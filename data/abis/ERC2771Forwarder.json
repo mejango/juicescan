@@ -1,0 +1,404 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "name",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "eip712Domain",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "fields",
+          "type": "bytes1",
+          "internalType": "bytes1"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "verifyingContract",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "extensions",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "execute",
+      "inputs": [
+        {
+          "name": "request",
+          "type": "tuple",
+          "internalType": "struct ERC2771Forwarder.ForwardRequestData",
+          "components": [
+            {
+              "name": "from",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "gas",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "data",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "executeBatch",
+      "inputs": [
+        {
+          "name": "requests",
+          "type": "tuple[]",
+          "internalType": "struct ERC2771Forwarder.ForwardRequestData[]",
+          "components": [
+            {
+              "name": "from",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "gas",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "data",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        },
+        {
+          "name": "refundReceiver",
+          "type": "address",
+          "internalType": "address payable"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "nonces",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "verify",
+      "inputs": [
+        {
+          "name": "request",
+          "type": "tuple",
+          "internalType": "struct ERC2771Forwarder.ForwardRequestData",
+          "components": [
+            {
+              "name": "from",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "to",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "gas",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "data",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "signature",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "EIP712DomainChanged",
+      "inputs": [],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ExecutedForwardRequest",
+      "inputs": [
+        {
+          "name": "signer",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "nonce",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "success",
+          "type": "bool",
+          "indexed": false,
+          "internalType": "bool"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "ERC2771ForwarderExpiredRequest",
+      "inputs": [
+        {
+          "name": "deadline",
+          "type": "uint48",
+          "internalType": "uint48"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC2771ForwarderInvalidSigner",
+      "inputs": [
+        {
+          "name": "signer",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC2771ForwarderMismatchedValue",
+      "inputs": [
+        {
+          "name": "requestedValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "msgValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC2771UntrustfulTarget",
+      "inputs": [
+        {
+          "name": "target",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "forwarder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "FailedCall",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InsufficientBalance",
+      "inputs": [
+        {
+          "name": "balance",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "needed",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InvalidAccountNonce",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "currentNonce",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InvalidShortString",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "StringTooLong",
+      "inputs": [
+        {
+          "name": "str",
+          "type": "string",
+          "internalType": "string"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "details": "See {EIP712-constructor}."
+    },
+    "eip712Domain()": {
+      "details": "returns the fields and values that describe the domain separator used by this contract for EIP-712 signature."
+    },
+    "execute((address,address,uint256,uint256,uint48,bytes,bytes))": {
+      "details": "Executes a `request` on behalf of `signature`'s signer using the ERC-2771 protocol. The gas provided to the requested call may not be exactly the amount requested, but the call will not run out of gas. Will revert if the request is invalid or the call reverts, in this case the nonce is not consumed. Requirements: - The request value should be equal to the provided `msg.value`. - The request should be valid according to {verify}."
+    },
+    "executeBatch((address,address,uint256,uint256,uint48,bytes,bytes)[],address)": {
+      "details": "Batch version of {execute} with optional refunding and atomic execution. In case a batch contains at least one invalid request (see {verify}), the request will be skipped and the `refundReceiver` parameter will receive back the unused requested value at the end of the execution. This is done to prevent reverting the entire batch when a request is invalid or has already been submitted. If the `refundReceiver` is the `address(0)`, this function will revert when at least one of the requests was not valid instead of skipping it. This could be useful if a batch is required to get executed atomically (at least at the top-level). For example, refunding (and thus atomicity) can be opt-out if the relayer is using a service that avoids including reverted transactions. Requirements: - The sum of the requests' values should be equal to the provided `msg.value`. - All of the requests should be valid (see {verify}) when `refundReceiver` is the zero address. NOTE: Setting a zero `refundReceiver` guarantees an all-or-nothing requests execution only for the first-level forwarded calls. In case a forwarded request calls to a contract with another subcall, the second-level call may revert without the top-level call reverting."
+    },
+    "nonces(address)": {
+      "details": "Returns the next unused nonce for an address."
+    },
+    "verify((address,address,uint256,uint256,uint48,bytes,bytes))": {
+      "details": "Returns `true` if a request is valid for a provided `signature` at the current block timestamp. A transaction is considered valid when the target trusts this forwarder, the request hasn't expired (deadline is not met), and the signer matches the `from` parameter of the signed request. NOTE: A request may return false here but it won't cause {executeBatch} to revert if a refund receiver is provided."
+    }
+  },
+  "userdoc": {},
+  "contractName": "ERC2771Forwarder",
+  "sourceName": "node_modules/@openzeppelin/contracts/metatx/ERC2771Forwarder.sol"
+}

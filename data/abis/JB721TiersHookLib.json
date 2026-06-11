@@ -1,0 +1,767 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "computeSplitsAndWeight",
+      "inputs": [
+        {
+          "name": "store",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "metadataIdTarget",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "packedPricingContext",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "prices",
+          "type": "IJBPrices",
+          "internalType": "contract IJBPrices"
+        },
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBBeforePayRecordedContext",
+          "components": [
+            {
+              "name": "terminal",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "weight",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "reservedPercent",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "weight",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "totalSplitAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "splitMetadata",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "splitCreditWeight",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "normalizePaymentValue",
+      "inputs": [
+        {
+          "name": "packedPricingContext",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "prices",
+          "type": "IJBPrices",
+          "internalType": "contract IJBPrices"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "amountValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "amountCurrency",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "amountDecimals",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "valid",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "resolveTokenURI",
+      "inputs": [
+        {
+          "name": "store",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "baseUri",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "AddTier",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tier",
+          "type": "tuple",
+          "indexed": false,
+          "internalType": "struct JB721TierConfig",
+          "components": [
+            {
+              "name": "price",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "initialSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "votingUnits",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "reserveFrequency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "reserveBeneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "encodedIpfsUri",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "category",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "discountPercent",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TierConfigFlags",
+              "components": [
+                {
+                  "name": "allowOwnerMint",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "useReserveBeneficiaryAsDefault",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "transfersPausable",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "useVotingUnits",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBeRemoved",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantIncreaseDiscountPercent",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBuyWithCredits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            },
+            {
+              "name": "splitPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "splits",
+              "type": "tuple[]",
+              "internalType": "struct JBSplit[]",
+              "components": [
+                {
+                  "name": "percent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "projectId",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "beneficiary",
+                  "type": "address",
+                  "internalType": "address payable"
+                },
+                {
+                  "name": "preferAddToBalance",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "lockedUntil",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "hook",
+                  "type": "address",
+                  "internalType": "contract IJBSplitHook"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "RemoveTier",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SetDiscountPercent",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "discountPercent",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SplitPayoutReverted",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "split",
+          "type": "tuple",
+          "indexed": false,
+          "internalType": "struct JBSplit",
+          "components": [
+            {
+              "name": "percent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "projectId",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address payable"
+            },
+            {
+              "name": "preferAddToBalance",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "lockedUntil",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBSplitHook"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookLib_NoTerminalForLeftover",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "leftoverAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookLib_SplitAmountMismatch",
+      "inputs": [
+        {
+          "name": "expectedAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "actualAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookLib_SplitFallbackFailed",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookLib_SplitMetadataLengthMismatch",
+      "inputs": [
+        {
+          "name": "tierIdCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "amountCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookLib_TokenTransferAmountMismatch",
+      "inputs": [
+        {
+          "name": "expectedAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "receivedAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHook_CantBuyWithCredits",
+      "inputs": [
+        {
+          "name": "restrictedCost",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "freshValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHook_Overspending",
+      "inputs": [
+        {
+          "name": "leftoverAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "adjustTiersFor(IJB721TiersHookStore,IJBSplits,uint256,address,address,JB721TierConfig[],uint256[])": {
+      "details": "Called via DELEGATECALL from the hook, so events are emitted from the hook's address.",
+      "params": {
+        "caller": "The msg.sender of the original call (for event emission).",
+        "hookAddress": "The hook address.",
+        "projectId": "The project ID.",
+        "splits": "The splits contract to register tier split groups in.",
+        "store": "The 721 tiers hook store.",
+        "tierIdsToRemove": "The tier IDs to remove.",
+        "tiersToAdd": "The tier configs to add."
+      }
+    },
+    "computeSplitsAndWeight(IJB721TiersHookStore,address,uint256,IJBPrices,JBBeforePayRecordedContext)": {
+      "details": "Called via DELEGATECALL from the hook; uses address(this) as the hook address.",
+      "params": {
+        "context": "The full payment context.",
+        "metadataIdTarget": "The metadata ID target for resolving pay metadata.",
+        "packedPricingContext": "The packed pricing context (currency, decimals).",
+        "prices": "The prices contract used for currency conversion.",
+        "store": "The 721 tiers hook store."
+      },
+      "returns": {
+        "beneficiary": "The resolved beneficiary address.",
+        "splitCreditWeight": "The weight attributable to tier splits when `issueTokensForSplits` is true. Zero when splits are absent or `issueTokensForSplits` is false.",
+        "splitMetadata": "Encoded per-tier breakdown (tierIds, amounts).",
+        "totalSplitAmount": "The total amount to forward for splits.",
+        "weight": "The adjusted weight for token minting."
+      }
+    },
+    "distributeAll(IJBDirectory,IJBSplits,uint256,address,address,uint256,uint256,bytes)": {
+      "details": "For ERC-20 tokens, pulls from the terminal using the allowance it granted via _beforeTransferTo.",
+      "params": {
+        "amount": "The total amount to distribute.",
+        "decimals": "The token decimals.",
+        "directory": "The directory to look up terminals.",
+        "encodedSplitData": "The encoded per-tier breakdown from hookMetadata.",
+        "hookAddress": "The hook address (for computing split group IDs).",
+        "projectId": "The project ID of the hook.",
+        "splits": "The splits contract to read tier split groups from.",
+        "token": "The token to distribute."
+      }
+    },
+    "normalizePaymentValue(uint256,IJBPrices,uint256,uint256,uint256,uint256)": {
+      "params": {
+        "amountCurrency": "The payment amount currency.",
+        "amountDecimals": "The payment amount decimals.",
+        "amountValue": "The payment amount value.",
+        "packedPricingContext": "The packed pricing context (currency, decimals).",
+        "prices": "The prices contract used for currency conversion.",
+        "projectId": "The project ID."
+      },
+      "returns": {
+        "valid": "Whether the value is valid (false means no prices contract and currencies differ).",
+        "value": "The normalized value."
+      }
+    },
+    "prepareMint(IJB721TiersHookStore,address,uint256,address,address,uint256,bytes)": {
+      "details": "Called via DELEGATECALL from the hook; uses address(this) as the hook address. Reverts with JB721TiersHook_CantBuyWithCredits or JB721TiersHook_Overspending on failure.",
+      "params": {
+        "beneficiary": "The address to mint NFTs to and track credits for.",
+        "metadataIdTarget": "The metadata ID target for resolving pay metadata.",
+        "payCredits": "The beneficiary's current pay credits balance.",
+        "payer": "The address that initiated the payment.",
+        "payerMetadata": "The metadata provided by the payer.",
+        "store": "The 721 tiers hook store.",
+        "value": "The normalized payment value."
+      },
+      "returns": {
+        "newPayCredits": "The beneficiary's updated pay credits balance.",
+        "tierIdsToMint": "The tier IDs corresponding to each minted token (empty if none).",
+        "tokenIds": "The token IDs minted (empty if none)."
+      }
+    },
+    "recordAddTiersFor(IJB721TiersHookStore,IJBSplits,uint256,address,address,JB721TierConfig[])": {
+      "details": "Used during initialization when tier configs are in memory.",
+      "params": {
+        "caller": "The msg.sender of the original call (for event emission).",
+        "hookAddress": "The hook address.",
+        "projectId": "The project ID.",
+        "splits": "The splits contract to register tier split groups in.",
+        "store": "The 721 tiers hook store.",
+        "tiersToAdd": "The tier configs to add."
+      }
+    },
+    "resolveTokenURI(IJB721TiersHookStore,address,string,uint256)": {
+      "details": "Extracted to the library to keep JBIpfsDecoder bytecode out of the hook contract (EIP-170 compliance).",
+      "params": {
+        "baseUri": "The base URI for IPFS-based token URIs.",
+        "hook": "The hook address.",
+        "store": "The 721 tiers hook store.",
+        "tokenId": "The token ID to resolve the URI for."
+      },
+      "returns": {
+        "_0": "The resolved token URI string."
+      }
+    },
+    "setDiscountPercentOf(IJB721TiersHookStore,uint256,uint256,address)": {
+      "params": {
+        "caller": "The msg.sender of the original call.",
+        "discountPercent": "The discount percent to set.",
+        "store": "The 721 tiers hook store.",
+        "tierId": "The ID of the tier."
+      }
+    }
+  },
+  "userdoc": {
+    "adjustTiersFor(IJB721TiersHookStore,IJBSplits,uint256,address,address,JB721TierConfig[],uint256[])": {
+      "notice": "Handles the full tier adjustment logic: removes tiers, adds tiers, emits events, and sets splits."
+    },
+    "computeSplitsAndWeight(IJB721TiersHookStore,address,uint256,IJBPrices,JBBeforePayRecordedContext)": {
+      "notice": "Computes split amounts, weight adjustment, and resolved beneficiary for a payment."
+    },
+    "distributeAll(IJBDirectory,IJBSplits,uint256,address,address,uint256,uint256,bytes)": {
+      "notice": "Pulls ERC-20 tokens from the terminal (if needed) and distributes forwarded funds to tier splits."
+    },
+    "normalizePaymentValue(uint256,IJBPrices,uint256,uint256,uint256,uint256)": {
+      "notice": "Normalizes a payment value based on the packed pricing context."
+    },
+    "prepareMint(IJB721TiersHookStore,address,uint256,address,address,uint256,bytes)": {
+      "notice": "Prepares NFT minting data for a payment: combines credits, decodes metadata, records mint, and checks overspending."
+    },
+    "recordAddTiersFor(IJB721TiersHookStore,IJBSplits,uint256,address,address,JB721TierConfig[])": {
+      "notice": "Records new tiers, emits events, and sets their split groups."
+    },
+    "resolveTokenURI(IJB721TiersHookStore,address,string,uint256)": {
+      "notice": "Resolves the token URI for a given NFT token ID."
+    },
+    "setDiscountPercentOf(IJB721TiersHookStore,uint256,uint256,address)": {
+      "notice": "Set the discount percent for a tier, emitting an event and recording it in the store."
+    }
+  },
+  "contractName": "JB721TiersHookLib",
+  "sourceName": "node_modules/@bananapus/721-hook-v6/src/libraries/JB721TiersHookLib.sol"
+}

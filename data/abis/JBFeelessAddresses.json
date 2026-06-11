@@ -1,0 +1,344 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "feelessHook",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBFeelessHook"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isFeelessFor",
+      "inputs": [
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setFeelessAddress",
+      "inputs": [
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "flag",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setFeelessAddressFor",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "flag",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setFeelessHook",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "contract IJBFeelessHook"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "supportsInterface",
+      "inputs": [
+        {
+          "name": "interfaceId",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "transferOwnership",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "OwnershipTransferred",
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SetFeelessAddress",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "addr",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "isFeeless",
+          "type": "bool",
+          "indexed": true,
+          "internalType": "bool"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SetFeelessHook",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "indexed": true,
+          "internalType": "contract IJBFeelessHook"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JBFeelessAddresses_InvalidFeelessHook",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "contract IJBFeelessHook"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableInvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableUnauthorizedAccount",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "owner": "This contract's owner."
+      }
+    },
+    "isFeelessFor(address,uint256,address)": {
+      "details": "The static admin-set mappings are caller-agnostic and always apply. The hook (if set) receives `caller` (typically the terminal's `_msgSender()`) and may use it to narrow its grant — e.g. grant an ecosystem router feeless cash-outs only when the router itself is the caller, not when it appears as a split recipient of someone else's payout. Hook is invoked via try/catch — a reverting hook is treated as `false`.",
+      "params": {
+        "addr": "The address to check.",
+        "caller": "The outer caller (typically the terminal's `_msgSender()`). Pass `address(0)` for lookups without caller context.",
+        "projectId": "The ID of the project to check."
+      },
+      "returns": {
+        "_0": "A flag indicating whether the address is feeless."
+      }
+    },
+    "owner()": {
+      "details": "Returns the address of the current owner."
+    },
+    "renounceOwnership()": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "setFeelessAddress(address,bool)": {
+      "details": "Equivalent to `setFeelessAddressFor(0, addr, flag)`.Can only be called by this contract's owner (typically the protocol multisig).",
+      "params": {
+        "addr": "The address to set as feeless or not feeless.",
+        "flag": "Whether the address should be feeless (`true`) or not feeless (`false`)."
+      }
+    },
+    "setFeelessAddressFor(uint256,address,bool)": {
+      "details": "Can only be called by this contract's owner (typically the protocol multisig).Use `projectId = 0` to set the global (all-project) feeless status.",
+      "params": {
+        "addr": "The address to set as feeless or not feeless for the project.",
+        "flag": "Whether the address should be feeless for the project (`true`) or not (`false`).",
+        "projectId": "The ID of the project. 0 means all projects."
+      }
+    },
+    "setFeelessHook(address)": {
+      "details": "Can only be called by this contract's owner (typically the protocol multisig).If `hook` is non-zero, it must report ERC-165 support for `IJBFeelessHook` or this call reverts.",
+      "params": {
+        "hook": "The new hook. Pass `address(0)` to disable hook consultation."
+      }
+    },
+    "supportsInterface(bytes4)": {
+      "details": "See {IERC165-supportsInterface}.",
+      "params": {
+        "interfaceId": "The ID of the interface to check for adherence to."
+      },
+      "returns": {
+        "_0": "A flag indicating if the provided interface ID is supported."
+      }
+    },
+    "transferOwnership(address)": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "userdoc": {
+    "feelessHook()": {
+      "notice": "Optional hook consulted (in addition to the static mappings) when computing feeless status."
+    },
+    "isFeelessFor(address,uint256,address)": {
+      "notice": "Returns whether the specified address is feeless for a specific project, providing the outer caller of the fee-bearing operation so hooks can scope grants by who initiated the action."
+    },
+    "setFeelessAddress(address,bool)": {
+      "notice": "Add or remove an address from the global (all-project) fee-exempt list."
+    },
+    "setFeelessAddressFor(uint256,address,bool)": {
+      "notice": "Add or remove an address from a project's fee-exempt list."
+    },
+    "setFeelessHook(address)": {
+      "notice": "Sets (or clears) the feeless hook consulted by `isFeelessFor`."
+    },
+    "supportsInterface(bytes4)": {
+      "notice": "Indicates whether this contract adheres to the specified interface."
+    }
+  },
+  "contractName": "JBFeelessAddresses",
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBFeelessAddresses.sol"
+}

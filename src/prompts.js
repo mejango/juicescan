@@ -1,0 +1,401 @@
+// src/prompts.js
+// Generate LLM prompts for protocol auditing and per-function context
+
+import { registry } from './abi-registry.js';
+
+var ECOSYSTEM_REPO_URL = 'https://github.com/Bananapus/version-6';
+
+function getContractRepo(contractName) {
+  var src = registry && registry.sources && registry.sources[contractName];
+  if (!src) return null;
+  return {
+    repo: src.repo || null,
+    githubUrl: src.githubUrl || null,
+    path: src.path || null,
+  };
+}
+
+function pushRepoContext(lines, contractName) {
+  lines.push('## Source Repositories');
+  lines.push('- Full ecosystem (start here for cross-repo audits): ' + ECOSYSTEM_REPO_URL + ' — read its root `AUDIT_INSTRUCTIONS.md` for the audit engine.');
+  var src = getContractRepo(contractName);
+  if (src && src.githubUrl) {
+    var contractRef = '- This contract\'s repo: ' + src.githubUrl;
+    if (src.path) contractRef += ' (' + src.path + ')';
+    lines.push(contractRef);
+    lines.push('- Repo-local audit notes: ' + src.githubUrl + '/blob/main/AUDIT_INSTRUCTIONS.md');
+  }
+  lines.push('');
+}
+
+var CONTRACT_DESCRIPTIONS = {
+  JBMultiTerminal: 'Holds funds and executes pay, payout, cash-out, surplus allowance, and fee-processing flows. Multi-token. Handles fees (2.5%, 28-day hold). Permit2 integration.',
+  JBTerminalStore: 'Owns accounting and surplus logic. Records payment minting, payout limit usage, and bonding curve reclaim math. Data hook integration point.',
+  JBController: 'Orchestrator for project lifecycle — ruleset queuing, token minting/burning, reserved token distribution, ERC2771 meta-transactions.',
+  JBDirectory: 'Routes projects to their terminals and controllers. Handles migration hooks.',
+  JBRulesets: 'Stores current and queued economic parameters. Linked-list via basedOnId. Weight decay with cache. Approval hooks.',
+  JBTokens: 'Dual token system: internal credits + ERC-20. Credits burned first on cash-out. 18-decimal requirement.',
+  JBSplits: 'Packed split storage for payout and reserved token distribution. Locked splits enforcement.',
+  JBFundAccessLimits: 'Payout limits and surplus allowances per terminal/token/currency.',
+  JBPrices: 'Price feed registry with project-specific and protocol default fallback. Inverse auto-calculation. Immutable feeds.',
+  JBPermissions: '256-bit packed permissions. ROOT (1) grants all. Wildcard projectId=0 for cross-project access.',
+  JBProjects: 'ERC-721 project ownership NFTs.',
+  JBERC20: 'Cloneable ERC20Votes+Permit token. Owned by JBTokens.',
+  JBFeelessAddresses: 'Fee-exempt address registry.',
+  JB721TiersHook: 'Tiered NFT rewards hook. Tiers sorted by category. Supports pay and cash-out hooks.',
+  JB721TiersHookStore: 'Storage for 721 tier data, pricing, and metadata.',
+  JB721TiersHookDeployer: 'Factory for deploying 721 tiered hooks.',
+  JB721TiersHookProjectDeployer: 'Combined project + 721 hook deployment.',
+  JBBuybackHookRegistry: 'Registry for buyback hooks that route payments through DEXs when cheaper than minting.',
+  JBSuckerRegistry: 'Registry for cross-chain sucker bridges.',
+  JBAddressRegistry: 'Maps deployed contract addresses to their deployers for trust verification.',
+  REVDeployer: 'Deploys and manages revnet (revenue network) projects.',
+  REVLoans: 'Loan system using project tokens as collateral.',
+  JBRouterTerminal: 'Routes payments through a DEX before forwarding to a project terminal.',
+  JBRouterTerminalRegistry: 'Registry for router terminal configurations.',
+  JBProjectHandles: 'Maps ENS names to project IDs.',
+  JBTokenDistributor: 'Distributes tokens to multiple recipients.',
+};
+
+export function getAuditPrompt() {
+  return [
+    'You are helping audit the Juicebox V6 protocol — an open-source, permissionless programmable treasury system deployed on Ethereum and L2s (Optimism, Arbitrum, Base, and possibly more).',
+    '',
+    'Start by cloning the full ecosystem repo and following its top-level audit engine:',
+    '',
+    '```bash',
+    'git clone --recursive https://github.com/Bananapus/version-6',
+    '```',
+    '',
+    'Then read `AUDIT_INSTRUCTIONS.md` at the root of that repo — it is the audit engine that walks through depth, subsystem, and adversarial-persona selection, decomposes the work into components, and tells you where to submit findings. The context below is a fast primer; the repo and its `AUDIT_INSTRUCTIONS.md` are the source of truth.',
+    '',
+    '## Protocol Architecture',
+    '',
+    'The protocol is built from ~47 contracts across 17 repositories under github.com/Bananapus.',
+    '',
+    'Core contracts:',
+    '- JBMultiTerminal: Holds funds. Executes pay, payout, cash-out, surplus allowance, and fee-processing flows. Multi-token. 2.5% fee with 28-day hold.',
+    '- JBTerminalStore: Accounting engine. Records balances, computes surplus, bonding curve reclaim math.',
+    '- JBController: Project lifecycle orchestrator. Ruleset queuing, token mint/burn, reserved token distribution.',
+    '- JBRulesets: Economic parameter storage. Linked-list with weight decay, approval hooks, bit-packed metadata.',
+    '- JBTokens: Dual token system (internal credits + ERC-20). Credits burned first.',
+    '- JBPermissions: 256-bit packed operator permissions. ROOT grants all. Wildcard projectId=0.',
+    '- JBPrices: Price feed registry. Immutable feeds, inverse auto-calculation.',
+    '- JBSplits: Payout and reserved token split distribution.',
+    '- JBFundAccessLimits: Per-cycle payout limits and surplus allowances.',
+    '- JBDirectory: Routes projects to terminals and controllers.',
+    '',
+    '## Key Flows',
+    '',
+    '1. Payment: accept funds → STORE.recordPaymentFrom (weight calc, data hook) → mint tokens → fulfill pay hooks',
+    '2. Cash out: STORE.recordCashOutFor (bonding curve, data hook) → burn tokens → transfer reclaim → fulfill hooks → take fees',
+    '3. Payouts: STORE.recordPayoutFor → distribute to splits → leftover to owner → take fees',
+    '4. Reserved tokens: accumulated in pendingReservedTokenBalanceOf → sendReservedTokensToSplitsOf mints and distributes',
+    '',
+    '## Critical Invariants',
+    '',
+    '1. Terminal solvency: internal balances + held-fee obligations must reconcile with actual token balances',
+    '2. No over-withdrawal: payouts and allowance usage must never exceed configured per-cycle limits',
+    '3. Cash-out correctness: surplus, total supply, tax rate, fee treatment, and hook overrides must produce correct reclaim',
+    '4. Ruleset integrity: active ruleset and fallback/cycling behavior must match exact timing and approval-hook semantics',
+    '5. Token accounting: credits, ERC-20 supply, reserved balance, and burn/mint paths must stay coherent',
+    '6. Privilege containment: permissions, wildcards, controller migration, and terminal routing must not allow unauthorized control',
+    '7. Held-fee correctness: deferred fees must not be forgiven, duplicated, or charged to the wrong place',
+    '8. Preview coherence: previewPayFor and previewCashOutFrom must not drift from actual execution',
+    '',
+    '## Omnichain Resilience',
+    '',
+    'The protocol deploys across Ethereum, Optimism, Arbitrum, Base, and possibly more. Each chain has unique properties:',
+    '- Native token varies: ETH on Ethereum/L2s, CELO on Celo. Some chains may have no native token. The protocol uses NATIVE_TOKEN (0x...EEEe) as a sentinel and WRAPPED_NATIVE_TOKEN (WETH9-compatible) for wrapping.',
+    '- Token addresses differ per chain: USDC, USDT, DAI, etc. have different contract addresses on each chain. The protocol must not assume a token address is portable.',
+    '- Decimals vary: USDC has 6 decimals, ETH has 18. The protocol uses JBFixedPointNumber for decimal adjustment and JBPrices for cross-currency conversion.',
+    '- Cross-chain bridging: JBSucker contracts use merkle trees (outbox/inbox) to bridge tokens between chains. Token mappings are immutable once the outbox tree has entries.',
+    '- Sequencer risk on L2s: JBChainlinkV3SequencerPriceFeed checks L2 sequencer status and enforces a grace period after restart.',
+    '- Amount caps: Cross-chain amounts use uint128 for SVM/Solana compatibility.',
+    '',
+    '## Omnitoken Resilience',
+    '',
+    'The protocol is multi-token by design. Each terminal can hold multiple token types simultaneously:',
+    '- Accounting contexts track token address, decimals, and currency per terminal. Duplicate prevention is enforced.',
+    '- Currency (uint32) is derived from token address: uint32(uint160(tokenAddress)). This is distinct from baseCurrency (1=ETH, 2=USD) used in ruleset metadata.',
+    '- groupId (uint256) and currency (uint32) represent the same token but with different bit widths — mixing them up causes silent bugs.',
+    '- Surplus aggregation converts across all terminals and tokens via JBPrices to a target currency. If a price feed reverts, operations using that currency pair also revert (DoS, not fund loss).',
+    '- Fee-free intra-terminal payouts track per token. Payout limits and surplus allowances are scoped per terminal/token/currency.',
+    '- Empty fundAccessLimitGroups means zero payouts (NOT unlimited). Use uint224.max for unlimited.',
+    '- ERC-20 fee-on-transfer, rebasing, and non-standard decimals are potential edge cases at system boundaries.',
+    '',
+    '## Attack Surfaces',
+    '',
+    '- pay, cashOutTokensOf, sendPayoutsOf, and useAllowanceOf entry points',
+    '- preview paths when downstream repos treat them as execution truth',
+    '- held-fee lifecycle and _processFee',
+    '- surplus aggregation across terminals and token types',
+    '- controller and terminal migration',
+    '- setPermissionsFor and wildcard semantics',
+    '- hook reentrancy: pay hooks, cash-out hooks, split hooks',
+    '- cross-chain token mapping and bridge message integrity',
+    '- native token handling on chains where the native token is not ETH',
+    '',
+    '## Key Constants',
+    '',
+    '- FEE = 25 / 1000 = 2.5% (1000 is the fee denominator, not an achievable fee value)',
+    '- MAX_RESERVED_PERCENT = 10,000 (basis points)',
+    '- MAX_CASH_OUT_TAX_RATE = 10,000',
+    '- SPLITS_TOTAL_PERCENT = 1,000,000,000',
+    '- NATIVE_TOKEN = 0x000000000000000000000000000000000000EEEe',
+    '- Fee holding: 28 days (2,419,200 seconds)',
+    '',
+    '## Known Issues (accepted risks)',
+    '',
+    '- cashOut(0) with totalSupply==0 returns entire surplus',
+    '- Pending reserved tokens inflate totalSupply, reducing cashout value',
+    '- Bonding curve subadditivity violation from mulDiv rounding (<0.01%)',
+    '',
+    '## Source Repositories',
+    '',
+    '- Core: github.com/Bananapus/nana-core-v6',
+    '- 721 Hook: github.com/Bananapus/nana-721-hook-v6',
+    '- Buyback Hook: github.com/Bananapus/nana-buyback-hook-v6',
+    '- Suckers (cross-chain): github.com/Bananapus/nana-suckers-v6',
+    '- Revnet: github.com/rev-net/revnet-core-v6',
+    '- Router Terminal: github.com/Bananapus/nana-router-terminal-v6',
+    '',
+    '## How to Contribute',
+    '',
+    'Review any contract function for:',
+    '- Logic errors that break invariants listed above',
+    '- Reentrancy paths through hooks',
+    '- Integer overflow/underflow or precision loss in accounting',
+    '- Permission bypasses',
+    '- State inconsistencies between preview and execution',
+    '',
+    'Report findings with: affected function, severity, description, and proof of concept.',
+  ].join('\n');
+}
+
+export function getFunctionPrompt(fn, contractName, fnNatspec) {
+  var lines = [];
+  lines.push('You are helping me interact with a Juicebox V6 smart contract function.');
+  lines.push('');
+
+  pushRepoContext(lines, contractName);
+
+  // Contract context
+  lines.push('## Contract: ' + contractName);
+  if (CONTRACT_DESCRIPTIONS[contractName]) {
+    lines.push(CONTRACT_DESCRIPTIONS[contractName]);
+  }
+  lines.push('');
+
+  // Function signature
+  var paramList = fn.inputs.map(function(p) {
+    return p.type + ' ' + (p.name || '');
+  }).join(', ');
+  lines.push('## Function');
+  lines.push(fn.name + '(' + paramList + ')');
+  lines.push('State mutability: ' + fn.stateMutability);
+  lines.push('');
+
+  // NatSpec
+  if (fnNatspec) {
+    if (fnNatspec.notice) {
+      lines.push('## Description');
+      lines.push(fnNatspec.notice);
+      lines.push('');
+    }
+    if (fnNatspec.details) {
+      lines.push('## Details');
+      lines.push(fnNatspec.details);
+      lines.push('');
+    }
+  }
+
+  // Parameters
+  if (fn.inputs.length > 0) {
+    lines.push('## Parameters');
+    for (var i = 0; i < fn.inputs.length; i++) {
+      var p = fn.inputs[i];
+      var desc = '';
+      if (fnNatspec && fnNatspec.params) {
+        desc = fnNatspec.params[p.name] || fnNatspec.params[p.name.replace(/^_/, '')] || '';
+      }
+      var typeStr = p.type;
+      if (p.components) {
+        typeStr = formatTupleType(p);
+      }
+      lines.push('- ' + (p.name || 'param' + i) + ' (' + typeStr + ')' + (desc ? ': ' + desc : ''));
+    }
+    lines.push('');
+  }
+
+  // Returns
+  if (fn.outputs && fn.outputs.length > 0) {
+    lines.push('## Returns');
+    for (var j = 0; j < fn.outputs.length; j++) {
+      var o = fn.outputs[j];
+      var retDesc = '';
+      if (fnNatspec && fnNatspec.returns) {
+        retDesc = fnNatspec.returns[o.name] || fnNatspec.returns['_' + j] || '';
+      }
+      var retType = o.type;
+      if (o.components) {
+        retType = formatTupleType(o);
+      }
+      lines.push('- ' + (o.name || 'output' + j) + ' (' + retType + ')' + (retDesc ? ': ' + retDesc : ''));
+    }
+    lines.push('');
+  }
+
+  // Context
+  lines.push('## Protocol Context');
+  lines.push('Juicebox V6 is an open-source programmable treasury protocol. Projects receive payments, issue tokens, distribute payouts to splits, and allow token holders to cash out their share of the surplus.');
+  if (fn.stateMutability === 'payable') {
+    lines.push('This function accepts ETH (or the chain\'s native token) via msg.value.');
+  }
+
+  return lines.join('\n');
+}
+
+function formatTupleType(param) {
+  if (!param.components) return param.type;
+  var fields = param.components.map(function(c) {
+    return c.type + ' ' + (c.name || '');
+  }).join(', ');
+  return 'tuple(' + fields + ')' + (param.type.endsWith('[]') ? '[]' : '');
+}
+
+// Extract current field values from a component's DOM
+function extractComponentFields(componentEl) {
+  var fields = [];
+  var sections = componentEl.querySelectorAll('.component-section');
+  for (var i = 0; i < sections.length; i++) {
+    var sec = sections[i];
+    var label = sec.querySelector('.input-label');
+    var labelText = label ? label.childNodes[0].textContent.trim() : '';
+
+    // Text/number inputs
+    var input = sec.querySelector('input.field, input.amount-input, textarea.field');
+    if (input) {
+      var val = input.value || '';
+      if (val) fields.push({ label: labelText, value: val });
+      // Also check token dropdown in same section
+      var tokenDd = sec.querySelector('.token-dropdown');
+      if (tokenDd) {
+        fields.push({ label: labelText + ' token', value: tokenDd.options[tokenDd.selectedIndex].text });
+      }
+      continue;
+    }
+
+    // Select dropdowns
+    var select = sec.querySelector('select.field, select.network-dropdown');
+    if (select) {
+      fields.push({ label: labelText, value: select.options[select.selectedIndex].text });
+      continue;
+    }
+
+    // Pills (chain pills, option pills)
+    var selectedPill = sec.querySelector('.chain-pill.selected, .pill.selected');
+    if (selectedPill) {
+      fields.push({ label: labelText, value: selectedPill.textContent.trim() });
+      continue;
+    }
+  }
+
+  // Chain selector at top level
+  var chainPill = componentEl.querySelector('.chain-pills-row .chain-pill.selected');
+  if (chainPill && !fields.some(function(f) { return f.label === 'chain'; })) {
+    fields.push({ label: 'chain', value: chainPill.textContent.trim() });
+  }
+
+  // Network dropdown
+  var netDd = componentEl.querySelector('.network-dropdown');
+  if (netDd) {
+    fields.push({ label: 'network', value: netDd.options[netDd.selectedIndex].text });
+  }
+
+  return fields;
+}
+
+export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl) {
+  var lines = [];
+  lines.push('I\'m about to execute a Juicebox V6 transaction using a frontend component. Please audit what I\'m about to sign — verify the parameters are correct, flag any risks, and confirm the on-chain effect matches my intent.');
+  lines.push('');
+
+  pushRepoContext(lines, contractName);
+
+  // What component
+  var title = componentEl.querySelector('.component-title');
+  lines.push('## Action: ' + (title ? title.textContent : fn.name));
+  lines.push('');
+
+  // Contract context
+  lines.push('## Contract: ' + contractName);
+  if (CONTRACT_DESCRIPTIONS[contractName]) {
+    lines.push(CONTRACT_DESCRIPTIONS[contractName]);
+  }
+  lines.push('');
+
+  // Function signature
+  var paramList = fn.inputs.map(function(p) {
+    return p.type + ' ' + (p.name || '');
+  }).join(', ');
+  lines.push('## Solidity Function');
+  lines.push('`' + fn.name + '(' + paramList + ')`');
+  lines.push('State mutability: ' + fn.stateMutability);
+  lines.push('');
+
+  // Current field values from the form
+  var fields = extractComponentFields(componentEl);
+  if (fields.length > 0) {
+    lines.push('## My Current Input Values');
+    for (var i = 0; i < fields.length; i++) {
+      lines.push('- **' + fields[i].label + '**: ' + fields[i].value);
+    }
+    lines.push('');
+  }
+
+  // NatSpec
+  if (fnNatspec) {
+    if (fnNatspec.notice) {
+      lines.push('## Function Description');
+      lines.push(fnNatspec.notice);
+      lines.push('');
+    }
+  }
+
+  // Parameters with types
+  if (fn.inputs.length > 0) {
+    lines.push('## Parameter Specification');
+    for (var j = 0; j < fn.inputs.length; j++) {
+      var p = fn.inputs[j];
+      var desc = '';
+      if (fnNatspec && fnNatspec.params) {
+        desc = fnNatspec.params[p.name] || fnNatspec.params[p.name.replace(/^_/, '')] || '';
+      }
+      var typeStr = p.type;
+      if (p.components) {
+        typeStr = formatTupleType(p);
+      }
+      lines.push('- `' + (p.name || 'param' + j) + '` (' + typeStr + ')' + (desc ? ': ' + desc : ''));
+    }
+    lines.push('');
+  }
+
+  // What to check
+  lines.push('## Please Verify');
+  lines.push('1. Do my input values correctly map to the function parameters?');
+  lines.push('2. Will the on-chain effect match what I intend (based on the action name and values)?');
+  lines.push('3. Are there any risks, gotchas, or edge cases with these specific values?');
+  if (fn.stateMutability === 'payable') {
+    lines.push('4. This function accepts ETH via msg.value — is the amount and token correct?');
+  }
+  lines.push('');
+
+  // Protocol context
+  lines.push('## Protocol Context');
+  lines.push('Juicebox V6 is an open-source programmable treasury. Key invariants: terminal solvency, no over-withdrawal, correct bonding curve cashout, privilege containment via JBPermissions.');
+  lines.push('');
+  lines.push('Known gotchas: empty fundAccessLimitGroups = zero payouts (not unlimited), cashOut(0) with totalSupply==0 returns entire surplus, pending reserved tokens inflate totalSupply reducing cashout value, currency (uint32) != baseCurrency (1=ETH, 2=USD).');
+
+  return lines.join('\n');
+}

@@ -1,0 +1,580 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "adjustedPendingReservesFor",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hookStore",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "refundBurns",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "computeAttestationUnits",
+      "inputs": [
+        {
+          "name": "tierIdsToMint",
+          "type": "uint16[]",
+          "internalType": "uint16[]"
+        },
+        {
+          "name": "hookStore",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tierIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "attestationAmounts",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "computeCashOutCount",
+      "inputs": [
+        {
+          "name": "gamePhase",
+          "type": "DefifaGamePhase",
+          "internalType": "enum DefifaGamePhase"
+        },
+        {
+          "name": "cumulativeMintPrice",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "surplusValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "totalAmountRedeemed",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "cumulativeCashOutWeight",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cashOutCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "computeCumulativeMintPriceForCashOut",
+      "inputs": [
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "hookStore",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "excludeReserveMints",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cumulativeMintPrice",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "computeCurrentSupply",
+      "inputs": [
+        {
+          "name": "hookStore",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "computeTokensClaim",
+      "inputs": [
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "hookStore",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "totalMintCost",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "defifaBalance",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "baseProtocolBalance",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "defifaTokenAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "baseProtocolTokenAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "pendingReserveMintCost",
+      "inputs": [
+        {
+          "name": "hookStore",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cost",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "validateAndBuildWeights",
+      "inputs": [
+        {
+          "name": "tierWeights",
+          "type": "tuple[]",
+          "internalType": "struct DefifaTierCashOutWeight[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutWeight",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "hookStore",
+          "type": "IJB721TiersHookStore",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "weights",
+          "type": "uint256[128]",
+          "internalType": "uint256[128]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "ClaimedTokens",
+      "inputs": [
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "defifaTokenAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "baseProtocolTokenAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_BadTierOrder",
+      "inputs": [
+        {
+          "name": "previousTierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_InvalidCashoutWeights",
+      "inputs": [
+        {
+          "name": "totalWeight",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "expectedWeight",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_InvalidTierId",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "actualTierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "maxTierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "category",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "adjustedPendingReservesFor(uint256,IJB721TiersHookStore,address,uint256)": {
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "refundBurns": "The number of refund-phase burns for the tier.",
+        "tierId": "The tier ID."
+      },
+      "returns": {
+        "_0": "The adjusted pending reserve count."
+      }
+    },
+    "claimTokensFor(address,uint256,uint256,IERC20,IERC20)": {
+      "details": "Executes via delegatecall, so `address(this)` is the calling contract. Transfers are from the hook's balance.",
+      "params": {
+        "baseProtocolToken": "The $BASE_PROTOCOL token.",
+        "beneficiary": "The address to claim tokens for.",
+        "defifaToken": "The $DEFIFA token.",
+        "outOfTotal": "The total share that the `shareToBeneficiary` is relative to.",
+        "shareToBeneficiary": "The share relative to the `outOfTotal` to send the user."
+      },
+      "returns": {
+        "beneficiaryReceivedTokens": "A flag indicating if the beneficiary received any tokens."
+      }
+    },
+    "computeAttestationUnits(uint16[],IJB721TiersHookStore,address)": {
+      "details": "Returns parallel arrays: tier IDs, cumulative attestation units per tier, and whether to switch delegate.",
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierIdsToMint": "The tier IDs to mint (must be in ascending order)."
+      },
+      "returns": {
+        "attestationAmounts": "The cumulative attestation units for each unique tier.",
+        "count": "The number of unique tiers.",
+        "tierIds": "The unique tier IDs."
+      }
+    },
+    "computeCashOutCount(DefifaGamePhase,uint256,uint256,uint256,uint256)": {
+      "params": {
+        "cumulativeCashOutWeight": "The cumulative cash-out weight of the tokens.",
+        "cumulativeMintPrice": "The cumulative mint price of the tokens to cash out.",
+        "gamePhase": "The current game phase.",
+        "surplusValue": "The surplus value from the context.",
+        "totalAmountRedeemed": "The amount already redeemed."
+      },
+      "returns": {
+        "cashOutCount": "The computed cash-out count."
+      }
+    },
+    "computeCashOutWeight(uint256,IJB721TiersHookStore,address,uint256[128] storage,mapping(uint256 => uint256) storage)": {
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierCashOutWeights": "The tier cash-out weights array.",
+        "tokenId": "The token ID.",
+        "tokensRedeemedFrom": "The mapping of tokens redeemed per tier (passed as a function that returns the value)."
+      },
+      "returns": {
+        "_0": "The cash-out weight."
+      }
+    },
+    "computeCashOutWeightBatch(uint256[],IJB721TiersHookStore,address,uint256[128] storage,mapping(uint256 => uint256) storage)": {
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierCashOutWeights": "The tier cash-out weights array.",
+        "tokenIds": "The token IDs.",
+        "tokensRedeemedFrom": "The mapping of tokens redeemed per tier."
+      },
+      "returns": {
+        "cumulativeWeight": "The cumulative weight."
+      }
+    },
+    "computeCumulativeMintPriceForCashOut(uint256[],IJB721TiersHookStore,address,bool)": {
+      "params": {
+        "excludeReserveMints": "Whether reserve-minted tokens should be excluded.",
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tokenIds": "The token IDs."
+      },
+      "returns": {
+        "cumulativeMintPrice": "The total mint price."
+      }
+    },
+    "computeCurrentSupply(IJB721TiersHookStore,address,uint256)": {
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierId": "The ID of the tier."
+      },
+      "returns": {
+        "_0": "The current supply."
+      }
+    },
+    "computeTokensClaim(uint256[],IJB721TiersHookStore,address,uint256,uint256,uint256)": {
+      "params": {
+        "baseProtocolBalance": "The current $BASE_PROTOCOL balance.",
+        "defifaBalance": "The current $DEFIFA balance.",
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tokenIds": "The token IDs.",
+        "totalMintCost": "The cumulative mint cost."
+      },
+      "returns": {
+        "baseProtocolTokenAmount": "The claimable $BASE_PROTOCOL amount.",
+        "defifaTokenAmount": "The claimable $DEFIFA amount."
+      }
+    },
+    "pendingReserveMintCost(IJB721TiersHookStore,address)": {
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store."
+      },
+      "returns": {
+        "cost": "The total pending reserve mint cost."
+      }
+    },
+    "validateAndBuildWeights(DefifaTierCashOutWeight[],IJB721TiersHookStore,address)": {
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierWeights": "The tier weights to validate and set."
+      },
+      "returns": {
+        "weights": "The 128-element array of validated weights."
+      }
+    }
+  },
+  "userdoc": {
+    "adjustedPendingReservesFor(uint256,IJB721TiersHookStore,address,uint256)": {
+      "notice": "Returns the adjusted pending reserve count for a tier, accounting for refund-phase burns."
+    },
+    "claimTokensFor(address,uint256,uint256,IERC20,IERC20)": {
+      "notice": "Claims the defifa and base protocol tokens for a beneficiary."
+    },
+    "computeAttestationUnits(uint16[],IJB721TiersHookStore,address)": {
+      "notice": "Computes the attestation units for tiers during payment processing."
+    },
+    "computeCashOutCount(DefifaGamePhase,uint256,uint256,uint256,uint256)": {
+      "notice": "Compute the cash-out count for the beforeCashOutRecorded hook."
+    },
+    "computeCashOutWeight(uint256,IJB721TiersHookStore,address,uint256[128] storage,mapping(uint256 => uint256) storage)": {
+      "notice": "Compute the cash-out weight for a single token."
+    },
+    "computeCashOutWeightBatch(uint256[],IJB721TiersHookStore,address,uint256[128] storage,mapping(uint256 => uint256) storage)": {
+      "notice": "Compute the cumulative cash-out weight for multiple tokens."
+    },
+    "computeCumulativeMintPriceForCashOut(uint256[],IJB721TiersHookStore,address,bool)": {
+      "notice": "Compute the cumulative mint price for a set of token IDs."
+    },
+    "computeCurrentSupply(IJB721TiersHookStore,address,uint256)": {
+      "notice": "Compute the current supply of a tier (minted - burned)."
+    },
+    "computeTokensClaim(uint256[],IJB721TiersHookStore,address,uint256,uint256,uint256)": {
+      "notice": "Compute the claimable token amounts for a set of token IDs."
+    },
+    "pendingReserveMintCost(IJB721TiersHookStore,address)": {
+      "notice": "Computes the total mint cost of all pending reserve NFTs across all tiers."
+    },
+    "validateAndBuildWeights(DefifaTierCashOutWeight[],IJB721TiersHookStore,address)": {
+      "notice": "Validates tier cash-out weights and returns the weight array to store."
+    }
+  },
+  "contractName": "DefifaHookLib",
+  "sourceName": "node_modules/@ballkidz/defifa/src/libraries/DefifaHookLib.sol"
+}

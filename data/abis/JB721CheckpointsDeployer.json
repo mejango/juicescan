@@ -1,0 +1,105 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "store",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookStore"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "IMPLEMENTATION",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "STORE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookStore"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "deploy",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "module",
+          "type": "address",
+          "internalType": "contract IJB721Checkpoints"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "error",
+      "name": "JB721CheckpointsDeployer_Unauthorized",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "store": "The store that holds tier data for each hook's NFTs."
+      }
+    },
+    "deploy(address)": {
+      "details": "Uses CREATE2 with the hook address as salt so the clone address is the same across chains.",
+      "params": {
+        "hook": "The hook address the module will serve."
+      },
+      "returns": {
+        "module": "The newly deployed and initialized checkpoint module."
+      }
+    }
+  },
+  "userdoc": {
+    "IMPLEMENTATION()": {
+      "notice": "The checkpoint module implementation that clones delegate to."
+    },
+    "STORE()": {
+      "notice": "The store that holds tier and voting data for each hook's NFTs."
+    },
+    "deploy(address)": {
+      "notice": "Deploys a new deterministic checkpoint clone for the given hook."
+    }
+  },
+  "contractName": "JB721CheckpointsDeployer",
+  "sourceName": "node_modules/@bananapus/721-hook-v6/src/JB721CheckpointsDeployer.sol"
+}

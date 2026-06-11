@@ -1,0 +1,358 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "FALLBACK_RULESET_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setSplitGroupsOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "splitGroups",
+          "type": "tuple[]",
+          "internalType": "struct JBSplitGroup[]",
+          "components": [
+            {
+              "name": "groupId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "splits",
+              "type": "tuple[]",
+              "internalType": "struct JBSplit[]",
+              "components": [
+                {
+                  "name": "percent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "projectId",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "beneficiary",
+                  "type": "address",
+                  "internalType": "address payable"
+                },
+                {
+                  "name": "preferAddToBalance",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "lockedUntil",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "hook",
+                  "type": "address",
+                  "internalType": "contract IJBSplitHook"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "splitsOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "groupId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "splits",
+          "type": "tuple[]",
+          "internalType": "struct JBSplit[]",
+          "components": [
+            {
+              "name": "percent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "projectId",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address payable"
+            },
+            {
+              "name": "preferAddToBalance",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "lockedUntil",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBSplitHook"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "SetSplit",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "groupId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "split",
+          "type": "tuple",
+          "indexed": false,
+          "internalType": "struct JBSplit",
+          "components": [
+            {
+              "name": "percent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "projectId",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address payable"
+            },
+            {
+              "name": "preferAddToBalance",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "lockedUntil",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBSplitHook"
+            }
+          ]
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JBControlled_ControllerUnauthorized",
+      "inputs": [
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSplits_PreviousLockedSplitsNotIncluded",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSplits_TotalPercentExceeds100",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "groupId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "percentTotal",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBSplits_ZeroSplitPercent",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "groupId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "splitIndex",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "directory": "A contract storing directories of terminals and controllers for each project."
+      }
+    },
+    "setSplitGroupsOf(uint256,uint256,(uint256,(uint32,uint64,address,bool,uint48,address)[])[])": {
+      "details": "Only the project's controller can set splits — unless the group ID encodes `msg.sender` in its lower 160 bits with non-zero upper 96 bits, which enables self-managed splits (e.g. hooks managing their own groups).Locked splits cannot be removed or reduced until their lock expires. The new groups must include all currently-locked splits.",
+      "params": {
+        "projectId": "The ID of the project to set the split groups of.",
+        "rulesetId": "The ID of the ruleset the split groups should be active in. Pass 0 to set the default splits (used when no ruleset-specific splits are configured). The default's default is the project's owner.",
+        "splitGroups": "An array of split groups to set."
+      }
+    },
+    "splitsOf(uint256,uint256,uint256)": {
+      "params": {
+        "groupId": "The split group ID (e.g. token address for payout groups, or a custom ID for reserved tokens).",
+        "projectId": "The ID of the project to get splits for.",
+        "rulesetId": "The ruleset to look up splits in. Falls back to ruleset 0 if none are found."
+      },
+      "returns": {
+        "splits": "An array of all splits for the project."
+      }
+    }
+  },
+  "userdoc": {
+    "DIRECTORY()": {
+      "notice": "The directory of terminals and controllers for projects."
+    },
+    "FALLBACK_RULESET_ID()": {
+      "notice": "The ID of the ruleset that will be checked if nothing was found in the provided rulesetId."
+    },
+    "setSplitGroupsOf(uint256,uint256,(uint256,(uint32,uint64,address,bool,uint48,address)[])[])": {
+      "notice": "Configure how a project distributes funds to its split recipients. Each split group defines a list of recipients (with percentage shares) for a specific purpose (e.g. payouts in ETH, reserved token distribution)."
+    },
+    "splitsOf(uint256,uint256,uint256)": {
+      "notice": "Get the list of split recipients for a project's group within a given ruleset. Falls back to the default splits (ruleset 0) if none are set for the specific ruleset."
+    }
+  },
+  "contractName": "JBSplits",
+  "sourceName": "node_modules/@bananapus/core-v6/src/JBSplits.sol"
+}

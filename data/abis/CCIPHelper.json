@@ -1,0 +1,1073 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "ARB_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_SEP_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_SEP_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_SEP_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_SEP_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_SEP_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ARB_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "AVA_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "AVA_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "AVA_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "AVA_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_SEP_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_SEP_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_SEP_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_SEP_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_SEP_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BNB_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BNB_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BNB_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BNB_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_SEP_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_SEP_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_SEP_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_SEP_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_SEP_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ETH_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_SEP_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_SEP_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_SEP_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_SEP_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_SEP_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "OP_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "POLY_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "POLY_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "POLY_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "POLY_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_MOD_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_MOD_LINK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_MOD_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_MOD_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_MOD_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_ROUTER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_SEL",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint64",
+          "internalType": "uint64"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TEMPO_WETH",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "linkOfChain",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "link",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "wethOfChain",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "weth",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "error",
+      "name": "CCIPHelper_UnsupportedChain",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "linkOfChain(uint256)": {
+      "params": {
+        "chainId": "The EVM chain ID to look up."
+      },
+      "returns": {
+        "link": "The LINK token address."
+      }
+    },
+    "wethOfChain(uint256)": {
+      "params": {
+        "chainId": "The EVM chain ID to look up."
+      },
+      "returns": {
+        "weth": "The wrapped native token address."
+      }
+    }
+  },
+  "userdoc": {
+    "ARB_ID()": {
+      "notice": "The EVM chain ID for Arbitrum One."
+    },
+    "ARB_LINK()": {
+      "notice": "The LINK token address for Arbitrum One."
+    },
+    "ARB_ROUTER()": {
+      "notice": "The CCIP router address for Arbitrum One."
+    },
+    "ARB_SEL()": {
+      "notice": "The CCIP chain selector for Arbitrum One."
+    },
+    "ARB_SEP_ID()": {
+      "notice": "The EVM chain ID for Arbitrum Sepolia."
+    },
+    "ARB_SEP_LINK()": {
+      "notice": "The LINK token address for Arbitrum Sepolia."
+    },
+    "ARB_SEP_ROUTER()": {
+      "notice": "The CCIP router address for Arbitrum Sepolia."
+    },
+    "ARB_SEP_SEL()": {
+      "notice": "The CCIP chain selector for Arbitrum Sepolia."
+    },
+    "ARB_SEP_WETH()": {
+      "notice": "The wrapped native token address for Arbitrum Sepolia."
+    },
+    "ARB_WETH()": {
+      "notice": "The wrapped native token address for Arbitrum One."
+    },
+    "AVA_ID()": {
+      "notice": "The EVM chain ID for Avalanche."
+    },
+    "AVA_ROUTER()": {
+      "notice": "The CCIP router address for Avalanche."
+    },
+    "AVA_SEL()": {
+      "notice": "The CCIP chain selector for Avalanche."
+    },
+    "AVA_WETH()": {
+      "notice": "The wrapped native token address for Avalanche."
+    },
+    "BASE_ID()": {
+      "notice": "The EVM chain ID for Base."
+    },
+    "BASE_LINK()": {
+      "notice": "The LINK token address for Base."
+    },
+    "BASE_ROUTER()": {
+      "notice": "The CCIP router address for Base."
+    },
+    "BASE_SEL()": {
+      "notice": "The CCIP chain selector for Base."
+    },
+    "BASE_SEP_ID()": {
+      "notice": "The EVM chain ID for Base Sepolia."
+    },
+    "BASE_SEP_LINK()": {
+      "notice": "The LINK token address for Base Sepolia."
+    },
+    "BASE_SEP_ROUTER()": {
+      "notice": "The CCIP router address for Base Sepolia."
+    },
+    "BASE_SEP_SEL()": {
+      "notice": "The CCIP chain selector for Base Sepolia."
+    },
+    "BASE_SEP_WETH()": {
+      "notice": "The wrapped native token address for Base Sepolia."
+    },
+    "BASE_WETH()": {
+      "notice": "The wrapped native token address for Base."
+    },
+    "BNB_ID()": {
+      "notice": "The EVM chain ID for BNB Chain."
+    },
+    "BNB_ROUTER()": {
+      "notice": "The CCIP router address for BNB Chain."
+    },
+    "BNB_SEL()": {
+      "notice": "The CCIP chain selector for BNB Chain."
+    },
+    "BNB_WETH()": {
+      "notice": "The wrapped native token address for BNB Chain."
+    },
+    "ETH_ID()": {
+      "notice": "The EVM chain ID for Ethereum mainnet."
+    },
+    "ETH_LINK()": {
+      "notice": "The LINK token address for Ethereum mainnet."
+    },
+    "ETH_ROUTER()": {
+      "notice": "The CCIP router address for Ethereum mainnet."
+    },
+    "ETH_SEL()": {
+      "notice": "The CCIP chain selector for Ethereum mainnet."
+    },
+    "ETH_SEP_ID()": {
+      "notice": "The EVM chain ID for Ethereum Sepolia."
+    },
+    "ETH_SEP_LINK()": {
+      "notice": "The LINK token address for Ethereum Sepolia."
+    },
+    "ETH_SEP_ROUTER()": {
+      "notice": "The CCIP router address for Ethereum Sepolia."
+    },
+    "ETH_SEP_SEL()": {
+      "notice": "The CCIP chain selector for Ethereum Sepolia."
+    },
+    "ETH_SEP_WETH()": {
+      "notice": "The wrapped native token address for Ethereum Sepolia."
+    },
+    "ETH_WETH()": {
+      "notice": "The wrapped native token address for Ethereum mainnet."
+    },
+    "OP_ID()": {
+      "notice": "The EVM chain ID for OP Mainnet."
+    },
+    "OP_LINK()": {
+      "notice": "The LINK token address for OP Mainnet."
+    },
+    "OP_ROUTER()": {
+      "notice": "The CCIP router address for OP Mainnet."
+    },
+    "OP_SEL()": {
+      "notice": "The CCIP chain selector for OP Mainnet."
+    },
+    "OP_SEP_ID()": {
+      "notice": "The EVM chain ID for OP Sepolia."
+    },
+    "OP_SEP_LINK()": {
+      "notice": "The LINK token address for OP Sepolia."
+    },
+    "OP_SEP_ROUTER()": {
+      "notice": "The CCIP router address for OP Sepolia."
+    },
+    "OP_SEP_SEL()": {
+      "notice": "The CCIP chain selector for OP Sepolia."
+    },
+    "OP_SEP_WETH()": {
+      "notice": "The wrapped native token address for OP Sepolia."
+    },
+    "OP_WETH()": {
+      "notice": "The wrapped native token address for OP Mainnet."
+    },
+    "POLY_ID()": {
+      "notice": "The EVM chain ID for Polygon."
+    },
+    "POLY_ROUTER()": {
+      "notice": "The CCIP router address for Polygon."
+    },
+    "POLY_SEL()": {
+      "notice": "The CCIP chain selector for Polygon."
+    },
+    "POLY_WETH()": {
+      "notice": "The wrapped native token address for Polygon."
+    },
+    "TEMPO_ID()": {
+      "notice": "The EVM chain ID for Tempo."
+    },
+    "TEMPO_LINK()": {
+      "notice": "The LINK token address for Tempo."
+    },
+    "TEMPO_MOD_ID()": {
+      "notice": "The EVM chain ID for Tempo mod chain."
+    },
+    "TEMPO_MOD_LINK()": {
+      "notice": "The LINK token address for Tempo mod chain."
+    },
+    "TEMPO_MOD_ROUTER()": {
+      "notice": "The CCIP router address for Tempo mod chain."
+    },
+    "TEMPO_MOD_SEL()": {
+      "notice": "The CCIP chain selector for Tempo mod chain."
+    },
+    "TEMPO_MOD_WETH()": {
+      "notice": "The wrapped native token address for Tempo mod chain."
+    },
+    "TEMPO_ROUTER()": {
+      "notice": "The CCIP router address for Tempo."
+    },
+    "TEMPO_SEL()": {
+      "notice": "The CCIP chain selector for Tempo."
+    },
+    "TEMPO_WETH()": {
+      "notice": "The wrapped native token address for Tempo."
+    },
+    "linkOfChain(uint256)": {
+      "notice": "Returns the LINK token address for a given chain ID."
+    },
+    "wethOfChain(uint256)": {
+      "notice": "Returns the wrapped native token address for a given chain ID."
+    }
+  },
+  "contractName": "CCIPHelper",
+  "sourceName": "node_modules/@bananapus/suckers-v6/src/libraries/CCIPHelper.sol"
+}

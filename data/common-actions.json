@@ -1,0 +1,103 @@
+[
+  {
+    "title": "PARTICIPATE",
+    "className": "transact",
+    "entries": [
+      { "contract": "JBMultiTerminal",     "function": "pay",                            "label": "Pay a project",                 "hint": "Send tokens to a project and receive project tokens in return" },
+      { "contract": "JBMultiTerminal",     "function": "cashOutTokensOf",                "label": "Cash out tokens",               "hint": "Burn project tokens to reclaim a share of the project's surplus" }
+    ]
+  },
+  {
+    "title": "MANAGE PROJECT",
+    "className": "transact",
+    "entries": [
+      { "contract": "JBOmnichainDeployer", "function": "launchProjectFor",               "label": "Launch a project",              "hint": "Launch a project with omnichain support, NFT tiers, and suckers" },
+      { "contract": "JBController",        "function": "queueRulesetsOf",                "label": "Queue rulesets",                "hint": "Queue new rulesets for a project to take effect after the current one ends" },
+      { "contract": "JBMultiTerminal",     "function": "sendPayoutsOf",                  "label": "Send payouts",                  "hint": "Distribute funds to a project's payout split recipients" },
+      { "contract": "JBController",        "function": "sendReservedTokensToSplitsOf",   "label": "Distribute reserved tokens",    "hint": "Mint and distribute pending reserved tokens to split recipients", "extra": true },
+      { "contract": "JBMultiTerminal",     "function": "useAllowanceOf",                 "label": "Use surplus allowance",         "hint": "Withdraw funds from a project's surplus up to the ruleset's allowance", "extra": true },
+      { "contract": "JBMultiTerminal",     "function": "addToBalanceOf",                 "label": "Add to balance",                "hint": "Add funds to a project's balance without minting tokens", "extra": true },
+      { "contract": "JBOmnichainDeployer", "function": "launchRulesetsFor",              "label": "Launch rulesets (omnichain)",    "hint": "Launch rulesets with omnichain sucker deployment", "more": true },
+      { "contract": "JBOmnichainDeployer", "function": "deploySuckersFor",               "label": "Deploy suckers",                "hint": "Deploy cross-chain sucker contracts for a project", "more": true },
+      { "contract": "JBController",        "function": "launchProjectFor",               "label": "Launch project (basic)",        "hint": "Launch a project without omnichain support", "more": true },
+      { "contract": "JBController",        "function": "launchRulesetsFor",              "label": "Launch rulesets (basic)",        "hint": "Launch initial rulesets for an existing project without omnichain", "more": true }
+    ]
+  },
+  {
+    "title": "TOKENS",
+    "className": "transact",
+    "entries": [
+      { "contract": "JBController",        "function": "mintTokensOf",                   "label": "Mint tokens",                   "hint": "Mint new project tokens to a beneficiary" },
+      { "contract": "JBController",        "function": "burnTokensOf",                   "label": "Burn tokens",                   "hint": "Burn a holder's project tokens, permanently removing them from supply" },
+      { "contract": "JBController",        "function": "deployERC20For",                 "label": "Deploy ERC-20 for project",     "hint": "Deploy a claimable ERC-20 token with governance and gasless approvals" },
+      { "contract": "JBController",        "function": "claimTokensFor",                 "label": "Claim ERC-20 tokens",           "hint": "Convert internal credits into the project's ERC-20 token", "extra": true },
+      { "contract": "JBController",        "function": "transferCreditsFrom",            "label": "Transfer credits",              "hint": "Transfer internal credits (unclaimed tokens) to another address", "extra": true }
+    ]
+  },
+  {
+    "title": "CONFIGURE",
+    "className": "transact",
+    "entries": [
+      { "contract": "JBController",        "function": "setSplitGroupsOf",               "label": "Set split groups",              "hint": "Configure how a project distributes payouts and reserved tokens" },
+      { "contract": "JBPermissions",       "function": "setPermissionsFor",              "label": "Set operator permissions",      "hint": "Grant or revoke permissions for an operator on a project" },
+      { "contract": "JBController",        "function": "setUriOf",                       "label": "Set project metadata URI",      "hint": "Set a project's metadata URI (typically an IPFS hash)", "extra": true },
+      { "contract": "JBController",        "function": "addPriceFeedFor",                "label": "Add price feed",                "hint": "Register a price feed for a new currency pair", "extra": true },
+      { "contract": "JBMultiTerminal",     "function": "migrateBalanceOf",               "label": "Migrate terminal balance",      "hint": "Migrate a project's funds to a new terminal", "extra": true },
+      { "contract": "JBMultiTerminal",     "function": "processHeldFeesOf",              "label": "Process held fees",             "hint": "Send held fees to the protocol's fee project after the 28-day hold", "extra": true },
+      { "contract": "JBDirectory",         "function": "setTerminalsOf",                 "label": "Set terminals",                 "hint": "Replace a project's entire terminal list", "more": true },
+      { "contract": "JBDirectory",         "function": "setPrimaryTerminalOf",           "label": "Set primary terminal",          "hint": "Designate the default terminal for a token", "more": true },
+      { "contract": "JBDirectory",         "function": "setControllerOf",                "label": "Set controller",                "hint": "Set a project's controller contract", "more": true },
+      { "contract": "JBMultiTerminal",     "function": "addAccountingContextsFor",       "label": "Add accounting contexts",       "hint": "Register new token accounting contexts for a terminal", "more": true },
+      { "contract": "JBProjects",          "function": "setApprovalForAll",              "label": "Set project operator",          "hint": "Approve an operator for all your project NFTs", "more": true },
+      { "contract": "JBFeelessAddresses",  "function": "setFeelessAddress",              "label": "Set feeless address",           "hint": "Mark an address as exempt from protocol fees", "more": true }
+    ]
+  },
+  {
+    "title": "PREVIEW",
+    "className": "read",
+    "entries": [
+      { "contract": "JBMultiTerminal",     "function": "previewPayFor",                  "label": "Preview payment",               "hint": "Preview how many project tokens a payer would receive" },
+      { "contract": "JBMultiTerminal",     "function": "previewCashOutFrom",             "label": "Preview cash out",              "hint": "Preview how many tokens a holder would reclaim" },
+      { "contract": "JBTerminalStore",     "function": "currentReclaimableSurplusOf",    "label": "Reclaimable surplus",           "hint": "How much a token holder could reclaim from surplus right now", "extra": true }
+    ]
+  },
+  {
+    "title": "PROJECT STATE",
+    "className": "read",
+    "entries": [
+      { "contract": "JBController",        "function": "currentRulesetOf",               "label": "Current ruleset",               "hint": "Returns the ruleset currently governing a project" },
+      { "contract": "JBController",        "function": "upcomingRulesetOf",              "label": "Upcoming ruleset",              "hint": "The ruleset that will take effect after the current one ends" },
+      { "contract": "JBController",        "function": "totalTokenSupplyWithReservedTokensOf", "label": "Total token supply (incl. reserved)", "hint": "Total supply including tokens reserved but not yet minted" },
+      { "contract": "JBTerminalStore",     "function": "balanceOf",                      "label": "Terminal balance",              "hint": "A project's balance of a specific token within a terminal" },
+      { "contract": "JBMultiTerminal",     "function": "currentSurplusOf",               "label": "Current surplus",               "hint": "A project's surplus in this terminal, converted to a given currency" },
+      { "contract": "JBController",        "function": "pendingReservedTokenBalanceOf",  "label": "Pending reserved tokens",       "hint": "Reserved tokens that have accumulated but not yet been distributed" },
+      { "contract": "JBRulesets",          "function": "latestQueuedOf",                 "label": "Latest queued ruleset",         "hint": "The most recently queued ruleset, whether active or not", "extra": true },
+      { "contract": "JBMultiTerminal",     "function": "heldFeesOf",                     "label": "Held fees",                     "hint": "Fees held for a project during the 28-day hold period", "extra": true }
+    ]
+  },
+  {
+    "title": "LOOK UP",
+    "className": "read",
+    "entries": [
+      { "contract": "JBTokens",            "function": "totalBalanceOf",                 "label": "Holder total balance",           "hint": "A holder's credits plus ERC-20 balance for a project" },
+      { "contract": "JBTokens",            "function": "creditBalanceOf",                "label": "Credit balance",                 "hint": "A holder's internal credit balance (unclaimed tokens)" },
+      { "contract": "JBTokens",            "function": "totalSupplyOf",                  "label": "Total token supply",             "hint": "Credits plus ERC-20 total supply for a project" },
+      { "contract": "JBDirectory",         "function": "primaryTerminalOf",              "label": "Primary terminal",               "hint": "The terminal that receives payments in a given token for a project", "extra": true },
+      { "contract": "JBDirectory",         "function": "controllerOf",                   "label": "Project controller",             "hint": "The controller assigned to a project", "extra": true },
+      { "contract": "JBDirectory",         "function": "terminalsOf",                    "label": "Project terminals",              "hint": "All terminals registered for a project", "extra": true },
+      { "contract": "JBSplits",            "function": "splitsOf",                       "label": "Split recipients",               "hint": "The list of split recipients for a project's group", "extra": true },
+      { "contract": "JBPermissions",       "function": "hasPermission",                  "label": "Check permission",               "hint": "Whether an operator has a specific permission for a project", "extra": true },
+      { "contract": "JBController",        "function": "allRulesetsOf",                  "label": "Ruleset history",                "hint": "Paginated history of a project's rulesets, newest first", "extra": true },
+      { "contract": "JBFundAccessLimits",  "function": "payoutLimitsOf",                 "label": "Payout limits",                  "hint": "All payout limits for a project's terminal and token", "extra": true },
+      { "contract": "JBFundAccessLimits",  "function": "surplusAllowancesOf",            "label": "Surplus allowances",             "hint": "All surplus allowances for a project's terminal and token", "extra": true },
+      { "contract": "JBTerminalStore",     "function": "usedPayoutLimitOf",              "label": "Used payout limit",              "hint": "How much of the payout limit has been used this cycle", "extra": true },
+      { "contract": "JBPrices",            "function": "pricePerUnitOf",                 "label": "Price per unit",                 "hint": "Exchange rate between two currencies", "extra": true },
+      { "contract": "JBTokens",            "function": "tokenOf",                        "label": "Project ERC-20 token",           "hint": "The ERC-20 token address deployed for a project", "more": true },
+      { "contract": "JBProjects",          "function": "ownerOf",                        "label": "Project owner",                  "hint": "The address that owns a project's NFT", "more": true },
+      { "contract": "JBPermissions",       "function": "hasPermissions",                 "label": "Check multiple permissions",     "hint": "Whether an operator has all of the specified permissions", "more": true },
+      { "contract": "JBFeelessAddresses",  "function": "isFeelessFor",                   "label": "Is feeless address",             "hint": "Check whether an address is exempt from protocol fees (project-scoped)", "more": true },
+      { "contract": "JBTerminalStore",     "function": "usedSurplusAllowanceOf",         "label": "Used surplus allowance",         "hint": "How much surplus allowance has been used this cycle", "more": true },
+      { "contract": "JBProjects",          "function": "count",                          "label": "Total projects",                 "hint": "The total number of projects that have been created", "more": true }
+    ]
+  }
+]

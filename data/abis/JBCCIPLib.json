@@ -1,0 +1,104 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "decodeTypedMessage",
+      "inputs": [
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "messageType",
+          "type": "uint8",
+          "internalType": "uint8"
+        },
+        {
+          "name": "payload",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "decodeTypedMessage(bytes)": {
+      "params": {
+        "data": "The raw CCIP message data."
+      },
+      "returns": {
+        "messageType": "The message type (0 = root).",
+        "payload": "The inner payload (encoded JBMessageRoot)."
+      }
+    },
+    "prepareTokenAmounts(ICCIPRouter,address,uint256)": {
+      "details": "Runs via DELEGATECALL so native ETH wrapping uses the caller's balance.",
+      "params": {
+        "amount": "The amount to bridge.",
+        "ccipRouter": "The CCIP router.",
+        "token": "The token to bridge (may be NATIVE_TOKEN)."
+      },
+      "returns": {
+        "bridgeToken": "The actual ERC-20 token address to bridge (wrapped native token if native was wrapped).",
+        "tokenAmounts": "The CCIP token amounts array (length 0 or 1)."
+      }
+    },
+    "sendCCIPMessage(ICCIPRouter,uint64,address,uint256,address,address,uint256,bytes,Client.EVMTokenAmount[],address)": {
+      "details": "Runs via DELEGATECALL. Handles EVM2AnyMessage construction, getFee, ccipSend, and refund.Supports two fee modes:   - `transportPayment > 0`: pay CCIP fees in native ETH (existing behavior).   - `transportPayment == 0`: pay CCIP fees in LINK pulled from the caller via transferFrom.     This enables chains with no meaningful native token (e.g. Tempo) to use CCIP.",
+      "params": {
+        "ccipRouter": "The CCIP router.",
+        "encodedPayload": "The ABI-encoded payload (e.g., abi.encode(type, data)).",
+        "feeToken": "The fee token address: address(0) for native ETH, LINK address for LINK fee mode.",
+        "feeTokenPayer": "The address to pull LINK fees from via transferFrom (0 to use sucker's own balance).",
+        "gasLimit": "The gas limit for the CCIP message.",
+        "peerAddress": "The peer sucker address on the remote chain.",
+        "refundRecipient": "The address to refund excess transport payment to.",
+        "remoteChainSelector": "The CCIP chain selector for the remote chain.",
+        "tokenAmounts": "The token amounts to bridge (from prepareTokenAmounts).",
+        "transportPayment": "The ETH transport payment available (0 for LINK fee mode)."
+      },
+      "returns": {
+        "refundAmount": "The amount that failed to refund (0 if successful or no refund needed).",
+        "refundFailed": "Whether the refund transfer failed."
+      }
+    },
+    "unwrapReceivedTokens(ICCIPRouter,Client.EVMTokenAmount[])": {
+      "details": "Runs via DELEGATECALL so `address(this).balance` refers to the calling contract.",
+      "params": {
+        "ccipRouter": "The CCIP router (used to look up wrapped native token).",
+        "destTokenAmounts": "The token amounts delivered by CCIP (length 0 or 1)."
+      }
+    }
+  },
+  "userdoc": {
+    "decodeTypedMessage(bytes)": {
+      "notice": "Decode a typed CCIP message: abi.encode(uint8 type, bytes payload)."
+    },
+    "prepareTokenAmounts(ICCIPRouter,address,uint256)": {
+      "notice": "Prepare token amounts for CCIP: wrap native tokens, build token amounts array, approve router."
+    },
+    "sendCCIPMessage(ICCIPRouter,uint64,address,uint256,address,address,uint256,bytes,Client.EVMTokenAmount[],address)": {
+      "notice": "Build and send a CCIP message, then handle refunds."
+    },
+    "unwrapReceivedTokens(ICCIPRouter,Client.EVMTokenAmount[])": {
+      "notice": "Unwrap wrapped native tokens from received CCIP tokens if the delivered token matches the wrapped"
+    }
+  },
+  "contractName": "JBCCIPLib",
+  "sourceName": "node_modules/@bananapus/suckers-v6/src/libraries/JBCCIPLib.sol"
+}

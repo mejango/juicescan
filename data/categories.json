@@ -1,0 +1,68 @@
+{
+  "Core Protocol": [
+    "JBMultiTerminal",
+    "JBController",
+    "JBDirectory",
+    "JBTerminalStore",
+    "JBTokens",
+    "JBRulesets",
+    "JBSplits",
+    "JBPermissions",
+    "JBPrices",
+    "JBProjects",
+    "JBFundAccessLimits",
+    "JBERC20",
+    "JBFeelessAddresses"
+  ],
+  "NFT Hooks": [
+    "JB721TiersHook",
+    "JB721TiersHookStore",
+    "JB721TiersHookDeployer",
+    "JB721TiersHookProjectDeployer",
+    "Banny721TokenUriResolver"
+  ],
+  "Buyback Hook": [
+    "JBBuybackHookRegistry"
+  ],
+  "Uniswap V4 LP": [
+    "JBUniswapV4LPSplitHook",
+    "JBUniswapV4LPSplitHookDeployer",
+    "JBUniswapV4Hook"
+  ],
+  "Revnets": [
+    "REVDeployer",
+    "REVLoans"
+  ],
+  "Cross-Chain": [
+    "JBSuckerRegistry",
+    "JBOptimismSucker",
+    "JBArbitrumSucker",
+    "JBCCIPSucker",
+    "JBBaseSucker",
+    "JBOmnichainDeployer"
+  ],
+  "Content Publishing": [
+    "CTDeployer",
+    "CTPublisher",
+    "CTProjectOwner"
+  ],
+  "Defifa": [
+    "DefifaDeployer",
+    "DefifaHook",
+    "DefifaGovernor"
+  ],
+  "Distributors": [
+    "JBTokenDistributor",
+    "JB721Distributor"
+  ],
+  "Utilities": [
+    "JBProjectPayer",
+    "JBProjectPayerDeployer",
+    "JBRouterTerminal",
+    "JBRouterTerminalRegistry",
+    "JBPayRouteResolver",
+    "JBProjectHandles",
+    "JBAddressRegistry",
+    "FeeProjectConfigBuilder"
+  ]
+}

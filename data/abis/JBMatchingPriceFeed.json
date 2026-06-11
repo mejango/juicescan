@@ -1,0 +1,45 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "currentUnitPrice",
+      "inputs": [
+        {
+          "name": "decimals",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    }
+  ],
+  "devdoc": {
+    "currentUnitPrice(uint256)": {
+      "params": {
+        "decimals": "The number of decimals the return value should use."
+      },
+      "returns": {
+        "_0": "The current unit price from the feed, as a fixed point number with the specified number of decimals."
+      }
+    }
+  },
+  "userdoc": {
+    "currentUnitPrice(uint256)": {
+      "notice": "Gets the current price (per 1 unit) from the feed."
+    }
+  },
+  "contractName": "JBMatchingPriceFeed",
+  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBMatchingPriceFeed.sol"
+}

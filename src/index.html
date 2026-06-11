@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Juicebox Money Engine: Fund Your Thing</title>
+<link rel="preload" href="app.js" as="script">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="header">
+  <div class="header-row">
+    <div class="header-center">
+      <h1>JUICEBOX MONEY ENGINE</h1>
+      <div class="palette" aria-label="Color palette">
+        <span class="palette-dot" style="background:var(--c-teal)" title="teal"></span>
+        <span class="palette-dot" style="background:var(--c-green)" title="green"></span>
+        <span class="palette-dot" style="background:var(--c-pink)" title="pink"></span>
+        <span class="palette-dot" style="background:var(--c-black)" title="black"></span>
+        <span class="palette-dot" style="background:var(--c-orange)" title="orange"></span>
+        <span class="palette-dot" style="background:var(--c-teal-light)" title="teal light"></span>
+        <span class="palette-dot" style="background:var(--c-green-light)" title="green light"></span>
+        <span class="palette-dot" style="background:var(--c-pink-light)" title="pink light"></span>
+        <span class="palette-dot" style="background:var(--c-black-light)" title="black light"></span>
+        <span class="palette-dot" style="background:var(--c-orange-light)" title="orange light"></span>
+        <span class="palette-dot" style="background:var(--card-bg)" title="card bg"></span>
+      </div>
+    </div>
+  </div>
+  <p class="subtitle">Unstoppable payments and programmable incentives for the open web</p>
+  <p class="risk-notice">100% open source, 100% open money. Use at your own risk. <a href="#" id="audit-prompt-link">[copy system audit prompt]</a></p>
+</header>
+
+<nav id="tabs">
+  <button class="tab active" data-tab="discover">DISCOVER</button>
+  <button class="tab" data-tab="common">ACTIONS</button>
+  <button class="tab" data-tab="learn">LEARN</button>
+  <button class="tab" data-tab="build">BUILD</button>
+  <button class="tab" data-tab="directory">API</button>
+  <button class="tab" data-tab="data">DATA</button>
+  <button class="tab" data-tab="why">WHY?</button>
+  <button class="tab-create" id="create-btn">+ Create</button>
+  <button class="tab-connect" id="connect-btn">Connect wallet</button>
+</nav>
+
+<main>
+  <section id="tab-discover" class="tab-content active"></section>
+  <section id="tab-common" class="tab-content"></section>
+  <section id="tab-learn" class="tab-content"></section>
+  <section id="tab-build" class="tab-content"></section>
+  <section id="tab-directory" class="tab-content"></section>
+  <section id="tab-data" class="tab-content"></section>
+  <section id="tab-why" class="tab-content"></section>
+</main>
+
+<footer>
+  <div class="footer-logo">
+    <img src="jblogo.gif" alt="Juicebox" width="200" height="200" loading="lazy" decoding="async">
+  </div>
+  <div class="footer-meta">
+    <span>build: __BUILD_DATE__</span>
+    <span>commit: __GIT_HASH__</span>
+    <span id="ipfs-cid-meta">ipfs: __IPFS_CID__</span>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

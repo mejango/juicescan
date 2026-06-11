@@ -1,0 +1,160 @@
+{
+  "JBMultiTerminal": {
+    "pay": {
+      "layout": "stepped",
+      "steps": [
+        { "label": "Payment", "fields": ["projectId", "token", "amount"] },
+        { "label": "Options", "fields": ["beneficiary", "minReturnedTokens", "memo"] }
+      ],
+      "labels": {
+        "projectId": "Project ID",
+        "beneficiary": "Credit tokens to",
+        "minReturnedTokens": "Minimum tokens received",
+        "memo": "Memo"
+      },
+      "defaults": { "minReturnedTokens": "0", "metadata": "0x" },
+      "hidden": ["metadata"]
+    },
+    "cashOutTokensOf": {
+      "layout": "stepped",
+      "steps": [
+        { "label": "Cash Out", "fields": ["projectId", "cashOutCount", "tokenToReclaim"] },
+        { "label": "Options", "fields": ["holder", "beneficiary", "minReclaimedTokens"] }
+      ],
+      "labels": {
+        "projectId": "Project ID",
+        "cashOutCount": "Amount to Cash Out",
+        "tokenToReclaim": "Token to Reclaim",
+        "holder": "Token Holder",
+        "beneficiary": "Send reclaimed to",
+        "minReclaimedTokens": "Minimum Reclaimed"
+      },
+      "defaults": { "minReclaimedTokens": "0", "metadata": "0x" },
+      "hidden": ["metadata"]
+    },
+    "addToBalanceOf": {
+      "layout": "flat",
+      "labels": {
+        "projectId": "Project ID",
+        "token": "Token",
+        "amount": "Amount",
+        "shouldReturnHeldFees": "Return Held Fees",
+        "memo": "Memo"
+      },
+      "defaults": { "metadata": "0x" },
+      "hidden": ["metadata"]
+    },
+    "sendPayoutsOf": {
+      "layout": "flat",
+      "labels": {
+        "projectId": "Project ID",
+        "token": "Token",
+        "amount": "Amount",
+        "currency": "Currency",
+        "minTokensPaidOut": "Min Paid Out"
+      },
+      "defaults": { "minTokensPaidOut": "0" }
+    },
+    "useAllowanceOf": {
+      "layout": "flat",
+      "labels": {
+        "projectId": "Project ID",
+        "token": "Token",
+        "amount": "Amount",
+        "currency": "Currency",
+        "minTokensPaidOut": "Min Paid Out",
+        "beneficiary": "Beneficiary",
+        "feeBeneficiary": "Fee Beneficiary",
+        "memo": "Memo"
+      },
+      "defaults": { "minTokensPaidOut": "0" }
+    }
+  },
+  "JBController": {
+    "launchProjectFor": {
+      "layout": "stepped",
+      "steps": [
+        { "label": "Project", "fields": ["owner", "projectUri", "memo"] },
+        { "label": "Rulesets", "fields": ["rulesetConfigurations"] },
+        { "label": "Terminals", "fields": ["terminalConfigurations"] }
+      ],
+      "labels": {
+        "owner": "Project Owner",
+        "projectUri": "Project URI",
+        "rulesetConfigurations": "Ruleset Configurations",
+        "terminalConfigurations": "Terminal Configurations",
+        "memo": "Memo"
+      }
+    },
+    "mintTokensOf": {
+      "layout": "flat",
+      "labels": {
+        "projectId": "Project ID",
+        "tokenCount": "Token Count",
+        "beneficiary": "Beneficiary",
+        "memo": "Memo",
+        "useReservedPercent": "Use Reserved Percent"
+      }
+    },
+    "burnTokensOf": {
+      "layout": "flat",
+      "labels": {
+        "holder": "Token Holder",
+        "projectId": "Project ID",
+        "tokenCount": "Token Count",
+        "memo": "Memo"
+      }
+    },
+    "deployERC20For": {
+      "layout": "flat",
+      "labels": {
+        "projectId": "Project ID",
+        "name": "Token Name",
+        "symbol": "Token Symbol",
+        "salt": "Salt"
+      },
+      "defaults": { "salt": "0x0000000000000000000000000000000000000000000000000000000000000000" },
+      "hidden": ["salt"]
+    },
+    "sendReservedTokensToSplitsOf": {
+      "layout": "flat",
+      "labels": {
+        "projectId": "Project ID"
+      }
+    },
+    "queueRulesetsOf": {
+      "layout": "stepped",
+      "steps": [
+        { "label": "Project", "fields": ["projectId", "memo"] },
+        { "label": "Rulesets", "fields": ["rulesetConfigurations"] }
+      ],
+      "labels": {
+        "projectId": "Project ID",
+        "rulesetConfigurations": "Ruleset Configurations",
+        "memo": "Memo"
+      }
+    }
+  },
+  "JBOmnichainDeployer": {
+    "launchProjectFor": {
+      "layout": "stepped",
+      "steps": [
+        { "label": "Project", "fields": ["owner", "projectUri", "controller", "memo"] },
+        { "label": "NFT Tiers", "fields": ["hook721Config"] },
+        { "label": "Rulesets", "fields": ["rulesetConfigurations"] },
+        { "label": "Terminals", "fields": ["terminalConfigurations"] },
+        { "label": "Omnichain", "fields": ["suckerDeploymentConfiguration"] }
+      ],
+      "labels": {
+        "owner": "Project Owner",
+        "projectUri": "Project URI",
+        "controller": "Controller",
+        "hook721Config": "NFT Collection Config",
+        "rulesetConfigurations": "Ruleset Configurations",
+        "terminalConfigurations": "Terminal Configurations",
+        "suckerDeploymentConfiguration": "Omnichain Config",
+        "memo": "Memo"
+      }
+    }
+  }
+}

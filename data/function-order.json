@@ -1,0 +1,43 @@
+{
+  "_comment": "Priority overrides for function display order. Lower number = shown first. Functions not listed use the default heuristic.",
+  "JBMultiTerminal": {
+    "pay":                  0,
+    "cashOutTokensOf":      1,
+    "sendPayoutsOf":        2,
+    "previewPayFor":        3,
+    "previewCashOutFrom":   4,
+    "addToBalanceOf":       5,
+    "useAllowanceOf":       6,
+    "currentSurplusOf":     7,
+    "heldFeesOf":           8,
+    "processHeldFeesOf":    9,
+    "migrateBalanceOf":     10,
+    "accountingContextsOf": 11,
+    "addAccountingContextsFor": 12
+  },
+  "JBController": {
+    "launchProjectFor":                     0,
+    "launchRulesetsFor":                    1,
+    "queueRulesetsOf":                      2,
+    "mintTokensOf":                         3,
+    "burnTokensOf":                         4,
+    "sendReservedTokensToSplitsOf":         5,
+    "deployERC20For":                       6,
+    "claimTokensFor":                       7,
+    "setSplitGroupsOf":                     8,
+    "currentRulesetOf":                     9,
+    "totalTokenSupplyWithReservedTokensOf": 10,
+    "pendingReservedTokenBalanceOf":        11,
+    "latestQueuedRulesetOf":                12,
+    "upcomingRulesetOf":                    13,
+    "allRulesetsOf":                        14,
+    "getRulesetOf":                         15,
+    "setUriOf":                             16,
+    "setTokenFor":                          17,
+    "setTokenMetadataOf":                   18,
+    "setControllerAllowed":                 19,
+    "setTerminalsAllowed":                  20,
+    "migrate":                              21,
+    "addPriceFeedFor":                      22
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "permissions",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        },
+        {
+          "name": "projects",
+          "type": "address",
+          "internalType": "contract IJBProjects"
+        },
+        {
+          "name": "publisher",
+          "type": "address",
+          "internalType": "contract ICTPublisher"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "PERMISSIONS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PROJECTS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBProjects"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PUBLISHER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract ICTPublisher"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "onERC721Received",
+      "inputs": [
+        {
+          "name": "operator",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "permissions": "The contract where operator permissions are stored.",
+        "projects": "The contract from which projects are minted.",
+        "publisher": "The Croptop publisher."
+      }
+    },
+    "onERC721Received(address,address,uint256,bytes)": {
+      "details": "Configure posting criteria before transferring ownership here; this contract has no transfer-out function.",
+      "params": {
+        "data": "Unused; no payload is expected on the transfer.",
+        "from": "Unused; any project NFT is accepted regardless of its prior owner.",
+        "operator": "Unused; the transfer is authenticated by `msg.sender`, not the operator.",
+        "tokenId": "The ID of the project NFT being received, used as the project ID the publisher is permitted on."
+      },
+      "returns": {
+        "_0": "magicValue The `IERC721Receiver.onERC721Received` selector that signals a successful receipt."
+      }
+    }
+  },
+  "userdoc": {
+    "PERMISSIONS()": {
+      "notice": "The contract where operator permissions are stored."
+    },
+    "PROJECTS()": {
+      "notice": "The contract from which projects are minted."
+    },
+    "PUBLISHER()": {
+      "notice": "The Croptop publisher contract that manages post allowances and content rules."
+    },
+    "onERC721Received(address,address,uint256,bytes)": {
+      "notice": "Give the Croptop publisher permission to post to the project on this contract's behalf."
+    }
+  },
+  "contractName": "CTProjectOwner",
+  "sourceName": "node_modules/@croptop/core-v6/src/CTProjectOwner.sol"
+}

@@ -1,0 +1,212 @@
+// src/burn-component.js
+// Burn Tokens component
+// Flow: Project ID -> chain -> token count -> memo -> execute
+
+import {
+  el, createComponentWrapper, createProjectAndChainInput,
+  createWalletButton, discoverChains, selectChain, firstChainForNetwork,
+  executeTransaction, executeRead, renderError, getAddress, getAccount,
+  getChainTokens, parseAmount, formatAmount, parseHashDefaults,
+} from './component-base.js';
+
+var burnTokensAbi = [{
+  type: 'function', name: 'burnTokensOf', stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'holder', type: 'address' },
+    { name: 'projectId', type: 'uint256' },
+    { name: 'tokenCount', type: 'uint256' },
+    { name: 'memo', type: 'string' },
+  ],
+  outputs: [],
+}];
+
+var totalBalanceOfAbi = [{
+  type: 'function', name: 'totalBalanceOf', stateMutability: 'view',
+  inputs: [
+    { name: 'holder', type: 'address' },
+    { name: 'projectId', type: 'uint256' },
+  ],
+  outputs: [{ name: '', type: 'uint256' }],
+}];
+
+export function renderBurnComponent() {
+  var defaults = parseHashDefaults('burn');
+
+  var state = {
+    phase: 'idle',
+    projectId: defaults.projectId || '',
+    liveChains: [],
+    selectedChain: defaults.chain ? Number(defaults.chain) : 1,
+    network: defaults.network || 'mainnet',
+    tokens: getChainTokens(defaults.chain ? Number(defaults.chain) : 1),
+    selectedToken: getChainTokens(defaults.chain ? Number(defaults.chain) : 1)[0] || null,
+    decimals: 18,
+    amount: defaults.amount || '',
+    memo: defaults.memo || '',
+    balance: null,
+    error: null,
+    txStatus: null,
+    _defaultChain: defaults.chain ? Number(defaults.chain) : null,
+  };
+
+  var discoveryGeneration = 0;
+
+  var comp = createComponentWrapper('BURN TOKENS', 'burn', state, function() {
+    var params = {};
+    if (state.projectId) params.projectId = state.projectId;
+    if (state.selectedChain) params.chain = state.selectedChain;
+    if (state.amount) params.amount = state.amount;
+    if (state.memo) params.memo = state.memo;
+    if (state.network === 'testnet') params.network = 'testnet';
+    return params;
+  }, { permissionNote: 'Token holder burns their own tokens. Irreversible.' });
+  var wrapper = comp.wrapper;
+  var body = comp.body;
+
+  function updateUI() {
+    body.innerHTML = '';
+    body.appendChild(createProjectAndChainInput(state, scheduleDiscovery, function(cid) {
+      if (cid === null) cid = firstChainForNetwork(state);
+      if (cid) selectChain(state, cid);
+      state.balance = null;
+      state.txStatus = null;
+      updateUI();
+      loadBalance();
+    }));
+
+
+    // Balance display
+    if (state.balance !== null) {
+      var balBox = el('div', 'pay-preview');
+      var row = el('div', 'preview-row');
+      var lbl = el('span', 'preview-label');
+      lbl.textContent = 'Your token balance';
+      row.appendChild(lbl);
+      var val = el('span', 'preview-value');
+      val.textContent = formatAmount(state.balance, 18);
+      row.appendChild(val);
+      balBox.appendChild(row);
+      body.appendChild(balBox);
+    }
+
+    // Token count
+    var amtSection = el('div', 'component-section');
+    var amtLabel = el('label', 'input-label');
+    amtLabel.innerHTML = 'token count to burn <span class="type-hint">18 decimals</span>';
+    amtSection.appendChild(amtLabel);
+    var amtInput = el('input', 'field numeric-field');
+    amtInput.type = 'text';
+    amtInput.placeholder = '100';
+    amtInput.value = state.amount;
+    amtInput.addEventListener('input', function() { state.amount = amtInput.value.trim(); });
+    amtSection.appendChild(amtInput);
+    body.appendChild(amtSection);
+
+    // Memo
+    var memoSection = el('div', 'component-section');
+    var memoLabel = el('label', 'input-label');
+    memoLabel.innerHTML = 'memo <span class="type-hint">optional</span>';
+    memoSection.appendChild(memoLabel);
+    var memoInput = el('input', 'field string-field optional-field');
+    memoInput.type = 'text';
+    memoInput.placeholder = 'Burn memo...';
+    memoInput.value = state.memo;
+    memoInput.addEventListener('input', function() { state.memo = memoInput.value; });
+    memoSection.appendChild(memoInput);
+    body.appendChild(memoSection);
+
+    // Warning
+    var warn = el('div', 'error-box warning');
+    warn.textContent = 'Burning tokens is irreversible.';
+    body.appendChild(warn);
+
+    if (state.error) body.appendChild(renderError(state.error));
+    if (state.txStatus) {
+      var txDiv = el('div', state.txStatus.success ? 'tx-success' : 'component-status');
+      txDiv.textContent = state.txStatus.message;
+      body.appendChild(txDiv);
+    }
+
+    body.appendChild(createWalletButton('BURN', executeBurn, comp.permissionNote));
+  }
+
+  function scheduleDiscovery() {
+    state.liveChains = [];
+    state.selectedChain = null;
+    state.balance = null;
+    state.error = null;
+    state.txStatus = null;
+
+    var pid = state.projectId;
+    if (!pid || !/^\d+$/.test(pid) || pid === '0') { state.phase = 'idle'; updateUI(); return; }
+
+    state.phase = 'discovering';
+    updateUI();
+
+    var gen = ++discoveryGeneration;
+    discoverChains(pid, function(live) {
+      if (gen !== discoveryGeneration) return;
+      state.liveChains = live;
+      var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
+      selectChain(state, preferred);
+      state._defaultChain = null;
+      state.phase = 'ready';
+      updateUI();
+      loadBalance();
+    });
+  }
+
+  function loadBalance() {
+    var account = getAccount();
+    if (!account || !state.selectedChain || !state.projectId) return;
+    var tokensAddr = getAddress('JBTokens', state.selectedChain);
+    if (!tokensAddr) return;
+
+    executeRead({
+      chainId: state.selectedChain,
+      address: tokensAddr,
+      abi: totalBalanceOfAbi,
+      functionName: 'totalBalanceOf',
+      args: [account, BigInt(state.projectId)],
+    }).then(function(result) {
+      state.balance = result;
+      updateUI();
+    }).catch(function() {});
+  }
+
+  function executeBurn() {
+    state.error = null;
+    state.txStatus = null;
+
+    if (!state.selectedChain || !state.projectId) {
+      state.error = 'Select a project and chain'; updateUI(); return;
+    }
+    if (!state.amount) { state.error = 'Enter a token count'; updateUI(); return; }
+
+    var tokenCount;
+    try { tokenCount = parseAmount(state.amount, 18); } catch (_) {
+      state.error = 'Invalid token count'; updateUI(); return;
+    }
+
+    var holder = getAccount();
+    if (!holder) { state.error = 'Connect wallet first'; updateUI(); return; }
+
+    var controllerAddr = getAddress('JBController', state.selectedChain);
+    if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+
+    executeTransaction({
+      chainId: state.selectedChain,
+      address: controllerAddr,
+      abi: burnTokensAbi,
+      functionName: 'burnTokensOf',
+      args: [holder, BigInt(state.projectId), tokenCount, state.memo || ''],
+      onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
+      onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },
+      onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
+    });
+  }
+
+  updateUI();
+  if (state.projectId) scheduleDiscovery();
+  return wrapper;
+}

@@ -1,0 +1,106 @@
+{
+  "abi": [
+    {
+      "type": "event",
+      "name": "ReturnHeldFees",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "returnedFees",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "leftoverAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "returnHeldFees(mapping(uint256 => mapping(address => JBFee[])) storage,mapping(uint256 => mapping(address => uint256)) storage,uint256,address,uint256,address)": {
+      "details": "Walks unprocessed held fees in storage order. For each fee, checks if the incoming `amount` covers the original net payout (gross minus fee). If yes, the fee is fully credited back and the entry is tombstoned by advancing the index. If only part of the fee can be refunded, the entry's stored gross amount is shrunk in place using the back-calculated fee so a future top-up can still settle the remainder.Partial refunds use `standardFeeAmountResultingIn` so repaying a dust amount cannot both credit the payer project and leave the fee project owed the 1-unit minimum fee. Reads `caller` from a parameter instead of `msg.sender` because the library runs under `DELEGATECALL` from the terminal — `msg.sender` here is the original external caller of the terminal, not the meta-tx-aware caller the terminal would emit. The terminal passes `_msgSender()` so the event carries the meta-tx sender as intended.",
+      "params": {
+        "amount": "The incoming amount available to match against held fees.",
+        "caller": "The address that triggered the return, forwarded into the `ReturnHeldFees` event.",
+        "heldFeesOf": "The terminal's held-fee storage mapping.",
+        "nextHeldFeeIndexOf": "The terminal's per-project/token next-index storage mapping.",
+        "projectId": "The project to return held fees to.",
+        "token": "The token that the held fees are in."
+      },
+      "returns": {
+        "returnedFees": "The total fee amount returned to the project (sum of fully and partially refunded fees)."
+      }
+    },
+    "viewHeldFees(mapping(uint256 => mapping(address => JBFee[])) storage,mapping(uint256 => mapping(address => uint256)) storage,uint256,address,uint256)": {
+      "params": {
+        "count": "The maximum number of held fees to return.",
+        "heldFeesOf": "The terminal's held-fee storage mapping (project => token => array).",
+        "nextHeldFeeIndexOf": "The terminal's per-project/token next-index storage mapping.",
+        "projectId": "The ID of the project to read held fees for.",
+        "token": "The token the fees are denominated in."
+      },
+      "returns": {
+        "heldFees": "A view-only copy of the unprocessed held fees, in storage order."
+      }
+    }
+  },
+  "userdoc": {
+    "returnHeldFees(mapping(uint256 => mapping(address => JBFee[])) storage,mapping(uint256 => mapping(address => uint256)) storage,uint256,address,uint256,address)": {
+      "notice": "Returns held fees back to a project's balance based on the specified incoming amount."
+    },
+    "viewHeldFees(mapping(uint256 => mapping(address => JBFee[])) storage,mapping(uint256 => mapping(address => uint256)) storage,uint256,address,uint256)": {
+      "notice": "Returns up to `count` held fees for a project/token, starting from the next unprocessed index."
+    }
+  },
+  "contractName": "JBHeldFees",
+  "sourceName": "node_modules/@bananapus/core-v6/src/libraries/JBHeldFees.sol"
+}

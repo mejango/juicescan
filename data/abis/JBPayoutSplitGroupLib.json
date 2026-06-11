@@ -1,0 +1,228 @@
+{
+  "abi": [
+    {
+      "type": "event",
+      "name": "PayoutReverted",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "split",
+          "type": "tuple",
+          "indexed": false,
+          "internalType": "struct JBSplit",
+          "components": [
+            {
+              "name": "percent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "projectId",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address payable"
+            },
+            {
+              "name": "preferAddToBalance",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "lockedUntil",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBSplitHook"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SendPayoutToSplit",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "group",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "split",
+          "type": "tuple",
+          "indexed": false,
+          "internalType": "struct JBSplit",
+          "components": [
+            {
+              "name": "percent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "projectId",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address payable"
+            },
+            {
+              "name": "preferAddToBalance",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "lockedUntil",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBSplitHook"
+            }
+          ]
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "netAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "invokeSplitHookWithPartial(JBSplit,uint256,address,uint256,uint256,IJBTerminalStore)": {
+      "details": "For ERC-20: grants the hook an allowance, calls `processSplitWith`, and revokes any unconsumed allowance. For native ETH: pushes via `msg.value`. The hook may take less than offered (revert or short-pull); the unsent portion is routed back to the project balance via `store.recordAddedBalanceFor`, scaled to include the proportional fee allocation so the held fee is effectively charged only on the consumed amount. Fee-eligibility is inferred from `netPayoutAmount < amount`.Called via DELEGATECALL from the terminal, so `address(this)` is the terminal and `msg.sender` observed by the hook is the terminal — hooks that check `DIRECTORY.isTerminalOf(msg.sender)` continue to work unchanged.",
+      "params": {
+        "amount": "The gross amount allocated to this split (pre-fee).",
+        "netPayoutAmount": "The amount the hook is offered (post-fee for non-feeless splits, == amount otherwise).",
+        "projectId": "The originating project ID.",
+        "split": "The split (must have a non-zero hook address).",
+        "store": "The terminal store used to credit any refund back to the project and to look up decimals.",
+        "token": "The token being distributed. Use `JBConstants.NATIVE_TOKEN` for ETH."
+      },
+      "returns": {
+        "feeEligibleAmount": "The gross-equivalent of `sent` (used for held-fee accounting). Zero for feeless splits or when the hook consumed nothing.",
+        "sent": "The amount the hook actually received."
+      }
+    },
+    "sendPayoutsToSplitGroupOf(IJBSplits,IJBTerminalStore,uint256,address,uint256,uint256,address)": {
+      "params": {
+        "amount": "The total amount to pay out.",
+        "caller": "The original caller of the terminal payout flow.",
+        "projectId": "The ID of the project to send the payouts of.",
+        "rulesetId": "The ID of the ruleset of the split group to pay.",
+        "splits": "The splits contract to read splits from.",
+        "store": "The terminal store used to restore balance when a payout fails.",
+        "token": "The address of the token to pay out."
+      },
+      "returns": {
+        "amountEligibleForFees": "The amount of payouts that are eligible for fees.",
+        "leftoverAmount": "The leftover amount after split payouts."
+      }
+    }
+  },
+  "userdoc": {
+    "invokeSplitHookWithPartial(JBSplit,uint256,address,uint256,uint256,IJBTerminalStore)": {
+      "notice": "Invokes a split hook with partial-pull-aware allowance handling."
+    },
+    "sendPayoutsToSplitGroupOf(IJBSplits,IJBTerminalStore,uint256,address,uint256,uint256,address)": {
+      "notice": "Sends payouts to the payout splits group specified in a project's ruleset."
+    }
+  },
+  "contractName": "JBPayoutSplitGroupLib",
+  "sourceName": "node_modules/@bananapus/core-v6/src/libraries/JBPayoutSplitGroupLib.sol"
+}

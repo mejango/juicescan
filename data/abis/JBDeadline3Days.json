@@ -1,0 +1,144 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "DURATION",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "approvalStatusOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "address",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "enum JBApprovalStatus"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "supportsInterface",
+      "inputs": [
+        {
+          "name": "interfaceId",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    }
+  ],
+  "devdoc": {
+    "approvalStatusOf(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256))": {
+      "params": {
+        "ruleset": "ruleset to check the status of."
+      },
+      "returns": {
+        "_0": "The ruleset's approval status."
+      }
+    },
+    "supportsInterface(bytes4)": {
+      "details": "See {IERC165-supportsInterface}.",
+      "params": {
+        "interfaceId": "The ID of the interface to check for adherence to."
+      },
+      "returns": {
+        "_0": "A flag indicating if this contract adheres to the specified interface."
+      }
+    }
+  },
+  "userdoc": {
+    "DURATION()": {
+      "notice": "The minimum number of seconds between the time a ruleset is queued and the time it starts. If the difference is greater than this number, the ruleset is `Approved`."
+    },
+    "approvalStatusOf(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256))": {
+      "notice": "The approval status of a given ruleset."
+    },
+    "supportsInterface(bytes4)": {
+      "notice": "Indicates whether this contract adheres to the specified interface."
+    }
+  },
+  "contractName": "JBDeadline3Days",
+  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline3Days.sol"
+}

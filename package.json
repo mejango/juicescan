@@ -1,0 +1,21 @@
+{
+  "name": "jb-directory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Juicebox Protocol Directory — static IPFS interface to all v6 contracts",
+  "scripts": {
+    "extract-abis": "bash build/extract-abis.sh",
+    "sync-deployments": "node build/sync-deployments.js",
+    "extract-sources": "node build/extract-sources.js",
+    "generate": "node build/generate-registry.js",
+    "bundle": "node build/bundle.js",
+    "build": "npm run sync-deployments && npm run extract-sources && npm run generate && npm run bundle",
+    "dev": "npm run sync-deployments && npm run extract-sources && npm run generate && npm run bundle -- --watch"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}

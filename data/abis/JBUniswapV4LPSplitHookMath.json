@@ -1,0 +1,1119 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "calculateTickBounds",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "suckerRegistry",
+          "type": "IJBSuckerRegistry",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tickLower",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "tickUpper",
+          "type": "int24",
+          "internalType": "int24"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "computeInitialSqrtPrice",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "suckerRegistry",
+          "type": "IJBSuckerRegistry",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sqrtPriceX96",
+          "type": "uint160",
+          "internalType": "uint160"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "computeOptimalCashOutAmount",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "suckerRegistry",
+          "type": "IJBSuckerRegistry",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "totalProjectTokens",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "preHeldTerminalTokens",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "sqrtPriceInit",
+          "type": "uint160",
+          "internalType": "uint160"
+        },
+        {
+          "name": "tickLower",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "tickUpper",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cashOutAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "findHighestValueTerminalTokenOf",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "highestToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getCashOutRate",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "suckerRegistry",
+          "type": "IJBSuckerRegistry",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "terminalTokensPerProjectToken",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getCashOutRateSqrtPriceX96",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "suckerRegistry",
+          "type": "IJBSuckerRegistry",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sqrtPriceX96",
+          "type": "uint160",
+          "internalType": "uint160"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getIssuanceRate",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "projectTokensPerTerminalToken",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getIssuanceRateSqrtPriceX96",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sqrtPriceX96",
+          "type": "uint160",
+          "internalType": "uint160"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getProjectTokensOutForTerminalTokensIn",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "terminalTokenInAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "projectTokenOutAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getSqrtPriceX96ForCurrentJuiceboxPrice",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "IJBRulesetApprovalHook",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sqrtPriceX96",
+          "type": "uint160",
+          "internalType": "uint160"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHookMath_InvalidTickBounds",
+      "inputs": [
+        {
+          "name": "tickLower",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "tickUpper",
+          "type": "int24",
+          "internalType": "int24"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHookMath_NoTerminalTokenFound",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "calculateTickBounds(IJBDirectory,IJBSuckerRegistry,uint256,address,address,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "projectToken": "The project token address.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "suckerRegistry": "The sucker registry for cross-chain surplus/supply queries.",
+        "terminalToken": "The terminal token address."
+      },
+      "returns": {
+        "tickLower": "The lower tick bound of the LP position.",
+        "tickUpper": "The upper tick bound of the LP position."
+      }
+    },
+    "computeInitialSqrtPrice(IJBDirectory,IJBSuckerRegistry,uint256,address,address,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "projectToken": "The project token address.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "suckerRegistry": "The sucker registry for cross-chain surplus/supply queries.",
+        "terminalToken": "The terminal token address."
+      },
+      "returns": {
+        "sqrtPriceX96": "The geometric midpoint between cash-out and issuance prices, as sqrtPriceX96."
+      }
+    },
+    "computeOptimalCashOutAmount(IJBDirectory,IJBSuckerRegistry,uint256,address,address,uint256,uint256,uint160,int24,int24,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "preHeldTerminalTokens": "Terminal tokens already held (e.g. recovered from a re-range burn) that count toward the position's terminal side, so the cash-out is reduced accordingly. Pass 0 when none are held.",
+        "projectId": "The ID of the project.",
+        "projectToken": "The project token address.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "sqrtPriceInit": "The initial sqrt price of the pool.",
+        "suckerRegistry": "The sucker registry for cross-chain surplus/supply queries.",
+        "terminalToken": "The terminal token address.",
+        "tickLower": "The lower tick bound of the LP position.",
+        "tickUpper": "The upper tick bound of the LP position.",
+        "totalProjectTokens": "Total project tokens available for the LP position."
+      },
+      "returns": {
+        "cashOutAmount": "The number of project tokens to cash out for optimal terminal-token pairing."
+      }
+    },
+    "findHighestValueTerminalTokenOf(IJBDirectory,uint256,address)": {
+      "details": "Converts each token's balance to 18-decimal ETH using price feeds. Falls back to raw balance comparison when no price feed exists.",
+      "params": {
+        "controller": "The project's controller address.",
+        "directory": "The JBDirectory used to resolve the project's terminals and primary terminals.",
+        "projectId": "The ID of the project."
+      },
+      "returns": {
+        "highestToken": "The token address with the highest ETH-denominated balance."
+      }
+    },
+    "getCashOutRate(IJBDirectory,IJBSuckerRegistry,uint256,address,address,JBRuleset)": {
+      "details": "Uses total on-chain surplus across all terminals (matching JBTerminalStore._computeCashOutFrom). When `scopeCashOutsToLocalBalances` is false, also includes remote cross-chain surplus and supply from the sucker registry for accurate omnichain pricing.",
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "suckerRegistry": "The sucker registry for cross-chain surplus/supply queries.",
+        "terminalToken": "The terminal token address."
+      },
+      "returns": {
+        "terminalTokensPerProjectToken": "Terminal tokens returned per project token burned (18-decimal fixed-point)."
+      }
+    },
+    "getCashOutRateSqrtPriceX96(IJBDirectory,IJBSuckerRegistry,uint256,address,address,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "projectToken": "The project token address.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "suckerRegistry": "The sucker registry for cross-chain surplus/supply queries.",
+        "terminalToken": "The terminal token address."
+      },
+      "returns": {
+        "sqrtPriceX96": "The cash-out-derived price encoded as a Uniswap V4 sqrtPriceX96."
+      }
+    },
+    "getIssuanceRate(IJBDirectory,uint256,address,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "terminalToken": "The terminal token address."
+      },
+      "returns": {
+        "projectTokensPerTerminalToken": "Project tokens minted (after reserves) per terminal token (18-decimal)."
+      }
+    },
+    "getIssuanceRateSqrtPriceX96(IJBDirectory,uint256,address,address,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "projectToken": "The project token address.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "terminalToken": "The terminal token address."
+      },
+      "returns": {
+        "sqrtPriceX96": "The issuance-derived price encoded as a Uniswap V4 sqrtPriceX96."
+      }
+    },
+    "getProjectTokensOutForTerminalTokensIn(IJBDirectory,uint256,address,uint256,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "terminalToken": "The terminal token address.",
+        "terminalTokenInAmount": "The amount of terminal tokens to convert."
+      },
+      "returns": {
+        "projectTokenOutAmount": "The equivalent project token amount at the current issuance weight."
+      }
+    },
+    "getSqrtPriceX96ForCurrentJuiceboxPrice(IJBDirectory,uint256,address,address,address,JBRuleset)": {
+      "params": {
+        "controller": "The project's controller address (pre-fetched to avoid redundant lookups).",
+        "directory": "The JBDirectory used to resolve the project's primary terminal.",
+        "projectId": "The ID of the project.",
+        "projectToken": "The project token address.",
+        "ruleset": "The project's current ruleset (pre-fetched to avoid redundant lookups).",
+        "terminalToken": "The terminal token address."
+      },
+      "returns": {
+        "sqrtPriceX96": "The current Juicebox issuance price encoded as a Uniswap V4 sqrtPriceX96."
+      }
+    }
+  },
+  "userdoc": {
+    "calculateTickBounds(IJBDirectory,IJBSuckerRegistry,uint256,address,address,address,JBRuleset)": {
+      "notice": "Calculate tick bounds for liquidity position based on issuance and cash out rates."
+    },
+    "computeInitialSqrtPrice(IJBDirectory,IJBSuckerRegistry,uint256,address,address,address,JBRuleset)": {
+      "notice": "Compute the initial sqrtPriceX96 for pool initialization."
+    },
+    "computeOptimalCashOutAmount(IJBDirectory,IJBSuckerRegistry,uint256,address,address,uint256,uint256,uint160,int24,int24,address,JBRuleset)": {
+      "notice": "Compute optimal cash-out amount based on LP position geometry."
+    },
+    "findHighestValueTerminalTokenOf(IJBDirectory,uint256,address)": {
+      "notice": "Find the primary terminal token with the highest ETH-denominated value across the project's terminals."
+    },
+    "getCashOutRate(IJBDirectory,IJBSuckerRegistry,uint256,address,address,JBRuleset)": {
+      "notice": "Calculate the cash out rate (price floor)."
+    },
+    "getCashOutRateSqrtPriceX96(IJBDirectory,IJBSuckerRegistry,uint256,address,address,address,JBRuleset)": {
+      "notice": "Convert cash out rate to sqrtPriceX96 (price floor)."
+    },
+    "getIssuanceRate(IJBDirectory,uint256,address,address,JBRuleset)": {
+      "notice": "Calculate the issuance rate (price ceiling)."
+    },
+    "getIssuanceRateSqrtPriceX96(IJBDirectory,uint256,address,address,address,JBRuleset)": {
+      "notice": "Convert issuance rate to sqrtPriceX96 (price ceiling)."
+    },
+    "getProjectTokensOutForTerminalTokensIn(IJBDirectory,uint256,address,uint256,address,JBRuleset)": {
+      "notice": "For given terminalToken amount, compute equivalent projectToken amount at current JuiceboxV4 price."
+    },
+    "getSqrtPriceX96ForCurrentJuiceboxPrice(IJBDirectory,uint256,address,address,address,JBRuleset)": {
+      "notice": "Compute Uniswap SqrtPriceX96 for current JuiceboxV4 price."
+    }
+  },
+  "contractName": "JBUniswapV4LPSplitHookMath",
+  "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/libraries/JBUniswapV4LPSplitHookMath.sol"
+}

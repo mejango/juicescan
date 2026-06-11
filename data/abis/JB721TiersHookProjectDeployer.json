@@ -1,0 +1,1779 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "permissions",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        },
+        {
+          "name": "hookDeployer",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookDeployer"
+        },
+        {
+          "name": "trustedForwarder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "HOOK_DEPLOYER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookDeployer"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PERMISSIONS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isTrustedForwarder",
+      "inputs": [
+        {
+          "name": "forwarder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "launchProjectFor",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "deployTiersHookConfig",
+          "type": "tuple",
+          "internalType": "struct JBDeploy721TiersHookConfig",
+          "components": [
+            {
+              "name": "name",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "symbol",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "baseUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "tokenUriResolver",
+              "type": "address",
+              "internalType": "contract IJB721TokenUriResolver"
+            },
+            {
+              "name": "contractUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "tiersConfig",
+              "type": "tuple",
+              "internalType": "struct JB721InitTiersConfig",
+              "components": [
+                {
+                  "name": "tiers",
+                  "type": "tuple[]",
+                  "internalType": "struct JB721TierConfig[]",
+                  "components": [
+                    {
+                      "name": "price",
+                      "type": "uint104",
+                      "internalType": "uint104"
+                    },
+                    {
+                      "name": "initialSupply",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "votingUnits",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "reserveFrequency",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "reserveBeneficiary",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "encodedIpfsUri",
+                      "type": "bytes32",
+                      "internalType": "bytes32"
+                    },
+                    {
+                      "name": "category",
+                      "type": "uint24",
+                      "internalType": "uint24"
+                    },
+                    {
+                      "name": "discountPercent",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "flags",
+                      "type": "tuple",
+                      "internalType": "struct JB721TierConfigFlags",
+                      "components": [
+                        {
+                          "name": "allowOwnerMint",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "useReserveBeneficiaryAsDefault",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "transfersPausable",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "useVotingUnits",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantBeRemoved",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantIncreaseDiscountPercent",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantBuyWithCredits",
+                          "type": "bool",
+                          "internalType": "bool"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "splitPercent",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "splits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBSplit[]",
+                      "components": [
+                        {
+                          "name": "percent",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        },
+                        {
+                          "name": "projectId",
+                          "type": "uint64",
+                          "internalType": "uint64"
+                        },
+                        {
+                          "name": "beneficiary",
+                          "type": "address",
+                          "internalType": "address payable"
+                        },
+                        {
+                          "name": "preferAddToBalance",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "lockedUntil",
+                          "type": "uint48",
+                          "internalType": "uint48"
+                        },
+                        {
+                          "name": "hook",
+                          "type": "address",
+                          "internalType": "contract IJBSplitHook"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                }
+              ]
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TiersHookFlags",
+              "components": [
+                {
+                  "name": "noNewTiersWithReserves",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "noNewTiersWithVotes",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "noNewTiersWithOwnerMinting",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "preventOverspending",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "issueTokensForSplits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "launchProjectConfig",
+          "type": "tuple",
+          "internalType": "struct JBLaunchProjectConfig",
+          "components": [
+            {
+              "name": "projectUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "rulesetConfigurations",
+              "type": "tuple[]",
+              "internalType": "struct JBPayDataHookRulesetConfig[]",
+              "components": [
+                {
+                  "name": "mustStartAtOrAfter",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "duration",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "weight",
+                  "type": "uint112",
+                  "internalType": "uint112"
+                },
+                {
+                  "name": "weightCutPercent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "approvalHook",
+                  "type": "address",
+                  "internalType": "contract IJBRulesetApprovalHook"
+                },
+                {
+                  "name": "metadata",
+                  "type": "tuple",
+                  "internalType": "struct JBPayDataHookRulesetMetadata",
+                  "components": [
+                    {
+                      "name": "reservedPercent",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "cashOutTaxRate",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "baseCurrency",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "pausePay",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "pauseCreditTransfers",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowOwnerMinting",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetCustomToken",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowTerminalMigration",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetTerminals",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetController",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowAddAccountingContext",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowAddPriceFeed",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "ownerMustSendPayouts",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "holdFees",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "scopeCashOutsToLocalBalances",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "useDataHookForCashOut",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "metadata",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    }
+                  ]
+                },
+                {
+                  "name": "splitGroups",
+                  "type": "tuple[]",
+                  "internalType": "struct JBSplitGroup[]",
+                  "components": [
+                    {
+                      "name": "groupId",
+                      "type": "uint256",
+                      "internalType": "uint256"
+                    },
+                    {
+                      "name": "splits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBSplit[]",
+                      "components": [
+                        {
+                          "name": "percent",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        },
+                        {
+                          "name": "projectId",
+                          "type": "uint64",
+                          "internalType": "uint64"
+                        },
+                        {
+                          "name": "beneficiary",
+                          "type": "address",
+                          "internalType": "address payable"
+                        },
+                        {
+                          "name": "preferAddToBalance",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "lockedUntil",
+                          "type": "uint48",
+                          "internalType": "uint48"
+                        },
+                        {
+                          "name": "hook",
+                          "type": "address",
+                          "internalType": "contract IJBSplitHook"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "fundAccessLimitGroups",
+                  "type": "tuple[]",
+                  "internalType": "struct JBFundAccessLimitGroup[]",
+                  "components": [
+                    {
+                      "name": "terminal",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "token",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "payoutLimits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBCurrencyAmount[]",
+                      "components": [
+                        {
+                          "name": "amount",
+                          "type": "uint224",
+                          "internalType": "uint224"
+                        },
+                        {
+                          "name": "currency",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "surplusAllowances",
+                      "type": "tuple[]",
+                      "internalType": "struct JBCurrencyAmount[]",
+                      "components": [
+                        {
+                          "name": "amount",
+                          "type": "uint224",
+                          "internalType": "uint224"
+                        },
+                        {
+                          "name": "currency",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "terminalConfigurations",
+              "type": "tuple[]",
+              "internalType": "struct JBTerminalConfig[]",
+              "components": [
+                {
+                  "name": "terminal",
+                  "type": "address",
+                  "internalType": "contract IJBTerminal"
+                },
+                {
+                  "name": "accountingContextsToAccept",
+                  "type": "tuple[]",
+                  "internalType": "struct JBAccountingContext[]",
+                  "components": [
+                    {
+                      "name": "token",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "decimals",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "currency",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "memo",
+              "type": "string",
+              "internalType": "string"
+            }
+          ]
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "contract IJBController"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "contract IJB721TiersHook"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "launchRulesetsFor",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "deployTiersHookConfig",
+          "type": "tuple",
+          "internalType": "struct JBDeploy721TiersHookConfig",
+          "components": [
+            {
+              "name": "name",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "symbol",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "baseUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "tokenUriResolver",
+              "type": "address",
+              "internalType": "contract IJB721TokenUriResolver"
+            },
+            {
+              "name": "contractUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "tiersConfig",
+              "type": "tuple",
+              "internalType": "struct JB721InitTiersConfig",
+              "components": [
+                {
+                  "name": "tiers",
+                  "type": "tuple[]",
+                  "internalType": "struct JB721TierConfig[]",
+                  "components": [
+                    {
+                      "name": "price",
+                      "type": "uint104",
+                      "internalType": "uint104"
+                    },
+                    {
+                      "name": "initialSupply",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "votingUnits",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "reserveFrequency",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "reserveBeneficiary",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "encodedIpfsUri",
+                      "type": "bytes32",
+                      "internalType": "bytes32"
+                    },
+                    {
+                      "name": "category",
+                      "type": "uint24",
+                      "internalType": "uint24"
+                    },
+                    {
+                      "name": "discountPercent",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "flags",
+                      "type": "tuple",
+                      "internalType": "struct JB721TierConfigFlags",
+                      "components": [
+                        {
+                          "name": "allowOwnerMint",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "useReserveBeneficiaryAsDefault",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "transfersPausable",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "useVotingUnits",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantBeRemoved",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantIncreaseDiscountPercent",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantBuyWithCredits",
+                          "type": "bool",
+                          "internalType": "bool"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "splitPercent",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "splits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBSplit[]",
+                      "components": [
+                        {
+                          "name": "percent",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        },
+                        {
+                          "name": "projectId",
+                          "type": "uint64",
+                          "internalType": "uint64"
+                        },
+                        {
+                          "name": "beneficiary",
+                          "type": "address",
+                          "internalType": "address payable"
+                        },
+                        {
+                          "name": "preferAddToBalance",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "lockedUntil",
+                          "type": "uint48",
+                          "internalType": "uint48"
+                        },
+                        {
+                          "name": "hook",
+                          "type": "address",
+                          "internalType": "contract IJBSplitHook"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                }
+              ]
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TiersHookFlags",
+              "components": [
+                {
+                  "name": "noNewTiersWithReserves",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "noNewTiersWithVotes",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "noNewTiersWithOwnerMinting",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "preventOverspending",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "issueTokensForSplits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "launchRulesetsConfig",
+          "type": "tuple",
+          "internalType": "struct JBLaunchRulesetsConfig",
+          "components": [
+            {
+              "name": "projectId",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "rulesetConfigurations",
+              "type": "tuple[]",
+              "internalType": "struct JBPayDataHookRulesetConfig[]",
+              "components": [
+                {
+                  "name": "mustStartAtOrAfter",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "duration",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "weight",
+                  "type": "uint112",
+                  "internalType": "uint112"
+                },
+                {
+                  "name": "weightCutPercent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "approvalHook",
+                  "type": "address",
+                  "internalType": "contract IJBRulesetApprovalHook"
+                },
+                {
+                  "name": "metadata",
+                  "type": "tuple",
+                  "internalType": "struct JBPayDataHookRulesetMetadata",
+                  "components": [
+                    {
+                      "name": "reservedPercent",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "cashOutTaxRate",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "baseCurrency",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "pausePay",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "pauseCreditTransfers",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowOwnerMinting",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetCustomToken",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowTerminalMigration",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetTerminals",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetController",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowAddAccountingContext",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowAddPriceFeed",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "ownerMustSendPayouts",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "holdFees",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "scopeCashOutsToLocalBalances",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "useDataHookForCashOut",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "metadata",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    }
+                  ]
+                },
+                {
+                  "name": "splitGroups",
+                  "type": "tuple[]",
+                  "internalType": "struct JBSplitGroup[]",
+                  "components": [
+                    {
+                      "name": "groupId",
+                      "type": "uint256",
+                      "internalType": "uint256"
+                    },
+                    {
+                      "name": "splits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBSplit[]",
+                      "components": [
+                        {
+                          "name": "percent",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        },
+                        {
+                          "name": "projectId",
+                          "type": "uint64",
+                          "internalType": "uint64"
+                        },
+                        {
+                          "name": "beneficiary",
+                          "type": "address",
+                          "internalType": "address payable"
+                        },
+                        {
+                          "name": "preferAddToBalance",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "lockedUntil",
+                          "type": "uint48",
+                          "internalType": "uint48"
+                        },
+                        {
+                          "name": "hook",
+                          "type": "address",
+                          "internalType": "contract IJBSplitHook"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "fundAccessLimitGroups",
+                  "type": "tuple[]",
+                  "internalType": "struct JBFundAccessLimitGroup[]",
+                  "components": [
+                    {
+                      "name": "terminal",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "token",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "payoutLimits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBCurrencyAmount[]",
+                      "components": [
+                        {
+                          "name": "amount",
+                          "type": "uint224",
+                          "internalType": "uint224"
+                        },
+                        {
+                          "name": "currency",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "surplusAllowances",
+                      "type": "tuple[]",
+                      "internalType": "struct JBCurrencyAmount[]",
+                      "components": [
+                        {
+                          "name": "amount",
+                          "type": "uint224",
+                          "internalType": "uint224"
+                        },
+                        {
+                          "name": "currency",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "terminalConfigurations",
+              "type": "tuple[]",
+              "internalType": "struct JBTerminalConfig[]",
+              "components": [
+                {
+                  "name": "terminal",
+                  "type": "address",
+                  "internalType": "contract IJBTerminal"
+                },
+                {
+                  "name": "accountingContextsToAccept",
+                  "type": "tuple[]",
+                  "internalType": "struct JBAccountingContext[]",
+                  "components": [
+                    {
+                      "name": "token",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "decimals",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "currency",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "memo",
+              "type": "string",
+              "internalType": "string"
+            }
+          ]
+        },
+        {
+          "name": "projectUri",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "contract IJBController"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "contract IJB721TiersHook"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "onERC721Received",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "queueRulesetsOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "deployTiersHookConfig",
+          "type": "tuple",
+          "internalType": "struct JBDeploy721TiersHookConfig",
+          "components": [
+            {
+              "name": "name",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "symbol",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "baseUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "tokenUriResolver",
+              "type": "address",
+              "internalType": "contract IJB721TokenUriResolver"
+            },
+            {
+              "name": "contractUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "tiersConfig",
+              "type": "tuple",
+              "internalType": "struct JB721InitTiersConfig",
+              "components": [
+                {
+                  "name": "tiers",
+                  "type": "tuple[]",
+                  "internalType": "struct JB721TierConfig[]",
+                  "components": [
+                    {
+                      "name": "price",
+                      "type": "uint104",
+                      "internalType": "uint104"
+                    },
+                    {
+                      "name": "initialSupply",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "votingUnits",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "reserveFrequency",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "reserveBeneficiary",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "encodedIpfsUri",
+                      "type": "bytes32",
+                      "internalType": "bytes32"
+                    },
+                    {
+                      "name": "category",
+                      "type": "uint24",
+                      "internalType": "uint24"
+                    },
+                    {
+                      "name": "discountPercent",
+                      "type": "uint8",
+                      "internalType": "uint8"
+                    },
+                    {
+                      "name": "flags",
+                      "type": "tuple",
+                      "internalType": "struct JB721TierConfigFlags",
+                      "components": [
+                        {
+                          "name": "allowOwnerMint",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "useReserveBeneficiaryAsDefault",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "transfersPausable",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "useVotingUnits",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantBeRemoved",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantIncreaseDiscountPercent",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "cantBuyWithCredits",
+                          "type": "bool",
+                          "internalType": "bool"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "splitPercent",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "splits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBSplit[]",
+                      "components": [
+                        {
+                          "name": "percent",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        },
+                        {
+                          "name": "projectId",
+                          "type": "uint64",
+                          "internalType": "uint64"
+                        },
+                        {
+                          "name": "beneficiary",
+                          "type": "address",
+                          "internalType": "address payable"
+                        },
+                        {
+                          "name": "preferAddToBalance",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "lockedUntil",
+                          "type": "uint48",
+                          "internalType": "uint48"
+                        },
+                        {
+                          "name": "hook",
+                          "type": "address",
+                          "internalType": "contract IJBSplitHook"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                }
+              ]
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TiersHookFlags",
+              "components": [
+                {
+                  "name": "noNewTiersWithReserves",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "noNewTiersWithVotes",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "noNewTiersWithOwnerMinting",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "preventOverspending",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "issueTokensForSplits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "queueRulesetsConfig",
+          "type": "tuple",
+          "internalType": "struct JBQueueRulesetsConfig",
+          "components": [
+            {
+              "name": "projectId",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "rulesetConfigurations",
+              "type": "tuple[]",
+              "internalType": "struct JBPayDataHookRulesetConfig[]",
+              "components": [
+                {
+                  "name": "mustStartAtOrAfter",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "duration",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "weight",
+                  "type": "uint112",
+                  "internalType": "uint112"
+                },
+                {
+                  "name": "weightCutPercent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "approvalHook",
+                  "type": "address",
+                  "internalType": "contract IJBRulesetApprovalHook"
+                },
+                {
+                  "name": "metadata",
+                  "type": "tuple",
+                  "internalType": "struct JBPayDataHookRulesetMetadata",
+                  "components": [
+                    {
+                      "name": "reservedPercent",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "cashOutTaxRate",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "baseCurrency",
+                      "type": "uint32",
+                      "internalType": "uint32"
+                    },
+                    {
+                      "name": "pausePay",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "pauseCreditTransfers",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowOwnerMinting",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetCustomToken",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowTerminalMigration",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetTerminals",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowSetController",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowAddAccountingContext",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "allowAddPriceFeed",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "ownerMustSendPayouts",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "holdFees",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "scopeCashOutsToLocalBalances",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "useDataHookForCashOut",
+                      "type": "bool",
+                      "internalType": "bool"
+                    },
+                    {
+                      "name": "metadata",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    }
+                  ]
+                },
+                {
+                  "name": "splitGroups",
+                  "type": "tuple[]",
+                  "internalType": "struct JBSplitGroup[]",
+                  "components": [
+                    {
+                      "name": "groupId",
+                      "type": "uint256",
+                      "internalType": "uint256"
+                    },
+                    {
+                      "name": "splits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBSplit[]",
+                      "components": [
+                        {
+                          "name": "percent",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        },
+                        {
+                          "name": "projectId",
+                          "type": "uint64",
+                          "internalType": "uint64"
+                        },
+                        {
+                          "name": "beneficiary",
+                          "type": "address",
+                          "internalType": "address payable"
+                        },
+                        {
+                          "name": "preferAddToBalance",
+                          "type": "bool",
+                          "internalType": "bool"
+                        },
+                        {
+                          "name": "lockedUntil",
+                          "type": "uint48",
+                          "internalType": "uint48"
+                        },
+                        {
+                          "name": "hook",
+                          "type": "address",
+                          "internalType": "contract IJBSplitHook"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "fundAccessLimitGroups",
+                  "type": "tuple[]",
+                  "internalType": "struct JBFundAccessLimitGroup[]",
+                  "components": [
+                    {
+                      "name": "terminal",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "token",
+                      "type": "address",
+                      "internalType": "address"
+                    },
+                    {
+                      "name": "payoutLimits",
+                      "type": "tuple[]",
+                      "internalType": "struct JBCurrencyAmount[]",
+                      "components": [
+                        {
+                          "name": "amount",
+                          "type": "uint224",
+                          "internalType": "uint224"
+                        },
+                        {
+                          "name": "currency",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "surplusAllowances",
+                      "type": "tuple[]",
+                      "internalType": "struct JBCurrencyAmount[]",
+                      "components": [
+                        {
+                          "name": "amount",
+                          "type": "uint224",
+                          "internalType": "uint224"
+                        },
+                        {
+                          "name": "currency",
+                          "type": "uint32",
+                          "internalType": "uint32"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "memo",
+              "type": "string",
+              "internalType": "string"
+            }
+          ]
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "contract IJBController"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "rulesetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "contract IJB721TiersHook"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "trustedForwarder",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "error",
+      "name": "JBPermissioned_Unauthorized",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "sender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "permissionId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "directory": "The directory of terminals and controllers for projects.",
+        "hookDeployer": "The 721 tiers hook deployer.",
+        "permissions": "A contract storing permissions.",
+        "trustedForwarder": "The trusted forwarder for the ERC2771Context."
+      }
+    },
+    "isTrustedForwarder(address)": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
+    },
+    "launchProjectFor(address,(string,string,string,address,string,((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint32,uint8),(bool,bool,bool,bool,bool)),(string,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],(address,(address,uint8,uint32)[])[],string),address,bytes32)": {
+      "details": "Forwards `msg.value` to `JBProjects.createFor` to cover any configured project creation fee.",
+      "params": {
+        "controller": "The controller that the project's rulesets will be queued with.",
+        "deployTiersHookConfig": "Configuration which dictates the behavior of the 721 tiers hook to deploy.",
+        "launchProjectConfig": "Configuration which dictates the behavior of the project to launch.",
+        "owner": "The address to set as the owner of the project. The ERC-721 which confers this project's ownership will be sent to this address.",
+        "salt": "A salt to use for the deterministic deployment."
+      },
+      "returns": {
+        "hook": "The 721 tiers hook that was deployed for the project.",
+        "projectId": "The ID of the newly launched project."
+      }
+    },
+    "launchRulesetsFor(uint256,(string,string,string,address,string,((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint32,uint8),(bool,bool,bool,bool,bool)),(uint64,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],(address,(address,uint8,uint32)[])[],string),string,address,bytes32)": {
+      "details": "Only a project's owner or an operator with `LAUNCH_RULESETS & SET_TERMINALS` can launch its rulesets.",
+      "params": {
+        "controller": "The controller that the project's rulesets will be queued with.",
+        "deployTiersHookConfig": "Configuration which dictates the behavior of the 721 tiers hook to deploy.",
+        "launchRulesetsConfig": "Configuration which dictates the project's new rulesets.",
+        "projectId": "The ID of the project to launch rulesets for.",
+        "projectUri": "Metadata URI to associate with the project. Pass an empty string to leave it unchanged.",
+        "salt": "A salt to use for the deterministic deployment."
+      },
+      "returns": {
+        "hook": "The 721 tiers hook that was deployed for the project.",
+        "rulesetId": "The ID of the successfully created ruleset."
+      }
+    },
+    "queueRulesetsOf(uint256,(string,string,string,address,string,((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint32,uint8),(bool,bool,bool,bool,bool)),(uint64,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],string),address,bytes32)": {
+      "details": "Only a project's owner or an operator with the `QUEUE_RULESETS` permission can queue its rulesets.",
+      "params": {
+        "controller": "The controller that the project's rulesets will be queued with.",
+        "deployTiersHookConfig": "Configuration which dictates the behavior of the 721 tiers hook to deploy.",
+        "projectId": "The ID of the project to queue rulesets for.",
+        "queueRulesetsConfig": "Configuration which dictates the project's newly queued rulesets.",
+        "salt": "A salt to use for the deterministic deployment."
+      },
+      "returns": {
+        "hook": "The 721 tiers hook that was deployed for the project.",
+        "rulesetId": "The ID of the successfully created ruleset."
+      }
+    },
+    "trustedForwarder()": {
+      "details": "Returns the address of the trusted forwarder."
+    }
+  },
+  "userdoc": {
+    "DIRECTORY()": {
+      "notice": "The directory of terminals and controllers for projects."
+    },
+    "HOOK_DEPLOYER()": {
+      "notice": "The deployer contract used to create new 721 tiers hook instances via clone."
+    },
+    "PERMISSIONS()": {
+      "notice": "A contract storing permissions."
+    },
+    "launchProjectFor(address,(string,string,string,address,string,((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint32,uint8),(bool,bool,bool,bool,bool)),(string,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],(address,(address,uint8,uint32)[])[],string),address,bytes32)": {
+      "notice": "Launches a new project with a 721 tiers hook attached."
+    },
+    "launchRulesetsFor(uint256,(string,string,string,address,string,((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint32,uint8),(bool,bool,bool,bool,bool)),(uint64,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],(address,(address,uint8,uint32)[])[],string),string,address,bytes32)": {
+      "notice": "Launches rulesets for a project with an attached 721 tiers hook."
+    },
+    "onERC721Received(address,address,uint256,bytes)": {
+      "notice": "Accepts project NFT reservations minted by `JBProjects.createFor`."
+    },
+    "queueRulesetsOf(uint256,(string,string,string,address,string,((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint32,uint8),(bool,bool,bool,bool,bool)),(uint64,(uint48,uint32,uint112,uint32,address,(uint16,uint16,uint32,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,bool,uint16),(uint256,(uint32,uint64,address,bool,uint48,address)[])[],(address,address,(uint224,uint32)[],(uint224,uint32)[])[])[],string),address,bytes32)": {
+      "notice": "Queues rulesets for a project with an attached 721 tiers hook."
+    }
+  },
+  "contractName": "JB721TiersHookProjectDeployer",
+  "sourceName": "node_modules/@bananapus/721-hook-v6/src/JB721TiersHookProjectDeployer.sol"
+}

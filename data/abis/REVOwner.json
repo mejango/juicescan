@@ -1,0 +1,1426 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "buybackHook",
+          "type": "address",
+          "internalType": "contract IJBBuybackHookRegistry"
+        },
+        {
+          "name": "directory",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "feeRevnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "suckerRegistry",
+          "type": "address",
+          "internalType": "contract IJBSuckerRegistry"
+        },
+        {
+          "name": "loans",
+          "type": "address",
+          "internalType": "contract IREVLoans"
+        },
+        {
+          "name": "deployerAddress",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "BUYBACK_HOOK",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBBuybackHookRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "CONTROLLER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBController"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "FEE_REVNET_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "LOANS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IREVLoans"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PERMISSIONS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PROJECTS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBProjects"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "SUCKER_REGISTRY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBSuckerRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "afterCashOutRecordedWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBAfterCashOutRecordedContext",
+          "components": [
+            {
+              "name": "holder",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutCount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "reclaimedAmount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "forwardedAmount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "cashOutTaxRate",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address payable"
+            },
+            {
+              "name": "hookMetadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "cashOutMetadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "amountToAutoIssue",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "stageId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "autoIssueFor",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "stageId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "beforeCashOutRecordedWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBBeforeCashOutRecordedContext",
+          "components": [
+            {
+              "name": "terminal",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "holder",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutCount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "totalSupply",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "surplus",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "scopeCashOutsToLocalBalances",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "cashOutTaxRate",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiaryIsFeeless",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cashOutTaxRate",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "cashOutCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "totalSupply",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "effectiveSurplusValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hookSpecifications",
+          "type": "tuple[]",
+          "internalType": "struct JBCashOutHookSpecification[]",
+          "components": [
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBCashOutHook"
+            },
+            {
+              "name": "noop",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "beforePayRecordedWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBBeforePayRecordedContext",
+          "components": [
+            {
+              "name": "terminal",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "weight",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "reservedPercent",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "weight",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hookSpecifications",
+          "type": "tuple[]",
+          "internalType": "struct JBPayHookSpecification[]",
+          "components": [
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBPayHook"
+            },
+            {
+              "name": "noop",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "burnHeldTokensOf",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "cashOutDelayOf",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cashOutDelay",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "deployer",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IREVDeployer"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "hasMintPermissionFor",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "ruleset",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "address",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "initializeRevnet",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "init",
+          "type": "tuple",
+          "internalType": "struct REVOwnerRevnetInit",
+          "components": [
+            {
+              "name": "cashOutDelay",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "tiered721Hook",
+              "type": "address",
+              "internalType": "contract IJB721TiersHook"
+            },
+            {
+              "name": "operator",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "extraOperatorPermissionIds",
+              "type": "uint256[]",
+              "internalType": "uint256[]"
+            },
+            {
+              "name": "autoIssuances",
+              "type": "tuple[]",
+              "internalType": "struct REVOwnerAutoIssuance[]",
+              "components": [
+                {
+                  "name": "stageId",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                },
+                {
+                  "name": "beneficiary",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "count",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "extraGrants",
+              "type": "tuple[]",
+              "internalType": "struct REVOwnerExtraGrant[]",
+              "components": [
+                {
+                  "name": "operator",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "permissionId",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "isOperatorOf",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "onERC721Received",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "peerChainAdjustedAccountsOf",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "supply",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "contexts",
+          "type": "tuple[]",
+          "internalType": "struct JBSourceContext[]",
+          "components": [
+            {
+              "name": "token",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "decimals",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "surplus",
+              "type": "uint128",
+              "internalType": "uint128"
+            },
+            {
+              "name": "balance",
+              "type": "uint128",
+              "internalType": "uint128"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setDeployer",
+      "inputs": [
+        {
+          "name": "newDeployer",
+          "type": "address",
+          "internalType": "contract IREVDeployer"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setOperatorOf",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "newOperator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "supportsInterface",
+      "inputs": [
+        {
+          "name": "interfaceId",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "flag",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tiered721HookOf",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tiered721Hook",
+          "type": "address",
+          "internalType": "contract IJB721TiersHook"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "AutoIssue",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "stageId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "BurnHeldTokens",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "InitializeRevnet",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ReplaceOperator",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "newOperator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_AlreadyInitialized",
+      "inputs": [
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_CashOutDelayNotFinished",
+      "inputs": [
+        {
+          "name": "cashOutDelay",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "blockTimestamp",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_InvalidLoanSourceToken",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_NativeFeeValueMismatch",
+      "inputs": [
+        {
+          "name": "expected",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "actual",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_NothingToAutoIssue",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "stageId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_NothingToBurn",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "holder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_StageNotStarted",
+      "inputs": [
+        {
+          "name": "stageId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_Unauthorized",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "expectedCaller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_UnauthorizedOperator",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedDecreaseAllowance",
+      "inputs": [
+        {
+          "name": "spender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "currentAllowance",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "requestedDecrease",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "afterCashOutRecordedWith((address,uint256,uint256,uint256,(address,uint8,uint32,uint256),(address,uint8,uint32,uint256),uint256,address,bytes,bytes))": {
+      "params": {
+        "context": "Cash out context passed in by the terminal."
+      }
+    },
+    "autoIssueFor(uint256,uint256,address)": {
+      "details": "Permissionless: anyone can trigger the mint once the stage has started. The recorded amount is consumed (reset to zero) after the mint executes.",
+      "params": {
+        "beneficiary": "The address to send auto-minted tokens to.",
+        "revnetId": "The ID of the revnet to auto-mint tokens for.",
+        "stageId": "The ID of the ruleset stage to auto-mint tokens from."
+      }
+    },
+    "beforeCashOutRecordedWith((address,address,uint256,uint256,uint256,uint256,(address,uint8,uint32,uint256),bool,uint256,bool,bytes))": {
+      "details": "This function is the policy boundary between three distinct cash-out semantics: 1. **Sucker cash-outs (registered bridge contracts):** returns tax=0 and uses LOCAL supply/surplus only.    Lines 209-211. Bridges cash out tokens at the originating chain's local backing rate to move value    across chains. This is the bridge accounting primitive — keep value moving out of this chain    proportional to this chain's local backing, regardless of cross-chain aggregation. This deliberate    asymmetry vs. ordinary cash-outs is what enables the cross-chain rebalancing arbitrage path described    in ARBITRAGE.md (Path 1). See also INVARIANTS.md Section D2 at the monorepo root. 2. **Ordinary cash-outs during the cash-out delay window:** revert. Lines around 217-220. The delay    blocks direct exits (cash-out/borrow) on new chains so they can prime via bridges before users    start drawing value. Note the delay does NOT apply to sucker cash-outs (item 1) — priming requires    bridges to remain open. 3. **Ordinary cash-outs after delay:** aggregate cross-chain state when `scopeCashOutsToLocalBalances`    is false, then route through the buyback hook to potentially settle via AMM (Path 2 floor arb in    ARBITRAGE.md) or pass through to bonding curve. The buyback hook auto-applies floor arbitrage for    users who would otherwise underpay themselves. The interaction of these three semantics — together with the buyback hook's pay-side ceiling arbitrage (Path 3, in nana-buyback-hook-v6) — is what makes a multi-chain revnet self-equilibrating. See ARBITRAGE.md for the full taxonomy. Part of `IJBRulesetDataHook`. In the non-zero-tax fee path, REVOwner is intentionally not registered as a feeless address — the protocol fee (2.5%) applies on top of the rev fee. The fee hook spec amount sent to `afterCashOutRecordedWith` will have the protocol fee deducted by the terminal before reaching this contract.",
+      "params": {
+        "context": "Standard Juicebox cash-out context. See `JBBeforeCashOutRecordedContext`."
+      },
+      "returns": {
+        "cashOutCount": "The number of revnet tokens to cash out.",
+        "cashOutTaxRate": "The cash-out tax rate, which influences the amount of terminal tokens reclaimed.",
+        "effectiveSurplusValue": "The global surplus across all chains for proportional reclaim.",
+        "hookSpecifications": "The amount of funds and data to send to cash-out hooks (this contract).",
+        "totalSupply": "The total token supply across all chains (for both proportional reclaim and tax)."
+      }
+    },
+    "beforePayRecordedWith((address,address,(address,uint8,uint32,uint256),uint256,uint256,address,uint256,uint256,bytes))": {
+      "details": "Part of `IJBRulesetDataHook`. The 721 hook spec comes first in the returned array.",
+      "params": {
+        "context": "Standard Juicebox payment context. See `JBBeforePayRecordedContext`."
+      },
+      "returns": {
+        "hookSpecifications": "Amounts (out of what's paid in) to send to pay hooks instead of adding to the revnet. Useful for automatically routing funds from a treasury as payments come in.",
+        "weight": "The weight which revnet tokens are minted relative to. This can be used to customize how many tokens get minted by a payment."
+      }
+    },
+    "burnHeldTokensOf(uint256)": {
+      "details": "Tokens accrue here from reserved-token distributions when splits don't sum to 100% (the JBController mints the leftover to the project owner — which is this contract).",
+      "params": {
+        "revnetId": "The ID of the revnet to burn tokens for."
+      }
+    },
+    "constructor": {
+      "params": {
+        "buybackHook": "The buyback hook used to route payments.",
+        "deployerAddress": "The account allowed to bind the canonical deployer via `setDeployer`. Passed explicitly because CREATE2 deployments set `msg.sender` to the factory, not the intended operator.",
+        "directory": "The directory of terminals and controllers.",
+        "feeRevnetId": "The Juicebox project ID of the fee revnet.",
+        "loans": "The loan contract.",
+        "suckerRegistry": "The sucker registry."
+      }
+    },
+    "hasMintPermissionFor(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256),address)": {
+      "details": "Part of `IJBRulesetDataHook`.",
+      "params": {
+        "addr": "The address to check.",
+        "revnetId": "The ID of the revnet to check.",
+        "ruleset": "The ruleset to check against."
+      },
+      "returns": {
+        "_0": "flag A flag indicating whether the address has permission to mint the revnet's tokens on-demand."
+      }
+    },
+    "initializeRevnet(uint256,(uint256,address,address,uint256[],(uint256,address,uint256)[],(address,uint8)[]))": {
+      "details": "Only callable by the canonical deployer during a revnet's initial configuration. Extra operator permissions are appended before bootstrap, so the operator receives the merged set in one permissions write.",
+      "params": {
+        "init": "The full initialization payload.",
+        "revnetId": "The ID of the revnet being initialized."
+      }
+    },
+    "isOperatorOf(uint256,address)": {
+      "params": {
+        "addr": "The address to check.",
+        "revnetId": "The ID of the revnet to check."
+      },
+      "returns": {
+        "_0": "flag A flag indicating whether the address holds the revnet's operator permissions."
+      }
+    },
+    "onERC721Received(address,address,uint256,bytes)": {
+      "details": "Only accepts NFTs from the canonical `JBProjects` contract."
+    },
+    "peerChainAdjustedAccountsOf(uint256)": {
+      "details": "Used by remote chains' aggregate cash-out math to correctly account for value temporarily held outside this chain's terminal (in active REVLoans). Critical for the conservation invariant described in INVARIANTS.md Section D2.5 — without this adjustment, outstanding-loan value would silently inflate apparent surplus on the peer-chain side. Each loan source token's outstanding debt is reported as its own context, raw and un-valued in the token's own currency and decimals, counted as both surplus and balance: it is value owed back to this chain's revnet and travels to peer snapshots with the collateral supply, where the receiving chain folds it into the matching same-asset local context at par.",
+      "params": {
+        "revnetId": "The ID of the revnet to snapshot."
+      },
+      "returns": {
+        "contexts": "One entry per loan source token with outstanding debt, as both surplus and balance.",
+        "supply": "The loan-collateral supply to include in the peer snapshot."
+      }
+    },
+    "setDeployer(address)": {
+      "details": "The deployer address is precomputed and supplied by the account that created this REVOwner instance. Only that deploy-time binder may call this, which avoids an ambient public initializer where any first caller could seize the deployer role before the deterministic REVDeployer is actually deployed.",
+      "params": {
+        "newDeployer": "The canonical REVDeployer instance that will manage revnet runtime state."
+      }
+    },
+    "setOperatorOf(uint256,address)": {
+      "details": "Only a revnet's current operator can rotate the operator. Passing `address(0)` relinquishes operator powers permanently — the permissions move to the zero address which cannot execute transactions.",
+      "params": {
+        "newOperator": "The new operator's address. Use `address(0)` to relinquish operator powers.",
+        "revnetId": "The ID of the revnet to change the operator for."
+      }
+    },
+    "supportsInterface(bytes4)": {
+      "details": "See `IERC165.supportsInterface`.",
+      "params": {
+        "interfaceId": "The interface ID to check."
+      },
+      "returns": {
+        "flag": "A flag indicating whether the interface is supported."
+      }
+    }
+  },
+  "userdoc": {
+    "BUYBACK_HOOK()": {
+      "notice": "The buyback hook used as a data hook to route payments through buyback pools."
+    },
+    "CONTROLLER()": {
+      "notice": "The controller used by every revnet to manage its project."
+    },
+    "DIRECTORY()": {
+      "notice": "The directory of terminals and controllers for Juicebox projects."
+    },
+    "FEE_REVNET_ID()": {
+      "notice": "The Juicebox project ID of the revnet that receives cash-out fees."
+    },
+    "LOANS()": {
+      "notice": "The loan contract used by every revnet."
+    },
+    "PERMISSIONS()": {
+      "notice": "The permissions registry used to grant operator authority over revnets."
+    },
+    "PROJECTS()": {
+      "notice": "The Juicebox project NFT contract."
+    },
+    "SUCKER_REGISTRY()": {
+      "notice": "Deploys and tracks suckers for revnets."
+    },
+    "afterCashOutRecordedWith((address,uint256,uint256,uint256,(address,uint8,uint32,uint256),(address,uint8,uint32,uint256),uint256,address,bytes,bytes))": {
+      "notice": "Process the fee from a cash-out."
+    },
+    "amountToAutoIssue(uint256,uint256,address)": {
+      "notice": "The amount of project tokens to auto-issue at a given stage to a given beneficiary."
+    },
+    "autoIssueFor(uint256,uint256,address)": {
+      "notice": "Auto-mint a revnet's tokens from a stage for a beneficiary."
+    },
+    "beforeCashOutRecordedWith((address,address,uint256,uint256,uint256,uint256,(address,uint8,uint32,uint256),bool,uint256,bool,bytes))": {
+      "notice": "Hook called by the JBTerminalStore during cash-out to enforce revnet-specific tax/fee/aggregation logic."
+    },
+    "beforePayRecordedWith((address,address,(address,uint8,uint32,uint256),uint256,uint256,address,uint256,uint256,bytes))": {
+      "notice": "Called before a payment is recorded. Coordinates the 721 hook (NFT tier minting with split deductions) with the buyback hook (which may route funds through a Uniswap pool for a better token price). Merges their hook specifications and scales the minting weight so payers only receive tokens proportional to funds entering the project (not the split portion)."
+    },
+    "burnHeldTokensOf(uint256)": {
+      "notice": "Burn any of a revnet's project tokens that have accumulated on this contract."
+    },
+    "cashOutDelayOf(uint256)": {
+      "notice": "The timestamp when cash-outs become available to a specific revnet's participants."
+    },
+    "deployer()": {
+      "notice": "The deployer that manages revnet state."
+    },
+    "hasMintPermissionFor(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256),address)": {
+      "notice": "Returns whether an address may mint a revnet's tokens on-demand. Grants permission to: the loans contract (re-mints collateral on repayment), buyback hook and its delegates (mints tokens from pool swaps), and suckers (mints bridged tokens on the destination chain)."
+    },
+    "initializeRevnet(uint256,(uint256,address,address,uint256[],(uint256,address,uint256)[],(address,uint8)[]))": {
+      "notice": "Bind every piece of revnet-scoped state managed by this contract in a single deployer call. Stores the cash-out delay, the tiered ERC-721 hook, auto-issuance allocations, extra operator permissions, the initial operator, and any integration-specific permission grants."
+    },
+    "isOperatorOf(uint256,address)": {
+      "notice": "Check whether an address is a revnet's operator."
+    },
+    "onERC721Received(address,address,uint256,bytes)": {
+      "notice": "Required to receive the JBProjects NFT for each revnet that this contract owns."
+    },
+    "peerChainAdjustedAccountsOf(uint256)": {
+      "notice": "Adjusts local accounts for outstanding loans when reporting peer-chain state."
+    },
+    "setDeployer(address)": {
+      "notice": "Bind the canonical deployer address exactly once."
+    },
+    "setOperatorOf(uint256,address)": {
+      "notice": "Change a revnet's operator."
+    },
+    "supportsInterface(bytes4)": {
+      "notice": "Indicates if this contract adheres to the specified interface."
+    },
+    "tiered721HookOf(uint256)": {
+      "notice": "Each revnet's tiered ERC-721 hook."
+    }
+  },
+  "contractName": "REVOwner",
+  "sourceName": "node_modules/@rev-net/core-v6/src/REVOwner.sol"
+}

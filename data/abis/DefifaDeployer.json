@@ -1,0 +1,1045 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "hookCodeOrigin",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenUriResolver",
+          "type": "address",
+          "internalType": "contract IJB721TokenUriResolver"
+        },
+        {
+          "name": "governor",
+          "type": "address",
+          "internalType": "contract IDefifaGovernor"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "contract IJBController"
+        },
+        {
+          "name": "registry",
+          "type": "address",
+          "internalType": "contract IJBAddressRegistry"
+        },
+        {
+          "name": "defifaProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "baseProtocolProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hookStore",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookStore"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "BASE_PROTOCOL_FEE_DIVISOR",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BASE_PROTOCOL_PROJECT_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "CONTROLLER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBController"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "DEFIFA_FEE_DIVISOR",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "DEFIFA_PROJECT_ID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "GOVERNOR",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IDefifaGovernor"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "HOOK_CODE_ORIGIN",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "HOOK_STORE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookStore"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "REGISTRY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBAddressRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TOKEN_URI_RESOLVER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJB721TokenUriResolver"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "commitmentsFulfilledFor",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "currentGamePhaseOf",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint8",
+          "internalType": "enum DefifaGamePhase"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "currentGamePotOf",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "includeCommitments",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "fulfillCommitmentsOf",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "fulfilledCommitmentsOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "launchGameWith",
+      "inputs": [
+        {
+          "name": "launchProjectData",
+          "type": "tuple",
+          "internalType": "struct DefifaLaunchProjectData",
+          "components": [
+            {
+              "name": "name",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "projectUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "contractUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "baseUri",
+              "type": "string",
+              "internalType": "string"
+            },
+            {
+              "name": "tiers",
+              "type": "tuple[]",
+              "internalType": "struct DefifaTierParams[]",
+              "components": [
+                {
+                  "name": "name",
+                  "type": "string",
+                  "internalType": "string"
+                },
+                {
+                  "name": "reservedRate",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "reservedTokenBeneficiary",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "encodedIpfsUri",
+                  "type": "bytes32",
+                  "internalType": "bytes32"
+                },
+                {
+                  "name": "shouldUseReservedTokenBeneficiaryAsDefault",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            },
+            {
+              "name": "tierPrice",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "token",
+              "type": "tuple",
+              "internalType": "struct JBAccountingContext",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                }
+              ]
+            },
+            {
+              "name": "mintPeriodDuration",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "refundPeriodDuration",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "splits",
+              "type": "tuple[]",
+              "internalType": "struct JBSplit[]",
+              "components": [
+                {
+                  "name": "percent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "projectId",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "beneficiary",
+                  "type": "address",
+                  "internalType": "address payable"
+                },
+                {
+                  "name": "preferAddToBalance",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "lockedUntil",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "hook",
+                  "type": "address",
+                  "internalType": "contract IJBSplitHook"
+                }
+              ]
+            },
+            {
+              "name": "attestationStartTime",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "attestationGracePeriod",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "defaultAttestationDelegate",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "defaultTokenUriResolver",
+              "type": "address",
+              "internalType": "contract IJB721TokenUriResolver"
+            },
+            {
+              "name": "terminal",
+              "type": "address",
+              "internalType": "contract IJBTerminal"
+            },
+            {
+              "name": "minParticipation",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "scorecardTimeout",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "timelockDuration",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "nextPhaseNeedsQueueing",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "noContestTriggeredFor",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "onERC721Received",
+      "inputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "safetyParamsOf",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "minParticipation",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardTimeout",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "timesFor",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint48",
+          "internalType": "uint48"
+        },
+        {
+          "name": "",
+          "type": "uint24",
+          "internalType": "uint24"
+        },
+        {
+          "name": "",
+          "type": "uint24",
+          "internalType": "uint24"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tokenOf",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "triggerNoContestFor",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "CommitmentPayoutFailed",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "FulfilledCommitments",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "pot",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "LaunchGame",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "indexed": true,
+          "internalType": "contract IDefifaHook"
+        },
+        {
+          "name": "governor",
+          "type": "address",
+          "indexed": true,
+          "internalType": "contract IDefifaGovernor"
+        },
+        {
+          "name": "tokenUriResolver",
+          "type": "address",
+          "indexed": false,
+          "internalType": "contract IJB721TokenUriResolver"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "QueuedNoContest",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "DefifaDeployer_CantFulfillYet",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaDeployer_InvalidCurrency",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "currency",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaDeployer_InvalidGameConfiguration",
+      "inputs": [
+        {
+          "name": "start",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "mintPeriodDuration",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "refundPeriodDuration",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaDeployer_NoContestAlreadyTriggered",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaDeployer_NotNoContest",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "phase",
+          "type": "uint8",
+          "internalType": "enum DefifaGamePhase"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaDeployer_SplitsDontAddUp",
+      "inputs": [
+        {
+          "name": "totalPercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "maxPercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "FailedDeployment",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InsufficientBalance",
+      "inputs": [
+        {
+          "name": "balance",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "needed",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "baseProtocolProjectId": "The ID of the protocol project that will receive fees from fulfilling commitments.",
+        "controller": "The controller to use to launch the game from.",
+        "defifaProjectId": "The ID of the project that should take the fee from the games.",
+        "governor": "The Defifa governor.",
+        "hookCodeOrigin": "The code of the Defifa hook.",
+        "hookStore": "The store used by Defifa hooks.",
+        "registry": "The contract storing references to the deployer of each hook.",
+        "tokenUriResolver": "The standard default token URI resolver."
+      }
+    },
+    "currentGamePhaseOf(uint256)": {
+      "details": "The game phase corresponds to the game's current funding cycle number.NO_CONTEST is returned if the minimum participation threshold is not met, or if the scorecard timeout has elapsed without ratification.",
+      "params": {
+        "gameId": "The ID of the game to get the phase number of."
+      },
+      "returns": {
+        "_0": "The game phase."
+      }
+    },
+    "currentGamePotOf(uint256,bool)": {
+      "params": {
+        "gameId": "The ID of the game for which the pot applies.",
+        "includeCommitments": "A flag indicating if the portion of the pot committed to fulfill preprogrammed obligations should be included."
+      },
+      "returns": {
+        "_0": "The game's pot amount, as a fixed point number.",
+        "_1": "The token address the game's pot is measured in.",
+        "_2": "The number of decimals included in the amount."
+      }
+    },
+    "fulfillCommitmentsOf(uint256)": {
+      "params": {
+        "gameId": "The ID of the game to fulfill splits for."
+      }
+    },
+    "launchGameWith((string,string,string,string,(string,uint16,address,bytes32,bool)[],uint104,(address,uint8,uint32),uint24,uint24,uint48,(uint32,uint64,address,bool,uint48,address)[],uint256,uint256,address,address,address,uint256,uint32,uint256))": {
+      "details": "Forwards `msg.value` to `JBProjects.createFor` to cover any configured project creation fee.",
+      "params": {
+        "launchProjectData": "Data necessary to fulfill the transaction to launch a game."
+      },
+      "returns": {
+        "gameId": "The ID of the newly configured game."
+      }
+    },
+    "nextPhaseNeedsQueueing(uint256)": {
+      "params": {
+        "gameId": "The ID of the game to get the queue status of."
+      },
+      "returns": {
+        "_0": "Whether or not the next phase still needs queuing."
+      }
+    },
+    "safetyParamsOf(uint256)": {
+      "params": {
+        "gameId": "The ID of the game to get the safety params of."
+      },
+      "returns": {
+        "minParticipation": "The minimum cumulative NFT mint cost for the game to proceed to scoring.",
+        "scorecardTimeout": "The maximum time after scoring begins for a scorecard to be ratified."
+      }
+    },
+    "timesFor(uint256)": {
+      "params": {
+        "gameId": "The ID of the game for which the game times apply."
+      },
+      "returns": {
+        "_0": "The game's start time, as a unix timestamp.",
+        "_1": "The game's minting period duration, in seconds.",
+        "_2": "The game's refund period duration, in seconds."
+      }
+    },
+    "tokenOf(uint256)": {
+      "params": {
+        "gameId": "The ID of the game to get the token of."
+      },
+      "returns": {
+        "_0": "The game's token."
+      }
+    },
+    "triggerNoContestFor(uint256)": {
+      "details": "Anyone can call this once the game is in the NO_CONTEST phase. This queues a new ruleset without payout limits, making the surplus equal to the balance so users can cash out at their mint price.Analogous to fulfillCommitmentsOf for COMPLETE — must be called before NO_CONTEST cash-outs work.",
+      "params": {
+        "gameId": "The ID of the game to trigger no-contest for."
+      }
+    }
+  },
+  "userdoc": {
+    "BASE_PROTOCOL_FEE_DIVISOR()": {
+      "notice": "The divisor that describes the protocol fee that should be taken."
+    },
+    "BASE_PROTOCOL_PROJECT_ID()": {
+      "notice": "The project ID that will receive protocol fees as commitments are fulfilled."
+    },
+    "CONTROLLER()": {
+      "notice": "The controller with which new projects should be deployed."
+    },
+    "DEFIFA_FEE_DIVISOR()": {
+      "notice": "The divisor that describes the Defifa fee that should be taken."
+    },
+    "DEFIFA_PROJECT_ID()": {
+      "notice": "The project ID that receives Defifa game fees as commitments are fulfilled."
+    },
+    "GOVERNOR()": {
+      "notice": "The governance contract that ratifies scorecards for each game."
+    },
+    "HOOK_CODE_ORIGIN()": {
+      "notice": "The original code for the Defifa hook to base subsequent instances on."
+    },
+    "HOOK_STORE()": {
+      "notice": "The 721 tiers hook store used by all games."
+    },
+    "REGISTRY()": {
+      "notice": "The Juicebox 721 tiers hook registry used to register deployed games."
+    },
+    "TOKEN_URI_RESOLVER()": {
+      "notice": "The default Defifa token URI resolver."
+    },
+    "commitmentsFulfilledFor(uint256)": {
+      "notice": "Whether commitments have been fulfilled for a game."
+    },
+    "currentGamePhaseOf(uint256)": {
+      "notice": "Returns the number of the game phase."
+    },
+    "currentGamePotOf(uint256,bool)": {
+      "notice": "The current pot the game is played with."
+    },
+    "fulfillCommitmentsOf(uint256)": {
+      "notice": "Fulfill split amounts between all splits for a game."
+    },
+    "fulfilledCommitmentsOf(uint256)": {
+      "notice": "The amount of commitments a game has fulfilled."
+    },
+    "launchGameWith((string,string,string,string,(string,uint16,address,bytes32,bool)[],uint104,(address,uint8,uint32),uint24,uint24,uint48,(uint32,uint64,address,bool,uint48,address)[],uint256,uint256,address,address,address,uint256,uint32,uint256))": {
+      "notice": "Launches a new game owned by this contract with a DefifaHook attached."
+    },
+    "nextPhaseNeedsQueueing(uint256)": {
+      "notice": "Whether or not the next phase still needs queuing."
+    },
+    "noContestTriggeredFor(uint256)": {
+      "notice": "Whether the no-contest refund ruleset has been triggered for a game."
+    },
+    "onERC721Received(address,address,uint256,bytes)": {
+      "notice": "Allows this contract to receive 721s."
+    },
+    "safetyParamsOf(uint256)": {
+      "notice": "The safety mechanism parameters of a game."
+    },
+    "timesFor(uint256)": {
+      "notice": "Get the countdown, minting, and refund deadline timestamps for a game."
+    },
+    "tokenOf(uint256)": {
+      "notice": "Get the ERC-20 token address associated with a given game."
+    },
+    "triggerNoContestFor(uint256)": {
+      "notice": "Triggers the no-contest refund mechanism for a game."
+    }
+  },
+  "contractName": "DefifaDeployer",
+  "sourceName": "node_modules/@ballkidz/defifa/src/DefifaDeployer.sol"
+}

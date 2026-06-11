@@ -1,0 +1,566 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "receive",
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "DEPLOYER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "addToBalanceOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "memo",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "defaultAddToBalance",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "defaultBeneficiary",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address payable"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "defaultMemo",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "defaultMetadata",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "defaultProjectId",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "initialize",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address payable"
+        },
+        {
+          "name": "memo",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "addToBalance",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "originalPayer",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "pay",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "minReturnedTokens",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "memo",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setDefaultValues",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address payable"
+        },
+        {
+          "name": "memo",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "addToBalance",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "supportsInterface",
+      "inputs": [
+        {
+          "name": "interfaceId",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "transferOwnership",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "OwnershipTransferred",
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SetDefaultValues",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "memo",
+          "type": "string",
+          "indexed": false,
+          "internalType": "string"
+        },
+        {
+          "name": "metadata",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        },
+        {
+          "name": "addToBalance",
+          "type": "bool",
+          "indexed": false,
+          "internalType": "bool"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JBProjectPayer_AlreadyInitialized",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBProjectPayer_NoMsgValueAllowed",
+      "inputs": [
+        {
+          "name": "msgValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBProjectPayer_TerminalNotFound",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableInvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableUnauthorizedAccount",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "addToBalanceOf(uint256,address,uint256,string,bytes)": {
+      "params": {
+        "amount": "The amount of tokens to pay. Ignored if the token is the native token.",
+        "memo": "A memo to pass along to the emitted event.",
+        "metadata": "Bytes to send along to the terminal.",
+        "projectId": "The ID of the project to pay.",
+        "token": "The token to pay with. Use `JBConstants.NATIVE_TOKEN` for the native token."
+      }
+    },
+    "constructor": {
+      "details": "This is the constructor of the implementation. The directory is shared between clones and is immutable.",
+      "params": {
+        "directory": "A contract storing directories of terminals and controllers for each project."
+      }
+    },
+    "initialize(uint256,address,string,bytes,bool,address)": {
+      "details": "Can only be called by the deployer, and only once per clone.",
+      "params": {
+        "addToBalance": "Whether to use `addToBalanceOf` instead of `pay`.",
+        "beneficiary": "The address that should receive tokens from payments.",
+        "memo": "The memo that should be forwarded with payments.",
+        "metadata": "The metadata that should be forwarded with payments.",
+        "owner": "The address that will own this contract.",
+        "projectId": "The ID of the project that should receive this contract's received payments."
+      }
+    },
+    "owner()": {
+      "details": "Returns the address of the current owner."
+    },
+    "pay(uint256,address,uint256,address,uint256,string,bytes)": {
+      "params": {
+        "amount": "The amount of tokens to pay. Ignored if the token is the native token.",
+        "beneficiary": "The address that will receive tokens from the payment.",
+        "memo": "A memo to pass along to the emitted event.",
+        "metadata": "Bytes to send along to the terminal.",
+        "minReturnedTokens": "The minimum number of project tokens expected in return.",
+        "projectId": "The ID of the project to pay.",
+        "token": "The token to pay with. Use `JBConstants.NATIVE_TOKEN` for the native token."
+      }
+    },
+    "renounceOwnership()": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "setDefaultValues(uint256,address,string,bytes,bool)": {
+      "details": "Only the owner can update default values.",
+      "params": {
+        "addToBalance": "Whether to use `addToBalanceOf` instead of `pay`.",
+        "beneficiary": "The address that should receive tokens from payments.",
+        "memo": "The memo that should be forwarded with payments.",
+        "metadata": "The metadata that should be forwarded with payments.",
+        "projectId": "The ID of the project that should receive this contract's received payments."
+      }
+    },
+    "supportsInterface(bytes4)": {
+      "details": "See {IERC165-supportsInterface}."
+    },
+    "transferOwnership(address)": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "userdoc": {
+    "DEPLOYER()": {
+      "notice": "The deployer that created this contract. Only it can call `initialize`."
+    },
+    "DIRECTORY()": {
+      "notice": "The directory of terminals and controllers for each project."
+    },
+    "addToBalanceOf(uint256,address,uint256,string,bytes)": {
+      "notice": "Add to the balance of the specified project."
+    },
+    "defaultAddToBalance()": {
+      "notice": "Whether received payments should call `addToBalanceOf` instead of `pay` on the project's terminal."
+    },
+    "defaultBeneficiary()": {
+      "notice": "The beneficiary that should receive tokens from payments made when this contract receives funds."
+    },
+    "defaultMemo()": {
+      "notice": "The memo that should be forwarded with payments."
+    },
+    "defaultMetadata()": {
+      "notice": "The metadata that should be forwarded with payments."
+    },
+    "defaultProjectId()": {
+      "notice": "The ID of the project that should receive this contract's received payments."
+    },
+    "initialize(uint256,address,string,bytes,bool,address)": {
+      "notice": "Initializes the clone with default values."
+    },
+    "originalPayer()": {
+      "notice": "The original payer of the current transaction."
+    },
+    "pay(uint256,address,uint256,address,uint256,string,bytes)": {
+      "notice": "Pay the specified project."
+    },
+    "setDefaultValues(uint256,address,string,bytes,bool)": {
+      "notice": "Updates the default values used when this contract receives direct payments."
+    }
+  },
+  "contractName": "JBProjectPayer",
+  "sourceName": "node_modules/@bananapus/project-payer-v6/src/JBProjectPayer.sol"
+}

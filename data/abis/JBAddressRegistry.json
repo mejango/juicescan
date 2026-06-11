@@ -1,0 +1,162 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "deployerOf",
+      "inputs": [
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "registerAddress",
+      "inputs": [
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "nonce",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "registerAddress",
+      "inputs": [
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "bytecode",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "AddressRegistered",
+      "inputs": [
+        {
+          "name": "addr",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "deployer",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JBAddressRegistry_AddressNotDeployed",
+      "inputs": [
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBAddressRegistry_AlreadyRegistered",
+      "inputs": [
+        {
+          "name": "addr",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBAddressRegistry_NonceTooLarge",
+      "inputs": [
+        {
+          "name": "nonce",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBAddressRegistry_ZeroDeployer",
+      "inputs": [
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "registerAddress(address,bytes32,bytes)": {
+      "details": "The `create2` salt is determined by the deployer's logic. The deployment bytecode can be retrieved offchain (from the deployment transaction) or onchain (with `abi.encodePacked(type(deployedContract).creationCode, abi.encode(constructorArguments))`).",
+      "params": {
+        "bytecode": "The full deployment bytecode, including constructor arguments.",
+        "deployer": "The address that deployed the contract.",
+        "salt": "The `create2` salt used during deployment."
+      }
+    },
+    "registerAddress(address,uint256)": {
+      "params": {
+        "deployer": "The address that deployed the contract.",
+        "nonce": "The deployer's transaction nonce at the time of deployment."
+      }
+    }
+  },
+  "userdoc": {
+    "deployerOf(address)": {
+      "notice": "Look up who deployed a registered contract. Returns `address(0)` if the contract hasn't been registered."
+    },
+    "registerAddress(address,bytes32,bytes)": {
+      "notice": "Register a contract that was deployed with `create2` (deterministic deployment). The registry computes the expected address from the deployer, salt, and bytecode, then verifies code exists there."
+    },
+    "registerAddress(address,uint256)": {
+      "notice": "Register a contract that was deployed with `create` (standard deployment). The registry computes the expected address from the deployer and nonce, then verifies code exists there."
+    }
+  },
+  "contractName": "JBAddressRegistry",
+  "sourceName": "node_modules/@bananapus/address-registry-v6/src/JBAddressRegistry.sol"
+}

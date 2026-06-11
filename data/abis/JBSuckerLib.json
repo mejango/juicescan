@@ -1,0 +1,232 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "buildSnapshotMessage",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "remoteToken",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "nonce",
+          "type": "uint64",
+          "internalType": "uint64"
+        },
+        {
+          "name": "root",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "messageVersion",
+          "type": "uint8",
+          "internalType": "uint8"
+        },
+        {
+          "name": "sourceTimestamp",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "message",
+          "type": "tuple",
+          "internalType": "struct JBMessageRoot",
+          "components": [
+            {
+              "name": "version",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "token",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "remoteRoot",
+              "type": "tuple",
+              "internalType": "struct JBInboxTreeRoot",
+              "components": [
+                {
+                  "name": "nonce",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "root",
+                  "type": "bytes32",
+                  "internalType": "bytes32"
+                }
+              ]
+            },
+            {
+              "name": "sourceTotalSupply",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "sourceContexts",
+              "type": "tuple[]",
+              "internalType": "struct JBSourceContext[]",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "bytes32",
+                  "internalType": "bytes32"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "surplus",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                },
+                {
+                  "name": "balance",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                }
+              ]
+            },
+            {
+              "name": "sourceTimestamp",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "computeBranchRoot",
+      "inputs": [
+        {
+          "name": "item",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "branch",
+          "type": "bytes32[32]",
+          "internalType": "bytes32[32]"
+        },
+        {
+          "name": "index",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "computeTreeRoot",
+      "inputs": [
+        {
+          "name": "branch",
+          "type": "bytes32[32]",
+          "internalType": "bytes32[32]"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "current",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "pure"
+    }
+  ],
+  "devdoc": {
+    "buildSnapshotMessage(IJBDirectory,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
+      "details": "Extracted from `JBSucker._buildSnapshotAndSend` to reduce child contract bytecode. Called via DELEGATECALL. The snapshot carries each context's surplus and balance in its own currency, without price-feed valuation.",
+      "params": {
+        "amount": "The amount of terminal tokens to bridge.",
+        "directory": "The JB directory to look up controllers and terminals.",
+        "messageVersion": "The message format version.",
+        "nonce": "The outbox nonce for this send.",
+        "projectId": "The project ID.",
+        "remoteToken": "The remote token bytes32 address.",
+        "root": "The merkle root of the outbox tree.",
+        "sourceTimestamp": "The monotonic source freshness key for this snapshot."
+      },
+      "returns": {
+        "message": "The constructed JBMessageRoot."
+      }
+    },
+    "computeBranchRoot(bytes32,bytes32[32],uint256)": {
+      "params": {
+        "branch": "The 32-element merkle proof branch.",
+        "index": "The leaf index.",
+        "item": "The leaf hash."
+      },
+      "returns": {
+        "_0": "The computed merkle root."
+      }
+    },
+    "computeTreeRoot(bytes32[32],uint256)": {
+      "params": {
+        "branch": "The 32-element branch array (caller copies from storage to memory).",
+        "count": "The number of leaves inserted into the tree."
+      },
+      "returns": {
+        "current": "The merkle root."
+      }
+    }
+  },
+  "userdoc": {
+    "buildSnapshotMessage(IJBDirectory,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
+      "notice": "Build the cross-chain snapshot message (total supply plus per-context surplus and balance)."
+    },
+    "computeBranchRoot(bytes32,bytes32[32],uint256)": {
+      "notice": "Compute a branch root from a leaf, branch, and index. Wraps MerkleLib.branchRoot so its ~170 lines of unrolled assembly live in the library's bytecode instead of each sucker's."
+    },
+    "computeTreeRoot(bytes32[32],uint256)": {
+      "notice": "Compute the merkle tree root from branch and count. Loop-based replacement for the unrolled MerkleLib.root() — saves ~3KB per sucker when called via DELEGATECALL instead of inlining."
+    }
+  },
+  "contractName": "JBSuckerLib",
+  "sourceName": "node_modules/@bananapus/suckers-v6/src/libraries/JBSuckerLib.sol"
+}

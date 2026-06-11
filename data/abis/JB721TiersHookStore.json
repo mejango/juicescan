@@ -1,0 +1,1957 @@
+{
+  "abi": [
+    {
+      "type": "function",
+      "name": "balanceOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "cashOutWeightOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "weight",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "cleanTiers",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "defaultReserveBeneficiaryOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "encodedIpfsUriOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "encodedTierIPFSUriOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "flagsOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct JB721TiersHookFlags",
+          "components": [
+            {
+              "name": "noNewTiersWithReserves",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "noNewTiersWithVotes",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "noNewTiersWithOwnerMinting",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "preventOverspending",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "issueTokensForSplits",
+              "type": "bool",
+              "internalType": "bool"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isTierRemoved",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "maxTierIdOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "numberOfBurnedFor",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "numberOfPendingReservesFor",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "numberOfReservesMintedFor",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "recordAddTiers",
+      "inputs": [
+        {
+          "name": "tiersToAdd",
+          "type": "tuple[]",
+          "internalType": "struct JB721TierConfig[]",
+          "components": [
+            {
+              "name": "price",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "initialSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "votingUnits",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "reserveFrequency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "reserveBeneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "encodedIpfsUri",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "category",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "discountPercent",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TierConfigFlags",
+              "components": [
+                {
+                  "name": "allowOwnerMint",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "useReserveBeneficiaryAsDefault",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "transfersPausable",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "useVotingUnits",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBeRemoved",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantIncreaseDiscountPercent",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBuyWithCredits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            },
+            {
+              "name": "splitPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "splits",
+              "type": "tuple[]",
+              "internalType": "struct JBSplit[]",
+              "components": [
+                {
+                  "name": "percent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "projectId",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "beneficiary",
+                  "type": "address",
+                  "internalType": "address payable"
+                },
+                {
+                  "name": "preferAddToBalance",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "lockedUntil",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "hook",
+                  "type": "address",
+                  "internalType": "contract IJBSplitHook"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tierIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordBurn",
+      "inputs": [
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordFlags",
+      "inputs": [
+        {
+          "name": "flags",
+          "type": "tuple",
+          "internalType": "struct JB721TiersHookFlags",
+          "components": [
+            {
+              "name": "noNewTiersWithReserves",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "noNewTiersWithVotes",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "noNewTiersWithOwnerMinting",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "preventOverspending",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "issueTokensForSplits",
+              "type": "bool",
+              "internalType": "bool"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordMint",
+      "inputs": [
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierIds",
+          "type": "uint16[]",
+          "internalType": "uint16[]"
+        },
+        {
+          "name": "isOwnerMint",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "leftoverAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "restrictedCost",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordMintReservesFor",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordRemoveTierIds",
+      "inputs": [
+        {
+          "name": "tierIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordSetDiscountPercentOf",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "discountPercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordSetEncodedIpfsUriOf",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "encodedIpfsUri",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordSetTokenUriResolver",
+      "inputs": [
+        {
+          "name": "resolver",
+          "type": "address",
+          "internalType": "contract IJB721TokenUriResolver"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "recordTransferForTier",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "reserveBeneficiaryOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierBalanceOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierIdOfToken",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "tierOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "id",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "includeResolvedUri",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct JB721Tier",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "price",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "remainingSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "initialSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "votingUnits",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "reserveFrequency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "reserveBeneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "encodedIpfsUri",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "category",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "discountPercent",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TierFlags",
+              "components": [
+                {
+                  "name": "allowOwnerMint",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "transfersPausable",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBeRemoved",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantIncreaseDiscountPercent",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBuyWithCredits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            },
+            {
+              "name": "splitPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "resolvedUri",
+              "type": "string",
+              "internalType": "string"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierOfTokenId",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "includeResolvedUri",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct JB721Tier",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "price",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "remainingSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "initialSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "votingUnits",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "reserveFrequency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "reserveBeneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "encodedIpfsUri",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "category",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "discountPercent",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TierFlags",
+              "components": [
+                {
+                  "name": "allowOwnerMint",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "transfersPausable",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBeRemoved",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantIncreaseDiscountPercent",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBuyWithCredits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            },
+            {
+              "name": "splitPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "resolvedUri",
+              "type": "string",
+              "internalType": "string"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierPricingOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "id",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "price",
+          "type": "uint104",
+          "internalType": "uint104"
+        },
+        {
+          "name": "splitPercent",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "discountPercent",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierTransferInfoOfTokenId",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "transfersPausable",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierVotingUnitsOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierVotingUnitsOfTokenId",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tiersOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "categories",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "includeResolvedUri",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "startingId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "size",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tiers",
+          "type": "tuple[]",
+          "internalType": "struct JB721Tier[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "price",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "remainingSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "initialSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "votingUnits",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "reserveFrequency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "reserveBeneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "encodedIpfsUri",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "category",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "discountPercent",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TierFlags",
+              "components": [
+                {
+                  "name": "allowOwnerMint",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "transfersPausable",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBeRemoved",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantIncreaseDiscountPercent",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBuyWithCredits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            },
+            {
+              "name": "splitPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "resolvedUri",
+              "type": "string",
+              "internalType": "string"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tokenUriResolverOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJB721TokenUriResolver"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalCashOutWeightOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalSupplyOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "supply",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "votingUnitsOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "units",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "event",
+      "name": "CleanTiers",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SetDefaultReserveBeneficiary",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newBeneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_CantMintManually",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_CantRemoveTier",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_DeadlockedReserve",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "initialSupply",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "reserveFrequency",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_DiscountPercentExceedsBounds",
+      "inputs": [
+        {
+          "name": "percent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_DiscountPercentIncreaseNotAllowed",
+      "inputs": [
+        {
+          "name": "percent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "storedPercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_InsufficientPendingReserves",
+      "inputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "numberOfPendingReserves",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_InsufficientSupplyRemaining",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_InvalidCategorySortOrder",
+      "inputs": [
+        {
+          "name": "tierCategory",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "previousTierCategory",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_InvalidQuantity",
+      "inputs": [
+        {
+          "name": "quantity",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_ManualMintingNotAllowed",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_MaxTiersExceeded",
+      "inputs": [
+        {
+          "name": "numberOfTiers",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_MissingReserveBeneficiary",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_PriceExceedsAmount",
+      "inputs": [
+        {
+          "name": "price",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "leftoverAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_ReserveFrequencyNotAllowed",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_SplitPercentExceedsBounds",
+      "inputs": [
+        {
+          "name": "percent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_TierRemoved",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_UnrecognizedTier",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_VotingUnitsNotAllowed",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721TiersHookStore_ZeroInitialSupply",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "cashOutWeightOf(address,uint256[])": {
+      "details": "Weight is based on each NFT's original tier price (not the discounted price paid). Discounts are transient purchase incentives and don't affect an NFT's share of the cash-out pool.",
+      "params": {
+        "hook": "The 721 hook contract the NFTs belong to.",
+        "tokenIds": "The token IDs to get the combined cash-out weight of."
+      },
+      "returns": {
+        "weight": "The combined cash-out weight."
+      }
+    },
+    "cleanTiers(address)": {
+      "details": "Call this after `recordRemoveTierIds` to keep tier iteration efficient. Without cleaning, removed tiers remain in the linked list (they just can't be minted from). The function also updates `_startingTierIdOfCategory` if the previous starting tier for a category was removed.",
+      "params": {
+        "hook": "The 721 contract to clean tiers for."
+      }
+    },
+    "encodedTierIPFSUriOf(address,uint256)": {
+      "params": {
+        "hook": "The 721 hook contract the NFT belongs to.",
+        "tokenId": "The token ID of the NFT."
+      },
+      "returns": {
+        "_0": "The encoded IPFS URI for the NFT's tier."
+      }
+    },
+    "flagsOf(address)": {
+      "params": {
+        "hook": "The 721 hook contract to get the flags of."
+      },
+      "returns": {
+        "_0": "The hook's flags."
+      }
+    },
+    "isTierRemoved(address,uint256)": {
+      "params": {
+        "hook": "The 721 hook contract the tier belongs to.",
+        "tierId": "The ID of the tier to check."
+      },
+      "returns": {
+        "_0": "`true` if the tier has been removed, `false` otherwise."
+      }
+    },
+    "numberOfPendingReservesFor(address,uint256)": {
+      "params": {
+        "hook": "The 721 hook contract to check.",
+        "tierId": "The ID of the tier to check."
+      },
+      "returns": {
+        "_0": "The number of pending reserved NFTs that can be minted."
+      }
+    },
+    "recordAddTiers((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[])": {
+      "details": "Only callable by hook contracts (msg.sender is treated as the hook address). WARNING: If any tier in `tiersToAdd` has `useReserveBeneficiaryAsDefault` set to `true`, its `reserveBeneficiary` will overwrite the hook's global `defaultReserveBeneficiaryOf`. This affects ALL existing tiers that do not have a tier-specific reserve beneficiary set via `_reserveBeneficiaryOf`. Callers should be aware of this side effect when using `adjustTiers` to add new tiers.",
+      "params": {
+        "tiersToAdd": "The tiers to add."
+      },
+      "returns": {
+        "tierIds": "The IDs of the tiers added."
+      }
+    },
+    "recordBurn(uint256[])": {
+      "details": "This function trusts `msg.sender` (the hook contract) to only call it after actually burning the tokens. It does not verify ownership or existence of the token IDs — the hook is responsible for performing those checks before calling this function.",
+      "params": {
+        "tokenIds": "The token IDs of the NFTs to burn."
+      }
+    },
+    "recordFlags((bool,bool,bool,bool,bool))": {
+      "details": "Only callable by hook contracts. Overwrites any previously stored flags for the caller.",
+      "params": {
+        "flags": "The flags to set."
+      }
+    },
+    "recordMint(uint256,uint16[],bool)": {
+      "details": "Reverts if the tier is removed, unrecognized, sold out, or its price exceeds the remaining amount. For owner mints, the tier must have `allowOwnerMint` set.",
+      "params": {
+        "amount": "The amount to spend on NFTs. The total price must not exceed this amount.",
+        "isOwnerMint": "A flag indicating whether the 721 contract's owner is directly calling this function.",
+        "tierIds": "The IDs of the tiers to mint from."
+      },
+      "returns": {
+        "leftoverAmount": "The `amount` remaining after minting.",
+        "restrictedCost": "Total cost of tiers with `cantBuyWithCredits` set. The caller can use this to enforce credit restrictions.",
+        "tokenIds": "The token IDs of the NFTs which were minted."
+      }
+    },
+    "recordMintReservesFor(uint256,uint256)": {
+      "params": {
+        "count": "The number of reserve NFTs to mint.",
+        "tierId": "The ID of the tier to mint reserves from."
+      },
+      "returns": {
+        "tokenIds": "The token IDs of the reserve NFTs which were minted."
+      }
+    },
+    "recordRemoveTierIds(uint256[])": {
+      "details": "Removing a tier only marks it in a bitmap — it does not update the sorted tier linked list. Call `cleanTiers()` after removing tiers to update the sorting sequence and prevent stale tier iteration. Reverts if the tier has `cantBeRemoved` set, or if the tier ID is 0 or exceeds `maxTierIdOf`.",
+      "params": {
+        "tierIds": "The IDs of the tiers to remove."
+      }
+    },
+    "recordSetDiscountPercentOf(uint256,uint256)": {
+      "params": {
+        "discountPercent": "The new discount percent to apply.",
+        "tierId": "The ID of the tier to record a discount for."
+      }
+    },
+    "recordSetEncodedIpfsUriOf(uint256,bytes32)": {
+      "params": {
+        "encodedIpfsUri": "The encoded IPFS URI to set for the tier.",
+        "tierId": "The ID of the tier to set the encoded IPFS URI of."
+      }
+    },
+    "recordSetTokenUriResolver(address)": {
+      "params": {
+        "resolver": "The resolver to set."
+      }
+    },
+    "recordTransferForTier(uint256,address,address)": {
+      "params": {
+        "from": "The address to transfer the 721 from.",
+        "tierId": "The ID of the tier that the 721 to transfer belongs to.",
+        "to": "The address to transfer the 721 to."
+      }
+    },
+    "reserveBeneficiaryOf(address,uint256)": {
+      "params": {
+        "hook": "The 721 hook contract.",
+        "tierId": "The ID of the tier."
+      },
+      "returns": {
+        "_0": "The reserve beneficiary address for the tier."
+      }
+    },
+    "tierIdOfToken(uint256)": {
+      "params": {
+        "tokenId": "The token ID of the NFT."
+      },
+      "returns": {
+        "_0": "The tier ID."
+      }
+    },
+    "tierOf(address,uint256,bool)": {
+      "params": {
+        "hook": "The 721 hook contract to get the tier from.",
+        "id": "The ID of the tier to get.",
+        "includeResolvedUri": "If `true` and the hook has a `tokenUriResolver`, resolves the URI and includes it."
+      },
+      "returns": {
+        "_0": "The tier."
+      }
+    },
+    "tierOfTokenId(address,uint256,bool)": {
+      "params": {
+        "hook": "The 721 hook contract the NFT belongs to.",
+        "includeResolvedUri": "If `true` and the hook has a `tokenUriResolver`, resolves the URI and includes it.",
+        "tokenId": "The token ID of the NFT."
+      },
+      "returns": {
+        "_0": "The tier that the NFT belongs to."
+      }
+    },
+    "tierPricingOf(address,uint256)": {
+      "params": {
+        "hook": "The 721 contract that the tier belongs to.",
+        "id": "The tier ID."
+      },
+      "returns": {
+        "discountPercent": "The discount percent.",
+        "price": "The tier price.",
+        "splitPercent": "The split percent."
+      }
+    },
+    "tierTransferInfoOfTokenId(address,uint256)": {
+      "params": {
+        "hook": "The 721 hook address.",
+        "tokenId": "The token ID."
+      },
+      "returns": {
+        "tierId": "The tier ID.",
+        "transfersPausable": "Whether transfers are paused for this tier."
+      }
+    },
+    "tierVotingUnitsOf(address,address,uint256)": {
+      "params": {
+        "account": "The address to get voting units for.",
+        "hook": "The 721 hook contract that the tier belongs to.",
+        "tierId": "The ID of the tier."
+      },
+      "returns": {
+        "_0": "The address's total voting units within the tier."
+      }
+    },
+    "tierVotingUnitsOfTokenId(address,uint256)": {
+      "details": "Mirrors the `votingUnits` field computed in `_getTierFrom`: a tier with custom voting units configured (the `useVotingUnits` flag, bit 2 of `packedBools`) contributes its stored voting units per NFT, otherwise it contributes its price per NFT. Multiply by an account's balance in the tier to get its voting power there.",
+      "params": {
+        "hook": "The 721 hook contract that the token belongs to.",
+        "tokenId": "The token ID."
+      },
+      "returns": {
+        "_0": "The per-unit voting value for the token's tier."
+      }
+    },
+    "tiersOf(address,uint256[],bool,uint256,uint256)": {
+      "params": {
+        "categories": "Filter to specific categories. Pass an empty array to include all categories.",
+        "hook": "The 721 hook contract to get tiers from.",
+        "includeResolvedUri": "If `true` and the hook has a `tokenUriResolver`, resolves URIs and includes them.",
+        "size": "The maximum number of tiers to return.",
+        "startingId": "Start from this tier ID (for pagination). Pass 0 to start from the beginning."
+      },
+      "returns": {
+        "tiers": "An array of active tiers."
+      }
+    },
+    "totalSupplyOf(address)": {
+      "params": {
+        "hook": "The 721 hook contract to get the total supply of."
+      },
+      "returns": {
+        "supply": "The total number of outstanding NFTs."
+      }
+    },
+    "votingUnitsOf(address,address)": {
+      "details": "Each tier contributes: `balance * (customVotingUnits || tierPrice)`.",
+      "params": {
+        "account": "The address to get the voting unit total of.",
+        "hook": "The 721 hook contract to get voting units within."
+      },
+      "returns": {
+        "units": "The total voting units the address holds across all tiers."
+      }
+    }
+  },
+  "userdoc": {
+    "balanceOf(address,address)": {
+      "notice": "How many NFTs an address owns from a hook, totaled across all tiers, as a running aggregate so this is O(1) instead of O(maxTierId)."
+    },
+    "cashOutWeightOf(address,uint256[])": {
+      "notice": "The combined cash-out weight of specific NFTs. Divide by `totalCashOutWeightOf` to get the fraction of the project's surplus that cashing out these NFTs would reclaim."
+    },
+    "cleanTiers(address)": {
+      "notice": "Walk through the tier sorting sequence and skip over any tiers that have been removed. This compacts the linked list so that `tiersOf` iteration no longer visits removed tiers. Anyone can call this — it's a maintenance operation with no access control."
+    },
+    "defaultReserveBeneficiaryOf(address)": {
+      "notice": "Returns the default reserve beneficiary for the provided 721 contract."
+    },
+    "encodedIpfsUriOf(address,uint256)": {
+      "notice": "Returns the encoded IPFS URI for the provided tier ID of the provided 721 contract."
+    },
+    "encodedTierIPFSUriOf(address,uint256)": {
+      "notice": "Get the encoded IPFS URI for the tier that a specific NFT belongs to. Used to resolve the NFT's metadata when no custom `tokenUriResolver` is set."
+    },
+    "flagsOf(address)": {
+      "notice": "Get the behavioral flags for a hook — such as whether transfers are pausable, whether NFT holders can cash out, and whether token issuance occurs for split-routed payments."
+    },
+    "isTierRemoved(address,uint256)": {
+      "notice": "Check whether a tier has been removed. Removed tiers can no longer be minted from, but existing NFTs from that tier remain valid and can still be cashed out."
+    },
+    "maxTierIdOf(address)": {
+      "notice": "Returns the largest tier ID currently used on the provided 721 contract."
+    },
+    "numberOfBurnedFor(address,uint256)": {
+      "notice": "Returns the number of NFTs which have been burned from the provided tier ID of the provided 721 contract."
+    },
+    "numberOfPendingReservesFor(address,uint256)": {
+      "notice": "How many reserved NFTs are waiting to be minted for a tier. Reserves accumulate automatically as non-reserve NFTs are minted (based on the tier's `reserveFrequency`). Anyone can mint them via `mintPendingReservesFor`."
+    },
+    "numberOfReservesMintedFor(address,uint256)": {
+      "notice": "Returns the number of reserve NFTs which have been minted from the provided tier ID of the provided 721 contract."
+    },
+    "recordAddTiers((uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[])": {
+      "notice": "Validate and store new tiers for the calling hook. Each tier is assigned a sequential ID, inserted into the category-sorted linked list, and has its reserve beneficiary, voting units, IPFS URI, and flags persisted. Tiers must be provided sorted by category (ascending)."
+    },
+    "recordBurn(uint256[])": {
+      "notice": "Increment the burn counter for each token's tier. Does NOT affect `remainingSupply` — burned NFTs cannot be re-minted. The burn count is used by `totalSupplyOf` to compute the circulating supply."
+    },
+    "recordFlags((bool,bool,bool,bool,bool))": {
+      "notice": "Store the behavioral flags for the calling hook. These flags govern whether new tiers can have voting units, reserves, or owner minting enabled."
+    },
+    "recordMint(uint256,uint16[],bool)": {
+      "notice": "Record paid mints: deduct each tier's (discounted) price from `amount`, decrement supply, generate token IDs, and enforce that enough supply remains to satisfy pending reserves. Returns the leftover amount and the total cost of credit-restricted tiers so the hook can enforce pay-credit rules."
+    },
+    "recordMintReservesFor(uint256,uint256)": {
+      "notice": "Generate token IDs for reserve NFT mints and decrement the tier's remaining supply. Reserves accumulate as non-reserve NFTs are minted (one reserve per `reserveFrequency` mints). Reverts if `count` exceeds the number of pending reserves."
+    },
+    "recordRemoveTierIds(uint256[])": {
+      "notice": "Mark one or more tiers as removed. Removed tiers cannot be minted from, but existing NFTs from those tiers remain valid (can still be cashed out and transferred). Pending reserves can still be minted."
+    },
+    "recordSetDiscountPercentOf(uint256,uint256)": {
+      "notice": "Update the discount percentage for a tier. Discounts reduce the price payers pay without affecting the NFT's cash-out weight (which always uses the original price). Reverts if the tier is removed, if the percent exceeds the denominator, or if the tier has `cantIncreaseDiscountPercent` set and the new value is higher."
+    },
+    "recordSetEncodedIpfsUriOf(uint256,bytes32)": {
+      "notice": "Record a new encoded IPFS URI for a tier."
+    },
+    "recordSetTokenUriResolver(address)": {
+      "notice": "Record a newly set token URI resolver."
+    },
+    "recordTransferForTier(uint256,address,address)": {
+      "notice": "Update tier balance accounting when an NFT is transferred. Decrements the sender's balance and increments the receiver's balance for the given tier. Handles mints (from == address(0)) and burns (to == address(0)) as one-sided updates."
+    },
+    "reserveBeneficiaryOf(address,uint256)": {
+      "notice": "The address that receives reserved NFTs for a tier. Falls back to the hook's default reserve beneficiary if no tier-specific beneficiary is set."
+    },
+    "tierBalanceOf(address,address,uint256)": {
+      "notice": "Returns the number of NFTs which the provided owner address owns from the provided 721 contract and tier ID."
+    },
+    "tierIdOfToken(uint256)": {
+      "notice": "Derive which tier an NFT belongs to from its token ID. Token IDs encode the tier: `tokenId / 1e9` gives the tier ID."
+    },
+    "tierOf(address,uint256,bool)": {
+      "notice": "Get the full details of a specific tier by its ID — price, supply, reserve info, metadata, etc."
+    },
+    "tierOfTokenId(address,uint256,bool)": {
+      "notice": "Look up which tier an NFT belongs to and return the full tier details (price, supply, metadata, etc.)."
+    },
+    "tierPricingOf(address,uint256)": {
+      "notice": "Get only the pricing fields for a tier, avoiding full struct construction."
+    },
+    "tierTransferInfoOfTokenId(address,uint256)": {
+      "notice": "Get only the tier ID and transfersPausable flag for a token, avoiding full struct construction."
+    },
+    "tierVotingUnitsOf(address,address,uint256)": {
+      "notice": "Get an address's voting power from a specific tier. Each NFT in the tier contributes either the tier's custom `votingUnits` (if configured) or the tier's price. Multiply by the holder's balance in the tier."
+    },
+    "tierVotingUnitsOfTokenId(address,uint256)": {
+      "notice": "Get only the per-unit voting value for a token's tier, avoiding full struct construction."
+    },
+    "tiersOf(address,uint256[],bool,uint256,uint256)": {
+      "notice": "Get all active (non-removed) tiers for a hook, with optional filtering by category and pagination. Tiers are returned sorted by category."
+    },
+    "tokenUriResolverOf(address)": {
+      "notice": "Returns the custom token URI resolver which overrides the default token URI resolver for the provided 721 contract."
+    },
+    "totalCashOutWeightOf(address)": {
+      "notice": "The combined cash-out weight of all hook NFTs, tracked so cash-out pricing is O(1)."
+    },
+    "totalSupplyOf(address)": {
+      "notice": "The total number of NFTs currently in circulation for a hook (minted minus burned, across all tiers)."
+    },
+    "votingUnitsOf(address,address)": {
+      "notice": "Get an address's total voting power across all tiers of a hook. Sums up the voting units from every tier where the address holds NFTs."
+    }
+  },
+  "contractName": "JB721TiersHookStore",
+  "sourceName": "node_modules/@bananapus/721-hook-v6/src/JB721TiersHookStore.sol"
+}
