@@ -6,7 +6,7 @@ import { registry, contracts, meta, natspec, categories, commonActions, getFunct
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl, getAccount, connect, onWalletChange, truncAddr } from './component-base.js';
+import { buildEmbedUrl, getAccount, connect, onWalletChange, eagerConnect, truncAddr } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute } from './discover.js';
 import { renderDataTab } from './data-tab.js';
@@ -105,6 +105,8 @@ function initTabs() {
     onWalletChange(updateConnect);
     connectBtn.addEventListener('click', function() { if (!getAccount()) connect().catch(function() {}); });
   }
+  // Restore a prior wallet connection silently (no prompt) so a refresh keeps the user connected.
+  eagerConnect();
 }
 
 // Parse the hash and apply it: pick the nav tab, and (for discover) open the project route.

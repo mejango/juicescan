@@ -9,6 +9,12 @@ let walletClient = null;
 let publicClient = null;
 let account = null;
 const listeners = [];
+const WALLET_FLAG = 'jb-wallet-connected'; // remember a prior connection so we can silently restore it
+
+function setupClients(chain) {
+  walletClient = createWalletClient({ chain, transport: custom(window.ethereum) });
+  publicClient = createPublicClient({ chain, transport: custom(window.ethereum) });
+}
 
 export function getAccount() {
   return account;
@@ -44,18 +50,11 @@ export async function connect() {
 
   const chain = CHAINS[getCurrentChainId()] || CHAINS[11155111];
 
-  walletClient = createWalletClient({
-    chain,
-    transport: custom(window.ethereum),
-  });
-
-  publicClient = createPublicClient({
-    chain,
-    transport: custom(window.ethereum),
-  });
+  setupClients(chain);
 
   const [addr] = await walletClient.requestAddresses();
   account = addr;
+  try { localStorage.setItem(WALLET_FLAG, '1'); } catch (_) {}
   notify();
 }
 
@@ -63,7 +62,28 @@ export async function disconnect() {
   walletClient = null;
   publicClient = null;
   account = null;
+  try { localStorage.removeItem(WALLET_FLAG); } catch (_) {}
   notify();
+}
+
+// Silently restore a prior connection on page load — `eth_accounts` returns already-authorized
+// accounts without prompting, so the user stays "connected" across refreshes.
+export async function eagerConnect() {
+  if (!window.ethereum) return;
+  var wasConnected = false;
+  try { wasConnected = localStorage.getItem(WALLET_FLAG) === '1'; } catch (_) {}
+  if (!wasConnected) return;
+  try {
+    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+    if (accounts && accounts.length) {
+      const chain = CHAINS[getCurrentChainId()] || CHAINS[11155111];
+      setupClients(chain);
+      account = accounts[0];
+      notify();
+    } else {
+      try { localStorage.removeItem(WALLET_FLAG); } catch (_) {}
+    }
+  } catch (_) {}
 }
 
 export async function switchChain(chainId) {
@@ -109,6 +129,13 @@ export async function switchChain(chainId) {
 if (typeof window !== 'undefined' && window.ethereum) {
   window.ethereum.on('accountsChanged', (accounts) => {
     account = accounts[0] || null;
+    if (account) {
+      setupClients(CHAINS[getCurrentChainId()] || CHAINS[11155111]);
+      try { localStorage.setItem(WALLET_FLAG, '1'); } catch (_) {}
+    } else {
+      walletClient = null; publicClient = null;
+      try { localStorage.removeItem(WALLET_FLAG); } catch (_) {}
+    }
     notify();
   });
   window.ethereum.on('chainChanged', () => {

@@ -3419,8 +3419,8 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     }
   }
   var nowLine = (now > t0 && now < t1)
-    ? '<line x1="' + X(now).toFixed(1) + '" y1="' + padT + '" x2="' + X(now).toFixed(1) + '" y2="' + (H - padB) + '" stroke="#1a8a8a" stroke-width="1.5" stroke-dasharray="4 3"/>'
-      + '<text x="' + (X(now) + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="#1a8a8a">Today</text>'
+    ? '<line x1="' + X(now).toFixed(1) + '" y1="' + padT + '" x2="' + X(now).toFixed(1) + '" y2="' + (H - padB) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="4 3"/>'
+      + '<text x="' + (X(now) + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="#c43550">Today</text>'
     : '';
   // AMM gets a Bendystraw historical trade line (swapEvents) when indexed; otherwise the
   // current pool price is a flat reference line.
@@ -3741,65 +3741,99 @@ function renderAutoIssuance(project, stages) {
   return card;
 }
 
-// Owners tab (revnets): All (holder distribution), Splits (reserved splits + distribute),
-// Auto issue (full cross-chain auto-issuance table). Replaces the old Tokens tab for revnets.
+// Wrap a content node in a titled detail-card (null title → the content supplies its own heading).
+function ownersCard(title, node) {
+  var card = el('div', 'detail-card');
+  if (title) { var label = el('div', 'detail-card-title'); label.textContent = title; card.appendChild(label); }
+  card.appendChild(node);
+  return card;
+}
+
+// Owners tab (revnets) — split into lazy SUBTABS so each pane's reads only fire when first opened
+// (the page no longer fetches every holder/settlement/splits/loan source at once on tab open).
 function renderOwnersSection(project) {
-  var section = el('div', 'detail-section');
+  var section = el('div', 'detail-section owners-section');
   var stages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
 
-  // Reserved-token distribution history (Bendystraw): each time pending reserves were sent to splits.
-  var reservedDistBox = el('div', 'detail-card-body');
-  appendBendystrawHistory(reservedDistBox,
-    function () { return fetchProjectEventRows(BENDYSTRAW_RESERVED_DIST_QUERY, 'sendReservedTokensToSplitsEvents', project, 25); },
-    function (r) {
-      return historyRow(Number(r.chainId), r.txHash, Number(r.timestamp),
-        formatCompactTokenAmount(toBigInt(r.tokenCount)) + ' ' + (project.tokenSymbol || 'tokens'));
+  var subBuilders = {
+    'All': function () {
+      var w = el('div', 'owners-subgroup');
+      w.appendChild(ownersCard('You', renderYouCard(project)));
+      w.appendChild(ownersCard('All', renderOwnersAll(project)));
+      return w;
     },
-    'No reserved-token distributions indexed yet.');
-
-  // Active loans (Bendystraw RevLoans): each loan's borrow + locked collateral.
-  var loansBox = el('div', 'detail-card-body');
-  appendBendystrawHistory(loansBox,
-    function () { return fetchProjectEventRows(BENDYSTRAW_LOANS_QUERY, 'loans', project, 25); },
-    function (r) {
-      var row = el('div', 'rf-perchain-row');
-      var left = el('span', 'rf-perchain-name');
-      left.appendChild(chainLogo(Number(r.chainId), chainById(Number(r.chainId)).name));
-      var t = el('span'); t.textContent = ' #' + r.id + ' · ' + timeAgo(Number(r.createdAt)); left.appendChild(t);
-      row.appendChild(left);
-      var val = el('span', 'rf-perchain-val');
-      val.textContent = formatEth(toBigInt(r.borrowAmount)) + ' / '
-        + formatCompactTokenAmount(toBigInt(r.collateral)) + ' ' + (project.tokenSymbol || 'tokens');
-      row.appendChild(val);
-      return row;
+    'Market': function () {
+      return ownersCard(null, renderOwnersAmm(project)); // AMM supplies its own "AMM <addr>" heading
     },
-    'No active loans indexed.');
+    'Settlement': function () {
+      var w = el('div');
+      w.appendChild(renderAcrossChainsBody(project));
+      w.appendChild(renderBridgesSubsection(project));
+      w.appendChild(renderBridgeTransactions(project));
+      return ownersCard('Settlement', w);
+    },
+    'Splits': function () {
+      var reservedDistBox = el('div', 'detail-card-body');
+      appendBendystrawHistory(reservedDistBox,
+        function () { return fetchProjectEventRows(BENDYSTRAW_RESERVED_DIST_QUERY, 'sendReservedTokensToSplitsEvents', project, 25); },
+        function (r) {
+          return historyRow(Number(r.chainId), r.txHash, Number(r.timestamp),
+            formatCompactTokenAmount(toBigInt(r.tokenCount)) + ' ' + (project.tokenSymbol || 'tokens'));
+        },
+        'No reserved-token distributions indexed yet.');
+      var w = el('div');
+      w.appendChild(renderOwnersSplits(project));
+      w.appendChild(detailSubSection('Latest distributions', reservedDistBox));
+      return ownersCard('Splits', w);
+    },
+    'Auto Issuance': function () {
+      return ownersCard('Auto issue', renderAutoIssuance(project, stages));
+    },
+    'Loans': function () {
+      var loansBox = el('div', 'detail-card-body');
+      appendBendystrawHistory(loansBox,
+        function () { return fetchProjectEventRows(BENDYSTRAW_LOANS_QUERY, 'loans', project, 25); },
+        function (r) {
+          var row = el('div', 'rf-perchain-row');
+          var left = el('span', 'rf-perchain-name');
+          left.appendChild(chainLogo(Number(r.chainId), chainById(Number(r.chainId)).name));
+          var t = el('span'); t.textContent = ' #' + r.id + ' · ' + timeAgo(Number(r.createdAt)); left.appendChild(t);
+          row.appendChild(left);
+          var val = el('span', 'rf-perchain-val');
+          val.textContent = formatEth(toBigInt(r.borrowAmount)) + ' / '
+            + formatCompactTokenAmount(toBigInt(r.collateral)) + ' ' + (project.tokenSymbol || 'tokens');
+          row.appendChild(val);
+          return row;
+        },
+        'No active loans indexed.');
+      return ownersCard('Active loans', loansBox);
+    },
+  };
+  var order = ['All', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
 
-  // "Settlement" gets Movement as a bottom activity-feed subsection.
-  var acrossWrap = el('div');
-  acrossWrap.appendChild(renderAcrossChainsBody(project));
-  acrossWrap.appendChild(renderBridgesSubsection(project));
-  acrossWrap.appendChild(renderBridgeTransactions(project));
-
-  // "Splits" gets the Reserved-distribution history as a bottom activity-feed subsection.
-  var splitsWrap = el('div');
-  splitsWrap.appendChild(renderOwnersSplits(project));
-  splitsWrap.appendChild(detailSubSection('Latest distributions', reservedDistBox));
-
-  [
-    ['You', renderYouCard(project)],
-    ['All', renderOwnersAll(project)],
-    [null, renderOwnersAmm(project)], // null title: the AMM card supplies its own "AMM <addr>" heading
-    ['Settlement', acrossWrap],
-    ['Splits', splitsWrap],
-    ['Auto issue', renderAutoIssuance(project, stages)],
-    ['Active loans', loansBox],
-  ].forEach(function (s) {
-    var card = el('div', 'detail-card');
-    if (s[0]) { var label = el('div', 'detail-card-title'); label.textContent = s[0]; card.appendChild(label); }
-    card.appendChild(s[1]);
-    section.appendChild(card);
+  var subRow = el('div', 'owners-subtabs');
+  var content = el('div', 'owners-subcontent');
+  var built = {};
+  function show(name) {
+    if (!subBuilders[name]) return;
+    if (!built[name]) built[name] = subBuilders[name](); // build (and fetch) only on first open
+    content.innerHTML = '';
+    content.appendChild(built[name]);
+    var btns = subRow.querySelectorAll('.owners-subtab');
+    for (var b = 0; b < btns.length; b++) btns[b].classList.toggle('active', btns[b].textContent === name);
+  }
+  order.forEach(function (name) {
+    var btn = document.createElement('button');
+    btn.className = 'owners-subtab';
+    btn.textContent = name;
+    btn.addEventListener('click', function () { show(name); });
+    subRow.appendChild(btn);
   });
+  section.appendChild(subRow);
+  section.appendChild(content);
+  // Inner content (e.g. the owners table's "Market" row) can request a subtab switch via this event.
+  section.addEventListener('jb:goto-subtab', function (e) { if (e.detail) show(e.detail); });
+  show('All');
   return section;
 }
 
@@ -4699,7 +4733,7 @@ function renderOwnersPieChart(participants, totalBalance, totalSupply, sym) {
   var panel = el('div', 'owners-chart-panel');
   var svgNS = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(svgNS, 'svg');
-  svg.setAttribute('viewBox', '0 0 240 240');
+  svg.setAttribute('viewBox', '0 0 240 214'); // crop bottom whitespace (donut ends at y≈212) → tighter to the total
   svg.setAttribute('class', 'owners-pie-svg');
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', sym + ' owner distribution');
@@ -4792,10 +4826,16 @@ function renderOwnersTable(participants, totalSupply, sym) {
     var acct = el('span', 'owners-account');
     if (isAmmAddress(row.address)) {
       // The AMM row reads "Market [AMM]" (matching the Market section); the address lives on hover.
+      // Clicking it jumps to the Market subtab (caught by renderOwnersSection).
       acct.appendChild(document.createTextNode('Market '));
       var ammTag = el('span', 'owners-amm-tag'); ammTag.textContent = 'AMM';
       ammTag.title = row.address + ' — Uniswap V4 pool holding pooled LP liquidity';
       acct.appendChild(ammTag);
+      tr.classList.add('owners-row-link');
+      tr.title = 'Open the Market';
+      tr.addEventListener('click', function () {
+        tr.dispatchEvent(new CustomEvent('jb:goto-subtab', { bubbles: true, detail: 'Market' }));
+      });
     } else {
       acct.appendChild(addressNode(row.address));
     }
@@ -5178,13 +5218,16 @@ function renderYouCard(project) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'you-card');
   var body = el('div', 'you-body');
+  var actions = opsActionsRow(project); // shown only while connected
   wrap.appendChild(body);
-  wrap.appendChild(opsActionsRow(project));
+  wrap.appendChild(actions);
 
   function load() {
     var acct = getAccount && getAccount();
     body.innerHTML = '';
     if (!acct) {
+      // Disconnected: show ONLY the connect prompt + button (hide the action buttons).
+      actions.style.display = 'none';
       var m = el('div', 'detail-card-body you-empty');
       m.textContent = 'Connect a wallet to see your ' + sym + ' across chains, its cash-out value, and your max loan.';
       var c = document.createElement('button'); c.className = 'ops-action-btn you-connect'; c.textContent = 'Connect wallet';
@@ -5192,6 +5235,7 @@ function renderYouCard(project) {
       body.appendChild(m); body.appendChild(c);
       return;
     }
+    actions.style.display = ''; // connected: reveal the action buttons
     var status = el('div', 'detail-card-body'); status.textContent = 'Reading your position across chains…'; body.appendChild(status);
     Promise.all([fetchYouPosition(project), readCashOutDelay(project)]).then(function (out) {
       if (!body.isConnected) return;

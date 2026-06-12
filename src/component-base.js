@@ -1,13 +1,13 @@
 // src/component-base.js
 // Shared building blocks for all component widgets
 
-import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
+import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain, eagerConnect } from './wallet.js';
 import { CHAINS, getManifestChains, getChainTokens } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
 import { getAddress } from './abi-registry.js';
 
-export { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain };
+export { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain, eagerConnect };
 export { CHAINS, getManifestChains, getChainTokens };
 export { parseAmount, formatAmount };
 export { renderError };
