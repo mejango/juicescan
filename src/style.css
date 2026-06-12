@@ -59,7 +59,9 @@ body {
   line-height: 1.5;
 }
 
-a { color: var(--c-teal); }
+/* Links: inherit the text colour, go teal only on hover. */
+a { color: inherit; }
+a:hover { color: var(--c-teal); }
 
 /* Palette display */
 .palette {
@@ -2803,7 +2805,7 @@ input[type="checkbox"].field {
   font-size: 20px;
   line-height: 1;
   font-family: inherit;
-  color: var(--c-teal);
+  color: var(--c-black);
   background: none;
   border: none;
   padding: 0;
@@ -2812,7 +2814,7 @@ input[type="checkbox"].field {
 }
 
 .detail-back:hover {
-  opacity: 0.7;
+  color: var(--c-teal);
 }
 
 .project-detail-header {
@@ -2875,11 +2877,19 @@ input[type="checkbox"].field {
   color: var(--muted-2);
   margin-top: 3px;
 }
-.detail-head-meta a { color: var(--c-teal); }
+.detail-head-meta a { color: inherit; }
+.detail-head-meta a:hover { color: var(--c-teal); }
 .detail-head-lbl { color: var(--muted-2); }
 .detail-head-val { color: var(--text); font-weight: bold; }
 .detail-head-sep { color: var(--c-pink-light); margin: 0 7px; }
-.detail-about-desc { white-space: pre-wrap; margin-bottom: 12px; }
+.detail-about-desc { margin-bottom: 12px; }
+.detail-about-para { margin: 0 0 10px; }
+.detail-about-para:last-child { margin-bottom: 0; }
+.detail-about-list { margin: 0 0 10px; padding-left: 22px; }
+.detail-about-list:last-child { margin-bottom: 0; }
+.detail-about-li { margin: 0 0 5px; }
+.detail-about-li:last-child { margin-bottom: 0; }
+.detail-address-link { text-decoration: underline; }
 
 /* "Use your <SYM>" actions + modals (Ops tab) */
 .ops-actions { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -2892,9 +2902,12 @@ input[type="checkbox"].field {
   font-family: inherit; font-size: 13px; font-weight: bold; padding: 8px 16px; cursor: pointer;
   border: 2px solid var(--c-teal); background: transparent; color: var(--c-black);
 }
-.ops-action-btn:hover { color: var(--c-teal); }
+.ops-action-btn:hover { text-shadow: 0 0 0.6px currentColor; }
 .ops-action-btn:disabled { opacity: 0.5; cursor: default; }
-.ops-action-btn:disabled:hover { color: var(--c-black); }
+.ops-action-btn:disabled:hover { text-shadow: none; }
+/* Wallet-action buttons (Cash out / Get a loan / …) are primary, like Pay: green fill, light fade on hover. */
+.ops-actions .ops-action-btn { border-color: var(--write); background: var(--c-green-light); color: var(--c-black); }
+.ops-actions .ops-action-btn:hover { opacity: 0.9; text-shadow: none; }
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(44, 32, 24, 0.45); z-index: 100;
@@ -2951,6 +2964,29 @@ input[type="checkbox"].field {
 .ops-move-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .ops-move-grid .ops-select { max-width: 100%; width: 100%; border-right: 2px solid var(--write); }
 .modal-info { margin: 12px 0 0; padding-left: 18px; font-size: 11px; color: var(--muted-2); line-height: 1.6; }
+
+/* ── Loan modal: variable fee structure + summary ── */
+.loan-section { margin-top: 18px; border-top: 1px solid var(--c-orange-light); padding-top: 12px; }
+.loan-section-head { display: flex; align-items: center; justify-content: space-between; cursor: pointer; font-size: 12px; font-weight: bold; color: var(--text); }
+.loan-caret { color: var(--muted-2); font-size: 9px; }
+.loan-section-body { margin-top: 12px; }
+.loan-prepaid-label { font-size: 12px; font-weight: bold; color: var(--text); margin-bottom: 8px; }
+.loan-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; background: var(--c-black-light); outline: none; }
+.loan-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--c-pink); cursor: pointer; border: none; }
+.loan-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--c-pink); cursor: pointer; border: none; }
+.loan-slider-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted-2); margin-top: 6px; }
+.loan-fee-chart { margin-top: 12px; position: relative; }
+.loan-fee-svg { display: block; width: 100%; height: auto; }
+.loan-fee-cursor { position: absolute; width: 1px; background: rgba(196, 53, 80, 0.5); pointer-events: none; }
+.loan-fee-dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--c-pink); transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-bg); pointer-events: none; }
+.loan-fee-tip { position: absolute; background: var(--c-black); color: #fbe9e2; font-size: 10px; line-height: 1.45; padding: 5px 8px; border-radius: 3px; pointer-events: none; max-width: 190px; z-index: 3; }
+.loan-fee-tip-t { font-weight: bold; }
+.loan-fee-caption { text-align: center; font-size: 11px; color: var(--muted-2); margin-top: 6px; }
+.loan-summary { margin-top: 16px; border-top: 1px solid var(--c-orange-light); padding-top: 12px; }
+.loan-summary-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 3px 0; }
+.loan-summary-k { color: var(--muted-2); }
+.loan-summary-v { color: var(--text); text-align: right; }
+.loan-summary-bullets { margin: 10px 0 0; padding-left: 18px; font-size: 11px; color: var(--muted-2); line-height: 1.6; }
 .modal-status { font-size: 11px; color: var(--muted-2); margin-top: 10px; word-break: break-word; }
 .tx-confirm-status.error { color: var(--c-pink); }
 .tx-confirm-status.success { color: var(--c-green); }
@@ -3106,7 +3142,7 @@ input[type="checkbox"].field {
 .owners-row-link { cursor: pointer; }
 .owners-row-link:hover { background: rgba(0,0,0,0.03); }
 .owners-head {
-  background: rgba(0,0,0,0.04);
+  background: var(--bg);
   color: var(--muted-2);
   font-size: 10px;
   font-weight: bold;
@@ -3198,13 +3234,13 @@ input[type="checkbox"].field {
 .splits-stage-btn:hover { color: var(--text); }
 .splits-stage-btn.active { color: var(--text); border-bottom-color: var(--c-black-light); }
 .splits-current-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--c-orange, #b8602e); margin-left: 6px; vertical-align: middle; }
+  background: var(--c-pink); margin-left: 6px; vertical-align: middle; }
 .splits-limit { font-size: 12px; color: var(--muted-2); margin-bottom: 12px; }
 .splits-table { border: 1px solid var(--c-orange-light); }
 .splits-row { display: grid; grid-template-columns: 2fr 1.4fr 1.6fr; gap: 16px; align-items: center;
   padding: 12px 16px; border-bottom: 1px solid var(--c-orange-light); font-size: 12px; }
 .splits-row:last-child { border-bottom: none; }
-.splits-head { background: rgba(0,0,0,0.04); font-size: 10px; text-transform: uppercase;
+.splits-head { background: var(--bg); font-size: 10px; text-transform: uppercase;
   letter-spacing: 0.5px; color: var(--muted-2); font-weight: bold; }
 .splits-acct { color: var(--text); }
 .splits-pct strong { color: var(--text); }
@@ -3238,7 +3274,8 @@ input[type="checkbox"].field {
 }
 .detail-info-chainname { text-transform: none; letter-spacing: 0; font-size: 11px; color: var(--muted-2); }
 .detail-info-value { font-size: 12px; font-weight: bold; color: var(--text); margin-top: 3px; }
-.detail-info-value a { color: var(--c-teal); font-weight: bold; }
+.detail-info-value a { color: inherit; font-weight: bold; }
+.detail-info-value a:hover { color: var(--c-teal); }
 .detail-info-chainrow { display: flex; align-items: center; gap: 6px; }
 .detail-info-chainid { font-size: 12px; font-weight: bold; color: var(--text); }
 .detail-info-chain { cursor: pointer; }
@@ -3403,15 +3440,14 @@ input[type="checkbox"].field {
 /* Owners subtabs: lazy panes (All / Market / Settlement / Splits / Auto Issuance / Loans). */
 .owners-subtabs {
   display: flex; flex-wrap: wrap; gap: 2px;
-  border-bottom: 1px solid var(--c-orange-light);
 }
 .owners-subtab {
   background: none; border: none; border-bottom: 2px solid transparent;
   font-family: inherit; font-size: 11px; font-weight: bold; color: var(--muted-2);
   padding: 7px 12px; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;
-  margin-bottom: -1px;
 }
 .owners-subtab:hover { color: var(--c-teal); }
+/* Active = teal text + teal underline (matching the main tabs). The full-width container line stays removed. */
 .owners-subtab.active { color: var(--c-teal); border-bottom-color: var(--c-teal); }
 .owners-subgroup { display: flex; flex-direction: column; gap: 16px; }
 
@@ -3425,6 +3461,26 @@ input[type="checkbox"].field {
   flex-direction: column;
   gap: 12px;
 }
+
+/* ── Skeleton loaders: subtle shimmer ghost blocks ── */
+.skel {
+  position: relative;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 0; /* square ghost blocks; the pie ghost (.skel-circle) keeps its radius */
+}
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  animation: skel-shimmer 1.5s ease-in-out infinite;
+}
+@keyframes skel-shimmer { 100% { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .skel::after { animation: none; } }
+.skel-circle { border-radius: 50%; }
+.skel-table .detail-ops-row { align-items: center; }
 
 .detail-card {
   background: var(--card-bg);
@@ -3937,7 +3993,8 @@ input[type="checkbox"].field {
   line-height: 1.4;
   margin-bottom: 6px;
 }
-.bendystraw-settings-note a { color: var(--c-teal); }
+.bendystraw-settings-note a { color: inherit; }
+.bendystraw-settings-note a:hover { color: var(--c-teal); }
 
 .bendystraw-settings-row {
   display: flex;
@@ -4174,7 +4231,7 @@ input[type="checkbox"].field {
   border-bottom: none;
 }
 .autoissue-head {
-  background: rgba(0,0,0,0.04);
+  background: var(--bg);
   color: var(--muted-2);
   font-size: 10px;
   font-weight: bold;
@@ -4234,7 +4291,7 @@ input[type="checkbox"].field {
 .detail-ops-table { margin-top: 10px; font-size: 12px; border: 1px solid var(--c-orange-light); }
 .detail-ops-row { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--c-orange-light); }
 .detail-ops-row:last-child { border-bottom: none; }
-.detail-ops-head { background: rgba(0,0,0,0.04); color: var(--muted-2); font-size: 10px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
+.detail-ops-head { background: var(--bg); color: var(--muted-2); font-size: 10px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
 .detail-ops-total { font-weight: bold; }
 .detail-ops-cell:not(:first-child) { text-align: right; }
 .detail-ops-chain { display: inline-flex; align-items: center; gap: 8px; }
@@ -4301,7 +4358,7 @@ input[type="checkbox"].field {
   color: var(--muted-2);
   text-transform: uppercase;
   letter-spacing: 0.35px;
-  background: rgba(0,0,0,0.04);
+  background: var(--bg);
 }
 
 .bridge-chain-pair {
@@ -4324,27 +4381,31 @@ input[type="checkbox"].field {
   text-align: left;
 }
 
+/* Outline chip (border + text, no fill): teal = claimed, orange = in-progress, light-black = other. */
 .bridge-status {
   display: inline-block;
-  padding: 2px 7px;
+  padding: 1px 6px;
   border-radius: 2px;
-  background: rgba(0,0,0,0.05);
-  color: var(--muted-2);
+  background: transparent;
+  border: 1px solid var(--c-black-light);
+  color: var(--c-black-light);
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 
 .bridge-status--claimed {
-  background: var(--c-green-light);
-  color: var(--c-green);
-}
-
-.bridge-status--pending {
-  background: var(--c-yellow-light, rgba(184, 96, 46, 0.14));
-  color: var(--c-brown, #b8602e);
-}
-
-.bridge-status--claimable {
-  background: var(--c-teal-light);
+  background: transparent;
+  border-color: var(--c-teal);
   color: var(--c-teal);
+}
+
+.bridge-status--pending,
+.bridge-status--claimable {
+  background: transparent;
+  border-color: var(--c-orange);
+  color: var(--c-orange);
 }
 
 .bridge-empty-row {
@@ -4363,20 +4424,23 @@ input[type="checkbox"].field {
 /* Hero price chart (above the tabs, revnets) */
 .price-hero { margin-bottom: 16px; }
 .price-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.price-legend { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; }
+.price-legend { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; flex: 1 1 100%; }
 .price-chip {
   display: inline-flex; align-items: center; gap: 7px; font-size: 11px; font-weight: bold;
-  padding: 5px 12px; border-radius: 14px; border: 1px solid var(--c-orange-light); background: none;
+  padding: 5px 12px; border-radius: 0; border: none; background: var(--bg);
 }
 .price-chip.active { color: var(--text); }
 .price-chip.muted { color: var(--text); cursor: help; }
 .price-chip-col { display: inline-flex; flex-direction: column; line-height: 1.3; }
 .price-chip-label { font-weight: bold; }
-.price-chip-val { font-size: 11px; font-weight: normal; color: var(--muted); white-space: nowrap; }
+.price-chip-val { font-size: 11px; font-weight: normal; color: var(--muted); white-space: nowrap; display: inline-block; min-width: 78px; }
+.pc-amm .price-chip-val { min-width: 200px; }
+.price-chip-unit { color: var(--muted-2); opacity: 0.8; }
+.price-chip-skel { display: inline-block; height: 11px; vertical-align: middle; }
 .price-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .pc-issuance .price-dot { background: #6ec4c4; }
-.pc-amm .price-dot { background: #b8602e; }
-.pc-cashout .price-dot { background: var(--c-black-light); }
+.pc-amm .price-dot { background: var(--c-teal); }
+.pc-cashout .price-dot { background: var(--c-pink); }
 .price-ranges { margin: 0; }
 .price-chart { width: 100%; }
 /* Shop: 721 NFT tiers */
@@ -4436,7 +4500,7 @@ input[type="checkbox"].field {
 .settlement-infra-tag--native { color: var(--c-teal); border-color: var(--c-teal); }
 .settlement-infra-tag--ccip { color: var(--c-orange); border-color: var(--c-orange); }
 /* Bottom subsection (activity feed) within a detail card */
-.detail-subsection { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--c-orange-light); }
+.detail-subsection { margin-top: 24px; padding-top: 0; border-top: none; }
 .detail-subsection-title { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted-2); margin-bottom: 8px; }
 /* Liquidity-by-price-band histogram */
 .lp-depth { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--c-orange-light); }
@@ -4523,7 +4587,7 @@ input[type="checkbox"].field {
   font-family: inherit; font-size: 13px; font-weight: bold; padding: 6px 18px; flex-shrink: 0;
   border: 2px solid var(--write); background: var(--c-green-light); color: var(--c-black); cursor: pointer;
 }
-.paybox-btn:hover { text-shadow: 0 0 0.6px currentColor; }
+.paybox-btn:hover { opacity: 0.9; }
 
 .paybox-feedback { margin: 8px 0; }
 .paybox-yg-label { font-size: 11px; color: var(--muted-2); }
@@ -4542,7 +4606,7 @@ input[type="checkbox"].field {
 /* Memo — subtle, optional, full-width at the bottom. */
 .paybox-memo {
   width: 100%; box-sizing: border-box; font-family: inherit; font-size: 11px; padding: 5px 8px; margin: 8px 0 12px;
-  border: 1px solid var(--c-orange-light); background: transparent; color: var(--text); border-radius: 2px;
+  border: 1px solid var(--bg); background: transparent; color: var(--text); border-radius: 2px;
 }
 .paybox-memo::placeholder { color: var(--muted); }
 .paybox-memo:focus { outline: none; border-color: var(--c-black-light); }
@@ -4581,7 +4645,8 @@ input[type="checkbox"].field {
 .terms-table th:first-child, .terms-table td:first-child { padding-left: 14px; }
 .terms-table th:last-child, .terms-table td:last-child { padding-right: 14px; }
 .terms-table tbody tr:last-child td { border-bottom: none; }
-.terms-current { background: rgba(237, 163, 176, 0.45); }
+/* Active stage: no row fill — just a pink dot beside the stage number. */
+.terms-current-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--c-pink); margin-left: 7px; vertical-align: middle; }
 .terms-stage { font-weight: bold; }
 .terms-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-orange, #b8602e); display: inline-block; margin-left: 6px; vertical-align: middle; }
 .terms-period { color: var(--text); }
@@ -4594,21 +4659,23 @@ input[type="checkbox"].field {
    ============================================================ */
 
 /* Entry button on the nav tab row */
+/* Create: idle/unavailable (in tuning before launch) — light black. */
 .tab-create {
-  margin-left: 8px;
-  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
-  padding: 4px 14px; background: transparent; color: var(--c-teal);
-  border: 2px solid var(--c-teal);
-}
-.tab-create:hover { color: var(--c-black); }
-.tab-connect {
   margin-left: auto;
-  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
-  padding: 4px 14px; background: transparent; color: var(--c-teal);
-  border: 2px solid var(--c-teal);
+  font-family: inherit; font-size: 13px; font-weight: bold; cursor: default;
+  padding: 4px 14px; background: transparent; color: var(--c-black-light);
+  border: 2px solid var(--c-black-light);
 }
-.tab-connect:hover { color: var(--c-black); }
-.tab-connect.connected { background: var(--c-teal); color: var(--bg); }
+.tab-create:hover { color: var(--c-black-light); }
+/* Connect wallet: top-right of the site header, black. */
+#header > #connect-btn {
+  position: absolute; top: 18px; right: 16px; margin: 0;
+  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
+  padding: 4px 14px; background: transparent; color: var(--c-black);
+  border: 2px solid var(--c-black);
+}
+#header > #connect-btn:hover { text-shadow: 0 0 0.6px currentColor; }
+#header > #connect-btn.connected { background: var(--c-black); color: var(--bg); }
 
 /* Overlay + sheet */
 .create-overlay {
@@ -4629,6 +4696,13 @@ input[type="checkbox"].field {
   color: var(--muted-2); cursor: pointer; padding: 2px 6px;
 }
 .create-close:hover { color: var(--c-black); }
+
+.create-wip {
+  margin: 14px 22px 0; padding: 9px 13px; font-size: 12px; line-height: 1.45;
+  color: var(--c-black); background: var(--c-orange-light);
+  border-left: 3px solid var(--c-orange);
+}
+.create-wip strong { color: var(--c-orange); }
 
 /* Stepper */
 .create-stepper { display: flex; align-items: center; padding: 16px 22px 6px; flex-wrap: wrap; gap: 2px; }
@@ -4851,3 +4925,16 @@ input[type="checkbox"].field {
 
 .create-note-sub { margin-top: 4px; }
 .create-inline-toggle { color: var(--c-teal); cursor: pointer; }
+
+/* ── Table row dividers: subtle (site bg colour), inset to the row's content padding. No divider
+   under the header (it would contrast the header fill). Table outline stays orange-light.
+   Appended last so these override each table's own border-bottom. ── */
+.owners-row, .detail-ops-row, .splits-row, .autoissue-row, .bridge-row { position: relative; border-bottom: none; }
+.owners-row:not(.owners-head):not(:last-child)::after,
+.detail-ops-row:not(.detail-ops-head):not(:last-child)::after { content: ''; position: absolute; left: 14px; right: 14px; bottom: 0; height: 1px; background: var(--bg); }
+.splits-row:not(.splits-head):not(:last-child)::after,
+.autoissue-row:not(.autoissue-head):not(:last-child)::after { content: ''; position: absolute; left: 16px; right: 16px; bottom: 0; height: 1px; background: var(--bg); }
+.bridge-row:not(.bridge-head):not(:last-child)::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: 0; height: 1px; background: var(--bg); }
+/* Terms table (real <table>): subtle dividers; no line under the header. */
+.terms-table td { border-bottom-color: var(--bg); }
+.terms-table th { border-bottom-color: transparent; }

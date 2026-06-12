@@ -943,6 +943,65 @@ function stripHtml(html) {
   return (tmp.textContent || '').replace(/\s+/g, ' ').trim();
 }
 
+// Like stripHtml, but PRESERVES paragraph/line breaks. Rich-text descriptions are HTML
+// (`<p>…</p><p><br></p><p>…</p>`); textContent concatenates block elements with no whitespace, so
+// sentences run together ("loans.$CPN"). Convert <br> and block boundaries to newlines first, then
+// extract text — never inject the raw HTML into the live DOM (untrusted on-chain content).
+function htmlToText(html) {
+  if (!html) return '';
+  var tmp = document.createElement('div');
+  tmp.innerHTML = String(html);
+  tmp.querySelectorAll('br').forEach(function (br) { br.replaceWith(document.createTextNode('\n')); });
+  tmp.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6, blockquote, tr').forEach(function (b) { b.appendChild(document.createTextNode('\n\n')); });
+  return (tmp.textContent || '')
+    .replace(/[ \t]+/g, ' ')      // collapse runs of spaces
+    .replace(/ *\n */g, '\n')      // trim spaces around newlines
+    .replace(/\n{3,}/g, '\n\n')    // cap consecutive blank lines
+    .trim();
+}
+
+// Render rich-text metadata (HTML from the editor) into `container` as paragraphs AND lists — so
+// `<ul>`/`<ol>` keep their bullets/numbers instead of flattening to plain lines. Untrusted on-chain
+// content: parse into a detached node and copy only text + list structure (never inject raw HTML).
+function renderRichTextInto(container, html) {
+  var tmp = document.createElement('div');
+  tmp.innerHTML = String(html || '');
+  var rendered = false;
+  for (var i = 0; i < tmp.children.length; i++) {
+    var b = tmp.children[i], tag = b.tagName;
+    if (tag === 'UL' || tag === 'OL') {
+      var list = el(tag === 'OL' ? 'ol' : 'ul', 'detail-about-list');
+      var items = b.querySelectorAll('li');
+      for (var j = 0; j < items.length; j++) { var li = el('li', 'detail-about-li'); li.textContent = htmlToText(items[j].innerHTML); list.appendChild(li); }
+      if (items.length) { container.appendChild(list); rendered = true; }
+    } else {
+      var txt = htmlToText(b.innerHTML);
+      if (txt) { var p = el('p', 'detail-about-para'); p.textContent = txt; container.appendChild(p); rendered = true; }
+    }
+  }
+  // Fallback (no block children — plain text): split on blank lines.
+  if (!rendered) {
+    htmlToText(html).split(/\n{2,}/).forEach(function (para) {
+      if (!para.trim()) return;
+      var p = el('p', 'detail-about-para'); p.textContent = para.trim(); container.appendChild(p);
+    });
+  }
+}
+
+// addressNode wrapped in a link to the chain's block explorer (etherscan-style).
+function addressLinkNode(address, chainId) {
+  var node = addressNode(address);
+  if (!address || address === ZERO_ADDRESS) return node;
+  var chain = CHAINS[chainId];
+  var base = chain && chain.blockExplorers && chain.blockExplorers.default && chain.blockExplorers.default.url;
+  if (!base) return node;
+  var a = document.createElement('a');
+  a.href = base.replace(/\/$/, '') + '/address/' + address;
+  a.target = '_blank'; a.rel = 'noopener'; a.className = 'detail-address-link';
+  a.appendChild(node);
+  return a;
+}
+
 function formatEth(wei) {
   if (wei === null || wei === undefined) return '—';
   return formatTokenCount(wei) + ' ETH';
@@ -1200,7 +1259,8 @@ async function fetchProject(id, chainId) {
       var meta = await fetchMetadata(uri);
       if (!meta) return;
       project.name = meta.name || null;
-      project.description = stripHtml(meta.description);
+      project.description = htmlToText(meta.description);
+      project.descriptionHtml = meta.description || null; // raw rich-text (HTML) — rendered with list/paragraph structure
       project.tagline = stripHtml(meta.projectTagline || meta.tagline) || null;
       project.logoUri = meta.logoUri ? ipfsToHttp(meta.logoUri) : null;
       project.infoUri = meta.infoUri || null;
@@ -2249,7 +2309,7 @@ function renderDetailHeader(project) {
   }
   metaLine.appendChild(sep());
   metaLine.appendChild(lbl(projectAuthorityLabel(project) + ': '));
-  metaLine.appendChild(addressNode(projectAuthorityAddress(project)));
+  metaLine.appendChild(addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)));
   if (project.infoUri) {
     metaLine.appendChild(sep());
     metaLine.appendChild(lbl("Site: "));
@@ -2268,7 +2328,16 @@ function renderAboutSection(project) {
   if (project.description) {
     var descCard = el('div', 'detail-card');
     var t = el('div', 'detail-card-title'); t.textContent = 'About'; descCard.appendChild(t);
-    var d = el('div', 'detail-card-body detail-about-desc'); d.textContent = project.description; descCard.appendChild(d);
+    var d = el('div', 'detail-card-body detail-about-desc');
+    if (project.descriptionHtml) {
+      renderRichTextInto(d, project.descriptionHtml);
+    } else {
+      project.description.split(/\n{2,}/).forEach(function (para) {
+        if (!para.trim()) return;
+        var p = el('p', 'detail-about-para'); p.textContent = para.trim(); d.appendChild(p);
+      });
+    }
+    descCard.appendChild(d);
     section.appendChild(descCard);
   }
   section.appendChild(renderInfoPanel(project));
@@ -2327,13 +2396,83 @@ function infoItem(label, valueNode) {
   return item;
 }
 
+// ── Skeleton loaders ────────────────────────────────────────────────────────
+// Ghost blocks that shimmer in the same layout the real data will fill — graceful, low-jank loading.
+function skel(w, h, cls) {
+  var b = el('div', 'skel' + (cls ? ' ' + cls : ''));
+  if (w) b.style.width = w;
+  if (h) b.style.height = h;
+  return b;
+}
+// Ops-style table ghost: real header text up top, shimmer cells below (You / Settlement).
+function skelOpsTable(headers, nRows) {
+  var table = el('div', 'detail-ops-table skel-table');
+  var head = el('div', 'detail-ops-row detail-ops-head');
+  headers.forEach(function (h) { var c = el('span', 'detail-ops-cell'); c.textContent = h; head.appendChild(c); });
+  table.appendChild(head);
+  for (var i = 0; i < nRows; i++) {
+    var row = el('div', 'detail-ops-row');
+    headers.forEach(function (_, j) { var c = el('span', 'detail-ops-cell'); c.appendChild(skel(j === 0 ? '52%' : '60%', '11px')); row.appendChild(c); });
+    table.appendChild(row);
+  }
+  return table;
+}
+// Owner-distribution ghost: a donut placeholder beside the holder table.
+function skelOwnersDistribution() {
+  var w = el('div', 'owners-distribution');
+  var panel = el('div', 'owners-chart-panel');
+  var donut = skel('170px', '170px', 'skel-circle'); donut.style.margin = '0 auto';
+  panel.appendChild(donut);
+  w.appendChild(panel);
+  var wrap = el('div', 'owners-table-wrap');
+  var table = el('div', 'owners-table');
+  var head = el('div', 'owners-row owners-head');
+  ['Account', 'Share', 'Chains', 'Paid'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
+  table.appendChild(head);
+  for (var i = 0; i < 4; i++) {
+    var row = el('div', 'owners-row');
+    ['58%', '40%', '34%', '48%'].forEach(function (cw) { var c = el('span'); c.appendChild(skel(cw, '11px')); row.appendChild(c); });
+    table.appendChild(row);
+  }
+  wrap.appendChild(table); w.appendChild(wrap);
+  return w;
+}
+// Activity-feed ghost rows (avatar circle + meta + description). Returns a fragment to drop into the feed.
+function skelActivityRows(n) {
+  var frag = document.createDocumentFragment();
+  for (var i = 0; i < n; i++) {
+    var row = el('div', 'activity-row');
+    var av = skel('24px', '24px', 'skel-circle'); av.style.flex = '0 0 24px'; av.style.marginTop = '2px';
+    row.appendChild(av);
+    var main = el('div', 'activity-main');
+    main.appendChild(skel('26%', '9px'));
+    var d = skel((62 - (i % 3) * 9) + '%', '11px'); d.style.marginTop = '7px'; main.appendChild(d);
+    row.appendChild(main);
+    frag.appendChild(row);
+  }
+  return frag;
+}
+// Generic class-driven table ghost (Auto issue / Bridges / Movement).
+function skelGenericTable(tableCls, rowCls, headCls, headers, widths, nRows) {
+  var table = el('div', tableCls);
+  var head = el('div', rowCls + ' ' + headCls);
+  headers.forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
+  table.appendChild(head);
+  for (var i = 0; i < nRows; i++) {
+    var row = el('div', rowCls);
+    widths.forEach(function (cw) { var c = el('span'); c.appendChild(skel(cw, '11px')); row.appendChild(c); });
+    table.appendChild(row);
+  }
+  return table;
+}
+
 function renderActivityCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title');
   title.textContent = 'Activity';
   card.appendChild(title);
-  var body = el('div', 'detail-card-body activity-feed');
-  body.textContent = 'Loading activity from Bendystraw…';
+  var body = el('div', 'activity-feed');
+  body.appendChild(skelActivityRows(5));
   card.appendChild(body);
 
   // Load the sucker map first so the feed can relabel under-the-hood sucker cash-outs as bridges.
@@ -3060,7 +3199,7 @@ function renderTermsTable(project, stages) {
     // Stage number (+ current dot) — header already labels the column "Stage".
     var c1 = document.createElement('td'); c1.className = 'terms-stagecell';
     var stg = el('span', 'terms-stage'); stg.textContent = String(i + 1); c1.appendChild(stg);
-    if (isCurrent) { var cur = el('div', 'terms-sub'); cur.textContent = 'active'; c1.appendChild(cur); }
+    if (isCurrent) { var dot = el('span', 'terms-current-dot'); dot.title = 'active'; c1.appendChild(dot); var cur = el('div', 'terms-sub'); cur.textContent = 'active'; c1.appendChild(cur); }
     tr.appendChild(c1);
 
     // Period (start – end) + span subtext
@@ -3200,11 +3339,24 @@ function renderPriceChart(project, stages) {
     var dot = el('span', 'price-dot'); c.appendChild(dot);
     var col = el('span', 'price-chip-col');
     var t = el('span', 'price-chip-label'); t.textContent = label; col.appendChild(t);
-    var v = el('span', 'price-chip-val'); v.textContent = '…'; col.appendChild(v);
+    var v = el('span', 'price-chip-val');
+    // Ghost the value while it loads so the chip reserves its width and the range row below doesn't jump.
+    var g = el('span', 'skel price-chip-skel'); g.style.width = (kind === 'pc-amm' ? 200 : 78) + 'px';
+    v.appendChild(g);
+    col.appendChild(v);
     var liq = el('span', 'price-chip-val price-chip-liq'); liq.style.display = 'none'; col.appendChild(liq);
     c.appendChild(col); c._val = v; c._liq = liq;
     if (note) c.title = note;
     return c;
+  }
+  // Pair denominator follows baseCurrency: token/ETH normally, token/USD for USD-based rulesets (e.g. ART).
+  var baseLabel = (project.metadata && Number(project.metadata.baseCurrency) === 2) ? 'USD' : 'ETH';
+  var pairUnit = sym + '/' + baseLabel;
+  function setChipVal(c, numStr, tail) {
+    c._val.textContent = '';
+    c._val.appendChild(document.createTextNode(numStr + ' '));
+    var u = el('span', 'price-chip-unit'); u.textContent = pairUnit; c._val.appendChild(u);
+    if (tail) c._val.appendChild(document.createTextNode(' ' + tail));
   }
   var amm = null;        // current AMM price (ETH/token), filled in lazily
   var cashout = null;    // current cash-out floor (ETH/token), filled in lazily
@@ -3221,7 +3373,7 @@ function renderPriceChart(project, stages) {
   top.appendChild(legend);
 
   var issNow = issuanceAtTime(sorted, now); var issPrice = issNow > 0 ? 1 / issNow : null;
-  issChip._val.textContent = issPrice ? formatPrice(issPrice) : '—';
+  if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
 
   var ranges = [['1D', 1 / 365], ['7D', 7 / 365], ['30D', 30 / 365], ['3M', 0.25], ['1Y', 1], ['All', 0]];
   var rangeRow = el('div', 'issuance-ranges price-ranges');
@@ -3296,10 +3448,9 @@ function renderPriceChart(project, stages) {
     var liq = (lp && (lp.totalRev > 0n || lp.totalEth > 0n))
       ? formatCompactTokenAmount(lp.totalRev) + ' ' + sym + ' + ' + formatPrice(Number(lp.totalEth) / 1e18) + ' ETH'
       : '';
-    ammChip._val.textContent = amm
-      ? (formatPrice(amm) + (liq ? ' on ' + liq + ' liq' : ''))
-      : (swaps.count ? '—' : 'no pool yet');
-    cashChip._val.textContent = cashout ? formatPrice(cashout) : '—';
+    if (amm) setChipVal(ammChip, formatPrice(amm), liq ? 'on ' + liq + ' liq' : '');
+    else ammChip._val.textContent = swaps.count ? '—' : 'no pool yet';
+    if (cashout) setChipVal(cashChip, formatPrice(cashout)); else cashChip._val.textContent = '—';
     // (The liquidity-by-price depth chart lives in the Owners → AMM section, not here.)
   });
   return card;
@@ -3418,9 +3569,14 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
         + '<text x="' + (X(st) + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="rgba(0,0,0,0.45)">Stage ' + (s + 1) + '</text>';
     }
   }
-  var nowLine = (now > t0 && now < t1)
-    ? '<line x1="' + X(now).toFixed(1) + '" y1="' + padT + '" x2="' + X(now).toFixed(1) + '" y2="' + (H - padB) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="4 3"/>'
-      + '<text x="' + (X(now) + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="#c43550">Today</text>'
+  // Today marker: history charts (`past`) end at "now" (right edge); projection charts place it
+  // wherever `now` falls in the range. Clamp into the plot and anchor the label so it never overflows.
+  var nowX = Math.max(padL, Math.min(W - padR, X(now)));
+  var nowShow = past || (now > t0 && now < t1);
+  var nearRight = nowX > W - padR - 40;
+  var nowLine = nowShow
+    ? '<line x1="' + nowX.toFixed(1) + '" y1="' + padT + '" x2="' + nowX.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="4 3"/>'
+      + '<text x="' + (nearRight ? nowX - 4 : nowX + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="#c43550"' + (nearRight ? ' text-anchor="end"' : '') + '>Today</text>'
     : '';
   // AMM gets a Bendystraw historical trade line (swapEvents) when indexed; otherwise the
   // current pool price is a flat reference line.
@@ -3430,12 +3586,12 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     for (var ai = 1; ai < ammSeries.length; ai++) {
       ammLine += ' L' + X(ammSeries[ai].timestamp).toFixed(1) + ' ' + Y(ammSeries[ai].value).toFixed(1);
     }
-    ammLine = '<path d="' + ammLine + '" fill="none" stroke="#b8602e" stroke-width="1.7"/>';
+    ammLine = '<path d="' + ammLine + '" fill="none" stroke="#1a8a8a" stroke-width="1.7"/>';
     for (var ad = 0; ad < ammSeries.length; ad++) {
-      ammLine += '<circle cx="' + X(ammSeries[ad].timestamp).toFixed(1) + '" cy="' + Y(ammSeries[ad].value).toFixed(1) + '" r="1.8" fill="#b8602e"/>';
+      ammLine += '<circle cx="' + X(ammSeries[ad].timestamp).toFixed(1) + '" cy="' + Y(ammSeries[ad].value).toFixed(1) + '" r="1.8" fill="#1a8a8a"/>';
     }
   } else if (ammPrice && ammPrice > 0) {
-    ammLine = '<line x1="' + padL + '" y1="' + Y(ammPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(ammPrice).toFixed(1) + '" stroke="#b8602e" stroke-width="1.5" stroke-dasharray="5 4"/>';
+    ammLine = '<line x1="' + padL + '" y1="' + Y(ammPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(ammPrice).toFixed(1) + '" stroke="#1a8a8a" stroke-width="1.5" stroke-dasharray="5 4"/>';
   }
   var cashLine = '';
   if (cashSeries.length) {
@@ -3443,9 +3599,9 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     for (var ci = 1; ci < cashSeries.length; ci++) {
       cashLine += ' L' + X(cashSeries[ci].timestamp).toFixed(1) + ' ' + Y(cashSeries[ci].value).toFixed(1);
     }
-    cashLine = '<path d="' + cashLine + '" fill="none" stroke="#2c2018" stroke-width="1.7"/>';
+    cashLine = '<path d="' + cashLine + '" fill="none" stroke="#c43550" stroke-width="1.7"/>';
   } else if (cashoutPrice && cashoutPrice > 0) {
-    cashLine = '<line x1="' + padL + '" y1="' + Y(cashoutPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(cashoutPrice).toFixed(1) + '" stroke="#2c2018" stroke-width="1.5" stroke-dasharray="2 4"/>';
+    cashLine = '<line x1="' + padL + '" y1="' + Y(cashoutPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(cashoutPrice).toFixed(1) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="2 4"/>';
   }
 
   var y0 = new Date(t0 * 1000).getFullYear();
@@ -3486,9 +3642,9 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
       }
       var html = '<div class="chart-tip-date">' + formatDate(t) + '</div>' + row('Issuance', issP, '#6ec4c4');
       var ammVal = seriesValueAt(ch.ammHistory || [], t) || ch.amm;
-      if (ammVal) html += row('AMM', ammVal, '#b8602e');
+      if (ammVal) html += row('AMM', ammVal, '#1a8a8a');
       var floor = seriesValueAt(ch.cashoutHistory || [], t) || ch.cashout;
-      if (floor) html += row('Cash out', floor, '#2c2018');
+      if (floor) html += row('Cash out', floor, '#c43550');
       wrap._tip.innerHTML = html;
       wrap._guide.style.display = ''; wrap._guide.style.left = x + 'px';
       wrap._tip.style.display = '';
@@ -3613,8 +3769,10 @@ function renderAutoIssuance(project, stages) {
     : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
   var stageCache = {};
 
-  var body = el('div', 'autoissue-load');
-  body.textContent = 'Loading auto issuance across chains…';
+  var body = el('div', 'autoissue-tablewrap');
+  body.appendChild(skelGenericTable('autoissue-table', 'autoissue-row', 'autoissue-head',
+    ['Chain', 'Stage', 'Account', 'Amount (' + (project.tokenSymbol || sym).trim() + ')', 'Unlock date', 'Distribute'],
+    ['58%', '40%', '66%', '54%', '60%', '50%'], 3));
   card.appendChild(body);
 
   function stagesForChain(chainId) {
@@ -4658,7 +4816,7 @@ function renderOwnersAll(project) {
   desc.textContent = sym + ' owners paid in, received splits, received auto-issuance, or got them second-hand.';
   wrap.appendChild(desc);
   var body = el('div', 'owners-load');
-  body.textContent = 'Loading owner distribution from Bendystraw…';
+  body.appendChild(skelOwnersDistribution());
   wrap.appendChild(body);
   fetchOwnersDistribution(project).then(function (data) {
     if (!body.isConnected) return;
@@ -4701,7 +4859,7 @@ function renderOwnersAmm(project) {
   var lpHead = el('div', 'detail-card-body owners-intro');
   lpHead.textContent = 'The market is used to fill orders that give payers more REV than issuance would.';
   wrap.appendChild(lpHead);
-  var loading = el('div', 'owners-load'); loading.textContent = 'Reading the buyback pool…'; wrap.appendChild(loading);
+  var loading = el('div', 'owners-load'); loading.appendChild(skelOwnersDistribution()); wrap.appendChild(loading);
   readLpPositions(project, project.chainId).then(function (lp) {
     if (!wrap.isConnected) return;
     loading.remove();
@@ -4909,7 +5067,17 @@ function renderOwnersSplits(project) {
     for (var b = 0; b < btns.length; b++) btns[b].classList.toggle('active', b === idx);
     var md = decodeStageMetadata(s.metadata);
     limitLine.textContent = 'The split limit for this stage is ' + percentFromRuleset(md.reservedPercent) + ' of issuance.';
-    tableWrap.innerHTML = ''; var loading = el('div', 'detail-card-body'); loading.textContent = 'Reading…'; tableWrap.appendChild(loading);
+    tableWrap.innerHTML = '';
+    var skWrap = el('div', 'splits-tablewrap');
+    skWrap.appendChild(skelGenericTable('splits-table', 'splits-row', 'splits-head', ['Account', 'Percentage', 'Pending splits'], ['46%', '40%', '42%'], 0));
+    for (var sci = 0; sci < 2; sci++) {
+      var blk = el('div', 'splits-chain-block');
+      var cr = el('div', 'splits-chainrow'); cr.appendChild(skel('110px', '12px')); cr.appendChild(skel('72px', '24px')); blk.appendChild(cr);
+      var t = el('div', 'splits-table'); var r = el('div', 'splits-row');
+      ['46%', '40%', '42%'].forEach(function (w) { var c = el('span'); c.appendChild(skel(w, '11px')); r.appendChild(c); });
+      t.appendChild(r); blk.appendChild(t); skWrap.appendChild(blk);
+    }
+    tableWrap.appendChild(skWrap);
     var key = String(s.id);
     var p = splitsCache[key] !== undefined ? Promise.resolve(splitsCache[key])
       : read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), BigInt(s.id), RESERVED_TOKEN_SPLIT_GROUP])
@@ -5059,8 +5227,7 @@ function renderAcrossChainsBody(project) {
   var desc = el('div', 'detail-card-body');
   desc.textContent = 'A project can settle funds on many chains, and holders can move funds between them.';
   body.appendChild(desc);
-  var status = el('div', 'detail-card-body');
-  status.textContent = 'Reading across chains…';
+  var status = skelOpsTable(['Chain', 'Supply', 'Balance', 'Unit value'], 4);
   body.appendChild(status);
   fetchOps(project).then(function (rows) {
     status.remove();
@@ -5148,7 +5315,7 @@ function opsActionsRow(project) {
     ['Cash out', function () { openModal('Cash out', buildCashOutModal(project)); }],
     ['Get a loan', function () { openModal('Get a loan', buildLoanModal(project)); }],
     ['Move between chains', function () { openModal('Move between chains', buildMoveModal(project)); }],
-    ['Add liquidity', function () { openModal('Add liquidity', buildAddLiquidityModal(project)); }],
+    ['Add market liquidity', function () { openModal('Add market liquidity', buildAddLiquidityModal(project)); }],
   ].forEach(function (a) {
     var b = document.createElement('button');
     b.className = 'ops-action-btn';
@@ -5236,7 +5403,7 @@ function renderYouCard(project) {
       return;
     }
     actions.style.display = ''; // connected: reveal the action buttons
-    var status = el('div', 'detail-card-body'); status.textContent = 'Reading your position across chains…'; body.appendChild(status);
+    var status = skelOpsTable(['Chain', 'Balance', 'Cash out', 'Max loan'], 2); body.appendChild(status);
     Promise.all([fetchYouPosition(project), readCashOutDelay(project)]).then(function (out) {
       if (!body.isConnected) return;
       var rows = out[0], delay = out[1];
@@ -5324,8 +5491,10 @@ function renderBridgeTransactions(project) {
   head.appendChild(filter);
   card.appendChild(head);
 
-  var body = el('div', 'detail-card-body bridge-load');
-  body.textContent = 'Loading bridge transactions…';
+  var body = el('div', 'bridge-table-wrap');
+  body.appendChild(skelGenericTable('bridge-table', 'bridge-row', 'bridge-head',
+    ['Initiated', 'Chains', 'Beneficiary', 'Tokens', 'Value', 'Status', 'Action'],
+    ['60%', '50%', '70%', '55%', '55%', '45%', '40%'], 2));
   card.appendChild(body);
 
   var rows = [];
@@ -5651,10 +5820,57 @@ function buildCashOutModal(project) {
   return wrap;
 }
 
+// REVLoans fee constants (REVLoans.sol). Percents are in MAX_FEE=1000 units (25 = 2.5%).
+var LOAN_MIN_PREPAID = 25, LOAN_MAX_PREPAID = 500, LOAN_LIQ_DAYS = 3650, LOAN_MAX_FEE = 1000;
+
+// Human label for when the time-based fee starts (the prepaid window): p/500 of the 10-year liquidation span.
+function loanPrepaidDurationLabel(p) {
+  var days = p * LOAN_LIQ_DAYS / LOAN_MAX_PREPAID;
+  if (days >= LOAN_LIQ_DAYS) return 'never';
+  if (days >= 365) { var y = Math.round((days / 365) * 10) / 10; return y + (y === 1 ? ' year' : ' years'); }
+  if (days >= 60) { var m = Math.round(days / 30.4); return m + ' months'; }
+  return Math.round(days) + ' days';
+}
+
+var LOAN_CHART = { W: 460, H: 168, padL: 30, padR: 12, padT: 12, padB: 28 };
+
+// "Additional cost to unlock" (fraction of borrowed principal) at time t years, for prepaid percent p.
+// 0 through the prepaid window (p/500 × 10y), then linear up to (1 − p/1000) at year 10.
+function loanFeeFracAt(t, p) {
+  var pdY = (p / LOAN_MAX_PREPAID) * 10;
+  if (t <= pdY) return 0;
+  return (1 - p / LOAN_MAX_FEE) * (t - pdY) / (10 - pdY);
+}
+
+// Chart of loanFeeFracAt over the 10-year loan life. Shape is amount-independent so the slider always
+// shows the trade-off; ETH numbers live in the summary + hover tooltip.
+function renderLoanFeeSvg(p) {
+  var W = LOAN_CHART.W, H = LOAN_CHART.H, padL = LOAN_CHART.padL, padR = LOAN_CHART.padR, padT = LOAN_CHART.padT, padB = LOAN_CHART.padB;
+  var plotW = W - padL - padR, plotH = H - padT - padB;
+  var pdY = (p / LOAN_MAX_PREPAID) * 10;     // prepaid window in years
+  var maxFrac = 1 - p / LOAN_MAX_FEE;        // peak additional cost as a fraction of principal
+  var X = function (yr) { return padL + (yr / 10) * plotW; };
+  var Y = function (frac) { return padT + (1 - frac) * plotH; };
+  var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="loan-fee-svg" role="img" aria-label="Additional cost to unlock over time">';
+  for (var yr = 0; yr <= 10; yr++) {
+    s += '<line x1="' + X(yr).toFixed(1) + '" y1="' + padT + '" x2="' + X(yr).toFixed(1) + '" y2="' + (padT + plotH) + '" stroke="rgba(0,0,0,0.1)" stroke-width="0.6" stroke-dasharray="2 3"/>';
+  }
+  s += '<line x1="' + padL + '" y1="' + padT + '" x2="' + padL + '" y2="' + (padT + plotH) + '" stroke="#7d6858" stroke-width="1"/>';
+  s += '<line x1="' + padL + '" y1="' + (padT + plotH) + '" x2="' + (W - padR) + '" y2="' + (padT + plotH) + '" stroke="#7d6858" stroke-width="1"/>';
+  if (pdY > 0.02 && pdY < 9.98) s += '<line x1="' + X(pdY).toFixed(1) + '" y1="' + padT + '" x2="' + X(pdY).toFixed(1) + '" y2="' + (padT + plotH) + '" stroke="#c43550" stroke-width="1" stroke-dasharray="3 2" opacity="0.55"/>';
+  s += '<path d="M' + X(0).toFixed(1) + ',' + Y(0).toFixed(1) + ' L' + X(pdY).toFixed(1) + ',' + Y(0).toFixed(1) + ' L' + X(10).toFixed(1) + ',' + Y(maxFrac).toFixed(1) + '" fill="none" stroke="#c43550" stroke-width="2"/>';
+  for (var xl = 0; xl <= 10; xl += 2) {
+    s += '<text x="' + X(xl).toFixed(1) + '" y="' + (padT + plotH + 13) + '" font-size="9" fill="#7d6858" text-anchor="middle">' + xl + '</text>';
+  }
+  s += '<text x="' + (padL + plotW / 2).toFixed(1) + '" y="' + (H - 2) + '" font-size="9" fill="#7d6858" text-anchor="middle">Time (years)</text>';
+  s += '</svg>';
+  return s;
+}
+
 function buildLoanModal(project) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null };
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, prepaidFee: LOAN_MIN_PREPAID };
 
   var lbl = el('div', 'modal-label'); lbl.textContent = 'How much ' + sym + ' do you want to collateralize?'; wrap.appendChild(lbl);
   var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
@@ -5669,14 +5885,92 @@ function buildLoanModal(project) {
 
   var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
 
-  var info = el('ul', 'modal-info');
-  ['Your collateralized ' + sym + ' is burned while the loan is open.',
-   'You receive an NFT to reclaim it when you repay.',
-   'Borrow against your token’s cash-out value; fees grow over time.',
-   'First-time loans need a one-off approval letting the loan contract burn your collateral.'].forEach(function (t) {
-    var li = document.createElement('li'); li.textContent = t; info.appendChild(li);
-  });
-  wrap.appendChild(info);
+  // ── Variable fee structure: prepaid-fee slider + cost-over-time chart ──
+  var feeSec = el('div', 'loan-section');
+  var feeHead = el('div', 'loan-section-head');
+  var feeT = el('span'); feeT.textContent = 'Variable fee structure'; feeHead.appendChild(feeT);
+  var feeCaret = el('span', 'loan-caret'); feeCaret.textContent = '▼'; feeHead.appendChild(feeCaret);
+  feeSec.appendChild(feeHead);
+  var feeBody = el('div', 'loan-section-body'); feeSec.appendChild(feeBody);
+  feeHead.addEventListener('click', function () { var open = feeBody.style.display !== 'none'; feeBody.style.display = open ? 'none' : ''; feeCaret.textContent = open ? '▶' : '▼'; });
+
+  var prepaidLbl = el('div', 'loan-prepaid-label'); feeBody.appendChild(prepaidLbl);
+  var slider = el('input', 'loan-slider'); slider.type = 'range'; slider.min = String(LOAN_MIN_PREPAID); slider.max = String(LOAN_MAX_PREPAID); slider.step = '5'; slider.value = String(state.prepaidFee);
+  feeBody.appendChild(slider);
+  var sLabels = el('div', 'loan-slider-labels'); var s1 = el('span'); s1.textContent = 'Less upfront cost'; var s2 = el('span'); s2.textContent = 'More upfront cost'; sLabels.appendChild(s1); sLabels.appendChild(s2); feeBody.appendChild(sLabels);
+  var chartHolder = el('div', 'loan-fee-chart');
+  var svgWrap = el('div', 'loan-fee-svgwrap'); chartHolder.appendChild(svgWrap);
+  var cursor = el('div', 'loan-fee-cursor'); var dot = el('div', 'loan-fee-dot'); var tip = el('div', 'loan-fee-tip');
+  cursor.style.display = dot.style.display = tip.style.display = 'none';
+  chartHolder.appendChild(cursor); chartHolder.appendChild(dot); chartHolder.appendChild(tip);
+  feeBody.appendChild(chartHolder);
+  var feeCaption = el('div', 'loan-fee-caption'); feeBody.appendChild(feeCaption);
+  wrap.appendChild(feeSec);
+
+  function updateFeeViz() {
+    var p = state.prepaidFee;
+    var amtStr = '';
+    if (state.borrowable && state.borrowable > 0n) amtStr = ' · ~' + formatEth(state.borrowable * BigInt(p) / BigInt(LOAN_MAX_FEE)) + ' now';
+    prepaidLbl.textContent = 'Prepaid fee: ' + (p / 10) + '%' + amtStr;
+    svgWrap.innerHTML = renderLoanFeeSvg(p);
+    feeCaption.textContent = p >= LOAN_MAX_PREPAID ? 'Fully prepaid — no additional cost over time.' : ('Fees increase after ' + loanPrepaidDurationLabel(p) + '.');
+  }
+  slider.addEventListener('input', function () { state.prepaidFee = Number(slider.value); updateFeeViz(); updateSummary(); });
+
+  // Hover: explain what's owed to unlock at the hovered point in time.
+  function onChartMove(e) {
+    var svg = svgWrap.querySelector('svg'); if (!svg) return;
+    var rect = svg.getBoundingClientRect(); var G = LOAN_CHART;
+    var plotH = G.H - G.padT - G.padB;
+    var plotL = rect.left + (G.padL / G.W) * rect.width, plotR = rect.left + ((G.W - G.padR) / G.W) * rect.width;
+    var plotT = rect.top + (G.padT / G.H) * rect.height, plotB = rect.top + ((G.padT + plotH) / G.H) * rect.height;
+    var cx = Math.max(plotL, Math.min(plotR, e.clientX));
+    var t = (cx - plotL) / (plotR - plotL) * 10;
+    var p = state.prepaidFee, frac = loanFeeFracAt(t, p), pdY = (p / LOAN_MAX_PREPAID) * 10;
+    var cy = plotB - frac * (plotB - plotT);
+    var hr = chartHolder.getBoundingClientRect();
+    cursor.style.display = ''; cursor.style.left = (cx - hr.left) + 'px'; cursor.style.top = (plotT - hr.top) + 'px'; cursor.style.height = (plotB - plotT) + 'px';
+    dot.style.display = ''; dot.style.left = (cx - hr.left) + 'px'; dot.style.top = (cy - hr.top) + 'px';
+    var head = '<div class="loan-fee-tip-t">Year ' + t.toFixed(1) + '</div>';
+    var bodyTxt;
+    if (t <= pdY) {
+      bodyTxt = 'Prepaid window — repay just the principal, no extra fee to unlock.';
+    } else {
+      var amt = (state.borrowable && state.borrowable > 0n) ? (' · ~' + formatEth(state.borrowable * BigInt(Math.round(frac * 1e6)) / 1000000n)) : '';
+      bodyTxt = 'Extra fee to unlock: ' + (frac * 100).toFixed(1) + '% of your borrow' + amt;
+    }
+    tip.innerHTML = head + '<div>' + bodyTxt + '</div>';
+    tip.style.display = '';
+    tip.style.left = Math.max(2, Math.min((cx - hr.left) + 10, hr.width - tip.offsetWidth - 2)) + 'px';
+    tip.style.top = (plotT - hr.top + 2) + 'px';
+  }
+  chartHolder.addEventListener('mousemove', onChartMove);
+  chartHolder.addEventListener('mouseleave', function () { cursor.style.display = 'none'; dot.style.display = 'none'; tip.style.display = 'none'; });
+
+  // ── Summary: computed loan terms + the things to know ──
+  var summary = el('div', 'loan-summary'); wrap.appendChild(summary);
+  function summaryRow(k, v) { var r = el('div', 'loan-summary-row'); var ks = el('span', 'loan-summary-k'); ks.textContent = k; var vs = el('span', 'loan-summary-v'); vs.textContent = v; r.appendChild(ks); r.appendChild(vs); return r; }
+  function updateSummary() {
+    summary.innerHTML = '';
+    var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
+    var p = state.prepaidFee;
+    if (state.borrowable && state.borrowable > 0n) {
+      var prepaidEth = state.borrowable * BigInt(p) / BigInt(LOAN_MAX_FEE);
+      summary.appendChild(summaryRow('You borrow', '~ ' + formatEth(state.borrowable)));
+      summary.appendChild(summaryRow('Prepaid fee (now)', '~ ' + formatEth(prepaidEth) + ' · ' + (p / 10) + '%'));
+      summary.appendChild(summaryRow('Later unlock fee', 'grows after ' + loanPrepaidDurationLabel(p) + ', up to ~ ' + formatEth(state.borrowable - prepaidEth) + ' by year 10'));
+    }
+    var bl = el('ul', 'loan-summary-bullets');
+    [(collateral > 0n ? formatTokenCount(collateral) : 'Your') + ' ' + sym + ' is burned as collateral while the loan is open.',
+     'You receive an NFT to reclaim it when you repay.',
+     'After 10 years the loan is liquidated and the collateral is lost.',
+     'First-time loans need a one-off approval to let the loan contract burn your collateral.'].forEach(function (t) {
+      var li = document.createElement('li'); li.textContent = t; bl.appendChild(li);
+    });
+    summary.appendChild(bl);
+  }
+  updateFeeViz();
+  updateSummary();
 
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
@@ -5694,7 +5988,7 @@ function buildLoanModal(project) {
   var previewSeq = 0;
   function updatePreview() {
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
-    if (!collateral || collateral === 0n) { preview.textContent = ''; state.borrowable = null; return; }
+    if (!collateral || collateral === 0n) { preview.textContent = ''; state.borrowable = null; updateSummary(); return; }
     var loans = getAddress('REVLoans', state.chainId);
     if (!loans) { preview.textContent = ''; return; }
     var seq = ++previewSeq; preview.textContent = 'Calculating…';
@@ -5708,7 +6002,8 @@ function buildLoanModal(project) {
         preview.textContent = state.borrowable > 0n
           ? 'You’ll borrow ~ ' + formatEth(state.borrowable)
           : 'Nothing borrowable yet — loans unlock after this revnet’s cash-out delay passes.';
-      }).catch(function () { if (seq === previewSeq) { preview.textContent = ''; state.borrowable = null; } });
+        updateFeeViz(); updateSummary();
+      }).catch(function () { if (seq === previewSeq) { preview.textContent = ''; state.borrowable = null; updateFeeViz(); updateSummary(); } });
   }
   amt.addEventListener('input', updatePreview);
   function onChainChange() { refreshBalance(); updatePreview(); }
@@ -5727,11 +6022,11 @@ function buildLoanModal(project) {
     var onStatus = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
     var fail = function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; };
 
-    // token = native, minBorrowAmount 0 (best price), prepaidFeePercent 0 (pay fees over time), holder/beneficiary = caller.
+    // token = native, minBorrowAmount 0 (best price), prepaidFeePercent from the slider, holder/beneficiary = caller.
     function doBorrow() {
       executeTransaction({
         chainId: state.chainId, address: loans, abi: borrowFromAbi, functionName: 'borrowFrom',
-        args: [pid, NATIVE_TOKEN, 0n, collateral, acct, 0n, acct],
+        args: [pid, NATIVE_TOKEN, 0n, collateral, acct, BigInt(state.prepaidFee), acct],
         onStatus: onStatus, onError: fail,
         onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Loan opened √'; btn.disabled = false; refreshBalance(); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
       });

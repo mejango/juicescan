@@ -41,8 +41,10 @@ async function build() {
   fs.copyFileSync(path.join(SRC, 'style.css'), path.join(DIST, 'style.css'));
 
   // Copy static assets
-  const logo = path.join(SRC, 'jblogo.gif');
-  if (fs.existsSync(logo)) fs.copyFileSync(logo, path.join(DIST, 'jblogo.gif'));
+  for (const asset of ['jblogo.gif', 'favicon.png']) {
+    const src = path.join(SRC, asset);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(DIST, asset));
+  }
 
   console.log(`Built dist/index.html (${(final.length / 1024).toFixed(0)} KB), dist/app.js (${(js.length / 1024).toFixed(0)} KB)`);
 }
