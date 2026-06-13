@@ -567,11 +567,11 @@ function renderDetails(state, render) {
   // auto-convert) is always part of the tx and toggled via an inline enable/disable in the description.
   wrap.appendChild(fieldBlock('Accounting', false, (function () {
     var w = el('div', '');
-    w.appendChild(multiPills([{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }], state.accepts, function (next) {
-      state.accepts = next.length ? next : ['eth']; render();
+    w.appendChild(choiceCardsInline([{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }], state.accepts[0] || 'eth', function (k) {
+      state.accepts = [k]; render();
     }));
     var note = el('div', 'create-note');
-    note.appendChild(document.createTextNode('The token(s) your project keeps a balance of.'));
+    note.appendChild(document.createTextNode('The token your project keeps its balance in.'));
     var line2 = el('div', 'create-note-sub');
     line2.appendChild(document.createTextNode('Other payment currencies auto-convert to your choice. '));
     var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
@@ -804,22 +804,6 @@ function choiceCardsInline(opts, current, onPick) {
   return row;
 }
 
-function multiPills(opts, selected, onChange) {
-  var row = el('div', 'create-pills');
-  opts.forEach(function (o) {
-    var on = selected.indexOf(o.key) !== -1;
-    var p = el('button', 'create-pill' + (on ? ' selected' : ''));
-    p.textContent = o.label;
-    p.addEventListener('click', function () {
-      var next = selected.slice();
-      if (on) next = next.filter(function (x) { return x !== o.key; });
-      else next.push(o.key);
-      onChange(next);
-    });
-    row.appendChild(p);
-  });
-  return row;
-}
 
 // Payouts section for a stage (folded into the stage editor).
 function payoutsSection(stage, render) {
