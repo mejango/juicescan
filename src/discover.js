@@ -49,11 +49,6 @@ var NATIVE_TOKEN = '0x000000000000000000000000000000000000EEEe';
 
 var LOGO_COLORS = ['#1a8a8a','#3d7a5a','#c43550','#2c2018','#b8602e','#6ec4c4','#82b89e'];
 function logoColor(id) { return LOGO_COLORS[(id - 1) % LOGO_COLORS.length]; }
-var OWNER_PIE_COLORS = [
-  '#1f77b4', '#aec7e8', '#ff7f0e', '#ffbb78', '#2ca02c', '#98df8a', '#d62728', '#ff9896',
-  '#9467bd', '#c5b0d5', '#8c564b', '#c49c94', '#e377c2', '#f7b6d2', '#7f7f7f', '#c7c7c7',
-  '#bcbd22', '#dbdb8d', '#17becf', '#9edae5',
-];
 var BENDYSTRAW_VERSION = 6;
 var OWNERS_PAGE_SIZE = 250;
 var OWNERS_MAX_PARTICIPANTS = 1000;
@@ -62,7 +57,6 @@ var AUTO_ISSUE_MAX_EVENTS = 1000;
 var PRICE_HISTORY_PAGE_SIZE = 1000;
 var PRICE_HISTORY_MAX_POINTS = 3000;
 var ACTIVITY_PAGE_SIZE = 10;
-var BRIDGE_TX_PAGE_SIZE = 20;
 var BENDYSTRAW_PARENT_CHAIN_ID = {
   11155111: 1,
   11155420: 10,
@@ -311,7 +305,18 @@ function readShopHook(project) {
 // It is NOT the clone hook address: METADATA_ID_TARGET is an immutable set to address(this) in the
 // implementation's constructor, so for a delegatecall clone it reads back as the IMPLEMENTATION address.
 // The mint metadata id MUST be keyed to this, or the hook never sees the tierIds and no NFT is minted.
-async function fetchProjectTiers(project) {
+// Memoized per chain:project — a single detail open calls this from the pay-card strip, the Shop tab,
+// and the Shop section; without the cache that's the same ~5-read 721 scan fired 2–3× concurrently and
+// again on every reopen. `bustTiersCache` clears it after an operator adds a tier.
+var _tiersCache = {};
+function fetchProjectTiers(project) {
+  var k = project.chainId + ':' + project.id;
+  if (_tiersCache[k]) return _tiersCache[k];
+  return (_tiersCache[k] = fetchProjectTiersUncached(project));
+}
+function bustTiersCache(project) { delete _tiersCache[project.chainId + ':' + project.id]; }
+
+async function fetchProjectTiersUncached(project) {
   var hook = await readShopHook(project);
   if (!hook) return null;
   var client = clientFor(project.chainId);
@@ -842,15 +847,6 @@ function openAddTierModal(project, shop) {
   var adv = el('div', 'operator-edit-adv'); adv.style.display = 'none'; content.appendChild(adv);
   advToggle.addEventListener('click', function (e) { e.preventDefault(); var open = adv.style.display === 'none'; adv.style.display = open ? 'block' : 'none'; advToggle.textContent = 'Extra options ' + (open ? '▴' : '▾'); });
 
-  // Labeled field with a plain-language subtitle under each advanced option.
-  function advField(labelText, subtitle, placeholder, attrs, topGap) {
-    var l = el('div', 'operator-edit-label'); l.style.marginTop = (topGap == null ? 12 : topGap) + 'px'; l.textContent = labelText; adv.appendChild(l);
-    if (subtitle) { var s = el('div', 'operator-edit-sub'); s.textContent = subtitle; adv.appendChild(s); }
-    var i = el('input', 'operator-edit-jwt'); i.type = (attrs && attrs.type) || 'text'; i.placeholder = placeholder || '';
-    if (attrs && attrs.step) i.step = attrs.step; if (attrs && attrs.min) i.min = attrs.min;
-    adv.appendChild(i); return i;
-  }
-
   // Reserve — opt-in checkbox; when on, set aside "1 of every N sold" for a chosen address.
   var reserveCbRow = el('label', 'operator-flag-row');
   var reserveCb = document.createElement('input'); reserveCb.type = 'checkbox'; reserveCbRow.appendChild(reserveCb);
@@ -1071,6 +1067,7 @@ async function submitAddTier(project, selectedChains, operatorAddr, form, setSta
     return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[tier], []] }) };
   }, 800000n, setStatus, { label: 'Add item for sale', title: 'Confirm add item' });
 
+  bustTiersCache(project); // refetch tiers next time the Shop opens so the new item shows
   setStatus('Item added on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + ' ✓', 'success');
   setTimeout(function () { modal.close(); }, 1400);
 }
@@ -1487,9 +1484,13 @@ async function readCashoutPrice(project, chainId) {
   var terminal = getAddress('JBMultiTerminal', chainId);
   if (!terminal) return null;
   try {
-    var supply = await read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]);
+    // supply and balance are independent — fetch together (one multicall round-trip) before the reclaim read.
+    var res = await Promise.all([
+      read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]),
+      read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, NATIVE_TOKEN]),
+    ]);
+    var supply = res[0], bal = res[1];
     if (!supply || supply === 0n) return null;
-    var bal = await read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, NATIVE_TOKEN]);
     if (bal == null || bal === 0n) return null;
     var reclaim = await read(chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, bal]);
     return reclaim ? Number(reclaim) / 1e18 : null;
@@ -3008,19 +3009,6 @@ function renderPayCard(project, cart) {
     }
   }
 
-  // AMM-only: let the payer pick how much slippage they'll tolerate below the quote.
-  function renderSlippageRow() {
-    var row = el('div', 'paybox-slippage');
-    var lbl = el('span', 'paybox-slippage-label'); lbl.textContent = 'Max slippage'; row.appendChild(lbl);
-    [50, 100, 300, 500].forEach(function (bps) {
-      var b = el('button', 'paybox-slippage-btn' + (state.slippageBps === bps ? ' active' : ''));
-      b.textContent = (bps % 100 === 0 ? String(bps / 100) : (bps / 100).toFixed(1)) + '%';
-      b.addEventListener('click', function () { state.slippageBps = bps; renderFeedback(); });
-      row.appendChild(b);
-    });
-    return row;
-  }
-
   function schedulePreview() {
     if (previewTimer) clearTimeout(previewTimer);
     state.preview = null;
@@ -4226,33 +4214,6 @@ function activityRowFromEvent(event, project) {
   };
 }
 
-function renderRulesSection(project) {
-  var section = el('div', 'detail-section');
-  if (!project.ruleset || !project.metadata) {
-    section.appendChild(emptyCard('Current ruleset', 'No active ruleset found onchain.'));
-    return section;
-  }
-  var r = project.ruleset, m = project.metadata;
-  var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title');
-  title.textContent = 'Current ruleset (cycle #' + r.cycleNumber + ')';
-  card.appendChild(title);
-
-  var rows = [
-    ['Duration', formatDuration(r.duration)],
-    ['Weight', formatAmount(r.weight, 18) + ' / unit'],
-    ['Weight cut', (Number(r.weightCutPercent) / 10000000).toFixed(2) + '%'],
-    ['Reserved %', percentFromRuleset(m.reservedPercent)],
-    ['Cash out tax', percentFromRuleset(m.cashOutTaxRate)],
-    ['Base currency', Number(m.baseCurrency) === 2 ? 'USD' : 'ETH'],
-    ['Pay paused', m.pausePay ? 'Yes' : 'No'],
-    ['Owner minting', m.allowOwnerMinting ? 'Allowed' : 'Disabled'],
-    ['Data hook', m.dataHook && m.dataHook !== ZERO_ADDRESS ? truncAddr(m.dataHook) : 'None'],
-  ];
-  for (var i = 0; i < rows.length; i++) card.appendChild(kvRow(rows[i][0], rows[i][1]));
-  section.appendChild(card);
-  return section;
-}
 
 var WEIGHT_CUT_DEN = 1000000000; // 1e9
 
@@ -5579,14 +5540,6 @@ var BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY = 'query($projectId: Int!, $vers
   + 'activityEvents(where: { projectId: $projectId, version: $version, chainId_in: $chainIds, ' + BENDYSTRAW_ACTIVITY_OR + ' }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + BENDYSTRAW_ACTIVITY_ITEM_FIELDS + ' } }';
-var BENDYSTRAW_SUCKER_TRANSACTIONS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
-  + 'suckerTransactions(where: { suckerGroupId: $suckerGroupId, version: $version }, '
-  + 'orderBy: "createdAt", orderDirection: "desc", limit: $limit, offset: $offset) { '
-  + 'items { index chainId peerChainId beneficiary projectTokenCount terminalTokenAmount status createdAt sucker token peer } totalCount } }';
-var BENDYSTRAW_SUCKER_TRANSACTIONS_BY_PROJECT_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'suckerTransactions(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
-  + 'orderBy: "createdAt", orderDirection: "desc", limit: $limit, offset: $offset) { '
-  + 'items { index chainId peerChainId beneficiary projectTokenCount terminalTokenAmount status createdAt sucker token peer } totalCount } }';
 // History lists (Bendystraw): payout distributions, reserved-token distributions, and loans.
 var BENDYSTRAW_PAYOUTS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'sendPayoutsEvents(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
@@ -5788,22 +5741,6 @@ async function loadAutoIssuanceRows(project, chains, stagesForChain) {
   return rows;
 }
 
-function renderTxHashLink(chainId, txHash) {
-  var url = CHAINS[chainId] && CHAINS[chainId].blockExplorers
-    && CHAINS[chainId].blockExplorers.default
-    && CHAINS[chainId].blockExplorers.default.url;
-  if (!url || !txHash) {
-    var span = el('span');
-    span.textContent = txHash ? truncAddr(txHash) : 'Distributed';
-    return span;
-  }
-  var a = document.createElement('a');
-  a.href = url.replace(/\/$/, '') + '/tx/' + txHash;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  a.textContent = truncAddr(txHash);
-  return a;
-}
 
 function renderAutoIssuanceTable(rows, sym, distribute) {
   var table = el('div', 'autoissue-table');
@@ -8922,13 +8859,3 @@ function kvRow(key, value) {
   return row;
 }
 
-function kvRowNode(key, node) {
-  var row = el('div', 'detail-ruleset-row');
-  var k = el('span', 'detail-ruleset-key');
-  k.textContent = key;
-  row.appendChild(k);
-  var v = el('span', 'detail-ruleset-val');
-  v.appendChild(node);
-  row.appendChild(v);
-  return row;
-}

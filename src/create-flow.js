@@ -16,7 +16,7 @@ import {
   el, executeTransaction, getAddress, getAccount, connect, NATIVE_TOKEN,
 } from './component-base.js';
 import {
-  launchProjectAbi, buildRulesetConfigs, buildSplitGroups, createDefaultRuleset, ZERO,
+  launchProjectAbi, buildRulesetConfigs, createDefaultRuleset, ZERO,
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 

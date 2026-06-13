@@ -7,7 +7,7 @@ import {
   createBeneficiaryInput, createWalletButton, discoverChains, selectChain,
   firstChainForNetwork, executeTransaction, executeRead, renderError, getAddress,
   getAccount, getChainTokens, parseAmount, formatAmount, parseHashDefaults,
-  getBeneficiaryAddress, NATIVE_TOKEN,
+  getBeneficiaryAddress,
 } from './component-base.js';
 
 var cashOutAbi = [{

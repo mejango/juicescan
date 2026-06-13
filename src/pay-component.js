@@ -3,15 +3,12 @@
 // Flow: project ID -> chain discovery -> token -> amount -> beneficiary -> memo -> preview -> pay
 
 import {
-  el, truncAddr, parseHashDefaults, buildEmbedUrl,
-  discoverChains, createProjectAndChainInput,
-  createBeneficiaryInput, createWalletButton, createComponentWrapper,
-  executeTransaction, getBeneficiaryAddress, selectChain, firstChainForNetwork,
-  getAccount, getWalletClient, createPublicClientForChain, onWalletChange, connect,
-  CHAINS, getManifestChains, getChainTokens,
-  parseAmount, formatAmount, renderError, getAddress,
-  NATIVE_TOKEN, ZERO_ADDRESS,
-  erc20DecimalsAbi, erc20ApproveAbi, erc20AllowanceAbi,
+  el, parseHashDefaults,
+  discoverChains, createProjectAndChainInput, createComponentWrapper,
+  executeTransaction, getBeneficiaryAddress, firstChainForNetwork,
+  createPublicClientForChain, connect, getChainTokens,
+  parseAmount, renderError, getAddress,
+  NATIVE_TOKEN, erc20DecimalsAbi,
 } from './component-base.js';
 import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 

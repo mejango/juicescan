@@ -5,7 +5,7 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, discoverChains, selectChain, firstChainForNetwork,
-  executeTransaction, renderError, getAddress, getChainTokens, parseHashDefaults,
+  executeTransaction, renderError, getAddress, parseHashDefaults,
 } from './component-base.js';
 
 var ZERO = '0x0000000000000000000000000000000000000000';

@@ -5,7 +5,7 @@
 import { parseEther } from 'viem';
 import {
   el, createComponentWrapper, createWalletButton, executeTransaction,
-  renderError, getAddress, getAccount, parseHashDefaults, NATIVE_TOKEN,
+  renderError, getAddress, getAccount, NATIVE_TOKEN,
 } from './component-base.js';
 
 export var launchProjectAbi = [{

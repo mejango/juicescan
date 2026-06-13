@@ -9,7 +9,6 @@ import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, 
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
 import { renderError } from './errors.js';
-import { getFunctionPrompt } from './prompts.js';
 
 export function renderFunctionForm(fn, contractName, getContractAddr, abi, fnNatspec) {
   var container = document.createElement('div');

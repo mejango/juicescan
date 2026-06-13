@@ -2,7 +2,7 @@
 // Type-specific input renderers. Each returns a DOM element with .getValue() and .validate().
 // Boring, explicit code — no magic. Every input type has its own renderer.
 
-import { renderTokenSelect, isNativeToken, getTokenDecimals } from './tokens.js';
+import { renderTokenSelect } from './tokens.js';
 import { getAccount, connect, onWalletChange } from './wallet.js';
 import { isAddress } from 'viem';
 

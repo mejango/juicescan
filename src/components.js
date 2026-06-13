@@ -1,34 +1,8 @@
 // src/components.js
-// Tab renderer and component registry for the COMPONENTS tab
-
-import { renderPayComponent } from './pay-component.js';
-import { renderCashOutComponent } from './cashout-component.js';
-import { renderPayoutsComponent } from './payouts-component.js';
-import { renderMintComponent } from './mint-component.js';
-import { renderReservedComponent } from './reserved-component.js';
-import { renderDeployERC20Component } from './deploy-erc20-component.js';
-import { renderBurnComponent } from './burn-component.js';
-import { renderDashboardComponent } from './dashboard-component.js';
-import { renderLaunchComponent } from './launch-component.js';
-import { renderQueueRulesetComponent } from './queue-ruleset-component.js';
-import { renderPermissionsComponent } from './permissions-component.js';
+// Style editor for the embeddable Action widgets (live CSS-var tuning + persistence).
+// The old COMPONENTS-tab renderer was removed — the Actions tab renders widgets directly.
 
 var STYLE_STORAGE_KEY = 'jb-component-style';
-var ACTIVE_COMPONENT_KEY = 'jb-active-component';
-
-var COMPONENTS = [
-  { id: 'pay', label: 'PAY', render: renderPayComponent },
-  { id: 'cashout', label: 'CASH OUT', render: renderCashOutComponent },
-  { id: 'payouts', label: 'PAYOUTS', render: renderPayoutsComponent },
-  { id: 'mint', label: 'MINT', render: renderMintComponent },
-  { id: 'burn', label: 'BURN', render: renderBurnComponent },
-  { id: 'reserved', label: 'RESERVED', render: renderReservedComponent },
-  { id: 'deploy-erc20', label: 'DEPLOY ERC-20', render: renderDeployERC20Component },
-  { id: 'launch', label: 'LAUNCH', render: renderLaunchComponent },
-  { id: 'queue-ruleset', label: 'QUEUE RULESET', render: renderQueueRulesetComponent },
-  { id: 'permissions', label: 'PERMISSIONS', render: renderPermissionsComponent },
-  { id: 'dashboard', label: 'DASHBOARD', render: renderDashboardComponent },
-];
 
 function loadSavedStyle() {
   try {
@@ -45,102 +19,6 @@ function saveStyle(vars) {
 
 function clearSavedStyle() {
   try { localStorage.removeItem(STYLE_STORAGE_KEY); } catch(e) {}
-}
-
-function getActiveComponent() {
-  try { return localStorage.getItem(ACTIVE_COMPONENT_KEY) || 'pay'; } catch(e) { return 'pay'; }
-}
-
-function setActiveComponent(id) {
-  try { localStorage.setItem(ACTIVE_COMPONENT_KEY, id); } catch(e) {}
-}
-
-export function renderComponents() {
-  var container = document.getElementById('tab-components');
-  if (!container) return;
-  container.innerHTML = '';
-
-  // Apply saved style vars immediately
-  var saved = loadSavedStyle();
-  var savedKeys = Object.keys(saved);
-  for (var si = 0; si < savedKeys.length; si++) {
-    container.style.setProperty(savedKeys[si], saved[savedKeys[si]]);
-  }
-
-  // Top bar: subtitle + style editor toggle
-  var topBar = document.createElement('div');
-  topBar.className = 'components-top-bar';
-
-  var subtitle = document.createElement('div');
-  subtitle.className = 'section-header';
-  subtitle.style.color = 'var(--muted)';
-  subtitle.style.margin = '0';
-  subtitle.textContent = 'Interactive widgets you can use on-site or embed in your own app.';
-  topBar.appendChild(subtitle);
-
-  // Style editor (collapsed by default)
-  var editorPanel = null;
-  var editorVisible = false;
-
-  var toggleBtn = document.createElement('button');
-  toggleBtn.className = 'style-editor-toggle';
-  toggleBtn.textContent = 'STYLE EDITOR';
-  toggleBtn.addEventListener('click', function() {
-    editorVisible = !editorVisible;
-    if (editorVisible && !editorPanel) {
-      editorPanel = renderStyleEditor(container, function() {
-        editorVisible = false;
-        editorPanel.style.display = 'none';
-        toggleBtn.style.display = '';
-      });
-      topBar.appendChild(editorPanel);
-    }
-    if (editorPanel) {
-      editorPanel.style.display = editorVisible ? '' : 'none';
-    }
-    toggleBtn.style.display = editorVisible ? 'none' : '';
-  });
-  topBar.appendChild(toggleBtn);
-  container.appendChild(topBar);
-
-  // Component picker pills
-  var activeId = getActiveComponent();
-  var pickerRow = document.createElement('div');
-  pickerRow.className = 'component-picker';
-
-  var componentContainer = document.createElement('div');
-
-  function renderActiveComponent() {
-    componentContainer.innerHTML = '';
-    var comp = COMPONENTS.find(function(c) { return c.id === activeId; });
-    if (comp) {
-      componentContainer.appendChild(comp.render());
-    }
-  }
-
-  for (var i = 0; i < COMPONENTS.length; i++) {
-    (function(comp) {
-      var pill = document.createElement('button');
-      pill.className = 'component-picker-pill' + (comp.id === activeId ? ' active' : '');
-      pill.textContent = comp.label;
-      pill.addEventListener('click', function() {
-        activeId = comp.id;
-        setActiveComponent(comp.id);
-        // Update pill states
-        var pills = pickerRow.querySelectorAll('.component-picker-pill');
-        for (var p = 0; p < pills.length; p++) {
-          pills[p].className = 'component-picker-pill' + (pills[p].textContent === comp.label ? ' active' : '');
-        }
-        renderActiveComponent();
-      });
-      pickerRow.appendChild(pill);
-    })(COMPONENTS[i]);
-  }
-
-  container.appendChild(pickerRow);
-  container.appendChild(componentContainer);
-
-  renderActiveComponent();
 }
 
 export function renderStyleEditor(target, onClose) {

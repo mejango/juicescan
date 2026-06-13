@@ -6,7 +6,7 @@ import queries from '../data/bendystraw-queries.json';
 import { bendystrawQuery, renderBendystrawSettings } from './bendystraw-client.js';
 import { renderPinataSettings } from './ipfs-pin.js';
 import { FORMATTERS } from './bendystraw-format.js';
-import { CHAINS, getManifestChains } from './chain.js';
+import { getManifestChains } from './chain.js';
 
 const DEFAULT_BENDYSTRAW_CHAIN_ID = 11155111;
 

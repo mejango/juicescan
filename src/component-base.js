@@ -48,12 +48,6 @@ export var erc20DecimalsAbi = [{
   outputs: [{ name: '', type: 'uint8' }],
 }];
 
-export var erc20BalanceOfAbi = [{
-  type: 'function', name: 'balanceOf', stateMutability: 'view',
-  inputs: [{ name: 'account', type: 'address' }],
-  outputs: [{ name: '', type: 'uint256' }],
-}];
-
 // --- DOM helpers ---
 
 export function el(tag, className) {

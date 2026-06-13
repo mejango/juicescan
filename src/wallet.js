@@ -32,11 +32,21 @@ export function onWalletChange(fn) {
   listeners.push(fn);
 }
 
+// Cached per (chain, RPC) so we don't spin up a fresh client on every read (e.g. each pay-preview
+// keystroke). multicall batching folds concurrent reads into one RPC round-trip. Keyed by the custom
+// RPC value too, so changing the RPC mid-session transparently yields a new client.
+var _readClients = {};
 export function createPublicClientForChain(chainId) {
   var chain = CHAINS[chainId];
   if (!chain) return null;
-  var customRpc = getCustomRpc(chainId);
-  return createPublicClient({ chain: chain, transport: http(customRpc || undefined) });
+  var customRpc = getCustomRpc(chainId) || '';
+  var key = chainId + '|' + customRpc;
+  if (_readClients[key]) return _readClients[key];
+  return (_readClients[key] = createPublicClient({
+    chain: chain,
+    transport: http(customRpc || undefined),
+    batch: { multicall: { wait: 32 } },
+  }));
 }
 
 function notify() {

@@ -5,9 +5,8 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, discoverChains, selectChain, firstChainForNetwork,
-  executeTransaction, executeRead, renderError, getAddress,
-  getChainTokens, parseAmount, formatAmount, parseHashDefaults, NATIVE_TOKEN,
-  lookupDecimals as lookupDecimalsBase,
+  executeTransaction, renderError, getAddress,
+  getChainTokens, parseAmount, parseHashDefaults,
 } from './component-base.js';
 
 var sendPayoutsAbi = [{
