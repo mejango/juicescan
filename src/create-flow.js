@@ -318,7 +318,7 @@ export function openCreateFlow() {
     sheet.innerHTML = '';
     sheet.appendChild(renderHeader(state, close));
     var wip = el('div', 'create-wip');
-    wip.innerHTML = '<strong>Work in progress.</strong> This launch flow is still being tuned and isn’t ready for production deploys — expect rough edges.';
+    wip.textContent = 'Work in progress';
     sheet.appendChild(wip);
     sheet.appendChild(renderStepper(state, render));
     var body = el('div', 'create-step');
