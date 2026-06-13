@@ -24,7 +24,7 @@ import { pinFile, pinJson, hasPinata, encodeIpfsUriToBytes32 } from './ipfs-pin.
 // Constants
 // ---------------------------------------------------------------------------
 
-var STEPS = ['Details', 'Stages', 'Shop', 'Deploy'];
+var STEPS = ['Details', 'Rulesets', 'Shop', 'Deploy'];
 
 var CHAIN_OPTIONS = [
   { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
@@ -687,8 +687,7 @@ function createStage() {
 
 function renderStages(state, render) {
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Stages',
-    'Set the rules your project runs by. Stage 1 starts at launch (or a time you pick); each later stage takes over automatically when the one before it ends. Open a stage to set how long it lasts, its token issuance, payouts, and edit rules.'));
+  wrap.appendChild(stepHead('Rulesets', 'Set the sequential rulesets your project follows over time.'));
 
   state.stages.forEach(function (stage, idx) {
     wrap.appendChild(renderStageCard(stage, idx, state, render));
