@@ -4870,7 +4870,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   display: flex; align-items: flex-start; justify-content: center; padding: 32px 16px; overflow-y: auto;
 }
 .create-sheet {
-  background: var(--bg); border: 3px solid var(--c-black-light); width: 100%; max-width: 760px;
+  background: var(--bg); border: 3px solid var(--c-black-light); width: 100%; max-width: 480px;
   padding: 0 0 20px; box-shadow: 0 10px 40px rgba(44, 32, 24, 0.35);
 }
 .create-head {
