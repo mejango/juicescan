@@ -404,11 +404,12 @@ function stepHead(title, desc) {
 }
 
 function fieldBlock(label, optional, node) {
+  // `optional` is kept in the signature for call-site clarity, but we no longer render an "(optional)"
+  // suffix on field labels — optionality is shown on the collapse section titles instead.
   var b = el('div', 'create-field');
   if (label) {
     var l = el('label', 'create-label');
     l.textContent = label;
-    if (optional) { var o = el('span', 'create-optional'); o.textContent = ' (optional)'; l.appendChild(o); }
     b.appendChild(l);
   }
   b.appendChild(node);
@@ -573,9 +574,11 @@ function renderDetails(state, render) {
     note.textContent = 'The token that makes up your project’s balance.';
     w.appendChild(note);
     var line2 = el('div', 'create-hint');
-    line2.appendChild(document.createTextNode('Other payment tokens auto-convert to your chosen accounting token as they’re paid in. '));
+    line2.appendChild(document.createTextNode(state.swapRouter
+      ? 'Other payment tokens auto-convert to your chosen accounting token as they’re paid in. '
+      : 'Payers can only pay in your accounting token. '));
     var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
-    toggle.textContent = state.swapRouter ? 'disable' : 'enable';
+    toggle.textContent = state.swapRouter ? 'Disable giving payers this option' : 'Enable giving payers this option';
     toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
     line2.appendChild(toggle);
     w.appendChild(line2);
@@ -596,7 +599,7 @@ function renderDetails(state, render) {
   wrap.appendChild(collapse(d, 'ownerOpen', 'Project owner', true, render, function () {
     var c = el('div', '');
     c.appendChild(infoNote('Leave blank to make your connected wallet the owner. Enter an address to assign ownership to it. Ensure the address exists on every chain you deploy to.'));
-    c.appendChild(fieldBlock('Project owner address', true, textInput(d.owner, '0x0000000000000000000000000000000000000000', function (v) { d.owner = v.trim(); })));
+    c.appendChild(fieldBlock(null, false, textInput(d.owner, '0x0000000000000000000000000000000000000000', function (v) { d.owner = v.trim(); })));
     return c;
   }));
 
@@ -615,8 +618,8 @@ function renderDetails(state, render) {
       c.appendChild(pill);
     });
     var hint = el('div', 'create-hint'); hint.textContent = 'Select up to 3 tags to help supporters find your project.';
-    hint.style.marginTop = '12px';
-    var w = el('div', ''); w.appendChild(c); w.appendChild(hint);
+    hint.style.marginBottom = '12px';
+    var w = el('div', ''); w.appendChild(hint); w.appendChild(c);
     return w;
   }));
 

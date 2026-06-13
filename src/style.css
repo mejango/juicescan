@@ -4973,7 +4973,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* Tags */
 .create-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .create-tag {
-  font-family: inherit; font-size: 12px; cursor: pointer; padding: 4px 12px; border-radius: 14px;
+  font-family: inherit; font-size: 12px; cursor: pointer; padding: 4px 12px; border-radius: 0;
   background: transparent; border: 1px solid var(--c-orange-light); color: var(--muted-2);
 }
 .create-tag.selected { border-color: var(--c-teal); color: var(--c-teal); background: var(--c-teal-light); }
@@ -5106,7 +5106,8 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 }
 
 .create-note-sub { margin-top: 4px; }
-.create-inline-toggle { color: var(--c-teal); cursor: pointer; }
+.create-inline-toggle { color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.create-inline-toggle:hover { color: var(--c-teal); }
 
 /* ── Table row dividers: subtle (site bg colour), inset to the row's content padding. No divider
    under the header (it would contrast the header fill). Table outline stays orange-light.
