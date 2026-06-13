@@ -289,6 +289,7 @@ function initState() {
     accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth' and/or 'usdc'
     swapRouter: true,                // include the router terminal (any token auto-converts) — on by default
     stages: [createStage()],         // ordered rulesets queued at launch (revnet-style stages)
+    afterMode: 'wait',               // what happens after a single timed ruleset: wait | terminal | cycle (custom adds a 2nd stage)
     nfts: [], // {name,description,priceEth,imageUri,imageUploading,limited,supply,reserveFrequency,reserveBeneficiary,externalLink}
     chainIds: [11155111],
     tos: false,
@@ -495,16 +496,23 @@ function warnNote(text) {
   return n;
 }
 
-// A single timed stage would otherwise auto-repeat forever when its cycle ends. To make it run ONCE and
-// then sit safe, append a "standby" ruleset: zero issuance, no payouts/surplus, payments paused, no
-// expiry (it starts at stage-1's cycle end via mustStartAtOrAfter 0). Cash-outs are preserved so holders
-// can still exit. Only applied when there's exactly one stage and it has a duration.
-function needsStandby(stages) {
-  return stages.length === 1 && stages[0].durationSeconds > 0;
+// The "Afterwards" choice only applies when there's exactly one ruleset and it has a duration —
+// otherwise there's nothing "after" (a forever ruleset never ends; multiple rulesets chain themselves).
+function afterApplies(state) {
+  return state.stages.length === 1 && state.stages[0].durationSeconds > 0;
 }
-function stagesWithStandby(stages) {
-  return needsStandby(stages) ? [stages[0], standbyStage(stages[0])] : stages;
+// Resolve the rulesets actually deployed, applying the "Afterwards" choice for a single timed ruleset:
+//   wait     → append a paused, no-issuance standby (project idles safely after the first cycle)
+//   terminal → append a copy that continues on the same terms ~forever (no further cycling)
+//   cycle    → leave the single ruleset to auto-repeat its cycle (no second ruleset)
+function resolveStages(state) {
+  var stages = state.stages;
+  if (!afterApplies(state)) return stages;
+  if (state.afterMode === 'wait') return [stages[0], standbyStage(stages[0])];
+  if (state.afterMode === 'terminal') return [stages[0], terminalStage(stages[0])];
+  return [stages[0]]; // 'cycle'
 }
+// Standby: zero issuance, no payouts/surplus, payments paused, no expiry; cash-outs preserved so holders can exit.
 function standbyStage(s1) {
   var s = createStage();
   s.durationSeconds = 0;            // never expires — sits in standby
@@ -515,6 +523,16 @@ function standbyStage(s1) {
   s.cashOutEnabled = s1.cashOutEnabled; s.cashOutTaxRate = s1.cashOutTaxRate; // keep exit liquidity
   s.payoutMode = 'none';            // no payouts, no surplus allowance
   s.pausePay = true;                // paused payments
+  return s;
+}
+// Terminal: ruleset 1's exact terms continue, but with a ~100-year duration so it effectively never
+// cycles again (the issuance cut etc. apply once more then hold).
+function terminalStage(s1) {
+  var s = JSON.parse(JSON.stringify(s1));
+  s.expanded = false;
+  s.schedule = ''; s.scheduleOn = false;       // only ruleset 1 schedules its start
+  s.durationCustom = false; s.customDurVal = ''; s.customDurUnit = 'days';
+  s.durationSeconds = 3153600000;              // ~100 years — effectively permanent
   return s;
 }
 
@@ -699,23 +717,41 @@ function renderStages(state, render) {
     wrap.appendChild(renderStageCard(stage, idx, state, render));
   });
 
-  if (needsStandby(state.stages)) {
-    wrap.appendChild(infoNote('Heads up: with a single timed stage, a “standby” ruleset is appended automatically after it (no issuance, no payouts, payments paused, cash-outs preserved) so the project runs Stage 1 once and then idles safely instead of auto-repeating. You’ll see it in the Deploy payload. Add a Stage 2 to define what comes next yourself.'));
-  }
-
-  var add = el('a', 'operator-cta create-add-link'); add.href = '#';
-  add.textContent = '+ Add ruleset';
-  add.addEventListener('click', function (e) {
-    e.preventDefault();
+  function addRuleset() {
     var prev = state.stages[state.stages.length - 1];
     var s = createStage();
     if (prev) { s.tokenMode = prev.tokenMode; s.deadline = prev.deadline; s.baseCurrency = prev.baseCurrency; s.payoutCurrency = prev.payoutCurrency; } // sensible carry-over
     state.stages.forEach(function (x) { x.expanded = false; });
     s.expanded = true;
     state.stages.push(s);
-    render();
-  });
-  wrap.appendChild(add);
+  }
+
+  if (afterApplies(state)) {
+    // One timed ruleset → choose what happens after its cycle ends.
+    var afterRow = el('div', 'create-after-row');
+    afterRow.appendChild(document.createTextNode('Afterwards, '));
+    var sel = el('select', 'create-after-select');
+    [['wait', 'Wait'], ['terminal', 'Terminal'], ['cycle', 'Cycle'], ['custom', 'Custom']].forEach(function (o) {
+      var op = el('option', ''); op.value = o[0]; op.textContent = o[1]; if (state.afterMode === o[0]) op.selected = true; sel.appendChild(op);
+    });
+    sel.addEventListener('change', function () {
+      if (sel.value === 'custom') { addRuleset(); state.afterMode = 'wait'; render(); } // adds an editable Ruleset #2
+      else { state.afterMode = sel.value; render(); }
+    });
+    afterRow.appendChild(sel);
+    wrap.appendChild(afterRow);
+    var notes = {
+      wait: 'The project idles safely — no issuance, payments paused, cash-outs preserved — until you change it.',
+      terminal: 'Ruleset #1’s terms continue on forever, without cycling again.',
+      cycle: 'Ruleset #1 repeats its cycle over and over until you change it.',
+    };
+    wrap.appendChild(infoNote(notes[state.afterMode] || ''));
+  } else {
+    var add = el('a', 'operator-cta create-add-link'); add.href = '#';
+    add.textContent = '+ Add ruleset';
+    add.addEventListener('click', function (e) { e.preventDefault(); addRuleset(); render(); });
+    wrap.appendChild(add);
+  }
   return wrap;
 }
 
@@ -1171,9 +1207,11 @@ function reviewSummary(state) {
   c.appendChild(row('Accounting token', state.accepts.map(function (a) { return a.toUpperCase(); }).join(' + ') + (state.swapRouter ? ' (+ any via router)' : '')));
   c.appendChild(row('Launch', state.stages[0] && state.stages[0].schedule
     ? new Date(Number(state.stages[0].schedule) * 1000).toLocaleString() : 'Immediately'));
-  c.appendChild(row('Stages', String(state.stages.length) + (needsStandby(state.stages) ? ' (+ standby)' : '')));
-  state.stages.forEach(function (s, i) { c.appendChild(row('Stage ' + (i + 1), stageSummary(s, i, state))); });
-  if (needsStandby(state.stages)) c.appendChild(row('Stage 2', 'standby · after Stage 1 · no expiry · paused, no issuance'));
+  c.appendChild(row('Rulesets', String(state.stages.length)));
+  state.stages.forEach(function (s, i) { c.appendChild(row('Ruleset #' + (i + 1), stageSummary(s, i, state))); });
+  if (afterApplies(state)) {
+    c.appendChild(row('Afterwards', { wait: 'idle (standby)', terminal: 'continue on the same terms forever', cycle: 'repeat the cycle forever' }[state.afterMode] || state.afterMode));
+  }
   c.appendChild(row('Shop', state.nfts.length ? (state.nfts.length + ' item(s)') : 'None'));
   c.appendChild(row('Chains', state.chainIds.map(chainName).join(', ')));
   return c;
@@ -1390,7 +1428,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt) {
   var multi = state.chainIds.length > 1;
   var hasNfts = state.nfts.length > 0;
   var terminalConfigs = buildTerminalConfigs(chainId, state.accepts, state.swapRouter);
-  var effectiveStages = stagesWithStandby(state.stages);
+  var effectiveStages = resolveStages(state);
   var stageRulesets = function (payHook) {
     return buildRulesetConfigs(
       effectiveStages.map(function (s, i) { return assembleRuleset(s, chainId, i === 0); }),

@@ -4978,6 +4978,14 @@ select.create-input, .create-amount-cur {
 .create-collapse-head:hover { color: var(--c-teal); }
 .create-collapse-label { text-decoration: underline; text-underline-offset: 2px; }
 .create-add-link { display: inline-block; margin-top: 14px; }
+.create-after-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--c-black); }
+.create-after-select {
+  font-family: inherit; font-size: 13px; cursor: pointer; padding: 6px 26px 6px 8px;
+  border: 1px solid var(--c-black-light); background: var(--card-bg); color: var(--c-black);
+  -webkit-appearance: none; -moz-appearance: none; appearance: none; border-radius: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237d5a4e' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; background-size: 10px 6px;
+}
 .create-collapse-caret { color: inherit; }
 
 /* Image picker */
