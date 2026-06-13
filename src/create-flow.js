@@ -529,7 +529,7 @@ function badStageIndex(state) {
 function collapse(state, key, label, optional, render, contentFn) {
   var w = el('div', 'create-collapse');
   var head = el('button', 'create-collapse-head');
-  var lab = el('span', '');
+  var lab = el('span', 'create-collapse-label');
   lab.textContent = label;
   if (optional) { var o = el('span', 'create-optional'); o.textContent = ' (Optional)'; lab.appendChild(o); }
   head.appendChild(lab);
@@ -538,7 +538,7 @@ function collapse(state, key, label, optional, render, contentFn) {
   head.appendChild(caret);
   head.addEventListener('click', function () { state[key] = !state[key]; render(); });
   w.appendChild(head);
-  if (state[key]) w.appendChild(contentFn());
+  if (state[key]) { var content = contentFn(); content.style.marginTop = '10px'; w.appendChild(content); }
   return w;
 }
 
@@ -664,13 +664,13 @@ function renderImagePicker(uri, busy, onChange) {
 // section renderers below read straight off the stage object.
 function createStage() {
   return {
-    expanded: true,
+    expanded: false,         // collapsed by default — sensible defaults are summarized in the card head
     durationSeconds: 0,      // 0 = no expiry (final stage); non-final stages need a duration to advance
-    schedule: '',            // stage 1 only: scheduled launch (mustStartAtOrAfter)
+    schedule: '', scheduleOn: false,  // stage 1 only: scheduled launch (mustStartAtOrAfter); scheduleOn=false means launch right away
     baseCurrency: 1,         // issuance-rate denomination (ETH=1 / USD=2) — metadata.baseCurrency
     payoutCurrency: 1,       // payout-limit denomination (ETH=1 / USD=2) — JBCurrencyAmount.currency
-    // token
-    tokenMode: 'none', weight: '1000000', reservedPercent: 0, weightCutPercent: 0,
+    // token — by default the project issues 10,000 tokens per ETH/USD
+    tokenMode: 'custom', weight: '10000', reservedPercent: 0, weightCutPercent: 0,
     cashOutEnabled: false, cashOutTaxRate: 0, allowOwnerMinting: false, pauseTransfers: false,
     reservedRecipients: [], tokenAdvancedOpen: false,
     // payouts
@@ -697,9 +697,10 @@ function renderStages(state, render) {
     wrap.appendChild(infoNote('Heads up: with a single timed stage, a “standby” ruleset is appended automatically after it (no issuance, no payouts, payments paused, cash-outs preserved) so the project runs Stage 1 once and then idles safely instead of auto-repeating. You’ll see it in the Deploy payload. Add a Stage 2 to define what comes next yourself.'));
   }
 
-  var add = el('button', 'create-add-nft');
-  add.textContent = '＋ Add stage';
-  add.addEventListener('click', function () {
+  var add = el('a', 'operator-cta create-add-link'); add.href = '#';
+  add.textContent = '+ Add ruleset';
+  add.addEventListener('click', function (e) {
+    e.preventDefault();
     var prev = state.stages[state.stages.length - 1];
     var s = createStage();
     if (prev) { s.tokenMode = prev.tokenMode; s.deadline = prev.deadline; s.baseCurrency = prev.baseCurrency; s.payoutCurrency = prev.payoutCurrency; } // sensible carry-over
@@ -759,7 +760,7 @@ function stageTiming(stage, idx, isLast, render) {
   var f = el('div', 'create-field');
   var lab = el('label', 'create-label'); lab.textContent = 'Duration'; f.appendChild(lab);
   var sel = el('select', 'field create-input');
-  var none = el('option', ''); none.value = '0'; none.textContent = 'None (no expiry)';
+  var none = el('option', ''); none.value = '0'; none.textContent = 'Forever';
   if (!stage.durationSeconds) none.selected = true; sel.appendChild(none);
   DURATION_PRESETS.forEach(function (p) {
     var opt = el('option', ''); opt.value = String(p.seconds); opt.textContent = p.label;
@@ -770,17 +771,24 @@ function stageTiming(stage, idx, isLast, render) {
   w.appendChild(f);
 
   if (idx === 0) {
-    w.appendChild(fieldBlock('Schedule launch', true, (function () {
-      var i = el('input', 'field create-input'); i.type = 'datetime-local';
+    w.appendChild(toggleRow('Launch right away', '', !stage.scheduleOn, function (v) {
+      stage.scheduleOn = !v;
+      if (v) stage.schedule = ''; // launching now clears any scheduled time
+      render();
+    }));
+    if (stage.scheduleOn) {
+      var ww = el('div', '');
+      var sub = el('div', 'create-hint'); sub.textContent = 'Your project will start at this date.'; ww.appendChild(sub);
+      var i = el('input', 'field create-input'); i.type = 'datetime-local'; i.style.marginTop = '4px';
       if (stage.schedule) i.value = tsToLocal(stage.schedule);
       i.addEventListener('input', function () {
         if (!i.value) { stage.schedule = ''; return; }
         var dt = new Date(i.value); stage.schedule = isNaN(dt.getTime()) ? '' : Math.floor(dt.getTime() / 1000);
       });
-      var ww = el('div', ''); ww.appendChild(i);
-      ww.appendChild(infoNote('Leave blank to start Stage 1 immediately after you deploy.'));
-      return ww;
-    })()));
+      ww.appendChild(i);
+      var tz = el('div', 'create-hint'); tz.textContent = 'Times are in your local timezone (' + localTimezoneLabel() + ').'; ww.appendChild(tz);
+      w.appendChild(fieldBlock(null, false, ww));
+    }
   } else {
     w.appendChild(infoNote('Stage ' + (idx + 1) + ' begins automatically when Stage ' + idx + ' ends.'));
   }
@@ -1533,4 +1541,9 @@ function tsToLocal(ts) {
   var d = new Date(Number(ts) * 1000); if (isNaN(d.getTime())) return '';
   var p = function (x) { return x < 10 ? '0' + x : '' + x; };
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+// e.g. "America/New_York" — the browser's local zone, for the scheduled-launch helper text.
+function localTimezoneLabel() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'; } catch (e) { return 'local time'; }
 }
