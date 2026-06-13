@@ -483,7 +483,7 @@ function toggleRow(label, desc, checked, onChange) {
 }
 
 function infoNote(text) {
-  var n = el('div', 'create-note');
+  var n = el('div', 'create-hint');
   n.textContent = text;
   return n;
 }
@@ -570,16 +570,16 @@ function renderDetails(state, render) {
     w.appendChild(choiceCardsInline([{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }], state.accepts[0] || 'eth', function (k) {
       state.accepts = [k]; render();
     }));
-    var note = el('div', 'create-note');
-    note.appendChild(document.createTextNode('The token your project keeps its balance in.'));
-    var line2 = el('div', 'create-note-sub');
-    line2.appendChild(document.createTextNode('Other payment currencies auto-convert to your choice. '));
+    var note = el('div', 'create-hint');
+    note.textContent = 'The token that makes up your project’s balance.';
+    w.appendChild(note);
+    var line2 = el('div', 'create-hint');
+    line2.appendChild(document.createTextNode('Other payment tokens auto-convert to your chosen accounting token as they’re paid in. '));
     var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
     toggle.textContent = state.swapRouter ? 'disable' : 'enable';
     toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
     line2.appendChild(toggle);
-    note.appendChild(line2);
-    w.appendChild(note);
+    w.appendChild(line2);
     return w;
   })()));
 
@@ -628,8 +628,6 @@ function renderDetails(state, render) {
     c.appendChild(fieldBlock('Payment notice', true, textArea(d.payDisclosure, 'Shown to payers before they pay.', function (v) { d.payDisclosure = v; })));
     return c;
   }));
-
-  if (!hasPinata()) wrap.appendChild(infoNote('No Pinata JWT set — add one in DATA → settings to upload a logo/metadata, or your metadata will be skipped and you can edit the project later.'));
 
   return wrap;
 }
@@ -1083,6 +1081,8 @@ function renderDeploy(state, render) {
   tos.appendChild(cb);
   tos.appendChild(document.createTextNode(' I understand this is a brand-new protocol and accept the risks of deploying.'));
   wrap.appendChild(tos);
+
+  if (!hasPinata()) wrap.appendChild(infoNote('No Pinata JWT set — add one in DATA → settings to pin your logo & metadata. Otherwise they’re skipped at launch and you can add them by editing the project later.'));
 
   if (state.statusLines.length) {
     var log = el('div', 'create-log');
