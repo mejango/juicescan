@@ -5128,7 +5128,7 @@ select.create-input, .create-amount-cur {
 /* Inline "Issues [x] tokens per [unit]" row */
 .create-inline-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--c-black); }
 .create-inline-num { width: 90px; flex: 0 0 auto; border-radius: 0; }
-.create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 8px; font-size: 12px; }
+.create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
 /* Inline reserved-split rows: "Split [%] to [recipient]" */
 .create-split-wrap { margin-top: 8px; }
 .create-split-row { display: flex; align-items: center; gap: 6px; }

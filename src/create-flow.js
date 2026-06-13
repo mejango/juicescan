@@ -396,10 +396,8 @@ function renderStep(state, render) {
 // ---- small shared field helpers (create-flow look) ----
 
 function stepHead(title, desc) {
+  // The stepper already labels each step, so we don't render a big H2 title — just the description.
   var w = el('div', 'create-step-head');
-  var h = el('h2', 'create-step-title');
-  h.textContent = title;
-  w.appendChild(h);
   if (desc) { var p = el('p', 'create-step-desc'); p.textContent = desc; w.appendChild(p); }
   return w;
 }
@@ -731,7 +729,7 @@ function renderStages(state, render) {
     var afterRow = el('div', 'create-after-row');
     afterRow.appendChild(document.createTextNode('Afterwards, '));
     var sel = el('select', 'create-after-select');
-    [['wait', 'Wait'], ['terminal', 'Terminal'], ['cycle', 'Cycle'], ['custom', 'Custom']].forEach(function (o) {
+    [['wait', 'Wait'], ['terminal', 'Terminate'], ['cycle', 'Cycle'], ['custom', 'Custom']].forEach(function (o) {
       var op = el('option', ''); op.value = o[0]; op.textContent = o[1]; if (state.afterMode === o[0]) op.selected = true; sel.appendChild(op);
     });
     sel.addEventListener('change', function () {
@@ -743,7 +741,7 @@ function renderStages(state, render) {
     var notes = {
       wait: 'The project idles safely — no issuance, payments paused, cash-outs preserved — until you change it.',
       terminal: 'Ruleset #1’s terms continue on forever, without cycling again.',
-      cycle: 'Ruleset #1 repeats its cycle over and over until you change it.',
+      cycle: 'Ruleset #1 repeats its cycle over and over until you change it. Changes will only be able to be made once a cycled ruleset ends.',
     };
     wrap.appendChild(infoNote(notes[state.afterMode] || ''));
   } else {
@@ -1052,9 +1050,7 @@ function tokenSection(stage, render) {
 
 function renderNfts(state, render) {
   var wrap = el('div', '');
-  var head = stepHead('Shop', 'Sell items that supporters mint by paying your project. You can change an item’s image later, but not its price or how many exist after launch.');
-  var badge = el('span', 'create-step-badge'); badge.textContent = 'OPTIONAL';
-  head.querySelector('.create-step-title').appendChild(badge);
+  var head = stepHead('Shop', 'Optional — sell items that supporters mint by paying your project. You can change an item’s image later, but not its price or how many exist after launch.');
   wrap.appendChild(head);
 
   state.nfts.forEach(function (nft, idx) {
