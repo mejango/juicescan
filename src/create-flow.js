@@ -575,7 +575,7 @@ function renderDetails(state, render) {
     w.appendChild(note);
     var line2 = el('div', 'create-hint');
     line2.appendChild(document.createTextNode(state.swapRouter
-      ? 'Other payment tokens auto-convert to your chosen accounting token as they’re paid in. '
+      ? 'Other payment tokens auto-swap to your chosen accounting token as they’re paid in. '
       : 'Payers can only pay in your accounting token. '));
     var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
     toggle.textContent = state.swapRouter ? 'Disable giving payers this option' : 'Enable giving payers this option';
