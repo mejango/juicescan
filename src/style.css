@@ -5110,6 +5110,20 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   border: 1px solid var(--c-black-light); border-left: none; background: var(--card-bg);
   color: var(--c-black); padding: 0 8px;
 }
+/* Inline "Issues [x] tokens per [unit]" row */
+.create-inline-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--c-black); }
+.create-inline-num { width: 90px; flex: 0 0 auto; border-radius: 0; }
+.create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); }
+/* Inline reserved-split rows: "Split [%] to [recipient]" */
+.create-split-wrap { margin-top: 8px; }
+.create-split-row { display: flex; align-items: center; gap: 6px; }
+.create-split-lead, .create-split-to, .create-split-sign { font-size: 12px; color: var(--muted-2); flex: 0 0 auto; }
+.create-split-pct { width: 60px; flex: 0 0 auto; border-radius: 0; }
+.create-split-recip { flex: 1 1 auto; min-width: 0; border-radius: 0; }
+.create-split-rm { background: none; border: none; cursor: pointer; color: var(--muted-2); font-size: 13px; flex: 0 0 auto; }
+.create-split-rm:hover { color: var(--c-pink); }
+.create-split-benef { margin-top: 6px; padding-left: 44px; }
+.create-split-benef .field { border-radius: 0; }
 
 .create-note-sub { margin-top: 4px; }
 .create-inline-toggle { color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }

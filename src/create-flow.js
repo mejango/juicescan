@@ -753,7 +753,7 @@ function stageSummary(stage, idx, state) {
 function renderStageEditor(stage, idx, state, render) {
   var c = el('div', 'create-stage-body');
   c.appendChild(stageTiming(stage, idx, idx === state.stages.length - 1, render));
-  c.appendChild(collapse(stage, 'tokenOpen', 'Token issuance', false, render, function () { return tokenSection(stage, render); }));
+  c.appendChild(tokenSection(stage, render));
   c.appendChild(collapse(stage, 'payoutsOpen', 'Payouts', false, render, function () { return payoutsSection(stage, render); }));
   c.appendChild(collapse(stage, 'deadlineOpen', 'Edit deadline & rules', false, render, function () { return deadlineSection(stage, render); }));
   return c;
@@ -917,6 +917,38 @@ function recipientRow(rec, right, onRemove) {
   return row;
 }
 
+// Inline reserved-token split row: "Split [%] to [0x / project ID]". A project ID reveals a
+// "token beneficiary" field (who receives that project's tokens). Edits `rec` in place.
+function reservedSplitRow(t, rec, render) {
+  var wrap = el('div', 'create-split-wrap');
+  var row = el('div', 'create-split-row');
+  var lead = el('span', 'create-split-lead'); lead.textContent = 'Split'; row.appendChild(lead);
+  var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.max = '100'; pct.step = 'any'; pct.placeholder = '10';
+  pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; }); row.appendChild(pct);
+  var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
+  var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
+  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
+  recip.value = rec.type === 'project' ? String(rec.projectId || '') : (rec.address || ''); row.appendChild(recip);
+  var rm = el('button', 'create-split-rm'); rm.textContent = '🗑'; rm.title = 'Remove';
+  rm.addEventListener('click', function () { var i = t.reservedRecipients.indexOf(rec); if (i >= 0) t.reservedRecipients.splice(i, 1); render(); });
+  row.appendChild(rm);
+  wrap.appendChild(row);
+  // Project-ID beneficiary line.
+  var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
+  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… who receives that project’s tokens';
+  benef.value = rec.type === 'project' ? (rec.address || '') : '';
+  benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
+  benefRow.appendChild(benef); wrap.appendChild(benefRow);
+  function refresh() {
+    var v = (recip.value || '').trim();
+    if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; }
+    else { rec.type = 'wallet'; rec.projectId = 0; rec.address = v; benefRow.style.display = 'none'; }
+  }
+  recip.addEventListener('input', refresh);
+  refresh();
+  return wrap;
+}
+
 // Token issuance section for a stage (folded into the stage editor).
 function tokenSection(stage, render) {
   var t = stage;
@@ -926,42 +958,34 @@ function tokenSection(stage, render) {
   if (t.tokenMode === 'custom') {
     var card = el('div', 'create-subcard');
 
-    card.appendChild(fieldBlock('Price issuance in', false, (function () {
-      var w = el('div', '');
-      w.appendChild(choiceCardsInline([{ key: 1, label: 'ETH' }, { key: 2, label: 'USD' }], t.baseCurrency, function (k) { t.baseCurrency = k; render(); }));
-      w.appendChild(infoNote('The unit your issuance rate is priced in. USD keeps a steady tokens-per-dollar no matter ETH’s price (a price feed converts when someone pays). It doesn’t change which token people pay with.'));
-      return w;
-    })()));
+    // Issues [x] tokens per [ETH/USD]
+    card.appendChild((function () {
+      var row = el('div', 'create-inline-row');
+      row.appendChild(document.createTextNode('Issues '));
+      var n = el('input', 'field create-inline-num'); n.type = 'text'; n.placeholder = '0'; n.value = t.weight;
+      n.addEventListener('input', function () { t.weight = n.value.trim(); });
+      row.appendChild(n);
+      row.appendChild(document.createTextNode(' tokens per '));
+      var cur = el('select', 'create-amount-cur');
+      [['ETH', 1], ['USD', 2]].forEach(function (o) { var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0]; if (t.baseCurrency === o[1]) op.selected = true; cur.appendChild(op); });
+      cur.addEventListener('change', function () { t.baseCurrency = Number(cur.value); render(); });
+      row.appendChild(cur);
+      return row;
+    })());
 
-    card.appendChild(fieldBlock('Issuance rate', false, (function () {
-      var n = textInput(t.weight, '0', function (v) { t.weight = v.trim(); });
-      var w = el('div', 'create-suffix-row'); w.appendChild(n);
-      var s = el('span', 'create-suffix'); s.textContent = 'tokens per ' + (t.baseCurrency === 2 ? 'USD' : 'ETH'); w.appendChild(s);
-      return w;
-    })()));
-
-    var rp = el('div', 'create-field');
+    var rp = el('div', 'create-field'); rp.style.marginTop = '14px';
     var rpl = el('label', 'create-label'); rpl.textContent = 'Reserved'; rp.appendChild(rpl);
     rp.appendChild(infoNote('Set aside this share of every token issuance for wallets / projects you choose.'));
-    rp.appendChild(pctSlider(t.reservedPercent, function (v) { t.reservedPercent = v; }));
+    rp.appendChild(pctSlider(t.reservedPercent, function (v) { t.reservedPercent = v; render(); }));
     card.appendChild(rp);
 
-    var rrHead = el('div', 'create-subcard-head');
-    var rrt = el('div', 'create-subcard-title'); rrt.textContent = 'Reserved token recipients';
-    var rro = el('span', 'create-optional'); rro.textContent = ' (optional)'; rrt.appendChild(rro);
-    rrHead.appendChild(rrt);
-    var rrAdd = el('button', 'create-btn small'); rrAdd.textContent = '+ Add recipient';
-    rrAdd.addEventListener('click', function () {
-      openRecipientModal('reserved', function (rec) { t.reservedRecipients.push(rec); render(); });
-    });
-    rrHead.appendChild(rrAdd);
-    card.appendChild(rrHead);
-    if (!t.reservedRecipients.length) {
-      card.appendChild(infoNote('By default, reserved tokens are sent to the project owner.'));
-    } else {
-      t.reservedRecipients.forEach(function (rec, idx) {
-        card.appendChild(recipientRow(rec, rec.percent + '%', function () { t.reservedRecipients.splice(idx, 1); render(); }));
-      });
+    // Reserved splits — divide the reserved share among recipients: "Split [%] to [0x / project ID]".
+    if (t.reservedPercent > 0) {
+      t.reservedRecipients.forEach(function (rec) { card.appendChild(reservedSplitRow(t, rec, render)); });
+      if (!t.reservedRecipients.length) card.appendChild(infoNote('No splits yet — the reserved tokens go to the project owner.'));
+      var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = 'add split +';
+      addSplit.addEventListener('click', function (e) { e.preventDefault(); t.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
+      card.appendChild(addSplit);
     }
 
     card.appendChild(collapse(t, 'tokenAdvancedOpen', 'Advanced', false, render, function () {
