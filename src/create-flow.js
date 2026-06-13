@@ -24,7 +24,7 @@ import { pinFile, pinJson, hasPinata, encodeIpfsUriToBytes32 } from './ipfs-pin.
 // Constants
 // ---------------------------------------------------------------------------
 
-var STEPS = ['Details', 'Rulesets', 'Shop', 'Deploy'];
+var STEPS = ['Details', 'Stages', 'Shop', 'Deploy'];
 
 var CHAIN_OPTIONS = [
   { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
@@ -291,7 +291,7 @@ function initState() {
     stages: [createStage()],         // ordered rulesets queued at launch (revnet-style stages)
     nfts: [], // {name,description,priceEth,imageUri,imageUploading,limited,supply,reserveFrequency,reserveBeneficiary,externalLink}
     chainIds: [11155111],
-    tos: false, payloadConfirmed: false, payloadOpen: true,
+    tos: false,
     deploying: false, statusLines: [], done: false,
   };
 }
@@ -685,8 +685,8 @@ function createStage() {
 
 function renderStages(state, render) {
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Ruleset Stages',
-    'Define one or more rulesets that run in sequence. Stage 1 starts when you deploy (or at a scheduled time); each later stage begins automatically when the previous one ends. Edit a stage to set its duration, token issuance, payouts, deadline, and rules.'));
+  wrap.appendChild(stepHead('Stages',
+    'Set the rules your project runs by. Stage 1 starts at launch (or a time you pick); each later stage takes over automatically when the one before it ends. Open a stage to set how long it lasts, its token issuance, payouts, and edit rules.'));
 
   state.stages.forEach(function (stage, idx) {
     wrap.appendChild(renderStageCard(stage, idx, state, render));
@@ -746,7 +746,7 @@ function renderStageEditor(stage, idx, state, render) {
   c.appendChild(stageTiming(stage, idx, idx === state.stages.length - 1, render));
   c.appendChild(collapse(stage, 'tokenOpen', 'Token issuance', false, render, function () { return tokenSection(stage, render); }));
   c.appendChild(collapse(stage, 'payoutsOpen', 'Payouts', false, render, function () { return payoutsSection(stage, render); }));
-  c.appendChild(collapse(stage, 'deadlineOpen', 'Rule change deadline & other rules', false, render, function () { return deadlineSection(stage, render); }));
+  c.appendChild(collapse(stage, 'deadlineOpen', 'Edit deadline & rules', false, render, function () { return deadlineSection(stage, render); }));
   return c;
 }
 
@@ -890,14 +890,14 @@ function tokenSection(stage, render) {
   if (t.tokenMode === 'custom') {
     var card = el('div', 'create-subcard');
 
-    card.appendChild(fieldBlock('Issuance denomination', false, (function () {
+    card.appendChild(fieldBlock('Price issuance in', false, (function () {
       var w = el('div', '');
       w.appendChild(choiceCardsInline([{ key: 1, label: 'ETH' }, { key: 2, label: 'USD' }], t.baseCurrency, function (k) { t.baseCurrency = k; render(); }));
-      w.appendChild(infoNote('The unit your issuance rate is priced in. USD keeps a stable tokens-per-dollar regardless of ETH’s price (a price feed converts at pay time). It doesn’t change which token is paid.'));
+      w.appendChild(infoNote('The unit your issuance rate is priced in. USD keeps a steady tokens-per-dollar no matter ETH’s price (a price feed converts when someone pays). It doesn’t change which token people pay with.'));
       return w;
     })()));
 
-    card.appendChild(fieldBlock('Total issuance rate', false, (function () {
+    card.appendChild(fieldBlock('Issuance rate', false, (function () {
       var n = textInput(t.weight, '0', function (v) { t.weight = v.trim(); });
       var w = el('div', 'create-suffix-row'); w.appendChild(n);
       var s = el('span', 'create-suffix'); s.textContent = 'tokens per ' + (t.baseCurrency === 2 ? 'USD' : 'ETH'); w.appendChild(s);
@@ -905,8 +905,8 @@ function tokenSection(stage, render) {
     })()));
 
     var rp = el('div', 'create-field');
-    var rpl = el('label', 'create-label'); rpl.textContent = 'Reserved percent'; rp.appendChild(rpl);
-    rp.appendChild(infoNote('Set aside a percentage of token issuance for the wallets / projects of your choosing.'));
+    var rpl = el('label', 'create-label'); rpl.textContent = 'Reserved'; rp.appendChild(rpl);
+    rp.appendChild(infoNote('Set aside this share of every token issuance for wallets / projects you choose.'));
     rp.appendChild(pctSlider(t.reservedPercent, function (v) { t.reservedPercent = v; }));
     card.appendChild(rp);
 
@@ -930,13 +930,13 @@ function tokenSection(stage, render) {
 
     card.appendChild(collapse(t, 'tokenAdvancedOpen', 'Advanced', false, render, function () {
       var c = el('div', '');
-      var icl = el('label', 'create-label'); icl.textContent = 'Issuance cut percent'; c.appendChild(icl);
-      c.appendChild(infoNote('The issuance rate is reduced by this percentage every ruleset. Higher = more incentive to pay earlier.'));
+      var icl = el('label', 'create-label'); icl.textContent = 'Issuance cut'; c.appendChild(icl);
+      c.appendChild(infoNote('The issuance rate drops by this much each stage cycle. Higher = more reason to pay earlier.'));
       c.appendChild(pctSlider(t.weightCutPercent, function (v) { t.weightCutPercent = v; }));
       c.appendChild(toggleRow('Enable cash outs', 'When enabled, token holders can cash out their tokens for a portion of the project’s ETH.', t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
       if (t.cashOutEnabled) {
-        var col = el('label', 'create-label'); col.textContent = 'Cash out tax rate'; c.appendChild(col);
-        c.appendChild(infoNote('At 0%, cash outs are 1:1. Higher rates send relatively more ETH to later cash-outers (bonding curve).'));
+        var col = el('label', 'create-label'); col.textContent = 'Cash out tax'; c.appendChild(col);
+        c.appendChild(infoNote('At 0%, cash outs are 1:1. Higher rates leave relatively more ETH for those who cash out later.'));
         c.appendChild(pctSlider(t.cashOutTaxRate, function (v) { t.cashOutTaxRate = v; }));
       }
       c.appendChild(toggleRow('Owner token minting', 'While enabled, the project owner can mint any amount of project tokens.', t.allowOwnerMinting, function (v) { t.allowOwnerMinting = v; }));
@@ -1051,39 +1051,24 @@ function renderDeploy(state, render) {
   });
   wrap.appendChild(chainRow);
   wrap.appendChild(infoNote(state.chainIds.length > 1
-    ? 'Multi-chain: deploys via the omnichain deployer (one transaction per chain, suckers link them). Keep each transaction in your wallet.'
-    : 'Single chain: deploys directly via ' + (state.nfts.length ? 'the 721 deployer.' : 'the controller.')));
+    ? 'Deploys on ' + state.chainIds.length + ' chains, linked so your token and balances can move between them. You’ll sign one transaction per chain.'
+    : 'Deploys on a single chain. You can add more chains here before launching.'));
 
   // Review summary
   wrap.appendChild(reviewSummary(state));
 
-  // Full transaction payload (exactly what gets signed) — JSON, collapsible (open by default).
-  wrap.appendChild(collapse(state, 'payloadOpen', 'Transaction payload — what you are signing', false, render, function () {
-    var c = el('div', '');
-    c.appendChild(infoNote('This is the exact ' + (state.chainIds.length > 1 ? state.chainIds.length + ' transactions' : 'transaction')
-      + ' that will be sent to your wallet — same args builder as the live deploy. Amounts are decimal strings; '
-      + 'the project URI is pinned to IPFS at launch and substituted in. Review it before signing.'));
-    var pre = el('pre', 'create-payload');
-    try { pre.textContent = payloadPreviewJson(state); }
-    catch (e) { pre.textContent = 'Could not build payload: ' + (e && e.message || e); }
-    c.appendChild(pre);
-    return c;
-  }));
-
-  // Explicit "this is the data I'm signing" confirmation.
-  var confirm = el('label', 'create-tos');
-  var ccb = el('input', ''); ccb.type = 'checkbox'; ccb.checked = state.payloadConfirmed;
-  ccb.addEventListener('change', function () { state.payloadConfirmed = ccb.checked; updateLaunch(); });
-  confirm.appendChild(ccb);
-  confirm.appendChild(document.createTextNode(' I have reviewed the payload above and confirm it is the correct data I am signing.'));
-  wrap.appendChild(confirm);
+  // The exact transaction for each chain is shown in a confirmation screen (with a copy-able LLM audit
+  // prompt) right before you sign it — no need to re-review raw calldata here.
+  wrap.appendChild(infoNote(state.chainIds.length > 1
+    ? 'You’ll sign one transaction per chain. Each one’s exact data is shown for review before you sign it.'
+    : 'The exact transaction data is shown for review before you sign it.'));
 
   // ToS + launch
   var tos = el('label', 'create-tos');
   var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = state.tos;
   cb.addEventListener('change', function () { state.tos = cb.checked; updateLaunch(); });
   tos.appendChild(cb);
-  tos.appendChild(document.createTextNode(' I have read and accept the risks of deploying a brand-new protocol.'));
+  tos.appendChild(document.createTextNode(' I understand this is a brand-new protocol and accept the risks of deploying.'));
   wrap.appendChild(tos);
 
   if (state.statusLines.length) {
@@ -1099,7 +1084,7 @@ function renderDeploy(state, render) {
   var bad = badStageIndex(state);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.payloadConfirmed || !state.chainIds.length || !state.details.name || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || bad !== -1;
   }
   launch.textContent = state.done ? 'Launched √' : (state.deploying ? 'Launching…' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -1145,7 +1130,7 @@ function openRecipientModal(kind, onAdd, stage) {
   ov.addEventListener('mousedown', function (e) { if (e.target === ov) close(); });
 
   var title = el('div', 'create-modal-title');
-  title.textContent = kind === 'payout' ? 'Add new payout' : 'Add reserved token recipient';
+  title.textContent = kind === 'payout' ? 'Add payout recipient' : 'Add reserved token recipient';
   dlg.appendChild(title);
 
   var typeRow = el('div', 'create-pills');
@@ -1373,28 +1358,6 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt) {
   }
   return { contract: 'JBOmnichainDeployer', address: addr, abi: omnichainAbi, missingSuckers: missing,
     args: [owner, projectUri, rulesetsFull, terminalConfigs, '', sucker] };
-}
-
-// JSON string of the full per-chain payload the user will sign (BigInts rendered as decimal strings).
-// projectUri is shown as a placeholder because it's pinned at launch time.
-function payloadPreviewJson(state) {
-  var owner = (state.details.owner && /^0x[0-9a-fA-F]{40}$/.test(state.details.owner))
-    ? state.details.owner : ((getAccount && getAccount()) || '0x<connected wallet at launch>');
-  var uri = hasPinata() ? 'ipfs://<metadata pinned at launch>' : '(no metadata)';
-  var salt = deploySalt(state, owner);
-  var preview = {
-    owner: owner,
-    metadataPinned: hasPinata() ? buildMetadata(state.details) : null,
-    transactions: state.chainIds.map(function (chainId) {
-      var plan = buildLaunchArgs(state, chainId, owner, uri, salt);
-      return { chain: chainName(chainId), contract: plan.contract, address: plan.address, "function": 'launchProjectFor', args: plan.args };
-    }),
-  };
-  return jsonBig(preview);
-}
-
-function jsonBig(v) {
-  return JSON.stringify(v, function (k, val) { return typeof val === 'bigint' ? val.toString() : val; }, 2);
 }
 
 // Assemble a single ruleset state object (createDefaultRuleset shape) from the wizard steps.
