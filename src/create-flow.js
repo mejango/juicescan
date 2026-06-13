@@ -497,7 +497,8 @@ function warnNote(text) {
 // The "Afterwards" choice only applies when there's exactly one ruleset and it has a duration —
 // otherwise there's nothing "after" (a forever ruleset never ends; multiple rulesets chain themselves).
 function afterApplies(state) {
-  return state.stages.length === 1 && state.stages[0].durationSeconds > 0;
+  var last = state.stages[state.stages.length - 1];
+  return !!last && last.durationSeconds > 0;
 }
 // Resolve the rulesets actually deployed, applying the "Afterwards" choice for a single timed ruleset:
 //   wait     → append a paused, no-issuance standby (project idles safely after the first cycle)
@@ -506,9 +507,10 @@ function afterApplies(state) {
 function resolveStages(state) {
   var stages = state.stages;
   if (!afterApplies(state)) return stages;
-  if (state.afterMode === 'wait') return [stages[0], standbyStage(stages[0])];
-  if (state.afterMode === 'terminal') return [stages[0], terminalStage(stages[0])];
-  return [stages[0]]; // 'cycle'
+  var last = stages[stages.length - 1];
+  if (state.afterMode === 'wait') return stages.concat([standbyStage(last)]);
+  if (state.afterMode === 'terminal') return stages.concat([terminalStage(last)]);
+  return stages; // 'cycle'
 }
 // Standby: zero issuance, no payouts/surplus, payments paused, no expiry; cash-outs preserved so holders can exit.
 function standbyStage(s1) {
@@ -523,14 +525,14 @@ function standbyStage(s1) {
   s.pausePay = true;                // paused payments
   return s;
 }
-// Terminal: ruleset 1's exact terms continue, but with a ~100-year duration so it effectively never
-// cycles again (the issuance cut etc. apply once more then hold).
+// Terminal: the last ruleset's exact terms continue, but with the max (uint32) duration so it
+// effectively never cycles again (the issuance cut etc. apply once more then hold).
 function terminalStage(s1) {
   var s = JSON.parse(JSON.stringify(s1));
   s.expanded = false;
   s.schedule = ''; s.scheduleOn = false;       // only ruleset 1 schedules its start
   s.durationCustom = false; s.customDurVal = ''; s.customDurUnit = 'days';
-  s.durationSeconds = 3153600000;              // ~100 years — effectively permanent
+  s.durationSeconds = FOREVER_SECONDS;         // uint32 max — effectively permanent
   return s;
 }
 
@@ -744,12 +746,8 @@ function renderStages(state, render) {
       cycle: 'Ruleset #1 repeats its cycle over and over until you change it. Changes will only be able to be made once a cycled ruleset ends.',
     };
     wrap.appendChild(infoNote(notes[state.afterMode] || ''));
-  } else {
-    var add = el('a', 'operator-cta create-add-link'); add.href = '#';
-    add.textContent = '+ Add ruleset';
-    add.addEventListener('click', function (e) { e.preventDefault(); addRuleset(); render(); });
-    wrap.appendChild(add);
   }
+  // A flexible (no-duration) last ruleset is terminal — owner-managed, nothing scheduled after it.
   return wrap;
 }
 
@@ -775,7 +773,8 @@ function renderStageCard(stage, idx, state, render) {
 function stageSummary(stage, idx, state) {
   var parts = [];
   parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : 'Starts after Ruleset #' + idx);
-  parts.push(stage.durationSeconds ? ('lasts ' + secondsLabel(stage.durationSeconds)) : 'lasts forever');
+  parts.push(!stage.durationSeconds ? 'lasts until changed by owner'
+    : (stage.durationSeconds === FOREVER_SECONDS ? 'lasts forever' : 'lasts ' + secondsLabel(stage.durationSeconds)));
   if (stage.tokenMode === 'custom') {
     parts.push('issues ' + (stage.weight || '0') + ' tokens / ' + (stage.baseCurrency === 2 ? 'USD' : 'ETH'));
   } else parts.push('no issuance');
@@ -799,12 +798,14 @@ function stageTiming(stage, idx, isLast, render) {
   var f = el('div', 'create-field');
   var lab = el('label', 'create-label'); lab.textContent = 'Duration'; f.appendChild(lab);
   var sel = el('select', 'field create-input');
-  var none = el('option', ''); none.value = '0'; none.textContent = 'Forever';
-  if (!stage.durationCustom && !stage.durationSeconds) none.selected = true; sel.appendChild(none);
+  var flex = el('option', ''); flex.value = '0'; flex.textContent = 'Flexible';
+  if (!stage.durationCustom && !stage.durationSeconds) flex.selected = true; sel.appendChild(flex);
   DURATION_PRESETS.forEach(function (p) {
     var opt = el('option', ''); opt.value = String(p.seconds); opt.textContent = p.label;
     if (!stage.durationCustom && stage.durationSeconds === p.seconds) opt.selected = true; sel.appendChild(opt);
   });
+  var foreverOpt = el('option', ''); foreverOpt.value = String(FOREVER_SECONDS); foreverOpt.textContent = 'Forever';
+  if (!stage.durationCustom && stage.durationSeconds === FOREVER_SECONDS) foreverOpt.selected = true; sel.appendChild(foreverOpt);
   var customOpt = el('option', ''); customOpt.value = 'custom'; customOpt.textContent = 'Custom…';
   if (stage.durationCustom) customOpt.selected = true; sel.appendChild(customOpt);
   sel.addEventListener('change', function () {
@@ -1617,6 +1618,7 @@ function secondsLabel(s) {
   return s + 's';
 }
 var DURATION_UNIT_SECONDS = { hours: 3600, days: 86400, weeks: 604800, years: 31536000 };
+var FOREVER_SECONDS = 4294967295; // uint32 max (~136 years) — the "Forever" option's max duration
 function recomputeCustomDuration(stage) {
   var v = parseFloat(stage.customDurVal);
   stage.durationSeconds = (v > 0) ? Math.round(v * (DURATION_UNIT_SECONDS[stage.customDurUnit] || 86400)) : 0;
