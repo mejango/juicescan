@@ -675,6 +675,8 @@ function createStage() {
     reservedRecipients: [], tokenAdvancedOpen: false,
     // payouts
     payoutMode: 'none', payoutRecipients: [],
+    // surplus allowance — owner can withdraw from surplus (beyond payouts) up to a cap each ruleset
+    surplusAllowanceOn: false, surplusAllowanceUnlimited: false, surplusAllowanceAmount: '', surplusAllowanceCurrency: 1,
     // deadline + rules
     deadline: '3days', pausePay: false, holdFees: false,
     allowSetTerminals: true, allowSetController: true, allowTerminalMigration: false, otherOpen: false,
@@ -738,6 +740,8 @@ function stageSummary(stage, idx, state) {
     if (stage.reservedPercent) parts.push(stage.reservedPercent + '% reserved');
     if (stage.cashOutEnabled) parts.push('cash-outs ' + stage.cashOutTaxRate + '%');
   } else parts.push('no token');
+  if (stage.payoutMode && stage.payoutMode !== 'none') parts.push(stage.payoutMode + ' payouts');
+  if (stage.surplusAllowanceOn) parts.push('surplus allowance');
   return parts.join(' · ');
 }
 
@@ -857,6 +861,31 @@ function payoutsSection(stage, render) {
     wrap.appendChild(infoNote(stage.payoutMode === 'limited'
       ? 'Limited: this ruleset can pay out the sum of the recipients’ amounts (in ' + unit + '). Remaining funds stay in the project.'
       : 'Unlimited: recipients receive their relative share of payouts; any remainder is withdrawable by the owner.'));
+  }
+
+  // Surplus allowance — separate from payouts: the owner can withdraw from the project's surplus
+  // (anything beyond payout limits) up to this cap each ruleset. Off by default.
+  wrap.appendChild(toggleRow('Surplus allowance', 'Let the owner withdraw from the project’s surplus (funds beyond payouts) each ruleset, up to a cap you set. Off by default.', stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; render(); }));
+  if (stage.surplusAllowanceOn) {
+    var saCard = el('div', 'create-subcard');
+    saCard.appendChild(toggleRow('Unlimited', '', stage.surplusAllowanceUnlimited, function (v) { stage.surplusAllowanceUnlimited = v; render(); }));
+    if (!stage.surplusAllowanceUnlimited) {
+      saCard.appendChild(fieldBlock('Allowance per ruleset', false, (function () {
+        var rowEl = el('div', 'create-amount-row');
+        var amt = el('input', 'field create-amount-input'); amt.type = 'text'; amt.placeholder = '0.0'; amt.value = stage.surplusAllowanceAmount;
+        amt.addEventListener('input', function () { stage.surplusAllowanceAmount = amt.value.trim(); });
+        var curSel = el('select', 'create-amount-cur');
+        [['ETH', 1], ['USD', 2]].forEach(function (o) {
+          var op = el('option', ''); op.value = String(o[1]); op.textContent = o[0];
+          if (stage.surplusAllowanceCurrency === o[1]) op.selected = true;
+          curSel.appendChild(op);
+        });
+        curSel.addEventListener('change', function () { stage.surplusAllowanceCurrency = Number(curSel.value); });
+        rowEl.appendChild(amt); rowEl.appendChild(curSel);
+        return rowEl;
+      })()));
+    }
+    wrap.appendChild(saCard);
   }
   return wrap;
 }
@@ -1400,14 +1429,23 @@ function assembleRuleset(stage, chainId, isFirst) {
     });
   }
 
-  // Fund access (payouts)
+  // Fund access (payout limits + surplus allowance). One group on the native terminal carries both.
   rs.fundAccessLimitGroups = [];
+  var payoutLimits = [];
   if (stage.payoutMode !== 'none') {
     var amount = stage.payoutMode === 'unlimited' ? UINT224_MAX
       : stage.payoutRecipients.reduce(function (s, x) { return s + safeParseEther(x.amountEth); }, 0n);
+    payoutLimits.push({ amount: amount, currency: stage.payoutCurrency || 1 });
+  }
+  var surplusAllowances = [];
+  if (stage.surplusAllowanceOn) {
+    var saAmt = stage.surplusAllowanceUnlimited ? UINT224_MAX : safeParseEther(stage.surplusAllowanceAmount);
+    if (saAmt > 0n) surplusAllowances.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 });
+  }
+  if (payoutLimits.length || surplusAllowances.length) {
     rs.fundAccessLimitGroups.push({
       terminal: getAddress('JBMultiTerminal', chainId), token: NATIVE_TOKEN,
-      payoutLimits: [{ amount: amount, currency: stage.payoutCurrency || 1 }], surplusAllowances: [],
+      payoutLimits: payoutLimits, surplusAllowances: surplusAllowances,
     });
   }
   return rs;
