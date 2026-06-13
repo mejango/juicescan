@@ -548,8 +548,7 @@ function collapse(state, key, label, optional, render, contentFn) {
 function renderDetails(state, render) {
   var d = state.details;
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Project Details',
-    'Add your project’s details. You can edit them any time.'));
+  wrap.appendChild(stepHead('Project Details', 'You can edit them at any time.'));
 
   wrap.appendChild(fieldBlock('Name', false, textInput(d.name, 'My project', function (v) { d.name = v; })));
   wrap.appendChild(fieldBlock('Tagline', true, (function () {
