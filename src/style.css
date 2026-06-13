@@ -4958,7 +4958,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* Toggles */
 .create-toggle-row { margin: 12px 0; }
 .create-toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.create-toggle-label { font-size: 13px; font-weight: bold; color: var(--c-black); }
+.create-toggle-label { font-size: 13px; font-weight: normal; color: var(--c-black); }
 
 /* Collapsibles */
 .create-collapse { margin-top: 14px; }
@@ -5084,12 +5084,13 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* Create wizard — Stages (revnet-style stacked ruleset cards) */
 .create-stage-card { border: 2px solid var(--c-orange-light); margin-bottom: 12px; background: var(--card-bg); }
 .create-stage-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; }
-.create-stage-title { font-size: 14px; font-weight: bold; color: var(--c-black); flex-shrink: 0; }
-.create-stage-sum { font-size: 12px; color: var(--muted-2); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.create-stage-headtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.create-stage-title { font-size: 14px; font-weight: bold; color: var(--c-black); }
+.create-stage-sum { font-size: 12px; color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .create-stage-caret { color: var(--muted-2); font-size: 12px; }
 .create-stage-remove { background: none; border: none; color: var(--muted-2); cursor: pointer; font-size: 12px; padding: 2px 4px; }
 .create-stage-remove:hover { color: var(--c-pink); }
-.create-stage-body { padding: 4px 14px 14px; border-top: 1px solid var(--c-orange-light); }
+.create-stage-body { padding: 4px 14px 14px; border-top: 1px solid var(--c-orange-light); background: var(--bg); }
 
 .create-note.warn { border-left-color: var(--c-pink); color: var(--c-pink); }
 /* Tx-confirm note styled like the "Work in progress" banner. */

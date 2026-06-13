@@ -283,7 +283,7 @@ function initState() {
     details: {
       name: '', tagline: '', description: '', logoUri: '', logoUploading: false,
       website: '', twitter: '', discord: '', telegram: '', tags: [],
-      coverImageUri: '', payDisclosure: '', owner: '',
+      coverImageUri: '', payDisclosure: '', owner: '', immutable: false,
       linksOpen: false, ownerOpen: false, tagsOpen: false, customOpen: false,
     },
     accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth' and/or 'usdc'
@@ -599,7 +599,12 @@ function renderDetails(state, render) {
   wrap.appendChild(collapse(d, 'ownerOpen', 'Project owner', true, render, function () {
     var c = el('div', '');
     c.appendChild(infoNote('Leave blank to make your connected wallet the owner. Enter an address to assign ownership to it. Ensure the address exists on every chain you deploy to.'));
-    c.appendChild(fieldBlock(null, false, textInput(d.owner, '0x0000000000000000000000000000000000000000', function (v) { d.owner = v.trim(); })));
+    c.appendChild(toggleRow('Make immutable after deploy', 'Burns ownership to a dead address so the project’s rules can never be changed by anyone.', d.immutable, function (v) { d.immutable = v; render(); }));
+    if (!d.immutable) {
+      var ownerField = fieldBlock(null, false, textInput(d.owner, '0x0000000000000000000000000000000000000000', function (v) { d.owner = v.trim(); }));
+      ownerField.style.marginTop = '10px';
+      c.appendChild(ownerField);
+    }
     return c;
   }));
 
@@ -666,6 +671,7 @@ function createStage() {
   return {
     expanded: false,         // collapsed by default — sensible defaults are summarized in the card head
     durationSeconds: 0,      // 0 = no expiry (final stage); non-final stages need a duration to advance
+    durationCustom: false, customDurVal: '', customDurUnit: 'days',  // custom duration (value × unit)
     schedule: '', scheduleOn: false,  // stage 1 only: scheduled launch (mustStartAtOrAfter); scheduleOn=false means launch right away
     baseCurrency: 1,         // issuance-rate denomination (ETH=1 / USD=2) — metadata.baseCurrency
     payoutCurrency: 1,       // payout-limit denomination (ETH=1 / USD=2) — JBCurrencyAmount.currency
@@ -717,9 +723,10 @@ function renderStageCard(stage, idx, state, render) {
   var card = el('div', 'create-stage-card');
   var head = el('div', 'create-stage-head');
   head.addEventListener('click', function (e) { if (e.target.closest('.create-stage-remove')) return; stage.expanded = !stage.expanded; render(); });
-  var title = el('span', 'create-stage-title'); title.textContent = 'Stage ' + (idx + 1);
-  head.appendChild(title);
-  var sum = el('span', 'create-stage-sum'); sum.textContent = stageSummary(stage, idx, state); head.appendChild(sum);
+  var left = el('div', 'create-stage-headtext');
+  var title = el('div', 'create-stage-title'); title.textContent = 'Ruleset #' + (idx + 1); left.appendChild(title);
+  var sum = el('div', 'create-stage-sum'); sum.textContent = stageSummary(stage, idx, state); left.appendChild(sum);
+  head.appendChild(left);
   if (idx > 0) {
     var rm = el('button', 'create-stage-remove'); rm.textContent = '✕';
     rm.addEventListener('click', function () { state.stages.splice(idx, 1); render(); });
@@ -733,13 +740,11 @@ function renderStageCard(stage, idx, state, render) {
 
 function stageSummary(stage, idx, state) {
   var parts = [];
-  parts.push(idx === 0 ? (stage.schedule ? 'scheduled' : 'at launch') : 'after Stage ' + idx);
-  parts.push(stage.durationSeconds ? secondsLabel(stage.durationSeconds) : 'no expiry');
+  parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : 'Starts after Ruleset #' + idx);
+  parts.push(stage.durationSeconds ? ('lasts ' + secondsLabel(stage.durationSeconds)) : 'lasts forever');
   if (stage.tokenMode === 'custom') {
-    parts.push(stage.weight + '/' + (stage.baseCurrency === 2 ? 'USD' : 'ETH'));
-    if (stage.reservedPercent) parts.push(stage.reservedPercent + '% reserved');
-    if (stage.cashOutEnabled) parts.push('cash-outs ' + stage.cashOutTaxRate + '%');
-  } else parts.push('no token');
+    parts.push('issues ' + (stage.weight || '0') + ' tokens / ' + (stage.baseCurrency === 2 ? 'USD' : 'ETH'));
+  } else parts.push('no issuance');
   if (stage.payoutMode && stage.payoutMode !== 'none') parts.push(stage.payoutMode + ' payouts');
   if (stage.surplusAllowanceOn) parts.push('surplus allowance');
   return parts.join(' · ');
@@ -761,13 +766,29 @@ function stageTiming(stage, idx, isLast, render) {
   var lab = el('label', 'create-label'); lab.textContent = 'Duration'; f.appendChild(lab);
   var sel = el('select', 'field create-input');
   var none = el('option', ''); none.value = '0'; none.textContent = 'Forever';
-  if (!stage.durationSeconds) none.selected = true; sel.appendChild(none);
+  if (!stage.durationCustom && !stage.durationSeconds) none.selected = true; sel.appendChild(none);
   DURATION_PRESETS.forEach(function (p) {
     var opt = el('option', ''); opt.value = String(p.seconds); opt.textContent = p.label;
-    if (stage.durationSeconds === p.seconds) opt.selected = true; sel.appendChild(opt);
+    if (!stage.durationCustom && stage.durationSeconds === p.seconds) opt.selected = true; sel.appendChild(opt);
   });
-  sel.addEventListener('change', function () { stage.durationSeconds = Number(sel.value); render(); });
+  var customOpt = el('option', ''); customOpt.value = 'custom'; customOpt.textContent = 'Custom…';
+  if (stage.durationCustom) customOpt.selected = true; sel.appendChild(customOpt);
+  sel.addEventListener('change', function () {
+    if (sel.value === 'custom') { stage.durationCustom = true; recomputeCustomDuration(stage); }
+    else { stage.durationCustom = false; stage.durationSeconds = Number(sel.value); }
+    render();
+  });
   f.appendChild(sel);
+  if (stage.durationCustom) {
+    var crow = el('div', 'create-amount-row'); crow.style.marginTop = '8px';
+    var num = el('input', 'field create-amount-input'); num.type = 'number'; num.min = '1'; num.step = '1'; num.placeholder = '1'; num.value = stage.customDurVal;
+    num.addEventListener('input', function () { stage.customDurVal = num.value.trim(); recomputeCustomDuration(stage); render(); });
+    var unit = el('select', 'create-amount-cur');
+    ['hours', 'days', 'weeks', 'years'].forEach(function (u) { var op = el('option', ''); op.value = u; op.textContent = u; if (stage.customDurUnit === u) op.selected = true; unit.appendChild(op); });
+    unit.addEventListener('change', function () { stage.customDurUnit = unit.value; recomputeCustomDuration(stage); render(); });
+    crow.appendChild(num); crow.appendChild(unit);
+    f.appendChild(crow);
+  }
   w.appendChild(f);
 
   if (idx === 0) {
@@ -786,7 +807,7 @@ function stageTiming(stage, idx, isLast, render) {
         var dt = new Date(i.value); stage.schedule = isNaN(dt.getTime()) ? '' : Math.floor(dt.getTime() / 1000);
       });
       ww.appendChild(i);
-      var tz = el('div', 'create-hint'); tz.textContent = 'Times are in your local timezone (' + localTimezoneLabel() + ').'; ww.appendChild(tz);
+      var tz = el('div', 'create-hint'); tz.textContent = localTimezoneLabel(); ww.appendChild(tz);
       w.appendChild(fieldBlock(null, false, ww));
     }
   } else {
@@ -900,12 +921,7 @@ function recipientRow(rec, right, onRemove) {
 function tokenSection(stage, render) {
   var t = stage;
   var wrap = el('div', '');
-  wrap.appendChild(infoNote('Payers receive the project’s tokens. Tokens can be cashed out to reclaim ETH (per the rules below) and used elsewhere. You can reserve some issuance for chosen recipients.'));
-
-  wrap.appendChild(choiceCards([
-    { key: 'none', title: 'None', sub: 'No tokens issued this stage.', badge: 'DEFAULT', icon: '⊘' },
-    { key: 'custom', title: 'Custom', sub: 'Set up custom token rules for this stage.', icon: '⚙' },
-  ], t.tokenMode, function (k) { t.tokenMode = k; render(); }));
+  wrap.appendChild(toggleRow('Issues tokens when paid', '', t.tokenMode === 'custom', function (v) { t.tokenMode = v ? 'custom' : 'none'; render(); }));
 
   if (t.tokenMode === 'custom') {
     var card = el('div', 'create-subcard');
@@ -1274,7 +1290,9 @@ function openNftModal(existing, onSave) {
 function deploy(state, render) {
   state.statusLines = [];
   state.done = false;
-  var owner = (state.details.owner && /^0x[0-9a-fA-F]{40}$/.test(state.details.owner)) ? state.details.owner : (getAccount && getAccount());
+  var owner = state.details.immutable
+    ? '0x000000000000000000000000000000000000dEaD'
+    : ((state.details.owner && /^0x[0-9a-fA-F]{40}$/.test(state.details.owner)) ? state.details.owner : (getAccount && getAccount()));
   if (!owner) {
     connect().then(function () { state.statusLines.push({ text: 'Wallet connected — click Launch again.' }); render(); })
       .catch(function (e) { state.statusLines.push({ text: 'Connect failed: ' + (e && e.message || e), err: true }); render(); });
@@ -1528,7 +1546,18 @@ function buildMetadata(d) {
 function networkOf(id) { var c = CHAIN_OPTIONS.find(function (x) { return x.id === id; }); return c && c.testnet ? 'testnet' : 'mainnet'; }
 function chainName(id) { var c = CHAIN_OPTIONS.find(function (x) { return x.id === id; }); return c ? c.name : ('chain ' + id); }
 function shortAddr(a) { return a && a.length > 10 ? (a.slice(0, 6) + '…' + a.slice(-4)) : (a || '—'); }
-function secondsLabel(s) { var p = DURATION_PRESETS.find(function (x) { return x.seconds === s; }); return p ? p.label : (s + 's'); }
+function secondsLabel(s) {
+  var p = DURATION_PRESETS.find(function (x) { return x.seconds === s; });
+  if (p) return p.label;
+  var U = [['year', 31536000], ['week', 604800], ['day', 86400], ['hour', 3600]];
+  for (var i = 0; i < U.length; i++) { if (s % U[i][1] === 0) { var n = s / U[i][1]; return n + ' ' + U[i][0] + (n === 1 ? '' : 's'); } }
+  return s + 's';
+}
+var DURATION_UNIT_SECONDS = { hours: 3600, days: 86400, weeks: 604800, years: 31536000 };
+function recomputeCustomDuration(stage) {
+  var v = parseFloat(stage.customDurVal);
+  stage.durationSeconds = (v > 0) ? Math.round(v * (DURATION_UNIT_SECONDS[stage.customDurUnit] || 86400)) : 0;
+}
 function uint256FromAddress(addr) { return BigInt(addr).toString(); }
 function uint32FromAddress(addr) { return (BigInt(addr) & 0xFFFFFFFFn).toString(); }
 function safeParseEther(v) { try { return v ? parseEther(String(v)) : 0n; } catch (_) { return 0n; } }

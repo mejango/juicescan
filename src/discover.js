@@ -2330,26 +2330,23 @@ function loadGroupCard(g, skeleton, grid) {
   }).catch(function () {
     if (skeleton.parentNode === grid) {
       skeleton.classList.remove('discover-card--loading');
-      var err = skeleton.querySelector('.discover-card-desc');
-      if (err) err.textContent = 'Could not load this project from chain.';
+      skeleton.innerHTML = '';
+      var err = el('div', 'discover-card-desc'); err.textContent = 'Could not load this project from chain.';
+      skeleton.appendChild(err);
     }
   });
 }
 
-function renderSkeletonCard(id) {
+function renderSkeletonCard() {
+  // Shimmer ghost in the same shape as a real card (logo + name, two meta lines, a description line).
   var card = el('div', 'discover-card discover-card--loading');
   var head = el('div', 'discover-card-header');
-  var logo = el('div', 'discover-card-logo');
-  logo.textContent = '#' + id;
-  logo.style.background = logoColor(id);
-  head.appendChild(logo);
-  var name = el('span', 'discover-card-name');
-  name.textContent = 'Loading project #' + id + '…';
-  head.appendChild(name);
+  head.appendChild(skel('28px', '28px'));
+  head.appendChild(skel('46%', '15px'));
   card.appendChild(head);
-  var desc = el('div', 'discover-card-desc');
-  desc.textContent = 'Reading from chain…';
-  card.appendChild(desc);
+  var m1 = skel('62%', '11px'); m1.style.marginTop = '12px'; card.appendChild(m1);
+  var m2 = skel('40%', '11px'); m2.style.marginTop = '8px'; card.appendChild(m2);
+  var d = skel('85%', '11px'); d.style.marginTop = '14px'; card.appendChild(d);
   return card;
 }
 
