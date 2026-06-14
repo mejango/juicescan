@@ -2,6 +2,84 @@
   "abi": [
     {
       "type": "function",
+      "name": "buildAccountingSnapshot",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "IJBDirectory",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "messageVersion",
+          "type": "uint8",
+          "internalType": "uint8"
+        },
+        {
+          "name": "sourceTimestamp",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "snapshot",
+          "type": "tuple",
+          "internalType": "struct JBAccountingSnapshot",
+          "components": [
+            {
+              "name": "version",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "sourceTotalSupply",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "sourceContexts",
+              "type": "tuple[]",
+              "internalType": "struct JBSourceContext[]",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "bytes32",
+                  "internalType": "bytes32"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "surplus",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                },
+                {
+                  "name": "balance",
+                  "type": "uint128",
+                  "internalType": "uint128"
+                }
+              ]
+            },
+            {
+              "name": "sourceTimestamp",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "buildSnapshotMessage",
       "inputs": [
         {
@@ -180,6 +258,18 @@
     }
   ],
   "devdoc": {
+    "buildAccountingSnapshot(IJBDirectory,uint256,uint8,uint256)": {
+      "details": "Extracted from `JBSucker.syncAccountingData` to reduce child contract bytecode. Called via DELEGATECALL. The snapshot carries each context's surplus and balance in its own currency, without price-feed valuation.",
+      "params": {
+        "directory": "The JB directory to look up controllers and terminals.",
+        "messageVersion": "The message format version.",
+        "projectId": "The project ID.",
+        "sourceTimestamp": "The monotonic source freshness key for this snapshot."
+      },
+      "returns": {
+        "snapshot": "The constructed accounting snapshot."
+      }
+    },
     "buildSnapshotMessage(IJBDirectory,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
       "details": "Extracted from `JBSucker._buildSnapshotAndSend` to reduce child contract bytecode. Called via DELEGATECALL. The snapshot carries each context's surplus and balance in its own currency, without price-feed valuation.",
       "params": {
@@ -217,6 +307,9 @@
     }
   },
   "userdoc": {
+    "buildAccountingSnapshot(IJBDirectory,uint256,uint8,uint256)": {
+      "notice": "Build the cross-chain accounting snapshot (total supply plus per-context surplus and balance)."
+    },
     "buildSnapshotMessage(IJBDirectory,uint256,bytes32,uint256,uint64,bytes32,uint8,uint256)": {
       "notice": "Build the cross-chain snapshot message (total supply plus per-context surplus and balance)."
     },

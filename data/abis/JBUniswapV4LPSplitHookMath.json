@@ -992,7 +992,7 @@
       }
     },
     "findHighestValueTerminalTokenOf(IJBDirectory,uint256,address)": {
-      "details": "Converts each token's balance to 18-decimal ETH using price feeds. Falls back to raw balance comparison when no price feed exists.",
+      "details": "Converts each token's balance to 18-decimal ETH using price feeds. Falls back to token-decimal-normalized balance comparison when no price feed exists.",
       "params": {
         "controller": "The project's controller address.",
         "directory": "The JBDirectory used to resolve the project's terminals and primary terminals.",

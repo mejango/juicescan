@@ -373,6 +373,40 @@
     },
     {
       "type": "function",
+      "name": "hasTiersOfAt",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "matchMode",
+          "type": "uint8",
+          "internalType": "enum JB721TierOwnerMatch"
+        },
+        {
+          "name": "blockNumber",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "hasTiers",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "hook",
       "inputs": [],
       "outputs": [
@@ -769,6 +803,18 @@
     "getVotes(address)": {
       "details": "Returns the current amount of votes that `account` has."
     },
+    "hasTiersOfAt(address,uint256[],uint8,uint256)": {
+      "details": "Empty arrays return `false`. `blockNumber` may be the current block, but not a future block.",
+      "params": {
+        "account": "The account to check.",
+        "blockNumber": "The block number to look up.",
+        "matchMode": "Whether to require any or all tier IDs to be held.",
+        "tierIds": "The tier IDs to check."
+      },
+      "returns": {
+        "hasTiers": "Whether the owner satisfies the requested tier match at `blockNumber`."
+      }
+    },
     "initialize(address)": {
       "details": "Can only be called once. Called by the deployer after cloning.",
       "params": {
@@ -789,7 +835,7 @@
     "ownerOfAt(uint256,uint256)": {
       "details": "Returns `address(0)` if no ownership checkpoint exists or the query predates the first checkpoint.",
       "params": {
-        "blockNumber": "The block number to look up.",
+        "blockNumber": "The current or past block number to look up.",
         "tokenId": "The token ID of the NFT to get the historical owner of."
       },
       "returns": {
@@ -825,6 +871,9 @@
     "getTotalTierActiveVotes(uint256)": {
       "notice": "The current total delegated voting units of a tier."
     },
+    "hasTiersOfAt(address,uint256[],uint8,uint256)": {
+      "notice": "Whether an owner held any or all of the provided tier IDs at a block."
+    },
     "hook()": {
       "notice": "The hook that this module tracks voting power for."
     },
@@ -835,7 +884,7 @@
       "notice": "Called by the hook after every NFT transfer to update checkpointed voting power."
     },
     "ownerOfAt(uint256,uint256)": {
-      "notice": "The owner of an NFT at a past block."
+      "notice": "The owner of an NFT at a current or past block."
     }
   },
   "contractName": "JB721Checkpoints",

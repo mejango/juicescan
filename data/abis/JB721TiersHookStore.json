@@ -176,6 +176,59 @@
     },
     {
       "type": "function",
+      "name": "heldTierIdsOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tierIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "heldTierVotingUnitsOf",
+      "inputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tierIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "units",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "isTierRemoved",
       "inputs": [
         {
@@ -1642,6 +1695,25 @@
         "_0": "The hook's flags."
       }
     },
+    "heldTierIdsOf(address,address)": {
+      "params": {
+        "hook": "The 721 hook contract to get held tier IDs from.",
+        "owner": "The address to get held tier IDs for."
+      },
+      "returns": {
+        "tierIds": "The tier IDs with a nonzero balance for the owner."
+      }
+    },
+    "heldTierVotingUnitsOf(address,address)": {
+      "params": {
+        "account": "The address to get held tier IDs and voting units for.",
+        "hook": "The 721 hook contract to get held tier IDs from."
+      },
+      "returns": {
+        "tierIds": "The tier IDs with a nonzero balance for the account.",
+        "units": "The account's voting units for each returned tier ID."
+      }
+    },
     "isTierRemoved(address,uint256)": {
       "params": {
         "hook": "The 721 hook contract the tier belongs to.",
@@ -1863,6 +1935,12 @@
     },
     "flagsOf(address)": {
       "notice": "Get the behavioral flags for a hook — such as whether transfers are pausable, whether NFT holders can cash out, and whether token issuance occurs for split-routed payments."
+    },
+    "heldTierIdsOf(address,address)": {
+      "notice": "The tier IDs whose balances are nonzero for the provided owner."
+    },
+    "heldTierVotingUnitsOf(address,address)": {
+      "notice": "The tier IDs and voting units whose balances are nonzero for the provided account."
     },
     "isTierRemoved(address,uint256)": {
       "notice": "Check whether a tier has been removed. Removed tiers can no longer be minted from, but existing NFTs from that tier remain valid and can still be cashed out."

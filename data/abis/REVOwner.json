@@ -29,6 +29,11 @@
           "internalType": "contract IREVLoans"
         },
         {
+          "name": "trustedForwarder",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
           "name": "deployerAddress",
           "type": "address",
           "internalType": "address"
@@ -782,6 +787,25 @@
     },
     {
       "type": "function",
+      "name": "isTrustedForwarder",
+      "inputs": [
+        {
+          "name": "forwarder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "onERC721Received",
       "inputs": [
         {
@@ -925,6 +949,19 @@
           "name": "tiered721Hook",
           "type": "address",
           "internalType": "contract IJB721TiersHook"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "trustedForwarder",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "view"
@@ -1154,10 +1191,37 @@
     },
     {
       "type": "error",
+      "name": "REVOwner_OverflowAlert",
+      "inputs": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "limit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "REVOwner_StageNotStarted",
       "inputs": [
         {
           "name": "stageId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_TooManyBuybackHookSpecifications",
+      "inputs": [
+        {
+          "name": "count",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1192,6 +1256,27 @@
           "name": "caller",
           "type": "address",
           "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "REVOwner_ZeroPrice",
+      "inputs": [
+        {
+          "name": "revnetId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "pricingCurrency",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "unitCurrency",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ]
     },
@@ -1243,7 +1328,7 @@
       }
     },
     "beforeCashOutRecordedWith((address,address,uint256,uint256,uint256,uint256,(address,uint8,uint32,uint256),bool,uint256,bool,bytes))": {
-      "details": "This function is the policy boundary between three distinct cash-out semantics: 1. **Sucker cash-outs (registered bridge contracts):** returns tax=0 and uses LOCAL supply/surplus only.    Lines 209-211. Bridges cash out tokens at the originating chain's local backing rate to move value    across chains. This is the bridge accounting primitive — keep value moving out of this chain    proportional to this chain's local backing, regardless of cross-chain aggregation. This deliberate    asymmetry vs. ordinary cash-outs is what enables the cross-chain rebalancing arbitrage path described    in ARBITRAGE.md (Path 1). See also INVARIANTS.md Section D2 at the monorepo root. 2. **Ordinary cash-outs during the cash-out delay window:** revert. Lines around 217-220. The delay    blocks direct exits (cash-out/borrow) on new chains so they can prime via bridges before users    start drawing value. Note the delay does NOT apply to sucker cash-outs (item 1) — priming requires    bridges to remain open. 3. **Ordinary cash-outs after delay:** aggregate cross-chain state when `scopeCashOutsToLocalBalances`    is false, then route through the buyback hook to potentially settle via AMM (Path 2 floor arb in    ARBITRAGE.md) or pass through to bonding curve. The buyback hook auto-applies floor arbitrage for    users who would otherwise underpay themselves. The interaction of these three semantics — together with the buyback hook's pay-side ceiling arbitrage (Path 3, in nana-buyback-hook-v6) — is what makes a multi-chain revnet self-equilibrating. See ARBITRAGE.md for the full taxonomy. Part of `IJBRulesetDataHook`. In the non-zero-tax fee path, REVOwner is intentionally not registered as a feeless address — the protocol fee (2.5%) applies on top of the rev fee. The fee hook spec amount sent to `afterCashOutRecordedWith` will have the protocol fee deducted by the terminal before reaching this contract.",
+      "details": "This function is the policy boundary between three distinct cash-out semantics: 1. **Sucker cash-outs (registered bridge contracts):** returns tax=0 and uses LOCAL supply/surplus only.    Lines 209-211. Bridges cash out tokens at the originating chain's local backing rate to move value    across chains. This is the bridge accounting primitive — keep value moving out of this chain    proportional to this chain's local backing, regardless of cross-chain aggregation. This deliberate    asymmetry vs. ordinary cash-outs is what enables the cross-chain rebalancing arbitrage path described    in ARBITRAGE.md (Path 1). See also INVARIANTS.md Section D2 at the monorepo root. 2. **Ordinary cash-outs during the cash-out delay window:** revert. Lines around 217-220. The delay    blocks direct exits (cash-out/borrow) on new chains so they can prime via bridges before users    start drawing value. Note the delay does NOT apply to sucker cash-outs (item 1) — priming requires    bridges to remain open. 3. **Ordinary cash-outs after delay:** aggregate cross-chain state when `scopeCashOutsToLocalBalances`    is false, then route through the buyback hook to potentially settle via AMM (Path 2 floor arb in    ARBITRAGE.md) or pass through to bonding curve. The buyback hook auto-applies floor arbitrage for    users who would otherwise underpay themselves. The interaction of these three semantics — together with the buyback hook's pay-side ceiling arbitrage (Path 3, in nana-buyback-hook-v6) — is what makes a multi-chain revnet self-equilibrating. See ARBITRAGE.md for the full taxonomy. Part of `IJBRulesetDataHook`. In the non-zero-tax fee path, REVOwner is intentionally not registered as a feeless address — the protocol fee (2.5%) applies on top of the rev fee. The fee hook spec amount sent to `afterCashOutRecordedWith` will have the protocol fee deducted by the terminal before reaching this contract. The fee path composes at most one buyback hook spec ahead of its own fee spec.",
       "params": {
         "context": "Standard Juicebox cash-out context. See `JBBeforeCashOutRecordedContext`."
       },
@@ -1278,7 +1363,8 @@
         "directory": "The directory of terminals and controllers.",
         "feeRevnetId": "The Juicebox project ID of the fee revnet.",
         "loans": "The loan contract.",
-        "suckerRegistry": "The sucker registry."
+        "suckerRegistry": "The sucker registry.",
+        "trustedForwarder": "The trusted forwarder for the ERC2771Context."
       }
     },
     "hasMintPermissionFor(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256),address)": {
@@ -1307,6 +1393,9 @@
       "returns": {
         "_0": "flag A flag indicating whether the address holds the revnet's operator permissions."
       }
+    },
+    "isTrustedForwarder(address)": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
     },
     "onERC721Received(address,address,uint256,bytes)": {
       "details": "Only accepts NFTs from the canonical `JBProjects` contract."
@@ -1342,6 +1431,9 @@
       "returns": {
         "flag": "A flag indicating whether the interface is supported."
       }
+    },
+    "trustedForwarder()": {
+      "details": "Returns the address of the trusted forwarder."
     }
   },
   "userdoc": {

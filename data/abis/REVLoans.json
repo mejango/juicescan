@@ -1863,6 +1863,27 @@
     },
     {
       "type": "error",
+      "name": "REVLoans_FeeAmountExceedsNetPayout",
+      "inputs": [
+        {
+          "name": "netAmountPaidOut",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "revFeeAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "sourceFeeAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "REVLoans_FeeOnTransferSourceUnsupported",
       "inputs": [
         {

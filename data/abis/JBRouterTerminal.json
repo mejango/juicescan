@@ -1878,11 +1878,11 @@
       "details": "Returns the address of the trusted forwarder."
     },
     "uniswapV3SwapCallback(int256,int256,bytes)": {
-      "details": "Verifies the caller is a legitimate pool via the factory using the encoded tokenIn/tokenOut pair.",
+      "details": "Only the pool synchronously entered by `_executeV3Swap` can call this callback.",
       "params": {
         "amount0Delta": "The amount of token 0 used for the swap.",
         "amount1Delta": "The amount of token 1 used for the swap.",
-        "data": "Data passed in by the swap operation: abi.encode(projectId, tokenIn, tokenOut)."
+        "data": "Data passed in by the swap operation: abi.encode(tokenIn)."
       }
     },
     "unlockCallback(bytes)": {
