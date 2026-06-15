@@ -6,10 +6,10 @@
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData } from 'viem';
 import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName } from './component-base.js';
 import { CHAINS, getCustomRpc, getChainTokens } from './chain.js';
-import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub, shortHex } from './pay-preview.js';
+import { computePayPreview, formatTokenCount, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrTxHash } from './relayr.js';
+import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 
@@ -8346,64 +8346,6 @@ function suckerBranchRoot(leaf, proof, index) {
 async function findToRemoteValue(chainId, sucker, token, account) {
   try { return BigInt(await clientFor(chainId).readContract({ address: getAddress('JBSuckerRegistry', chainId), abi: suckerRegistryBridgeAbi, functionName: 'toRemoteFee', args: [] })); }
   catch (_) { return 0n; }
-}
-
-// Find the connected wallet's claimable leaves on `toChainId` for tokens bridged from `fromChainId`.
-// Reconstructs the merkle proof client-side from the source sucker's InsertToOutboxTree logs and the
-// delivered inbox root; only returns leaves whose proof re-derives the on-chain root (and aren't executed).
-async function findClaimableBridges(project, fromChainId, toChainId, account) {
-  if (!account || fromChainId === toChainId) return [];
-  try {
-    var destPairs = await readSuckerPairsOf(project.id, toChainId);
-    var destPair = destPairs.filter(function (p) { return p.remoteChainId === fromChainId; })[0];
-    if (!destPair) return [];
-    var destSucker = destPair.local, destClient = clientFor(toChainId);
-    var inbox = await destClient.readContract({ address: destSucker, abi: suckerClaimAbi, functionName: 'inboxOf', args: [NATIVE_TOKEN] });
-    var inboxRoot = (inbox && inbox.root || SUCKER_BYTES32_ZERO);
-    if (/^0x0+$/.test(inboxRoot)) return []; // nothing delivered to this chain yet
-
-    var srcPairs = await readSuckerPairsOf(project.id, fromChainId);
-    var srcPair = srcPairs.filter(function (p) { return p.remoteChainId === toChainId; })[0];
-    if (!srcPair) return [];
-    var srcSucker = srcPair.local;
-
-    // Enumerate every InsertToOutboxTree for the native token (to rebuild the tree). getLogs via the
-    // CORS/log-capable publicnode client (the default RPC doesn't serve eth_getLogs).
-    var logClient = lpLogsClient(fromChainId) || clientFor(fromChainId);
-    var latest = await logClient.getBlockNumber();
-    var W = 45000n, windows = [];
-    for (var n = 0; n < 8 && latest - BigInt(n) * W > 0n; n++) {
-      var hi = latest - BigInt(n) * W, lo = hi > W ? hi - W + 1n : 0n;
-      windows.push({ lo: lo, hi: hi }); if (lo === 0n) break;
-    }
-    var batches = await Promise.all(windows.map(function (w) {
-      return logClient.getLogs({ address: srcSucker, event: INSERT_TO_OUTBOX_EVENT, args: { token: NATIVE_TOKEN }, fromBlock: w.lo, toBlock: w.hi }).catch(function () { return []; });
-    }));
-    var byIndex = {};
-    batches.forEach(function (b) { b.forEach(function (l) { if (l.args) byIndex[Number(l.args.index)] = l.args; }); });
-    if (!Object.keys(byIndex).length) return [];
-
-    // The delivered inbox root matches the outbox root recorded right after some insert → that index+1 = count.
-    var count = null;
-    Object.keys(byIndex).forEach(function (k) { if ((byIndex[k].root || '').toLowerCase() === inboxRoot.toLowerCase()) count = Number(k) + 1; });
-    if (count == null) return []; // delivered root is older/newer than any insert we found
-    var leafHashes = [];
-    for (var i = 0; i < count; i++) { if (!byIndex[i]) return []; leafHashes.push(byIndex[i].hashed); }
-
-    var benef32 = '0x' + account.slice(2).toLowerCase().padStart(64, '0');
-    var out = [];
-    for (var k2 = 0; k2 < count; k2++) {
-      var a = byIndex[k2];
-      if ((a.beneficiary || '').toLowerCase() !== benef32) continue;
-      var ex = await destClient.readContract({ address: destSucker, abi: suckerClaimAbi, functionName: 'executedLeafHashOf', args: [NATIVE_TOKEN, BigInt(k2)] }).catch(function () { return SUCKER_BYTES32_ZERO; });
-      if (ex && !/^0x0+$/.test(ex)) continue; // already claimed
-      var proof = suckerLeafProof(leafHashes, k2);
-      if (suckerBranchRoot(a.hashed, proof, k2).toLowerCase() !== inboxRoot.toLowerCase()) continue; // proof safety net
-      out.push({ destSucker: destSucker, index: k2, beneficiary: a.beneficiary, metadata: a.metadata,
-        projectTokenCount: BigInt(a.projectTokenCount), terminalTokenAmount: BigInt(a.terminalTokenAmount), proof: proof });
-    }
-    return out;
-  } catch (_) { return []; }
 }
 
 function buildMoveModal(project) {
