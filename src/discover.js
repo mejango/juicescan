@@ -1514,13 +1514,26 @@ var POOLKEY_TUPLE = [{ type: 'tuple', components: [
 
 // Current AMM price (ETH per project token) from the buyback pool's slot0. Returns null if no pool /
 // price. Works even with zero liquidity (the pool is price-initialized at deploy at the issuance rate).
+// The buyback pool's PAIR (terminal) token for a project on a chain — its Uniswap pool-currency address
+// (native ETH = 0x0, else the ERC-20 e.g. USDC), decimals, and symbol. Mirrors the accounting token.
+function lpPairFor(project, chainId) {
+  return resolveAcctToken(chainId, BigInt(project.id)).then(function (a) {
+    var native = a.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
+    return { addr: native ? ZERO_ADDRESS : a.address.toLowerCase(), decimals: a.decimals, symbol: native ? 'ETH' : a.symbol, isNative: native };
+  }).catch(function () { return { addr: ZERO_ADDRESS, decimals: 18, symbol: 'ETH', isNative: true }; });
+}
+
+// Current AMM price as PAIR-token per project token (ETH/token for ETH pools, USDC/token for USDC pools).
 async function readAmmPrice(project, chainId) {
   var hook = getAddress('JBBuybackHook', chainId);
   var pm = POOL_MANAGER_BY_CHAIN[chainId];
   if (!hook || !pm) return null;
   try {
+    var pair = await lpPairFor(project, chainId);
     var client = clientFor(chainId);
-    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), ZERO_ADDRESS] });
+    // The buyback hook keys its pool by (projectId, terminalToken) — pass the project's actual pair token,
+    // not a hard-coded native 0x0, or a USDC pool is never found.
+    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
     if (!key) return null;
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
     var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
@@ -1531,10 +1544,14 @@ async function readAmmPrice(project, chainId) {
     var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n); // sqrtPriceX96 = lower 160 bits of slot0
     if (sqrtP === 0n) return null;
     var sp = Number(sqrtP) / Math.pow(2, 96);
-    var p = sp * sp; // token1 per token0 (both 18 decimals here)
-    // ETH is currency0 → p = projectTokens/ETH → invert; else (project token is currency0) p = ETH/token.
-    var ethPerToken = (c0 === ZERO_ADDRESS) ? (p > 0 ? 1 / p : null) : p;
-    return (ethPerToken && isFinite(ethPerToken) && ethPerToken > 0) ? ethPerToken : null;
+    var rawP = sp * sp; // raw currency1 per currency0 (base units)
+    // Convert raw → human pair-per-token. Project token is 18-dec; pair has pair.decimals.
+    // raw_pair/raw_token = pairIsC0 ? 1/rawP : rawP ; human = raw_ratio × 10^(18 − pairDec).
+    var pairIsC0 = (c0 === pair.addr);
+    var rawRatio = pairIsC0 ? (rawP > 0 ? 1 / rawP : null) : rawP;
+    if (rawRatio == null) return null;
+    var human = rawRatio * Math.pow(10, 18 - pair.decimals);
+    return (isFinite(human) && human > 0) ? human : null;
   } catch (e) { return null; }
 }
 
@@ -1874,6 +1891,13 @@ function formatUsd(n) {
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// The indexer's volumeUsd/*Usd fields are 18-decimal scaled USD (value of all intake regardless of the
+// project's accounting token). Convert to a plain number; null/empty -> null so callers can show '—'.
+function usdFromScaled(value) {
+  if (value == null || value === '') return null;
+  try { return Number(BigInt(String(value).split('.')[0]) / 1000000000000n) / 1e6; } catch (_) { return null; }
+}
+
 // ETH/USD spot from the protocol's own Chainlink feed (cached per chain). currentUnitPrice(18) returns
 // USD-per-ETH scaled to 18 decimals; null when the feed is absent/reverting (testnet gaps).
 var ETH_USD_CACHE = {};
@@ -1987,7 +2011,7 @@ function appendIndexedStats(statLine, stats) {
   if (!stats) return;
   if (stats.volume && toBigInt(stats.volume) > 0n) {
     statLine.appendChild(document.createTextNode(' · '));
-    var vStrong = el('strong'); vStrong.textContent = formatEth(toBigInt(stats.volume));
+    var vStrong = el('strong'); vStrong.textContent = formatUsd(usdFromScaled(stats.volumeUsd));
     statLine.appendChild(vStrong);
     statLine.appendChild(document.createTextNode(' raised'));
   }
@@ -2579,8 +2603,8 @@ function renderProjectCard(project) {
 
   // Line 2: Type · On (chain logos).
   var meta1 = el('div', 'discover-card-meta');
-  meta1.appendChild(cardLbl('Type: '));
-  var typeVal = el('span', 'discover-card-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'BASIC';
+  meta1.appendChild(cardLbl('Flavor: '));
+  var typeVal = el('span', 'discover-card-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
   meta1.appendChild(typeVal);
   if (project.chains && project.chains.length) {
     meta1.appendChild(cardSep());
@@ -2604,7 +2628,7 @@ function renderProjectCard(project) {
   var stats = el('div', 'discover-card-stats');
   stats.appendChild(statItem('Balance', mountUsdBalance(project)));
   if (project.indexedStats) {
-    stats.appendChild(statItem('Volume', formatEth(toBigInt(project.indexedStats.volume || 0))));
+    stats.appendChild(statItem('Volume', formatUsd(usdFromScaled(project.indexedStats.volumeUsd))));
     stats.appendChild(statItem('Payments', String(project.indexedStats.paymentsCount)));
   }
   card.appendChild(stats);
@@ -3503,8 +3527,8 @@ function renderDetailHeader(project) {
   var metaLine = el('div', 'detail-head-meta');
   var lbl = function (text) { var s = el('span', 'detail-head-lbl'); s.textContent = text; return s; };
   var sep = function () { var s = el('span', 'detail-head-sep'); s.textContent = '|'; return s; };
-  metaLine.appendChild(lbl('Type: '));
-  var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'BASIC';
+  metaLine.appendChild(lbl('Flavor: '));
+  var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
   metaLine.appendChild(typeVal);
   if (project.chains && project.chains.length) {
     metaLine.appendChild(sep());
@@ -8726,8 +8750,9 @@ async function readPoolState(project, chainId) {
   var pm = POOL_MANAGER_BY_CHAIN[chainId];
   if (!hook || !pm) return null;
   try {
+    var pair = await lpPairFor(project, chainId);
     var client = clientFor(chainId);
-    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), ZERO_ADDRESS] });
+    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
     if (!key) return null;
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase(), c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
     if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null;
@@ -8736,7 +8761,7 @@ async function readPoolState(project, chainId) {
     var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
     var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n);
     if (sqrtP === 0n) return null;
-    return { key: key, sqrtP: sqrtP };
+    return { key: key, sqrtP: sqrtP, pair: pair };
   } catch (e) { return null; }
 }
 
@@ -9008,27 +9033,41 @@ async function prepareAddLiquidity(opts) {
 
   var st = await readPoolState(project, chainId);
   if (!st || !st.key) throw new Error('Pool not initialized on this chain');
-  var key = st.key, sqrtP = st.sqrtP;
-  if ((key.currency0 || '').toLowerCase() !== ZERO_ADDRESS) throw new Error('Unexpected pool ordering (native not currency0)');
+  var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
+  var c0 = (key.currency0 || '').toLowerCase();
+  var pairIsC0 = (c0 === pair.addr); // else the project token (always ERC-20) is currency0
+  var pairDec = pair.decimals;
+  // Map the pair/token deposit amounts (raw, in their own decimals) onto currency0/currency1 by ordering.
+  var amount0 = pairIsC0 ? opts.pairAmount : opts.tokenAmount;
+  var amount1 = pairIsC0 ? opts.tokenAmount : opts.pairAmount;
 
   var s = Number(key.tickSpacing);
-  // UI range is ETH-per-REV [pa, pb]; pool price = REV/ETH = 1/(ETH per REV).
-  // Lower tick ↔ smaller pool price ↔ 1/pb; upper tick ↔ 1/pa.
   var maxUsable = Math.trunc(887272 / s) * s, minUsable = Math.trunc(-887272 / s) * s;
-  var rawLower = lpTickFromPoolPrice(1 / opts.pb);
-  var rawUpper = Math.ceil(Math.log(1 / opts.pa) / Math.log(1.0001));
-  var tickLower = Math.max(minUsable, lpAlignDown(rawLower, s));
-  var tickUpper = Math.min(maxUsable, lpAlignUp(rawUpper, s));
+  // UI range is in pair-per-token (q). Pool price is raw currency1/currency0:
+  //   pair=c0 → P_raw = 10^(18−pairDec)/q ;  token=c0 → P_raw = q·10^(pairDec−18).
+  // ticks are monotonic in P_raw, so derive both ends and sort (order-agnostic across the two cases).
+  var pRawFromQ = function (q) { return pairIsC0 ? (Math.pow(10, 18 - pairDec) / q) : (q * Math.pow(10, pairDec - 18)); };
+  var tA = Math.log(pRawFromQ(opts.pa)) / Math.log(1.0001);
+  var tB = Math.log(pRawFromQ(opts.pb)) / Math.log(1.0001);
+  var tickLower = Math.max(minUsable, lpAlignDown(Math.floor(Math.min(tA, tB)), s));
+  var tickUpper = Math.min(maxUsable, lpAlignUp(Math.ceil(Math.max(tA, tB)), s));
   if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
 
   var sqrtA = lpSqrtAtTick(tickLower), sqrtB = lpSqrtAtTick(tickUpper);
-  var liquidity = lpGetLiquidityForAmounts(sqrtP, sqrtA, sqrtB, opts.amount0, opts.amount1);
+  var liquidity = lpGetLiquidityForAmounts(sqrtP, sqrtA, sqrtB, amount0, amount1);
   if (liquidity <= 0n) throw new Error('Amounts too small for this range');
   var need = lpGetAmountsForLiquidity(sqrtP, sqrtA, sqrtB, liquidity);
-  // 1% headroom over the exact requirement (SWEEP refunds unused native; Permit2 caps the token pull).
+  // 1% headroom over the exact requirement (SWEEP refunds unused native; Permit2/CLOSE pull the exact ERC-20).
   var amount0Max = need.amount0 + need.amount0 / 100n + 1n;
   var amount1Max = need.amount1 + need.amount1 / 100n + 1n;
-  var value = amount0Max; // native ETH side; excess refunded by SWEEP
+
+  // The native side (only ever the pair, when it's ETH) is sent as msg.value; ERC-20 sides go via Permit2.
+  var c0Native = pairIsC0 && pair.isNative;
+  var c1Native = !pairIsC0 && pair.isNative;
+  var value = c0Native ? amount0Max : (c1Native ? amount1Max : 0n);
+  var erc20 = [];
+  if (!c0Native && amount0Max > 1n) erc20.push({ currency: key.currency0, max: amount0Max });
+  if (!c1Native && amount1Max > 1n) erc20.push({ currency: key.currency1, max: amount1Max });
 
   var mintParams = encodeAbiParameters(
     [
@@ -9042,13 +9081,20 @@ async function prepareAddLiquidity(opts) {
   );
   var closeC0 = encodeAbiParameters([{ type: 'address' }], [key.currency0]);
   var closeC1 = encodeAbiParameters([{ type: 'address' }], [key.currency1]);
-  var sweep = encodeAbiParameters([{ type: 'address' }, { type: 'address' }], [key.currency0, acct]);
-  var actions = '0x02121214'; // MINT_POSITION, CLOSE_CURRENCY(c0), CLOSE_CURRENCY(c1), SWEEP(c0)
-  var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], [actions, [mintParams, closeC0, closeC1, sweep]]);
+  var parts = [mintParams, closeC0, closeC1];
+  var actions = '0x021212'; // MINT_POSITION, CLOSE_CURRENCY(c0), CLOSE_CURRENCY(c1)
+  if (pair.isNative) {
+    // Refund unused native (sent as msg.value) to the user. ERC-20 sides need no sweep (CLOSE pulls exact).
+    var nativeCur = c0Native ? key.currency0 : key.currency1;
+    parts.push(encodeAbiParameters([{ type: 'address' }, { type: 'address' }], [nativeCur, acct]));
+    actions = '0x02121214'; // … + SWEEP(native)
+  }
+  var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], [actions, parts]);
 
   return {
     posm: posm, key: key, acct: acct, tickLower: tickLower, tickUpper: tickUpper,
-    liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max, value: value, unlockData: unlockData,
+    liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max, value: value,
+    unlockData: unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20,
   };
 }
 
@@ -9065,24 +9111,26 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
   if (wc !== chainId) { onStatus('Switching network…', 'pending'); await switchChain(chainId); }
 
   var deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
-  var permitData = null;
+  var permitDatas = [];
+  var now = Math.floor(Date.now() / 1000);
 
-  if (prep.amount1Max > 1n && prep.need.amount1 > 0n) {
-    // 1. ERC20 → Permit2 (exact amount, bounded; only when the current allowance is short).
-    var erc20Allow = await clientFor(chainId).readContract({ address: key.currency1, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] });
-    if (BigInt(erc20Allow) < prep.amount1Max) {
+  // Each ERC-20 side (the project token always; the pair too when it's USDC) needs a Permit2 allowance.
+  for (var i = 0; i < (prep.erc20 || []).length; i++) {
+    var side = prep.erc20[i];
+    // 1. ERC20 → Permit2 (exact, bounded; only when the current allowance is short).
+    var erc20Allow = await clientFor(chainId).readContract({ address: side.currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] });
+    if (BigInt(erc20Allow) < side.max) {
       onStatus('Approving token for Permit2…', 'pending');
-      await lpSendTx(chainId, { address: key.currency1, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, prep.amount1Max] });
+      await lpSendTx(chainId, { address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max] });
     }
-    // 2. Permit2 → PositionManager allowance. Reuse it if still valid; otherwise sign one (gasless) and
-    //    fold it into the mint multicall — no separate on-chain approval tx.
-    var p2 = await clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, key.currency1, posm] });
+    // 2. Permit2 → PositionManager allowance. Reuse if still valid; else sign one (gasless) and fold it
+    //    into the mint multicall — no separate on-chain approval tx.
+    var p2 = await clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, side.currency, posm] });
     var p2amount = BigInt(p2[0]), p2exp = Number(p2[1]), p2nonce = Number(p2[2]);
-    var now = Math.floor(Date.now() / 1000);
-    if (!(p2amount >= prep.amount1Max && p2exp > now)) {
+    if (!(p2amount >= side.max && p2exp > now)) {
       onStatus('Sign token approval…', 'pending');
       var permitMessage = {
-        details: { token: key.currency1, amount: prep.amount1Max, expiration: BigInt(now + 30 * 24 * 3600), nonce: BigInt(p2nonce) },
+        details: { token: side.currency, amount: side.max, expiration: BigInt(now + 30 * 24 * 3600), nonce: BigInt(p2nonce) },
         spender: posm,
         sigDeadline: BigInt(now + 1800),
       };
@@ -9093,39 +9141,43 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
         primaryType: 'PermitSingle',
         message: permitMessage,
       });
-      permitData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'permit', args: [acct, permitMessage, signature] });
+      permitDatas.push(encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'permit', args: [acct, permitMessage, signature] }));
     }
   }
 
   onStatus('Adding liquidity…', 'pending');
-  if (permitData) {
+  if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
-    return lpSendTx(chainId, { address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [[permitData, mintData]], value: prep.value });
+    return lpSendTx(chainId, { address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value });
   }
   return lpSendTx(chainId, { address: posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline], value: prep.value });
 }
 
 // Build the "exact transaction" preview payload (mirrors the Pay confirm), for openTxConfirm.
 function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
+  var pair = prep.pair || { symbol: 'ETH', decimals: 18, isNative: true };
+  // amount0Max/amount1Max are currency-ordered; map back to pair vs project token for display.
+  var pairMax = prep.pairIsC0 ? prep.amount0Max : prep.amount1Max;
+  var tokenMax = prep.pairIsC0 ? prep.amount1Max : prep.amount0Max;
   return {
     chain: chainName,
     chainId: chainId,
     contract: 'Uniswap V4 PositionManager',
     address: prep.posm,
     'function': 'modifyLiquidities',
-    value: prep.value.toString() + ' wei (' + formatEth(prep.value) + ')',
-    erc20Approval: (prep.need.amount1 > 0n)
-      ? { token: prep.key.currency1, via: 'Permit2', spender: prep.posm, amount: prep.amount1Max.toString() }
-      : null,
+    value: prep.value > 0n ? (prep.value.toString() + ' wei (' + formatEth(prep.value) + ')') : '0',
+    erc20Approvals: (prep.erc20 || []).map(function (s) {
+      return { token: s.currency, via: 'Permit2', spender: prep.posm, amount: s.max.toString() };
+    }),
     position: {
-      actions: 'MINT_POSITION, CLOSE, CLOSE, SWEEP (0x02121214)',
+      actions: pair.isNative ? 'MINT_POSITION, CLOSE, CLOSE, SWEEP (0x02121214)' : 'MINT_POSITION, CLOSE, CLOSE (0x021212)',
       poolFee: Number(prep.key.fee),
       hooks: prep.key.hooks,
       tickLower: prep.tickLower,
       tickUpper: prep.tickUpper,
       liquidity: prep.liquidity.toString(),
-      maxETH: formatEth(prep.amount0Max),
-      maxToken: formatTokens(prep.amount1Max) + ' ' + sym,
+      ['max' + pair.symbol]: formatBalance(pairMax, pair.decimals, pair.symbol),
+      maxToken: formatTokens(tokenMax) + ' ' + sym,
       recipient: prep.acct,
     },
     args: { unlockData: prep.unlockData, deadline: 'set at signing (~20 min)' },
@@ -9142,7 +9194,10 @@ function buildAddLiquidityModal(project) {
   // Issuance ceiling = ETH per token at the current issuance weight (the top of the AMM band).
   var weight = project.ruleset ? Number(project.ruleset.weight) : 0;
   var ceiling = weight > 0 ? 1e18 / weight : 0;
-  var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null };
+  // ethBal holds the PAIR-token balance (native ETH or USDC); pair is the resolved accounting/pair token.
+  var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null, pair: { addr: ZERO_ADDRESS, decimals: 18, symbol: 'ETH', isNative: true } };
+  function pairSym() { return state.pair.symbol; }
+  function pairDec() { return state.pair.decimals; }
 
   var intro = el('div', 'modal-balance');
   intro.textContent = 'Seed the buyback pool so payers can route through the AMM. Liquidity is added at the current pool price.';
@@ -9152,7 +9207,7 @@ function buildAddLiquidityModal(project) {
   var chainSel = el('select', 'ops-select');
   chainSel.style.maxWidth = '100%'; chainSel.style.borderRight = '2px solid var(--write)';
   lpChains.forEach(function (c) { var o = document.createElement('option'); o.value = String(c.id); o.textContent = c.name; chainSel.appendChild(o); });
-  chainSel.addEventListener('change', function () { state.chainId = Number(chainSel.value); refreshBalances(); refreshPrice(); });
+  chainSel.addEventListener('change', function () { state.chainId = Number(chainSel.value); refreshPair(); });
   wrap.appendChild(chainSel);
 
   var balLine = el('div', 'modal-balance'); balLine.style.marginTop = '8px'; wrap.appendChild(balLine);
@@ -9186,10 +9241,19 @@ function buildAddLiquidityModal(project) {
   var eu = el('span', 'ops-unit'); eu.textContent = 'ETH'; ethRow.appendChild(eu); wrap.appendChild(ethRow);
 
   var pairNote = el('div', 'modal-balance'); pairNote.style.marginTop = '6px';
-  pairNote.textContent = 'Concentrated liquidity is deposited as a fixed ' + sym + ':ETH ratio set by the current pool '
-    + 'price within your range — so entering one side fills the other. The ratio shifts as you move the range: '
-    + 'when the pool price sits near the top of your range the deposit is mostly ' + sym + ', near the bottom mostly ETH.';
   wrap.appendChild(pairNote);
+
+  // Re-label everything that names the pair token (range unit, second amount, ratio note) once it's known.
+  function applyPairLabels() {
+    var ps = pairSym();
+    lblR.textContent = 'Price range (' + ps + ' per ' + sym + ')';
+    lbl2.textContent = ps + ' to add';
+    eu.textContent = ps;
+    pairNote.textContent = 'Concentrated liquidity is deposited as a fixed ' + sym + ':' + ps + ' ratio set by the current pool '
+      + 'price within your range — so entering one side fills the other. The ratio shifts as you move the range: '
+      + 'when the pool price sits near the top of your range the deposit is mostly ' + sym + ', near the bottom mostly ' + ps + '.';
+  }
+  applyPairLabels();
 
   tokAmt.addEventListener('input', function () { state.driver = 'tok'; autofill(); });
   ethAmt.addEventListener('input', function () { state.driver = 'eth'; autofill(); });
@@ -9199,9 +9263,10 @@ function buildAddLiquidityModal(project) {
   });
   ethMax.addEventListener('click', function () {
     if (state.ethBal == null) { connect(); return; }
-    var buf = 1000000000000000n; // keep ~0.001 ETH for gas
+    // Keep ~0.001 ETH for gas only when the pair IS native ETH; an ERC-20 pair (USDC) can go to the brim.
+    var buf = state.pair.isNative ? 1000000000000000n : 0n;
     var v = state.ethBal > buf ? state.ethBal - buf : 0n;
-    ethAmt.value = formatAmount(v, 18); state.driver = 'eth'; autofill();
+    ethAmt.value = formatAmount(v, pairDec()); state.driver = 'eth'; autofill();
   });
 
   var status = el('div', 'modal-status'); wrap.appendChild(status);
@@ -9233,14 +9298,23 @@ function buildAddLiquidityModal(project) {
   }
   function onRangeChange() { drawGraph(); autofill(); }
 
+  // Resolve the pair (accounting) token for the selected chain, then refresh labels, balances, and price.
+  function refreshPair() {
+    lpPairFor(project, state.chainId).then(function (p) {
+      state.pair = p; applyPairLabels();
+      refreshBalances(); refreshPrice();
+    });
+  }
+
   function refreshBalances() {
     var acct = getAccount && getAccount();
     if (!acct) { balLine.textContent = 'Connect a wallet to see your balance.'; state.revBal = null; state.ethBal = null; return; }
     balLine.textContent = 'Your balance: …';
-    Promise.all([readUserBalance(project, state.chainId), readEthBalance(state.chainId, acct)]).then(function (r) {
+    var pairTokenAddr = state.pair.isNative ? NATIVE_TOKEN : state.pair.addr;
+    Promise.all([readUserBalance(project, state.chainId), readWalletTokenBalance(state.chainId, pairTokenAddr, acct)]).then(function (r) {
       state.revBal = r[0]; state.ethBal = r[1];
       balLine.textContent = 'Your balance: ' + (r[0] != null ? formatTokens(r[0]) : '—') + ' ' + sym
-        + ' · ' + (r[1] != null ? formatEth(r[1]) : '—');
+        + ' · ' + (r[1] != null ? formatBalance(r[1], pairDec(), pairSym()) : '—');
     });
   }
 
@@ -9250,7 +9324,7 @@ function buildAddLiquidityModal(project) {
       var amm = res[0], floor = res[1];
       state.poolP = (amm && amm > 0) ? amm : 0;
       state.floor = (floor && floor > 0) ? floor : 0;
-      priceLine.textContent = amm ? ('Pool price: ~' + formatPrice(amm) + ' ETH / ' + sym) : 'Pool not initialized on this chain.';
+      priceLine.textContent = amm ? ('Pool price: ~' + formatPrice(amm) + ' ' + pairSym() + ' / ' + sym) : 'Pool not initialized on this chain.';
       var hasFloor = state.floor > 0;
       var poolP = state.poolP > 0 ? state.poolP : (ceiling > 0 ? ceiling / 10 : 0);
       var minDefault;
@@ -9266,20 +9340,19 @@ function buildAddLiquidityModal(project) {
     });
   }
 
-  refreshBalances();
-  refreshPrice();
+  refreshPair();
 
   btn.addEventListener('click', function () {
     if (!(getAccount && getAccount())) { connect(); return; }
-    var amount0, amount1;
-    try { amount0 = ethAmt.value ? parseAmount(ethAmt.value, 18) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ETH amount'; return; }
-    try { amount1 = tokAmt.value ? parseAmount(tokAmt.value, 18) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + sym + ' amount'; return; }
-    if (amount0 <= 0n && amount1 <= 0n) { status.className = 'modal-status error'; status.textContent = 'Enter an amount'; return; }
+    var pairAmount, tokenAmount;
+    try { pairAmount = ethAmt.value ? parseAmount(ethAmt.value, pairDec()) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + pairSym() + ' amount'; return; }
+    try { tokenAmount = tokAmt.value ? parseAmount(tokAmt.value, 18) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + sym + ' amount'; return; }
+    if (pairAmount <= 0n && tokenAmount <= 0n) { status.className = 'modal-status error'; status.textContent = 'Enter an amount'; return; }
     var r = currentRange();
     if (!(r.pa > 0) || !(r.pb > r.pa)) { status.className = 'modal-status error'; status.textContent = 'Set a valid price range'; return; }
     btn.disabled = true;
     status.className = 'modal-status'; status.textContent = 'Preparing…';
-    var lpOpts = { project: project, chainId: state.chainId, amount0: amount0, amount1: amount1, pa: r.pa, pb: r.pb };
+    var lpOpts = { project: project, chainId: state.chainId, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb };
     prepareAddLiquidity(lpOpts).then(function (prep) {
       btn.disabled = false;
       status.textContent = '';
