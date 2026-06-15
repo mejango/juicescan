@@ -31,8 +31,8 @@ import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './rel
 // Steps depend on the chosen project type (defaults to Custom). Type is always the first step.
 // Revnet is a reduced flow (no Shop/Settlement — ETH-only, single canonical terminal, suckers on Deploy).
 function stepsFor(state) {
-  if (state.projectType === 'revnet') return ['Type', 'Details', 'Stages', 'Shop', 'Settlement', 'Deploy'];
-  return ['Type', 'Details', 'Rulesets', 'Shop', 'Settlement', 'Deploy'];
+  if (state.projectType === 'revnet') return ['Flavor', 'Details', 'Stages', 'Shop', 'Settlement', 'Deploy'];
+  return ['Flavor', 'Details', 'Rulesets', 'Shop', 'Settlement', 'Deploy'];
 }
 
 // The chain selector shows canonical (mainnet) names; the mainnet/testnet toggle (at Deploy) maps each to
@@ -84,7 +84,19 @@ var TAG_OPTIONS = ['AI', 'Art', 'Brand', 'Business', 'Charity', 'Climate', 'Coll
   'Social', 'Software', 'Sports', 'Tooling', 'Writing'];
 
 var UINT224_MAX = (1n << 224n) - 1n;
+var UINT112_MAX = (1n << 112n) - 1n;
+var UINT104_MAX = (1n << 104n) - 1n;
 var SPLITS_TOTAL = 1000000000; // 1e9
+
+// Parse a user-typed token amount (whole or decimal, any size) to its 18-dec fixed-point BigInt, clamped
+// to `maxV` and never negative. Returns 0n on empty/garbage (never throws — parseEther throws on bad input).
+function tokenAmount18(v, maxV) {
+  var n;
+  try { n = (v == null || String(v).trim() === '') ? 0n : parseEther(String(v).trim()); }
+  catch (_) { return 0n; }
+  if (n < 0n) return 0n;
+  return (maxV != null && n > maxV) ? maxV : n;
+}
 
 // ---------------------------------------------------------------------------
 // ABI building blocks (shared struct components)
@@ -509,7 +521,7 @@ function renderFooter(state, render, close) {
 
 function renderStep(state, render) {
   switch (stepsFor(state)[state.step]) {
-    case 'Type': return renderType(state, render);
+    case 'Flavor': return renderType(state, render);
     case 'Details': return renderDetails(state, render);
     case 'Rulesets': return renderStages(state, render);
     case 'Stages': return renderRevnetStages(state, render);
@@ -524,7 +536,7 @@ function renderStep(state, render) {
 function renderType(state, render) {
   var isRev = state.projectType === 'revnet';
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Project type', 'Follow a preset, or design your project from scratch.'));
+  wrap.appendChild(stepHead('Project flavor', 'Follow a preset, or design your project from scratch.'));
 
   var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
   [['custom', 'Custom'], ['revnet', 'Revnet']].forEach(function (o) {
@@ -535,7 +547,7 @@ function renderType(state, render) {
     state.step = Math.min(state.step, stepsFor(state).length - 1); // clamp if the new flow has fewer steps
     render();
   });
-  wrap.appendChild(fieldBlock('Type', false, sel));
+  wrap.appendChild(fieldBlock('Flavor', false, sel));
 
   var desc = el('div', 'create-hint');
   desc.textContent = isRev
@@ -1093,9 +1105,15 @@ function revStageEditor(stage, idx, state, render) {
   var splitHead = el('div', 'create-hint');
   function setSplitHead() {
     var tot = revSplitTotalPct(stage);
-    splitHead.textContent = tot > 0
-      ? ('Total split limit of ' + round2(tot) + '%, payer always receives ' + round2(Math.max(0, 100 - tot)) + '% of issuance.')
-      : 'Without splits, the payer always receives 100% of issuance.';
+    if (tot > 100) {
+      splitHead.className = 'create-hint warn';
+      splitHead.textContent = 'Splits total ' + round2(tot) + '% — over 100%. Reduce a share so they sum to 100% or less.';
+    } else {
+      splitHead.className = 'create-hint';
+      splitHead.textContent = tot > 0
+        ? ('Total split limit of ' + round2(tot) + '%, payer always receives ' + round2(100 - tot) + '% of issuance.')
+        : 'Without splits, the payer always receives 100% of issuance.';
+    }
   }
   setSplitHead();
   (stage.reservedRecipients || []).forEach(function (rec, i) { s1.appendChild(reservedSplitRow(stage, rec, i, render, setSplitHead)); });
@@ -1942,8 +1960,12 @@ function itemEditor(state, nft, idx, render) {
       fInp.addEventListener('input', function () { nft.reserveFrequency = fInp.value.trim(); });
       rRow.appendChild(fInp); rRow.appendChild(document.createTextNode(' sold to '));
       var bInp = el('input', 'field'); bInp.type = 'text'; bInp.placeholder = '0x… address'; bInp.value = nft.reserveBeneficiary || ''; bInp.style.flex = '1';
-      bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); });
+      bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); render(); });
       rRow.appendChild(bInp); a.appendChild(rRow);
+      // Reserving requires a beneficiary, or the deploy reverts (JB721TiersHookStore_MissingReserveBeneficiary).
+      if (Number(nft.reserveFrequency) > 0 && !/^0x[0-9a-fA-F]{40}$/.test(resolvedStr(nft.reserveBeneficiary))) {
+        a.appendChild(warnNote('Add the address that receives the reserved set-aside, or this item will fail to deploy.'));
+      }
     }
     var minter = state.projectType === 'revnet' ? 'operator' : 'owner';
     a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' privileged access', dz('The ' + minter + ' can take from inventory for free.', 'The ' + minter + ' pays like everyone else.'), nft.flags.allowOwnerMint, function (v) { nft.flags.allowOwnerMint = v; }));
@@ -2163,8 +2185,8 @@ function renderDeploy(state, render) {
   wrap.appendChild(launch);
   if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
   if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
-  if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Type step to launch.'));
-  if (needOperator) wrap.appendChild(infoNote('Set an operator on the Type step to deploy your revnet.'));
+  if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Flavor step to launch.'));
+  if (needOperator) wrap.appendChild(infoNote('Set an operator on the Flavor step to deploy your revnet.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
 
   return wrap;
@@ -2343,7 +2365,7 @@ function reviewSummary(state) {
     r.appendChild(list); return r;
   }
   if (state.projectType === 'revnet') {
-    c.appendChild(row('Type', 'Revnet'));
+    c.appendChild(row('Flavor', 'Revnet'));
     c.appendChild(row('Name', state.details.name || '—'));
     c.appendChild(row('Token', '$' + tickerLabel(state)));
     c.appendChild(row('Accounting token', (state.accepts[0] || 'eth') === 'usdc' ? 'USDC' : 'ETH'));
@@ -2505,6 +2527,41 @@ function itemSplits(d, state, chainId, itemIdx) {
 // Deploy orchestration
 // ---------------------------------------------------------------------------
 
+// Known JB/REV revert selectors → friendly, actionable guidance pointing at the step the user can fix.
+var DEPLOY_ERROR_GUIDE = [
+  { sel: '0x584f1c49', name: 'jbcontroller_invalidcreationfee', msg: 'The project creation fee didn’t match what the contract expects. Refresh and try again — the fee may have just changed.' },
+  { sel: '0x2e373fa3', name: 'jbprojects_invalidcreationfee', msg: 'The project creation fee didn’t match what the contract expects. Refresh and try again — the fee may have just changed.' },
+  { sel: '0x50dcc307', name: 'jbprojects_zerocreationfeereceiver', msg: 'The protocol’s creation-fee receiver isn’t configured on this chain, so deploys aren’t available here right now. Try a different chain.' },
+  { sel: '0xba2fe6f3', name: 'revdeployer_stagetimesmustincrease', msg: 'Each stage must start after the previous one. On the Stages step, give a later stage a larger “days after”.' },
+  { sel: '0x8249b409', name: 'revdeployer_musthavesplits', msg: 'A stage has a split percentage but no recipients. On the Stages step, add a split recipient or remove the split.' },
+  { sel: '0x8c4564bd', name: 'revdeployer_cashoutscantbeturnedoffcompletely', msg: 'A stage’s cash-out tax is 100%, which fully blocks cash outs (not allowed for a revnet). Lower the cash-out tax on the Stages step.' },
+  { sel: '0x141d4794', name: 'revdeployer_stagesrequired', msg: 'A revnet needs at least one stage. Add a stage on the Stages step.' },
+  { sel: '0x87971d24', name: 'jbrulesets_invalidweightcutpercent', msg: 'An issuance-cut percentage is out of range. Set it between 0 and 100% on the Rulesets/Stages step.' },
+  { sel: '0xbad92c41', name: 'jb721tiershookstore_invalidquantity', msg: 'A store item’s quantity is too high (max 999,999,999). Lower it on the Shop step.' },
+  { sel: '0x800e9368', name: 'jb721tiershookstore_missingreservebeneficiary', msg: 'A store item reserves inventory but has no beneficiary address. Add one on the Shop step (the item’s “Reserve inventory” row).' },
+  { sel: '0xb99e376a', name: 'jb721tiershookstore_invalidcategorysortorder', msg: 'Store items are out of category order. On the Shop step, order items so their categories ascend.' },
+];
+
+// Turn a raw sim/contract/wallet error into a friendly, fixable message. Walks the cause chain so a custom
+// error's 4-byte selector (or decoded name) is matched even when it's nested in viem's error data.
+function friendlyDeployError(err) {
+  var raw = (err && (err.shortMessage || err.message)) || 'The transaction reverted.';
+  var parts = [], e = err;
+  for (var i = 0; e && i < 8; i++) {
+    parts.push(e.shortMessage || '', e.message || '', e.details || '');
+    if (e.data) parts.push(typeof e.data === 'string' ? e.data : (e.data.data || ''));
+    e = e.cause;
+  }
+  var blob = parts.join(' ').toLowerCase();
+  if (/user rejected|user denied|rejected the request|request rejected|denied transaction/.test(blob)) return 'You rejected the transaction in your wallet.';
+  if (/insufficient funds|exceeds the balance|gas required exceeds|insufficient balance/.test(blob)) return 'Not enough ETH to cover the creation fee plus gas. Top up the wallet and try again.';
+  for (var k = 0; k < DEPLOY_ERROR_GUIDE.length; k++) {
+    var g = DEPLOY_ERROR_GUIDE[k];
+    if (blob.indexOf(g.sel) !== -1 || blob.indexOf(g.name) !== -1) return g.msg;
+  }
+  return raw;
+}
+
 function deploy(state, render) {
   state.statusLines = [];
   state.done = false;
@@ -2528,7 +2585,7 @@ function deploy(state, render) {
     render();
   }).catch(function (e) {
     state.deploying = false;
-    state.statusLines.push({ text: 'Error: ' + (e && e.message || e), err: true });
+    state.statusLines.push({ text: friendlyDeployError(e), err: true });
     render();
   });
 }
@@ -2591,7 +2648,7 @@ async function runDeploy(state, owner) {
       await simulateTransaction({ chainId: sp.chainId, address: sp.address, abi: sp.abi, functionName: sp.functionName || 'launchProjectFor', args: sp.args, value: sp.value, account: signer });
       push('Simulation OK on ' + chainName(sp.chainId) + ' ✓', 'ok');
     } catch (e) {
-      throw new Error('Simulation failed on ' + chainName(sp.chainId) + ' — ' + (e && e.message || e));
+      throw new Error('Couldn’t simulate on ' + chainName(sp.chainId) + ' — ' + friendlyDeployError(e));
     }
   }
 
@@ -2814,31 +2871,26 @@ function buildRevStage(state, stage, idx, chainId, start) {
     var rows = (stage.reservedRecipients || [])
       .map(function (x, origIdx) { return { x: x, origIdx: origIdx }; })
       .filter(function (e) { return (Number(e.x.percent) || 0) > 0; });
-    // Each split's share of the reserved bucket is its row% ÷ total%. Per-row rounding can drift above/below
-    // SPLITS_TOTAL (1e9); JBSplits reverts if a group exceeds it. Give the LAST split the exact remainder.
-    var acc = 0;
+    // Each split's share of the reserved bucket is its row% ÷ total%. fillSplits keeps the group summing to
+    // exactly SPLITS_TOTAL (1e9) so rounding drift can't exceed it and revert.
+    var shares = fillSplits(rows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / totalPct * SPLITS_TOTAL); }));
     splits = rows.map(function (e, k) {
-      var raw = (k === rows.length - 1)
-        ? (SPLITS_TOTAL - acc)
-        : Math.round((Number(e.x.percent) || 0) / totalPct * SPLITS_TOTAL);
-      acc += raw;
       var benef = e.x.type === 'project' ? null : pickResolved(e.x.address, e.x);
-      return splitState(e.x, raw, benef);
+      return splitState(e.x, shares[k], benef);
     });
   }
-  // initialIssuance: tokens per ETH × 1e18 (18-dec fixed point). 0 on later stages = inherit (with cut).
-  var issuance = (idx === 0 || stage.weight)
-    ? BigInt(Math.max(0, Math.round(Number(stage.weight) || 0))) * (10n ** 18n)
-    : 0n;
+  // initialIssuance: tokens per base unit × 1e18 (18-dec fixed point). 0 on later stages = inherit (with cut).
+  // parseEther (not Number×1e18) keeps precision on large/decimal weights and never throws on Infinity.
+  var issuance = (idx === 0 || stage.weight) ? tokenAmount18(stage.weight, UINT112_MAX) : 0n;
   var cutFreq = stage.issuanceCutOn ? Math.max(0, Math.round((Number(stage.cutFreqDays) || 0) * 86400)) : 0;
   var cutPercent = stage.issuanceCutOn
     ? Math.round(Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) / 100 * JBCONSTANTS.MAX_WEIGHT_CUT_PERCENT)
     : 0;
   var taxRate = Math.round(Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) * 100); // percent → out of 10000
   var autos = (stage.autoIssuances || [])
-    .map(function (a) { return { count: a.count, addr: pickResolved(a.address, a) }; })
-    .filter(function (a) { return Number(a.count) > 0 && /^0x[0-9a-fA-F]{40}$/.test(a.addr); })
-    .map(function (a) { return { chainId: chainId, count: BigInt(Math.round(Number(a.count))) * (10n ** 18n), beneficiary: a.addr }; });
+    .map(function (a) { return { count: tokenAmount18(a.count, UINT104_MAX), addr: pickResolved(a.address, a) }; })
+    .filter(function (a) { return a.count > 0n && /^0x[0-9a-fA-F]{40}$/.test(a.addr); })
+    .map(function (a) { return { chainId: chainId, count: a.count, beneficiary: a.addr }; });
   return {
     startsAtOrAfter: start,
     autoIssuances: autos,
@@ -2869,11 +2921,13 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   // Reserved rate = sum of the split-row percentages (each is a % of issuance reserved for that recipient).
   var reservedTotalPct = (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
   rs.weight = custom ? (stage.weight || '0') : '0';
-  rs.reservedPercent = custom ? Math.min(100, reservedTotalPct) : 0;
-  rs.weightCutPercent = custom ? stage.weightCutPercent : 0;
+  rs.reservedPercent = custom ? Math.max(0, Math.min(100, reservedTotalPct)) : 0;
+  rs.weightCutPercent = custom ? Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) : 0;
   // Cash outs / owner minting / pausing apply to the project's tokens regardless of whether THIS stage
-  // issues new tokens (tokens can exist from prior stages or owner mints).
-  rs.cashOutTaxRate = (stage.cashOutEnabled && stage.payoutMode !== 'unlimited') ? stage.cashOutTaxRate : 100; // 100% = cash outs off (no surplus under unlimited payouts)
+  // issues new tokens (tokens can exist from prior stages or owner mints). Clamp 0–100 so a stray value
+  // can't overflow MAX_CASH_OUT_TAX_RATE and revert at deploy.
+  rs.cashOutTaxRate = (stage.cashOutEnabled && stage.payoutMode !== 'unlimited')
+    ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100; // 100% = cash outs off (no surplus under unlimited payouts)
   rs.allowOwnerMinting = !!stage.allowOwnerMinting;
   rs.pauseCreditTransfers = !!stage.pauseTransfers;
 
@@ -2892,22 +2946,32 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   if (stage.payoutMode !== 'none' && stage.payoutRecipients.length) {
     var payoutSplits;
     if (stage.payoutMode === 'unlimited') {
-      // % of payouts each recipient gets; any unallocated remainder goes to the project owner.
-      payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL), payoutBenef(x, idx)); });
+      // % of payouts each recipient gets; any unallocated remainder goes to the project owner. Clamp the
+      // running total to SPLITS_TOTAL so over-100% (or rounding drift) can't revert the group.
+      var pacc = 0;
+      payoutSplits = stage.payoutRecipients.map(function (x, idx) {
+        var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
+        if (pacc + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc);
+        pacc += raw;
+        return splitState(x, raw, payoutBenef(x, idx));
+      });
     } else {
       // Limited: the payout limit is the sum of the amounts; each recipient's split is its share of that sum.
       var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
-      payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL), payoutBenef(x, idx)); });
+      var lshares = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
+      payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares[idx], payoutBenef(x, idx)); });
     }
     rs.splitGroups.push({ groupId: uint256FromAddress(NATIVE_TOKEN), splits: payoutSplits });
   }
   if (custom && reservedTotalPct > 0) {
-    // Each recipient's share of the reserved group = its row % ÷ the total reserved %. Key by original index.
+    // Each recipient's share of the reserved group = its row % ÷ the total reserved %. fillSplits keeps the
+    // group summing to exactly SPLITS_TOTAL so rounding drift can't exceed it and revert.
+    var rrows = stage.reservedRecipients.map(function (x, origIdx) { return { x: x, origIdx: origIdx }; })
+      .filter(function (e) { return (Number(e.x.percent) || 0) > 0; });
+    var rshares = fillSplits(rrows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL); }));
     rs.splitGroups.push({
       groupId: '1',
-      splits: stage.reservedRecipients.map(function (x, origIdx) { return { x: x, origIdx: origIdx }; })
-        .filter(function (e) { return (Number(e.x.percent) || 0) > 0; })
-        .map(function (e) { return splitState(e.x, Math.round((Number(e.x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL), reservedBenef(e.x, e.origIdx)); }),
+      splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx)); }),
     });
   }
 
@@ -2931,6 +2995,22 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     });
   }
   return rs;
+}
+
+// Adjust a list of integer split shares so they sum to EXACTLY SPLITS_TOTAL (1e9). Per-row rounding can
+// drift a few atoms above/below; JBSplits reverts if a group EXCEEDS SPLITS_TOTAL. We correct the drift on
+// the largest share (always non-zero, can't go negative for tiny deltas). Use for groups meant to
+// distribute 100% (reserved tokens, limited payouts). Returns the same array, mutated.
+function fillSplits(rawShares) {
+  if (!rawShares.length) return rawShares;
+  var sum = rawShares.reduce(function (s, v) { return s + v; }, 0);
+  var delta = SPLITS_TOTAL - sum;
+  if (delta !== 0) {
+    var maxI = 0;
+    for (var i = 1; i < rawShares.length; i++) if (rawShares[i] > rawShares[maxI]) maxI = i;
+    rawShares[maxI] = Math.max(0, rawShares[maxI] + delta);
+  }
+  return rawShares;
 }
 
 function splitState(rec, rawPercent, beneficiaryOverride) {
@@ -2967,7 +3047,8 @@ function build721Config(state, projectUri, chainId) {
     var sp = itemSplits(nft, state, chainId, e.idx);
     return {
       price: priceUnits(nft.priceEth, priceDecimals),
-      initialSupply: limited ? (Number(chainSupply) || 0) : 999999999, // max allowed (_ONE_BILLION - 1) ~ unlimited
+      // Clamp to [0, 999999999] — the store caps initialSupply at _ONE_BILLION-1; a larger value reverts (uint32 overflow / InvalidQuantity).
+      initialSupply: limited ? Math.max(0, Math.min(999999999, Math.floor(Number(chainSupply) || 0))) : 999999999,
       votingUnits: votes,
       reserveFrequency: freq,
       reserveBeneficiary: reserveBenef,
@@ -3093,7 +3174,16 @@ function attachEns(input, store) {
   var token = 0, timer = null;
   function go() {
     var v = (input.value || '').trim();
-    if (!isEnsName(v)) { hint.style.display = 'none'; store(v, null); return; }
+    if (!isEnsName(v)) {
+      store(v, null);
+      // Flag a malformed 0x address right under the field (valid 0x = 40 hex chars). Empty / clearly-not-an-
+      // address (e.g. a half-typed ENS name without a dot) stays silent so we don't nag mid-typing.
+      if (/^0x/i.test(v) && !/^0x[0-9a-fA-F]{40}$/.test(v)) {
+        hint.style.display = ''; hint.className = 'create-resolve-hint warn';
+        hint.textContent = 'Not a valid address — needs 0x followed by 40 hex characters.';
+      } else { hint.style.display = 'none'; }
+      return;
+    }
     hint.style.display = ''; hint.className = 'create-resolve-hint'; hint.textContent = 'Resolving ' + v + '…';
     var my = ++token;
     resolveEns(v).then(function (addr) {
