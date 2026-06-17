@@ -5001,6 +5001,10 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .pay-routing-tag.amm {
   background: transparent; color: var(--c-orange); border-color: var(--c-orange);
 }
+.pay-routing-tag.direct, .paybox-route-direct {
+  display: inline-block; font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 2px 7px; border-radius: 2px; background: transparent; color: var(--c-teal); border: 1px solid var(--c-teal);
+}
 .pay-amm-sub { font-size: 11px; color: var(--muted-2); margin: 2px 0 0; }
 .paybox-amm-fill { font-size: 11px; color: var(--muted-2); margin-top: 12px; }
 .paybox-amm-cmp { font-size: 11px; color: var(--muted-2); margin-top: 2px; }

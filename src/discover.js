@@ -1581,6 +1581,48 @@ var POSITION_MANAGER_BY_CHAIN = {
   42161: '0xd88f38f930b7952f2db2432cb002e7abbf3dd869',
   421614: '0xac631556d3d4019c95769033b5e719dd77124bac',
 };
+// Uniswap canonical Universal Router (v4-enabled) + V4 Quoter per chain. Authoritative values from
+// hookmate (univ4-router-v6/lib/hookmate) — the same address book JB's own router uses. OP Sepolia
+// (11155420) has no Uniswap v4 deployment → no direct swap there. Permit2 is the canonical singleton.
+var UNIVERSAL_ROUTER_BY_CHAIN = {
+  1: '0x66a9893cc07d91d95644aedd05d03f95e1dba8af',
+  10: '0x851116d9223fabed8e56c0e6b8ad0c31d98b3507',
+  8453: '0x6ff5693b99212da76ad316178a184ab56d299b43',
+  42161: '0xa51afafe0263b40edaef0df8781ea9aa03e381a3',
+  11155111: '0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b',
+  84532: '0x492e6456d9528771018deb9e87ef7750ef184104',
+  421614: '0xefd1d4bd4cf1e86da286bb4cb1b8bced9c10ba47',
+};
+var V4_QUOTER_BY_CHAIN = {
+  1: '0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203',
+  10: '0x1f3131a13296fb91c90870043742c3cdbff1a8d7',
+  8453: '0x0d5e0f971ed27fbff6c2837bf31316121532048d',
+  42161: '0x3972c00f7ed4885e145823eb7c655375d275a1c5',
+  11155111: '0x61b3f2011a92d183c7dbadbda940a7555ccf9227',
+  84532: '0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba',
+  421614: '0x7de51022d70a725b508085468052e25e22b5c4c9',
+};
+// v4-periphery Actions + Universal Router Commands (canonical byte values).
+var V4_ACTION = { SWAP_EXACT_IN_SINGLE: 0x06, SETTLE_ALL: 0x0c, TAKE: 0x0e };
+var UR_CMD = { PERMIT2_PERMIT: 0x0a, V4_SWAP: 0x10 };
+var v4QuoterAbi = [{
+  type: 'function', name: 'quoteExactInputSingle', stateMutability: 'nonpayable',
+  inputs: [{ name: 'params', type: 'tuple', components: [
+    { name: 'poolKey', type: 'tuple', components: [
+      { name: 'currency0', type: 'address' }, { name: 'currency1', type: 'address' },
+      { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'hooks', type: 'address' },
+    ]},
+    { name: 'zeroForOne', type: 'bool' }, { name: 'exactAmount', type: 'uint128' }, { name: 'hookData', type: 'bytes' },
+  ]}],
+  outputs: [{ name: 'amountOut', type: 'uint256' }, { name: 'gasEstimate', type: 'uint256' }],
+}];
+var urExecuteAbi = [{
+  type: 'function', name: 'execute', stateMutability: 'payable',
+  inputs: [{ name: 'commands', type: 'bytes' }, { name: 'inputs', type: 'bytes[]' }, { name: 'deadline', type: 'uint256' }],
+  outputs: [],
+}];
+function pad1(n) { return (n < 16 ? '0' : '') + n.toString(16); }
+
 // The V4 PoolManager (singleton per chain) custodies all pooled tokens — so a buyback pool's REV shows up
 // in the owners list under the PoolManager address. Flag those as the AMM.
 var AMM_ADDRESSES = (function () { var m = {}; Object.keys(POOL_MANAGER_BY_CHAIN).forEach(function (k) { m[POOL_MANAGER_BY_CHAIN[k].toLowerCase()] = true; }); return m; })();
@@ -1643,6 +1685,112 @@ async function readAmmPrice(project, chainId) {
     var human = rawRatio * Math.pow(10, 18 - pair.decimals);
     return (isFinite(human) && human > 0) ? human : null;
   } catch (e) { return null; }
+}
+
+// ── Direct AMM swap (bypass `pay`) ──────────────────────────────────────────────────────────────
+// Paying through the buyback hook skims the reserved % even on the swap route. Swapping the pool
+// directly via Uniswap's Universal Router instead lets the hook hand the swapper the BETTER of the
+// full pool output (no reserved cut) or the JB issuance beneficiary — so the user keeps the "split tax"
+// whenever the AMM wins. The hook intercepts every pool swap (no sender gate) and routes optimally.
+
+// Resolve the buyback pool + swap direction for buying the project token with its pair token.
+function directSwapPoolFor(project, chainId) {
+  var hook = getAddress('JBBuybackHook', chainId);
+  if (!hook || !UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
+  return lpPairFor(project, chainId).then(function (pair) {
+    return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] })
+      .then(function (key) {
+        var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
+        var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
+        if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null; // pool not set
+        var pairAddr = pair.addr; // pool-currency form: native = 0x0
+        // Buying the project token: input = pair token, output = the project token (the non-pair currency).
+        var zeroForOne = (c0 === pairAddr); // swapping currency0(pair) → currency1(token)
+        var tokenOut = zeroForOne ? key.currency1 : key.currency0;
+        return { key: key, pair: pair, pairAddr: pairAddr, zeroForOne: zeroForOne, tokenOut: tokenOut };
+      }).catch(function () { return null; });
+  });
+}
+
+// True expected output of swapping `amountIn` of the pair token directly through the pool — runs the V4
+// Quoter, which executes the hook's beforeSwap, so the result already reflects the hook's optimal routing
+// (full AMM output when the AMM wins, JB issuance beneficiary otherwise). Null if the quote reverts.
+function quoteDirectSwap(chainId, pool, amountIn) {
+  var quoter = V4_QUOTER_BY_CHAIN[chainId];
+  if (!quoter || !pool) return Promise.resolve(null);
+  return clientFor(chainId).readContract({
+    address: quoter, abi: v4QuoterAbi, functionName: 'quoteExactInputSingle',
+    args: [{ poolKey: pool.key, zeroForOne: pool.zeroForOne, exactAmount: amountIn, hookData: '0x' }],
+  }).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; });
+}
+
+// Encode the V4_SWAP command input for an exact-in single swap (pair token → project token), output to
+// the user. Actions: SWAP_EXACT_IN_SINGLE (amountOutMinimum enforces slippage) → SETTLE_ALL (pay the
+// input; native from msg.value, ERC-20 pulled via the router's Permit2 allowance) → TAKE (output to user).
+function encodeV4SwapInput(pool, amountIn, minOut, recipient) {
+  var poolKeyParam = [pool.key.currency0, pool.key.currency1, pool.key.fee, pool.key.tickSpacing, pool.key.hooks];
+  var swapParams = encodeAbiParameters(
+    [{ type: 'tuple', components: [
+      { type: 'tuple', components: [{ type: 'address' }, { type: 'address' }, { type: 'uint24' }, { type: 'int24' }, { type: 'address' }] },
+      { type: 'bool' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' },
+    ]}],
+    [[poolKeyParam, pool.zeroForOne, amountIn, minOut, '0x']]
+  );
+  var settleParams = encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [pool.pairAddr, amountIn]); // SETTLE_ALL(currencyIn, max)
+  var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], [pool.tokenOut, recipient, 0n]); // TAKE(currencyOut, recipient, OPEN_DELTA)
+  var actions = '0x' + pad1(V4_ACTION.SWAP_EXACT_IN_SINGLE) + pad1(V4_ACTION.SETTLE_ALL) + pad1(V4_ACTION.TAKE);
+  return encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], [actions, [swapParams, settleParams, takeParams]]);
+}
+
+// Native pair token → project token: single V4_SWAP, input paid via msg.value.
+function buildDirectSwapNativeTx(chainId, pool, amountIn, minOut, recipient) {
+  return {
+    chainId: chainId, address: UNIVERSAL_ROUTER_BY_CHAIN[chainId], abi: urExecuteAbi, functionName: 'execute',
+    args: ['0x' + pad1(UR_CMD.V4_SWAP), [encodeV4SwapInput(pool, amountIn, minOut, recipient)], BigInt(Math.floor(Date.now() / 1000) + 1800)],
+    value: amountIn,
+  };
+}
+
+// ERC-20 pair token (e.g. USDC for ART) → project token. Ensures a one-time USDC→Permit2 approval, signs a
+// gasless Permit2 single-allowance for the Universal Router, then sends PERMIT2_PERMIT + V4_SWAP in one tx
+// (the swap's SETTLE pulls the USDC via that allowance). Async: may send an approval tx + request a sig.
+async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus) {
+  var ur = UNIVERSAL_ROUTER_BY_CHAIN[chainId];
+  var client = clientFor(chainId);
+  var wallet = getWalletClient();
+  // 1. One-time ERC20→Permit2 approval (canonical Permit2; wallets recognize it).
+  var erc20Allow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [recipient, PERMIT2_ADDRESS] });
+  if (BigInt(erc20Allow) < amountIn) {
+    if (onStatus) onStatus('Approving for Permit2 (one-time)…', 'pending');
+    var ah = await wallet.writeContract({ account: recipient, chain: CHAINS[chainId], address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
+    await client.waitForTransactionReceipt({ hash: ah });
+  }
+  // 2. Sign an expiring Permit2 single-allowance authorizing the Universal Router to pull `amountIn`.
+  var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, ur] });
+  var nonce = Number(p2[2]);
+  var now = Math.floor(Date.now() / 1000);
+  var expiration = now + 1800, sigDeadline = BigInt(now + 1800);
+  if (onStatus) onStatus('Sign the swap authorization…', 'pending');
+  var signature = await wallet.signTypedData({
+    account: recipient,
+    domain: { name: 'Permit2', chainId: chainId, verifyingContract: PERMIT2_ADDRESS },
+    types: LP_PERMIT2_TYPES, primaryType: 'PermitSingle',
+    message: { details: { token: token, amount: amountIn, expiration: expiration, nonce: nonce }, spender: ur, sigDeadline: sigDeadline },
+  });
+  // 3. PERMIT2_PERMIT input = (PermitSingle, signature); PermitSingle = (PermitDetails, spender, sigDeadline).
+  var permitInput = encodeAbiParameters(
+    [{ type: 'tuple', components: [
+      { type: 'tuple', components: [{ type: 'address' }, { type: 'uint160' }, { type: 'uint48' }, { type: 'uint48' }] },
+      { type: 'address' }, { type: 'uint256' },
+    ]}, { type: 'bytes' }],
+    [[[token, amountIn, expiration, nonce], ur, sigDeadline], signature]
+  );
+  var commands = '0x' + pad1(UR_CMD.PERMIT2_PERMIT) + pad1(UR_CMD.V4_SWAP);
+  return {
+    chainId: chainId, address: ur, abi: urExecuteAbi, functionName: 'execute',
+    args: [commands, [permitInput, encodeV4SwapInput(pool, amountIn, minOut, recipient)], BigInt(now + 1800)],
+    value: 0n,
+  };
 }
 
 // Current cash-out price (ETH reclaimed per token) — the price floor. Null when supply/surplus is 0.
@@ -2889,7 +3037,7 @@ function renderProjectDetail(project, initialTab) {
   // Sections build lazily on first view so the cross-chain "Ops" fan-out only fires when opened.
   // The price chart (revnets' issuance-price ladder) lives at the top of the About tab.
   var builders = {
-    About: function () {
+    Overview: function () {
       var wrap = el('div');
       if (project.isRevnet && project.stages && project.stages.length) wrap.appendChild(renderPriceChart(project, project.stages));
       wrap.appendChild(renderAboutSection(project));
@@ -2905,7 +3053,7 @@ function renderProjectDetail(project, initialTab) {
     // Revnets express rules through stages (Terms) and holders through Owners (splits + auto-issuance).
     builders.Terms = function () { return renderStagesSection(project); };
     // Revnets carry the wallet actions in the Owners → "You" card, so no separate Ops tab.
-    tabs = ['About', 'Terms', 'Owners'];
+    tabs = ['Overview', 'Terms', 'Owners'];
   } else {
     // Custom projects get the same subtabbed holders view as revnets, minus the revnet-only concepts
     // (Auto Issuance, Loans). The cross-chain composition that used to live in "Ops" now sits under
@@ -2918,7 +3066,7 @@ function renderProjectDetail(project, initialTab) {
         tokenCardInAll: true,
       });
     };
-    tabs = ['About', 'Rulesets & Funds', 'Tokens'];
+    tabs = ['Overview', 'Rulesets & Funds', 'Tokens'];
   }
   // Shop tab: shown optimistically (assume the project can sell items) so a #shop route resolves and the
   // tab doesn't pop in late. Once the 721-hook read resolves it's either filled with real content or
@@ -3081,6 +3229,7 @@ function renderPayCard(project, cart) {
     memo: '',
     phase: 'idle',
     preview: null,
+    directSwap: null, // { pool, out } when a direct AMM swap beats paying (no split-tax)
     slippageBps: 100, // AMM-route max slippage (default 1%)
     shop: null,       // { hook, tiers, ... } once the strip loads
     mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
@@ -3339,6 +3488,26 @@ function renderPayCard(project, cart) {
       return;
     }
 
+    // Direct AMM swap beats paying: the buyback hook would skim the reserved % even on its swap route, so
+    // we route the buy through Uniswap directly — the user keeps 100% of the output, splits get nothing.
+    var ds = state.directSwap;
+    if (ds && state.phase === 'ready' && p && p.received != null) {
+      var dLabel = el('div', 'paybox-yg-label'); dLabel.textContent = 'You get at least'; feedback.appendChild(dLabel);
+      var dRow = el('div', 'paybox-yg-row');
+      var dVal = el('div', 'paybox-yg-val');
+      dVal.textContent = formatTokenCount(ds.out * BigInt(10000 - (state.slippageBps || 0)) / 10000n) + ' ' + sym;
+      dRow.appendChild(dVal);
+      var dTag = el('span', 'paybox-route-tag paybox-route-direct'); dTag.textContent = 'SWAP';
+      dTag.title = 'Bought straight from the Uniswap pool, bypassing pay — so the reserved % / splits take nothing';
+      dRow.appendChild(dTag);
+      feedback.appendChild(dRow);
+      var dNote = el('div', 'paybox-splits');
+      var extra = ds.out > p.received ? ' (+' + formatTokenCount(ds.out - p.received) + ' vs paying)' : '';
+      dNote.textContent = 'Swapped from the market — splits take 0 ' + sym + extra + '.';
+      feedback.appendChild(dNote);
+      return;
+    }
+
     var label = el('div', 'paybox-yg-label');
     label.textContent = isAmm ? 'You get at least' : 'You get';
     feedback.appendChild(label);
@@ -3402,9 +3571,35 @@ function renderPayCard(project, cart) {
   function schedulePreview() {
     if (previewTimer) clearTimeout(previewTimer);
     state.preview = null;
+    state.directSwap = null;
     state.phase = 'idle';
     renderFeedback();
     previewTimer = setTimeout(loadPreview, 400);
+  }
+
+  // Decide whether a direct AMM swap beats paying (which skims the reserved % even on the swap route).
+  // Only for plain native-token buys (no NFTs, not add-to-balance) where a buyback pool exists. When
+  // previewPay already routed AMM, the full output = received + reserved (pay would split it); otherwise
+  // the V4 Quoter gives the true hook-routed output (null at 0 liquidity → stays on pay, no change).
+  function maybeOfferDirectSwap(gen, amt, p) {
+    if (state.mode === 'addbalance' || selectedTierIds().length) return;
+    // Input must be a directly-accepted token (a swap-via-router currency isn't the pool's pair).
+    if (!state.token || state.token.viaRouter) return;
+    if (!p || p.unavailable || p.received == null) return;
+    var payOut = p.received;
+    var isNativeIn = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
+    var inputCur = isNativeIn ? ZERO_ADDRESS : state.token.address.toLowerCase();
+    directSwapPoolFor(project, state.chainId).then(function (pool) {
+      // Only when the paid token IS the pool's pair token (native for ETH pools, USDC for USDC pools).
+      if (gen !== previewGen || !pool || pool.pairAddr !== inputCur) return;
+      function decide(directOut) {
+        if (gen !== previewGen) return;
+        if (directOut != null && directOut > payOut) { state.directSwap = { pool: pool, out: directOut }; renderFeedback(); }
+      }
+      var ammFull = (p.routing === 'amm' && p.reserved != null) ? (p.received + p.reserved) : null;
+      if (ammFull != null && ammFull > payOut) { decide(ammFull); return; }
+      quoteDirectSwap(state.chainId, pool, amt).then(decide);
+    }).catch(function () {});
   }
 
   function loadPreview() {
@@ -3429,7 +3624,9 @@ function renderPayCard(project, cart) {
       state.phase = 'ready';
       state.preview = p;
       state.conversion = null;
+      state.directSwap = null;
       renderFeedback();
+      maybeOfferDirectSwap(gen, amt, p);
       // Add-to-balance via router: derive the accepted-token amount that lands after the swap. The
       // simulated pay's total mint ÷ the per-unit issuance rate = the swap output (route must be issuance).
       var acc = acceptedToken();
@@ -3507,6 +3704,44 @@ function renderPayCard(project, cart) {
     return;
 
     function proceed() {
+    // Direct AMM swap: bypass `pay` (which skims the reserved % even on its swap route) and swap the pool
+    // directly via Uniswap's Universal Router, so the user keeps 100% of the output. Only for plain native
+    // buys with no NFTs; the buyback hook still routes the swap at the best of AMM vs issuance. The swap's
+    // amountOutMinimum makes an adverse move revert (not lose funds).
+    if (state.directSwap && !addBalance && !tierIds.length) {
+      var ds = state.directSwap;
+      var dsMinOut = ds.out * BigInt(10000 - (state.slippageBps || 0)) / 10000n;
+      var dChain = (chains.find(function (c) { return c.id === state.chainId; }) || {}).name || ('Chain ' + state.chainId);
+      var dSymClean = (state.token.symbol || (isNative ? 'ETH' : 'token')).replace(/\s*\(native\)/i, '');
+      var dHuman = state.amount + ' ' + dSymClean;
+      openPayConfirm({
+        chain: dChain,
+        chainId: state.chainId,
+        contract: 'Uniswap Universal Router',
+        address: UNIVERSAL_ROUTER_BY_CHAIN[state.chainId],
+        'function': 'execute',
+        abi: abiSignature(urExecuteAbi, 'execute'),
+        value: isNative ? (amt.toString() + ' wei (' + dHuman + ')') : '0',
+        erc20Approval: isNative ? null : { token: state.token.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: UNIVERSAL_ROUTER_BY_CHAIN[state.chainId] },
+        args: {
+          action: 'Direct AMM swap — bypasses pay so splits/reserved take nothing',
+          buy: sym,
+          amountIn: amt.toString() + ' (' + dHuman + ')',
+          minReturnedTokens: dsMinOut.toString() + ' (' + formatTokenCount(dsMinOut) + ' ' + sym + ', ' + (state.slippageBps / 100) + '% max slippage)',
+          beneficiary: beneficiary,
+          note: 'Swaps the buyback pool directly via the Universal Router; the hook fills at the best of AMM vs issuance.',
+        },
+      }, function send() {
+        if (isNative) { sendPay(buildDirectSwapNativeTx(state.chainId, ds.pool, amt, dsMinOut, beneficiary)); return; }
+        // ERC-20 (USDC) input → Permit2 approval/signature, then PERMIT2_PERMIT + V4_SWAP in one tx.
+        var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
+        buildDirectSwapErc20Tx(state.chainId, ds.pool, state.token.address, amt, dsMinOut, beneficiary, statusCb)
+          .then(function (tx) { sendPay(tx); })
+          .catch(function (e) { status.className = 'paybox-status error'; status.textContent = (e && (e.shortMessage || e.message)) || 'Swap authorization failed'; });
+      });
+      return;
+    }
+
     // Require back what the user was quoted (issuance exact; AMM minus chosen slippage). Only when the
     // preview matches the current amount; otherwise leave unprotected rather than risk a stale floor.
     var minTokens = (!addBalance && state.phase === 'ready') ? payMinTokens(state.preview, state.slippageBps) : 0n;
@@ -4601,7 +4836,8 @@ function activityRowFromEvent(event, project) {
   if (event.autoIssueEvent) {
     var ai = event.autoIssueEvent;
     return {
-      type: 'auto_issue', direction: 'in', chainId: chainId,
+      // Token-only mint (no fund flow) → no in/out tag, like issuance/reserved.
+      type: 'auto_issue', direction: null, chainId: chainId,
       txHash: ai.txHash || event.txHash, timestamp: Number(ai.timestamp || event.timestamp),
       account: ai.beneficiary || ai.from || event.from, from: ai.from || event.from,
       baseAmount: '', tokenAmount: formatCompactTokenAmount(toBigInt(ai.count)),
@@ -5981,12 +6217,12 @@ var BENDYSTRAW_PARTICIPANTS_BY_PROJECT_QUERY = 'query($projectId: Int!, $chainId
   + 'participants(where: { projectId: $projectId, chainId_in: $chainIds, version: $version, balance_gt: "0" }, '
   + 'orderBy: "balance", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { address balance volume chainId projectId version suckerGroupId } totalCount } }';
-var BENDYSTRAW_STORE_AUTO_ISSUANCE_QUERY = 'query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { '
-  + 'storeAutoIssuanceAmountEvents(where: { projectId: $projectId, chainId: $chainId }, '
+var BENDYSTRAW_STORE_AUTO_ISSUANCE_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'storeAutoIssuanceAmountEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { timestamp txHash caller beneficiary stageId count } totalCount } }';
-var BENDYSTRAW_AUTO_ISSUE_EVENTS_QUERY = 'query($projectId: Int!, $chainId: Int!, $limit: Int!, $offset: Int!) { '
-  + 'autoIssueEvents(where: { projectId: $projectId, chainId: $chainId }, '
+var BENDYSTRAW_AUTO_ISSUE_EVENTS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'autoIssueEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { timestamp txHash caller beneficiary stageId count } totalCount } }';
 var BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
@@ -6082,6 +6318,7 @@ async function fetchBendystrawAutoIssuePages(query, path, projectId, chainId) {
     var data = await bendystrawQuery(query, {
       projectId: Number(projectId),
       chainId: Number(chainId),
+      version: BENDYSTRAW_VERSION,
       limit: AUTO_ISSUE_PAGE_SIZE,
       offset: offset,
     });
@@ -6172,6 +6409,10 @@ function stageMatchForAutoIssue(row, stages) {
     for (var i = 0; i < stages.length; i++) {
       if (String(stages[i].id) === String(row.stageId)) return { stage: stages[i], stageIndex: i };
     }
+    // stageId from a superseded ruleset (project re-queued) matches no current stage → drop the row.
+    // Falling back to stages[0] here is what dumped stale allocations under Stage 1 with the current
+    // stage's remaining stapled on.
+    return { stage: null, stageIndex: -1 };
   }
   var idx = row.stageIndex == null ? 0 : Number(row.stageIndex);
   return { stage: stages[idx] || null, stageIndex: idx };
@@ -6334,18 +6575,18 @@ function renderAutoIssueAction(cell, row, distribute) {
   cell.appendChild(btn);
 }
 
-function projectTestnetChainIds(project) {
+function projectChainIds(project) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
   var seen = {};
   return chains.map(function (c) { return Number(c.id); }).filter(function (cid) {
     if (!CHAINS[cid] || seen[cid]) return false;
     seen[cid] = true;
-    return cid !== 1 && cid !== 10 && cid !== 8453 && cid !== 42161;
+    return true;
   });
 }
 
 function projectBendystrawChainIds(project) {
-  var source = projectTestnetChainIds(project);
+  var source = projectChainIds(project);
   if (!source.length && project.chainId) source = [Number(project.chainId)];
   var seen = {};
   var out = [];
@@ -6705,7 +6946,7 @@ async function readTotalSupplyAcrossChains(project, chainIds) {
 // Count of unique owners (holders, deduped across chains) — matches the Owners tab. Null on failure.
 async function fetchOwnersCount(project) {
   try {
-    var chainIds = projectTestnetChainIds(project);
+    var chainIds = projectChainIds(project);
     if (!chainIds.length) return null;
     var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
     var result = null;
@@ -6726,7 +6967,7 @@ async function fetchOwnersCount(project) {
 }
 
 async function fetchOwnersDistribution(project) {
-  var chainIds = projectTestnetChainIds(project);
+  var chainIds = projectChainIds(project);
   if (!chainIds.length) return { participants: [], totalCount: 0, totalSupply: 0n, totalBalance: 0n, truncated: false };
 
   // The by-group query is an optimization; if it errors (or the group can't be resolved) fall through to
@@ -6775,7 +7016,7 @@ function renderOwnersAll(project) {
     body.innerHTML = '';
     if (!data.participants.length || data.totalBalance === 0n) {
       body.className = 'detail-card-body owners-empty';
-      body.textContent = 'No indexed owners yet. Bendystraw is testnet-only here and has not reported V6 owner balances for this project.';
+      body.textContent = 'No indexed owners yet. Pay the project or distribute auto-issuance to populate this.';
       return;
     }
     body.className = 'owners-distribution';

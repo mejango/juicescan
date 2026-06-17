@@ -8,12 +8,18 @@ import { renderPinataSettings } from './ipfs-pin.js';
 import { FORMATTERS } from './bendystraw-format.js';
 import { getManifestChains } from './chain.js';
 
-const DEFAULT_BENDYSTRAW_CHAIN_ID = 11155111;
+// DATA-tab chain picker follows the Discover network toggle (jb-network), like the rest of the app.
+// Mainnet → mainnet chains (default Ethereum); testnet → testnet chains (default Sepolia).
+function wantTestnet() {
+  try { return localStorage.getItem('jb-network') === 'testnet'; } catch (_) { return false; }
+}
+function defaultBendystrawChainId() { return wantTestnet() ? 11155111 : 1; }
+function inActiveNetwork(chain) { return chain && !!chain.testnet === wantTestnet(); }
 
 function bendystrawChains() {
   const chains = getManifestChains();
   return Object.keys(chains)
-    .filter(cid => chains[cid].testnet)
+    .filter(cid => inActiveNetwork(chains[cid]))
     .map(cid => ({ id: cid, chain: chains[cid] }));
 }
 
@@ -326,7 +332,7 @@ function buildContent(q) {
 
 // Multi-select chain picker. Pills toggle on/off independently.
 // `.getValue()` returns a comma-separated list of chain IDs, or "" when none.
-// Empty selection means "all Bendystraw testnets" — still sends chainId_in so mainnet rows never appear.
+// Empty selection means "all chains in the active network" — no chainId_in filter.
 function renderChainMultiPills(varDef) {
   const wrapper = document.createElement('div');
   wrapper.className = 'fn-chain-selector data-chain-selector data-chain-multi';
@@ -360,7 +366,7 @@ function renderChainMultiPills(varDef) {
     allBtn.type = 'button';
     allBtn.className = 'chain-pill' + (selected.size === 0 ? ' selected' : '');
     allBtn.textContent = 'all';
-    allBtn.title = 'search all Bendystraw testnets';
+    allBtn.title = 'search all chains in the active network';
     allBtn.addEventListener('click', () => { selected.clear(); render(); });
     pillsRow.appendChild(allBtn);
 
@@ -390,9 +396,9 @@ function renderProjectAndChainPair(projectVar, chainVar, fields) {
   const chains = getManifestChains();
   const chainEntries = bendystrawChains();
   const defaultChain = chainVar.default != null ? Number(chainVar.default) : null;
-  let selectedChain = defaultChain != null && chains[String(defaultChain)] && chains[String(defaultChain)].testnet
+  let selectedChain = defaultChain != null && inActiveNetwork(chains[String(defaultChain)])
     ? defaultChain
-    : DEFAULT_BENDYSTRAW_CHAIN_ID;
+    : defaultBendystrawChainId();
   let showPicker = false;
 
   const chainWrap = document.createElement('div');
@@ -473,7 +479,7 @@ function renderChainPills(varDef) {
   const chains = getManifestChains();
   const chainEntries = bendystrawChains();
   const defaultVal = varDef.default != null ? Number(varDef.default) : null;
-  let selectedChain = defaultVal != null && chains[String(defaultVal)] && chains[String(defaultVal)].testnet
+  let selectedChain = defaultVal != null && inActiveNetwork(chains[String(defaultVal)])
     ? defaultVal
     : null;
 
