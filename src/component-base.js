@@ -1,7 +1,7 @@
 // src/component-base.js
 // Shared building blocks for all component widgets
 
-import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain, eagerConnect } from './wallet.js';
+import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect } from './wallet.js';
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
@@ -46,7 +46,7 @@ export function abiSignature(abi, functionName) {
   return f.name + '(' + ins + ')' + mut + outs;
 }
 
-export { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain, eagerConnect };
+export { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect };
 export { CHAINS, getManifestChains, getChainTokens };
 export { parseAmount, formatAmount };
 export { renderError };
@@ -648,6 +648,20 @@ function annotateAddresses(text) {
   }).join('\n');
 }
 
+// Annotate ruleset start timestamps (mustStartAtOrAfter / startsAtOrAfter) with a human date + a note that
+// it's a fixed deploy-time value, identical on every chain so a multichain project starts in lockstep.
+function annotateTimestamps(text) {
+  return text.split('\n').map(function (line) {
+    if (line.indexOf('//') !== -1) return line; // already annotated
+    var m = line.match(/(?:mustStartAtOrAfter|startsAtOrAfter):\s*"?(\d+)"?,?\s*$/);
+    if (!m) return line;
+    var ts = Number(m[1]);
+    if (ts === 0) return line + '  // 0 = starts at the deploy block (this chain only)';
+    var when; try { when = new Date(ts * 1000).toUTCString(); } catch (_) { when = ''; }
+    return line + '  // ' + when + ' — when this ruleset starts. Fixed at deploy (~10 min ahead) and identical on every chain so a multichain project begins in lockstep, not at each chain’s own block time.';
+  }).join('\n');
+}
+
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
   return new Promise(function (resolve) {
@@ -662,8 +676,8 @@ export function confirmTransactionModal(payload, opts) {
     note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
     content.appendChild(note);
     var pre = el('pre', 'create-payload');
-    pre.textContent = annotateAddresses(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
-      .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:'));
+    pre.textContent = annotateTimestamps(annotateAddresses(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
+      .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:')));
     content.appendChild(pre);
     appendAuditPromptLink(content, payload);
     var foot = el('div', 'create-modal-foot');

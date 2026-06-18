@@ -167,6 +167,12 @@ function routerTerminalFor(chainId) { return getAddress('JBRouterTerminalRegistr
 // Canonical Circle testnet USDC (6 decimals), lowercased to avoid viem checksum validation. Offered as
 // a pay currency on revnets (which have the router); previewPayFor reads "unavailable" where no pool.
 var USDC_BY_CHAIN = {
+  // Mainnets — native (Circle-issued) USDC.
+  1: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+  10: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+  8453: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+  42161: '0xaf88d065e77c8cc2239327c5edb3a432268e5831',
+  // Testnets.
   84532: '0x036cbd53842c5426634e7929541ec2318f3dcf7e',
   11155111: '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238',
   11155420: '0x5fd84259d66cd46123540766be93dfe6d43130d7',
@@ -2368,15 +2374,25 @@ function addressOrNull(address) {
 }
 
 async function bendystrawRevnetOperatorOf(projectId, chainId) {
-  // The revnet operator = the permissionHolder flagged `isRevnetOperator`. Bendystraw's V6 reindex now sets
-  // this flag (the v6-isrevnet-revowner PR), so filter on it directly — no REVOwner-address lookup needed.
+  // The revnet operator = the permissionHolder flagged `isRevnetOperator`. Bendystraw's V6 reindex sets this
+  // flag (the v6-isrevnet-revowner PR), so filter on it directly — no REVOwner-address lookup needed.
+  //
+  // Bendystraw can return MORE THAN ONE flagged row: when REVOwner.setOperatorOf reassigns the operator, the
+  // indexer currently leaves `isRevnetOperator: true` on the prior operator (its `permissions` array is
+  // emptied, but the flag is stale). Taking `items[0]` blindly surfaces whichever the indexer returns first —
+  // for BAN (project 4 / Sepolia) that's the old Sphinx Safe with an empty permission set, not team.banny.eth.
+  // Disambiguate using authoritative per-row data: the live operator is the flagged holder that still HOLDS
+  // permissions. The prior operator's row carries `permissions: []`. Once the indexer clears the stale flag
+  // this filter collapses to a single row and is a no-op.
   var data = await bendystrawQuery(BENDYSTRAW_PROJECT_OPERATOR_QUERY, {
     chainId: Number(chainId),
     projectId: Number(projectId),
     version: BENDYSTRAW_VERSION,
   });
-  var rows = data && data.permissionHolders && data.permissionHolders.items;
-  return addressOrNull(rows && rows[0] && rows[0].operator);
+  var rows = (data && data.permissionHolders && data.permissionHolders.items) || [];
+  var live = rows.filter(function (r) { return r && r.permissions && r.permissions.length > 0; });
+  var pick = (live.length ? live[0] : rows[0]) || null;
+  return addressOrNull(pick && pick.operator);
 }
 
 async function revnetOperatorOf(projectId, chainId) {
@@ -2398,6 +2414,28 @@ function projectAuthorityAddress(project) {
 
 function projectOwnerRecipientLabel(project) {
   return project && project.isRevnet ? 'REVOwner' : 'Project owner';
+}
+
+// Render the "Account" cell for a single JBSplit. Precedence matches the JBSplit struct's own routing:
+//   projectId > 0          → reserved tokens are minted to that project
+//   beneficiary != 0       → tokens go to that address
+//   hook != 0              → tokens are forwarded to a split hook (e.g. BannyLPSplitHook for LP'ing)
+//   otherwise              → the project owner / REVOwner
+// The hook check MUST come before the owner fallback: a hook-routed split has beneficiary == 0 by design,
+// so without this the row mislabels the LP split hook as the project owner. Returns a fresh node.
+function splitAccountNode(sp, project, chainId) {
+  var node = el('span', 'splits-acct-inner');
+  if (Number(sp.projectId) > 0) { node.textContent = 'Project #' + sp.projectId; return node; }
+  if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) { node.appendChild(addressNode(sp.beneficiary, chainId)); return node; }
+  if (sp.hook && sp.hook !== ZERO_ADDRESS) {
+    var label = el('span', 'split-hook-label'); label.textContent = 'Split hook'; label.title = 'Reserved tokens are forwarded to a split hook';
+    node.appendChild(label);
+    node.appendChild(document.createTextNode(' '));
+    node.appendChild(addressNode(sp.hook, chainId));
+    return node;
+  }
+  node.textContent = projectOwnerRecipientLabel(project);
+  return node;
 }
 
 
@@ -2574,6 +2612,7 @@ async function fetchProject(id, chainId) {
     operator: null,
     tokenAddress: null,
     tokenSymbol: null,
+    metaSymbol: null, // off-chain display symbol from projectUri (custom credits-only projects)
     tokenName: null,
     totalSupply: null,
     pendingReserved: null,
@@ -2609,6 +2648,9 @@ async function fetchProject(id, chainId) {
       project.discord = meta.discord || null;
       project.telegram = meta.telegram || null;
       project.tags = Array.isArray(meta.tags) ? meta.tags : [];
+      // Off-chain display symbol from the project URI (custom projects with no ERC-20 yet). Used only as
+      // a fallback — a deployed ERC-20's on-chain symbol wins (resolved after all reads, below).
+      project.metaSymbol = (meta.symbol || meta.ticker || '').toString().trim() || null;
       // Operator-defined names for 721 store categories: { "1": "Memberships", … } (category 0 = Default).
       project.storeCategories = (meta.storeCategories && typeof meta.storeCategories === 'object') ? meta.storeCategories : {};
     }).catch(function () {}));
@@ -2686,6 +2728,9 @@ async function fetchProject(id, chainId) {
     project.operator = await revnetOperatorOf(id, chainId);
   }
 
+  // Symbol priority: deployed ERC-20 symbol (authoritative) → off-chain projectUri symbol (credits-only
+  // custom projects). Resolved here, after both the token-of read and the metadata fetch have settled.
+  if (!project.tokenSymbol && project.metaSymbol) project.tokenSymbol = project.metaSymbol;
   // Name priority: on-chain ERC-20 name (V6, authoritative) → IPFS metadata name → symbol → id.
   if (project.tokenName) project.name = project.tokenName;
   else if (!project.name) project.name = project.tokenSymbol ? (project.tokenSymbol) : ('Project #' + id);
@@ -2758,12 +2803,8 @@ export function applyDiscoverRoute(route) {
 function renderGrid() {
   _gridWrapper = el('div', 'discover-grid-wrapper');
 
-  // Top row: "Work in progress" banner on the left; network pivot + Create button top-right.
+  // Top row: subtle network text-toggle on the left; Create button top-right.
   var topRow = el('div', 'discover-top');
-  var header = el('div', 'discover-header');
-  header.textContent = 'Work in progress';
-  topRow.appendChild(header);
-  var rightCtrls = el('div', 'discover-top-ctrls');
   // Network pivot: mainnet ⇄ testnet. Switches the queried chains + the indexer host.
   var netSel = el('select', 'discover-net-select');
   [['mainnet', 'Mainnets'], ['testnet', 'Testnets']].forEach(function (o) {
@@ -2772,7 +2813,9 @@ function renderGrid() {
   netSel.value = getNetworkMode();
   netSel.title = 'Switch between mainnet and testnet deployments';
   netSel.addEventListener('change', function () { setNetwork(netSel.value); });
-  rightCtrls.appendChild(netSel);
+  topRow.appendChild(netSel);
+  setTimeout(function () { fitSelectWidth(netSel); }, 0);
+  var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = '+ Create';
   createBtn.title = 'Create — in tuning before launch';
   createBtn.addEventListener('click', function () { openCreateFlow(); });
@@ -2917,6 +2960,15 @@ function renderProjectCard(project) {
   if (project.indexedStats) {
     stats.appendChild(statItem('Volume', formatUsd(usdFromScaled(project.indexedStats.volumeUsd))));
     stats.appendChild(statItem('Payments', String(project.indexedStats.paymentsCount)));
+    // Token-holder count — revnets call them "Owners", custom projects "Token holders".
+    // contributorsCount only counts addresses that paid; holders who received tokens via
+    // auto-issuance / reserved mint (ART has one) are missed. Seed with it, then correct to
+    // the real current-holder count (same aggregation the detail header uses).
+    var ownersVal = el('span', ''); ownersVal.textContent = String(project.indexedStats.contributorsCount);
+    stats.appendChild(statItem(project.isRevnet ? 'Owners' : 'Token holders', ownersVal));
+    fetchOwnersCount(project).then(function (n) {
+      if (n != null && ownersVal.isConnected) ownersVal.textContent = String(n);
+    }).catch(function () {});
   }
   card.appendChild(stats);
 
@@ -3061,7 +3113,7 @@ function renderProjectDetail(project, initialTab) {
     builders['Rulesets & Funds'] = function () { return renderRulesetsFundsSection(project); };
     builders.Tokens = function () {
       return renderOwnersSection(project, {
-        subtabs: ['All', 'Market', 'Settlement', 'Splits'],
+        subtabs: ['Accounts', 'Market', 'Settlement', 'Splits'],
         noLoans: true,
         tokenCardInAll: true,
       });
@@ -4052,6 +4104,16 @@ function renderTokenPanel(project) {
   var tsVal = el('span', 'info-token-symbol'); tsVal.textContent = project.tokenSymbol || 'credits';
   grid.appendChild(infoItem('Symbol', tsVal));
   if (project.tokenAddress) grid.appendChild(infoItem('Address', fullAddressNode(project.tokenAddress)));
+  // "On" — the chains the token lives on, each linking to its address on that chain's explorer.
+  // JB omnichain ERC-20s share a deterministic CREATE2 address, so project.tokenAddress applies on every chain.
+  if (project.tokenAddress) {
+    var onIds = orderedProjectChainIds(project);
+    if (onIds.length) {
+      var onWrap = el('span', 'token-on-chains');
+      onIds.forEach(function (id) { onWrap.appendChild(chainAddrBubble(id, project.tokenAddress)); });
+      grid.appendChild(infoItem('On', onWrap));
+    }
+  }
   card.appendChild(grid);
   var foot = el('div', 'detail-about-foot');
   var edit = el('a', 'operator-cta'); edit.textContent = 'Edit'; edit.href = '#';
@@ -4640,14 +4702,170 @@ function skelGenericTable(tableCls, rowCls, headCls, headers, widths, nRows) {
   return table;
 }
 
+// Friendly labels for the activity event-type filter (keyed by the `type` set in activityRowFromEvent).
+var ACTIVITY_TYPE_LABELS = {
+  pay: 'Payments', cash_out: 'Cash outs', bridge: 'Bridges', payout: 'Payouts',
+  reserved: 'Reserved distributions', auto_issue: 'Auto-issuance', borrow: 'Loans',
+  repay: 'Loan repayments', liquidate: 'Liquidations', mint_nft: 'NFT mints',
+  deploy_erc20: 'Token deploys', create: 'Project creation',
+};
+function activityTypeLabel(t) { return ACTIVITY_TYPE_LABELS[t] || String(t || 'activity').replace(/_/g, ' '); }
+
+// A native <select> sizes to its WIDEST option, so a short selected label leaves a big gap before the
+// caret. Shrink the select to fit just the selected option's text (+ room for the custom caret).
+function fitSelectWidth(sel) {
+  var opt = sel.options[sel.selectedIndex];
+  if (!opt) return;
+  var cs = getComputedStyle(sel);
+  var meas = document.createElement('span');
+  meas.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;';
+  meas.style.fontFamily = cs.fontFamily; meas.style.fontSize = cs.fontSize;
+  meas.style.fontWeight = cs.fontWeight; meas.style.letterSpacing = cs.letterSpacing;
+  meas.textContent = opt.text;
+  document.body.appendChild(meas);
+  var w = meas.getBoundingClientRect().width;
+  document.body.removeChild(meas);
+  sel.style.width = (Math.ceil(w) + 15) + 'px';
+}
+
+// Multi-select chain filter for the activity feed: a caret trigger that opens a checkbox popover, one
+// row per chain the project is deployed on. `selected()` returns null when all (or none) are checked
+// — the caller treats null as "no chain filter". onChange fires on every toggle.
+// Generic checkbox-dropdown multi-select for the activity filters. config:
+//   { allLabel, unit, trigger: 'logos'|'text', onChange }
+// items (set via setItems) are { value, label, logo?:()=>node }. Defaults to all-selected; `selected()`
+// returns null when all (or none) are checked — the caller treats null as "no filter". Selections are
+// preserved by value across setItems() calls so a post-tx refresh doesn't reset the user's picks.
+function makeMultiselect(config) {
+  var items = [];
+  var sel = {};
+  var wrap = el('div', 'activity-ms');
+  var trigger = el('button', 'activity-filter-select activity-ms-trigger');
+  var menu = el('div', 'activity-chain-menu'); menu.style.display = 'none';
+  wrap.appendChild(trigger); wrap.appendChild(menu);
+
+  function count() { var n = 0; items.forEach(function (it) { if (sel[it.value]) n++; }); return n; }
+  function isAll() { var n = count(); return n === 0 || n === items.length; }
+  function refreshTrigger() {
+    var chosen = isAll() ? items : items.filter(function (it) { return sel[it.value]; });
+    trigger.title = isAll() ? config.allLabel : (chosen.length === 1 ? chosen[0].label : chosen.length + ' ' + config.unit);
+    trigger.innerHTML = '';
+    if (config.trigger === 'logos') {
+      var stack = el('span', 'activity-chain-stack');
+      chosen.forEach(function (it, i) {
+        var logo = it.logo ? it.logo() : el('span');
+        logo.style.position = 'relative';
+        logo.style.zIndex = String(chosen.length - i); // leftmost on top
+        stack.appendChild(logo);
+      });
+      trigger.appendChild(stack);
+    } else {
+      trigger.textContent = isAll() ? config.allLabel : (chosen.length === 1 ? chosen[0].label : chosen.length + ' ' + config.unit);
+    }
+  }
+  function buildMenu() {
+    menu.innerHTML = '';
+    var all = el('label', 'activity-chain-opt activity-chain-all');
+    var allCb = el('input', ''); allCb.type = 'checkbox'; allCb.checked = count() === items.length;
+    allCb.addEventListener('change', function () {
+      items.forEach(function (it) { sel[it.value] = allCb.checked; });
+      buildMenu(); refreshTrigger(); config.onChange();
+    });
+    all.appendChild(allCb);
+    var allTxt = el('span', ''); allTxt.textContent = config.allLabel; all.appendChild(allTxt);
+    menu.appendChild(all);
+    items.forEach(function (it) {
+      var row = el('label', 'activity-chain-opt');
+      var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = !!sel[it.value];
+      cb.addEventListener('change', function () { sel[it.value] = cb.checked; refreshTrigger(); config.onChange(); allCb.checked = count() === items.length; });
+      row.appendChild(cb);
+      if (it.logo) row.appendChild(it.logo());
+      var nm = el('span', ''); nm.textContent = it.label; row.appendChild(nm);
+      menu.appendChild(row);
+    });
+  }
+  function outside(e) { if (!wrap.contains(e.target)) close(); }
+  function open() { buildMenu(); menu.style.display = 'block'; document.addEventListener('mousedown', outside); }
+  function close() { menu.style.display = 'none'; document.removeEventListener('mousedown', outside); }
+  trigger.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (menu.style.display === 'none') open(); else close();
+  });
+
+  refreshTrigger();
+  return {
+    el: wrap,
+    setItems: function (newItems) {
+      var prev = sel;
+      items = newItems;
+      sel = {};
+      items.forEach(function (it) { sel[it.value] = (it.value in prev) ? prev[it.value] : true; });
+      refreshTrigger();
+    },
+    selected: function () {
+      if (isAll()) return null;
+      return items.filter(function (it) { return sel[it.value]; }).map(function (it) { return it.value; });
+    },
+  };
+}
+
 function renderActivityCard(project) {
   var card = el('div', 'detail-card');
+  // Header row: title on the left, filter controls right-aligned.
+  var head = el('div', 'activity-head');
   var title = el('div', 'detail-card-title');
   title.textContent = 'Activity';
-  card.appendChild(title);
+  head.appendChild(title);
+  // Filter controls (chain + event-type combos). Hidden until rows load and there's >1 value to pick.
+  // Chain filter is a MULTI-select over every chain the project is deployed on; type is single-select.
+  var filters = el('div', 'activity-filters'); filters.style.display = 'none';
+  var typeMs = makeMultiselect({ allLabel: 'All', unit: 'events', trigger: 'text', onChange: function () { applyFilters(); } });
+  var chainMs = makeMultiselect({ allLabel: 'All chains', unit: 'chains', trigger: 'logos', onChange: function () { applyFilters(); } });
+  // Chain options follow the canonical order (DISCOVER_CHAINS / the project "On:" logos), deduped.
+  var projChainIds = orderedProjectChainIds(project);
+  chainMs.setItems(projChainIds.map(function (id) {
+    return { value: id, label: chainById(id).name, logo: function () { return chainLogo(id, chainById(id).name); } };
+  }));
+  filters.appendChild(typeMs.el);
+  filters.appendChild(chainMs.el);
+  head.appendChild(filters);
+  card.appendChild(head);
+
   var body = el('div', 'activity-feed');
   body.appendChild(skelActivityRows(5));
   card.appendChild(body);
+
+  var allRows = [];
+
+  function rebuildFilterOptions() {
+    var types = [];
+    allRows.forEach(function (r) { if (types.indexOf(r.type) === -1) types.push(r.type); });
+    typeMs.setItems(types.map(function (t) { return { value: t, label: activityTypeLabel(t) }; }));
+    typeMs.el.style.display = types.length > 1 ? '' : 'none';
+    var multiChain = projChainIds.length > 1;
+    chainMs.el.style.display = multiChain ? '' : 'none';
+    filters.style.display = (multiChain || types.length > 1) ? '' : 'none';
+  }
+
+  function applyFilters() {
+    var chainsSel = chainMs.selected(); // null = all chains
+    var typesSel = typeMs.selected();   // null = all events
+    // Type filter is per-row; group across chains FIRST so each merged row keeps its FULL chain set,
+    // then keep groups that fired on at least one selected chain — the row still shows every chain it
+    // ran on (including chains not in the filter), since the point is "this happened on my chain(s)".
+    var typed = allRows.filter(function (r) { return !typesSel || typesSel.indexOf(r.type) !== -1; });
+    var rows = groupActivityRows(typed).filter(function (g) {
+      return !chainsSel || g.chains.some(function (c) { return chainsSel.indexOf(c.chainId) !== -1; });
+    });
+    body.innerHTML = '';
+    if (!rows.length) {
+      body.className = 'detail-card-body activity-empty';
+      body.textContent = allRows.length ? 'No activity matches this filter.' : 'No indexed V6 activity yet.';
+      return;
+    }
+    body.className = 'activity-feed';
+    rows.forEach(function (row) { body.appendChild(renderActivityRow(row, project)); });
+  }
 
   // Load the sucker map first so the feed can relabel under-the-hood sucker cash-outs as bridges.
   // `keepOnEmpty` (used by refreshes) leaves existing rows in place when a refetch returns nothing
@@ -4660,14 +4878,16 @@ function renderActivityCard(project) {
       if (!body.isConnected) return rows;
       if (!rows.length) {
         if (keepOnEmpty) return rows;
+        allRows = [];
+        filters.style.display = 'none';
         body.innerHTML = '';
         body.className = 'detail-card-body activity-empty';
         body.textContent = 'No indexed V6 activity yet.';
         return rows;
       }
-      body.innerHTML = '';
-      body.className = 'activity-feed';
-      rows.forEach(function (row) { body.appendChild(renderActivityRow(row, project)); });
+      allRows = rows;
+      rebuildFilterOptions();
+      applyFilters();
       return rows;
     }).catch(function () {
       if (!body.isConnected || keepOnEmpty) return [];
@@ -4698,17 +4918,84 @@ function renderActivityCard(project) {
   return card;
 }
 
+// Canonical chain display order — matches DISCOVER_CHAINS (the project "On:" logos and the filter).
+// Chains not in the active network list sort last (by id) so nothing is ever dropped.
+function chainOrderIndex(chainId) {
+  for (var i = 0; i < DISCOVER_CHAINS.length; i++) if (DISCOVER_CHAINS[i].id === Number(chainId)) return i;
+  return DISCOVER_CHAINS.length + Number(chainId);
+}
+// Project's chain ids in canonical order, deduped (project.chains is already DISCOVER_CHAINS-ordered).
+function orderedProjectChainIds(project) {
+  var ids = (project.chains || []).map(function (c) { return c.id; });
+  if (!ids.length && project.chainId) ids = [Number(project.chainId)];
+  var seen = {};
+  return ids.filter(function (id) { if (seen[id]) return false; seen[id] = true; return true; })
+    .sort(function (a, b) { return chainOrderIndex(a) - chainOrderIndex(b); });
+}
+
+// Collapse the same logical event replicated across chains (omnichain project creation, token deploy,
+// etc.) into ONE row carrying many chain bubbles. Two rows merge when every display field matches AND
+// they're on DIFFERENT chains — so genuinely-distinct same-chain events stay separate. Rows arrive
+// timestamp-desc; first-fit bucketing preserves that order and the merged row shows the latest time.
+function groupActivityRows(rows) {
+  var buckets = {}, order = [];
+  rows.forEach(function (r) {
+    var key = [r.type, (r.account || r.from || '').toLowerCase(), r.action, r.tokenAmount || '', r.baseAmount || '', r.memo || ''].join('|');
+    var list = buckets[key] || (buckets[key] = []);
+    var g = null;
+    for (var i = 0; i < list.length; i++) { if (!list[i]._seen[r.chainId]) { g = list[i]; break; } }
+    if (!g) { g = { row: r, chains: [], _seen: {}, timestamp: r.timestamp }; list.push(g); order.push(g); }
+    g.chains.push({ chainId: r.chainId, txHash: r.txHash });
+    g._seen[r.chainId] = true;
+    if (Number(r.timestamp) > Number(g.timestamp)) g.timestamp = r.timestamp;
+  });
+  order.forEach(function (g) { g.chains.sort(function (a, b) { return chainOrderIndex(a.chainId) - chainOrderIndex(b.chainId); }); });
+  order.sort(function (a, b) { return Number(b.timestamp) - Number(a.timestamp); });
+  return order.map(function (g) { g.row.chains = g.chains; g.row.timestamp = g.timestamp; return g.row; });
+}
+
+// A chain logo that links to this event's tx on that chain's explorer (plain logo if no explorer/tx).
+function chainTxBubble(chainId, txHash) {
+  var logo = chainLogo(chainId, chainById(chainId).name + (txHash ? ' — view transaction' : ''));
+  var url = txUrl(chainId, txHash);
+  if (!url) return logo;
+  var a = document.createElement('a');
+  a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  a.className = 'activity-chain-link';
+  a.appendChild(logo);
+  return a;
+}
+
+// A chain logo that links to an address on that chain's explorer (plain logo if no explorer/address).
+function chainAddrBubble(chainId, address) {
+  var logo = chainLogo(chainId, chainById(chainId).name + (address ? ' — view on explorer' : ''));
+  var base = CHAINS[chainId] && CHAINS[chainId].blockExplorers && CHAINS[chainId].blockExplorers.default && CHAINS[chainId].blockExplorers.default.url;
+  if (!base || !address) return logo;
+  var a = document.createElement('a');
+  a.href = base.replace(/\/$/, '') + '/address/' + address;
+  a.target = '_blank'; a.rel = 'noopener noreferrer';
+  a.className = 'activity-chain-link';
+  a.appendChild(logo);
+  return a;
+}
+
 function renderActivityRow(row, project) {
   var item = el('div', 'activity-row');
-  // Identity key for refresh diffing — txHash + logIndex uniquely tags an event.
-  item.setAttribute('data-tx', (row.txHash || '') + ':' + (row.logIndex != null ? row.logIndex : ''));
+  var chains = (row.chains && row.chains.length) ? row.chains : [{ chainId: row.chainId, txHash: row.txHash }];
+  // Identity key for refresh diffing — all tx hashes in this (possibly merged) row.
+  item.setAttribute('data-tx', chains.map(function (c) { return (c.txHash || '') + ':' + c.chainId; }).join(','));
   var avatar = el('span', 'activity-avatar');
   avatar.style.background = identGradient(row.account || row.from || row.txHash || String(row.timestamp || '0'));
   item.appendChild(avatar);
 
   var main = el('div', 'activity-main');
   var meta = el('div', 'activity-meta');
-  meta.appendChild(renderExplorerTxLink(row.chainId, row.txHash, timeAgo(row.timestamp)));
+  // Single chain: the time itself links to the tx. Multiple: time is plain text (bubbles carry the links).
+  if (chains.length === 1) {
+    meta.appendChild(renderExplorerTxLink(chains[0].chainId, chains[0].txHash, timeAgo(row.timestamp)));
+  } else {
+    var t = el('span', 'activity-time'); t.textContent = timeAgo(row.timestamp); meta.appendChild(t);
+  }
   var side = el('span', 'activity-side');
   if (row.baseAmount) {
     var amt = el('span', 'activity-base-amount');
@@ -4722,7 +5009,10 @@ function renderActivityRow(row, project) {
     tag.textContent = row.direction;
     side.appendChild(tag);
   }
-  side.appendChild(chainLogo(row.chainId, chainById(row.chainId).name));
+  // One chain bubble per chain this event fired on, each linking to its own tx — packed side-by-side.
+  var chainsWrap = el('span', 'activity-chains');
+  chains.forEach(function (c) { chainsWrap.appendChild(chainTxBubble(c.chainId, c.txHash)); });
+  side.appendChild(chainsWrap);
   meta.appendChild(side);
   main.appendChild(meta);
 
@@ -5203,9 +5493,7 @@ function renderFundsCard(project) {
           var pct = Number(sp.percent) / 1e9 * 100;
           var row = el('div', 'detail-split-row');
           var nm = el('span', 'detail-split-name');
-          if (Number(sp.projectId) > 0) nm.textContent = 'Project #' + sp.projectId;
-          else if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) nm.appendChild(addressNode(sp.beneficiary));
-          else nm.textContent = projectOwnerRecipientLabel(project);
+          nm.appendChild(splitAccountNode(sp, project, project.chainId));
           row.appendChild(nm);
           var p = el('span', 'detail-split-percent'); p.textContent = pct.toFixed(pct % 1 === 0 ? 0 : 2) + '%'; row.appendChild(p);
           payBox.appendChild(row);
@@ -5266,9 +5554,7 @@ function renderTreasurySection(project) {
       var pct = (Number(sp.percent) / 1e9 * 100);
       var sRow = el('div', 'detail-split-row');
       var sName = el('span', 'detail-split-name');
-      if (Number(sp.projectId) > 0) sName.textContent = 'Project #' + sp.projectId;
-      else if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) sName.appendChild(addressNode(sp.beneficiary));
-      else sName.textContent = projectOwnerRecipientLabel(project);
+      sName.appendChild(splitAccountNode(sp, project, project.chainId));
       sRow.appendChild(sName);
       var sPct = el('span', 'detail-split-percent'); sPct.textContent = pct.toFixed(pct % 1 === 0 ? 0 : 2) + '%'; sRow.appendChild(sPct);
       splitsCard.appendChild(sRow);
@@ -6109,7 +6395,7 @@ function renderOwnersSection(project, opts) {
   var stages = (project.stages || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
 
   var subBuilders = {
-    'All': function () {
+    'Accounts': function () {
       var w = el('div', 'owners-subgroup');
       // Custom projects fold their token summary in here (no separate Tokens tab).
       if (opts.tokenCardInAll) w.appendChild(renderTokenCard(project));
@@ -6159,7 +6445,7 @@ function renderOwnersSection(project, opts) {
       return ownersCard('Active loans', loansBox);
     },
   };
-  var order = opts.subtabs || ['All', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
+  var order = opts.subtabs || ['Accounts', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
 
   var subRow = el('div', 'owners-subtabs');
   var content = el('div', 'owners-subcontent');
@@ -6183,7 +6469,7 @@ function renderOwnersSection(project, opts) {
   section.appendChild(content);
   // Inner content (e.g. the owners table's "Market" row) can request a subtab switch via this event.
   section.addEventListener('jb:goto-subtab', function (e) { if (e.detail) show(e.detail); });
-  show('All');
+  show('Accounts');
   return section;
 }
 
@@ -6201,8 +6487,8 @@ var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float!, $ver
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($id: String!) { '
   + 'suckerGroup(id: $id) { volume volumeUsd paymentsCount contributorsCount balance tokenSupply } }';
 var BENDYSTRAW_PROJECT_OPERATOR_QUERY = 'query($chainId: Int!, $projectId: Int!, $version: Int!) { '
-  + 'permissionHolders(where: { chainId: $chainId, projectId: $projectId, version: $version, isRevnetOperator: true }, limit: 1) { '
-  + 'items { operator } } }';
+  + 'permissionHolders(where: { chainId: $chainId, projectId: $projectId, version: $version, isRevnetOperator: true }, limit: 10) { '
+  + 'items { operator permissions } } }';
 // Buyback-hook AMM trades (V6 swapEvent model). Each buy/sell is a realized
 // AMM price; mints are the issuance route, not a market trade.
 var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
@@ -6810,18 +7096,35 @@ async function fetchProjectActivity(project) {
   var chainIds = projectBendystrawChainIds(project);
   if (!chainIds.length) return [];
   var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
-  var result = groupId
-    ? await fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
-      suckerGroupId: groupId,
-      version: BENDYSTRAW_VERSION,
-      chainIds: chainIds,
-    }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE)
-    : await fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
-      projectId: Number(project.id),
-      version: BENDYSTRAW_VERSION,
-      chainIds: chainIds,
-    }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE);
-  return (result.items || []).map(function (event) {
+
+  // Query by BOTH the current sucker group AND the (omnichain-consistent) projectId, then merge.
+  // Why both: an activityEvent's `suckerGroupId` is the group AS OF that event. Sucker groups merge
+  // over time as chains link up, so the earliest events (project creation, ERC20 deploy) on each chain
+  // carry a stale per-chain group id and the by-group query misses them — they only show on the one
+  // chain whose early event happens to match the current group. The by-projectId query recovers the
+  // rest (projectId is deterministic and identical across an omnichain deploy). Dedup by event id.
+  var queries = [];
+  if (groupId) {
+    queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
+      suckerGroupId: groupId, version: BENDYSTRAW_VERSION, chainIds: chainIds,
+    }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE).catch(function () { return { items: [] }; }));
+  }
+  queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
+    projectId: Number(project.id), version: BENDYSTRAW_VERSION, chainIds: chainIds,
+  }, ACTIVITY_PAGE_SIZE, ACTIVITY_PAGE_SIZE).catch(function () { return { items: [] }; }));
+
+  var results = await Promise.all(queries);
+  var seen = {}, merged = [];
+  results.forEach(function (res) {
+    (res.items || []).forEach(function (ev) {
+      var key = ev.id || ((ev.txHash || '') + ':' + (ev.type || '') + ':' + ev.chainId);
+      if (seen[key]) return;
+      seen[key] = true;
+      merged.push(ev);
+    });
+  });
+  merged.sort(function (a, b) { return Number(b.timestamp || 0) - Number(a.timestamp || 0); });
+  return merged.map(function (event) {
     return activityRowFromEvent(event, project);
   }).filter(Boolean);
 }
@@ -7598,9 +7901,7 @@ function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, p
     var ofLimit = frac * 100;                     // share of the limit
     var row = el('div', 'splits-row');
     var acct = el('span', 'splits-acct');
-    if (Number(sp.projectId) > 0) acct.textContent = 'Project #' + sp.projectId;
-    else if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) acct.appendChild(addressNode(sp.beneficiary, pc.id));
-    else acct.textContent = projectOwnerRecipientLabel(project);
+    acct.appendChild(splitAccountNode(sp, project, pc.id));
     row.appendChild(acct);
     var pct = el('span', 'splits-pct');
     var strong = el('strong'); strong.textContent = effective.toFixed(effective % 1 === 0 ? 0 : 2) + '%'; pct.appendChild(strong);
@@ -8215,10 +8516,20 @@ function openPayConfirm(payload, onConfirm) {
 }
 
 // Shared: a chain <select> from the project's chains.
-function opsChainSelect(project, onChange) {
+function opsChainSelect(project, onChange, opts) {
+  opts = opts || {};
   var sel = el('select', 'ops-select');
+  var sym = project.tokenSymbol || 'tokens';
   (project.chains || []).forEach(function (c) {
     var o = document.createElement('option'); o.value = String(c.id); o.textContent = c.name; sel.appendChild(o);
+    // Show the connected wallet's balance on each chain right in the option, so the user can pick the
+    // chain with funds without switching first.
+    if (opts.withBalance) {
+      readUserBalance(project, c.id).then(function (b) {
+        if (b == null) return;
+        o.textContent = c.name + ' · ' + formatTokens(b) + ' ' + sym;
+      });
+    }
   });
   if (onChange) sel.addEventListener('change', function () { onChange(Number(sel.value)); });
   return sel;
@@ -8291,11 +8602,17 @@ function buildCashOutModal(project, requestClose) {
   var lbl1 = el('div', 'modal-label'); lbl1.textContent = 'Cash out amount'; wrap.appendChild(lbl1);
   var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
 
+  // Chain selector on its own row above the amount (with per-chain balances).
+  var chainRow = el('div', 'ops-chainrow');
+  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); }, { withBalance: true });
+  chainRow.appendChild(chainSel);
+  wrap.appendChild(chainRow);
+
   var inRow = el('div', 'ops-inrow');
-  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
-  inRow.appendChild(chainSel);
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; inRow.appendChild(amt);
-  var unit = el('span', 'ops-unit'); unit.textContent = sym; inRow.appendChild(unit);
+  var field = el('div', 'ops-field');
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; field.appendChild(amt);
+  var unit = el('span', 'ops-unit'); unit.textContent = sym; field.appendChild(unit);
+  inRow.appendChild(field);
   wrap.appendChild(inRow);
   wrap.appendChild(opsPercentButtons(amt, function () { return state.balance; }));
 
@@ -8612,11 +8929,17 @@ function buildLoanModal(project, requestClose) {
   var lbl = el('div', 'modal-balance'); lbl.textContent = 'How much ' + sym + ' do you want to collateralize?'; wrap.appendChild(lbl);
   var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
 
+  // Chain selector on its own row above the amount (with per-chain balances).
+  var chainRow = el('div', 'ops-chainrow');
+  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); }, { withBalance: true });
+  chainRow.appendChild(chainSel);
+  wrap.appendChild(chainRow);
+
   var inRow = el('div', 'ops-inrow');
-  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); });
-  inRow.appendChild(chainSel);
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; inRow.appendChild(amt);
-  var unit = el('span', 'ops-unit'); unit.textContent = sym; inRow.appendChild(unit);
+  var field = el('div', 'ops-field');
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; field.appendChild(amt);
+  var unit = el('span', 'ops-unit'); unit.textContent = sym; field.appendChild(unit);
+  inRow.appendChild(field);
   wrap.appendChild(inRow);
   wrap.appendChild(opsPercentButtons(amt, function () { return state.balance; }));
 
@@ -8626,9 +8949,9 @@ function buildLoanModal(project, requestClose) {
   var feeSec = el('div', 'loan-section');
   var feeHead = el('div', 'loan-section-head');
   var feeT = el('span'); feeT.textContent = 'Variable fee structure'; feeHead.appendChild(feeT);
-  var feeCaret = el('span', 'loan-caret'); feeCaret.textContent = '▼'; feeHead.appendChild(feeCaret);
+  var feeCaret = el('span', 'loan-caret'); feeCaret.textContent = '▶'; feeHead.appendChild(feeCaret);
   feeSec.appendChild(feeHead);
-  var feeBody = el('div', 'loan-section-body'); feeSec.appendChild(feeBody);
+  var feeBody = el('div', 'loan-section-body'); feeBody.style.display = 'none'; feeSec.appendChild(feeBody);
   feeHead.addEventListener('click', function () { var open = feeBody.style.display !== 'none'; feeBody.style.display = open ? 'none' : ''; feeCaret.textContent = open ? '▶' : '▼'; });
 
   var prepaidLbl = el('div', 'loan-prepaid-label'); feeBody.appendChild(prepaidLbl);
@@ -9590,7 +9913,8 @@ function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   var maxV = Math.max.apply(null, pts) * 1.12;
   var W = 320, H = 60, padL = 6, padR = 6, baseY = 38;
   function X(v) { return padL + (W - padL - padR) * (v / maxV); }
-  var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="none" class="lp-graph-svg">';
+  // Uniform scaling (no preserveAspectRatio="none") so the text labels don't render horizontally stretched.
+  var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" class="lp-graph-svg">';
   svg += '<line x1="' + padL + '" y1="' + baseY + '" x2="' + (W - padR) + '" y2="' + baseY + '" stroke="rgba(0,0,0,0.25)" stroke-width="1"/>';
   if (pa > 0 && pb > pa) {
     svg += '<rect x="' + X(pa).toFixed(1) + '" y="' + (baseY - 9) + '" width="' + Math.max(1, X(pb) - X(pa)).toFixed(1) + '" height="18" fill="rgba(110,196,196,0.35)" stroke="#1a8a8a" stroke-width="1"/>';
@@ -9598,16 +9922,18 @@ function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   function marker(v, color, label, up) {
     if (!(v > 0)) return '';
     var xv = X(v);
-    // Keep edge labels from clipping: left-anchor near the left edge, right-anchor near the right.
+    // Keep the whole label inside the chart: anchor by where its half-width would overflow an edge.
+    // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.)
+    var half = label.length * 8 * 0.3;
     var anchor = 'middle', tx = xv;
-    if (xv < 24) { anchor = 'start'; tx = padL; }
-    else if (xv > W - 24) { anchor = 'end'; tx = W - padR; }
+    if (xv - half < padL) { anchor = 'start'; tx = padL; }
+    else if (xv + half > W - padR) { anchor = 'end'; tx = W - padR; }
     var x = xv.toFixed(1);
     return '<line x1="' + x + '" y1="' + (baseY - 13) + '" x2="' + x + '" y2="' + (baseY + 13) + '" stroke="' + color + '" stroke-width="1.5"/>'
       + '<text x="' + tx.toFixed(1) + '" y="' + (up ? 11 : H - 3) + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>';
   }
   svg += marker(floor, '#2c2018', 'Cash out floor', true);
-  svg += marker(poolP, '#b8602e', 'pool', false);
+  svg += marker(poolP, '#b8602e', 'Current pool price', false);
   svg += marker(ceiling, '#1a8a8a', 'Issuance ceiling', true);
   svg += '</svg>';
   return svg;
@@ -10248,27 +10574,36 @@ function buildAddLiquidityModal(project) {
 
   var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
   var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash-out floor to the issuance ceiling.'; wrap.appendChild(rnote);
-  var rangeRow = el('div', 'ops-inrow');
-  var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.placeholder = 'Min'; rangeRow.appendChild(minInput);
-  var toSpan = el('span', 'ops-unit'); toSpan.textContent = 'to'; rangeRow.appendChild(toSpan);
-  var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.placeholder = 'Max';
-  maxInput.style.borderLeft = 'none'; maxInput.style.borderRight = '2px solid var(--write)'; rangeRow.appendChild(maxInput);
+  var rangeRow = el('div', 'ops-rangerow');
+  var minField = el('div', 'ops-field ops-field--grow');
+  var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.placeholder = 'Min'; minField.appendChild(minInput);
+  rangeRow.appendChild(minField);
+  var toSpan = el('span', 'ops-between'); toSpan.textContent = 'to'; rangeRow.appendChild(toSpan);
+  var maxField = el('div', 'ops-field ops-field--grow');
+  var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.placeholder = 'Max'; maxField.appendChild(maxInput);
+  rangeRow.appendChild(maxField);
   wrap.appendChild(rangeRow);
   minInput.addEventListener('input', onRangeChange);
   maxInput.addEventListener('input', onRangeChange);
 
   // Token + ETH amounts — editing one auto-fills the other at the current price within the range.
-  var lbl1 = el('div', 'modal-label'); lbl1.textContent = sym + ' to add'; wrap.appendChild(lbl1);
-  var tokRow = el('div', 'ops-inrow');
-  var tokAmt = el('input', 'ops-amount'); tokAmt.type = 'number'; tokAmt.placeholder = '0.00'; tokRow.appendChild(tokAmt);
-  var tokMax = el('button', 'lp-max'); tokMax.textContent = 'Max'; tokRow.appendChild(tokMax);
-  var tu = el('span', 'ops-unit'); tu.textContent = sym; tokRow.appendChild(tu); wrap.appendChild(tokRow);
+  // Both sides share one row (two columns).
+  var addGrid = el('div', 'lp-add-grid'); wrap.appendChild(addGrid);
+  var tokCol = el('div', 'lp-add-col'); addGrid.appendChild(tokCol);
+  var tokHead = el('div', 'lp-add-head'); tokCol.appendChild(tokHead);
+  var lbl1 = el('div', 'modal-label'); lbl1.textContent = sym + ' to add'; tokHead.appendChild(lbl1);
+  var tokMax = el('button', 'lp-max'); tokMax.textContent = 'Max'; tokHead.appendChild(tokMax);
+  var tokField = el('div', 'ops-field ops-field--grow');
+  var tokAmt = el('input', 'ops-amount'); tokAmt.type = 'number'; tokAmt.placeholder = '0.00'; tokField.appendChild(tokAmt);
+  var tu = el('span', 'ops-unit'); tu.textContent = sym; tokField.appendChild(tu); tokCol.appendChild(tokField);
 
-  var lbl2 = el('div', 'modal-label'); lbl2.textContent = 'ETH to add'; wrap.appendChild(lbl2);
-  var ethRow = el('div', 'ops-inrow');
-  var ethAmt = el('input', 'ops-amount'); ethAmt.type = 'number'; ethAmt.placeholder = '0.00'; ethRow.appendChild(ethAmt);
-  var ethMax = el('button', 'lp-max'); ethMax.textContent = 'Max'; ethRow.appendChild(ethMax);
-  var eu = el('span', 'ops-unit'); eu.textContent = 'ETH'; ethRow.appendChild(eu); wrap.appendChild(ethRow);
+  var ethCol = el('div', 'lp-add-col'); addGrid.appendChild(ethCol);
+  var ethHead = el('div', 'lp-add-head'); ethCol.appendChild(ethHead);
+  var lbl2 = el('div', 'modal-label'); lbl2.textContent = 'ETH to add'; ethHead.appendChild(lbl2);
+  var ethMax = el('button', 'lp-max'); ethMax.textContent = 'Max'; ethHead.appendChild(ethMax);
+  var ethField = el('div', 'ops-field ops-field--grow');
+  var ethAmt = el('input', 'ops-amount'); ethAmt.type = 'number'; ethAmt.placeholder = '0.00'; ethField.appendChild(ethAmt);
+  var eu = el('span', 'ops-unit'); eu.textContent = 'ETH'; ethField.appendChild(eu); ethCol.appendChild(ethField);
 
   var pairNote = el('div', 'modal-balance'); pairNote.style.marginTop = '6px';
   wrap.appendChild(pairNote);

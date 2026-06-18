@@ -2556,7 +2556,7 @@ input[type="checkbox"].field {
   margin-bottom: 12px;
   display: inline-block;
 }
-.discover-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.discover-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
 
 .discover-grid {
   display: flex;
@@ -2633,7 +2633,7 @@ input[type="checkbox"].field {
 
 .discover-card-stats {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px 12px;
   border-top: 1px solid var(--muted-4);
   padding-top: 8px;
@@ -3207,14 +3207,40 @@ input[type="checkbox"].field {
   display: flex; align-items: center; padding: 0 12px; font-weight: bold; font-size: 12px;
   border: 2px solid var(--write); background: var(--card-bg); color: var(--muted-2);
 }
+/* Single bordered field that holds an amount input + inline suffix (and optional Max), so the suffix
+   isn't a separate box. Defaults to a shorter width; --grow stretches full width (add-liquidity/range). */
+.ops-field { display: flex; align-items: stretch; border: 2px solid var(--write); background: var(--card-bg); width: 200px; max-width: 100%; min-width: 0; }
+.ops-field--grow { width: 100%; flex: 1 1 0; min-width: 0; }
+/* Add-liquidity: REV + ETH side-by-side. */
+.lp-add-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.lp-add-col { min-width: 0; }
+.ops-field .ops-amount { border: none; background: transparent; }
+.ops-field .ops-unit { border: none; background: transparent; padding: 0 12px 0 4px; }
+.ops-field .lp-max { border: none; }
+.ops-chainrow { margin-bottom: 8px; }
+.ops-chainrow .ops-select {
+  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
+  border: none; background: transparent; color: var(--text); opacity: 0.85;
+  max-width: 100%; width: auto; padding: 0 15px 0 0;
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M1 1l3.5 3.5L8 1' fill='none' stroke='%237d6858' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right center;
+}
+.ops-chainrow .ops-select:hover { opacity: 1; }
+.ops-chainrow .ops-select:focus { outline: none; }
+/* Min/Max range row: two bordered fields with a plain "to" between them (not its own box). */
+.ops-rangerow { display: flex; align-items: stretch; gap: 8px; }
+.ops-between { display: flex; align-items: center; padding: 0 4px; font-size: 12px; color: var(--muted-2); }
+/* Price-range chart labels in the site font, not the SVG default. */
+.lp-graph-svg text { font-family: var(--app-font, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .ops-percent { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
 /* Add-liquidity range graph + inline Max buttons */
 .lp-graph { margin: 8px 0 4px; }
-.lp-graph-svg { display: block; width: 100%; height: 60px; }
+.lp-graph-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.lp-add-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .lp-max {
-  font-family: inherit; font-size: 11px; font-weight: bold; padding: 0 10px; cursor: pointer;
-  border: 2px solid var(--write); border-left: none; border-right: none;
-  background: var(--card-bg); color: var(--c-teal);
+  font-family: inherit; font-size: 11px; font-weight: bold; padding: 0; cursor: pointer;
+  border: none; background: transparent; color: var(--c-black-light);
 }
 .lp-max:hover { color: var(--text); }
 .ops-percent-btn {
@@ -3591,6 +3617,8 @@ input[type="checkbox"].field {
 .splits-head { background: var(--bg); font-size: 10px; text-transform: uppercase;
   letter-spacing: 0.5px; color: var(--muted-2); font-weight: bold; }
 .splits-acct { color: var(--text); }
+.splits-acct-inner { display: inline; }
+.split-hook-label { color: var(--muted-3); font-weight: normal; font-size: 0.85em; }
 .splits-pct strong { color: var(--text); }
 .splits-muted { color: var(--muted-3); font-weight: normal; }
 .splits-pend { color: var(--text); }
@@ -3685,8 +3713,8 @@ input[type="checkbox"].field {
   top: 0;
 }
 
-.detail-chain-logos { display: inline-flex; gap: 4px; align-items: center; vertical-align: middle; }
-.discover-chain-logos { display: inline-flex; gap: 4px; align-items: center; vertical-align: middle; }
+.detail-chain-logos { display: inline-flex; gap: 2px; align-items: center; vertical-align: middle; }
+.discover-chain-logos { display: inline-flex; gap: 2px; align-items: center; vertical-align: middle; }
 .discover-basic-badge { color: var(--muted-2); border-color: var(--muted-3); }
 .discover-card-meta { font-size: 12px; color: var(--muted-2); margin-top: 5px; }
 .discover-card-lbl { color: var(--muted-2); }
@@ -3926,11 +3954,62 @@ input[type="checkbox"].field {
   flex-shrink: 0;
 }
 
+.activity-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.activity-head .detail-card-title { margin-bottom: 0; }
+.activity-filters {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.activity-filter-select {
+  font-family: inherit; font-size: 13px; cursor: pointer;
+  height: 18px; line-height: 18px; vertical-align: middle;
+  padding: 0 13px 0 0; color: var(--c-black-light);
+  border: none; outline: none; box-shadow: none; opacity: 0.7;
+  -webkit-appearance: none; appearance: none;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M1 1l3.5 3.5L8 1' fill='none' stroke='%237d6858' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right center;
+}
+.activity-filter-select:hover { opacity: 1; }
+.activity-filter-select:focus { outline: none; border: none; box-shadow: none; }
+
+.activity-ms { position: relative; display: inline-flex; align-items: center; }
+.activity-ms-trigger { text-align: left; display: inline-flex; align-items: center; }
+.activity-chain-stack { display: inline-flex; align-items: center; }
+.activity-chain-stack .chain-logo {
+  width: 16px; height: 16px; border-radius: 50%; margin-left: -5px;
+  box-shadow: 0 0 0 1.5px var(--bg);
+}
+.activity-chain-stack .chain-logo:first-child { margin-left: 0; }
+.activity-chain-stack .chain-logo svg { width: 16px; height: 16px; display: block; }
+.activity-chain-menu {
+  position: absolute; top: 100%; right: 0; margin-top: 6px; z-index: 40;
+  min-width: 150px; padding: 6px;
+  background: var(--card-bg); border: 1px solid var(--c-green-light);
+}
+.activity-chain-opt {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px; font-size: 13px; color: var(--c-black-light); cursor: pointer;
+}
+.activity-chain-opt:hover { background: var(--c-orange-light); }
+.activity-chain-opt input { cursor: pointer; margin: 0; }
+.activity-chain-opt .chain-logo { width: 14px; height: 14px; display: inline-flex; }
+.activity-chain-opt .chain-logo svg { width: 14px; height: 14px; }
+.activity-chain-all { border-bottom: 1px solid var(--c-orange-light); margin-bottom: 2px; }
+
 .activity-feed {
   display: flex;
   flex-direction: column;
   max-height: 390px;
   overflow-y: auto;
+  /* keep the scrollbar from sitting on top of the chain bubbles / amounts on the right edge */
+  padding-right: 12px;
 }
 
 .activity-empty {
@@ -3981,9 +4060,15 @@ input[type="checkbox"].field {
 .activity-side {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   white-space: nowrap;
 }
+.activity-chains { display: inline-flex; align-items: center; gap: 2px; }
+.token-on-chains { display: inline-flex; align-items: center; gap: 6px; }
+.token-on-chains .chain-logo { width: 18px; height: 18px; display: inline-flex; }
+.token-on-chains .chain-logo svg { width: 18px; height: 18px; display: block; }
+.activity-chain-link { display: inline-flex; opacity: 0.85; }
+.activity-chain-link:hover { opacity: 1; }
 
 .activity-base-amount {
   color: var(--muted-2);
@@ -5043,10 +5128,14 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* Create: idle/unavailable (in tuning before launch) — light black. */
 .discover-top-ctrls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .discover-net-select {
-  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
-  padding: 4px 8px; background: transparent; color: var(--c-black-light);
-  border: 2px solid var(--c-green-light);
+  font-family: inherit; font-size: 13px; cursor: pointer;
+  padding: 0 13px 0 0; color: var(--c-black-light);
+  border: none; outline: none; box-shadow: none; opacity: 0.7;
+  -webkit-appearance: none; appearance: none;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M1 1l3.5 3.5L8 1' fill='none' stroke='%237d6858' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right center;
 }
+.discover-net-select:hover { opacity: 1; }
+.discover-net-select:focus { outline: none; border: none; box-shadow: none; }
 .tab-create {
   font-family: inherit; font-size: 13px; font-weight: bold; cursor: default;
   padding: 4px 14px; background: transparent; color: var(--c-black-light);
@@ -5063,6 +5152,19 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 #header > #connect-btn:hover { text-shadow: 0 0 0.6px currentColor; }
 #header > #connect-btn.connected { background: var(--c-black); color: var(--bg); }
 
+/* Connected-wallet dropdown (Copy address / Disconnect). Fixed to the viewport, anchored under the button. */
+.wallet-menu {
+  position: fixed; z-index: 1000; min-width: 150px;
+  background: var(--c-black); border: 1px solid var(--c-black-light);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.25); padding: 4px;
+}
+.wallet-menu-item {
+  display: block; width: 100%; text-align: left; font-family: inherit; font-size: 12px; font-weight: bold;
+  cursor: pointer; padding: 7px 10px; background: transparent; color: var(--bg); border: none;
+}
+.wallet-menu-item:hover { background: var(--c-black-light); }
+.wallet-menu-danger { color: var(--c-pink); }
+
 /* Overlay + sheet */
 .create-overlay {
   position: fixed; inset: 0; background: rgba(44, 32, 24, 0.5); z-index: 200;
@@ -5077,6 +5179,13 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
   padding: 16px 22px; border-bottom: 1px solid var(--c-orange-light);
 }
 .create-title { font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: var(--c-pink); }
+.create-head-actions { display: flex; align-items: center; gap: 14px; margin-left: auto; margin-right: 14px; }
+.create-io-btn {
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  padding: 0; background: none; border: none; color: var(--muted-2); text-decoration: underline;
+}
+.create-io-btn:hover { color: var(--c-black); }
+.create-io-btn:disabled { opacity: 0.4; cursor: not-allowed; text-decoration: none; }
 .create-close {
   font-family: inherit; font-size: 16px; line-height: 1; background: none; border: none;
   color: var(--muted-2); cursor: pointer; padding: 2px 6px;
@@ -5251,8 +5360,11 @@ select.create-input, .create-amount-cur {
 .create-log-line.err { color: var(--c-pink); }
 
 /* Single live status line during deploy (replaces the growing log). */
-.create-status { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 13px; color: var(--muted-2); }
+.create-status { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; font-size: 13px; color: var(--muted-2); min-width: 0; }
+.create-status > span:last-child { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.create-spinner { flex-shrink: 0; }
 .create-status.err { color: var(--c-pink); }
+.create-quote-choice { margin: 14px 0; border: 1px solid var(--c-green-light); padding: 12px; }
 .create-spinner {
   width: 13px; height: 13px; flex: 0 0 auto; border-radius: 50%;
   border: 2px solid var(--c-orange-light); border-top-color: var(--c-orange);

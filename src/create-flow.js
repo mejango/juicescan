@@ -15,7 +15,7 @@ import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, for
 import { mainnet } from 'viem/chains';
 import { normalize as ensNormalize } from 'viem/ens';
 import {
-  el, executeTransaction, simulateTransaction, getAddress, getAccount, connect, NATIVE_TOKEN,
+  el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
   createPublicClientForChain, getWalletClient, switchChain, truncAddr,
 } from './component-base.js';
 import {
@@ -349,12 +349,20 @@ function suckerDeployerForBridge(localId, remoteId, bridge) {
     var name = rollup === 'op' ? 'JBOptimismSuckerDeployer' : rollup === 'base' ? 'JBBaseSuckerDeployer' : rollup === 'arb' ? 'JBArbitrumSuckerDeployer' : null;
     return name ? (getAddress(name, localId) || null) : null;
   }
-  // CCIP — deployers are route-keyed; scan common suffixes on the local chain.
-  var a = getAddress('JBCCIPSuckerDeployer', localId);
-  if (a) return a;
-  var suffixes = ['', '__ETH', '__OP', '__BASE', '__ARB', '__ETH_SEP', '__OP_SEP', '__BASE_SEP', '__ARB_SEP'];
-  for (var i = 0; i < suffixes.length; i++) { var x = getAddress('JBCCIPSuckerDeployer' + suffixes[i], localId); if (x) return x; }
-  return null;
+  // CCIP — deployers are keyed by the REMOTE chain (e.g. JBCCIPSuckerDeployer__ARB on chain X is the
+  // deployer that connects X to Arbitrum). Pick by remoteId, NOT the first suffix that happens to exist on
+  // the local chain — otherwise every remote reuses one deployer and gets miswired. No fallback scan: if the
+  // route-specific deployer is absent, return null so the pair is reported uncovered instead of silently wrong.
+  var suffix = ccipSuffixForRemote(remoteId);
+  return suffix ? (getAddress('JBCCIPSuckerDeployer' + suffix, localId) || null) : null;
+}
+
+// The route-keyed CCIP deployer suffix for a remote chain: __<FAM> (mainnet) / __<FAM>_SEP (testnet).
+function ccipSuffixForRemote(remoteId) {
+  var fam = chainFam(remoteId);
+  if (!fam) return null;
+  var testnet = remoteId === 11155111 || remoteId === 11155420 || remoteId === 84532 || remoteId === 421614;
+  return '__' + fam.toUpperCase() + (testnet ? '_SEP' : '');
 }
 
 function bridgesForType(suckerType) { return suckerType === 'both' ? ['native', 'ccip'] : [suckerType || 'native']; }
@@ -428,8 +436,51 @@ function initState() {
     },
     chainIds: [11155111],
     tos: false,
-    deploying: false, statusLines: [], done: false,
+    deploying: false, statusLines: [], done: false, quoteChoice: null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Draft persistence + .jb import/export
+// ---------------------------------------------------------------------------
+
+var DRAFT_KEY = 'jb-create-draft';
+
+// A JSON-safe snapshot of the form state: drop functions (`_close`), transient deploy flags, and the
+// in-flight logo-upload flag so a refresh/import never restores a half-deploy or "uploading…" state.
+function sanitizeState(state) {
+  var c = {};
+  Object.keys(state).forEach(function (k) { if (k === '_close' || typeof state[k] === 'function') return; c[k] = state[k]; });
+  c = JSON.parse(JSON.stringify(c)); // deep clone + strip any nested functions
+  c.deploying = false; c.statusLines = []; c.done = false; delete c.deployed; c.quoteChoice = null;
+  if (c.details) c.details.logoUploading = false;
+  return c;
+}
+
+// Merge a loaded/imported draft over the current defaults (tolerant of schema drift + partial files).
+function mergeDraft(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  var s = Object.assign(initState(), obj);
+  s.details = Object.assign(initState().details, obj.details || {});
+  s.collection = Object.assign(initState().collection, obj.collection || {});
+  s.deploying = false; s.statusLines = []; s.done = false; delete s.deployed; s.quoteChoice = null;
+  if (s.details) s.details.logoUploading = false;
+  s.step = Math.max(0, Math.min(Number(s.step) || 0, stepsFor(s).length - 1));
+  return s;
+}
+
+function saveDraft(state) { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(sanitizeState(state))); } catch (_) {} }
+function loadDraft() { try { var r = localStorage.getItem(DRAFT_KEY); return r ? mergeDraft(JSON.parse(r)) : null; } catch (_) { return null; } }
+function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (_) {} }
+
+// Download the current draft as a `.jb` file (plain JSON) to save or share for review.
+function exportDraftFile(state) {
+  var nm = ((state.details && state.details.name) || 'project').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'project';
+  var blob = new Blob([JSON.stringify(sanitizeState(state), null, 2)], { type: 'application/json' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a'); a.href = url; a.download = nm + '.jb';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -437,10 +488,11 @@ function initState() {
 // ---------------------------------------------------------------------------
 
 export function openCreateFlow() {
-  var state = initState();
+  // Restore a saved draft if one exists (survives refresh); otherwise start fresh.
+  var state = loadDraft() || initState();
   var pre = getAccount && getAccount();
-  // Owner/operator are required and explicit — prefill the connected wallet so it's populated but editable.
-  if (pre) { state.details.owner = pre; state.revOperator = pre; }
+  // Owner/operator are required and explicit — prefill the connected wallet only where still blank.
+  if (pre) { if (!state.details.owner) state.details.owner = pre; if (!state.revOperator) state.revOperator = pre; }
 
   var overlay = el('div', 'create-overlay');
   var sheet = el('div', 'create-sheet');
@@ -452,9 +504,25 @@ export function openCreateFlow() {
   overlay.addEventListener('mousedown', function (e) { if (e.target === overlay && !state.deploying) close(); });
   document.addEventListener('keydown', onKey);
 
+  // Replace the live state object's contents in place (render/handlers close over `state`), then re-render.
+  function applyImported(obj) {
+    var merged = mergeDraft(obj);
+    if (!merged) { alert('That doesn’t look like a valid .jb project file.'); return; }
+    Object.keys(state).forEach(function (k) { if (k !== '_close') delete state[k]; });
+    Object.assign(state, merged);
+    render();
+  }
+  function onImport(file) {
+    var reader = new FileReader();
+    reader.onload = function () { try { applyImported(JSON.parse(String(reader.result))); } catch (_) { alert('Could not read that .jb file.'); } };
+    reader.onerror = function () { alert('Could not read that file.'); };
+    reader.readAsText(file);
+  }
+  function onExport() { exportDraftFile(state); }
+
   function render() {
     sheet.innerHTML = '';
-    sheet.appendChild(renderHeader(state, close));
+    sheet.appendChild(renderHeader(state, close, onImport, onExport));
     var wip = el('div', 'create-wip');
     wip.textContent = 'Work in progress';
     sheet.appendChild(wip);
@@ -463,6 +531,8 @@ export function openCreateFlow() {
     body.appendChild(renderStep(state, render));
     sheet.appendChild(body);
     sheet.appendChild(renderFooter(state, render, close));
+    // Persist the draft after every render so a refresh restores the work. Clear it once deployed.
+    if (state.done) clearDraft(); else saveDraft(state);
   }
   render();
 
@@ -470,11 +540,26 @@ export function openCreateFlow() {
   return { close: close };
 }
 
-function renderHeader(state, close) {
+function renderHeader(state, close, onImport, onExport) {
   var head = el('div', 'create-head');
   var title = el('div', 'create-title');
   title.textContent = 'Create a project';
   head.appendChild(title);
+
+  // .jb import/export — save the in-progress draft to a file, or load one (e.g. to share for review).
+  var actions = el('div', 'create-head-actions');
+  var imp = el('button', 'create-io-btn'); imp.textContent = 'import';
+  imp.title = 'Load a saved or shared project draft (.jb)';
+  imp.disabled = !!state.deploying;
+  var fileIn = el('input'); fileIn.type = 'file'; fileIn.accept = '.jb,application/json'; fileIn.style.display = 'none';
+  fileIn.addEventListener('change', function () { var f = fileIn.files && fileIn.files[0]; if (f && onImport) onImport(f); fileIn.value = ''; });
+  imp.addEventListener('click', function () { if (!state.deploying) fileIn.click(); });
+  var exp = el('button', 'create-io-btn'); exp.textContent = 'export';
+  exp.title = 'Download this draft as a .jb file to save or share for review';
+  exp.addEventListener('click', function () { if (onExport) onExport(); });
+  actions.appendChild(imp); actions.appendChild(exp); actions.appendChild(fileIn);
+  head.appendChild(actions);
+
   var x = el('button', 'create-close');
   x.textContent = '✕';
   x.title = 'Close';
@@ -653,6 +738,15 @@ function infoNote(text) {
 
 function warnNote(text) {
   var n = el('div', 'create-note warn');
+  n.textContent = text;
+  return n;
+}
+
+// Pink notice band, same color treatment as the "Work in progress" band.
+function pinkNote(text) {
+  var n = el('div', 'create-wip');
+  n.style.margin = '0';
+  n.style.display = 'block';
   n.textContent = text;
   return n;
 }
@@ -1225,11 +1319,15 @@ function stageSummaryRaw(stage, idx, state) {
 
   // Payouts — list each recipient's share.
   if (stage.payoutMode === 'unlimited') {
-    parts.push('pays out all funds');
-    (stage.payoutRecipients || []).filter(function (r) { return Number(r.percent) > 0; }).forEach(function (r) {
-      parts.push(round2(Number(r.percent)) + '% → ' + recipLabel(r));
-    });
-    parts.push('remainder → owner');
+    var uRecips = (stage.payoutRecipients || []).filter(function (r) { return Number(r.percent) > 0; });
+    if (!uRecips.length) {
+      // No splits → everything goes to the owner; say so directly instead of "all funds" + "remainder → owner".
+      parts.push('pays out all funds to owner');
+    } else {
+      parts.push('pays out all funds');
+      uRecips.forEach(function (r) { parts.push(round2(Number(r.percent)) + '% → ' + recipLabel(r)); });
+      parts.push('remainder → owner');
+    }
   } else if (stage.payoutMode === 'limited') {
     var pc = stage.payoutCurrency === 2 ? 'USD' : 'ETH';
     var named = (stage.payoutRecipients || []).filter(function (r) { return Number(r.amountEth) > 0; });
@@ -1250,10 +1348,7 @@ function stageSummaryRaw(stage, idx, state) {
   if (stage.pausePay) parts.push('payments paused');
   if (stage.holdFees) parts.push('fees held');
   if (stage.allowTerminalMigration) parts.push('terminal migration allowed');
-  if (deadlineApplies(state)) {
-    var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
-    parts.push(dl && dl.key !== 'none' ? 'edits locked ' + dl.short + ' before changes' : 'no edit deadline');
-  }
+  // Edit deadline is shown in its own "Edit deadline" section below the card — not a ruleset bullet.
 
   return parts;
 }
@@ -1690,7 +1785,8 @@ function collectionNameOf(state) {
 function collectionSymbolOf(state) {
   var c = state.collection || {};
   if (c.symbolTouched) return c.symbol;
-  return state.details.name || '';
+  // Default the NFT collection symbol to the project's token symbol (the Details ticker), not its name.
+  return state.details.ticker || '';
 }
 
 // Everything that applies to the whole collection (not a single item) — collection name/symbol, the Pinata
@@ -1701,7 +1797,7 @@ function collectionExtrasSection(state, render) {
   var ownerNote = el('div', 'create-hint'); ownerNote.textContent = 'The project owner can set or change these anytime after launch.'; ownerNote.style.marginTop = '0'; f.appendChild(ownerNote);
   var nameField = fieldBlock('Collection name', false, textInput(collectionNameOf(state), state.details.name || 'Collection name', function (v) { c.name = v; c.nameTouched = true; }));
   f.appendChild(nameField);
-  f.appendChild(fieldBlock('Collection symbol', false, textInput(collectionSymbolOf(state), state.details.name || 'Symbol', function (v) { c.symbol = v; c.symbolTouched = true; })));
+  f.appendChild(fieldBlock('Collection symbol', false, textInput(collectionSymbolOf(state), state.details.ticker || 'Symbol', function (v) { c.symbol = v; c.symbolTouched = true; })));
 
   // Pinata JWT — needed to pin item media + metadata to IPFS. Only shown when one isn't set yet.
   if (!hasPinata()) {
@@ -2085,9 +2181,12 @@ function renderDeploy(state, render) {
 
   // The exact transaction for each chain is shown in a confirmation screen (with a copy-able LLM audit
   // prompt) right before you sign it — no need to re-review raw calldata here.
-  wrap.appendChild(infoNote(state.chainIds.length > 1
-    ? 'Each chain’s exact transaction is shown for review before you sign it.'
-    : 'The exact transaction data is shown for review before you sign it.'));
+  if (state.chainIds.length > 1) {
+    wrap.appendChild(pinkNote('Your wallet will prompt you ' + state.chainIds.length + ' times — one signature per chain (' + state.chainIds.length + ' chains). After signing all ' + state.chainIds.length + ', you pay gas once and Relayr deploys to every chain.'));
+    wrap.appendChild(infoNote('Each chain’s exact transaction is shown for review before you sign it.'));
+  } else {
+    wrap.appendChild(infoNote('The exact transaction data is shown for review before you sign it.'));
+  }
 
   // ToS + launch
   var tos = el('label', 'create-tos');
@@ -2125,9 +2224,30 @@ function renderDeploy(state, render) {
   var last = state.statusLines.length ? state.statusLines[state.statusLines.length - 1] : null;
   if (last) {
     var statusRow = el('div', 'create-status' + (last.err ? ' err' : ''));
-    if (state.deploying && !last.err) statusRow.appendChild(el('span', 'create-spinner'));
+    if (state.deploying && !last.err && !state.quoteChoice) statusRow.appendChild(el('span', 'create-spinner'));
     var stx = el('span'); stx.textContent = last.text; statusRow.appendChild(stx);
     wrap.appendChild(statusRow);
+  }
+
+  // Relayr quote returned (multichain) → let the user pick which chain to pay gas on, then pay. Shown in
+  // place of the Launch button while a choice is pending.
+  if (state.quoteChoice) {
+    var qc = el('div', 'create-quote-choice');
+    var qh = el('div', 'create-label'); qh.textContent = 'Pay gas once to deploy on every chain'; qc.appendChild(qh);
+    var qSel = el('select', 'field create-input'); qSel.style.width = 'auto'; qSel.style.minWidth = '0';
+    state.quoteChoice.options.forEach(function (o, i) {
+      var op = el('option'); op.value = String(i); op.textContent = o.chain + ' — ~' + o.eth + ' ETH'; qSel.appendChild(op);
+    });
+    qc.appendChild(qSel);
+    var qFoot = el('div', 'create-modal-foot'); qFoot.style.marginTop = '10px';
+    var qPay = el('button', 'create-btn primary'); qPay.textContent = 'Pay & deploy';
+    qPay.addEventListener('click', function () { var i = Number(qSel.value) || 0; var o = state.quoteChoice && state.quoteChoice.options[i]; if (o && state.quoteChoice) state.quoteChoice.resolve(o.opt); });
+    var qCancel = el('button', 'create-btn ghost'); qCancel.textContent = 'Cancel';
+    qCancel.addEventListener('click', function () { state.quoteChoice && state.quoteChoice.resolve(null); });
+    qFoot.appendChild(qCancel); qFoot.appendChild(qPay);
+    qc.appendChild(qFoot);
+    wrap.appendChild(qc);
+    return wrap;
   }
 
   var bad = isRev ? -1 : badStageIndex(state); // revnets have no per-stage durations to validate
@@ -2464,8 +2584,10 @@ function deploy(state, render) {
   // Set the status pusher BEFORE runDeploy — with no Pinata JWT, runDeploy calls push() synchronously
   // (the "launching without metadata" line) before its first await, so the assignment must precede the call.
   state._push = function pushStatus(text, kind) { state.statusLines.push({ text: text, ok: kind === 'ok', err: kind === 'err' }); render(); };
-  runDeploy(state, owner).then(function () {
-    state.deploying = false; state.done = true;
+  runDeploy(state, owner).then(function (res) {
+    state.deploying = false;
+    if (res === false) { render(); return; } // user cancelled at the raw-data review — not a success
+    state.done = true;
     state.statusLines.push({ text: 'All done.', ok: true });
     render();
   }).catch(function (e) {
@@ -2507,9 +2629,11 @@ async function runDeploy(state, owner) {
   var salt = deploySalt(state, owner);
   var signer = getAccount();
   if (!signer) throw new Error('Connect a wallet to deploy.');
-  // Revnet stage start times are absolute timestamps baked into the config hash — compute ONCE so every
-  // chain encodes the identical config (matching cross-chain sucker/project addresses). ~10 min ahead so
-  // the deploy lands before the first stage begins, matching "starts ~10 minutes after deployment".
+  // One shared start timestamp for ALL chains, ~10 min ahead. Computed ONCE here — and recomputed every
+  // attempt because runDeploy re-runs on each Launch click (a rejected tx → a fresh, later start). Revnets
+  // bake it into stage starts (matching the cross-chain config hash → deterministic sucker/project
+  // addresses); custom multichain uses it for the first ruleset's mustStartAtOrAfter so every chain's
+  // project begins at the SAME moment rather than at each chain's own block-confirmation time.
   var deployStart = Math.floor(Date.now() / 1000) + 600;
 
   // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
@@ -2519,36 +2643,62 @@ async function runDeploy(state, owner) {
     var cid = state.chainIds[i];
     var plan = state.projectType === 'revnet'
       ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
-      : buildLaunchArgs(state, cid, owner, projectUri, salt);
+      : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
     if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
     if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
     plan.chainId = cid;
     plan.value = await creationFeeOf(cid); // the deploy charges msg.value == JBProjects.creationFee()
     plans.push(plan);
   }
-  push('Simulating the ' + (state.projectType === 'revnet' ? 'revnet deploy' : 'launch') + ' on ' + plans.length + ' chain' + (plans.length > 1 ? 's' : '') + '…');
-  for (var s = 0; s < plans.length; s++) {
-    var sp = plans[s];
-    try {
-      await simulateTransaction({ chainId: sp.chainId, address: sp.address, abi: sp.abi, functionName: sp.functionName || 'launchProjectFor', args: sp.args, value: sp.value, account: signer });
-      push('Simulation passed on ' + chainName(sp.chainId), 'ok');
-    } catch (e) {
-      throw new Error('Couldn’t simulate on ' + chainName(sp.chainId) + ' — ' + friendlyDeployError(e));
-    }
-  }
+  // Review the EXACT raw data FIRST — before anything is simulated, signed, or sent. For multichain this
+  // is the per-chain calldata that gets wrapped into ERC-2771 forward requests and posted to Relayr for a
+  // quote; for single chain it's the wallet transaction. Simulation runs only AFTER the user confirms.
+  var multichain = plans.length > 1;
+  var reviewPayload = {
+    action: (state.projectType === 'revnet' ? 'Deploy revnet' : 'Launch project') + ' on ' + plans.map(function (p) { return chainName(p.chainId); }).join(', '),
+    transactions: plans.map(function (p) {
+      var fn = p.functionName || 'launchProjectFor';
+      return {
+        chain: chainName(p.chainId),
+        address: p.address,
+        'function': fn,
+        value: p.value.toString() + ' wei (' + formatEther(p.value) + ' ETH creation fee)',
+        args: p.args,
+        calldata: encodeFunctionData({ abi: p.abi, functionName: fn, args: p.args }),
+      };
+    }),
+  };
+  var reviewOk = await confirmTransactionModal(reviewPayload, {
+    title: multichain ? 'Review the raw data sent to Relayr' : 'Review the transaction',
+    confirmText: 'Confirm & simulate',
+    note: multichain
+      ? 'This is the exact per-chain calldata that will be wrapped into ERC-2771 forward requests and sent to Relayr for a quote. Nothing is signed or sent until you confirm — simulation runs next, then you pay once.'
+      : 'This is the exact transaction. Nothing is sent until you confirm — it’s simulated next, then sent to your wallet to sign.',
+  });
+  if (!reviewOk) { push('Launch cancelled — nothing was simulated or sent.'); return false; }
 
-  // Single chain → one direct wallet transaction (includes the creation fee as msg.value).
+  // Single chain → simulate locally (eth_call), then one direct wallet transaction (creation fee as
+  // msg.value). Already reviewed above, so skip executeTransaction's own confirm (the wallet still shows
+  // its native signing prompt).
   if (plans.length === 1) {
     var p0 = plans[0];
+    push('Simulating the ' + (state.projectType === 'revnet' ? 'revnet deploy' : 'launch') + ' on ' + chainName(p0.chainId) + '…');
+    try {
+      await simulateTransaction({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, account: signer });
+      push('Simulation passed on ' + chainName(p0.chainId), 'ok');
+    } catch (e) {
+      throw new Error('Couldn’t simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
+    }
     push('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
-    var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, onStatus: function (m) { push(m); } });
+    var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, skipConfirm: true, onStatus: function (m) { push(m); } });
     push('Reading the new project…');
     await captureDeployed(state, p0.chainId, hash0);
     return;
   }
 
-  // Multichain → Relayr: sign one request per chain (no chain switching to sign), pay gas once, relayers
-  // execute everywhere.
+  // Multichain → Relayr (two-step, like revnet-app). We DON'T eth_call-simulate locally — Relayr simulates
+  // each chain server-side and only returns a quote if every leg would succeed. Sign one request per chain,
+  // post the bundle for a quote, let the user CHOOSE which chain to pay gas on, then pay once.
   push('Sign one request per chain — gas is paid once at the end.');
   var txs = [];
   for (var k = 0; k < plans.length; k++) {
@@ -2558,10 +2708,19 @@ async function runDeploy(state, owner) {
     var data = encodeFunctionData({ abi: pk.abi, functionName: pk.functionName || 'launchProjectFor', args: pk.args });
     txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, data, gas, pk.value));
   }
-  push('Requesting a Relayr quote…');
+  push('Sending to Relayr to simulate + quote…');
   var quote = await relayrPostBundle(txs);
-  var pay = (quote.payment_info || []).reduce(function (m, x) { return (!m || BigInt(x.amount) < BigInt(m.amount)) ? x : m; }, null);
-  if (!pay) throw new Error('Relayr returned no payment option.');
+  var options = (quote.payment_info || []).slice().sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : 1; });
+  if (!options.length) throw new Error('Relayr returned no payment options.');
+  // Step 2: let the user pick a pay option from the quote (cheapest first), then pay it.
+  var pay = await new Promise(function (resolve) {
+    state.quoteChoice = {
+      options: options.map(function (o) { return { opt: o, chain: chainName(o.chain), eth: (+formatEther(BigInt(o.amount))).toFixed(5) }; }),
+      resolve: function (o) { state.quoteChoice = null; resolve(o); },
+    };
+    push('Relayr quoted ' + options.length + ' pay option' + (options.length > 1 ? 's' : '') + ' — choose where to pay gas once to fund all chains.');
+  });
+  if (!pay) { push('Cancelled — nothing was paid (the signed requests expire unused).'); return false; }
   var wallet = getWalletClient();
   var cur = await wallet.getChainId();
   if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
@@ -2634,8 +2793,11 @@ function deploySalt(state, owner) {
 // Build the launchProjectFor call for one chain. Returns { contract, address, abi, args, missingSuckers }.
 // Used BOTH for the on-chain send (runDeploy) and the JSON payload preview, so what the user reviews is
 // byte-for-byte what they sign.
-function buildLaunchArgs(state, chainId, owner, projectUri, salt) {
+function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var multi = state.chainIds.length > 1;
+  // Multichain "start immediately" → pin every chain's first ruleset to the one shared deploy-time start
+  // (~10 min ahead) so they all begin at the same moment. Single chain starts at its own deploy block (0).
+  var immediateStart = multi ? deployStart : 0;
   // Items can be included/excluded per chain — a chain with no included items uses the non-721 path.
   var hasNfts = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
   var terminalConfigs = buildTerminalConfigs(chainId, state.accepts, state.swapRouter);
@@ -2646,7 +2808,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt) {
       effectiveStages.map(function (s, i) {
         // The appended standby/terminal stage (index ≥ user-stage count) inherits the last user stage's overrides.
         var userIdx = Math.min(i, state.stages.length - 1);
-        return assembleRuleset(state, s, userIdx, chainId, i === 0, deadlineOn);
+        return assembleRuleset(state, s, userIdx, chainId, i === 0, deadlineOn, immediateStart);
       }),
       payHook ? { payDataHookVariant: true } : undefined);
   };
@@ -2759,14 +2921,21 @@ function buildRevnet721Config(state, projectUri, chainId, salt) {
   };
 }
 
+// The accounting token the project HOLDS — its address + token-keyed currency (uint32(uint160(token))).
+// Payout splits (group id), fund-access-limit token, and unlimited-limit currency must all use THIS token,
+// not native, or a USDC project's payouts are denominated in the wrong token.
+function acctTokenFor(state, chainId) {
+  if ((state.accepts[0] || 'eth') === 'usdc') {
+    var usdc = USDC_BY_CHAIN[chainId];
+    if (usdc) return { token: usdc, decimals: 6, currency: Number(BigInt(usdc) % (1n << 32n)) };
+  }
+  return { token: NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY };
+}
+
 // The revnet's accounting context — ETH (native) or USDC, per the Settlement accounting choice.
 // JBAccountingContext.currency = uint32(uint160(token)).
 function revnetAccept(state, chainId) {
-  if ((state.accepts[0] || 'eth') === 'usdc') {
-    var usdc = USDC_BY_CHAIN[chainId];
-    if (usdc) return [{ token: usdc, decimals: 6, currency: Number(BigInt(usdc) % (1n << 32n)) }];
-  }
-  return [{ token: NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY }];
+  return [acctTokenFor(state, chainId)];
 }
 
 // One REVStageConfig from a revnet stage object.
@@ -2814,7 +2983,7 @@ function buildRevStage(state, stage, idx, chainId, start) {
 // Assemble a single ruleset state object (createDefaultRuleset shape) from the wizard steps.
 // Build one JBRulesetConfig from a stage. isFirst => stage 1 (honors scheduled launch); later stages
 // queue with mustStartAtOrAfter 0 so the controller chains them after the previous stage's duration.
-function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn) {
+function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn, immediateStart) {
   // Per-chain overrides (amount + beneficiary), keyed by user-stage + recipient index; fall back to defaults.
   var amtAt = function (x, idx) { return chainPayoutAmount(state, chainId, userStageIdx, idx); };
   // For project recipients, the token beneficiary is held in x.address and resolved via the global ENS cache.
@@ -2822,7 +2991,10 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   var reservedBenef = function (x, idx) { return x.type === 'project' ? resolvedStr(x.address) : chainAddr(state, chainId, 'r:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
   var rs = createDefaultRuleset();
   rs.baseCurrency = stage.baseCurrency || 1;
-  rs.mustStartAtOrAfter = (isFirst && stage.schedule) ? Number(stage.schedule) : 0;
+  // First ruleset start: scheduled time if set; else 0 ("start at the deploy block") for single chain. For
+  // MULTICHAIN "immediately", use the shared `immediateStart` (one deploy-time timestamp, identical on every
+  // chain) so each chain's first ruleset starts at the SAME moment instead of its own block-confirmation time.
+  rs.mustStartAtOrAfter = isFirst ? (stage.schedule ? Number(stage.schedule) : (immediateStart || 0)) : 0;
   rs.durationPreset = -1; rs.durationCustom = String(stage.durationSeconds || 0); // exact seconds via custom path
 
   var custom = stage.tokenMode === 'custom';
@@ -2869,7 +3041,8 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
       var lshares = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
       payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares[idx], payoutBenef(x, idx)); });
     }
-    rs.splitGroups.push({ groupId: uint256FromAddress(NATIVE_TOKEN), splits: payoutSplits });
+    // Payout split group is keyed by the accounting token (uint256(uint160(token))) — USDC, not native.
+    rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
   }
   if (custom && reservedTotalPct > 0) {
     // Each recipient's share of the reserved group = its row % ÷ the total reserved %. fillSplits keeps the
@@ -2883,22 +3056,25 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     });
   }
 
-  // Fund access (payout limits + surplus allowance). One group on the native terminal carries both.
+  // Fund access (payout limits + surplus allowance) — on the ACCOUNTING token's terminal (USDC, not native).
+  // An "unlimited" (uint224 max) limit must be denominated in the accounting token's own currency so the
+  // terminal doesn't try to JBPrices-convert MAX from ETH/USD (which would overflow); a finite/limited
+  // amount keeps the user's chosen ETH/USD denomination (JBPrices converts it to the token at payout).
+  var acct = acctTokenFor(state, chainId);
   rs.fundAccessLimitGroups = [];
   var payoutLimits = [];
   if (stage.payoutMode !== 'none') {
-    var amount = stage.payoutMode === 'unlimited' ? UINT224_MAX
-      : stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n);
-    payoutLimits.push({ amount: amount, currency: stage.payoutCurrency || 1 });
+    if (stage.payoutMode === 'unlimited') payoutLimits.push({ amount: UINT224_MAX, currency: acct.currency });
+    else payoutLimits.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n), currency: stage.payoutCurrency || 1 });
   }
   var surplusAllowances = [];
   if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
-    var saAmt = stage.surplusAllowanceUnlimited ? UINT224_MAX : safeParseEther(stage.surplusAllowanceAmount);
-    if (saAmt > 0n) surplusAllowances.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 });
+    if (stage.surplusAllowanceUnlimited) surplusAllowances.push({ amount: UINT224_MAX, currency: acct.currency });
+    else { var saAmt = safeParseEther(stage.surplusAllowanceAmount); if (saAmt > 0n) surplusAllowances.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 }); }
   }
   if (payoutLimits.length || surplusAllowances.length) {
     rs.fundAccessLimitGroups.push({
-      terminal: getAddress('JBMultiTerminal', chainId), token: NATIVE_TOKEN,
+      terminal: getAddress('JBMultiTerminal', chainId), token: acct.token,
       payoutLimits: payoutLimits, surplusAllowances: surplusAllowances,
     });
   }
@@ -3012,6 +3188,11 @@ function buildTerminalConfigs(chainId, accepts, swapRouter) {
 
 function buildMetadata(d) {
   var m = { version: 1, name: d.name || '', projectTagline: d.tagline || '', description: d.description || '' };
+  // Custom projects don't deploy an ERC-20 at launch (tokens are credits), so the symbol can't live
+  // on-chain yet — stash it in the project URI metadata so the UI can show "$SYMBOL" until/unless an
+  // ERC-20 is deployed later. Revnets pass the ticker to REVDeployer instead (real ERC-20), but it's
+  // harmless to also record it here.
+  if (d.ticker) m.symbol = d.ticker;
   if (d.logoUri) m.logoUri = d.logoUri;
   if (d.coverImageUri) m.coverImageUri = d.coverImageUri;
   if (d.website) m.infoUri = d.website;

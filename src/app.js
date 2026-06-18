@@ -6,7 +6,7 @@ import { registry, contracts, meta, natspec, categories, commonActions, getFunct
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl, getAccount, connect, onWalletChange, eagerConnect, truncAddr } from './component-base.js';
+import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute } from './discover.js';
 import { renderDataTab } from './data-tab.js';
@@ -102,7 +102,31 @@ function initTabs() {
     };
     updateConnect();
     onWalletChange(updateConnect);
-    connectBtn.addEventListener('click', function() { if (!getAccount()) connect().catch(function() {}); });
+
+    // When connected, clicking opens a small menu with Copy address / Disconnect; otherwise it connects.
+    var walletMenu = null;
+    function closeWalletMenu() { if (walletMenu) { walletMenu.remove(); walletMenu = null; document.removeEventListener('click', onDocClick, true); } }
+    function onDocClick(e) { if (walletMenu && e.target !== connectBtn && !walletMenu.contains(e.target)) closeWalletMenu(); }
+    function openWalletMenu() {
+      closeWalletMenu();
+      var acc = getAccount();
+      walletMenu = document.createElement('div');
+      walletMenu.className = 'wallet-menu';
+      var r = connectBtn.getBoundingClientRect();
+      walletMenu.style.top = (r.bottom + 6) + 'px';
+      walletMenu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+      var copy = document.createElement('button'); copy.className = 'wallet-menu-item'; copy.textContent = 'Copy address';
+      copy.addEventListener('click', function () { try { navigator.clipboard.writeText(acc); } catch (_) {} closeWalletMenu(); });
+      var disc = document.createElement('button'); disc.className = 'wallet-menu-item wallet-menu-danger'; disc.textContent = 'Disconnect';
+      disc.addEventListener('click', function () { closeWalletMenu(); disconnect().catch(function () {}); });
+      walletMenu.appendChild(copy); walletMenu.appendChild(disc);
+      document.body.appendChild(walletMenu);
+      setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
+    }
+    connectBtn.addEventListener('click', function () {
+      if (!getAccount()) { connect().catch(function () {}); return; }
+      if (walletMenu) closeWalletMenu(); else openWalletMenu();
+    });
   }
   // Restore a prior wallet connection silently (no prompt) so a refresh keeps the user connected.
   eagerConnect();
