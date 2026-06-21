@@ -5,11 +5,6 @@ export function renderLearnTab() {
   var container = document.getElementById('tab-learn');
   container.innerHTML = '';
 
-  var wipBanner = document.createElement('div');
-  wipBanner.className = 'discover-header';
-  wipBanner.textContent = 'Work in progress';
-  container.appendChild(wipBanner);
-
   var wrap = document.createElement('div');
   wrap.className = 'guide-wrap';
 
@@ -55,8 +50,8 @@ export function renderLearnTab() {
   wrap.appendChild(basicsHeader);
 
   wrap.appendChild(guideSection('learn-what', '1. WHAT IS JUICEBOX?', [
-    'Juicebox is a programmable treasury for the open internet. Anyone can create a project, accept payments, and distribute funds according to rules they define — all without middlemen.',
-    'People who pay into a project get tokens in return. Those tokens represent their stake. If the project has money in its treasury beyond what it needs for payouts, token holders can cash out their tokens to reclaim a portion of that extra money (called "surplus").',
+    'Juicebox is a programmable money engine for the open internet. Anyone can create a project, accept payments, and distribute funds according to rules they define — all without middlemen.',
+    'People who pay into a project get tokens in return. Those tokens represent their stake. If the project has money beyond what it needs for payouts, token holders can cash out their tokens to reclaim a portion of that extra money (called "surplus").',
     'Projects can accept any currency, operate across multiple blockchains, and customize every aspect of how money flows in and out. Tokens can be programmed to serve any purpose — governance votes, membership access, revenue shares, or just a way to track participation.'
   ], []));
 
@@ -73,7 +68,7 @@ export function renderLearnTab() {
       '  3. Token holders can CASH OUT',
       '     └─▶ Burn tokens, reclaim a share of what\'s left',
       '',
-      '  surplus = treasury balance - payout commitments',
+      '  surplus = project balance - payout commitments',
       '  cash out value = your tokens\' share of the surplus',
     ]),
     textBlock('The project owner configures rules that determine how much to pay out, how many tokens to issue per payment, and what the cash out terms look like. These rules can evolve over time through "rulesets" — scheduled configurations that automatically take effect.'),
@@ -82,7 +77,7 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-projects', '3. PROJECTS', [
-    'A Juicebox project is like a treasury with programmable rules. Each project is represented by an NFT — whoever holds the NFT controls the project.',
+    'A Juicebox project is like a bank account with programmable rules. Each project is represented by an NFT — whoever holds the NFT controls the project.',
     'Projects can accept any token (ETH, stablecoins, etc.) and can operate on multiple chains simultaneously. The project owner sets the rules, but the protocol enforces them automatically — no trust required.',
     'Anyone can create a project. There are no gatekeepers and no approval processes.'
   ], [
@@ -91,7 +86,7 @@ export function renderLearnTab() {
       '  │  YOUR PROJECT                                  │',
       '  │                                                │',
       '  │  accepts payments ──▶ issues tokens            │',
-      '  │  holds a treasury ──▶ distributes payouts      │',
+      '  │  holds funds      ──▶ distributes payouts      │',
       '  │  tracks surplus   ──▶ enables cash outs        │',
       '  │                                                │',
       '  │  rules set by owner, enforced by protocol      │',
@@ -109,7 +104,7 @@ export function renderLearnTab() {
       '  ───────                          ──────',
       '  owner controls rules             rules locked forever',
       '  flexible governance              zero trust required',
-      '  good for: DAOs, treasuries       good for: protocols, tokens',
+      '  good for: DAOs, collectives      good for: protocols, tokens',
     ]),
     textBlock('Under the hood, revnets are just Juicebox projects owned by a special contract that refuses to change anything. All the same pay and cash out mechanics apply.')
   ]));
@@ -172,7 +167,7 @@ export function renderLearnTab() {
     'Splits can be locked until a specific date. Once locked, they can\'t be reduced or removed — only added to. This protects team members and partners from having their share cut.'
   ], [
     diagram('FUND FLOW', [
-      '  treasury balance',
+      '  project balance',
       '       │',
       '  ┌────┴──────────────────────┐',
       '  │                           │',
@@ -184,7 +179,7 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-fees', '8. FEES', [
     'The protocol charges a 2.5% fee on payouts and surplus withdrawals. Cash outs with a tax rate above 0% also incur fees.',
-    'If the holdFees ruleset flag is enabled, fees are held for 28 days before being processed. During this window, if a project adds funds back, the held fees are returned. After 28 days, fees are forwarded to the Juicebox protocol treasury. If holdFees is off, fees are processed immediately.',
+    'If the holdFees ruleset flag is enabled, fees are held for 28 days before being processed. During this window, if a project adds funds back, the held fees are returned. After 28 days, the held fees can be forwarded to the Juicebox protocol\'s own project — processed via processHeldFeesOf(), or by a later ruleset/operation (it isn\'t automatic at the 28-day mark). If holdFees is off, fees are processed immediately.',
     'Some addresses can be designated as fee-exempt — they pay zero fees on all transactions.'
   ], [
     diagram('FEE EXAMPLE', [
@@ -261,11 +256,12 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-omnichain', '11. OMNICHAIN', [
     'A single project can operate across multiple blockchains — Ethereum, Optimism, Arbitrum, and more. The same project tokens work everywhere, and funds move proportionally between chains.',
-    'This works through "suckers" — bridge contracts that connect a project\'s treasuries across chains. When tokens are bridged from one chain to another, the sucker moves a proportional share of the treasury funds to match. Each chain pair has its own sucker using the native bridge (Optimism bridge, Arbitrum bridge, or Chainlink CCIP).',
-    'Once tokens have been bridged through a sucker, the token mapping between chains becomes permanent — it can\'t be changed, only disabled. This protects holders from having their cross-chain tokens invalidated.'
+    'This works through "suckers" — bridge contracts that connect a project\'s funds across chains. When tokens are bridged from one chain to another, the sucker moves a proportional share of the funds to match. Each chain pair has its own sucker using the native bridge (Optimism bridge, Arbitrum bridge, or Chainlink CCIP).',
+    'Once tokens have been bridged through a sucker, the token mapping between chains becomes permanent — it can\'t be changed, only disabled. This protects holders from having their cross-chain tokens invalidated.',
+    'If a bridge ever stops working, holders aren\'t stranded: the project can deprecate the sucker (with a built-in delay so in-flight transfers still arrive) and enable an emergency hatch that lets holders withdraw their backing funds locally on the chain they deposited from.'
   ], [
     diagram('CROSS-CHAIN FLOW', [
-      '  Ethereum treasury ◄──── sucker ────► Optimism treasury',
+      '  Ethereum funds ◄──── sucker ────► Optimism funds',
       '       │                                    │',
       '       └── tokens bridged ──────────────────┘',
       '           funds move proportionally',
@@ -275,7 +271,8 @@ export function renderLearnTab() {
   wrap.appendChild(guideSection('learn-prices', '12. PRICE FEEDS', [
     'JBPrices normalizes price feeds between currencies, enabling projects to account in USD while managing ETH.',
     'Price feeds are immutable once set — a feed cannot be replaced, only added. Inverse prices are auto-calculated (ETH→USD gives you USD→ETH for free).',
-    'Projects can set project-specific feeds that override protocol defaults. If a feed reverts, operations using that currency pair will also revert — safe failure mode (no fund loss, just temporary unavailability).'
+    'Projects can set project-specific feeds that override protocol defaults. JBPrices tries each configured feed in order (project-specific, then the protocol default, in both directions) and only reverts when none returns a usable price — so a single feed reverting doesn\'t block the operation. When it can\'t resolve any price, the dependent operation reverts: a safe failure mode (no fund loss, just temporary unavailability).',
+    'On L2s (Optimism, Arbitrum, Base) the protocol uses a sequencer-aware feed that withholds prices while the chain\'s sequencer is down or inside its grace period after a restart — preventing operations from acting on a stale price during an outage.'
   ], []));
 
   // ============================================
@@ -289,7 +286,7 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-permissions', '13. PERMISSIONS', [
     'The project owner doesn\'t have to do everything themselves. They can grant specific abilities to other addresses — like "you can trigger payouts" or "you can queue new rulesets" — without giving away full control.',
-    'Each ability has a number (a "permission ID"). Granting permission #8 (SEND_PAYOUTS) to an address lets it distribute funds, but nothing else. There\'s also a special "ROOT" permission (#1) that grants everything — use with care.',
+    'Each ability has a number (a "permission ID"). Granting permission #5 (SEND_PAYOUTS) to an address lets it distribute funds, but nothing else. There\'s also a special "ROOT" permission (#1) that grants everything — use with care.',
     'Permissions are per-project. Granting someone access to project #5 doesn\'t give them any access to project #6. You can also grant wildcard permissions that apply across all projects an address interacts with.'
   ], [
     propertyTable('COMMON PERMISSIONS', [
@@ -323,7 +320,7 @@ export function renderLearnTab() {
   wrap.appendChild(guideSection('learn-croptop', '15. CROPTOP', [
     'Croptop turns any Juicebox project into a content platform. Anyone can publish content (images, text, links) to a project\'s NFT collection — the content becomes a mintable NFT that supporters can collect.',
     'The project owner sets rules for what can be posted: minimum price, supply limits, and optionally an allowlist of who can post. Within those rules, posting is open to everyone. Each post creates a new NFT tier, and supporters mint copies by paying into the project.',
-    'A 5% fee goes to the Croptop protocol on each post. The rest flows to the project treasury. If the same content is posted twice, the existing NFT tier is reused instead of creating a duplicate.'
+    'A 5% fee goes to the Croptop protocol on each post. The rest flows to the project\'s funds. If the same content is posted twice, the existing NFT tier is reused instead of creating a duplicate.'
   ], [
     diagram('HOW CROPTOP WORKS', [
       '  someone publishes content + pays the mint price',
@@ -331,10 +328,10 @@ export function renderLearnTab() {
       '     ├─▶ content validated against project\'s posting rules',
       '     ├─▶ new NFT tier created for this content',
       '     ├─▶ 5% fee to Croptop protocol',
-      '     └─▶ remaining payment → project treasury',
+      '     └─▶ remaining payment → project funds',
       '         └─▶ poster receives the first NFT',
     ]),
-    textBlock('Croptop works alongside all other Juicebox features. A revnet with Croptop becomes a self-sustaining content platform where creators publish, supporters collect, and funds flow to the treasury automatically.')
+    textBlock('Croptop works alongside all other Juicebox features. A revnet with Croptop becomes a self-sustaining content platform where creators publish, supporters collect, and funds flow to the project automatically.')
   ]));
 
   wrap.appendChild(guideSection('learn-buyback', '16. BUYBACK HOOK', [
@@ -357,13 +354,13 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-loans', '17. LOANS', [
     'Revnet token holders who need cash don\'t have to sell. They can take out a loan against their tokens instead — keeping their position while accessing liquidity.',
-    'When you borrow, your collateral tokens are burned (removed from supply) and you receive funds from the treasury. The loan itself is represented as an NFT, so it can be transferred or sold. When you repay, your tokens are re-minted and returned to you.',
-    'Loans have an upfront fee (2.5% to 50% of the borrowed amount, paid to the revnet) plus a small protocol fee. If a loan isn\'t repaid within 10 years, anyone can liquidate it — the collateral tokens stay burned permanently and the loan is written off. This actually benefits remaining token holders, since there are now fewer tokens sharing the same treasury.'
+    'When you borrow, your collateral tokens are burned (removed from supply) and you receive funds from the project. The loan itself is represented as an NFT, so it can be transferred or sold. When you repay, your tokens are re-minted and returned to you.',
+    'Loans have an upfront fee (2.5% to 50% of the borrowed amount, paid to the revnet) plus a small protocol fee. If a loan isn\'t repaid within 10 years, anyone can liquidate it — the collateral tokens stay burned permanently and the loan is written off. This actually benefits remaining token holders, since there are now fewer tokens sharing the same funds.'
   ], [
     diagram('LOAN LIFECYCLE', [
       '  borrow',
       '     └─▶ your tokens are burned as collateral',
-      '     └─▶ funds sent to you from the treasury (minus fees)',
+      '     └─▶ funds sent to you from the project (minus fees)',
       '     └─▶ you receive a loan NFT as your receipt',
       '',
       '  repay (before 10-year expiry)',
@@ -378,7 +375,7 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-migration', '18. MIGRATION', [
-    'As the protocol evolves, projects can upgrade to newer versions of its core contracts — without losing their treasury, tokens, or history. Think of it like moving to a new office: same business, better infrastructure.',
+    'As the protocol evolves, projects can upgrade to newer versions of its core contracts — without losing their funds, tokens, or history. Think of it like moving to a new office: same business, better infrastructure.',
     'There are two kinds of migration. A controller migration moves the project\'s management logic (how rulesets work, how tokens are minted) to a new controller. A terminal migration moves funds and accounting to a new terminal. Both follow a safe handoff process where the old contract and the new contract each run checks to ensure nothing is lost.',
     'Only the project owner (or someone they\'ve granted permission to) can trigger a migration, and the destination contract must be registered in the project\'s directory first.'
   ], [
@@ -393,7 +390,7 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-distributor', '19. DISTRIBUTOR', [
-    'The distributor is a reward system that automatically shares revenue (or any tokens) among project participants. Think of it like a dividend: funds go into the distributor, and holders collect their fair share over time.',
+    'The distributor is an optional add-on a project can deploy (it isn\'t part of the core protocol deployment). It\'s a reward system that automatically shares revenue (or any tokens) among project participants. Think of it like a dividend: funds go into the distributor, and holders collect their fair share over time.',
     'Distribution happens in rounds. At the start of each round, a snapshot captures how much each participant holds. Their share of the round\'s rewards is proportional to their holdings at that moment. Rewards don\'t unlock all at once — they vest gradually over a set number of rounds, encouraging long-term participation.',
     'There are two flavors: one for regular token holders (based on voting power), and one for NFT holders (based on their NFT tiers). Both work the same way — fund it, start a round, and let holders collect as their rewards vest.'
   ], [
@@ -430,8 +427,8 @@ export function renderLearnTab() {
   ]));
 
   wrap.appendChild(guideSection('learn-payer', '21. PROJECT PAYER', [
-    'A project payer is a dedicated deposit address for your treasury. Any funds sent to it are automatically forwarded into your project — no extra steps for the sender.',
-    'You can configure it in two modes. In the default mode, payments mint project tokens for the sender (just like paying the project directly). In "add to balance" mode, funds go straight into the treasury without minting tokens — useful for revenue deposits, donations, or any scenario where token issuance isn\'t desired.',
+    'A project payer is a dedicated deposit address for your project. Any funds sent to it are automatically forwarded into your project — no extra steps for the sender.',
+    'You can configure it in two modes. In the default mode, payments mint project tokens for the sender (just like paying the project directly). In "add to balance" mode, funds go straight into the project\'s balance without minting tokens — useful for revenue deposits, donations, or any scenario where token issuance isn\'t desired.',
     'The payer automatically finds the right terminal to route funds to. If your project migrates to a new terminal later, the payer follows it automatically — no reconfiguration needed.'
   ], [
     diagram('HOW THE PROJECT PAYER WORKS', [
@@ -444,7 +441,7 @@ export function renderLearnTab() {
       '     │  └─▶ pays the project → tokens minted for sender',
       '     │',
       '     └─ "add to balance" mode',
-      '        └─▶ adds funds to treasury → no tokens minted',
+      '        └─▶ adds funds to balance → no tokens minted',
     ]),
     textBlock('This is especially useful for integrations. Any contract, wallet, or payment flow that can send ETH to an address can now fund your project — they don\'t need to know anything about Juicebox.')
   ]));
@@ -456,11 +453,6 @@ export function renderLearnTab() {
 export function renderBuildTab() {
   var container = document.getElementById('tab-build');
   container.innerHTML = '';
-
-  var wipBanner = document.createElement('div');
-  wipBanner.className = 'discover-header';
-  wipBanner.textContent = 'Work in progress';
-  container.appendChild(wipBanner);
 
   var wrap = document.createElement('div');
   wrap.className = 'guide-wrap';
@@ -490,7 +482,7 @@ export function renderBuildTab() {
     '<a class="guide-toc-link" href="#build-distributor">15. Distributor</a>' +
     '<a class="guide-toc-link" href="#build-handles">16. Project Handles</a>' +
     '<a class="guide-toc-link" href="#build-payer">17. Project Payer</a>' +
-    '<a class="guide-toc-link" href="#build-swap-terminal">18. Swap Terminal</a>' +
+    '<a class="guide-toc-link" href="#build-swap-terminal">18. Router Terminal</a>' +
     '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>';
   wrap.appendChild(toc);
 
@@ -575,7 +567,7 @@ export function renderBuildTab() {
       ['JBTokens.tokenOf(projectId)', 'Get the ERC-20 address (zero if not yet deployed)'],
       ['JBTokens.totalBalanceOf(holder, projectId)', 'Complete holdings (credits + ERC-20)'],
       ['JBTokens.creditBalanceOf(holder, projectId)', 'Internal credits only'],
-      ['JBTokens.claimTokensFor(holder, projectId, count, beneficiary)', 'Convert credits into ERC-20 tokens'],
+      ['JBController.claimTokensFor(holder, projectId, count, beneficiary)', 'Convert credits into ERC-20 tokens'],
     ]),
     fnRefTable('MINTING & BURNING', [
       ['JBController.mintTokensOf(projectId, tokenCount, beneficiary, memo, useReservedPercent)', 'Owner mints tokens on-demand (if ruleset allows)'],
@@ -613,8 +605,8 @@ export function renderBuildTab() {
   ]));
 
   wrap.appendChild(guideSection('build-cashout', '6. CASH OUT', [
-    'Token holders can cash out (redeem) their tokens for a proportional share of the project\'s surplus. Surplus = terminal balance minus the current payout limit.',
-    'The cash out tax rate controls how much value stays in the treasury vs. goes to the redeemer. A rate of 0% = full proportional redemption. Higher rates incentivize holding but reduce access to capital.'
+    'Token holders can cash out (redeem) their tokens for a proportional share of the project\'s surplus. Surplus = terminal balance minus the remaining (unused) payout limit for the cycle.',
+    'The cash out tax rate controls how much value stays in the project vs. goes to the redeemer. A rate of 0% = full proportional redemption. Higher rates incentivize holding but reduce access to capital.'
   ], [
     codeBlock(
       'JBMultiTerminal.cashOutTokensOf',
@@ -634,7 +626,7 @@ export function renderBuildTab() {
       '         ÷ MAX',
       '',
       '  taxRate = 0%    → full proportional redemption',
-      '  taxRate = 100%  → value stays in treasury (early holders protected)',
+      '  taxRate = 100%  → value stays in project (early holders protected)',
     ]),
     infoBox('Cash outs with tax rate > 0% incur the 2.5% protocol fee.')
   ]));
@@ -676,7 +668,7 @@ export function renderBuildTab() {
       '  • owner can change rulesets',
       '  • manual ERC-20 deploy',
       '  • flexible governance',
-      '  • good for: DAOs, treasuries',
+      '  • good for: DAOs, collectives',
       '',
       '  REVNET',
       '  • owned by REVOwner contract',
@@ -695,7 +687,7 @@ export function renderBuildTab() {
       'deployFor(\n' +
       '  revnetId,                        // project ID (or 0 for auto)\n' +
       '  configuration,                   // REVConfig with stages\n' +
-      '  terminalConfigurations[],        // payment terminals\n' +
+      '  accountingContextsToAccept[],    // tokens the terminal should accept\n' +
       '  suckerDeploymentConfiguration,   // cross-chain setup\n' +
       '  tiered721HookConfiguration,      // optional NFT tiers\n' +
       '  allowedPosts[]                   // optional croptop posts\n' +
@@ -719,7 +711,7 @@ export function renderBuildTab() {
     'Cash outs from revnets with a cash out tax rate > 0% incur two fees:',
   ], [
     stepList([
-      '2.5% protocol fee — taken from the reclaimed value by JBMultiTerminal, sent to the Juicebox treasury',
+      '2.5% protocol fee — taken from the reclaimed value by JBMultiTerminal, sent to the Juicebox protocol\'s project',
       '2.5% revnet fee — taken from the token count by REVOwner, sent to the revnet fee project',
     ]),
     textBlock('The protocol fee is on the value reclaimed (ETH/tokens out). The revnet fee is on the token count burned (project tokens). These are different bases.')
@@ -751,16 +743,27 @@ export function renderBuildTab() {
     propertyTable('PERMISSION IDS', [
       ['1 - ROOT', 'Grants all permissions. Use with extreme care.'],
       ['2 - QUEUE_RULESETS', 'Queue new rulesets for the project.'],
-      ['3 - SET_CASH_OUT_DELAY', 'Set delay before cash outs activate.'],
-      ['4 - MINT_TOKENS', 'Mint tokens on-demand.'],
-      ['5 - BURN_TOKENS', 'Burn tokens from another holder.'],
-      ['6 - SET_SPLITS', 'Modify payout and reserved token splits.'],
+      ['3 - LAUNCH_RULESETS', 'Launch the project’s first rulesets.'],
+      ['4 - CASH_OUT_TOKENS', 'Cash out (redeem) project tokens on a holder’s behalf.'],
+      ['5 - SEND_PAYOUTS', 'Trigger payout distributions.'],
+      ['6 - MIGRATE_TERMINAL', 'Migrate funds to a new terminal.'],
       ['7 - SET_PROJECT_URI', 'Update project metadata.'],
-      ['8 - SEND_PAYOUTS', 'Trigger payout distributions.'],
-      ['9 - MIGRATE_TERMINAL', 'Migrate funds to a new terminal.'],
-      ['10 - SET_TERMINALS', 'Add or remove terminals.'],
-      ['11 - SET_CONTROLLER', 'Change the project controller.'],
-      ['12 - USE_ALLOWANCE', 'Withdraw surplus via allowance.'],
+      ['8 - DEPLOY_ERC20', 'Deploy the project’s ERC-20 token.'],
+      ['9 - SET_TOKEN', 'Set a custom token for the project.'],
+      ['10 - MINT_TOKENS', 'Mint tokens on-demand.'],
+      ['11 - BURN_TOKENS', 'Burn tokens from another holder.'],
+      ['12 - CLAIM_TOKENS', 'Claim credits into ERC-20 tokens for a holder.'],
+      ['13 - TRANSFER_CREDITS', 'Transfer a holder’s unclaimed credits.'],
+      ['14 - SET_CONTROLLER', 'Change the project controller.'],
+      ['15 - SET_TERMINALS', 'Set the project’s terminals.'],
+      ['16 - ADD_TERMINALS', 'Add terminals to the project.'],
+      ['17 - SET_PRIMARY_TERMINAL', 'Set the primary terminal for a token.'],
+      ['18 - USE_ALLOWANCE', 'Withdraw surplus via the surplus allowance.'],
+      ['19 - SET_SPLIT_GROUPS', 'Modify payout and reserved token splits.'],
+      ['20 - ADD_PRICE_FEED', 'Add a price feed for a currency pair.'],
+      ['21 - ADD_ACCOUNTING_CONTEXTS', 'Add accounting contexts (accepted tokens) to a terminal.'],
+      ['22 - SET_TOKEN_METADATA', 'Set the project token’s name and symbol.'],
+      ['23 - SIGN_FOR_ERC20', 'Sign ERC-20 permit approvals on the project’s behalf.'],
     ]),
     infoBox('Permissions are per-operator, per-project. Granting QUEUE_RULESETS to address X for project 5 doesn\'t give X any access to project 6.')
   ]));
@@ -774,25 +777,26 @@ export function renderBuildTab() {
       '  owner,\n' +
       '  deployTiersHookConfig,    // NFT name, symbol, tiers[]\n' +
       '  launchProjectConfig,      // standard project config\n' +
-      '  controller\n' +
+      '  controller,\n' +
+      '  salt                      // CREATE2 salt for a deterministic hook address (0 for none)\n' +
       ')\n' +
       '// Always use this deployer, even with empty tiers'
     ),
     propertyTable('TIER CONFIGURATION', [
       ['price', 'Minimum contribution to receive this tier.'],
-      ['initialSupply', 'Max NFTs available. 0 = unlimited.'],
+      ['initialSupply', 'Max NFTs available. Must be at least 1; capped at 999,999,999. 0 is rejected.'],
       ['category', 'Grouping ID. Tiers MUST be sorted by category (ascending).'],
       ['reserveFrequency', 'Mint 1 reserved NFT every N minted.'],
       ['reserveBeneficiary', 'Who receives reserved NFTs.'],
-      ['votingUnits', 'Governance weight. Used by JB721TiersHookGovernance.'],
-      ['encodedIPFSUri', 'IPFS content hash for metadata.'],
-      ['cannotBeRemoved', 'If true, tier is permanent.'],
+      ['votingUnits', 'Governance weight (via JB721Checkpoints). Applies only when the tier’s flags.useVotingUnits is set — otherwise voting power tracks the tier price.'],
+      ['encodedIpfsUri', 'IPFS content hash for metadata.'],
+      ['flags.cantBeRemoved', 'If true, tier is permanent (one of the nested flags: allowOwnerMint, useVotingUnits, transfersPausable, cantBeRemoved, …).'],
     ]),
     fnRefTable('READING NFT STATE', [
-      ['JB721TiersHook.tiersOf(hook, categories[], includeResolvedUri, startId, size)', 'List tiers with optional filters'],
-      ['JB721TiersHook.tierOf(hook, tierId, includeResolvedUri)', 'Single tier details'],
-      ['JB721TiersHook.balanceOf(hook, owner)', 'NFTs held by an address'],
-      ['JB721TiersHook.redemptionWeightOf(hook, tokenIds[])', 'Cash out value of specific NFTs'],
+      ['JB721TiersHookStore.tiersOf(hook, categories[], includeResolvedUri, startId, size)', 'List tiers with optional filters'],
+      ['JB721TiersHookStore.tierOf(hook, tierId, includeResolvedUri)', 'Single tier details'],
+      ['JB721TiersHook.balanceOf(owner)', 'NFTs held by an address'],
+      ['JB721TiersHook.cashOutWeightOf(tokenIds[])', 'Cash out weight of specific NFTs (divide by totalCashOutWeight() for the surplus fraction)'],
     ]),
     infoBox('Tiers are sorted by CATEGORY, not price. The contract reverts with InvalidCategorySortOrder if submitted out of order.')
   ]));
@@ -801,7 +805,7 @@ export function renderBuildTab() {
     'Build custom logic that executes at key moments in the payment lifecycle. Hooks are the primary extension mechanism.'
   ], [
     propertyTable('HOOK INTERFACES', [
-      ['IJBRulesetDataHook', 'Intercepts pay/cashout BEFORE state changes. Can modify weight, token count, memo, and delegate list.'],
+      ['IJBRulesetDataHook', 'Intercepts pay/cashout BEFORE state changes. Can override the weight (pay) or the cash-out tax rate / effective counts (cash out), and specify pay/cash-out hook specifications.'],
       ['IJBPayHook', 'Called AFTER payment recorded and tokens minted. Use for rewards, notifications, side effects.'],
       ['IJBCashOutHook', 'Called AFTER tokens burned and funds transferred. Use for cleanup, analytics, conditional logic.'],
       ['IJBSplitHook', 'Called when a split routes funds to a hook address. Use for auto-investing, compounding, forwarding.'],
@@ -815,14 +819,14 @@ export function renderBuildTab() {
       '\n' +
       '// context includes:\n' +
       '//   payer, projectId, rulesetId, amount,\n' +
-      '//   forwardedAmount, weight, projectTokenCount,\n' +
+      '//   forwardedAmount, weight, newlyIssuedTokenCount,\n' +
       '//   beneficiary, hookMetadata, payerMetadata'
     ),
     infoBox('Data hooks run BEFORE state changes and can override values. Pay/cashout hooks run AFTER and are for side effects only.')
   ]));
 
   wrap.appendChild(guideSection('build-distributor', '15. DISTRIBUTOR', [
-    'JBDistributor distributes ERC-20 or native ETH rewards to stakers in time-based rounds with linear vesting. Two implementations exist: JBTokenDistributor (for IVotes token holders) and JB721Distributor (for NFT holders).',
+    'JBDistributor is an optional, project-deployed add-on (not part of the core protocol deployment). It distributes ERC-20 rewards to stakers in time-based rounds with linear vesting. Two implementations exist: JBTokenDistributor (for IJBActiveVotes token holders, e.g. a Juicebox JBERC20) and JB721Distributor (for NFT holders).',
     'The distributor is funded via split hooks or direct deposits. Each round, a snapshot captures the distributable balance. Stakers claim their pro-rata share, which vests linearly over a configured number of rounds.'
   ], [
     fnRefTable('CORE FUNCTIONS', [
@@ -839,7 +843,7 @@ export function renderBuildTab() {
       ['currentRound()', 'The current round number'],
       ['roundSnapshotBlock(round)', 'The block number used for stake weight lookups'],
     ]),
-    infoBox('Stake weight comes from IVotes.getPastVotes() for token distributors and tier voting units for 721 distributors. Rewards are proportional to stake weight at the snapshot block.')
+    infoBox('A holder\'s stake comes from IVotes.getPastVotes() (token distributors) or tier voting units (721 distributors). The TOTAL-stake denominator uses IJBActiveVotes.getPastTotalActiveVotes — which excludes undelegated balances (e.g. AMM-held tokens), so holders must delegate (even to themselves) to count. Rewards are proportional to active stake at the snapshot block.')
   ]));
 
   wrap.appendChild(guideSection('build-handles', '16. PROJECT HANDLES', [
@@ -852,7 +856,7 @@ export function renderBuildTab() {
       ['handleOf(chainId, projectId, setter)', 'Returns the verified handle string, or empty if ENS text record doesn\'t match.'],
       ['TEXT_KEY', 'The ENS text record key: "juicebox". Expected value: "{chainId}:{projectId}".'],
     ]),
-    textBlock('Name parts are in reverse order with .eth appended automatically. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["sub", "myproject"]. Parts cannot contain dots, "eth", empty strings, or certain Unicode format characters.')
+    textBlock('Name parts are in reverse order with .eth appended automatically. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["sub", "myproject"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client\'s responsibility, not the contract\'s.')
   ]));
 
   wrap.appendChild(guideSection('build-payer', '17. PROJECT PAYER', [
@@ -876,16 +880,17 @@ export function renderBuildTab() {
     infoBox('Terminal lookup happens at payment time via JBDirectory, so the payer automatically follows terminal migrations without reconfiguration.')
   ]));
 
-  wrap.appendChild(guideSection('build-swap-terminal', '18. SWAP TERMINAL', [
-    'JBSwapTerminal accepts payments in any token, swaps them through a Uniswap V3 pool into a single output token (TOKEN_OUT, set at deployment), then forwards the result to the project\'s primary terminal. It\'s a pass-through — it never holds a balance.',
-    'The output token is fixed per terminal deployment, not per project. Projects configure which Uniswap pool to use for each input token. Slippage protection uses a TWAP oracle with automatic sigmoid-based tolerance, or payers can provide their own quote in metadata.'
+  wrap.appendChild(guideSection('build-swap-terminal', '18. ROUTER TERMINAL', [
+    'JBRouterTerminal is a universal payment terminal: it accepts any token and automatically converts it into whatever token the destination project accepts, then forwards the result to that project\'s primary terminal. It\'s a pass-through — it never holds a balance.',
+    'There is no fixed output token. For each payment, a JBPayRouteResolver evaluates every token the destination project accepts and picks the route that yields the most project tokens for the payer — choosing among direct forwarding, a Uniswap V3 or V4 swap, a recursive cash-out of JB tokens, or a combination. Pools and routes are discovered automatically, not configured per project.'
   ], [
-    fnRefTable('SWAP TERMINAL FUNCTIONS', [
-      ['addDefaultPool(projectId, token, pool)', 'Set the Uniswap V3 pool for swapping a specific input token. projectId=0 sets a global default.'],
-      ['pay(...)', 'Same IJBTerminal interface as JBMultiTerminal — swaps input to TOKEN_OUT, then calls pay() on the downstream terminal.'],
-      ['addToBalanceOf(...)', 'Same as pay() but forwards via addToBalanceOf() on the downstream terminal (no token minting).'],
+    fnRefTable('ROUTER TERMINAL FUNCTIONS', [
+      ['pay(...)', 'Same IJBTerminal interface as JBMultiTerminal — resolves the best route, converts the input, then calls pay() on the destination terminal.'],
+      ['addToBalanceOf(...)', 'Same as pay() but forwards via addToBalanceOf() on the destination terminal (no token minting).'],
+      ['previewPayFor(...)', 'Preview the chosen route and expected output for a payment without executing it.'],
+      ['bestPoolLiquidityOf(tokenA, tokenB)', 'Report the deepest-liquidity Uniswap pool the router would use for a pair.'],
     ]),
-    textBlock('The swap terminal implements IJBTerminal and is registered alongside JBMultiTerminal in JBDirectory. It does not support cash outs or surplus — it is purely a payment pass-through with automatic token conversion.')
+    textBlock('The router terminal implements IJBTerminal and is registered alongside JBMultiTerminal in JBDirectory. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration.')
   ]));
 
   wrap.appendChild(guideSection('build-buyback', '19. BUYBACK HOOK', [

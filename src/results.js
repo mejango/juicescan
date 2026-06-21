@@ -1,6 +1,8 @@
 // src/results.js
 // Renders read/simulate return values with smart annotations
 
+import { truncAddr } from './component-base.js';
+
 export function renderResult(outputs, rawResult) {
   var container = document.createElement('div');
   container.className = 'result-box';
@@ -93,7 +95,7 @@ function renderResultValue(name, type, components, value) {
 function formatValue(value) {
   if (typeof value === 'bigint') return value.toLocaleString();
   if (typeof value === 'string' && value.startsWith('0x') && value.length === 42) {
-    return value.slice(0, 6) + '...' + value.slice(-4);
+    return truncAddr(value);
   }
   return String(value);
 }

@@ -326,11 +326,6 @@ function renderDirectory() {
   var container = document.getElementById('tab-directory');
   container.innerHTML = '';
 
-  var wipBanner = document.createElement('div');
-  wipBanner.className = 'discover-header';
-  wipBanner.textContent = 'Work in progress';
-  container.appendChild(wipBanner);
-
   var categoryNames = Object.keys(categories);
   for (var c = 0; c < categoryNames.length; c++) {
     var category = categoryNames[c];

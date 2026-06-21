@@ -152,7 +152,7 @@ export function bigint(value) {
 
 export function bool(value) {
   const span = document.createElement('span');
-  span.textContent = value === true ? '✓' : value === false ? '·' : '—';
+  span.textContent = value === true ? 'yes' : value === false ? 'no' : '—';
   span.className = 'data-cell-bool';
   return span;
 }

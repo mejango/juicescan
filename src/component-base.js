@@ -5,7 +5,7 @@ import { getAccount, getWalletClient, createPublicClientForChain, connect, disco
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
-import { decodeFunctionData } from 'viem';
+import { decodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
@@ -101,6 +101,39 @@ export function truncAddr(addr) {
   return addr.slice(0, 6) + '...' + addr.slice(-4);
 }
 
+// Pretty-print a tx payload for the confirm/decode views: BigInt → decimal string, then unquote
+// JSON keys ({ "to": … } → { to: … }) so it reads like a config rather than wire JSON.
+export function formatPayloadJson(obj) {
+  return JSON.stringify(obj, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
+    .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
+}
+
+// The user-facing message from a thrown error: viem's concise `shortMessage` if present, else `.message`,
+// else the caller's fallback. One place so every catch handler reads errors the same way.
+export function errMessage(e, fallback) {
+  return (e && (e.shortMessage || e.message)) || fallback;
+}
+
+// One address-format check for the whole app (replaces ~39 inline `/^0x[0-9a-fA-F]{40}$/` regexes).
+// strict:false = format only (any case), matching the old regex; the `typeof` guard matches `.test()`'s
+// string coercion so isAddr(undefined) === false. addrOrZero coerces a blank/invalid address to 0x0.
+export function isAddr(s) {
+  return typeof s === 'string' && isAddress(s, { strict: false });
+}
+export function addrOrZero(s) {
+  return (s && isAddr(s)) ? s : ZERO_ADDRESS;
+}
+
+// A status-line setter bound to an element: `set(msg, kind)` writes `<baseClass> <kind>` + text.
+// Replaces the ~7 copy-pasted `function setStatus(msg, kind){ status.className=…; status.textContent=… }`.
+export function makeStatusSetter(elem, baseClass) {
+  baseClass = baseClass || 'modal-status';
+  return function (msg, kind) {
+    elem.className = baseClass + (kind ? ' ' + kind : '');
+    elem.textContent = msg;
+  };
+}
+
 // --- URL hash helpers ---
 
 export function parseHashDefaults(prefix) {
@@ -173,29 +206,6 @@ export function discoverChains(projectId, callback) {
 }
 
 // --- Shared UI builders ---
-
-export function createProjectInput(state, onUpdate) {
-  var section = el('div', 'component-section');
-  var label = el('label', 'input-label');
-  label.innerHTML = 'project ID <span class="type-hint">uint256</span>';
-  section.appendChild(label);
-  var input = el('input', 'field numeric-field');
-  input.type = 'text';
-  input.placeholder = '1';
-  input.value = state.projectId;
-  input.addEventListener('input', function() {
-    state.projectId = input.value.trim();
-    onUpdate();
-  });
-  section.appendChild(input);
-
-  if (state.phase === 'discovering') {
-    var disc = el('div', 'component-status component-discovering');
-    disc.textContent = 'Searching chains...';
-    section.appendChild(disc);
-  }
-  return section;
-}
 
 // Combined project ID + chain selector. The chain summary sits ABOVE the
 // project ID input as a compact "on <chain>" link — click it to reveal the
@@ -305,114 +315,6 @@ export function createProjectAndChainInput(state, onProjectUpdate, onChainChange
   });
   section.appendChild(input);
 
-  return section;
-}
-
-export function createChainSelector(state, onChainChange) {
-  var chainSection = el('div', 'component-section');
-  var chains = getManifestChains();
-
-  var chainHeader = el('div', 'chain-header-row');
-  var chainLabel = el('label', 'input-label');
-  chainLabel.textContent = 'chain';
-  chainHeader.appendChild(chainLabel);
-
-  var netSelect = el('select', 'network-dropdown');
-  var mainOpt = document.createElement('option');
-  mainOpt.value = 'mainnet';
-  mainOpt.textContent = 'mainnet';
-  if (state.network === 'mainnet') mainOpt.selected = true;
-  netSelect.appendChild(mainOpt);
-  var testOpt = document.createElement('option');
-  testOpt.value = 'testnet';
-  testOpt.textContent = 'testnet';
-  if (state.network === 'testnet') testOpt.selected = true;
-  netSelect.appendChild(testOpt);
-  netSelect.addEventListener('change', function() {
-    state.network = netSelect.value;
-    onChainChange(null); // null means "pick first for network"
-  });
-  chainHeader.appendChild(netSelect);
-  chainSection.appendChild(chainHeader);
-
-  var pillsRow = el('div', 'chain-pills-row');
-  var isTestnet = state.network === 'testnet';
-  for (var i = 0; i < state.liveChains.length; i++) {
-    (function(cid) {
-      var ch = chains[String(cid)];
-      if (!ch) return;
-      if (isTestnet !== !!ch.testnet) return;
-      var pill = el('button', 'chain-pill' + (ch.testnet ? ' testnet' : '') + (state.selectedChain === cid ? ' selected' : ''));
-      pill.textContent = ch.name;
-      pill.addEventListener('click', function() {
-        onChainChange(cid);
-      });
-      pillsRow.appendChild(pill);
-    })(state.liveChains[i]);
-  }
-  chainSection.appendChild(pillsRow);
-  return chainSection;
-}
-
-export function createTokenSelector(state, onChange) {
-  var amtSection = el('div', 'component-section');
-  var amtLabel = el('label', 'input-label');
-  amtLabel.textContent = 'amount';
-  amtSection.appendChild(amtLabel);
-
-  var amtWrapper = el('div', 'amount-with-token');
-  var amtInput = el('input', 'field numeric-field amount-input');
-  amtInput.type = 'text';
-  amtInput.placeholder = '0.1';
-  amtInput.value = state.amount;
-  amtInput.addEventListener('input', function() {
-    state.amount = amtInput.value.trim();
-    onChange();
-  });
-  amtWrapper.appendChild(amtInput);
-
-  if (state.tokens.length > 0) {
-    var tokenSelect = el('select', 'token-dropdown');
-    for (var t = 0; t < state.tokens.length; t++) {
-      var opt = document.createElement('option');
-      opt.value = state.tokens[t].address;
-      opt.textContent = state.tokens[t].symbol;
-      if (state.selectedToken && state.selectedToken.address.toLowerCase() === state.tokens[t].address.toLowerCase()) {
-        opt.selected = true;
-      }
-      tokenSelect.appendChild(opt);
-    }
-    tokenSelect.addEventListener('change', function() {
-      var addr = tokenSelect.value;
-      for (var ti = 0; ti < state.tokens.length; ti++) {
-        if (state.tokens[ti].address === addr) {
-          state.selectedToken = state.tokens[ti];
-          state.decimals = state.tokens[ti].decimals || 18;
-          onChange();
-          break;
-        }
-      }
-    });
-    amtWrapper.appendChild(tokenSelect);
-  }
-  amtSection.appendChild(amtWrapper);
-  return amtSection;
-}
-
-export function createAmountInput(state, onAmountChange, label) {
-  var section = el('div', 'component-section');
-  var lbl = el('label', 'input-label');
-  lbl.textContent = label || 'amount';
-  section.appendChild(lbl);
-  var input = el('input', 'field numeric-field');
-  input.type = 'text';
-  input.placeholder = '0';
-  input.value = state.amount || '';
-  input.addEventListener('input', function() {
-    state.amount = input.value.trim();
-    onAmountChange();
-  });
-  section.appendChild(input);
   return section;
 }
 
@@ -837,8 +739,7 @@ function txRawJson(tx) {
     }
   } catch (_) {}
   if (!obj) obj = { contract: tx.contract, address: tx.address || tx.to, chain: tx.chain, function: tx.function, args: tx.args, calldata: tx.calldata, value: tx.value };
-  return JSON.stringify(obj, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
-    .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
+  return formatPayloadJson(obj);
 }
 function renderDecodedSummary(payload) {
   var list = Array.isArray(payload.transactions) ? payload.transactions : (Array.isArray(payload.chains) ? payload.chains : null);
@@ -848,6 +749,29 @@ function renderDecodedSummary(payload) {
   // Single-tx payload (executeTransaction): function + args, or calldata.
   if (payload.function || payload.calldata || payload.address) { wrap.appendChild(renderDecodedTx(payload)); return wrap; }
   return null;
+}
+
+// Shared confirm-dialog BODY (safety note, optional description, decoded summary first, exact raw payload
+// behind a "Show raw data" toggle, audit-prompt link). Both confirmTransactionModal and discover's
+// openTxConfirm append this into their own modal chrome, so every confirm dialog reads identically.
+export function renderConfirmBody(content, payload, opts) {
+  opts = opts || {};
+  var note = el('div', 'tx-confirm-note');
+  note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
+  content.appendChild(note);
+  if (opts.description) { var desc = el('div', 'tx-confirm-desc'); desc.textContent = opts.description; content.appendChild(desc); }
+  var decoded = renderDecodedSummary(payload);
+  if (decoded) content.appendChild(decoded);
+  var pre = el('pre', 'create-payload');
+  pre.textContent = annotateTimestamps(annotateAddresses(formatPayloadJson(payload)));
+  if (decoded) {
+    var details = document.createElement('details'); details.className = 'tx-rawdata';
+    var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
+    details.appendChild(pre); content.appendChild(details);
+  } else {
+    content.appendChild(pre);
+  }
+  appendAuditPromptLink(content, payload);
 }
 
 export function confirmTransactionModal(payload, opts) {
@@ -860,30 +784,7 @@ export function confirmTransactionModal(payload, opts) {
     var x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '✕'; head.appendChild(x);
     dialog.appendChild(head);
     var content = el('div', 'pay-confirm');
-    var note = el('div', 'tx-confirm-note');
-    note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
-    content.appendChild(note);
-    // Optional plain-English explanation of WHAT this step does / WHY it exists (e.g. the bridge's
-    // second "send" step). Sits between the safety banner and the decoded payload.
-    if (opts.description) {
-      var desc = el('div', 'tx-confirm-desc'); desc.textContent = opts.description; content.appendChild(desc);
-    }
-    // Legible decode first (function + named args), so users don't parse calldata themselves…
-    var decoded = renderDecodedSummary(payload);
-    if (decoded) content.appendChild(decoded);
-    // …with the exact raw payload still one click away.
-    var pre = el('pre', 'create-payload');
-    pre.textContent = annotateTimestamps(annotateAddresses(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
-      .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:')));
-    if (decoded) {
-      var details = document.createElement('details'); details.className = 'tx-rawdata';
-      var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
-      details.appendChild(pre);
-      content.appendChild(details);
-    } else {
-      content.appendChild(pre);
-    }
-    appendAuditPromptLink(content, payload);
+    renderConfirmBody(content, payload, opts); // safety note + decoded summary + raw-in-details + audit link
     var foot = el('div', 'create-modal-foot');
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
     var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
@@ -1138,26 +1039,6 @@ export function createComponentWrapper(title, prefix, state, getEmbedParams, opt
 
 // --- Common state initialization ---
 
-export function createBaseState(prefix) {
-  var defaults = parseHashDefaults(prefix);
-  return {
-    phase: 'idle',
-    projectId: defaults.projectId || '',
-    liveChains: [],
-    selectedChain: defaults.chain ? Number(defaults.chain) : null,
-    tokens: [],
-    selectedToken: null,
-    amount: defaults.amount || '',
-    decimals: 18,
-    beneficiary: defaults.beneficiary ? 'custom' : 'self',
-    customBeneficiary: defaults.beneficiary || '',
-    network: defaults.network || 'mainnet',
-    error: null,
-    txStatus: null,
-    _defaultChain: defaults.chain ? Number(defaults.chain) : null,
-  };
-}
-
 // --- Discovery + chain selection helpers ---
 
 export function firstChainForNetwork(state) {
@@ -1184,7 +1065,7 @@ export function selectChain(state, chainId) {
 export function getBeneficiaryAddress(state) {
   if (state.beneficiary === 'custom') {
     var addr = state.customBeneficiary;
-    if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) return null;
+    if (!addr || !isAddr(addr)) return null;
     return addr;
   }
   return getAccount() || null;

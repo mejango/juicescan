@@ -2,15 +2,15 @@
 // Queue Ruleset component — queues new rulesets for an existing project
 // Flow: project ID -> chain -> ruleset config(s) -> execute
 
+import { parseEther } from 'viem';
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, discoverChains, selectChain, firstChainForNetwork,
-  executeTransaction, renderError, getAddress, parseHashDefaults,
+  executeTransaction, renderError, getAddress, parseHashDefaults, ZERO_ADDRESS as ZERO, addrOrZero,
 } from './component-base.js';
+import { buildSplitGroups, buildFundAccessLimitGroups, getDurationSeconds, createDefaultFundAccessLimitGroup, percentSlider, configRow } from './launch-component.js';
 
-var ZERO = '0x0000000000000000000000000000000000000000';
-
-var queueRulesetsAbi = [{
+export var queueRulesetsAbi = [{
   type: 'function', name: 'queueRulesetsOf', stateMutability: 'nonpayable',
   inputs: [
     { name: 'projectId', type: 'uint256' },
@@ -44,10 +44,12 @@ var queueRulesetsAbi = [{
       { name: 'splitGroups', type: 'tuple[]', components: [
         { name: 'groupId', type: 'uint256' },
         { name: 'splits', type: 'tuple[]', components: [
-          { name: 'preferAddToBalance', type: 'bool' },
+          // Canonical JBSplit field order — must match exactly or the tuple type changes the 4-byte selector
+          // and every queue tx reverts (preferAddToBalance was wrongly at index 0).
           { name: 'percent', type: 'uint32' },
           { name: 'projectId', type: 'uint64' },
           { name: 'beneficiary', type: 'address' },
+          { name: 'preferAddToBalance', type: 'bool' },
           { name: 'lockedUntil', type: 'uint48' },
           { name: 'hook', type: 'address' },
         ]},
@@ -97,10 +99,6 @@ function createDefaultPayoutLimit() {
 
 function createDefaultSurplusAllowance() {
   return { amount: '', currency: '' };
-}
-
-function createDefaultFundAccessLimitGroup() {
-  return { terminal: '', token: '', payoutLimits: [createDefaultPayoutLimit()], surplusAllowances: [createDefaultSurplusAllowance()] };
 }
 
 function createDefaultRuleset() {
@@ -261,20 +259,17 @@ export function renderQueueRulesetComponent() {
     for (var i = 0; i < state.rulesets.length; i++) {
       var rs = state.rulesets[i];
       var durationSeconds = getDurationSeconds(rs);
-      var weightVal = rs.weight;
-      var weightBig;
-      if (Number(weightVal) <= 1) {
-        weightBig = BigInt(weightVal || '0');
-      } else {
-        weightBig = BigInt(Math.floor(Number(weightVal) * 1e18));
-      }
+      // weight is "tokens per base unit" in 18-dec fixed point. parseEther gives the exact integer with no
+      // float drift (>~9M tokens) and no BigInt('0.5') crash on fractional weights — matches the launch path.
+      var weightBig = 0n;
+      try { weightBig = rs.weight ? parseEther(String(rs.weight)) : 0n; } catch (_) { weightBig = 0n; }
 
       rulesetConfigs.push({
         mustStartAtOrAfter: Number(rs.mustStartAtOrAfter) || 0,
         duration: durationSeconds,
         weight: weightBig,
         weightCutPercent: Math.round(rs.weightCutPercent * 10000000),
-        approvalHook: (rs.approvalHook && /^0x[0-9a-fA-F]{40}$/.test(rs.approvalHook)) ? rs.approvalHook : ZERO,
+        approvalHook: addrOrZero(rs.approvalHook),
         metadata: {
           reservedPercent: Math.round(rs.reservedPercent * 100),
           cashOutTaxRate: Math.round(rs.cashOutTaxRate * 100),
@@ -293,7 +288,7 @@ export function renderQueueRulesetComponent() {
           useTotalSurplusForCashOuts: rs.useTotalSurplusForCashOuts,
           useDataHookForPay: rs.useDataHookForPay,
           useDataHookForCashOut: rs.useDataHookForCashOut,
-          dataHook: (rs.dataHook && /^0x[0-9a-fA-F]{40}$/.test(rs.dataHook)) ? rs.dataHook : ZERO,
+          dataHook: addrOrZero(rs.dataHook),
           metadata: Number(rs.metadataExtra) || 0,
         },
         splitGroups: buildSplitGroups(rs.splitGroups),
@@ -320,65 +315,7 @@ export function renderQueueRulesetComponent() {
 
 // --- Build split groups for tx ---
 
-function buildSplitGroups(groups) {
-  var result = [];
-  for (var i = 0; i < groups.length; i++) {
-    var g = groups[i];
-    if (!g.groupId) continue;
-    var splits = [];
-    for (var j = 0; j < g.splits.length; j++) {
-      var s = g.splits[j];
-      if (!s.percent && !s.beneficiary && !s.projectId) continue;
-      splits.push({
-        preferAddToBalance: s.preferAddToBalance,
-        percent: Number(s.percent) || 0,
-        projectId: Number(s.projectId) || 0,
-        beneficiary: (s.beneficiary && /^0x[0-9a-fA-F]{40}$/.test(s.beneficiary)) ? s.beneficiary : ZERO,
-        lockedUntil: Number(s.lockedUntil) || 0,
-        hook: (s.hook && /^0x[0-9a-fA-F]{40}$/.test(s.hook)) ? s.hook : ZERO,
-      });
-    }
-    if (splits.length > 0) {
-      result.push({ groupId: BigInt(g.groupId), splits: splits });
-    }
-  }
-  return result;
-}
-
 // --- Build fund access limit groups for tx ---
-
-function buildFundAccessLimitGroups(groups) {
-  var result = [];
-  for (var i = 0; i < groups.length; i++) {
-    var g = groups[i];
-    if (!g.terminal) continue;
-    var payoutLimits = [];
-    for (var j = 0; j < g.payoutLimits.length; j++) {
-      var pl = g.payoutLimits[j];
-      if (!pl.amount && pl.amount !== '0') continue;
-      payoutLimits.push({
-        amount: BigInt(pl.amount),
-        currency: Number(pl.currency) || 0,
-      });
-    }
-    var surplusAllowances = [];
-    for (var k = 0; k < g.surplusAllowances.length; k++) {
-      var sa = g.surplusAllowances[k];
-      if (!sa.amount && sa.amount !== '0') continue;
-      surplusAllowances.push({
-        amount: BigInt(sa.amount),
-        currency: Number(sa.currency) || 0,
-      });
-    }
-    result.push({
-      terminal: g.terminal,
-      token: (g.token && /^0x[0-9a-fA-F]{40}$/.test(g.token)) ? g.token : ZERO,
-      payoutLimits: payoutLimits,
-      surplusAllowances: surplusAllowances,
-    });
-  }
-  return result;
-}
 
 // --- Render a single ruleset fieldset ---
 
@@ -701,11 +638,6 @@ function renderFundAccessEditor(rs, updateUI) {
 
 // --- Shared form helpers ---
 
-function getDurationSeconds(rs) {
-  if (rs.durationPreset === -1) return Number(rs.durationCustom) || 0;
-  return rs.durationPreset;
-}
-
 function durationRow(rs, updateUI) {
   var row = el('div', 'config-row');
   var lbl = el('label', 'input-label');
@@ -832,42 +764,6 @@ function splitPercentRow(split) {
   return row;
 }
 
-function percentSlider(label, rs, key, max) {
-  var row = el('div', 'config-row');
-  var lbl = el('label', 'input-label');
-  lbl.textContent = label;
-  row.appendChild(lbl);
-  var slider = el('input', 'config-slider');
-  slider.type = 'range';
-  slider.min = '0';
-  slider.max = String(max);
-  slider.step = '0.5';
-  slider.value = rs[key];
-  var valInput = el('input', 'config-slider-input');
-  valInput.type = 'text';
-  valInput.value = rs[key];
-  var suffix = el('span', 'config-percent-suffix');
-  suffix.textContent = '%';
-  slider.addEventListener('input', function() {
-    rs[key] = Number(slider.value);
-    valInput.value = slider.value;
-  });
-  valInput.addEventListener('input', function() {
-    var v = parseFloat(valInput.value);
-    if (!isNaN(v) && v >= 0 && v <= max) {
-      rs[key] = v;
-      slider.value = v;
-    }
-  });
-  valInput.addEventListener('blur', function() {
-    valInput.value = rs[key];
-  });
-  row.appendChild(slider);
-  row.appendChild(valInput);
-  row.appendChild(suffix);
-  return row;
-}
-
 function currencyPills(rs, updateUI) {
   var row = el('div', 'config-row');
   var lbl = el('label', 'input-label');
@@ -890,20 +786,6 @@ function currencyPills(rs, updateUI) {
 
 function baseCurrencyLabel(rs) {
   return Number(rs.baseCurrency) === 2 ? 'USD' : 'ETH';
-}
-
-function configRow(label, hint, st, key, placeholder) {
-  var row = el('div', 'config-row');
-  var lbl = el('label', 'input-label');
-  lbl.innerHTML = label + ' <span class="type-hint">' + hint + '</span>';
-  row.appendChild(lbl);
-  var input = el('input', 'field numeric-field' + (/optional/i.test(hint || '') ? ' optional-field' : ''));
-  input.type = 'text';
-  input.placeholder = placeholder || '0';
-  input.value = st[key];
-  input.addEventListener('input', function() { st[key] = input.value.trim(); });
-  row.appendChild(input);
-  return row;
 }
 
 function addressRow(label, st, key) {

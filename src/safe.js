@@ -11,10 +11,9 @@
 // the "Open in Safe app" deep link.
 
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData } from 'viem';
-import { getWalletClient, getAccount, switchChain, createPublicClientForChain } from './component-base.js';
+import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO } from './component-base.js';
 import { CHAINS } from './chain.js';
 
-var ZERO = '0x0000000000000000000000000000000000000000';
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
 function cs(a) { try { return checksumAddress(a); } catch (_) { return a; } }
 

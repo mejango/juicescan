@@ -8,10 +8,6 @@ export function encodeCalldata(abi, functionName, args) {
   return encodeFunctionData({ abi, functionName, args });
 }
 
-export function decodeResult(abi, functionName, data) {
-  return decodeFunctionResult({ abi, functionName, data });
-}
-
 export function decodeError(abi, data) {
   try {
     return decodeErrorResult({ abi, data });

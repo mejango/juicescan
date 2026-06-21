@@ -8,7 +8,7 @@ import {
   executeTransaction, getBeneficiaryAddress, firstChainForNetwork,
   createPublicClientForChain, connect, getChainTokens,
   parseAmount, renderError, getAddress,
-  NATIVE_TOKEN, erc20DecimalsAbi,
+  NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
 import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 
@@ -25,6 +25,72 @@ var payAbi = [{
   ],
   outputs: [],
 }];
+
+function sameAddress(a, b) {
+  return !!a && !!b && a.toLowerCase() === b.toLowerCase();
+}
+
+function payPreviewScore(preview) {
+  if (!preview || preview.unavailable || preview.received == null) return -1n;
+  return BigInt(preview.received);
+}
+
+function payRouteIsBetter(candidate, current) {
+  var candidateScore = payPreviewScore(candidate.preview);
+  var currentScore = payPreviewScore(current && current.preview);
+  if (candidateScore !== currentScore) return candidateScore > currentScore;
+
+  var candidateTotal = candidate.preview && candidate.preview.reserved != null
+    ? candidateScore + BigInt(candidate.preview.reserved) : candidateScore;
+  var currentTotal = current && current.preview && current.preview.reserved != null
+    ? currentScore + BigInt(current.preview.reserved) : currentScore;
+  if (candidateTotal !== currentTotal) return candidateTotal > currentTotal;
+
+  return !candidate.viaRouter && current && current.viaRouter;
+}
+
+function payRouteCandidates(chainId) {
+  var routes = [];
+  var router = getAddress('JBRouterTerminalRegistry', chainId);
+  var direct = getAddress('JBMultiTerminal', chainId);
+  if (router) routes.push({ address: router, contractName: 'JBRouterTerminalRegistry', viaRouter: true });
+  if (direct && !sameAddress(direct, router)) {
+    routes.push({ address: direct, contractName: 'JBMultiTerminal', viaRouter: false });
+  }
+  return routes;
+}
+
+function resolveBestPayRoute(opts) {
+  var routes = payRouteCandidates(opts.chainId);
+  if (!routes.length) return Promise.resolve(null);
+
+  return Promise.all(routes.map(function (route) {
+    return computePayPreview({
+      chainId: opts.chainId,
+      projectId: opts.projectId,
+      token: opts.token,
+      amount: opts.amount,
+      beneficiary: opts.beneficiary,
+      terminal: route.address,
+    }).then(function (preview) {
+      return Object.assign({}, route, { preview: preview });
+    }).catch(function () {
+      return Object.assign({}, route, { preview: { unavailable: true } });
+    });
+  })).then(function (resolved) {
+    var best = null;
+    for (var i = 0; i < resolved.length; i++) {
+      if (!best || payRouteIsBetter(resolved[i], best)) best = resolved[i];
+    }
+    if (best && best.preview && !best.preview.unavailable && best.preview.received != null) return best;
+
+    // Keep the old behavior available when previews fail: direct terminal if present, otherwise router.
+    for (var j = 0; j < routes.length; j++) {
+      if (!routes[j].viaRouter) return Object.assign({}, routes[j], { preview: null });
+    }
+    return Object.assign({}, routes[0], { preview: null });
+  });
+}
 
 export function renderPayComponent() {
   var defaults = parseHashDefaults('pay');
@@ -175,7 +241,7 @@ export function renderPayComponent() {
     var youGet = el('div', 'pay-you-get');
     var youLink = el('span', 'pay-you-link');
     youLink.textContent = (state.beneficiary === 'custom' && state.customBeneficiary)
-      ? (state.customBeneficiary.slice(0, 6) + '...' + state.customBeneficiary.slice(-4))
+      ? truncAddr(state.customBeneficiary)
       : 'You';
     youLink.title = 'Click to change beneficiary';
     var youGetText = el('span');
@@ -354,28 +420,38 @@ export function renderPayComponent() {
     // Beneficiary doesn't affect the mint math; a placeholder lets the preview work pre-connect.
     var beneficiary = getBeneficiaryAddress(state) || undefined;
 
-    var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
-    if (!terminalAddr) { state.error = 'No terminal address for this chain'; updateUI(); return; }
-
     state.phase = 'previewing';
     state.error = null;
     updateUI();
 
     var gen = ++previewGeneration;
-    computePayPreview({
+    resolveBestPayRoute({
       chainId: state.selectedChain,
       projectId: state.projectId,
       token: state.selectedToken.address,
       amount: amountParsed,
       beneficiary: beneficiary,
-    }).then(function (p) {
+    }).then(function (route) {
       if (gen !== previewGeneration) return;
+      if (!route) {
+        state.phase = 'ready';
+        state.preview = null;
+        state.error = 'No terminal address for this chain';
+        updateUI();
+        return;
+      }
+      var p = route.preview;
       state.phase = 'ready';
-      state.preview = p.unavailable ? null : {
+      state.preview = (!p || p.unavailable) ? null : {
         beneficiaryTokens: formatTokenCount(p.received),
         reservedTokens: formatTokenCount(p.reserved),
         routing: p.routing,
         amm: p.amm,
+        route: {
+          address: route.address,
+          contractName: route.contractName,
+          viaRouter: route.viaRouter,
+        },
       };
       state.error = null;
       updateUI();
@@ -406,27 +482,66 @@ export function renderPayComponent() {
       updateUI(); return;
     }
 
-    var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
-    if (!terminalAddr) { state.error = 'No terminal address for this chain'; updateUI(); return; }
-
     var isNative = state.selectedToken.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
+
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = null;
+    previewGeneration++;
 
     state.phase = 'confirming';
     updateUI();
 
-    executeTransaction({
+    resolveBestPayRoute({
       chainId: state.selectedChain,
-      address: terminalAddr,
-      abi: payAbi,
-      functionName: 'pay',
-      args: [BigInt(state.projectId), state.selectedToken.address, amountParsed, beneficiary, 0n, state.memo || '', '0x'],
-      value: isNative ? amountParsed : 0n,
-      tokenAddr: isNative ? null : state.selectedToken.address,
-      spenderAddr: isNative ? null : terminalAddr,
-      approvalAmount: isNative ? null : amountParsed,
-      onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
-      onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
-      onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },
+      projectId: state.projectId,
+      token: state.selectedToken.address,
+      amount: amountParsed,
+      beneficiary: beneficiary,
+    }).then(function (route) {
+      if (!route) {
+        state.phase = 'ready';
+        state.error = 'No terminal address for this chain';
+        updateUI();
+        return;
+      }
+      if (route.preview && !route.preview.unavailable) {
+        state.preview = {
+          beneficiaryTokens: formatTokenCount(route.preview.received),
+          reservedTokens: formatTokenCount(route.preview.reserved),
+          routing: route.preview.routing,
+          amm: route.preview.amm,
+          route: {
+            address: route.address,
+            contractName: route.contractName,
+            viaRouter: route.viaRouter,
+          },
+        };
+      }
+
+      // Slippage floor: require at least 99% of the previewed token output (1% tolerance). Protects the
+      // buyback/AMM route from sandwiching and the mint route from a mid-tx weight/surplus change. Falls
+      // back to 0 only when no preview is available (the user already accepted the unpriced path).
+      var minReturned = 0n;
+      try { if (state.preview && state.preview.received != null) minReturned = BigInt(state.preview.received) * 99n / 100n; } catch (_) {}
+      executeTransaction({
+        chainId: state.selectedChain,
+        address: route.address,
+        contractName: route.contractName,
+        abi: payAbi,
+        functionName: 'pay',
+        args: [BigInt(state.projectId), state.selectedToken.address, amountParsed, beneficiary, minReturned, state.memo || '', '0x'],
+        value: isNative ? amountParsed : 0n,
+        tokenAddr: isNative ? null : state.selectedToken.address,
+        spenderAddr: isNative ? null : route.address,
+        approvalAmount: isNative ? null : amountParsed,
+        onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
+        onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
+        onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },
+      });
+    }).catch(function (err) {
+      state.phase = 'ready';
+      state.error = (err && (err.shortMessage || err.message)) || 'Could not resolve pay route';
+      updateUI();
     });
   }
 

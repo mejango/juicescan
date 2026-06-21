@@ -13,12 +13,13 @@
 // real beneficiary/reserved counts live in the decoded metadata.
 
 import { decodeAbiParameters, formatUnits } from 'viem';
-import { getAddress, createPublicClientForChain, el } from './component-base.js';
+import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
 // Format an 18-decimal token count (bigint) for display, trimming to a few significant digits.
-export function formatTokenCount(raw) {
-  if (raw === null || raw === undefined) return '—';
-  var n = Number(formatUnits(raw, 18));
+// Adaptive significant digits for a Number: big numbers drop decimals (and get thousands separators),
+// small numbers keep more. Shared by formatTokenCount (18-dec tokens) and discover's formatBalance
+// (arbitrary-decimal accounting tokens) so the precision rules live in exactly one place.
+export function formatAdaptive(n) {
   if (!isFinite(n)) return '—';
   if (n === 0) return '0';
   // >= 1: thousands separators. Whole numbers show no decimals; if there's a fractional
@@ -29,6 +30,11 @@ export function formatTokenCount(raw) {
   }
   if (n >= 0.0001) return n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
   return n.toPrecision(2);
+}
+
+export function formatTokenCount(raw) {
+  if (raw === null || raw === undefined) return '—';
+  return formatAdaptive(Number(formatUnits(raw, 18)));
 }
 
 // Truncate a bytes32 pool id (or any hex) for compact display.
@@ -193,7 +199,7 @@ export async function computePayPreview(opts) {
   } catch (err) {
     // previewPayFor reverts e.g. JBPrices_PriceFeedNotFound when a non-native currency lacks a feed.
     result.unavailable = true;
-    result.reason = (err && (err.shortMessage || err.message)) || 'preview unavailable';
+    result.reason = errMessage(err, 'preview unavailable');
     return result;
   }
 }

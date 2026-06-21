@@ -4,9 +4,9 @@
 // executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderDecodedTx, renderTxReview, decodeCallForDisplay } from './component-base.js';
-import { CHAINS, getCustomRpc, getChainTokens, defaultRpcFor } from './chain.js';
-import { computePayPreview, formatTokenCount, renderRoutingTag, shortHex } from './pay-preview.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderDecodedTx, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter } from './component-base.js';
+import { CHAINS, getChainTokens } from './chain.js';
+import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
@@ -16,26 +16,10 @@ import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { toggleRow, dz, currencySelect, cashOutSection, DURATION_PRESETS, FOREVER_SECONDS, renderStages, createStage, buildQueueRulesetConfigs } from './create-flow.js';
 
-// One batched client per chain. `batch.multicall` makes viem fold all the concurrent
-// readContract calls (7 projects × ~7 reads) into a couple of Multicall3 requests, so a
-// public RPC doesn't rate-limit (429) the burst.
-var _clients = {};
-function clientFor(chainId) {
-  if (_clients[chainId]) return _clients[chainId];
-  var chain = CHAINS[chainId];
-  if (!chain) throw new Error('Unknown chain ' + chainId);
-  var customRpc = getCustomRpc(chainId);
-  // viem's default mainnet RPCs (eth.merkle.io etc.) block browser CORS, which breaks reads/ENS.
-  // Fall back to CORS-enabled public endpoints for the mainnets unless a custom one is set.
-  var rpc = customRpc || defaultRpcFor(chainId);
-  var client = createPublicClient({
-    chain: chain,
-    transport: http(rpc),
-    batch: { multicall: { wait: 32 } },
-  });
-  _clients[chainId] = client;
-  return client;
-}
+// Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
+// component-base) — one cache for the whole app, keyed by chainId|customRpc so a custom RPC takes
+// effect immediately (the old discover-local cache keyed by chainId only, ignoring RPC changes).
+var clientFor = createPublicClientForChain;
 
 // The V6 contracts are deployed (same CREATE2 addresses) on every chain below. Discover pivots between
 // the two networks via the header dropdown; `DISCOVER_CHAINS` is the active set and is reassigned by
@@ -72,8 +56,6 @@ function setNetwork(mode) {
 }
 
 var IPFS_GATEWAY = 'https://ipfs.io/ipfs/';
-var ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-var NATIVE_TOKEN = '0x000000000000000000000000000000000000EEEe';
 
 var LOGO_COLORS = ['#1a8a8a','#3d7a5a','#c43550','#2c2018','#b8602e','#6ec4c4','#82b89e'];
 function logoColor(id) { return LOGO_COLORS[(id - 1) % LOGO_COLORS.length]; }
@@ -469,7 +451,7 @@ function renderTierMediaInto(container, m, alt, mode) {
     container.appendChild(v); return true;
   }
   if (kind === 'audio') {
-    if (mode === 'thumb') { container.appendChild(tierMediaBadge('♪', alt, media)); return true; }
+    if (mode === 'thumb') { container.appendChild(tierMediaBadge('AUDIO', alt, media)); return true; }
     var wrapA = el('div', 'tier-media-audio');
     if (m.image) { var ai = document.createElement('img'); ai.loading = 'lazy'; ai.src = m.image; ai.alt = alt || ''; wrapA.appendChild(ai); }
     var au = document.createElement('audio'); au.src = media; au.controls = true; wrapA.appendChild(au);
@@ -547,17 +529,23 @@ function makeNftCart() {
 
 function renderShopSection(project, shop, cart) {
   var wrap = el('div', 'detail-section');
-  var card = el('div', 'detail-card');
+  var card = el('div', 'detail-card shop-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; card.appendChild(title);
   var body = el('div', 'shop-body'); card.appendChild(body);
   wrap.appendChild(card);
 
-  // Intro line — only shown when there's something for sale (inserted above the body on tier load).
-  function showIntro() {
-    if (card.querySelector('.owners-intro')) return;
-    var intro = el('div', 'detail-card-body owners-intro');
-    intro.textContent = 'Mint these NFTs by paying the project — your payment also mints ' + (project.tokenSymbol || 'tokens') + ', and any overpayment becomes credits.';
-    card.insertBefore(intro, body);
+  // Instead of an intro blurb, surface the connected user's unclaimed credit balance for this project
+  // (NFT overpayment becomes credits) as a key/value at the top — only when they actually hold some.
+  function showCredits() {
+    var acct = getAccount();
+    if (!acct) return;
+    read(project.chainId, 'JBTokens', creditBalanceOfAbi, 'creditBalanceOf', [acct, BigInt(project.id)]).then(toBigInt).then(function (credit) {
+      if (!credit || credit <= 0n || !wrap.isConnected || card.querySelector('.shop-credits')) return;
+      var row = el('div', 'about-link-row shop-credits');
+      var k = el('span', 'about-link-key'); k.textContent = 'Your credits:'; row.appendChild(k);
+      var v = el('span', 'token-line-val'); v.textContent = formatTokens(credit) + ' ' + (project.tokenSymbol || 'credits'); row.appendChild(v);
+      card.insertBefore(row, body);
+    }).catch(function () {});
   }
 
   // Operator: add an NFT tier (shown once we know the 721 hook). Appended after the body resolves.
@@ -587,15 +575,41 @@ function renderShopSection(project, shop, cart) {
       appendAddTierFoot(s);
       return;
     }
-    showIntro();
+    showCredits();
     appendAddTierFoot(s);
     body.className = 'shop-body';
     // Group tiers under category headings (juicy-vision layout), sorted by category number.
     var cats = [], seen = {};
     s.tiers.forEach(function (t) { if (!seen[t.category]) { seen[t.category] = true; cats.push(t.category); } });
     cats.sort(function (a, b) { return a - b; });
-    var catNames = {}, headingEls = {}, refreshers = {};
+    var catNames = {}, headingEls = {}, refreshers = {}, chipEls = {};
     function catLabel(c) { return catNames[c] || (project.storeCategories && project.storeCategories[c]) || (c === 0 ? 'General' : 'Category ' + c); }
+
+    // Lead with category filter chips: click to show only the selected categories (multi-select);
+    // "All" (the default) shows everything.
+    var selectedCats = null; // null = All
+    function applyFilter() {
+      cats.forEach(function (c) { var g = headingEls[c] && headingEls[c].parentElement; if (g) g.style.display = (!selectedCats || selectedCats.has(c)) ? '' : 'none'; });
+      if (chipEls.all) chipEls.all.classList.toggle('active', !selectedCats);
+      cats.forEach(function (c) { if (chipEls[c]) chipEls[c].classList.toggle('active', !!selectedCats && selectedCats.has(c)); });
+    }
+    if (cats.length > 1) {
+      var chipRow = el('div', 'shop-cat-chips');
+      var mkChip = function (label, onClick) { var b = el('button', 'shop-cat-chip'); b.textContent = label; b.addEventListener('click', onClick); return b; };
+      chipEls.all = mkChip('All', function () { selectedCats = null; applyFilter(); });
+      chipRow.appendChild(chipEls.all);
+      cats.forEach(function (c) {
+        chipEls[c] = mkChip(catLabel(c), function () {
+          if (!selectedCats) selectedCats = new Set();
+          if (selectedCats.has(c)) selectedCats.delete(c); else selectedCats.add(c);
+          if (!selectedCats.size) selectedCats = null; // deselecting the last one returns to All
+          applyFilter();
+        });
+        chipRow.appendChild(chipEls[c]);
+      });
+      body.appendChild(chipRow);
+    }
+
     cats.forEach(function (c) {
       var group = el('div', 'shop-cat-group');
       var heading = el('div', 'shop-cat-heading'); heading.textContent = catLabel(c); group.appendChild(heading);
@@ -603,11 +617,12 @@ function renderShopSection(project, shop, cart) {
       var grid = el('div', 'shop-grid'); group.appendChild(grid);
       s.tiers.filter(function (t) { return t.category === c; }).forEach(function (t) {
         grid.appendChild(renderTierCard(project, s, t, function (cat, name) {
-          if (cat != null && name && !catNames[cat]) { catNames[cat] = name; if (headingEls[cat]) headingEls[cat].textContent = name; }
+          if (cat != null && name && !catNames[cat]) { catNames[cat] = name; if (headingEls[cat]) headingEls[cat].textContent = name; if (chipEls[cat]) chipEls[cat].textContent = name; }
         }, cart, refreshers));
       });
       body.appendChild(group);
     });
+    applyFilter();
     if (cart) cart.subscribe(function (id) { if (refreshers[id]) refreshers[id](); });
 
     // Focus hook: clicking a tier in the Pay-card strip scrolls to (and briefly highlights) its card here.
@@ -620,6 +635,25 @@ function renderShopSection(project, shop, cart) {
     }
     if (_activeDetail) _activeDetail.shopFocus = focusTier;
   }).catch(function () { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = 'Could not load the shop.'; } });
+
+  // Mobile checkout bar — on phones the Pay card (where the purchase is completed) is a separate stacked
+  // section above the tabs, so once items are in the cart show a bar that scrolls up to it. Hidden on
+  // desktop, where the Pay card sits in the always-visible left column beside the shop.
+  var checkoutBar = el('button', 'shop-checkout-bar');
+  checkoutBar.addEventListener('click', function () {
+    var pay = document.querySelector('.project-detail-left .paybox') || document.querySelector('.paybox');
+    if (pay) pay.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  function updateCheckout() {
+    if (!wrap.isConnected) return;
+    var entries = cart ? cart.entries() : {};
+    var n = 0; for (var k in entries) n += entries[k];
+    checkoutBar.textContent = 'Checkout · ' + n + ' item' + (n === 1 ? '' : 's') + ' →';
+    checkoutBar.classList.toggle('shown', n > 0);
+  }
+  if (cart) cart.subscribe(updateCheckout);
+  updateCheckout();
+  wrap.appendChild(checkoutBar);
   return wrap;
 }
 
@@ -777,10 +811,10 @@ function openAddTierModal(project, shop) {
     rec.isEmpty = function () { return !(recip.value || '').trim() && !(pct.value || '').trim(); };
     rec.parse = function () {
       var v = (recip.value || '').trim();
-      if (/^0x[0-9a-fA-F]{40}$/.test(v)) return { projectId: 0, beneficiary: v };
+      if (isAddr(v)) return { projectId: 0, beneficiary: v };
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
         var b = (benef.value || '').trim();
-        if (!/^0x[0-9a-fA-F]{40}$/.test(b)) throw new Error('Project #' + v + ' needs a token beneficiary address');
+        if (!isAddr(b)) throw new Error('Project #' + v + ' needs a token beneficiary address');
         return { projectId: Number(v), beneficiary: b };
       }
       throw new Error('Enter a 0x address or a project ID');
@@ -884,7 +918,7 @@ function openAddTierModal(project, shop) {
   addCatSave.addEventListener('click', function (e) {
     e.preventDefault();
     var names = catInputs.map(function (i) { return (i.value || '').trim(); }).filter(Boolean);
-    function setS(msg, kind) { addCatStatus.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); addCatStatus.textContent = msg; }
+    var setS = makeStatusSetter(addCatStatus, 'operator-edit-status');
     if (!names.length) { setS('Enter at least one category name', 'error'); return; }
     if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     addStoreCategories(project, allChains, operatorAddr, names, setS).then(function (newIds) {
@@ -892,7 +926,7 @@ function openAddTierModal(project, shop) {
       rebuildCatOptions(); categorySelect.value = String(newIds[0]); lastCatValue = categorySelect.value;
       catNameRows.innerHTML = ''; catInputs = []; addCatNameRow();
       addCatBox.style.display = 'none'; categorySelect.style.display = '';
-    }).catch(function (err) { setS((err && (err.shortMessage || err.message)) || 'Failed to add categories', 'error'); });
+    }).catch(function (err) { setS(errMessage(err, 'Failed to add categories'), 'error'); });
   });
 
   // Extra options — reserved mints, tier-level splits, governance, flags.
@@ -1025,7 +1059,7 @@ function openAddTierModal(project, shop) {
   content.appendChild(actions);
 
   var modal = openModal('Add items for sale', content);
-  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   addAnother.addEventListener('click', function (e) {
     e.preventDefault();
@@ -1048,7 +1082,7 @@ function openAddTierModal(project, shop) {
     if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
     busy = true;
     submitAddTiers(project, selected, operatorAddr, forms, setStatus, modal).catch(function (err) {
-      busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Add items failed', 'error');
+      busy = false; setStatus(errMessage(err, 'Add items failed'), 'error');
     });
   });
 }
@@ -1056,10 +1090,10 @@ function openAddTierModal(project, shop) {
 // Parse a plain split row ({recip, benef}) → {projectId, beneficiary}. Mirrors the live-row parse().
 function parsePlainSplit(s) {
   var v = (s.recip || '').trim();
-  if (/^0x[0-9a-fA-F]{40}$/.test(v)) return { projectId: 0, beneficiary: v };
+  if (isAddr(v)) return { projectId: 0, beneficiary: v };
   if (/^[0-9]+$/.test(v) && Number(v) > 0) {
     var b = (s.benef || '').trim();
-    if (!/^0x[0-9a-fA-F]{40}$/.test(b)) throw new Error('project #' + v + ' needs a token beneficiary address');
+    if (!isAddr(b)) throw new Error('project #' + v + ' needs a token beneficiary address');
     return { projectId: Number(v), beneficiary: b };
   }
   throw new Error('enter a 0x address or a project ID');
@@ -1099,7 +1133,7 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     }
     if (reserveFreq > 0) {
       if (supply === 1) { setStatus(label + 'a reserved item needs a supply of at least 2 (or unlimited)', 'error'); return; }
-      if (!/^0x[0-9a-fA-F]{40}$/.test(reserveBenef)) { setStatus(label + 'enter a reserve beneficiary address', 'error'); return; }
+      if (!isAddr(reserveBenef)) { setStatus(label + 'enter a reserve beneficiary address', 'error'); return; }
     }
     // Split sales — plain split data; resolve project recipients across chains.
     var splitDefs = [], splitTotalPct = 0;
@@ -1606,7 +1640,7 @@ var JB_PERMISSION_DESCS = {
   1: 'Grants every permission below — full control of the project.',
   2: 'Queue new rulesets (change duration, issuance, payouts, and rules).',
   3: 'Launch the project’s first rulesets.',
-  4: 'Cash out (redeem) project tokens for treasury funds on a holder’s behalf.',
+  4: 'Cash out (redeem) project tokens for a share of the project’s funds on a holder’s behalf.',
   5: 'Send the project’s scheduled payouts to its splits.',
   6: 'Move the project’s funds to a new terminal version.',
   7: 'Update the project’s metadata (name, logo, description).',
@@ -1646,11 +1680,6 @@ var JB_PERMISSION_DESCS = {
 function permissionLabel(id) { return JB_PERMISSION_LABELS[id] || ('Permission #' + id); }
 function permissionDesc(id) { return JB_PERMISSION_DESCS[id] || ''; }
 // Decode a packed permissions bitmap (uint256/BigInt) → sorted array of granted permission ids.
-function decodePackedPermissions(packed) {
-  var p = toBigInt(packed || 0); var ids = [];
-  for (var i = 1; i <= JB_PERMISSION_MAX_ID; i++) { if ((p >> BigInt(i)) & 1n) ids.push(i); }
-  return ids;
-}
 var totalBalanceOfAbi = [{
   type: 'function', name: 'totalBalanceOf', stateMutability: 'view',
   inputs: [{ name: 'holder', type: 'address' }, { name: 'projectId', type: 'uint256' }],
@@ -2203,7 +2232,7 @@ var borrowableAbi = [{
     { name: 'decimals', type: 'uint256' },
     { name: 'currency', type: 'uint256' },
   ],
-  // borrowableNow = min(capacity, live treasury surplus); 0 while the revnet's cash-out delay is active.
+  // borrowableNow = min(capacity, live project surplus); 0 while the revnet's cash-out delay is active.
   outputs: [{ name: 'borrowableNow', type: 'uint256' }, { name: 'borrowableCapacity', type: 'uint256' }],
 }];
 // REVOwner (a revnet's data hook): when loans/cash-outs unlock. 0 = no delay; future = locked until then.
@@ -2299,19 +2328,14 @@ function formatEth(wei) {
 }
 
 // Format a raw token amount with its own decimals + symbol (e.g. USDC at 6 decimals, ETH at 18).
+// Precision rules come from the shared formatAdaptive; '—' (null/non-finite) stays symbol-less.
 function formatBalance(amount, decimals, symbol) {
   if (amount === null || amount === undefined) return '—';
-  var n = Number(amount) / Math.pow(10, (decimals == null ? 18 : decimals));
-  if (!isFinite(n)) return '—';
-  var s;
-  if (n === 0) s = '0';
-  else if (n >= 1) s = (n === Math.round(n)) ? n.toLocaleString('en-US', { maximumFractionDigits: 0 }) : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  else if (n >= 0.0001) s = n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-  else s = n.toPrecision(2);
-  return s + (symbol ? ' ' + symbol : '');
+  var s = formatAdaptive(Number(amount) / Math.pow(10, (decimals == null ? 18 : decimals)));
+  return s === '—' ? s : s + (symbol ? ' ' + symbol : '');
 }
 
-// The project's primary accounting token (what its treasury balance is denominated in). Reads the
+// The project's primary accounting token (what its balance is denominated in). Reads the
 // terminal's accounting contexts; defaults to native ETH when none are recorded.
 function resolveAcctToken(chainId, pid) {
   var fallback = { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' };
@@ -2366,7 +2390,7 @@ function fetchEthUsd(chainId) {
     .catch(function () { ETH_USD_CACHE[chainId] = null; return null; });
 }
 
-// One chain's treasury balances across EVERY accounting token the terminal accepts (a project can hold
+// One chain's balances across EVERY accounting token the terminal accepts (a project can hold
 // both ETH and USDC). Falls back to the primary accounting token if no contexts are recorded.
 function readChainBalances(chainId, pid) {
   var term = getAddress('JBMultiTerminal', chainId);
@@ -2387,7 +2411,7 @@ function readChainBalances(chainId, pid) {
   }).catch(function () { return { chainId: chainId, tokens: [] }; });
 }
 
-// Cross-chain treasury breakdown across ALL accounting tokens + a single USD total. ETH converts via the
+// Cross-chain balance breakdown across ALL accounting tokens + a single USD total. ETH converts via the
 // live feed; USDC (and other non-ETH accounting tokens) are taken at $1. One row per (chain, token). Cached.
 function fetchBalanceBreakdown(project) {
   if (project._balBreakdown) return Promise.resolve(project._balBreakdown);
@@ -2949,7 +2973,24 @@ var _container = null;
 var _gridWrapper = null;
 var _cache = {}; // "<chainId>-<projectId>" -> projectData
 var _groups = null; // cached buildGroups result
-var _activeDetail = null; // { key, showTab } for the currently open project detail
+var _activeDetail = null; // { key, showTab, project, isMobile } for the currently open project detail
+
+// Activity-card-vs-tab and the column stacking are decided at build time from the viewport width. If the
+// window is resized ACROSS the 600px breakpoint while a detail is open, re-render it so Activity moves
+// between the left column (wide) and the first subtab (narrow). Debounced; only fires on an actual cross.
+if (typeof window !== 'undefined') {
+  var _resizeT = null;
+  window.addEventListener('resize', function () {
+    if (!_activeDetail || !_activeDetail.project) return;
+    if (_resizeT) clearTimeout(_resizeT);
+    _resizeT = setTimeout(function () {
+      if (!_activeDetail || !_activeDetail.project) return;
+      var nowMobile = !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
+      if (nowMobile === _activeDetail.isMobile) return; // breakpoint not crossed
+      showProjectDetail(_activeDetail.project, _activeDetail.current, true, _activeDetail.subtab);
+    }, 150);
+  });
+}
 
 function ensureGroups() {
   if (_groups) return Promise.resolve(_groups);
@@ -3025,7 +3066,7 @@ function renderGrid() {
   topRow.appendChild(netSel);
   setTimeout(function () { fitSelectWidth(netSel); }, 0);
   var rightCtrls = el('div', 'discover-top-ctrls');
-  var createBtn = el('button', 'tab-create'); createBtn.textContent = '+ Create';
+  var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
   createBtn.title = 'Create — in tuning before launch';
   createBtn.addEventListener('click', function () { openCreateFlow(); });
   rightCtrls.appendChild(createBtn);
@@ -3130,7 +3171,6 @@ function renderProjectCard(project) {
   card.addEventListener('click', function () { showProjectDetail(project); });
 
   var cardLbl = function (text) { var s = el('span', 'discover-card-lbl'); s.textContent = text; return s; };
-  var cardSep = function () { var s = el('span', 'discover-card-sep'); s.textContent = '|'; return s; };
 
   // Line 1: logo + name + #id.
   var head = el('div', 'discover-card-header');
@@ -3140,17 +3180,22 @@ function renderProjectCard(project) {
   head.appendChild(name);
   card.appendChild(head);
 
-  // Line 2: Type | On (chain logos).
+  // Line 2: Type | On (chain logos). Each label+value is a nowrap pair joined by a breakable space;
+  // the "|" is drawn by CSS ::after inside the pair so it trails the previous line on a wrap.
   var meta1 = el('div', 'discover-card-meta');
-  meta1.appendChild(cardLbl('Flavor: '));
+  var flavorPair = el('span', 'discover-card-pair');
+  flavorPair.appendChild(cardLbl('Flavor: '));
   var typeVal = el('span', 'discover-card-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
-  meta1.appendChild(typeVal);
+  flavorPair.appendChild(typeVal);
+  meta1.appendChild(flavorPair);
   if (project.chains && project.chains.length) {
-    meta1.appendChild(cardSep());
-    meta1.appendChild(cardLbl('On: '));
+    meta1.appendChild(document.createTextNode(' '));
+    var onPair = el('span', 'discover-card-pair');
+    onPair.appendChild(cardLbl('On: '));
     var cardLogos = el('span', 'discover-chain-logos');
     project.chains.forEach(function (c) { cardLogos.appendChild(projectChainLogo(project, c)); });
-    meta1.appendChild(cardLogos);
+    onPair.appendChild(cardLogos);
+    meta1.appendChild(onPair);
   }
   card.appendChild(meta1);
 
@@ -3290,8 +3335,11 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
 
   var leftCol = el('div', 'project-detail-left');
   leftCol.appendChild(renderPayCard(project, nftCart));
-  activityCardEl = renderActivityCard(project);
-  leftCol.appendChild(activityCardEl);
+  // On phones, Activity becomes the first detail subtab (added below, and default) instead of a tall
+  // always-on card wedged between Pay and the tabs; on wider screens it stays in the left column.
+  var activityAsTab = !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
+  activityCardEl = renderActivityCard(project, { asTab: activityAsTab });
+  if (!activityAsTab) leftCol.appendChild(activityCardEl);
   columns.appendChild(leftCol);
 
   var rightCol = el('div', 'project-detail-right');
@@ -3304,7 +3352,6 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
       wrap.appendChild(renderAboutSection(project));
       return wrap;
     },
-    Treasury: function () { return renderTreasurySection(project); },
     Owners: function () { return renderOwnersSection(project, { tabName: 'Owners', initialSubTab: initialSubTab }); },
     Ops: function () { return renderOpsSection(project); },
   };
@@ -3342,13 +3389,15 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   var shopState = { shop: null, loaded: false };
   builders.Shop = function () {
     if (shopState.loaded && shopState.shop) return renderShopSection(project, shopState.shop, nftCart);
-    var wrap = el('div', 'detail-section'); var card = el('div', 'detail-card');
+    var wrap = el('div', 'detail-section'); var card = el('div', 'detail-card shop-card');
     var t = el('div', 'detail-card-title'); t.textContent = 'Shop'; card.appendChild(t);
     var b = el('div', 'shop-body'); b.textContent = 'Loading…'; card.appendChild(b);
     wrap.appendChild(card); return wrap;
   };
   tabs.push('Shop');
   if (project.isRevnet) tabs.push(ownerTabName); // Operator sits to the right of Shop
+  // Phones: Activity is the first subtab and the default (the left-column card is omitted above).
+  if (activityAsTab) { builders.Activity = function () { return activityCardEl; }; tabs.unshift('Activity'); }
   var tabRow = el('div', 'project-detail-tabs');
   var contentArea = el('div', 'project-detail-content');
   var built = {};
@@ -3413,7 +3462,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   }).catch(function () {});
 
   rightCol.appendChild(tabRow);
-  _activeDetail = { key: detailKey, showTab: showTab, current: startTab };
+  _activeDetail = { key: detailKey, showTab: showTab, current: startTab, project: project, isMobile: activityAsTab };
   showTab(startTab);
   rightCol.appendChild(contentArea);
   columns.appendChild(rightCol);
@@ -4019,7 +4068,7 @@ function renderPayCard(project, cart) {
         var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
         buildDirectSwapErc20Tx(state.chainId, ds.pool, state.token.address, amt, dsMinOut, beneficiary, statusCb)
           .then(function (tx) { sendPay(tx); })
-          .catch(function (e) { status.className = 'paybox-status error'; status.textContent = (e && (e.shortMessage || e.message)) || 'Swap authorization failed'; });
+          .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Swap authorization failed'); });
       });
       return;
     }
@@ -4096,7 +4145,7 @@ function renderPayCard(project, cart) {
       var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
       buildRouterPermit2Metadata(state.chainId, state.token.address, beneficiary, terminal, amt, statusCb)
         .then(function (meta) { var p = Object.assign({}, txParams); p.args = args.slice(); p.args[metaIdx] = meta; sendPay(p); })
-        .catch(function (e) { status.className = 'paybox-status error'; status.textContent = (e && (e.shortMessage || e.message)) || 'Permit2 authorization failed'; });
+        .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Permit2 authorization failed'); });
     });
     } // proceed()
   }
@@ -4224,36 +4273,43 @@ function renderDetailHeader(project) {
   header.appendChild(topRow);
 
   // Meta line: type | chains | owner/operator | site.
-  var metaLine = el('div', 'detail-head-meta');
   var lbl = function (text) { var s = el('span', 'detail-head-lbl'); s.textContent = text; return s; };
-  var sep = function () { var s = el('span', 'detail-head-sep'); s.textContent = '|'; return s; };
-  metaLine.appendChild(lbl('Flavor: '));
+  var mkPair = function (labelText, nodes) {
+    var p = el('span', 'detail-head-pair');
+    p.appendChild(lbl(labelText));
+    nodes.forEach(function (n) { p.appendChild(n); });
+    return p;
+  };
+  // Mirror the Discover card's stacked meta: "Flavor | On" on one row (the "|" is a ::after bar
+  // BETWEEN the two pairs), then the authority on its own row (no leading bar), then Site. Each row
+  // is a block, so they get clean vertical spacing and the separator never trails/orphans on a wrap.
+  var ownerWarn = el('span', 'detail-head-ownerwarn');
+  var row1 = el('div', 'detail-head-meta');
   var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
-  metaLine.appendChild(typeVal);
+  row1.appendChild(mkPair('Flavor: ', [typeVal]));
   if (project.chains && project.chains.length) {
-    metaLine.appendChild(sep());
-    metaLine.appendChild(lbl('On: '));
+    row1.appendChild(document.createTextNode(' '));
     var logos = el('span', 'detail-chain-logos');
     for (var c = 0; c < project.chains.length; c++) logos.appendChild(projectChainLogo(project, project.chains[c]));
-    metaLine.appendChild(logos);
+    row1.appendChild(mkPair('On: ', [logos]));
   }
-  metaLine.appendChild(sep());
-  metaLine.appendChild(lbl(projectAuthorityLabel(project) + ': '));
-  metaLine.appendChild(addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)));
+  header.appendChild(row1);
+  var row2 = el('div', 'detail-head-meta');
+  row2.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
+  header.appendChild(row2);
+  if (project.infoUri) {
+    var href = project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri);
+    var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
+    a.className = 'detail-head-url'; // long URLs may wrap; the "Site:" label stays attached at the start
+    a.textContent = project.infoUri.replace(/^https?:\/\//, '');
+    var row3 = el('div', 'detail-head-meta');
+    row3.appendChild(mkPair('Site: ', [a]));
+    header.appendChild(row3);
+  }
   // Flag when the on-chain owner isn't the same on every chain (a per-chain ownership split).
-  var ownerWarn = el('span', 'detail-head-ownerwarn'); metaLine.appendChild(ownerWarn);
   if (!project.isRevnet && (project.chains || []).length > 1) {
     fetchOwnersPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
   }
-  if (project.infoUri) {
-    metaLine.appendChild(sep());
-    metaLine.appendChild(lbl("Site: "));
-    var href = project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri);
-    var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = project.infoUri.replace(/^https?:\/\//, '');
-    metaLine.appendChild(a);
-  }
-  header.appendChild(metaLine);
   return header;
 }
 
@@ -4426,15 +4482,18 @@ function renderOtherInfoPanel(project) {
   grid.appendChild(infoItem('Token name', tnVal));
   var tsVal = el('span', 'info-token-symbol'); tsVal.textContent = project.tokenSymbol || 'credits';
   grid.appendChild(infoItem('Token symbol', tsVal));
-  grid.appendChild(infoItem('Token type', project.tokenAddress ? 'ERC-20' : 'Credits'));
   if (project.tokenAddress) {
-    grid.appendChild(infoItem('Token address', fullAddressNode(project.tokenAddress)));
+    // "Token on" sits above "Token address"; "Token type" drops to the row beside Operator.
     var onIds = orderedProjectChainIds(project);
     if (onIds.length) {
       var onWrap = el('span', 'token-on-chains');
       onIds.forEach(function (id) { onWrap.appendChild(chainAddrBubble(id, project.tokenAddress)); });
       grid.appendChild(infoItem('Token on', onWrap));
     }
+    grid.appendChild(infoItem('Token address', fullAddressNode(project.tokenAddress)));
+    grid.appendChild(infoItem('Token type', 'ERC-20'));
+  } else {
+    grid.appendChild(infoItem('Token type', 'Credits'));
   }
 
   // Operator/owner — ENS-resolved, with a transfer CTA below (revnets only — REVOwner.setOperatorOf).
@@ -4500,14 +4559,14 @@ function openTransferOperatorModal(project) {
   content.appendChild(actions);
 
   var modal = openModal('Transfer operator', content);
-  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     if (busy) return;
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     submitTransferOperator(project, selected, operatorAddr, addrInput.value, setStatus, modal).catch(function (err) {
-      busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Transfer failed', 'error');
+      busy = false; setStatus(errMessage(err, 'Transfer failed'), 'error');
     });
     busy = true;
   });
@@ -4564,12 +4623,12 @@ function openTransferAuthorityModal(project) {
     e.preventDefault(); if (busy) return; busy = true;
     var to = (addrInput.value || '').trim();
     (async function () {
-      if (!/^0x[0-9a-fA-F]{40}$/.test(to)) { setStatus('Enter a valid 0x address', 'error'); busy = false; return; }
+      if (!isAddr(to)) { setStatus('Enter a valid 0x address', 'error'); busy = false; return; }
       var buildCall = isRev
         ? function (cid) { var revOwner = getAddress('REVOwner', cid); if (!revOwner) throw new Error('No REVOwner on ' + chainNameOf(cid)); return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [BigInt(project.id), to] }) }; }
         : function (cid) { var jbp = getAddress('JBProjects', cid); if (!jbp) throw new Error('No JBProjects on ' + chainNameOf(cid)); return { to: jbp, data: encodeFunctionData({ abi: jbProjectsTransferAbi, functionName: 'transferFrom', args: [authorityAddr, to, BigInt(project.id)] }) }; };
       var res = await runAuthorityActionAcrossChains(project, chains, authorityAddr, buildCall, { label: isRev ? 'Transfer operator' : 'Transfer ownership', title: isRev ? 'Transfer operator' : 'Transfer ownership' }, setStatus)
-        .catch(function (err) { setStatus((err && (err.shortMessage || err.message)) || 'Transfer failed', 'error'); return null; });
+        .catch(function (err) { setStatus(errMessage(err, 'Transfer failed'), 'error'); return null; });
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
@@ -4582,7 +4641,7 @@ function openTransferAuthorityModal(project) {
 
 async function submitTransferOperator(project, selectedChains, operatorAddr, newOperator, setStatus, modal) {
   newOperator = (newOperator || '').trim();
-  if (!/^0x[0-9a-fA-F]{40}$/.test(newOperator)) { setStatus('Enter a valid 0x operator address', 'error'); return; }
+  if (!isAddr(newOperator)) { setStatus('Enter a valid 0x operator address', 'error'); return; }
   if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
   var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
   if (!account) return;
@@ -4705,7 +4764,7 @@ function openEditProjectModal(project) {
   content.appendChild(actions);
 
   var modal = openModal('Edit project', content);
-  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault();
@@ -4719,7 +4778,7 @@ function openEditProjectModal(project) {
     };
     submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal).catch(function (err) {
       busy = false;
-      setStatus((err && (err.shortMessage || err.message)) || 'Edit failed', 'error');
+      setStatus(errMessage(err, 'Edit failed'), 'error');
     });
     busy = true;
   });
@@ -4910,7 +4969,7 @@ function openEditTokenModal(project) {
   content.appendChild(actions);
 
   var modal = openModal(deployed ? 'Edit token name & symbol' : 'Set token name & symbol', content);
-  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault();
@@ -5372,12 +5431,13 @@ function makeMultiselect(config) {
   };
 }
 
-function renderActivityCard(project) {
+function renderActivityCard(project, opts) {
   var card = el('div', 'detail-card');
   // Header row: title on the left, filter controls right-aligned.
   var head = el('div', 'activity-head');
   var title = el('div', 'detail-card-title');
-  title.textContent = 'Activity';
+  // When the card IS the "Activity" subtab (phones), the tab already says ACTIVITY — name the card "Recent".
+  title.textContent = (opts && opts.asTab) ? 'Recent' : 'Activity';
   head.appendChild(title);
   // Filter controls (chain + event-type combos). Hidden until rows load and there's >1 value to pick.
   // Chain filter is a MULTI-select over every chain the project is deployed on; type is single-select.
@@ -6486,7 +6546,7 @@ function adminAuditPrompt() {
     'Also: the admin is the OPERATOR (not owner) of the protocol fee revnet (project #1, NANA).',
     '',
     'Verify each claim, citing the exact contract + function:',
-    '1. None of these functions can move, mint, burn, or freeze an arbitrary project’s tokens or treasury.',
+    '1. None of these functions can move, mint, burn, or freeze an arbitrary project’s tokens or funds.',
     '2. A project’s controller, terminals, rulesets, payouts, surplus allowance, and token are governed by that project’s OWN owner/permissions — e.g. JBDirectory.setControllerOf / setTerminalsOf are project-permissioned (_requirePermission), NOT onlyOwner.',
     '3. setIsAllowedToSetFirstController only gates who may set a project’s FIRST controller (affects new projects); it cannot change an existing project’s controller.',
     '4. Identify the strongest INDIRECT levers (e.g. a wrong default price feed affecting projects relying on the default; removing an allowed sucker deployer or token mapping affecting future bridging) and assess blast radius — these are availability/mispricing risks, not direct fund theft.',
@@ -6616,7 +6676,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
     var inp = el('input', 'operator-edit-jwt'); inp.type = 'text'; inp.placeholder = f.placeholder || ''; content.appendChild(inp);
     inputs[f.name] = { get: function () {
       var raw = (inp.value || '').trim();
-      if (f.kind === 'address') { if (!/^0x[0-9a-fA-F]{40}$/.test(raw)) throw new Error('Enter a valid address for ' + f.label); return raw; }
+      if (f.kind === 'address') { if (!isAddr(raw)) throw new Error('Enter a valid address for ' + f.label); return raw; }
       if (f.kind === 'bytes32') { if (!/^0x[0-9a-fA-F]{64}$/.test(raw)) throw new Error('Enter a 32-byte hex value (0x + 64 hex) for ' + f.label); return raw; }
       if (f.kind === 'uint') { if (!/^\d+$/.test(raw)) throw new Error('Enter a whole number for ' + f.label); return BigInt(raw); }
       return raw;
@@ -6660,7 +6720,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
       };
       var shim = { owner: adminAddr, chains: selected, chainId: homeChainId, isRevnet: false };
       var res = await runAuthorityActionAcrossChains(shim, selected, adminAddr, buildCall, { label: action.title, title: action.title, gas: action.gas }, setStatus)
-        .catch(function (err) { setStatus((err && (err.shortMessage || err.message)) || 'Failed', 'error'); return null; });
+        .catch(function (err) { setStatus(errMessage(err, 'Failed'), 'error'); return null; });
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
@@ -6850,7 +6910,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
     e.preventDefault(); if (busy) return;
     if (gate && !gate.ok()) { setStatus('Tick the confirmation box to proceed.', 'error'); return; }
     var operator = editing ? existingOperator : (opInput.value || '').trim();
-    if (!/^0x[0-9a-fA-F]{40}$/.test(operator)) { setStatus('Enter a valid operator address', 'error'); return; }
+    if (!isAddr(operator)) { setStatus('Enter a valid operator address', 'error'); return; }
     var ids = []; for (var i = 1; i <= JB_PERMISSION_MAX_ID; i++) if (checks[i].checked) ids.push(i);
     busy = true;
     (async function () {
@@ -6863,7 +6923,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, account, buildCall, { label: 'Set permissions', title: editing ? 'Edit permissions' : 'Add operator', gas: 200000n }, setStatus)
-        .catch(function (err) { setStatus((err && (err.shortMessage || err.message)) || 'Failed', 'error'); return null; });
+        .catch(function (err) { setStatus(errMessage(err, 'Failed'), 'error'); return null; });
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
@@ -6976,13 +7036,13 @@ function openPowerModal(project, action) {
       var raw = (inp.value || '').trim();
       if (f.kind === 'address') {
         if (!raw && f.infra) return ''; // blank → buildArgs resolves the per-chain infra default
-        if (!/^0x[0-9a-fA-F]{40}$/.test(raw)) throw new Error('Enter a valid address for ' + f.label);
+        if (!isAddr(raw)) throw new Error('Enter a valid address for ' + f.label);
         return raw;
       }
       if (f.kind === 'addressList') {
         if (!raw && f.infra) return [];
         var list = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-        list.forEach(function (a2) { if (!/^0x[0-9a-fA-F]{40}$/.test(a2)) throw new Error('Invalid address in ' + f.label + ': ' + a2); });
+        list.forEach(function (a2) { if (!isAddr(a2)) throw new Error('Invalid address in ' + f.label + ': ' + a2); });
         return list;
       }
       if (f.kind === 'amount') { if (!raw) throw new Error('Enter ' + f.label); return parseAmount(raw, 18).toString(); }
@@ -7029,7 +7089,7 @@ function openPowerModal(project, action) {
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas }, setStatus)
-        .catch(function (err) { setStatus((err && (err.shortMessage || err.message)) || 'Failed', 'error'); return null; });
+        .catch(function (err) { setStatus(errMessage(err, 'Failed'), 'error'); return null; });
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
@@ -7117,7 +7177,7 @@ function openAddAccountingContextModal(project) {
   // Auto-read decimals for a pasted ERC-20 (best-effort, custom mode only).
   tokenInput.addEventListener('change', function () {
     var t = (tokenInput.value || '').trim();
-    if (mode.kind !== 'custom' || !/^0x[0-9a-fA-F]{40}$/.test(t)) return;
+    if (mode.kind !== 'custom' || !isAddr(t)) return;
     if (t.toLowerCase() === NATIVE_TOKEN.toLowerCase()) { decInput.value = '18'; return; }
     clientFor(project.chainId).readContract({ address: t, abi: ERC20_DECIMALS_ABI, functionName: 'decimals', args: [] }).then(function (d) { if (d != null) decInput.value = String(Number(d)); }).catch(function () {});
   });
@@ -7148,7 +7208,7 @@ function openAddAccountingContextModal(project) {
     (async function () {
       var selected = selectedChains();
       if (!selected.length) { setStatus('Select at least one chain', 'error'); busy = false; return; }
-      if (mode.kind === 'custom' && !/^0x[0-9a-fA-F]{40}$/.test((tokenInput.value || '').trim())) { setStatus('Enter a valid token address (or pick Native / USDC)', 'error'); busy = false; return; }
+      if (mode.kind === 'custom' && !isAddr((tokenInput.value || '').trim())) { setStatus('Enter a valid token address (or pick Native / USDC)', 'error'); busy = false; return; }
       var dec = decimalsForMode();
       // Per-chain token: Native = same address everywhere; USDC = each chain's own; custom = the pasted address.
       var usable = selected.filter(function (c) { return !!tokenForChain(c.id); });
@@ -7161,7 +7221,7 @@ function openAddAccountingContextModal(project) {
       };
       var shim = Object.assign({}, project, { chains: usable });
       var res = await runAuthorityActionAcrossChains(shim, usable, operatorAddr, buildCall, { label: 'Add accounting token', title: 'Add accounting token', gas: 300000n }, setStatus)
-        .catch(function (err) { setStatus((err && (err.shortMessage || err.message)) || 'Failed', 'error'); return null; });
+        .catch(function (err) { setStatus(errMessage(err, 'Failed'), 'error'); return null; });
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
@@ -7601,83 +7661,6 @@ function buildFundsTokenBlock(project, kind, showHead) {
   return wrap;
 }
 
-function renderTreasurySection(project) {
-  var section = el('div', 'detail-section');
-
-  var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title');
-  title.textContent = 'Treasury';
-  card.appendChild(title);
-  card.appendChild(kvRow('Balance (native)', formatEth(project.balance)));
-  card.appendChild(kvRow('Token supply', formatTokens(project.totalSupply)));
-  card.appendChild(kvRow('Pending reserved', formatTokens(project.pendingReserved)));
-  section.appendChild(card);
-
-  // Reserved-token splits (read from JBSplits for the current ruleset).
-  var splitsCard = el('div', 'detail-card');
-  var splitsTitle = el('div', 'detail-card-title');
-  splitsTitle.textContent = 'Reserved token recipients';
-  splitsCard.appendChild(splitsTitle);
-  if (project.reservedSplits && project.reservedSplits.length) {
-    for (var s = 0; s < project.reservedSplits.length; s++) {
-      var sp = project.reservedSplits[s];
-      var pct = (Number(sp.percent) / 1e9 * 100);
-      var sRow = el('div', 'detail-split-row');
-      var sName = el('span', 'detail-split-name');
-      sName.appendChild(splitAccountNode(sp, project, project.chainId));
-      sRow.appendChild(sName);
-      var sPct = el('span', 'detail-split-percent'); sPct.textContent = pct.toFixed(pct % 1 === 0 ? 0 : 2) + '%'; sRow.appendChild(sPct);
-      splitsCard.appendChild(sRow);
-    }
-  } else {
-    var body = el('div', 'detail-card-body');
-    body.textContent = project.reservedSplits ? 'No reserved-token splits configured.' : 'Could not read splits.';
-    splitsCard.appendChild(body);
-  }
-  section.appendChild(splitsCard);
-
-  // RevLoans exposure (revnet-only).
-  if (project.isRevnet) {
-    var loanCard = el('div', 'detail-card');
-    var lt = el('div', 'detail-card-title');
-    lt.textContent = 'Loans (RevLoans)';
-    loanCard.appendChild(lt);
-    loanCard.appendChild(kvRow('Total borrowed', formatEth(project.loanBorrowed)));
-    loanCard.appendChild(kvRow('Collateral locked', formatTokens(project.loanCollateral) + (project.tokenSymbol ? ' ' + project.tokenSymbol : '')));
-
-    // Borrowable-amount quote: how much ETH a given collateral could borrow now, + the source fee.
-    var qpid = BigInt(project.id);
-    var q = el('div', 'detail-autoissue-row');
-    var qin = document.createElement('input');
-    qin.type = 'number';
-    qin.className = 'field detail-autoissue-input';
-    qin.placeholder = (project.tokenSymbol ? project.tokenSymbol : 'token') + ' to lock as collateral';
-    q.appendChild(qin);
-    var qbtn = document.createElement('button');
-    qbtn.className = 'detail-check-btn';
-    qbtn.textContent = 'Quote';
-    q.appendChild(qbtn);
-    loanCard.appendChild(q);
-    var qres = el('div', 'detail-autoissue-results');
-    loanCard.appendChild(qres);
-    qbtn.addEventListener('click', function () {
-      var v = parseFloat(qin.value);
-      if (!(v > 0)) { qres.textContent = 'Enter a collateral amount.'; return; }
-      qres.textContent = 'Quoting…';
-      // v tokens → 18-decimal bigint (6-decimal input precision is plenty for a quote).
-      var collateral = BigInt(Math.round(v * 1e6)) * 1000000000000n;
-      read(project.chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [qpid, collateral, 18n, 1n])
-        .then(function (r) {
-          qres.textContent = 'Borrowable: ' + formatAmount(r[0], 18) + ' ETH | source fee: ' + formatAmount(r[1], 18) + ' ETH';
-        })
-        .catch(function () { qres.textContent = 'Quote unavailable (needs a price feed / nonzero treasury).'; });
-    });
-
-    section.appendChild(loanCard);
-  }
-
-  return section;
-}
 
 // Revnet stages = the queued rulesets, oldest→newest. Each stage's issuance (weight),
 // issuance cut, and duration are read straight off the ruleset; the current stage is marked.
@@ -8108,9 +8091,10 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
   var nowX = Math.max(padL, Math.min(W - padR, X(now)));
   var nowShow = past || (now > t0 && now < t1);
   var nearRight = nowX > W - padR - 40;
+  // Just the marker line here; the "Today" label is an HTML overlay (mountChart) so it stays at the
+  // regular font size instead of being shrunk by the chart's responsive viewBox.
   var nowLine = nowShow
     ? '<line x1="' + nowX.toFixed(1) + '" y1="' + padT + '" x2="' + nowX.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#1a8a8a" stroke-width="1.5" stroke-dasharray="4 3"/>'
-      + '<text x="' + (nearRight ? nowX - 4 : nowX + 4).toFixed(1) + '" y="' + (padT + 12) + '" font-size="10" fill="#1a8a8a"' + (nearRight ? ' text-anchor="end"' : '') + '>Today</text>'
     : '';
   // AMM gets a Bendystraw historical trade line (swapEvents) when indexed; otherwise the
   // current pool price is a flat reference line.
@@ -8145,10 +8129,9 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     + '<path d="' + area + '" fill="rgba(110,196,196,0.18)"/>'
     + '<path d="' + line + '" fill="none" stroke="#6ec4c4" stroke-width="2"/>'
     + dividers + nowLine + ammLine + cashLine
-    + '<text x="' + padL + '" y="' + (H - 6) + '" font-size="10" fill="rgba(0,0,0,0.5)">' + y0 + '</text>'
-    + '<text x="' + (W - padR) + '" y="' + (H - 6) + '" font-size="10" fill="rgba(0,0,0,0.5)" text-anchor="end">' + y1 + '</text>'
     + '</svg>';
-  return { svg: svg, geo: { t0: t0, t1: t1, W: W, padL: padL, padR: padR } };
+  // Axis years + "Today" go to mountChart as HTML overlays (regular font, not viewBox-shrunk).
+  return { svg: svg, geo: { t0: t0, t1: t1, W: W, padL: padL, padR: padR, nowX: nowX, nowShow: nowShow, nearRight: nearRight, y0: y0, y1: y1 } };
 }
 
 // Render the chart into a wrap + attach a hover tooltip/guide showing each series' value at that time.
@@ -8186,6 +8169,14 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
     });
   }
   holder.innerHTML = c.svg;
+  // Axis years + "Today" as HTML overlays so they render at the regular font size (the chart SVG's
+  // responsive viewBox would otherwise shrink them to ~6px on a phone).
+  var g = c.geo;
+  var lbl = '<span class="chart-axis chart-axis-l">' + g.y0 + '</span><span class="chart-axis chart-axis-r">' + g.y1 + '</span>';
+  if (g.nowShow) {
+    lbl += '<span class="chart-today' + (g.nearRight ? ' chart-today-r' : '') + '" style="left:' + (g.nowX / g.W * 100).toFixed(1) + '%">Today</span>';
+  }
+  holder.insertAdjacentHTML('beforeend', lbl);
   wrap._chart = { geo: c.geo, sorted: sorted, sym: sym, amm: amm, cashout: cashout, cashoutHistory: cashoutHistory || [], ammHistory: ammHistory || [] };
 }
 
@@ -8429,7 +8420,7 @@ function renderAutoIssuance(project, stages) {
         btn.disabled = false;
         btn.textContent = 'Distribute';
         setConfirmBusy(ctx, false);
-        setConfirmStatus(ctx, (err && (err.shortMessage || err.message)) || 'Could not connect wallet', 'error');
+        setConfirmStatus(ctx, errMessage(err, 'Could not connect wallet'), 'error');
       });
       return;
     }
@@ -10049,7 +10040,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… token beneficiary for that project';
   benefRow.appendChild(benef); recipBox.appendChild(benefRow); // under the recipient field, in its column
   var ensAddr = null; // resolved address for the current ENS input
-  function isEnsName(v) { return v.indexOf('.') !== -1 && !/^0x[0-9a-fA-F]{40}$/.test(v) && !/^[0-9]+$/.test(v); }
+  function isEnsName(v) { return v.indexOf('.') !== -1 && !isAddr(v) && !/^[0-9]+$/.test(v); }
   function refresh() {
     var v = (recip.value || '').trim();
     benefRow.style.display = /^[0-9]+$/.test(v) ? '' : 'none';
@@ -10060,7 +10051,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
         if (addr) { ensAddr = addr; ensHint.className = 'splits-edit-hint'; ensHint.textContent = addr; }
         else { ensAddr = null; ensHint.className = 'splits-edit-hint warn'; ensHint.textContent = 'No address set for ' + v; }
       });
-    } else if (/^0x[0-9a-fA-F]{40}$/.test(v)) {
+    } else if (isAddr(v)) {
       ensAddr = null; ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = 'Looking up ENS…';
       ensNameOf(v).then(function (name) {
         if ((recip.value || '').trim() !== v) return;
@@ -10089,14 +10080,14 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
       // Hook split: the hook keys off the distributing project; projectId/beneficiary are pass-through.
       if (rec.lpHook) return { projectId: 0n, beneficiary: opts.ownerAddr || getAccount() || ZERO_ADDRESS };
       var v = (recip.value || '').trim();
-      if (/^0x[0-9a-fA-F]{40}$/.test(v)) return { projectId: 0n, beneficiary: v };
+      if (isAddr(v)) return { projectId: 0n, beneficiary: v };
       if (isEnsName(v)) {
         if (!ensAddr) throw new Error(v + ' hasn’t resolved to an address yet');
         return { projectId: 0n, beneficiary: ensAddr };
       }
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
         var b = (benef.value || '').trim();
-        if (!/^0x[0-9a-fA-F]{40}$/.test(b)) throw new Error('Project #' + v + ' recipient needs a token beneficiary address');
+        if (!isAddr(b)) throw new Error('Project #' + v + ' recipient needs a token beneficiary address');
         return { projectId: BigInt(v), beneficiary: b };
       }
       throw new Error('Enter a 0x address, ENS name, or a project ID');
@@ -10164,7 +10155,7 @@ function openQueueRulesetModal(project) {
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Queue ruleset'; actions.appendChild(submit);
   content.appendChild(actions);
   var modal = openModal('Queue ruleset', content);
-  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   // The queue form IS the create flow's Rulesets tab. We drive it with the same create-flow `state` shape
   // (stages + afterMode), prefill stage 1 from the project's current ruleset, render via `renderStages`,
@@ -10338,7 +10329,7 @@ function openQueueRulesetModal(project) {
       busy = false;
       if (res && res.safe && res.queued > 0) { queuedToSafe = true; submit.textContent = 'Go to Safe execution'; }
     }).catch(function (err) {
-      busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Queue failed', 'error');
+      busy = false; setStatus(errMessage(err, 'Queue failed'), 'error');
     });
   });
 }
@@ -10500,14 +10491,14 @@ function openEditSplitsModal(project, opts) {
   content.appendChild(actions);
 
   var modal = openModal(modalTitle, content);
-  function setStatus(msg, kind) { status.className = 'operator-edit-status' + (kind ? ' ' + kind : ''); status.textContent = msg; }
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     if (busy) return;
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal, groupId).catch(function (err) {
-      busy = false; setStatus((err && (err.shortMessage || err.message)) || 'Edit failed', 'error');
+      busy = false; setStatus(errMessage(err, 'Edit failed'), 'error');
     });
     busy = true;
   });
@@ -10629,7 +10620,7 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
     if (!(getAccount && getAccount())) {
       btn.disabled = true; btn.textContent = 'Connecting…'; status.textContent = 'Connecting wallet…';
       connect().then(function () { btn.disabled = false; btn.textContent = 'Distribute'; btn.click(); })
-        .catch(function (err) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = (err && (err.shortMessage || err.message)) || 'Could not connect wallet'; });
+        .catch(function (err) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = errMessage(err, 'Could not connect wallet'); });
       return;
     }
     var ctrl = getAddress('JBController', pc.id);
@@ -10673,8 +10664,14 @@ function renderAcrossChainsBody(project) {
     var balCell = function (tokens, acct) {
       var nz = (tokens || []).filter(function (t) { return t.balance != null && BigInt(t.balance) > 0n; });
       if (!nz.length) return '0 ' + ((acct && acct.symbol) || 'ETH');
+      // Single token: value with the share-% as a muted sub-line — matches the Supply column's {main, sub}.
+      if (nz.length === 1) {
+        var t = nz[0]; var k = t.symbol + '@' + t.decimals; var tot = totByTok[k] ? totByTok[k].sum : 0n; var pct = pctOf(BigInt(t.balance), tot);
+        var val = formatBalance(t.balance, t.decimals, t.symbol);
+        return pct ? { main: val, sub: pct } : val;
+      }
       var lineFor = function (t) { var k = t.symbol + '@' + t.decimals; var tot = totByTok[k] ? totByTok[k].sum : 0n; var pct = pctOf(BigInt(t.balance), tot); return formatBalance(t.balance, t.decimals, t.symbol) + (pct ? ' (' + pct + ')' : ''); };
-      return nz.length === 1 ? lineFor(nz[0]) : { lines: nz.map(lineFor) };
+      return { lines: nz.map(lineFor) };
     };
     rows.forEach(function (r) {
       var acct = r.acct || { decimals: 18, symbol: 'ETH' };
@@ -11276,7 +11273,7 @@ function renderBridgeTransactionsTable(rows, project) {
           confirmTitle: 'Transfer all queued movements',
           confirmDescription: 'This ships the bridge’s queued outbox to ' + moveChainName(s.peerChainId) + ' — it delivers all '
             + sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + ' to ' + moveChainName(s.peerChainId) + ' in a single bridge '
-            + 'message, so anyone can trigger it. The value shown is the bridge’s messaging fee — you pay it to relay the message; it’s not the bridged tokens (those move from the project’s treasury).',
+            + 'message, so anyone can trigger it. The value shown is the bridge’s messaging fee — you pay it to relay the message; it’s not the bridged tokens (those move from the project’s funds).',
           // Tx progress shows inside the confirm modal (which stays open) — keep the table row's status
           // empty so it never pushes the Execute button around. Just re-enable / refresh on terminal states.
           onStatus: function () {},
@@ -11315,16 +11312,7 @@ function openModal(titleText, contentNode) {
 function openTxConfirm(payload, onConfirm, opts) {
   opts = opts || {};
   var content = el('div', 'pay-confirm');
-  var note = el('div', 'tx-confirm-note');
-  note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
-  content.appendChild(note);
-  if (opts.description) { var desc = el('div', 'tx-confirm-desc'); desc.textContent = opts.description; content.appendChild(desc); }
-  var pre = el('pre', 'create-payload');
-  // Unquote object keys (identifier keys only) for a lighter, less JSON-y read; string values stay quoted.
-  pre.textContent = JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
-    .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
-  content.appendChild(pre);
-  appendAuditPromptLink(content, payload);
+  renderConfirmBody(content, payload, opts); // shared body: decoded summary + raw-in-details + audit link
   var status = el('div', 'modal-status tx-confirm-status');
   status.style.display = 'none';
   content.appendChild(status);
@@ -11409,7 +11397,7 @@ function readUserBalance(project, chainId) {
 }
 
 // Renders, into `balTable`, two per-chain sections: the connected wallet's project-token balance, and the
-// project's treasury (accounting-token) balances. Shared by the Cash out + Move modals.
+// project's (accounting-token) balances. Shared by the Cash out + Move modals.
 function renderBalanceTables(balTable, project, sym) {
   balTable.innerHTML = '';
   var chs = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
@@ -11444,7 +11432,7 @@ function renderBalanceTables(balTable, project, sym) {
       var byChainSym = {}; (bd.rows || []).forEach(function (r) { byChainSym[r.chainId + '|' + r.symbol] = formatAmount(r.balance, r.decimals); });
       chs.forEach(function (c) { kinds.forEach(function (k, i) { var v = cells[c.id][i]; if (v) { var key = c.id + '|' + k.symbol; v.textContent = byChainSym[key] != null ? byChainSym[key] : '0'; } }); });
     });
-  }).catch(function () { tt.textContent = 'Could not read treasury.'; });
+  }).catch(function () { tt.textContent = 'Could not read balances.'; });
 }
 
 // The protocol fee on payouts/cash-outs is paid into this project (JBConstants.FEE_BENEFICIARY_PROJECT_ID).
@@ -11672,7 +11660,7 @@ function buildCashOutModal(project, requestClose) {
       preview.appendChild(note);
     }
     // When the payout reads ~0, explain why (cash-outs draw only from surplus across all tokens): either
-    // cash-outs are off (100% tax) or there's no surplus (payout limit covers the whole treasury).
+    // cash-outs are off (100% tax) or there's no surplus (payout limit covers the whole balance).
     if (f.net != null && f.net === 0n) {
       var why = '';
       if ((state.cashOutTaxRate || 0) >= 10000) why = 'Cash outs are off this ruleset (100% cash-out tax).';
@@ -11729,11 +11717,11 @@ function buildCashOutModal(project, requestClose) {
           feeTok.textContent = '↳ get ~ ' + formatTokens(p.received) + ' ' + fsym + ' in JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' for the fee';
           if (state.outcome) state.outcome.protoToken = { amount: p.received, sym: fsym };
         } else {
-          feeTok.textContent = '↳ fee funds JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' (protocol treasury)';
+          feeTok.textContent = '↳ fee funds JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' (protocol project)';
         }
       }).catch(function () {
         if (seq !== previewSeq) return;
-        feeTok.textContent = '↳ fee funds JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' (protocol treasury)';
+        feeTok.textContent = '↳ fee funds JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' (protocol project)';
       });
     }
 
@@ -12348,11 +12336,6 @@ function fetchProjectSuckerInfra(project) {
 }
 
 // Currency symbol for a peer accounting context (currency = uint32(uint160(token))). 61166 = native ETH.
-function contextSymbol(currency, decimals) {
-  if (currency === 61166) return 'ETH';
-  if (decimals === 6) return 'USDC';
-  return 'tokens';
-}
 // Symbol for an accounting-context token by ADDRESS (registry records key contexts by token, not currency).
 function acctTokenSymbol(addr, decimals) {
   if (!addr || /^0x0+$/.test(addr) || addr.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return 'ETH';
@@ -12549,7 +12532,7 @@ function renderGossipSection(project) {
 
         var table = el('div', 'gossip-table');
         var hr = el('div', 'gossip-row gossip-head');
-        ['Chain', 'Supply', 'Balance', 'Snapshot', 'Status', ''].forEach(function (h) { var c = el('span', 'gossip-cell'); c.textContent = h; hr.appendChild(c); });
+        ['Chain', 'Status', '', 'Supply', 'Balance', 'Snapshot'].forEach(function (h) { var c = el('span', 'gossip-cell'); c.textContent = h; hr.appendChild(c); });
         table.appendChild(hr);
 
         // Dedup redundant Syncs: a stale peer's sync re-gossips everything it knows (its `extras`), so a chain
@@ -12582,12 +12565,15 @@ function renderGossipSection(project) {
           var c0 = el('span', 'gossip-cell gossip-peer');
           c0.appendChild(chainLogo(p.peerChainId, p.peerName));
           c0.appendChild(document.createTextNode(p.peerName));
-          row.appendChild(c0);
-          var c1 = el('span', 'gossip-cell'); c1.textContent = formatTokens(p.supply); row.appendChild(c1);
-          var c2 = el('span', 'gossip-cell'); c2.textContent = balStr; row.appendChild(c2);
-          var c3 = el('span', 'gossip-cell'); c3.textContent = snapshotAge(p.snapshot); row.appendChild(c3);
-          var c4 = el('span', 'gossip-cell'); row.appendChild(c4);
-          var c5 = el('span', 'gossip-cell gossip-sync-cell'); row.appendChild(c5);
+          var c1 = el('span', 'gossip-cell'); c1.textContent = formatTokens(p.supply);
+          var c2 = el('span', 'gossip-cell'); c2.textContent = balStr;
+          var c3 = el('span', 'gossip-cell'); c3.textContent = snapshotAge(p.snapshot);
+          var c4 = el('span', 'gossip-cell');
+          var c5 = el('span', 'gossip-cell gossip-sync-cell');
+          // Order: Chain, Status, Sync, then Supply / Balance / Snapshot — so the actionable Status + Sync
+          // are visible without scrolling the table on a narrow screen.
+          row.appendChild(c0); row.appendChild(c4); row.appendChild(c5);
+          row.appendChild(c1); row.appendChild(c2); row.appendChild(c3);
           // Repaint status + sync action for a given pending state. Called once now (cheap, no log scan) and
           // again if the lazy on-chain in-flight check finds a sync mid-flight — so the table never blocks.
           function paint(pending) {
@@ -13052,7 +13038,7 @@ function buildMoveModal(project) {
                 + 'This step ships that queued batch to ' + moveChainName(to) + ' — it delivers every pending move in the '
                 + 'queue (yours and anyone else’s) in one bridge message, so anyone can trigger it. The small value is the '
                 + 'bridge’s messaging fee — you pay it to relay the message; it’s not the bridged tokens (those move from the '
-                + 'project’s treasury). Once it lands, claim your tokens on ' + moveChainName(to) + ' from the Movement table.',
+                + 'project’s funds). Once it lands, claim your tokens on ' + moveChainName(to) + ' from the Movement table.',
               onStatus: onStatus, onError: fail,
               onSuccess: function () {
                 status.classList.remove('pending');
@@ -13242,8 +13228,6 @@ function lpGetAmountsForLiquidity(sp, sa, sb, L) {
 }
 function lpAlignDown(tick, s) { var r = tick % s; if (r !== 0 && tick < 0) r += s; return tick - r; }
 function lpAlignUp(tick, s) { return lpAlignDown(tick + s - 1, s); }
-function lpTickFromPoolPrice(poolPrice) { return Math.floor(Math.log(poolPrice) / Math.log(1.0001)); }
-
 // Read the buyback pool key + current sqrtPriceX96. Null if no pool.
 async function readPoolState(project, chainId) {
   var hook = getAddress('JBBuybackHook', chainId);
@@ -13941,14 +13925,14 @@ function buildAddLiquidityModal(project) {
           refreshBalances(); refreshPrice();
         }).catch(function (e) {
           ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-          var msg = (e && (e.shortMessage || e.message)) || 'Add liquidity failed';
+          var msg = errMessage(e, 'Add liquidity failed');
           ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
         });
       }, { title: 'Confirm add liquidity', confirmText: 'Confirm & add liquidity', closeOnConfirm: false });
     }).catch(function (e) {
       btn.disabled = false;
       status.className = 'modal-status error';
-      var msg = (e && (e.shortMessage || e.message)) || 'Could not prepare';
+      var msg = errMessage(e, 'Could not prepare');
       status.textContent = msg.length > 160 ? msg.slice(0, 160) + '…' : msg;
     });
   });

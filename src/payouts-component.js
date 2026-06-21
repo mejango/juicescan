@@ -9,13 +9,13 @@ import {
   getChainTokens, parseAmount, parseHashDefaults,
 } from './component-base.js';
 
-var sendPayoutsAbi = [{
+export var sendPayoutsAbi = [{
   type: 'function', name: 'sendPayoutsOf', stateMutability: 'nonpayable',
   inputs: [
     { name: 'projectId', type: 'uint256' },
     { name: 'token', type: 'address' },
     { name: 'amount', type: 'uint256' },
-    { name: 'currency', type: 'uint32' },
+    { name: 'currency', type: 'uint256' }, // JBCurrencyIds is uint256 on-chain — uint32 here changed the selector → tx reverted
     { name: 'minTokensPaidOut', type: 'uint256' },
   ],
   outputs: [{ name: '', type: 'uint256' }],

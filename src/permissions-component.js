@@ -4,7 +4,7 @@
 
 import {
   el, createComponentWrapper, createWalletButton, executeTransaction,
-  renderError, getAddress, getAccount, parseHashDefaults,
+  renderError, getAddress, getAccount, parseHashDefaults, isAddr,
 } from './component-base.js';
 
 var setPermissionsAbi = [{
@@ -55,9 +55,11 @@ var PERMISSION_IDS = [
   { id: 31, name: 'SET_ROUTER_TERMINAL', desc: 'Configure router terminal' },
   { id: 32, name: 'MAP_SUCKER_TOKEN', desc: 'Map cross-chain token' },
   { id: 33, name: 'DEPLOY_SUCKERS', desc: 'Deploy cross-chain bridges' },
-  { id: 34, name: 'SUCKER_SAFETY', desc: 'Emergency token recovery' },
-  { id: 35, name: 'SET_SUCKER_DEPRECATION', desc: 'Deprecate sucker' },
-  { id: 36, name: 'HIDE_TOKENS', desc: 'Hide tokens' },
+  // Canonical JBPermissionIds.sol: 34=SET_SUCKER_PEER, 35=SUCKER_SAFETY, 36=SET_SUCKER_DEPRECATION.
+  // (Previously shifted — checking "SUCKER_SAFETY" granted SET_SUCKER_PEER, a materially more dangerous role.)
+  { id: 34, name: 'SET_SUCKER_PEER', desc: 'Set a sucker’s cross-chain peer' },
+  { id: 35, name: 'SUCKER_SAFETY', desc: 'Emergency token recovery' },
+  { id: 36, name: 'SET_SUCKER_DEPRECATION', desc: 'Deprecate sucker' },
   { id: 37, name: 'OPEN_LOAN', desc: 'Open loan against tokens' },
   { id: 38, name: 'REALLOCATE_LOAN', desc: 'Move loan collateral' },
   { id: 39, name: 'REPAY_LOAN', desc: 'Repay loan' },
@@ -237,7 +239,7 @@ export function renderPermissionsComponent() {
     state.error = null;
     state.txStatus = null;
 
-    if (!state.operator || !/^0x[0-9a-fA-F]{40}$/.test(state.operator)) {
+    if (!state.operator || !isAddr(state.operator)) {
       state.error = 'Enter a valid operator address'; updateUI(); return;
     }
 

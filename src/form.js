@@ -4,7 +4,7 @@
 
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange } from './wallet.js';
-import { confirmTransactionModal } from './component-base.js';
+import { confirmTransactionModal, truncAddr } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
@@ -346,7 +346,7 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
         outputArea.innerHTML = '<div class="tx-success">TX submitted: ' + hash + '</div>';
         return pub.waitForTransactionReceipt({ hash: hash });
       }).then(function(receipt) {
-        outputArea.innerHTML = '<div class="tx-success">Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncateAddress(receipt.transactionHash) + '</div>';
+        outputArea.innerHTML = '<div class="tx-success">Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash) + '</div>';
       }).catch(function(err) {
         outputArea.innerHTML = '';
         outputArea.appendChild(renderError(formatError(err, abi)));
@@ -404,9 +404,4 @@ function formatError(err, abi) {
     return 'Reverted: ' + err.data;
   }
   return err.shortMessage || err.message || 'Unknown error';
-}
-
-function truncateAddress(addr) {
-  if (!addr || addr.length < 10) return addr;
-  return addr.slice(0, 6) + '...' + addr.slice(-4);
 }

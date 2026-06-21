@@ -68,7 +68,7 @@ export function renderCashOutComponent() {
     if (state.beneficiary === 'custom' && state.customBeneficiary) params.beneficiary = state.customBeneficiary;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Token holder burns their own tokens to reclaim treasury assets.' });
+  }, { permissionNote: 'Token holder burns their own tokens to reclaim a share of the project\'s funds.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -198,7 +198,33 @@ export function renderCashOutComponent() {
     }).catch(function() {});
   }
 
-  function executeCashOut() {
+  // JBMultiTerminal.previewCashOutFrom — hook-aware reclaim (net of any data-hook fee, before the 2.5%
+  // protocol fee). Used to set a slippage floor so a surplus drop / MEV can't turn a burn into ~0 reclaim.
+  var previewCashOutAbi = [{
+    type: 'function', name: 'previewCashOutFrom', stateMutability: 'view',
+    inputs: [
+      { name: 'holder', type: 'address' }, { name: 'projectId', type: 'uint256' },
+      { name: 'cashOutCount', type: 'uint256' }, { name: 'tokenToReclaim', type: 'address' },
+      { name: 'beneficiary', type: 'address' }, { name: 'metadata', type: 'bytes' },
+    ],
+    outputs: [
+      { name: 'ruleset', type: 'tuple', components: [
+        { name: 'cycleNumber', type: 'uint256' }, { name: 'id', type: 'uint256' },
+        { name: 'basedOnId', type: 'uint256' }, { name: 'start', type: 'uint256' },
+        { name: 'duration', type: 'uint256' }, { name: 'weight', type: 'uint256' },
+        { name: 'weightCutPercent', type: 'uint256' }, { name: 'approvalHook', type: 'address' },
+        { name: 'metadata', type: 'uint256' },
+      ]},
+      { name: 'reclaimAmount', type: 'uint256' },
+      { name: 'cashOutTaxRate', type: 'uint256' },
+      { name: 'hookSpecifications', type: 'tuple[]', components: [
+        { name: 'hook', type: 'address' }, { name: 'noop', type: 'bool' },
+        { name: 'amount', type: 'uint256' }, { name: 'metadata', type: 'bytes' },
+      ]},
+    ],
+  }];
+
+  async function executeCashOut() {
     state.error = null;
     state.txStatus = null;
 
@@ -225,12 +251,24 @@ export function renderCashOutComponent() {
     var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
     if (!terminalAddr) { state.error = 'No terminal address for this chain'; updateUI(); return; }
 
+    // Slippage floor: 95% of the previewed reclaim (covers the 2.5% protocol fee + ~2.5% tolerance). Reverts
+    // a burn that would reclaim near-zero (surplus drained / MEV) instead of letting it silently succeed.
+    var minReclaimed = 0n;
+    try {
+      var preview = await executeRead({
+        chainId: state.selectedChain, address: terminalAddr, abi: previewCashOutAbi, functionName: 'previewCashOutFrom',
+        args: [holder, BigInt(state.projectId), cashOutCount, state.selectedToken.address, beneficiary, '0x'],
+      });
+      var reclaim = preview && (preview.reclaimAmount != null ? preview.reclaimAmount : preview[1]);
+      if (reclaim != null && BigInt(reclaim) > 0n) minReclaimed = BigInt(reclaim) * 95n / 100n;
+    } catch (_) {} // cash-out delay active or read failed → fall back to no floor (tx still reviewable)
+
     executeTransaction({
       chainId: state.selectedChain,
       address: terminalAddr,
       abi: cashOutAbi,
       functionName: 'cashOutTokensOf',
-      args: [holder, BigInt(state.projectId), cashOutCount, state.selectedToken.address, 0n, beneficiary, '0x'],
+      args: [holder, BigInt(state.projectId), cashOutCount, state.selectedToken.address, minReclaimed, beneficiary, '0x'],
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

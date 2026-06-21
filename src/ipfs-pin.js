@@ -37,34 +37,6 @@ export function hasPinata() { return !!getPinataJwt(); }
 
 // Settings strip for the DATA tab — mirrors renderBendystrawSettings. Lets the user paste a Pinata
 // JWT used by the Create flow to pin logos/metadata. Stored in this browser only.
-export function renderPinataSettings() {
-  var panel = document.createElement('div');
-  panel.className = 'bendystraw-settings';
-  var note = document.createElement('div');
-  note.className = 'bendystraw-settings-note';
-  note.innerHTML = 'IPFS pinning for the <b>+ Create</b> flow (project logo + metadata). '
-    + 'Paste a <a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Pinata JWT</a> '
-    + 'with pinFileToIPFS + pinJSONToIPFS scopes. Stored only in this browser.';
-  panel.appendChild(note);
-  var row = document.createElement('div');
-  row.className = 'bendystraw-settings-row';
-  var input = document.createElement('input');
-  input.type = 'password';
-  input.className = 'field bendystraw-key-input';
-  input.placeholder = 'pinata JWT (for project creation)';
-  input.value = getPinataJwt();
-  input.autocomplete = 'off';
-  input.spellcheck = false;
-  var t = null;
-  input.addEventListener('input', function () {
-    if (t) clearTimeout(t);
-    t = setTimeout(function () { setPinataJwt(input.value.trim()); }, 250);
-  });
-  row.appendChild(input);
-  panel.appendChild(row);
-  return panel;
-}
-
 // Pin a File/Blob. Returns "ipfs://<cid>". Throws on misconfig or HTTP error (caller shows the message).
 export async function pinFile(file, name) {
   var jwt = getPinataJwt();

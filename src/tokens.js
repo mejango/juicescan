@@ -46,8 +46,3 @@ export function renderTokenSelect(onSelect) {
   return container;
 }
 
-export function getTokenDecimals(address) {
-  const tokens = getChainTokens(getCurrentChainId());
-  const match = tokens.find(t => t.address.toLowerCase() === address.toLowerCase());
-  return match ? match.decimals : 18;
-}

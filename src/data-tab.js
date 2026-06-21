@@ -28,7 +28,7 @@ export function renderDataTab() {
   container.innerHTML = '';
 
   // Compact settings strip at the top. (No Pinata field — the Create flow pins via a baked-in scoped key.)
-  container.appendChild(renderBendystrawSettings());
+  container.appendChild(renderBendystrawSettings({ onNetworkChange: renderDataTab }));
 
   // Sections, identical structure to ACTIONS.
   for (const section of queries.sections) {

@@ -39,25 +39,40 @@ export async function bendystrawQuery(graphql, variables) {
   return body.data;
 }
 
-export function renderBendystrawSettings() {
+export function renderBendystrawSettings(opts) {
+  opts = opts || {};
   const panel = document.createElement('div');
   panel.className = 'bendystraw-settings';
 
   const isMainnet = _host === HOST_MAINNET;
   const note = document.createElement('div');
   note.className = 'bendystraw-settings-note';
-  note.innerHTML = 'Read-only GraphQL of Juicebox V6 events. Indexer host follows the Discover '
-    + 'network toggle (' + (isMainnet ? 'bendystraw.xyz' : 'testnet.bendystraw.xyz') + '). '
+  note.innerHTML = 'Read-only GraphQL of Juicebox V6 events. Indexer host follows the network '
+    + 'toggle (' + (isMainnet ? 'bendystraw.xyz' : 'testnet.bendystraw.xyz') + '). '
     + '<a href="https://bendystraw-dev.up.railway.app/schema" target="_blank" rel="noopener">Open schema</a>.';
   panel.appendChild(note);
 
   const row = document.createElement('div');
   row.className = 'bendystraw-settings-row';
 
-  const netBadge = document.createElement('span');
-  netBadge.className = 'bendystraw-net-btn active';
-  netBadge.textContent = isMainnet ? 'mainnet' : 'testnet';
-  row.appendChild(netBadge);
+  // Mainnet/testnet dropdown — same control as the Discover header. Switches the indexer host, persists
+  // the shared `jb-network` key (so Discover follows), and re-renders the DATA tab via the callback.
+  const netSel = document.createElement('select');
+  netSel.className = 'discover-net-select';
+  [['mainnet', 'Mainnets'], ['testnet', 'Testnets']].forEach(function (o) {
+    const op = document.createElement('option');
+    op.value = o[0]; op.textContent = o[1];
+    if ((isMainnet ? 'mainnet' : 'testnet') === o[0]) op.selected = true;
+    netSel.appendChild(op);
+  });
+  netSel.title = 'Switch between mainnet and testnet deployments';
+  netSel.addEventListener('change', function () {
+    const mode = netSel.value === 'mainnet' ? 'mainnet' : 'testnet';
+    try { localStorage.setItem('jb-network', mode); } catch (_) {}
+    setBendystrawNetwork(mode);
+    if (opts.onNetworkChange) opts.onNetworkChange();
+  });
+  row.appendChild(netSel);
 
   panel.appendChild(row);
   return panel;
