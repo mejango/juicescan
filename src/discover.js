@@ -1020,9 +1020,10 @@ function openAddTierModal(project, shop) {
   var votingInput = el('input', 'operator-edit-jwt'); votingInput.type = 'number'; votingInput.step = '1'; votingInput.min = '0'; votingInput.placeholder = '0'; votingWrap.appendChild(votingInput);
   votingCb.addEventListener('change', function () { votingWrap.style.display = votingCb.checked ? '' : 'none'; if (!votingCb.checked) votingInput.value = ''; });
 
-  // "+ Add another item" sits above the chain selector (the chains apply to every staged item).
-  var addAnother = el('a', 'operator-cta'); addAnother.href = '#'; addAnother.textContent = '+ Add another item';
-  addAnother.style.display = 'inline-block'; addAnother.style.marginTop = '24px'; content.appendChild(addAnother);
+  // "+ Add another item" on its own line, divided from the current item's fields above; sits above the chain
+  // selector (the chains apply to every staged item).
+  var addAnother = el('a', 'operator-cta tier-add-another'); addAnother.href = '#'; addAnother.textContent = '+ Add another item';
+  content.appendChild(addAnother);
   var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '24px'; clbl.textContent = 'On'; content.appendChild(clbl);
   var chainBox = el('div', 'splits-edit-chains');
   var chainChecks = allChains.map(function (c) {
