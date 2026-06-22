@@ -4610,9 +4610,9 @@ function renderDetailHeader(project) {
     nodes.forEach(function (n) { p.appendChild(n); });
     return p;
   };
-  // "Flavor | On | Operator" on one row (the "|" is a ::after bar BETWEEN pairs); the pairs are inline +
-  // nowrap, so the row stays on one line on desktop and only wraps to multiple lines when the viewport is
-  // too narrow (mobile). Site is its own row (a URL can be long).
+  // "Flavor | On | Operator | Site" on one row (the "|" is a ::after bar BETWEEN pairs); each pair is inline +
+  // nowrap as a UNIT, so the row stays on one line on desktop and only wraps whole key:val pairs to the next
+  // line when the viewport is too narrow (mobile) — a label never separates from its value.
   var ownerWarn = el('span', 'detail-head-ownerwarn');
   var row1 = el('div', 'detail-head-meta');
   var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
@@ -4625,16 +4625,15 @@ function renderDetailHeader(project) {
   }
   row1.appendChild(document.createTextNode(' '));
   row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id)), ownerWarn]));
-  header.appendChild(row1);
   if (project.infoUri) {
     var href = project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri);
     var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener';
-    a.className = 'detail-head-url'; // long URLs may wrap; the "Site:" label stays attached at the start
+    a.className = 'detail-head-url';
     a.textContent = project.infoUri.replace(/^https?:\/\//, '');
-    var row3 = el('div', 'detail-head-meta');
-    row3.appendChild(mkPair('Site: ', [a]));
-    header.appendChild(row3);
+    row1.appendChild(document.createTextNode(' '));
+    row1.appendChild(mkPair('Site: ', [a]));
   }
+  header.appendChild(row1);
   // Flag when the on-chain owner isn't the same on every chain (a per-chain ownership split).
   if (!project.isRevnet && (project.chains || []).length > 1) {
     fetchOwnersPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
