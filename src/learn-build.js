@@ -934,11 +934,11 @@ export function renderBuildTab() {
 
   wrap.appendChild(guideSection('build-clients', '20. WEB CLIENTS', [
     'This explorer is a complete, client-only reference implementation — there is no backend. It is a static bundle (loaded from IPFS) that reads the chain over public RPCs and builds every Juicebox transaction in the browser. The code ships unminified on purpose, so everything you see here is code you can read.',
-    'That makes it a working spec you can hand to an LLM. Every section in Build and Learn has a "copy link" button next to its header — copy it, paste the URL to your LLM, and ask it to recreate that feature against the V6 contracts. Point the model at this site\'s repo (the README maps every transaction to the contract function it calls) and the contract source, and it has everything it needs to rebuild it.'
+    'That makes it a working spec you can hand to an LLM. Every section in Build and Learn has a link icon next to its header that copies a deep link — paste it to your LLM and ask it to recreate that feature against the V6 contracts. And every interactive component in Discover (Pay, Cash Out, Mint, and the rest) has a link icon at its bottom that copies a ready-made prompt — naming the exact code file and contract function — so you can hand a whole feature like your pay flow straight to a model.'
   ], [
     stepList([
-      'Find the feature here — this section, or Pay, Cash Out, Launch, a Hook — and click "copy link" by its header.',
-      'Paste the link to your LLM: "Recreate this against the Juicebox V6 contracts."',
+      'In Discover, click the link icon at the bottom of a component (e.g. the Pay card) to copy a recreation prompt; or in Build/Learn, click the icon by a section header to copy its link.',
+      'Paste it to your LLM and ask: "Recreate this against the Juicebox V6 contracts."',
       'Give it the two repos below. The README\'s transaction→contract map shows exactly which function each action calls.',
       'Mirror the pattern: every transaction is a pure buildXArgs() that round-trips through the contract ABI — copy the builder and keep its round-trip test.'
     ]),
@@ -1014,6 +1014,24 @@ export function renderWhyTab() {
 
 // --- Helper builders ---
 
+// A small link icon next to a section header that copies a deep link to that section (paste to an LLM).
+function sectionLinkButton(id) {
+  var btn = document.createElement('button');
+  btn.className = 'guide-copy-link';
+  btn.type = 'button';
+  btn.title = 'Copy a link to this section';
+  btn.setAttribute('aria-label', 'Copy link to this section');
+  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+  btn.addEventListener('click', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var url = location.origin + location.pathname + location.search + '#' + id;
+    var ok = function () { btn.classList.add('guide-copy-link--ok'); btn.title = 'Copied!'; setTimeout(function () { btn.classList.remove('guide-copy-link--ok'); btn.title = 'Copy a link to this section'; }, 1300); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, ok);
+    else { try { var ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
+  });
+  return btn;
+}
+
 function guideSection(id, title, paragraphs, extras) {
   var section = document.createElement('div');
   section.className = 'guide-section';
@@ -1026,19 +1044,7 @@ function guideSection(id, title, paragraphs, extras) {
   h.appendChild(titleSpan);
   // Copy a deep link to this section — paste it to an LLM ("recreate this feature against the V6 contracts")
   // or share it. The link routes back to this tab + scrolls here (see applyHash in app.js).
-  var copyBtn = document.createElement('button');
-  copyBtn.className = 'guide-copy-link';
-  copyBtn.type = 'button';
-  copyBtn.textContent = 'copy link';
-  copyBtn.title = 'Copy a link to this section';
-  copyBtn.addEventListener('click', function (e) {
-    e.preventDefault(); e.stopPropagation();
-    var url = location.origin + location.pathname + location.search + '#' + id;
-    var done = function () { copyBtn.textContent = 'copied'; setTimeout(function () { copyBtn.textContent = 'copy link'; }, 1400); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, done);
-    else { try { var ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} done(); }
-  });
-  h.appendChild(copyBtn);
+  h.appendChild(sectionLinkButton(id));
   section.appendChild(h);
 
   for (var i = 0; i < paragraphs.length; i++) {

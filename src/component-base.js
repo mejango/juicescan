@@ -1016,11 +1016,61 @@ export function lookupDecimals(chainId, tokenAddr, callback) {
 
 // --- Component wrapper factory ---
 
+// Each component → the code file + contract function it builds, so the "copy prompt" link can tell an LLM
+// exactly what to read to reproduce it.
+var COMPONENT_SPECS = {
+  pay: { file: 'pay-component.js (buildPayArgs)', fn: 'JBMultiTerminal.pay' },
+  cashout: { file: 'cashout-component.js (buildCashOutArgs)', fn: 'JBMultiTerminal.cashOutTokensOf' },
+  payouts: { file: 'payouts-component.js (buildSendPayoutsArgs)', fn: 'JBMultiTerminal.sendPayoutsOf' },
+  mint: { file: 'mint-component.js (buildMintArgs)', fn: 'JBController.mintTokensOf' },
+  burn: { file: 'burn-component.js (buildBurnArgs)', fn: 'JBController.burnTokensOf' },
+  'deploy-erc20': { file: 'deploy-erc20-component.js (buildDeployErc20Args)', fn: 'JBController.deployERC20For' },
+  reserved: { file: 'reserved-component.js (buildSendReservedArgs)', fn: 'JBController.sendReservedTokensToSplitsOf' },
+  permissions: { file: 'permissions-component.js (buildSetPermissionsArgs)', fn: 'JBPermissions.setPermissionsFor' },
+  launch: { file: 'create-flow.js (buildLaunchArgs) + launch-component.js', fn: 'JBController.launchProjectFor' },
+  'queue-ruleset': { file: 'queue-ruleset-component.js (buildQueueRulesetsArgs)', fn: 'JBController.queueRulesetsOf' },
+};
+var LINK_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+
+// An LLM prompt that gives the model the code + contract + repos needed to reproduce this component.
+export function componentReproPrompt(title, prefix) {
+  var s = COMPONENT_SPECS[prefix];
+  return 'Reproduce the Juicebox V6 "' + (title || prefix) + '" web component.\n'
+    + (s ? 'It builds a ' + s.fn + ' transaction.\n' : '')
+    + 'Reference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicebox-v6-website'
+    + (s ? ' — read src/' + s.file + '. The transaction args are a pure builder round-tripped through the contract ABI; the README maps every action to its contract function.' : '.') + '\n'
+    + 'V6 contracts: https://github.com/Bananapus/nana-core-v6.\n'
+    + 'Recreate it against the V6 contracts, matching the transaction encoding (arg order, decimals, currency id, slippage floor) exactly.\n'
+    + 'Live reference: ' + location.href;
+}
+
+// Small link icon (bottom of a component) that copies the repro prompt — so a builder can hand any component
+// straight to an LLM. Title-cased to a recognizable chain-link glyph; flashes teal on copy.
+export function componentPromptLink(title, prefix) {
+  var btn = el('button', 'comp-prompt-link');
+  btn.type = 'button';
+  btn.title = 'Copy an LLM prompt to recreate this component';
+  btn.setAttribute('aria-label', 'Copy an LLM prompt to recreate this component');
+  btn.innerHTML = LINK_ICON_SVG;
+  btn.addEventListener('click', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var text = componentReproPrompt(title, prefix);
+    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.title = 'Prompt copied!'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.title = 'Copy an LLM prompt to recreate this component'; }, 1400); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, ok);
+    else { try { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
+  });
+  return btn;
+}
+
 export function createComponentWrapper(title, prefix, state, getEmbedParams, opts) {
   var wrapper = el('div', 'component-wrapper' + ((opts && opts.wide) ? ' component-wrapper-wide' : ''));
 
   var body = el('div', 'component-body');
   wrapper.appendChild(body);
+  // A "copy LLM prompt" link at the bottom of every component — recreate this element with your own LLM.
+  var foot = el('div', 'comp-prompt-foot');
+  foot.appendChild(componentPromptLink(title, prefix));
+  wrapper.appendChild(foot);
 
   // Attach metadata to the DOM element for toolbar access
   wrapper._compTitle = title;

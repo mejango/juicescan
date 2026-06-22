@@ -2008,18 +2008,24 @@ input[type="checkbox"].field {
   letter-spacing: 0.5px;
   margin-bottom: 8px;
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
 }
-/* Per-section "copy link" — small + muted so it doesn't compete with the header. */
+/* Per-section link icon — sits right after the title, small + muted so it doesn't compete with the header. */
 .guide-copy-link {
-  font-family: inherit; font-size: 11px; font-weight: normal; letter-spacing: 0;
+  display: inline-flex; align-items: center;
   color: var(--muted-2); background: none; border: none; cursor: pointer;
-  padding: 2px 4px; white-space: nowrap; opacity: 0.55; flex: 0 0 auto;
+  padding: 0 2px; opacity: 0.5; flex: 0 0 auto;
 }
 .guide-copy-link:hover { opacity: 1; color: var(--c-teal); }
+.guide-copy-link--ok { opacity: 1; color: var(--c-teal); }
 .guide-info a { color: var(--c-teal); text-decoration: none; border-bottom: 1px solid currentColor; }
+/* "Copy LLM prompt" link at the bottom of every Discover component (recreate this element with your LLM). */
+.comp-prompt-foot { display: flex; justify-content: flex-end; padding: 6px 2px 0; }
+.comp-prompt-link { display: inline-flex; align-items: center; color: var(--muted-2); background: none; border: none; cursor: pointer; padding: 2px; opacity: 0.45; }
+.comp-prompt-link:hover { opacity: 1; color: var(--c-teal); }
+.comp-prompt-link--ok { opacity: 1; color: var(--c-teal); }
 
 .guide-text {
   color: var(--text);
