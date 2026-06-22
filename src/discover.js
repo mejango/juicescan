@@ -6418,13 +6418,26 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           var sub = el('div', 'backoffice-sub');
           sub.appendChild(document.createTextNode(nconf + '/' + need + ' signatures'));
           if (nconf >= need) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('ready to execute')); }
+          // Surface the two things a label-only view hides: a DELEGATECALL (runs arbitrary code in the Safe's
+          // context) and any ETH the tx sends. Both are WYSIWYS-critical before a signer approves.
+          var isDelegate = Number(tx.operation) === 1;
+          var ethVal = (function () { try { return BigInt(tx.value || 0); } catch (_) { return 0n; } })();
+          if (isDelegate) { sub.appendChild(boSep()); var dc = el('span', 'backoffice-warn'); dc.textContent = '⚠ DELEGATECALL'; sub.appendChild(dc); }
+          if (ethVal > 0n) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('sends ' + formatBalance(ethVal, 18, 'ETH'))); }
           main.appendChild(sub);
+          // Extra explicit confirmation for the dangerous cases before signing/executing.
+          var riskGate = function () {
+            if (isDelegate && !window.confirm('This Safe transaction is a DELEGATECALL — it runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets). Only proceed if you fully trust it. Continue?')) return false;
+            if (ethVal > 0n && !window.confirm('This transaction sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe. Continue?')) return false;
+            return true;
+          };
           row.appendChild(main);
           var actions = el('div', 'backoffice-actions');
           var signed = (tx.confirmations || []).some(function (cf) { return acc && cf.owner && cf.owner.toLowerCase() === acc.toLowerCase(); });
           if (isSigner && !signed && nconf < need) {
             var signBtn = el('button', 'detail-check-btn'); signBtn.textContent = 'Sign';
             signBtn.addEventListener('click', function () {
+              if (!riskGate()) return;
               signBtn.disabled = true; signBtn.textContent = 'Signing…';
               confirmSafeTx(c.id, safe, tx, acc).then(function () { signBtn.textContent = 'Signed'; setTimeout(function () { loadQueues(info); }, 1200); })
                 .catch(function (e) { signBtn.disabled = false; signBtn.textContent = 'Sign'; alert((e && e.message) || e); });
@@ -6439,6 +6452,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
             var execBtn = el('button', 'detail-check-btn'); execBtn.textContent = 'Execute';
             execBtn.addEventListener('click', function () {
               if (!(getAccount && getAccount())) { connect(); return; }
+              if (!riskGate()) return;
               execBtn.disabled = true; execBtn.textContent = 'Executing…';
               executeSafeTx(c.id, safe, tx).then(function () { execBtn.textContent = 'Sent'; setTimeout(function () { loadQueues(info); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }, 2000); })
                 .catch(function (e) { execBtn.disabled = false; execBtn.textContent = 'Execute'; alert((e && (e.shortMessage || e.message)) || e); });
@@ -10846,7 +10860,9 @@ function fetchYouPosition(project) {
       var bal = res[0], supply = res[1], acct = res[2], credit = res[3];
       var hasBal = bal != null && bal > 0n;
       var surplusJob = terminal
-        ? read(cid, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, acct.address]).catch(function () { return null; })
+        // Actual reclaimable surplus (balance − remaining payout limit), in the accounting token's units — not
+        // raw balanceOf, which overstated the cash-out value when a payout limit exists.
+        ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals || 18), BigInt(Number(BigInt(acct.address) & 0xffffffffn))]).catch(function () { return null; })
         : Promise.resolve(null);
       return surplusJob.then(function (surplus) {
         // Cash-out value: what `bal` tokens reclaim now, in the accounting token.
@@ -14053,7 +14069,8 @@ function fetchOps(project) {
     ]).then(function (res) {
       var supply = res[0] != null ? (toBigInt(res[0]) + toBigInt(res[1] || 0n)) : null, acct = res[2];
       var balP = terminal
-        ? read(cid, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, acct.address]).catch(function () { return null; })
+        // Actual reclaimable surplus (net of payout limit), not raw balanceOf — overstated the unit value.
+        ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals || 18), BigInt(Number(BigInt(acct.address) & 0xffffffffn))]).catch(function () { return null; })
         : Promise.resolve(null);
       // All accounting tokens this chain holds (a project can settle in ETH + USDC).
       var toksP = terminal ? readChainBalances(cid, pid).then(function (cr) { return cr.tokens; }).catch(function () { return []; }) : Promise.resolve([]);

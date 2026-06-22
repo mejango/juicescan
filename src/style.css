@@ -934,6 +934,10 @@ footer {
   justify-content: center;
   gap: 16px;
 }
+.footer-meta a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; }
+.footer-meta a:hover { color: var(--c-teal); }
+/* Safe-queue DELEGATECALL warning badge */
+.backoffice-warn { color: var(--warning); font-weight: 600; }
 
 /* Checkbox styling for bool inputs */
 input[type="checkbox"].field {

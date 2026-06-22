@@ -221,6 +221,16 @@ export function safeExecArgs(tx, signatures) {
   return [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0),
     BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, signatures];
 }
+// Signature bytes (no 0x) for one confirmation. A real off-chain signature passes through; an on-chain
+// approveHash confirmation has a null signature, so synthesize Safe's pre-validated signature: r = the owner
+// left-padded to 32 bytes, s = 0 (32 bytes), v = 1. Dropping these shifted owner recovery → GS026/GS020 revert.
+function sigBytesFor(c) {
+  var s = (c.signature || '').replace(/^0x/, '');
+  if (s) return s;
+  var owner = (c.owner || '').replace(/^0x/, '').toLowerCase().padStart(64, '0');
+  return owner + '0'.repeat(64) + '01';
+}
+
 export async function executeSafeTx(chainId, safe, tx) {
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
@@ -231,7 +241,7 @@ export async function executeSafeTx(chainId, safe, tx) {
   // Safe requires signatures concatenated in ascending owner-address order.
   var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
   if (!confs.length) throw new Error('No confirmations to execute with.');
-  var signatures = '0x' + confs.map(function (c) { return (c.signature || '').replace(/^0x/, ''); }).join('');
+  var signatures = '0x' + confs.map(sigBytesFor).join('');
   return wallet.writeContract({
     account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
     args: safeExecArgs(tx, signatures),
@@ -241,7 +251,7 @@ export async function executeSafeTx(chainId, safe, tx) {
 // The signatures bytes for a ready tx (owner sigs concatenated, ASC by owner address).
 function execSignatures(tx) {
   var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
-  return '0x' + confs.map(function (c) { return (c.signature || '').replace(/^0x/, ''); }).join('');
+  return '0x' + confs.map(sigBytesFor).join('');
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.

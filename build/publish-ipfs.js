@@ -28,13 +28,21 @@ function bearer() {
   return jwt;
 }
 
+// Only the built runtime app lives in dist/ — but defensively skip anything that isn't runtime so test,
+// devops, source-map, or editor files can never get pinned (users download the pinned set on every load).
+// The bundle is intentionally NOT minified so the IPFS-loaded code stays inspectable (see the audit-prompt
+// feature) — that's runtime, kept.
+function isRuntimeFile(name) {
+  if (name === '.DS_Store' || name.startsWith('.')) return false;
+  return !/\.(test|spec)\.[cm]?js$|\.map$|\.bak$|\.ts$|\.md$/i.test(name);
+}
 function walk(dir, base) {
   const out = [];
   for (const name of fs.readdirSync(dir)) {
     const full = path.join(dir, name);
     const rel = base ? base + '/' + name : name;
     if (fs.statSync(full).isDirectory()) out.push(...walk(full, rel));
-    else out.push({ full, rel });
+    else if (isRuntimeFile(name)) out.push({ full, rel });
   }
   return out;
 }
