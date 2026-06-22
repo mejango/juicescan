@@ -11346,11 +11346,18 @@ var TITLE_CONCEPT = {
   'cash out': 'cashout', 'get a loan': 'loan', 'repay loan': 'loan', 'move between chains': 'move',
   'distribute payouts': 'payouts', 'use surplus allowance': 'payouts', 'queue ruleset': 'queue-ruleset',
   'add operator': 'permissions', 'edit permissions': 'permissions',
-  'set token name & symbol': 'deploy-erc20', 'edit token name & symbol': 'deploy-erc20',
+  'set token name & symbol': 'deploy-erc20',     // this branch genuinely deploys the ERC-20
+  'edit token name & symbol': 'token-metadata',  // deployed branch is setTokenMetadataOf, NOT deployERC20For
+  'add items for sale': 'items-for-sale', 'confirm add items': 'items-for-sale',
+  'transfer ownership': 'transfer-ownership', 'transfer operator': 'transfer-operator',
+  'edit project': 'edit-project', 'add accounting token': 'accounting-token',
+  'edit splits': 'split-groups', 'edit reserved recipients': 'split-groups',
+  'add market liquidity': 'add-liquidity', 'add liquidity': 'add-liquidity',
 };
 function conceptForTitle(title) {
   var k = (title || '').trim().toLowerCase();
   if (TITLE_CONCEPT[k]) return TITLE_CONCEPT[k];
+  if (k.indexOf('payout splits') >= 0) return 'split-groups'; // dynamic "Edit <SYM> payout splits" title
   for (var pre in TITLE_CONCEPT) if (k.indexOf(pre) === 0) return TITLE_CONCEPT[pre];
   return null;
 }
