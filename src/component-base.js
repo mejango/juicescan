@@ -547,7 +547,7 @@ function auditLinksFromPayload(payload) {
 
 // Append a subtle "[copy prompt to verify with your LLM]" link that copies buildTxAuditPrompt(payload).
 export function appendAuditPromptLink(container, payload) {
-  var DEFAULT = '[Copy tx audit prompt]';
+  var DEFAULT = '[copy tx audit prompt]';
   var wrap = el('div', 'tx-audit-prompt');
   var link = el('a', 'tx-audit-link'); link.href = '#'; link.textContent = DEFAULT;
   link.addEventListener('click', function (e) {
