@@ -10522,15 +10522,14 @@ function openQueueRulesetModal(project) {
     if (state.currentDataHook) {
       var shopH = el('div', 'operator-edit-label'); shopH.style.marginTop = '18px'; shopH.textContent = 'Shop (NFT items)'; body.appendChild(shopH);
       var shopBox = el('div', 'queue-shop-choice');
-      // 'remove' is gated on omnichain because JBOmnichainDeployer ALWAYS keeps a shop attached (no detach
-      // path) — a contract limitation, not a TODO. 'new' deploys a fresh collection via the one-call deployer.
-      [['continue', 'Keep the current shop', 'Buyers keep minting the existing NFT items.', false],
-       ['remove', 'Remove the shop', state.isOmnichain ? 'Not available on omnichain projects — the omnichain deployer always keeps a shop attached (single-chain projects can remove a shop).' : 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.', state.isOmnichain],
-       ['new', 'Start a new shop', 'Deploy a fresh NFT collection — it replaces the current shop.', false]
-      ].forEach(function (o) {
-        var dis = !!o[3];
-        var row = el('label', 'queue-shop-opt' + (dis ? ' disabled' : ''));
-        var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0]; rb.disabled = dis;
+      // 'remove' is single-chain only — JBOmnichainDeployer has no detach path (it always re-stamps a live 721
+      // hook), so on omnichain the option isn't offered at all. 'new' deploys a fresh collection.
+      var shopOpts = [['continue', 'Keep the current shop', 'Buyers keep minting the existing NFT items.']];
+      if (!state.isOmnichain) shopOpts.push(['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.']);
+      shopOpts.push(['new', 'Start a new shop', 'Deploy a fresh NFT collection — it replaces the current shop.']);
+      shopOpts.forEach(function (o) {
+        var row = el('label', 'queue-shop-opt');
+        var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0];
         rb.addEventListener('change', function () { if (rb.checked) { state.shopChoice = o[0]; if (o[0] === 'new') ensureNewShopState(state, allChains); renderEditor(); } });
         var txt = el('div', 'queue-shop-opt-txt');
         var nm = el('div', 'queue-shop-opt-name'); nm.textContent = o[1]; txt.appendChild(nm);
