@@ -12014,7 +12014,8 @@ function readUserBalance(project, chainId) {
 
 // Renders, into `balTable`, two per-chain sections: the connected wallet's project-token balance, and the
 // project's (accounting-token) balances. Shared by the Cash out + Move modals.
-function renderBalanceTables(balTable, project, sym) {
+function renderBalanceTables(balTable, project, sym, opts) {
+  opts = opts || {};
   balTable.innerHTML = '';
   var chs = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   function chainCell(cid, name) { var c = el('span', 'cashout-tbl-chain'); c.appendChild(chainLogo(cid, name)); var t = el('span'); t.textContent = ' ' + (name || ('Chain ' + cid)); c.appendChild(t); return c; }
@@ -12035,7 +12036,8 @@ function renderBalanceTables(balTable, project, sym) {
     balTable.appendChild(yt);
   }
 
-  // PROJECT BALANCES — Chain | <one column per accounting token (USDC, ETH, …)>.
+  // PROJECT BALANCES — Chain | <one column per accounting token (USDC, ETH, …)>. Skippable (add-liquidity only wants "Your balance").
+  if (opts.skipProjectBalances) return;
   var ph = title('Project balances'); ph.style.marginTop = '14px'; balTable.appendChild(ph);
   var tt = makeTable('1.4fr auto'); balTable.appendChild(tt);
   acctKindsForFunds(project).then(function (kinds) {
@@ -12503,6 +12505,10 @@ function buildLoanModal(project, requestClose) {
   var baseCur = BigInt((project.metadata && project.metadata.baseCurrency) || 1);
   function fmtBorrow(v) { return formatBalance(v, 18, baseLbl); }
 
+  // Your balance + project balances per chain, boxed at the top (like the cash-out modal).
+  var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
+  renderBalanceTables(balTable, project, sym);
+
   var clbl = el('div', 'modal-label'); clbl.textContent = 'Collateral'; wrap.appendChild(clbl);
   var lbl = el('div', 'modal-balance'); lbl.textContent = 'How much ' + sym + ' do you want to collateralize?'; wrap.appendChild(lbl);
 
@@ -12511,10 +12517,6 @@ function buildLoanModal(project, requestClose) {
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); });
   chainRow.appendChild(chainSel);
   wrap.appendChild(chainRow);
-
-  // Your balance + project balances per chain (replaces the in-dropdown balance).
-  var balTable = el('div', 'ops-bal-tables'); wrap.appendChild(balTable);
-  renderBalanceTables(balTable, project, sym);
 
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field');
@@ -14402,14 +14404,14 @@ function buildAddLiquidityModal(project) {
   intro.textContent = 'Seed the buyback pool so payers can route through the AMM. Liquidity is added at the current pool price.';
   wrap.appendChild(intro);
 
+  // Your balance per chain, boxed at the top (like the cash-out modal). Add-liquidity skips project balances.
+  var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
+  renderBalanceTables(balTable, project, sym, { skipProjectBalances: true });
+
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshPair(); }, { chains: lpChains });
   chainRow.appendChild(chainSel);
   wrap.appendChild(chainRow);
-
-  // Your balance + project balances per chain (replaces the inline "Your balance" line).
-  var balTable = el('div', 'ops-bal-tables'); wrap.appendChild(balTable);
-  renderBalanceTables(balTable, project, sym);
 
   // Slim line for the pair token (ETH/USDC) balance — the table above covers the project token.
   var balLine = el('div', 'modal-balance'); balLine.style.marginTop = '8px'; wrap.appendChild(balLine);
