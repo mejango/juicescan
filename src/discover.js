@@ -13769,9 +13769,9 @@ function lpTrimNum(n) {
 // and issuance ceiling. All values are ETH per token.
 function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   var pts = [floor, ceiling, poolP, pa, pb].filter(function (v) { return v > 0; });
-  if (!pts.length) return '<div class="modal-balance">Range preview unavailable.</div>';
+  if (!pts.length) return { html: '<div class="modal-balance">Range preview unavailable.</div>', maxV: 0, W: 320, padL: 6, padR: 6 };
   var maxV = Math.max.apply(null, pts) * 1.12;
-  var W = 320, H = 60, padL = 6, padR = 6, baseY = 38;
+  var W = 320, H = 74, padL = 6, padR = 6, baseY = 42;
   function X(v) { return padL + (W - padL - padR) * (v / maxV); }
   // Uniform scaling (no preserveAspectRatio="none") so the text labels don't render horizontally stretched.
   var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" class="lp-graph-svg">';
@@ -13782,21 +13782,24 @@ function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   function marker(v, color, label, up) {
     if (!(v > 0)) return '';
     var xv = X(v);
+    var valStr = formatPrice(v);
     // Keep the whole label inside the chart: anchor by where its half-width would overflow an edge.
-    // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.)
-    var half = label.length * 8 * 0.3;
+    // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.) Use the wider of label/value.
+    var half = Math.max(label.length, valStr.length) * 8 * 0.3;
     var anchor = 'middle', tx = xv;
     if (xv - half < padL) { anchor = 'start'; tx = padL; }
     else if (xv + half > W - padR) { anchor = 'end'; tx = W - padR; }
     var x = xv.toFixed(1);
+    var labelY = up ? 10 : H - 13, valY = up ? 20 : H - 3;
     return '<line x1="' + x + '" y1="' + (baseY - 13) + '" x2="' + x + '" y2="' + (baseY + 13) + '" stroke="' + color + '" stroke-width="1.5"/>'
-      + '<text x="' + tx.toFixed(1) + '" y="' + (up ? 11 : H - 3) + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>';
+      + '<text x="' + tx.toFixed(1) + '" y="' + labelY + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>'
+      + '<text x="' + tx.toFixed(1) + '" y="' + valY + '" font-size="8" font-weight="bold" fill="' + color + '" text-anchor="' + anchor + '">' + valStr + '</text>';
   }
   svg += marker(floor, '#2c2018', 'Cash out floor', true);
   svg += marker(poolP, '#b8602e', 'Current pool price', false);
   svg += marker(ceiling, '#1a8a8a', 'Issuance ceiling', true);
   svg += '</svg>';
-  return svg;
+  return { html: svg, maxV: maxV, W: W, padL: padL, padR: padR };
 }
 
 // --- Uniswap V4 mint (Add liquidity) — exact encoding per v4-periphery PositionManager ---
@@ -14442,6 +14445,23 @@ function buildAddLiquidityModal(project) {
 
   // Number-line of where the selected range sits relative to floor / pool price / issuance ceiling.
   var graphWrap = el('div', 'lp-graph'); wrap.appendChild(graphWrap);
+  var graphHolder = el('div', 'lp-graph-holder'); graphWrap.appendChild(graphHolder);
+  var graphTip = el('div', 'lp-graph-tip'); graphTip.style.display = 'none'; graphWrap.appendChild(graphTip);
+  var graphScale = null;
+  // Hover anywhere on the range bar to read the price at that point (mapping cursor x → ETH/token value).
+  graphWrap.addEventListener('mousemove', function (e) {
+    if (!graphScale || !graphScale.maxV) { graphTip.style.display = 'none'; return; }
+    var rect = graphHolder.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    var svgX = (e.clientX - rect.left) / rect.width * graphScale.W;
+    var span = graphScale.W - graphScale.padL - graphScale.padR;
+    var value = span > 0 ? (svgX - graphScale.padL) / span * graphScale.maxV : 0;
+    if (!(value > 0)) { graphTip.style.display = 'none'; return; }
+    graphTip.textContent = '≈ ' + formatPrice(value) + ' ' + pairSym() + ' / ' + sym;
+    graphTip.style.display = '';
+    graphTip.style.left = Math.max(2, Math.min(rect.width - 110, e.clientX - rect.left + 8)) + 'px';
+  });
+  graphWrap.addEventListener('mouseleave', function () { graphTip.style.display = 'none'; });
 
   var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
   var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash-out floor to the issuance ceiling.'; wrap.appendChild(rnote);
@@ -14516,7 +14536,9 @@ function buildAddLiquidityModal(project) {
   }
   function drawGraph() {
     var r = currentRange();
-    graphWrap.innerHTML = renderLpRangeSvg(state.floor, state.ceiling, state.poolP, r.pa, r.pb);
+    var g = renderLpRangeSvg(state.floor, state.ceiling, state.poolP, r.pa, r.pb);
+    graphHolder.innerHTML = g.html;
+    graphScale = g.maxV ? g : null;
   }
   function autofill() {
     var r = currentRange();

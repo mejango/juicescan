@@ -2892,7 +2892,9 @@ input[type="checkbox"].field {
 .lp-graph-svg text { font-family: var(--app-font, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .ops-percent { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
 /* Add-liquidity range graph + inline Max buttons */
-.lp-graph { margin: 8px 0 4px; }
+.lp-graph { margin: 8px 0 4px; position: relative; }
+.lp-graph-holder { width: 100%; }
+.lp-graph-tip { position: absolute; top: 0; pointer-events: none; background: var(--c-black); color: var(--card-bg); font-size: 11px; padding: 4px 8px; border-radius: 3px; white-space: nowrap; z-index: 5; }
 .lp-graph-svg { display: block; width: 100%; height: auto; overflow: visible; }
 .lp-add-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .lp-max {
