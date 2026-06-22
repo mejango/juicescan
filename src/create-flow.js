@@ -769,7 +769,9 @@ function accountingBlock(state, render) {
     w.appendChild(note);
     // Multi-asset revnet: the backing is fixed by the proportion of payments received and can't be rebalanced.
     if (isRev && state.accepts.length > 1) {
-      w.appendChild(pinkNote('Your revnet’s token will be backed by both ETH and USDC paid in by users. Holders can cash out for either, and the backing mix is set entirely by the proportion of payments received in each — you can’t rebalance between them later.'));
+      var revWarn = pinkNote('Your revnet’s token will be backed by both ETH and USDC paid in by users. Holders can cash out for either, and the backing mix is set entirely by the proportion of payments received in each — you can’t rebalance between them later.');
+      revWarn.style.marginTop = '10px'; // gap between the accounting note and the warning box
+      w.appendChild(revWarn);
     }
     // Router-terminal (any-token auto-swap) note stays grouped right under the main note (custom only).
     if (!isRev) {
