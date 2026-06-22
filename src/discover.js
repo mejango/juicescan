@@ -227,6 +227,9 @@ var setTokenAbi = [{ type: 'function', name: 'setTokenFor', stateMutability: 'no
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
 var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+// JBOmnichainDeployer.tiered721HookOf(projectId, rulesetId) — for omnichain (incl. custom) projects the ruleset
+// dataHook is the deployer wrapper; the real 721 hook lives here, keyed per ruleset.
+var OMNI_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }], outputs: [{ name: 'hook', type: 'address' }, { name: 'useDataHookForCashOut', type: 'bool' }] }];
 var HOOK_STORE_ABI = [{ type: 'function', name: 'STORE', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
 var HOOK_METADATA_ID_TARGET_ABI = [{ type: 'function', name: 'METADATA_ID_TARGET', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
 var TIER721_FLAGS = { name: 'flags', type: 'tuple', components: [
@@ -330,10 +333,31 @@ function buildTierMintMetadata(idTarget, tierIds) {
 
 // The project's 721 hook (revnets: REVOwner.tiered721HookOf). Null if none / empty.
 function readShopHook(project) {
+  var client = clientFor(project.chainId);
   var revo = getAddress('REVOwner', project.chainId);
-  if (!revo) return Promise.resolve(null);
-  return clientFor(project.chainId).readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
-    .then(function (h) { return (h && !/^0x0+$/.test(h)) ? h : null; }).catch(function () { return null; });
+  var revoP = revo
+    ? client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
+        .then(function (h) { return (h && !/^0x0+$/.test(h)) ? h : null; }).catch(function () { return null; })
+    : Promise.resolve(null);
+  return revoP.then(function (h) {
+    if (h) return h; // revnets: REVOwner tracks the project's 721 hook directly
+    // Custom projects aren't in REVOwner. Read the current ruleset: its dataHook is either the omnichain
+    // deployer (omnichain — the real 721 hook is in the deployer's tiered721HookOf mapping) or, for a
+    // single-chain custom project, the 721 hook itself. fetchProjectTiers then verifies via STORE().
+    var jbc = getAddress('JBController', project.chainId);
+    if (!jbc) return null;
+    return client.readContract({ address: jbc, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(project.id)] }).then(function (r) {
+      var rs = r ? (r[0] || r.ruleset) : null;
+      var m = r ? (r[1] || r.metadata) : null;
+      if (!m || !m.useDataHookForPay || !m.dataHook || /^0x0+$/.test(m.dataHook)) return null;
+      var omni = getAddress('JBOmnichainDeployer', project.chainId);
+      if (omni && rs && m.dataHook.toLowerCase() === omni.toLowerCase()) {
+        return client.readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id), BigInt(rs.id)] })
+          .then(function (cfg) { var hk = cfg && (cfg.hook || cfg[0]); return (hk && !/^0x0+$/.test(hk)) ? hk : null; }).catch(function () { return null; });
+      }
+      return m.dataHook; // single-chain custom: the dataHook is the 721 hook
+    }).catch(function () { return null; });
+  });
 }
 
 // All sellable tiers for a project: { hook, idTarget, store, resolver, tiers:[...] }. Null if no shop.
@@ -3739,7 +3763,9 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // has no hook and can't get one (revnets always keep it — operators can add tiers even before any exist).
   fetchProjectTiers(project).then(function (shop) {
     if (!wrap.isConnected) return;
-    var show = shop && (shop.tiers.length || project.isRevnet);
+    // Show the Shop whenever a 721 hook is attached (fetchProjectTiers only returns non-null when STORE()
+    // confirms a real 721 hook) — even with 0 tiers, so an operator can add items to an empty shop.
+    var show = !!shop;
     if (show) {
       shopState.shop = shop; shopState.loaded = true;
       built.Shop = null; // drop the loading placeholder so the real section rebuilds
