@@ -10200,6 +10200,36 @@ function polar(cx, cy, r, a) {
   };
 }
 
+// Paginate a long list: fills `rowsContainer` with one page (pageSize) of rows built by buildRow(item, idx)
+// and returns a nav bar (First / Prev / "page / total" / Next / Last). The nav hides itself for a single page.
+var LIST_PAGE_SIZE = 30;
+function attachPagination(rowsContainer, items, pageSize, buildRow) {
+  var page = 0;
+  var pages = Math.max(1, Math.ceil(items.length / pageSize));
+  var nav = el('div', 'list-pagination');
+  function go(to) { page = Math.max(0, Math.min(pages - 1, to)); render(); rowsContainer.scrollIntoView({ block: 'nearest' }); }
+  function render() {
+    rowsContainer.innerHTML = '';
+    var start = page * pageSize;
+    items.slice(start, start + pageSize).forEach(function (item, i) { rowsContainer.appendChild(buildRow(item, start + i)); });
+    nav.innerHTML = '';
+    if (pages <= 1) { nav.style.display = 'none'; return; }
+    nav.style.display = '';
+    var mk = function (label, to, disabled) {
+      var b = el('button', 'list-page-btn'); b.type = 'button'; b.textContent = label; b.disabled = disabled;
+      if (!disabled) b.addEventListener('click', function () { go(to); });
+      return b;
+    };
+    nav.appendChild(mk('« First', 0, page === 0));
+    nav.appendChild(mk('‹ Prev', page - 1, page === 0));
+    var ind = el('span', 'list-page-indicator'); ind.textContent = (page + 1) + ' / ' + pages; nav.appendChild(ind);
+    nav.appendChild(mk('Next ›', page + 1, page >= pages - 1));
+    nav.appendChild(mk('Last »', pages - 1, page >= pages - 1));
+  }
+  render();
+  return nav;
+}
+
 function renderOwnersTable(participants, totalSupply, sym, project, paidByToken) {
   var wrap = el('div', 'owners-table-wrap');
   var table = el('div', 'owners-table');
@@ -10210,8 +10240,10 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     head.appendChild(cell);
   });
   table.appendChild(head);
+  var body = el('div', 'owners-tbody');
+  table.appendChild(body);
 
-  participants.forEach(function (row, idx) {
+  function buildOwnerRow(row) {
     var tr = el('div', 'owners-row');
     var acct = el('span', 'owners-account');
     if (isAmmAddress(row.address)) {
@@ -10253,12 +10285,14 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     var paidUsd = Number(usdFromScaled(row.volumeUsd));
     if (lit) paid.textContent = lit;
     else if (paidUsd > 0) paid.textContent = formatUsd(paidUsd);
-    else { var acct = project.acctToken || { decimals: 18, symbol: 'ETH' }; paid.textContent = formatBalance(row.volume, acct.decimals, acct.symbol); }
+    else { var accTok = project.acctToken || { decimals: 18, symbol: 'ETH' }; paid.textContent = formatBalance(row.volume, accTok.decimals, accTok.symbol); }
     tr.appendChild(paid);
-    table.appendChild(tr);
-  });
+    return tr;
+  }
 
+  var nav = attachPagination(body, participants, LIST_PAGE_SIZE, buildOwnerRow);
   wrap.appendChild(table);
+  wrap.appendChild(nav);
   return wrap;
 }
 
@@ -14053,7 +14087,7 @@ function renderLpOwnersPie(lp) {
   var svgNS = 'http://www.w3.org/2000/svg';
   var svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('viewBox', '0 0 240 240'); svg.setAttribute('class', 'owners-pie-svg'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'LP owner distribution');
-  var cx = 120, cy = 120, outer = 92, inner = 54, angle = -Math.PI / 2;
+  var cx = 120, cy = 120, outer = 92, inner = 54, angle = 0; // 3 o'clock start → tiny LP slices fan on the right
   // Pink-light fill, borders distinguish slices (matches the owners donut).
   if (owners.length === 1) {
     var ring = document.createElementNS(svgNS, 'path');
@@ -14062,7 +14096,8 @@ function renderLpOwnersPie(lp) {
     tagPieSlice(ring, owners[0].address, isAmmAddress(owners[0].address), ' (100%)');
     svg.appendChild(ring);
   } else {
-    owners.forEach(function (o) {
+    // smallest-first so the tiny LP slices fan out on the RIGHT side (matches the owners donut)
+    owners.slice().sort(function (a, b) { return a.valueEth - b.valueEth; }).forEach(function (o) {
       var frac = o.valueEth / total; if (!(frac > 0)) return;
       var next = angle + frac * Math.PI * 2;
       var path = document.createElementNS(svgNS, 'path');
@@ -14135,7 +14170,9 @@ function renderLpTable(lp, sym, chainId) {
   var head = el('div', 'owners-row owners-head');
   ['Account', pairSym, sym, 'Share'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
   table.appendChild(head);
-  owners.forEach(function (o) {
+  var body = el('div', 'owners-tbody');
+  table.appendChild(body);
+  function buildLpRow(o) {
     var tr = el('div', 'owners-row');
     var acct = el('span', 'owners-account');
     acct.appendChild(addressNode(o.address));
@@ -14144,9 +14181,11 @@ function renderLpTable(lp, sym, chainId) {
     var ethC = el('span', 'owners-balance'); ethC.textContent = lpTrimNum(Number(o.eth) / pairScale) + ' ' + pairSym; tr.appendChild(ethC);
     var revC = el('span', 'owners-balance'); revC.textContent = formatCompactTokenAmount(o.rev) + ' ' + sym; tr.appendChild(revC);
     var shareC = el('span'); var st = el('strong'); st.textContent = (o.valueEth / total * 100).toFixed(1) + '%'; shareC.appendChild(st); tr.appendChild(shareC);
-    table.appendChild(tr);
-  });
+    return tr;
+  }
+  var nav = attachPagination(body, owners, LIST_PAGE_SIZE, buildLpRow);
   wrap.appendChild(table);
+  wrap.appendChild(nav);
   return wrap;
 }
 

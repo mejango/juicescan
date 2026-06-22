@@ -3154,6 +3154,12 @@ input[type="checkbox"].field {
   overflow-x: auto;
   border: 1px solid var(--c-orange-light);
 }
+/* Paginated-list footer nav — centered text buttons (matches the subtab / text-button style). */
+.list-pagination { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.list-page-btn { background: none; border: none; font-family: inherit; font-size: 12px; color: var(--muted-2); padding: 4px 8px; cursor: pointer; }
+.list-page-btn:hover:not(:disabled) { color: var(--c-teal); }
+.list-page-btn:disabled { opacity: 0.35; cursor: default; }
+.list-page-indicator { font-size: 12px; color: var(--muted-2); padding: 0 4px; }
 .owners-table {
   min-width: 460px;
 }
