@@ -3023,9 +3023,11 @@ function addressNode(address, chainId) {
   // Custom tooltip (shows the full address) so it reveals INSTANTLY on hover — native `title` has a delay.
   var tip = el('span', 'addr-tip'); tip.textContent = address; span.appendChild(tip);
   ensNameOf(address).then(function (name) { if (name) { label.textContent = name; tip.textContent = address; } });
-  // Click the truncated address (or ENS) to copy the full address.
+  // Click the truncated address (or ENS) to copy the full address. The native title carries the FULL address
+  // too — the instant .addr-tip is clipped inside ellipsis cells (e.g. the owners table), so this guarantees the
+  // address is visible on hover everywhere.
   label.style.cursor = 'pointer';
-  label.title = 'Click to copy';
+  label.title = address + ' · click to copy';
   label.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
     var prevTip = tip.textContent;
@@ -10126,8 +10128,10 @@ function renderOwnersPieChart(participants, totalBalance, totalSupply, sym) {
   svg.setAttribute('aria-label', sym + ' owner distribution');
 
   var cx = 120, cy = 120, outer = 92, inner = 54;
-  var angle = -Math.PI / 2;
-  var drawable = participants.filter(function (row) { return row.balance > 0n; });
+  // Start at 3 o'clock + draw smallest-first, so the fan of tiny slices (the "scrunched" small holders) sits on
+  // the RIGHT side going clockwise, with the biggest slices across the top — not bunched at the top.
+  var angle = 0;
+  var drawable = participants.filter(function (row) { return row.balance > 0n; }).slice().reverse();
   // Pink-light fill, borders distinguish slices (see .owners-pie-slice).
   if (drawable.length === 1) {
     // One owner → a full annulus (near-360° so the band fills but the hole stays open).

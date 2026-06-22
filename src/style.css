@@ -3130,7 +3130,7 @@ input[type="checkbox"].field {
 }
 /* Colorless donut: no fills, slices distinguished by their borders only.
    Scoped under .owners-pie-svg so it beats the `.owners-pie-svg path` (card-bg) divider rule. */
-.owners-pie-svg .owners-pie-slice { fill: var(--c-pink-light); stroke: var(--c-black-light); stroke-width: 1.5; }
+.owners-pie-svg .owners-pie-slice { fill: var(--c-pink-light); stroke: var(--card-bg); stroke-width: 0.75; }
 .owners-pie-center {
   text-anchor: middle;
   fill: var(--text);
