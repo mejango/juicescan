@@ -50,6 +50,21 @@ function headers(json) {
   return h;
 }
 
+// Serialize ALL Safe Transaction Service requests through one FIFO queue (concurrency 1). The gateway
+// rate-limits bursts with 429, and a multi-chain Back-office load — each chain does a nonce read + a
+// pending-list read, with retries — used to fire ~8-16 requests at once and trip it. Trickling them keeps the
+// app well under the limit; total latency for a 4-chain load is ~1s, which is fine for an on-demand tab.
+var _safeApiQueue = Promise.resolve();
+function safeFetch(url, opts) {
+  var run = function () { return fetch(url, opts); };
+  var p = _safeApiQueue.then(run, run);
+  _safeApiQueue = p.then(function () {}, function () {}); // keep the chain alive regardless of outcome
+  return p;
+}
+// Collapse concurrent identical nonce reads (listPendingSafeTxs reads the nonce too) — in-flight only, no TTL,
+// so the propose path never sees a stale nonce.
+var _nonceInflight = {};
+
 export function safeQueueLink(chainId, safe) {
   var p = SAFE_PREFIX[chainId];
   return p ? ('https://app.safe.global/transactions/queue?safe=' + p + ':' + safe) : null;
@@ -108,20 +123,27 @@ async function signSafeTx(chainId, safe, fields, signer) {
 }
 
 // The Safe's current queue nonce (next nonce to use). Reads the service; falls back to on-chain `nonce()`.
-export async function getSafeNextNonce(chainId, safe) {
-  var base = txBase(chainId);
-  if (base) {
+export function getSafeNextNonce(chainId, safe) {
+  var key = chainId + ':' + String(safe).toLowerCase();
+  if (_nonceInflight[key]) return _nonceInflight[key];
+  var p = (async function () {
+    var base = txBase(chainId);
+    if (base) {
+      try {
+        var r = await safeFetch(base + '/api/v1/safes/' + cs(safe) + '/', { headers: headers(false) });
+        if (r.ok) { var d = await r.json(); if (d && d.nonce != null) return Number(d.nonce); }
+      } catch (_) {}
+    }
+    // On-chain fallback.
     try {
-      var r = await fetch(base + '/api/v1/safes/' + cs(safe) + '/', { headers: headers(false) });
-      if (r.ok) { var d = await r.json(); if (d && d.nonce != null) return Number(d.nonce); }
-    } catch (_) {}
-  }
-  // On-chain fallback.
-  try {
-    var pub = createPublicClientForChain(chainId);
-    var n = await pub.readContract({ address: safe, abi: [{ type: 'function', name: 'nonce', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }], functionName: 'nonce', args: [] });
-    return Number(n);
-  } catch (_) { return null; }
+      var pub = createPublicClientForChain(chainId);
+      var n = await pub.readContract({ address: safe, abi: [{ type: 'function', name: 'nonce', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }], functionName: 'nonce', args: [] });
+      return Number(n);
+    } catch (_) { return null; }
+  })();
+  _nonceInflight[key] = p;
+  p.then(function () { delete _nonceInflight[key]; }, function () { delete _nonceInflight[key]; });
+  return p;
 }
 
 // Propose a transaction to the Safe's queue on `chainId`. Returns { safeTxHash, nonce }.
@@ -141,7 +163,7 @@ export async function proposeSafeTx(opts) {
     nonce: String(nonce), contractTransactionHash: safeTxHash, sender: cs(opts.signer),
     signature: signature, origin: 'Juicebox V6 explorer',
   };
-  var res = await fetch(base + '/api/v1/safes/' + cs(opts.safe) + '/multisig-transactions/', {
+  var res = await safeFetch(base + '/api/v1/safes/' + cs(opts.safe) + '/multisig-transactions/', {
     method: 'POST', headers: headers(true), body: JSON.stringify(body),
   });
   if (!res.ok && res.status !== 201) {
@@ -165,7 +187,7 @@ export async function listPendingSafeTxs(chainId, safe) {
   for (var b = 0; b < bases.length; b++) {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        var r = await fetch(bases[b] + path, { headers: headers(false) });
+        var r = await safeFetch(bases[b] + path, { headers: headers(false) });
         if (r.ok) {
           var d = await r.json();
           var rows = (d && d.results) || [];
@@ -191,7 +213,7 @@ export async function confirmSafeTx(chainId, safe, tx, signer) {
     gasToken: tx.gasToken || ZERO, refundReceiver: tx.refundReceiver || ZERO, nonce: tx.nonce,
   };
   var signature = await signSafeTx(chainId, safe, fields, signer);
-  var res = await fetch(base + '/api/v1/multisig-transactions/' + tx.safeTxHash + '/confirmations/', {
+  var res = await safeFetch(base + '/api/v1/multisig-transactions/' + tx.safeTxHash + '/confirmations/', {
     method: 'POST', headers: headers(true), body: JSON.stringify({ signature: signature }),
   });
   if (!res.ok && res.status !== 201) {
