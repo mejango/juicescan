@@ -10264,8 +10264,115 @@ export function attachPagination(rowsContainer, items, pageSize, buildRow) {
   return nav;
 }
 
+// Pure: substring-match accounts by address (case-insensitive), excluding already-selected, capped at `limit`.
+// ENS name matching is layered on asynchronously by buildAccountSearch (forward-resolve a name → address).
+export function matchAccountsByAddress(items, query, selectedLower, limit) {
+  var q = String(query || '').trim().toLowerCase();
+  if (!q) return [];
+  selectedLower = selectedLower || [];
+  limit = limit || 8;
+  var out = [];
+  for (var i = 0; i < items.length && out.length < limit; i++) {
+    var a = (items[i].address || '').toLowerCase();
+    if (a.indexOf(q) !== -1 && selectedLower.indexOf(a) === -1) out.push(items[i]);
+  }
+  return out;
+}
+
+// Account search-with-chips. Type a partial/full address or an ENS name; pick a match to add it as a filter
+// chip (multiple allowed). onChange(selectedLowerAddresses[]) fires whenever the chip set changes.
+// opts.subLabel(item) -> a secondary string per suggestion (e.g. the account's share). opts.placeholder.
+function buildAccountSearch(items, onChange, opts) {
+  opts = opts || {};
+  var wrap = el('div', 'acct-search');
+  var chipRow = el('div', 'acct-search-chips'); chipRow.style.display = 'none'; wrap.appendChild(chipRow);
+  var box = el('div', 'acct-search-box');
+  var input = el('input', 'acct-search-input'); input.type = 'text';
+  input.placeholder = opts.placeholder || 'Search account by address or ENS…';
+  box.appendChild(input);
+  var menu = el('div', 'acct-search-menu'); menu.style.display = 'none'; box.appendChild(menu);
+  wrap.appendChild(box);
+  var selected = [];
+  var byAddr = {}; items.forEach(function (it) { byAddr[(it.address || '').toLowerCase()] = it; });
+  var topAddr = null;
+
+  function renderChips() {
+    chipRow.innerHTML = '';
+    selected.forEach(function (addr) {
+      var chip = el('span', 'acct-chip');
+      var lbl = el('span', 'acct-chip-label'); lbl.textContent = truncAddr(addr); chip.appendChild(lbl);
+      ensNameOf(addr).then(function (n) { if (n) lbl.textContent = n; }).catch(function () {});
+      var x = el('button', 'acct-chip-x'); x.type = 'button'; x.textContent = '×'; x.setAttribute('aria-label', 'Remove account filter');
+      x.addEventListener('click', function () { selected = selected.filter(function (a) { return a !== addr; }); renderChips(); onChange(selected.slice()); });
+      chip.appendChild(x);
+      chipRow.appendChild(chip);
+    });
+    chipRow.style.display = selected.length ? '' : 'none';
+  }
+  function add(addr) {
+    addr = (addr || '').toLowerCase();
+    if (!addr || selected.indexOf(addr) !== -1) return;
+    selected.push(addr); input.value = ''; menu.style.display = 'none';
+    renderChips(); onChange(selected.slice());
+  }
+  function renderMenu(matches) {
+    menu.innerHTML = '';
+    topAddr = matches.length ? matches[0].address : null;
+    if (!matches.length) { var e = el('div', 'acct-search-empty'); e.textContent = 'No matching account'; menu.appendChild(e); menu.style.display = ''; return; }
+    matches.forEach(function (it) {
+      var item = el('div', 'acct-search-item');
+      var a = el('span', 'acct-search-item-addr'); a.textContent = truncAddr(it.address); item.appendChild(a);
+      ensNameOf(it.address).then(function (n) { if (n) a.textContent = n; }).catch(function () {});
+      if (opts.subLabel) { var s = el('span', 'acct-search-item-sub'); s.textContent = opts.subLabel(it); item.appendChild(s); }
+      // mousedown (not click) so it fires before the input's blur hides the menu.
+      item.addEventListener('mousedown', function (ev) { ev.preventDefault(); add(it.address); });
+      menu.appendChild(item);
+    });
+    menu.style.display = '';
+  }
+  var ensSeq = 0;
+  function refresh() {
+    var q = input.value.trim();
+    if (!q) { menu.style.display = 'none'; topAddr = null; return; }
+    var selLower = selected.slice();
+    var matches = matchAccountsByAddress(items, q, selLower, 8);
+    renderMenu(matches);
+    // ENS forward-resolve when the query looks like a name (has a dot, or has letters and isn't a hex prefix).
+    var looksEns = /\./.test(q) || (/[a-z]/i.test(q) && !/^0x/i.test(q));
+    if (looksEns) {
+      var seq = ++ensSeq;
+      ensAddressOf(/\./.test(q) ? q : (q + '.eth')).then(function (addr) {
+        if (seq !== ensSeq || !addr) return;
+        var lower = addr.toLowerCase();
+        var hit = byAddr[lower];
+        if (hit && selLower.indexOf(lower) === -1 && matches.indexOf(hit) === -1) renderMenu([hit].concat(matches).slice(0, 8));
+      }).catch(function () {});
+    }
+  }
+  input.addEventListener('input', refresh);
+  input.addEventListener('focus', refresh);
+  input.addEventListener('blur', function () { setTimeout(function () { menu.style.display = 'none'; }, 120); });
+  input.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    var q = input.value.trim();
+    if (/^0x[0-9a-fA-F]{40}$/.test(q) && byAddr[q.toLowerCase()]) { add(q); return; }
+    if (topAddr) add(topAddr);
+  });
+  return { el: wrap };
+}
+
 function renderOwnersTable(participants, totalSupply, sym, project, paidByToken) {
   var outer = el('div', 'owners-table-outer');
+  // Account search (chips filter the table) — only worth showing once the list is long enough to scan. The
+  // AMM/Market row isn't a searchable account.
+  var searchable = participants.filter(function (p) { return !isAmmAddress(p.address); });
+  if (searchable.length > 8) {
+    var search = buildAccountSearch(searchable, function (sel) { applyFilter(sel); }, {
+      subLabel: function (it) { return formatOwnerPortion(it.balance, totalSupply); },
+    });
+    outer.appendChild(search.el);
+  }
   var wrap = el('div', 'owners-table-wrap');
   var table = el('div', 'owners-table');
   var head = el('div', 'owners-row owners-head');
@@ -10325,10 +10432,17 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     return tr;
   }
 
-  var nav = attachPagination(body, participants, LIST_PAGE_SIZE, buildOwnerRow);
   wrap.appendChild(table);
   outer.appendChild(wrap);
-  outer.appendChild(nav);
+  var navHolder = el('div', 'owners-nav-holder');
+  outer.appendChild(navHolder);
+  // Re-build the page (and its nav) for the current chip filter — no chips = the full list.
+  function applyFilter(sel) {
+    var list = (sel && sel.length) ? participants.filter(function (p) { return sel.indexOf((p.address || '').toLowerCase()) !== -1; }) : participants;
+    navHolder.innerHTML = '';
+    navHolder.appendChild(attachPagination(body, list, LIST_PAGE_SIZE, buildOwnerRow));
+  }
+  applyFilter([]);
   return outer;
 }
 
@@ -14204,6 +14318,12 @@ function renderLpTable(lp, sym, chainId) {
   if (!owners.length) return null;
   var total = owners.reduce(function (s, o) { return s + o.valueEth; }, 0);
   var outer = el('div', 'owners-table-outer lp-pos-table-outer');
+  if (owners.length > 8) {
+    var search = buildAccountSearch(owners, function (sel) { applyFilter(sel); }, {
+      subLabel: function (o) { return (o.valueEth / total * 100).toFixed(1) + '%'; },
+    });
+    outer.appendChild(search.el);
+  }
   var wrap = el('div', 'owners-table-wrap lp-pos-table-wrap');
   var table = el('div', 'owners-table lp-pos-table');
   var pairSym = (lp.pair && lp.pair.symbol) || 'ETH';
@@ -14224,10 +14344,16 @@ function renderLpTable(lp, sym, chainId) {
     var shareC = el('span'); var st = el('strong'); st.textContent = (o.valueEth / total * 100).toFixed(1) + '%'; shareC.appendChild(st); tr.appendChild(shareC);
     return tr;
   }
-  var nav = attachPagination(body, owners, LIST_PAGE_SIZE, buildLpRow);
   wrap.appendChild(table);
   outer.appendChild(wrap);
-  outer.appendChild(nav);
+  var navHolder = el('div', 'owners-nav-holder');
+  outer.appendChild(navHolder);
+  function applyFilter(sel) {
+    var list = (sel && sel.length) ? owners.filter(function (o) { return sel.indexOf((o.address || '').toLowerCase()) !== -1; }) : owners;
+    navHolder.innerHTML = '';
+    navHolder.appendChild(attachPagination(body, list, LIST_PAGE_SIZE, buildLpRow));
+  }
+  applyFilter([]);
   return outer;
 }
 
