@@ -4508,7 +4508,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .shop-tier-price-orig { font-size: 11px; color: var(--muted-2); text-decoration: line-through; }
 .paybox-shop-discount { position: absolute; top: 3px; left: 3px; background: var(--c-teal); color: var(--bg); font-size: 8px; font-weight: bold; padding: 1px 4px; border-radius: 2px; z-index: 1; }
 /* Item-detail popup */
-.tier-detail { display: flex; flex-direction: column; gap: 12px; min-width: 280px; max-width: 360px; }
+.tier-detail { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 360px; margin: 0 auto; }
 .tier-detail-art { aspect-ratio: 1; background: var(--card-bg); border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; max-height: 280px; position: relative; }
 .tier-detail-art img, .tier-detail-art svg { width: 100%; height: 100%; object-fit: contain; }
 .tier-detail-name { font-size: 16px; font-weight: bold; }
