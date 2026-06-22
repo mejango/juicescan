@@ -3902,7 +3902,10 @@ function renderPayCard(project, cart) {
         _tokenCache[chainId] = list;
         if (state.chainId !== chainId) return;
         state.tokens = list;
-        var keep = list.filter(function (t) { return state.token && t.address.toLowerCase() === state.token.address.toLowerCase() && t.viaRouter === state.token.viaRouter; })[0];
+        // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
+        // would shadow the project's real accounting token. A project that accepts USDC directly must default
+        // to USDC, not silently stay on native ETH (which would pay 1 ETH instead of 1 USDC).
+        var keep = state.tokenTouched && list.filter(function (t) { return state.token && t.address.toLowerCase() === state.token.address.toLowerCase() && t.viaRouter === state.token.viaRouter; })[0];
         state.token = keep || list[0] || null;
         rebuildCurrency();
         schedulePreview();
@@ -3913,6 +3916,7 @@ function renderPayCard(project, cart) {
     chainId: chains[0].id,
     tokens: tokensForChain(chains[0].id),
     token: null,
+    tokenTouched: false, // true once the user explicitly picks a pay token (then we stop auto-defaulting)
     amount: '',
     memo: '',
     phase: 'idle',
@@ -4051,6 +4055,7 @@ function renderPayCard(project, cart) {
     });
     chainSel.addEventListener('change', function () {
       state.chainId = Number(chainSel.value);
+      state.tokenTouched = false; // a new chain re-defaults to that chain's accounting token
       state.tokens = tokensForChain(state.chainId);
       state.token = state.tokens[0] || null;
       sizeSelectToText(chainSel);
@@ -4076,16 +4081,19 @@ function renderPayCard(project, cart) {
     currWrap.innerHTML = '';
     if (state.tokens.length > 1) {
       var sel = el('select', 'paybox-select');
-      state.tokens.forEach(function (t) {
+      // Value by INDEX (not address) — a project can offer the same address both directly and via-router, and
+      // we must keep the displayed option in lock-step with state.token (else the user sees USDC but pays ETH).
+      state.tokens.forEach(function (t, i) {
         var o = document.createElement('option');
-        o.value = t.address;
+        o.value = String(i);
         o.textContent = currencyLabel(t.symbol);
         sel.appendChild(o);
       });
+      var curIdx = state.tokens.indexOf(state.token);
+      if (curIdx >= 0) sel.value = String(curIdx); // sync the shown option to the actual selected token
       sel.addEventListener('change', function () {
-        for (var i = 0; i < state.tokens.length; i++) {
-          if (state.tokens[i].address === sel.value) { state.token = state.tokens[i]; break; }
-        }
+        var t = state.tokens[Number(sel.value)];
+        if (t) { state.token = t; state.tokenTouched = true; }
         sizeSelectToText(sel, 13);
         schedulePreview();
       });
