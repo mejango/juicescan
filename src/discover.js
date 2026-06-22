@@ -9680,6 +9680,12 @@ async function fetchRulesetQueueRows(project) {
     } catch (_) {}
 
     queued.forEach(function (r) {
+      // Hide rulesets queued as part of the deploy. The launch queues the genesis + all its stages TOGETHER in
+      // one tx, so they get consecutive rulesetIds (rulesetId == queue timestamp, collision-incremented) — i.e.
+      // each stage's `id` is right after its `basedOnId`. A separately, manually-queued ruleset is based on the
+      // then-current ruleset but queued much later, so `id - basedOnId` is large. The genesis (basedOnId == 0)
+      // is already excluded above; this drops the rest of the deploy cluster. (Verified on BAN: id-based == 1.)
+      if (Number(r.id) - Number(r.basedOnId) <= 60) return;
       var info = callerById[String(r.id)];
       // Label by cycle NUMBER (stable across chains) so the same ruleset queued on every chain groups into one
       // row — the rulesetId differs per chain (it's the local queue timestamp) and would split the rows apart.
