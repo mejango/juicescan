@@ -4474,7 +4474,7 @@ input[type="checkbox"].field {
 .shop-checkout-bar { display: none; }
 
 /* Category filter chips leading the shop — multi-select, "All" is the default (active = teal). */
-.shop-cat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.shop-cat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
 .shop-cat-chip {
   font-family: inherit; font-size: 12px; font-weight: bold; padding: 6px 14px;
   border: 1px solid var(--c-orange-light); background: none; color: var(--muted-2);
