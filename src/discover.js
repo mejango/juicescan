@@ -2595,11 +2595,14 @@ export function safeMediaUrl(url) {
 // An <iframe> executes whatever its src resolves to — require a real http(s) URL (no data:/blob:/javascript:).
 export function httpUrlOnly(url) { var u = (url || '').trim(); return /^https?:\/\//i.test(u) ? u : ''; }
 
+// DOMParser is INERT — unlike `div.innerHTML = html`, the parsed document never loads <img src> (so an
+// `<img onerror>` in untrusted on-chain text can't fire) and never runs script. Use it everywhere we parse
+// project-controlled HTML to extract text/structure.
+function parseInertHtml(html) { return new DOMParser().parseFromString(String(html || ''), 'text/html').body; }
+
 function stripHtml(html) {
   if (!html) return '';
-  var tmp = document.createElement('div');
-  tmp.innerHTML = String(html);
-  return (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+  return (parseInertHtml(html).textContent || '').replace(/\s+/g, ' ').trim();
 }
 
 // Like stripHtml, but PRESERVES paragraph/line breaks. Rich-text descriptions are HTML
@@ -2608,8 +2611,7 @@ function stripHtml(html) {
 // extract text — never inject the raw HTML into the live DOM (untrusted on-chain content).
 function htmlToText(html) {
   if (!html) return '';
-  var tmp = document.createElement('div');
-  tmp.innerHTML = String(html);
+  var tmp = parseInertHtml(html);
   tmp.querySelectorAll('br').forEach(function (br) { br.replaceWith(document.createTextNode('\n')); });
   tmp.querySelectorAll('p, div, li, h1, h2, h3, h4, h5, h6, blockquote, tr').forEach(function (b) { b.appendChild(document.createTextNode('\n\n')); });
   return (tmp.textContent || '')
@@ -2623,8 +2625,7 @@ function htmlToText(html) {
 // `<ul>`/`<ol>` keep their bullets/numbers instead of flattening to plain lines. Untrusted on-chain
 // content: parse into a detached node and copy only text + list structure (never inject raw HTML).
 function renderRichTextInto(container, html) {
-  var tmp = document.createElement('div');
-  tmp.innerHTML = String(html || '');
+  var tmp = parseInertHtml(html);
   var rendered = false;
   for (var i = 0; i < tmp.children.length; i++) {
     var b = tmp.children[i], tag = b.tagName;
