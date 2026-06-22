@@ -2,7 +2,7 @@
 // applies at mint (effective = price - mulDiv(price, discountPercent, 200), DISCOUNT_DENOMINATOR = 200), or
 // the buyer is over/under-charged. These are the pure pricing/label helpers behind the shop + pay cards.
 import { describe, it, expect } from 'vitest';
-import { tierEffectivePrice, tierDiscountLabel } from '../src/discover.js';
+import { tierEffectivePrice, tierDiscountLabel, pctOffToDiscountPercent, buildSetDiscountConfig } from '../src/discover.js';
 
 describe('tierEffectivePrice — mirrors the on-chain mint discount (denominator 200)', () => {
   it('no discount → full price', () => {
@@ -39,4 +39,26 @@ describe('tierDiscountLabel — shopper-facing "% off" (discountPercent / 2)', (
   it('40 → "20% off"', () => { expect(tierDiscountLabel({ discountPercent: 40 })).toBe('20% off'); });
   it('200 → "100% off"', () => { expect(tierDiscountLabel({ discountPercent: 200 })).toBe('100% off'); });
   it('odd percent keeps one decimal', () => { expect(tierDiscountLabel({ discountPercent: 5 })).toBe('2.5% off'); });
+});
+
+describe('pctOffToDiscountPercent — operator % off (0-100) → on-chain discountPercent (0-200)', () => {
+  it('0% → 0', () => { expect(pctOffToDiscountPercent(0)).toBe(0); });
+  it('20% → 40', () => { expect(pctOffToDiscountPercent(20)).toBe(40); });
+  it('50% → 100', () => { expect(pctOffToDiscountPercent(50)).toBe(100); });
+  it('100% → 200', () => { expect(pctOffToDiscountPercent(100)).toBe(200); });
+  it('clamps above 100', () => { expect(pctOffToDiscountPercent(150)).toBe(200); });
+  it('clamps negative', () => { expect(pctOffToDiscountPercent(-5)).toBe(0); });
+});
+
+describe('buildSetDiscountConfig — the setDiscountPercentsOf entry + round-trip to effective price', () => {
+  it('encodes {tierId, discountPercent}', () => {
+    expect(buildSetDiscountConfig(7, 25)).toEqual({ tierId: 7, discountPercent: 50 });
+  });
+  it('20% off → effective price is 80% of original', () => {
+    const cfg = buildSetDiscountConfig(1, 20);
+    expect(tierEffectivePrice(1000n, cfg.discountPercent)).toBe(800n);
+  });
+  it('100% off → free', () => {
+    expect(tierEffectivePrice(1000n, buildSetDiscountConfig(1, 100).discountPercent)).toBe(0n);
+  });
 });

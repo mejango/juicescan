@@ -372,6 +372,18 @@ export function tierDiscountLabel(tier) {
   return (Number.isInteger(pct) ? String(pct) : pct.toFixed(1)) + '% off';
 }
 
+// A shopper-facing "% off" (0–100) → the on-chain discountPercent (0–200, denominator 200). The operator
+// edit form takes % off; the store stores discountPercent. round(pctOff/100 * 200) = round(pctOff * 2).
+export function pctOffToDiscountPercent(pctOff) {
+  var p = Number(pctOff) || 0;
+  if (p < 0) p = 0; if (p > 100) p = 100;
+  return Math.round(p / 100 * 200);
+}
+// One entry of setDiscountPercentsOf — {tierId, discountPercent} for the 721 hook.
+export function buildSetDiscountConfig(tierId, pctOff) {
+  return { tierId: Number(tierId), discountPercent: pctOffToDiscountPercent(pctOff) };
+}
+
 async function fetchProjectTiersUncached(project) {
   var hook = await readShopHook(project);
   if (!hook) return null;
@@ -554,7 +566,13 @@ function makeNftCart() {
 function renderShopSection(project, shop, cart) {
   var wrap = el('div', 'detail-section');
   var card = el('div', 'detail-card shop-card');
-  var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; card.appendChild(title);
+  var head = el('div', 'shop-card-head');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Shop'; head.appendChild(title);
+  // Top-right "+ Add items" for the owner/operator (shown once the 721 hook resolves; gated on submit).
+  var headAdd = el('a', 'operator-cta shop-head-add'); headAdd.href = '#'; headAdd.textContent = '+ Add items';
+  headAdd.title = 'Add NFT items for sale (operator only)'; headAdd.style.display = 'none';
+  head.appendChild(headAdd);
+  card.appendChild(head);
   var body = el('div', 'shop-body'); card.appendChild(body);
   wrap.appendChild(card);
 
@@ -574,17 +592,16 @@ function renderShopSection(project, shop, cart) {
 
   // Operator: add an NFT tier (shown once we know the 721 hook). Appended after the body resolves.
   // Bottom-left also shows the 721 collection's contract address.
+  // Footer shows the 721 collection's contract address. The "Add items" CTA lives top-right (headAdd) now.
   function appendAddTierFoot(s) {
     if (!s || !s.hook) return;
+    headAdd.style.display = ''; // operator add control, top-right
+    headAdd.onclick = function (e) { e.preventDefault(); openAddTierModal(project, s); };
     var foot = el('div', 'detail-about-foot shop-foot');
     var addr = el('div', 'shop-collection-addr');
     addr.appendChild(document.createTextNode('Address: '));
     addr.appendChild(addressLinkNode(s.hook, project.chainId));
     foot.appendChild(addr);
-    var add = el('a', 'operator-cta'); add.href = '#'; add.textContent = 'Add items for sale';
-    add.title = 'Add NFT items for sale (operator only)';
-    add.addEventListener('click', function (e) { e.preventDefault(); openAddTierModal(project, s); });
-    foot.appendChild(add);
     card.appendChild(foot);
   }
 
@@ -1410,7 +1427,76 @@ function openTierDetail(project, shop, tier, refreshers) {
   if (flagBits.length) fact('Flags', flagBits.join(', '));
   content.appendChild(cfg);
 
+  // Operator controls — the project owner/operator can edit the discount or remove the tier. Per the contract
+  // these are the ONLY mutable bits (price/supply/category/flags are immutable; any other change is remove +
+  // re-add as a new id). Shown only when the connected wallet is the authority; gated again on submit.
+  var authority = projectAuthorityAddress(project);
+  var acct = getAccount && getAccount();
+  if (acct && authority && acct.toLowerCase() === authority.toLowerCase()) {
+    var opH = el('div', 'tier-detail-section-h'); opH.textContent = 'Operator'; content.appendChild(opH);
+    var opBox = el('div', 'tier-detail-op');
+    var opStatus = el('div', 'modal-status'); opStatus.style.display = 'none';
+    var dRow = el('div', 'tier-detail-op-row');
+    var dLab = el('span', 'tier-detail-fact-l'); dLab.textContent = 'Discount % off'; dRow.appendChild(dLab);
+    var dInput = document.createElement('input'); dInput.type = 'number'; dInput.min = '0'; dInput.max = '100'; dInput.step = '1';
+    dInput.value = String(Number(tier.discountPercent || 0) / 2); dInput.className = 'tier-detail-op-input'; dRow.appendChild(dInput);
+    var dBtn = el('button', 'create-btn'); dBtn.textContent = 'Set';
+    if (fl.cantIncreaseDiscountPercent) dBtn.title = 'This tier is discount-capped — you can only lower it.';
+    dBtn.addEventListener('click', function () { submitSetTierDiscount(project, tier, Number(dInput.value), opStatus); });
+    dRow.appendChild(dBtn); opBox.appendChild(dRow);
+    var rmBtn = el('button', 'create-btn ghost tier-detail-remove'); rmBtn.textContent = fl.cantBeRemoved ? 'Cannot be removed' : 'Remove item';
+    rmBtn.disabled = !!fl.cantBeRemoved;
+    if (!fl.cantBeRemoved) rmBtn.addEventListener('click', function () { if (window.confirm('Remove item #' + tier.id + ' from the shop on every chain? Buyers can no longer mint it, and re-adding creates a NEW id (supply resets). Continue?')) submitRemoveTier(project, tier, opStatus); });
+    opBox.appendChild(rmBtn);
+    opBox.appendChild(opStatus);
+    content.appendChild(opBox);
+  }
+
   openModal('Shop item #' + tier.id, content);
+}
+
+function shopOpSetStatus(statusEl) {
+  return function (m, kind) { statusEl.style.display = m ? '' : 'none'; statusEl.className = 'modal-status' + (kind ? ' ' + kind : ''); statusEl.textContent = m || ''; };
+}
+async function resolveHookMap(project, chains) {
+  var hookMap = {};
+  for (var i = 0; i < chains.length; i++) {
+    var h = await read(chains[i].id, 'REVOwner', REVO_TIERED_HOOK_ABI, 'tiered721HookOf', [BigInt(project.id)]).catch(function () { return null; });
+    if (h && !/^0x0+$/.test(h)) hookMap[chains[i].id] = h;
+  }
+  return hookMap;
+}
+function shopChainsOf(project) {
+  return (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
+}
+// Operator: set a tier's discount on every chain (JB721TiersHook.setDiscountPercentsOf), via relayr.
+async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
+  var setStatus = shopOpSetStatus(statusEl);
+  var account = await ensureOperatorAccount(project, projectAuthorityAddress(project), setStatus);
+  if (!account) return;
+  var avail = shopChainsOf(project), hookMap = await resolveHookMap(project, avail);
+  avail = avail.filter(function (c) { return hookMap[c.id]; });
+  if (!avail.length) { setStatus('No 721 hook found on these chains', 'error'); return; }
+  var cfg = buildSetDiscountConfig(tier.id, pctOff);
+  await runRelayrAcrossChains(avail, account, function (cid) {
+    return { to: hookMap[cid], data: encodeFunctionData({ abi: setDiscountPercentsOfAbi, functionName: 'setDiscountPercentsOf', args: [[cfg]] }) };
+  }, 300000n, setStatus, { label: 'Set discount', title: 'Confirm discount' });
+  bustTiersCache(project);
+  setStatus('Discount set on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : ''), 'success');
+}
+// Operator: remove a tier from the shop on every chain (JB721TiersHook.adjustTiers with tierIdsToRemove).
+async function submitRemoveTier(project, tier, statusEl) {
+  var setStatus = shopOpSetStatus(statusEl);
+  var account = await ensureOperatorAccount(project, projectAuthorityAddress(project), setStatus);
+  if (!account) return;
+  var avail = shopChainsOf(project), hookMap = await resolveHookMap(project, avail);
+  avail = avail.filter(function (c) { return hookMap[c.id]; });
+  if (!avail.length) { setStatus('No 721 hook found on these chains', 'error'); return; }
+  await runRelayrAcrossChains(avail, account, function (cid) {
+    return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[], [BigInt(tier.id)]] }) };
+  }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove' });
+  bustTiersCache(project);
+  setStatus('Removed on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : ''), 'success');
 }
 
 // Compact mini-shop folded into the top of the Pay card: a horizontal strip of tier thumbnails backed by
@@ -1541,6 +1627,13 @@ var JB721_TIER_CONFIG = { name: 'tiersToAdd', type: 'tuple[]', components: [
 var adjustTiersAbi = [{
   type: 'function', name: 'adjustTiers', stateMutability: 'nonpayable', outputs: [],
   inputs: [JB721_TIER_CONFIG, { name: 'tierIdsToRemove', type: 'uint256[]' }],
+}];
+// JB721TiersHook.setDiscountPercentsOf — operator-only (SET_721_DISCOUNT_PERCENT). discountPercent is out of
+// 200 (DISCOUNT_DENOMINATOR); see buildSetDiscountConfig. The only price-related field editable after a tier
+// is added (price/supply/etc. are immutable — any other change is remove + re-add).
+var setDiscountPercentsOfAbi = [{
+  type: 'function', name: 'setDiscountPercentsOf', stateMutability: 'nonpayable', outputs: [],
+  inputs: [{ name: 'discountPercentConfigs', type: 'tuple[]', components: [{ name: 'tierId', type: 'uint32' }, { name: 'discountPercent', type: 'uint16' }] }],
 }];
 // JBController.setSplitGroupsOf — operator-only (SET_SPLIT_GROUPS). Replaces a ruleset's split groups.
 var setSplitGroupsAbi = [{

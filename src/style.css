@@ -4520,6 +4520,13 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .tier-detail-supply-row, .tier-detail-fact { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 2px 0; }
 .tier-detail-supply-chain { display: inline-flex; align-items: center; gap: 3px; }
 .tier-detail-supply-val, .tier-detail-fact-l { color: var(--muted-2); }
+.tier-detail-op { display: flex; flex-direction: column; gap: 8px; }
+.tier-detail-op-row { display: flex; align-items: center; gap: 8px; }
+.tier-detail-op-input { width: 70px; }
+.tier-detail-remove { align-self: flex-start; }
+/* Shop header: title left, "+ Add items" operator CTA top-right. */
+.shop-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.shop-head-add { font-size: 13px; white-space: nowrap; }
 .shop-tier-supply { font-size: 11px; color: var(--muted-2); }
 .shop-tier-step { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .shop-tier-stepbtn { width: 26px; height: 26px; border: 1px solid var(--c-orange-light); border-radius: 4px; background: none; color: var(--c-teal); font-size: 16px; font-weight: bold; line-height: 1; cursor: pointer; }
