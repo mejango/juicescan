@@ -10,7 +10,7 @@ import {
   getBeneficiaryAddress,
 } from './component-base.js';
 
-var cashOutAbi = [{
+export var cashOutAbi = [{
   type: 'function', name: 'cashOutTokensOf', stateMutability: 'nonpayable',
   inputs: [
     { name: 'holder', type: 'address' },
@@ -23,6 +23,23 @@ var cashOutAbi = [{
   ],
   outputs: [{ name: '', type: 'uint256' }],
 }];
+
+// 95% floor on the previewed reclaim (covers the 2.5% protocol fee + ~2.5% slippage) so a burn can't
+// reclaim ~0 silently (surplus drained / MEV). 0 when the reclaim is unknown (preview failed / delay active).
+export function cashOutMinReclaimed(reclaimAmount) {
+  try { return (reclaimAmount != null && BigInt(reclaimAmount) > 0n) ? (BigInt(reclaimAmount) * 95n) / 100n : 0n; } catch (_) { return 0n; }
+}
+// Pure builder for JBMultiTerminal.cashOutTokensOf. `o`: { chainId, terminalAddr, holder, projectId,
+// cashOutCount (bigint), tokenToReclaim, beneficiary, minReclaimed (bigint) }.
+export function buildCashOutArgs(o) {
+  return {
+    chainId: o.chainId,
+    address: o.terminalAddr,
+    abi: cashOutAbi,
+    functionName: 'cashOutTokensOf',
+    args: [o.holder, BigInt(o.projectId), o.cashOutCount, o.tokenToReclaim, o.minReclaimed || 0n, o.beneficiary, '0x'],
+  };
+}
 
 var totalBalanceOfAbi = [{
   type: 'function', name: 'totalBalanceOf', stateMutability: 'view',
@@ -260,19 +277,17 @@ export function renderCashOutComponent() {
         args: [holder, BigInt(state.projectId), cashOutCount, state.selectedToken.address, beneficiary, '0x'],
       });
       var reclaim = preview && (preview.reclaimAmount != null ? preview.reclaimAmount : preview[1]);
-      if (reclaim != null && BigInt(reclaim) > 0n) minReclaimed = BigInt(reclaim) * 95n / 100n;
+      minReclaimed = cashOutMinReclaimed(reclaim);
     } catch (_) {} // cash-out delay active or read failed → fall back to no floor (tx still reviewable)
 
-    executeTransaction({
-      chainId: state.selectedChain,
-      address: terminalAddr,
-      abi: cashOutAbi,
-      functionName: 'cashOutTokensOf',
-      args: [holder, BigInt(state.projectId), cashOutCount, state.selectedToken.address, minReclaimed, beneficiary, '0x'],
+    executeTransaction(Object.assign(buildCashOutArgs({
+      chainId: state.selectedChain, terminalAddr: terminalAddr, holder: holder, projectId: state.projectId,
+      cashOutCount: cashOutCount, tokenToReclaim: state.selectedToken.address, beneficiary: beneficiary, minReclaimed: minReclaimed,
+    }), {
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
-    });
+    }));
   }
 
   updateUI();

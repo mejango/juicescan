@@ -67,6 +67,30 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     const deployNotes = await Q(page, '() => { const launch=[...document.querySelectorAll(".create-step button")].find(b=>/Launch|Deploy/i.test(b.textContent)); const notes=[...document.querySelectorAll(".create-step .create-hint, .create-step .create-banner")].map(h=>h.textContent.trim()).filter(Boolean); return { disabled: launch?launch.disabled:null, hasNameReason: notes.some(n=>/project name/i.test(n)), hasTosReason: notes.some(n=>/box above/i.test(n)) }; }');
     check('deploy launch button disabled with explained reasons', deployNotes.disabled === true && deployNotes.hasNameReason && deployNotes.hasTosReason, JSON.stringify(deployNotes));
 
+    // 6. Ruleset approval condition: renamed, offers a Custom address shown inline beside the dropdown.
+    await freshCreateFlow(page, 507);
+    await Q(page, '() => { [...document.querySelectorAll(".create-step-label")].find(s=>/Ruleset/i.test(s.textContent)).click(); return 1; }');
+    await page.waitForTimeout(700);
+    const approval = await Q(page, '() => { const lbl=[...document.querySelectorAll(".create-label")].some(l=>/Ruleset approval condition/.test(l.textContent)); const sel=[...document.querySelectorAll(".create-step select")].find(s=>[...s.options].some(o=>/Custom address/.test(o.textContent))); return { lbl, hasCustom: !!sel }; }');
+    check('ruleset approval condition renamed + offers Custom address', approval.lbl && approval.hasCustom, JSON.stringify(approval));
+    await Q(page, '() => { const s=[...document.querySelectorAll(".create-step select")].find(x=>[...x.options].some(o=>/Custom address/.test(o.textContent))); s.value="custom"; s.dispatchEvent(new Event("change",{bubbles:true})); return 1; }');
+    await page.waitForTimeout(400);
+    const inlineAddr = await Q(page, '() => { const row=document.querySelector(".create-approval-row"); return !!(row && row.querySelector(".create-approval-addr")); }');
+    check('custom approval address renders inline beside the dropdown', inlineAddr);
+
+    // 7. Split lock shows only when the ruleset has a fixed duration (hidden for Flexible).
+    await Q(page, '() => { [...document.querySelectorAll(".create-stage-head, .create-stage-title")].find(e=>/Ruleset #1/.test(e.textContent)).click(); return 1; }');
+    await page.waitForTimeout(500);
+    await Q(page, '() => { const d=[...document.querySelectorAll(".create-stage-card select")].find(s=>[...s.options].some(o=>/Flexible/.test(o.textContent))); d.value="2419200"; d.dispatchEvent(new Event("change",{bubbles:true})); return 1; }');
+    await page.waitForTimeout(400);
+    await Q(page, '() => { const a=[...document.querySelectorAll(".create-stage-card a, .create-stage-card button")].find(e=>/Add split/i.test(e.textContent)); if(a)a.click(); return 1; }');
+    await page.waitForTimeout(400);
+    const lockShown = await Q(page, '() => document.querySelectorAll(".create-split-lock").length');
+    await Q(page, '() => { const d=[...document.querySelectorAll(".create-stage-card select")].find(s=>[...s.options].some(o=>/Flexible/.test(o.textContent))); d.value="0"; d.dispatchEvent(new Event("change",{bubbles:true})); return 1; }');
+    await page.waitForTimeout(400);
+    const lockHidden = await Q(page, '() => document.querySelectorAll(".create-split-lock").length');
+    check('split lock shows for fixed duration, hidden for Flexible', lockShown >= 1 && lockHidden === 0, 'shown=' + lockShown + ' hidden=' + lockHidden);
+
   } catch (e) {
     check('smoke run completed without throwing', false, (e.message || String(e)).split('\n')[0]);
   } finally {

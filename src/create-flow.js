@@ -424,6 +424,7 @@ function initState() {
     accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth', 'usdc', or ['custom']
     customToken: { address: '', name: '', symbol: '', decimals: null, status: 'idle', error: '' }, // 'custom' accounting token (one ERC-20, same address on all chains; its own currency id, no price feed)
     swapRouter: true,                // include the router terminal (any token auto-converts) — on by default
+    approvalAddress: '',             // custom ruleset-approval-hook address (when the approval condition is 'custom'); per-chain overrides live under key 'approval'
     stages: [createStage()],         // ordered rulesets queued at launch (revnet-style stages)
     afterMode: 'wait',               // what happens after a single timed ruleset: wait | terminal | cycle (custom adds a 2nd stage)
     shopEnabled: false, // off by default — the Shop step starts as a single opt-in checkbox
@@ -436,7 +437,7 @@ function initState() {
     collection: { // top-level JB721 hook config (name/symbol auto-derive from the project until edited)
       name: '', symbol: '', nameTouched: false, symbolTouched: false, extrasOpen: false,
       preventOverspending: false, noNewTiersWithReserves: false, noNewTiersWithVotes: false,
-      noNewTiersWithOwnerMinting: false, issueTokensForSplits: false,
+      noNewTiersWithOwnerMinting: false, issueTokensForSplits: false, useForRedemptions: false,
       // revnet-only: extra 721 permissions the operator gets (default on — REVDeployer grants all four).
       opCanAdjustTiers: true, opCanUpdateMetadata: true, opCanMint: true, opCanIncreaseDiscount: true,
     },
@@ -524,6 +525,7 @@ export function openCreateFlow() {
     render();
     // Re-verify a custom accounting token against the imported chain set (its on-chain state isn't in the file).
     if (customAccounting(state) && isAddr((state.customToken || {}).address)) lookupCustomToken(state, render);
+    reresolveApproval(state, render); // re-resolve a custom approval-hook ENS name (cache isn't in the file)
   }
   function onImport(file) {
     var reader = new FileReader();
@@ -545,6 +547,7 @@ export function openCreateFlow() {
     if (state.done) clearDraft(); else saveDraft(state);
   }
   render();
+  reresolveApproval(state, render); // a restored draft's approval ENS isn't in the cache yet — re-resolve it
 
   document.body.appendChild(overlay);
   return { close: close };
@@ -925,6 +928,29 @@ function warnNote(text) {
   return n;
 }
 
+// Size a <select> tight to its CURRENTLY selected option's text. Native `width:auto` sizes to the widest
+// option (leaving slack when a shorter one is picked); this measures the selection after layout (rAF, once
+// attached) and sets an explicit width. No-op where measurement is unavailable (e.g. jsdom → width 0).
+function fitSelect(sel) {
+  if (typeof requestAnimationFrame !== 'function') return sel;
+  requestAnimationFrame(function () {
+    if (!sel.isConnected) return;
+    var opt = sel.options[sel.selectedIndex]; if (!opt) return;
+    var cs = getComputedStyle(sel);
+    var span = el('span', '');
+    span.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;';
+    span.style.font = cs.font || (cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily);
+    span.style.letterSpacing = cs.letterSpacing;
+    span.textContent = opt.textContent;
+    document.body.appendChild(span);
+    var w = span.getBoundingClientRect().width;
+    document.body.removeChild(span);
+    if (w > 0) sel.style.width = Math.ceil(w + parseFloat(cs.paddingLeft || 0) + parseFloat(cs.paddingRight || 0)
+      + parseFloat(cs.borderLeftWidth || 0) + parseFloat(cs.borderRightWidth || 0) + 1) + 'px';
+  });
+  return sel;
+}
+
 // Pink notice band, same color treatment as the "Work in progress" band.
 function pinkNote(text) {
   var n = el('div', 'create-wip');
@@ -1013,6 +1039,7 @@ function renderDetails(state, render) {
   // Token ticker — required for revnets (it names the ERC-20 deployed for the token). Optional otherwise.
   wrap.appendChild(fieldBlock('Token symbol', state.projectType !== 'revnet', (function () {
     var n = textInput(d.ticker, 'TOKEN', function (v) { d.ticker = v.trim().toUpperCase().slice(0, 11); });
+    n.classList.add('create-symbol-field'); // a symbol is short — 1/4 width
     n.addEventListener('input', function () { n.value = n.value.toUpperCase(); });
     return n;
   })()));
@@ -1034,6 +1061,8 @@ function renderDetails(state, render) {
     g.appendChild(fieldBlock('Twitter handle', true, textInput(d.twitter, '@handle', function (v) { d.twitter = v; })));
     g.appendChild(fieldBlock('Discord', true, textInput(d.discord, 'https://discord.gg/…', function (v) { d.discord = v; })));
     g.appendChild(fieldBlock('Telegram', true, textInput(d.telegram, 'https://t.me/…', function (v) { d.telegram = v; })));
+    g.appendChild(fieldBlock('Instagram', true, textInput(d.instagram, 'https://instagram.com/…', function (v) { d.instagram = v; })));
+    g.appendChild(fieldBlock('WhatsApp', true, textInput(d.whatsapp, 'https://wa.me/…', function (v) { d.whatsapp = v; })));
     return g;
   }));
 
@@ -1183,21 +1212,38 @@ export function renderStages(state, render, opts) {
   }
   // A flexible (no-duration) last ruleset is terminal — owner-managed, nothing scheduled after it.
 
-  // Edit deadline — project-wide, at the bottom of the tab. Only shown when a future ruleset edit can
-  // actually happen, so the deadline has something to govern (see deadlineApplies).
+  // Ruleset approval condition — project-wide, at the bottom of the tab. The approval hook decides whether a
+  // queued edit can take effect; presets are time deadlines, "Custom address" points at any approval-hook
+  // contract (per-chain). Only shown when a future ruleset edit can actually happen (see deadlineApplies).
   if (deadlineApplies(state)) {
     var cur = (state.stages[0] && state.stages[0].deadline) || '3days';
     var dField = el('div', 'create-field'); dField.style.marginTop = '22px';
-    var dLab = el('label', 'create-label'); dLab.textContent = 'Edit deadline'; dField.appendChild(dLab);
-    dField.appendChild(infoNote('Owner edits must be queued this far ahead of the next ruleset, giving token holders time to review changes before they take effect.'));
-    var dSel = el('select', 'field create-input'); dSel.style.marginTop = '6px';
+    var dLab = el('label', 'create-label'); dLab.textContent = 'Ruleset approval condition'; dField.appendChild(dLab);
+    dField.appendChild(infoNote('The condition a queued edit must satisfy before it takes effect, giving token holders time to review changes.'));
+    // Dropdown sits tight to its text; when Custom is picked the address field sits inline beside it.
+    var dRow = el('div', 'create-approval-row');
+    var dSel = el('select', 'field create-input create-input-auto');
     DEADLINE_OPTIONS.forEach(function (o) {
-      var op = el('option', ''); op.value = o.key; op.textContent = o.label + (o.def ? ' (default)' : '');
+      var op = el('option', ''); op.value = o.key; op.textContent = o.label;
       if (cur === o.key) op.selected = true; dSel.appendChild(op);
     });
+    var custOpt = el('option', ''); custOpt.value = 'custom'; custOpt.textContent = 'Custom address';
+    if (cur === 'custom') custOpt.selected = true; dSel.appendChild(custOpt);
     dSel.addEventListener('change', function () { state.stages.forEach(function (s) { s.deadline = dSel.value; }); render(); });
-    dField.appendChild(dSel);
-    if (cur === 'none') dField.appendChild(warnNote('No deadline lets the owner make last-second edits before a ruleset takes effect, which supporters may see as risky.'));
+    fitSelect(dSel); dRow.appendChild(dSel);
+    // Inline address — only when custom and not in per-chain mode (per-chain rows render full-width below).
+    if (cur === 'custom' && !perChainOpen(state, 'approval')) {
+      var ai = textInput(state.approvalAddress || '', '0x… or name.eth', function (v) { state.approvalAddress = v.trim(); });
+      var ah = attachEns(ai, function (name, addr) { state.approvalAddressResolved = addr || null; state.approvalAddressResolvedFor = addr ? name : null; });
+      var ab = recipBoxWith(ai, ah); ab.classList.add('create-approval-addr'); dRow.appendChild(ab);
+    }
+    dField.appendChild(dRow);
+    if (cur === 'custom') {
+      dField.appendChild(perChainAddrControl(state, render, 'approval', state.approvalAddressResolved || state.approvalAddress || ''));
+      dField.appendChild(infoNote('A JBRulesetApprovalHook contract that approves or rejects queued edits. Must be deployed on every selected chain.'));
+    } else if (cur === 'none') {
+      dField.appendChild(warnNote('No condition lets the owner make last-second edits before a ruleset takes effect, which supporters may see as risky.'));
+    }
     wrap.appendChild(dField);
   }
   return wrap;
@@ -1566,7 +1612,7 @@ function stageTiming(stage, idx, isLast, render) {
   // Duration (None + presets)
   var f = el('div', 'create-field');
   var lab = el('label', 'create-label'); lab.textContent = 'Duration'; f.appendChild(lab);
-  var sel = el('select', 'field create-input');
+  var sel = el('select', 'field create-input create-input-auto');
   var flex = el('option', ''); flex.value = '0'; flex.textContent = 'Flexible';
   if (!stage.durationCustom && !stage.durationSeconds) flex.selected = true; sel.appendChild(flex);
   DURATION_PRESETS.forEach(function (p) {
@@ -1582,7 +1628,7 @@ function stageTiming(stage, idx, isLast, render) {
     else { stage.durationCustom = false; stage.durationSeconds = Number(sel.value); }
     render();
   });
-  f.appendChild(sel);
+  fitSelect(sel); f.appendChild(sel);
   if (stage.durationCustom) {
     var crow = el('div', 'create-amount-row'); crow.style.marginTop = '8px';
     var num = el('input', 'field create-amount-input'); num.type = 'number'; num.min = '1'; num.step = '1'; num.placeholder = '1'; num.value = stage.customDurVal;
@@ -1648,6 +1694,35 @@ export function currencySelect(current, onChange, cls, lockedSym) {
 }
 
 
+// Split lock (JBSplit.lockedUntil). A checked "Locked" + date stores a unix timestamp; the split then can't
+// be edited or removed by the owner until that date. Only offered when the ruleset has a fixed duration —
+// a "Flexible" (no-duration) ruleset has no bounded window for the lock to govern, so the control is hidden.
+function splitLockAllowed(stage) { return !!stage && (Number(stage.durationSeconds) || 0) > 0; }
+function tsToDateInput(ts) { try { return new Date(Number(ts) * 1000).toISOString().slice(0, 10); } catch (_) { return ''; } }
+function splitLockRow(stage, rec, render) {
+  if (!splitLockAllowed(stage)) { if (rec.lockedUntil) rec.lockedUntil = 0; return null; } // flexible → no lock; clear any stale value
+  var wrap = el('div', 'create-split-lock');
+  var lbl = el('label', 'create-split-lockcheck');
+  var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = !!rec.lockedUntil;
+  cb.addEventListener('change', function () {
+    // Default to the end of this ruleset, capped at ~10y so a "Forever" duration doesn't seed a year-4159 date.
+    var span = Math.min(Number(stage.durationSeconds) || 2592000, 315360000);
+    rec.lockedUntil = cb.checked ? (rec.lockedUntil || (Math.floor(Date.now() / 1000) + span)) : 0;
+    render();
+  });
+  lbl.appendChild(cb); var t = el('span', 'create-split-locklabel'); t.textContent = 'Locked'; lbl.appendChild(t);
+  wrap.appendChild(lbl);
+  if (rec.lockedUntil) {
+    var d = el('input', 'field create-split-lockdate'); d.type = 'date'; d.value = tsToDateInput(rec.lockedUntil);
+    d.min = tsToDateInput(Math.floor(Date.now() / 1000)); // no past dates (a lock in the past is meaningless)
+    // Clamp ≥ 0 — a negative timestamp would overflow JBSplit.lockedUntil (uint48) and abort the whole deploy build.
+    d.addEventListener('change', function () { rec.lockedUntil = d.value ? Math.max(0, Math.floor(Date.parse(d.value + 'T00:00:00Z') / 1000)) : 0; render(); });
+    wrap.appendChild(d);
+    wrap.appendChild(infoNote("Locked until this date — the split can't be edited or removed for the rest of this ruleset."));
+  }
+  return wrap;
+}
+
 // Payouts section for a stage (folded into the stage editor).
 function payoutRow(stage, rec, idx, mode, render, state) {
   var wrap = el('div', 'create-split-wrap'); if (idx > 0) wrap.style.marginTop = '18px';
@@ -1664,14 +1739,15 @@ function payoutRow(stage, rec, idx, mode, render, state) {
     var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
     row.appendChild(toField); row.appendChild(rm);
   } else {
-    var lead2 = el('span', 'create-split-lead'); lead2.textContent = idx === 0 ? 'Payout' : '… and'; row.appendChild(lead2);
-    var amt = el('input', 'field create-inline-num'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
+    var lead2 = el('span', 'create-split-lead'); lead2.textContent = idx === 0 ? 'Pay' : '… and'; row.appendChild(lead2);
+    var amt = el('input', 'field create-inline-num create-payout-amt'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
     amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); row.appendChild(amt);
     row.appendChild(currencySelect(stage.payoutCurrency, function (v) { stage.payoutCurrency = v; render(); }, null, lockedCurrencySym(state)));
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
   appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'p:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, pidKey: 'ppid:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx });
+  var plk = splitLockRow(stage, rec, render); if (plk) wrap.appendChild(plk);
   return wrap;
 }
 
@@ -1698,14 +1774,15 @@ function payoutKindRow(pk, kind, rec, idx, render, state, stage) {
     var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
     row.appendChild(toField); row.appendChild(rm);
   } else {
-    var lead2 = el('span', 'create-split-lead'); lead2.textContent = idx === 0 ? 'Payout' : '… and'; row.appendChild(lead2);
-    var amt = el('input', 'field create-inline-num'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
+    var lead2 = el('span', 'create-split-lead'); lead2.textContent = idx === 0 ? 'Pay' : '… and'; row.appendChild(lead2);
+    var amt = el('input', 'field create-inline-num create-payout-amt'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
     amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); row.appendChild(amt);
     var u = el('span', 'create-suffix'); u.textContent = ' ' + kind.symbol + ' '; row.appendChild(u);
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
   appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'pk:' + kind.key + ':' + idx, pidKey: 'pkpid:' + kind.key + ':' + idx });
+  var klk = splitLockRow(stage, rec, render); if (klk) wrap.appendChild(klk);
   return wrap;
 }
 // A "Payout <SYM> funds" block for one accounting context.
@@ -1763,7 +1840,7 @@ function payoutsSection(stage, render, state) {
       // Surplus is the project's TOTAL across all accepted tokens (cash-out reclaim prices against the
       // cumulative surplus). Owner access is unlimited-across-tokens here to avoid per-token cap ambiguity.
       wrap.appendChild(toggleRow('Give owner access to surplus funds', dz('The owner can withdraw the project’s surplus (funds beyond payouts) — an unlimited allowance per accepted token (ETH, USDC, …), each in its own currency.', 'The owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
-      wrap.appendChild(cashOutSection(stage, render));
+      wrap.appendChild(cashOutSection(state, stage, render));
     }
     return wrap;
   }
@@ -1814,7 +1891,7 @@ function payoutsSection(stage, render, state) {
       wrap.appendChild(saCard);
     }
     // Token-holder cash outs live right after the owner's surplus allowance (both draw from surplus).
-    wrap.appendChild(cashOutSection(stage, render));
+    wrap.appendChild(cashOutSection(state, stage, render));
   }
   return wrap;
 }
@@ -1946,6 +2023,7 @@ function reservedSplitRow(t, rec, idx, render, onTotal, state, stageIdx) {
   row.appendChild(rm);
   wrap.appendChild(row);
   appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'r:' + stageIdx + ':' + idx, pidKey: 'rpid:' + stageIdx + ':' + idx, allowFundMarket: true });
+  var rlk = splitLockRow(t, rec, render); if (rlk) wrap.appendChild(rlk);
   return wrap;
 }
 
@@ -2003,14 +2081,38 @@ function idleToggle(label, subtext) {
   return t;
 }
 
+// The accounting token(s) the project's surplus is held in (for cash-out copy). Custom → its symbol; ETH/USDC
+// (either or both) → "ETH", "USDC", or "ETH and USDC" — honors a project that accepts more than one token.
+function surplusTokenLabel(state) {
+  if (customAccounting(state)) return customAcctSym(state) || 'TOKEN';
+  var a = state.accepts || [];
+  var syms = [];
+  if (a.indexOf('eth') !== -1) syms.push('ETH');
+  if (a.indexOf('usdc') !== -1) syms.push('USDC');
+  return syms.length ? syms.join(' and ') : 'ETH';
+}
+// Token cash-out (rulesets) and item cash-out (the 721 store) are MUTUALLY EXCLUSIVE on-chain: with the 721
+// hook as the cash-out data hook, JB721Hook.beforeCashOutRecordedWith reverts on any project-token cash-out
+// (JB721Hook.sol:107). So enabling one idles the other in the UI.
+function itemCashOutOn(state) { return !!(state.shopEnabled && state.collection && state.collection.useForRedemptions); }
+function anyTokenCashOut(state) { return (state.stages || []).some(function (s) { return s.cashOutEnabled; }); }
+
 // Cash-out access for token holders — they reclaim a share of the project's surplus by burning tokens.
 // Lives next to the owner's surplus allowance (both draw from surplus). Tax rate shapes the bonding curve.
-export function cashOutSection(stage, render) {
+export function cashOutSection(state, stage, render) {
   var t = stage;
   var wrap = el('div', '');
-  var acctSym = t.baseCurrency === 2 ? 'USDC' : 'ETH';
-  wrap.appendChild(toggleRow('Give tokens cash out access to surplus funds', dz('Token holders can cash out their tokens for a share of the project’s surplus ' + acctSym + '.', 'Token holders can’t cash out their tokens.'), t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
-  if (t.cashOutEnabled) wrap.appendChild(cashOutTaxCard(t, render, acctSym));
+  var label = surplusTokenLabel(state);
+  // Item cash-out (Shop) overrides token cash-out — they can't both be on. Idle the token toggle, but keep the
+  // tax card: the same ruleset cashOutTaxRate governs item redemption (JB721Hook forwards it).
+  if (itemCashOutOn(state) && !t.cashOutEnabled) {
+    wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'Items cash out for surplus instead (enabled in the Shop) — tokens and items can’t both be cashed out.'));
+    wrap.appendChild(cashOutTaxCard(t, render, label));
+    wrap.appendChild(infoNote('This cash-out tax applies to item redemptions.'));
+    return wrap;
+  }
+  wrap.appendChild(toggleRow('Give tokens cash out access to surplus funds', dz('Token holders can cash out their tokens for a share of the project’s surplus ' + label + '.', 'Token holders can’t cash out their tokens.'), t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
+  if (t.cashOutEnabled) wrap.appendChild(cashOutTaxCard(t, render, label));
   return wrap;
 }
 
@@ -2151,7 +2253,11 @@ function collectionExtrasSection(state, render) {
   var ownerNote = el('div', 'create-hint'); ownerNote.textContent = 'The project owner can set or change these anytime after launch.'; ownerNote.style.marginTop = '0'; f.appendChild(ownerNote);
   var nameField = fieldBlock('Collection name', false, textInput(collectionNameOf(state), state.details.name || 'Collection name', function (v) { c.name = v; c.nameTouched = true; }));
   f.appendChild(nameField);
-  f.appendChild(fieldBlock('Collection symbol', false, textInput(collectionSymbolOf(state), state.details.ticker || 'Symbol', function (v) { c.symbol = v; c.symbolTouched = true; })));
+  f.appendChild(fieldBlock('Collection symbol', false, (function () {
+    var s = textInput(collectionSymbolOf(state), state.details.ticker || 'Symbol', function (v) { c.symbol = v; c.symbolTouched = true; });
+    s.classList.add('create-symbol-field'); // a symbol is short — 1/4 width
+    return s;
+  })()));
 
   // Pinata JWT — needed to pin item media + metadata to IPFS. Only shown when one isn't set yet.
   if (!hasPinata()) {
@@ -2168,6 +2274,17 @@ function collectionExtrasSection(state, render) {
   f.appendChild(toggleRow('Lock voting items after launch', dz('New items added after launch can’t carry custom voting power.', 'New items added after launch can carry custom voting power.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
   f.appendChild(toggleRow('Lock owner minting after launch', dz('New items added after launch can’t let the owner mint for free.', 'New items added after launch can let the owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
   f.appendChild(toggleRow('Give split recipients project tokens', dz('Sale-split recipients also receive project tokens for their share.', 'Sale-split recipients receive funds only, no project tokens.'), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
+  // useDataHookForCashOut — item holders redeem items against project surplus. Revnets force this on at the
+  // deployer (so it's custom-only). Mutually exclusive with TOKEN cash-out (set in rulesets): the 721 hook
+  // reverts on any token cash-out, so if token cash-outs are on we idle this instead of letting both be set.
+  if (state.projectType !== 'revnet') {
+    if (anyTokenCashOut(state) && !c.useForRedemptions) {
+      f.appendChild(idleToggle('Give items cash out access to surplus funds', 'Token cash outs are enabled in your rulesets — tokens and items can’t both be cashed out. Turn off token cash outs to let items redeem.'));
+    } else {
+      f.appendChild(toggleRow('Give items cash out access to surplus funds', dz('Item holders can cash out their items for a share of the project’s surplus ' + surplusTokenLabel(state) + '.', 'Items can’t be cashed out — they grant no claim on surplus.'), c.useForRedemptions, function (v) { c.useForRedemptions = v; render(); }));
+      if (c.useForRedemptions) f.appendChild(infoNote('Items redeem at the cash-out tax you set in your rulesets.'));
+    }
+  }
 
   // Revnet operator 721 permissions — REVDeployer grants the operator all four by default; these let the
   // user revoke individual ones at deploy time (encoded as the REVDeploy721TiersHookConfig preventOperator* flags).
@@ -2636,9 +2753,10 @@ function renderDeploy(state, render) {
   var needCustomToken = customAccounting(state) && !customReady(state); // custom accounting token not resolved yet
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
+  var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -2652,6 +2770,7 @@ function renderDeploy(state, render) {
   if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet — fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying — otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
+  if (approvalBad) wrap.appendChild(warnNote(approvalBad + ' Without it the approval condition silently becomes “none” (no review window for edits).'));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
   if (!state.tos) wrap.appendChild(infoNote('Check the box above to confirm you accept the risks before ' + (isRev ? 'deploying.' : 'launching.')));
@@ -2660,6 +2779,27 @@ function renderDeploy(state, render) {
 }
 
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+// When the approval condition is "Custom address", every selected chain must resolve to a real contract.
+// A blank / mistyped / unresolved-ENS value would silently encode approvalHook = address(0) — no review
+// window for owner edits — with nothing else to catch it, so it's a hard deploy gate.
+function approvalIssue(state) {
+  if (!(state.stages || []).some(function (s) { return s.deadline === 'custom'; })) return null;
+  var def = pickResolved(state.approvalAddress, { resolvedAddress: state.approvalAddressResolved, resolvedFor: state.approvalAddressResolvedFor });
+  var bad = (state.chainIds || []).filter(function (cid) { return !isAddr(chainAddr(state, cid, 'approval', def)); });
+  if (!bad.length) return null;
+  return 'The custom ruleset approval condition needs a valid contract address on ' + bad.map(function (c) { return chainName(c); }).join(', ') + '.';
+}
+
+// Repopulate the volatile _ensCache for a custom approval-hook ENS name after a reload/import, so the
+// Deploy-step gate (approvalIssue) sees the resolved address instead of treating a valid name as missing.
+function reresolveApproval(state, render) {
+  if (!(state.stages || []).some(function (s) { return s.deadline === 'custom'; })) return;
+  if (!isEnsName(state.approvalAddress || '')) return;
+  resolveEns(state.approvalAddress).then(function (addr) {
+    if (addr) { state.approvalAddressResolved = addr; state.approvalAddressResolvedFor = (state.approvalAddress || '').trim(); if (render) render(); }
+  });
+}
 
 // First stage whose reserved-token or percent-mode payout splits sum over 100% (silently clamped at build).
 function splitTotalIssue(state) {
@@ -3242,7 +3382,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var addr = getAddress('JBOmnichainDeployer', chainId);
   var missing = sucker.missing.length > 0;
   if (hasNfts) {
-    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: false, salt: salt };
+    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions), salt: salt };
     return { contract: 'JBOmnichainDeployer', address: addr, abi: omnichain721Abi, missingSuckers: missing,
       args: [owner, projectUri, deploy721, rulesetsFull, terminalConfigs, '', sucker] };
   }
@@ -3376,7 +3516,7 @@ function buildRevStage(state, stage, idx, chainId, start) {
     splits = rows.map(function (e, k) {
       var benef = chainAddr(state, chainId, 'r:' + idx + ':' + e.origIdx, pickResolved(e.x.address, e.x)); // per-chain beneficiary/address
       var pid = (e.x.type === 'project' || e.x.type === 'customhook') ? (Number(pcAddrGet(state, chainId, 'rpid:' + idx + ':' + e.origIdx, e.x.projectId || 0)) || 0) : 0;
-      return splitState(e.x, shares[k], benef, chainId, pid);
+      return splitState(e.x, shares[k], benef, chainId, pid, false);
     });
   }
   // initialIssuance: tokens per base unit × 1e18 (18-dec fixed point). 0 on later stages = inherit (with cut).
@@ -3421,6 +3561,7 @@ export function buildQueueRulesetConfigs(state, chainId, immediateStart) {
 }
 
 function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn, immediateStart) {
+  var lockOk = splitLockAllowed(stage); // split locks only encode for a fixed-duration ruleset (not Flexible)
   // Per-chain overrides (amount + beneficiary), keyed by user-stage + recipient index; fall back to defaults.
   var amtAt = function (x, idx) { return chainPayoutAmount(state, chainId, userStageIdx, idx); };
   // For project recipients, the token beneficiary is held in x.address and resolved via the global ENS cache.
@@ -3452,13 +3593,27 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   // Cash outs / owner minting / pausing apply to the project's tokens regardless of whether THIS stage
   // issues new tokens (tokens can exist from prior stages or owner mints). Clamp 0–100 so a stray value
   // can't overflow MAX_CASH_OUT_TAX_RATE and revert at deploy.
-  rs.cashOutTaxRate = (stage.cashOutEnabled && !noSurplus)
-    ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100; // 100% = cash outs off (no surplus under unlimited payouts)
+  // Item redemptions route cash-out through the 721 hook (item holders redeem for surplus). Only when a store
+  // is actually on this chain AND the project opted in. Mutually exclusive with token cash-out by contract.
+  var storeRedeem = state.shopEnabled && !!(state.collection && state.collection.useForRedemptions)
+    && (state.nfts || []).some(function (_, i) { return chainItemIncluded(state, chainId, i); });
+  // The cash-out tax governs whoever can cash out — token holders OR (mutually exclusively) item holders — so
+  // it applies when either is on. 100% = cash outs off (also forced when payouts leave no surplus).
+  rs.cashOutTaxRate = ((stage.cashOutEnabled || storeRedeem) && !noSurplus)
+    ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100;
   rs.allowOwnerMinting = !!stage.allowOwnerMinting;
   rs.pauseCreditTransfers = !!stage.pauseTransfers;
+  rs.useDataHookForCashOut = storeRedeem;
 
-  var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
-  rs.approvalHook = (deadlineOn !== false && dl && dl.contract && getAddress(dl.contract, chainId)) || ZERO;
+  if (deadlineOn === false) {
+    rs.approvalHook = ZERO;
+  } else if (stage.deadline === 'custom') {
+    // Custom approval-hook contract — per-chain override → the global default; ENS resolved.
+    rs.approvalHook = addrOrZero(chainAddr(state, chainId, 'approval', pickResolved(state.approvalAddress, { resolvedAddress: state.approvalAddressResolved, resolvedFor: state.approvalAddressResolvedFor })));
+  } else {
+    var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
+    rs.approvalHook = (dl && dl.contract && getAddress(dl.contract, chainId)) || ZERO;
+  }
 
   rs.pausePay = stage.pausePay; rs.holdFees = stage.holdFees;
   rs.allowSetTerminals = stage.allowSetTerminals; rs.allowSetController = stage.allowSetController;
@@ -3490,14 +3645,14 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
           var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
           if (pacc + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc);
           pacc += raw;
-          return splitState(x, raw, benefK(x, kind, idx), chainId, pidK(x, kind, idx));
+          return splitState(x, raw, benefK(x, kind, idx), chainId, pidK(x, kind, idx), lockOk);
         });
       } else if (pk.mode === 'limited') {
         var totalAmt = (pk.recipients || []).reduce(function (s, x) { return s + puK(x.amountEth, kind.decimals); }, 0n);
         if (totalAmt > 0n) payoutLimits.push({ amount: totalAmt, currency: cur });
         var totalNum = (pk.recipients || []).reduce(function (s, x) { return s + (Number(x.amountEth) || 0); }, 0) || 1;
         var lshares = fillSplits((pk.recipients || []).map(function (x) { return Math.round(((Number(x.amountEth) || 0) / totalNum) * SPLITS_TOTAL); }));
-        splits = (pk.recipients || []).map(function (x, idx) { return splitState(x, lshares[idx], benefK(x, kind, idx), chainId, pidK(x, kind, idx)); });
+        splits = (pk.recipients || []).map(function (x, idx) { return splitState(x, lshares[idx], benefK(x, kind, idx), chainId, pidK(x, kind, idx), lockOk); });
       }
       if (stage.surplusAllowanceOn && pk.mode !== 'unlimited') surplusAllowances.push({ amount: UINT224_MAX, currency: cur });
       if (splits.length) rs.splitGroups.push({ groupId: uint256FromAddress(token), splits: splits });
@@ -3515,12 +3670,12 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
           var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
           if (pacc1 + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc1);
           pacc1 += raw;
-          return splitState(x, raw, payoutBenef(x, idx), chainId, payoutPid(x, idx));
+          return splitState(x, raw, payoutBenef(x, idx), chainId, payoutPid(x, idx), lockOk);
         });
       } else {
         var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
         var lshares1 = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
-        payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares1[idx], payoutBenef(x, idx), chainId, payoutPid(x, idx)); });
+        payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares1[idx], payoutBenef(x, idx), chainId, payoutPid(x, idx), lockOk); });
       }
       rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
     }
@@ -3546,7 +3701,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     var rshares = fillSplits(rrows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL); }));
     rs.splitGroups.push({
       groupId: '1',
-      splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx), chainId, reservedPid(e.x, e.origIdx)); }),
+      splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx), chainId, reservedPid(e.x, e.origIdx), lockOk); }),
     });
   }
   return rs;
@@ -3568,7 +3723,11 @@ function fillSplits(rawShares) {
   return rawShares;
 }
 
-function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOverride) {
+function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOverride, allowLock) {
+  // lockedUntil only encodes when the stage actually allows locks (splitLockAllowed at the call site) — a
+  // stale value from a draft/import or a non-lockable (revnet/Flexible) stage must NOT reach the chain.
+  // `allowLock === undefined` (e.g. a direct unit-test call) keeps the value, so existing behavior holds.
+  var lockTs = (allowLock !== false && rec.lockedUntil) ? Number(rec.lockedUntil) : 0;
   // "Buyback liquidity" reserved split → routes to the shared BannyLPSplitHook (same address on every
   // chain). The hook keys off the distributing project, so projectId/beneficiary are pass-through.
   if (rec.type === 'lphook' && chainId != null) {
@@ -3576,7 +3735,7 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
     if (hookAddr) {
       var b = getAccount && getAccount();
       return { preferAddToBalance: false, percent: rawPercent, projectId: 0,
-        beneficiary: addrOrZero(b), lockedUntil: 0, hook: hookAddr };
+        beneficiary: addrOrZero(b), lockedUntil: lockTs, hook: hookAddr };
     }
   }
   // The address-bearing field is the wallet recipient OR the project / custom-hook token beneficiary.
@@ -3591,7 +3750,7 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
     percent: rawPercent,
     projectId: pid,
     beneficiary: addrOrZero(addr),
-    lockedUntil: rec.lockedUntil ? Number(rec.lockedUntil) : 0,
+    lockedUntil: lockTs,
     hook: hook,
   };
 }
@@ -3691,6 +3850,8 @@ function buildMetadata(d) {
   if (d.twitter) m.twitter = d.twitter.replace(/^@/, '');
   if (d.discord) m.discord = d.discord;
   if (d.telegram) m.telegram = d.telegram;
+  if (d.instagram) m.instagram = d.instagram;
+  if (d.whatsapp) m.whatsapp = d.whatsapp;
   if (d.payDisclosure) m.payDisclosure = d.payDisclosure;
   if (d.tags && d.tags.length) m.tags = d.tags;
   return m;
@@ -3837,4 +3998,6 @@ export const __test = {
   assembleRuleset, splitState, fillSplits, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, uint256FromAddress, deploySalt,
+  splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
+  surplusTokenLabel, itemCashOutOn, anyTokenCashOut,
 };

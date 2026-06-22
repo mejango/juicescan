@@ -72,6 +72,15 @@ export var queueRulesetsAbi = [{
   outputs: [{ name: 'rulesetId', type: 'uint256' }],
 }];
 
+// Pure builder for JBController.queueRulesetsOf. `o`: { chainId, controllerAddr, projectId, rulesetConfigs
+// (array of ruleset tuples, built by buildRulesetConfigs), memo }.
+export function buildQueueRulesetsArgs(o) {
+  return {
+    chainId: o.chainId, address: o.controllerAddr, abi: queueRulesetsAbi, functionName: 'queueRulesetsOf',
+    args: [BigInt(o.projectId), o.rulesetConfigs, o.memo || ''],
+  };
+}
+
 var DURATION_PRESETS = [
   { label: 'None (no expiry)', seconds: 0 },
   { label: '1 day', seconds: 86400 },
@@ -297,11 +306,7 @@ export function renderQueueRulesetComponent() {
     }
 
     executeTransaction({
-      chainId: state.selectedChain,
-      address: controllerAddr,
-      abi: queueRulesetsAbi,
-      functionName: 'queueRulesetsOf',
-      args: [BigInt(state.projectId), rulesetConfigs, state.memo || ''],
+      ...buildQueueRulesetsArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, rulesetConfigs: rulesetConfigs, memo: state.memo || '' }),
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

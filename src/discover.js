@@ -1556,6 +1556,23 @@ var repayLoanAbi = [{
   outputs: [{ name: 'paidOffLoanId', type: 'uint256' }, { name: 'paidOffloan', type: 'tuple', components: REVLOAN_COMPONENTS }],
 }];
 var EMPTY_PERMIT2 = { sigDeadline: 0n, amount: 0n, expiration: 0, nonce: 0, signature: '0x' };
+// Pure builder for REVLoans.borrowFrom. `o`: { chainId, loansAddr, revnetId, token, minBorrow (bigint),
+// collateral (bigint), beneficiary, prepaidFeePercent, holder }. minBorrow is the floor on funds received.
+export function buildBorrowArgs(o) {
+  return {
+    chainId: o.chainId, address: o.loansAddr, abi: borrowFromAbi, functionName: 'borrowFrom',
+    args: [BigInt(o.revnetId), o.token, o.minBorrow || 0n, o.collateral, o.beneficiary, BigInt(o.prepaidFeePercent), o.holder],
+  };
+}
+// Pure builder for REVLoans.repayLoan (payable). `o`: { chainId, loansAddr, loanId, maxRepay (bigint),
+// collateralToReturn (bigint), beneficiary, value (bigint), allowance? (permit2 tuple) }.
+export function buildRepayArgs(o) {
+  return {
+    chainId: o.chainId, address: o.loansAddr, abi: repayLoanAbi, functionName: 'repayLoan',
+    args: [BigInt(o.loanId), o.maxRepay, o.collateralToReturn, o.beneficiary, o.allowance || EMPTY_PERMIT2],
+    value: o.value || 0n,
+  };
+}
 var LOAN_REV_FEE_PERCENT = 10; // 1% of the borrow, out of MAX_FEE (1000), to the $REV revnet
 var _loanRevIdCache = {};
 function loanRevIdOf(chainId) {
@@ -1700,6 +1717,14 @@ var claimTokensForAbi = [{
   ],
   outputs: [],
 }];
+// Pure builder for JBController.claimTokensFor (mint internal credits into the ERC-20). `o`: { chainId,
+// controllerAddr, holder, projectId, tokenCount (bigint), beneficiary }.
+export function buildClaimTokensArgs(o) {
+  return {
+    chainId: o.chainId, address: o.controllerAddr, abi: claimTokensForAbi, functionName: 'claimTokensFor',
+    contractName: 'JBController', args: [o.holder, BigInt(o.projectId), o.tokenCount, o.beneficiary],
+  };
+}
 // Uniswap V4 PoolManager per chain (from deploy-all-v6 Deploy.s.sol), lowercased. Used to read the
 // buyback pool's current price (slot0) via extsload — the live AMM price for a revnet's token.
 var POOL_MANAGER_BY_CHAIN = {
@@ -10670,7 +10695,8 @@ function renderAcrossChainsBody(project) {
         var val = formatBalance(t.balance, t.decimals, t.symbol);
         return pct ? { main: val, sub: pct } : val;
       }
-      var lineFor = function (t) { var k = t.symbol + '@' + t.decimals; var tot = totByTok[k] ? totByTok[k].sum : 0n; var pct = pctOf(BigInt(t.balance), tot); return formatBalance(t.balance, t.decimals, t.symbol) + (pct ? ' (' + pct + ')' : ''); };
+      // % as a muted sub-line under each token's value — same style + position as the Supply column.
+      var lineFor = function (t) { var k = t.symbol + '@' + t.decimals; var tot = totByTok[k] ? totByTok[k].sum : 0n; var pct = pctOf(BigInt(t.balance), tot); var val = formatBalance(t.balance, t.decimals, t.symbol); return pct ? { main: val, sub: pct } : val; };
       return { lines: nz.map(lineFor) };
     };
     rows.forEach(function (r) {
@@ -10867,9 +10893,8 @@ function buildClaimModal(project, creditRows) {
       var ctrl = getAddress('JBController', r.id);
       if (!ctrl) { status.textContent = 'No controller on this chain'; return; }
       btn.disabled = true;
-      executeTransaction({
-        chainId: r.id, address: ctrl, abi: claimTokensForAbi, functionName: 'claimTokensFor', contractName: 'JBController',
-        args: [holder, pid, r.credit, holder], label: 'Claim credits',
+      executeTransaction(Object.assign(buildClaimTokensArgs({ chainId: r.id, controllerAddr: ctrl, holder: holder, projectId: pid, tokenCount: r.credit, beneficiary: holder }), {
+        label: 'Claim credits',
         onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
         onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
         onSuccess: function () {
@@ -10877,7 +10902,7 @@ function buildClaimModal(project, creditRows) {
           btn.textContent = 'Claimed';
           document.dispatchEvent(new CustomEvent('jb:bridge-updated')); // reloads the You card with fresh credit/ERC-20 split
         },
-      });
+      }));
     });
     rowEl.appendChild(btn);
     rowEl.appendChild(status);
@@ -12117,15 +12142,21 @@ function buildLoanModal(project, requestClose) {
     // token = native, minBorrowAmount 0 (best price), prepaidFeePercent from the slider, holder/beneficiary = caller.
     function doBorrow(approved) {
       var loanToken = (state.acct && state.acct.address) || NATIVE_TOKEN; // disburse in the accounting token
-      executeTransaction({
-        chainId: state.chainId, address: loans, abi: borrowFromAbi, functionName: 'borrowFrom',
-        args: [pid, loanToken, 0n, collateral, acct, BigInt(state.prepaidFee), acct],
+      // Slippage floor: 99% of the previewed disbursed amount. REVLoans reverts if borrowAmount < minBorrow,
+      // so an adverse move in the revnet's cash-out value between quote and execution reverts instead of
+      // silently under-delivering funds. 0 when no preview is available.
+      var minBorrow = 0n;
+      try { var _lo = state.loanOut && state.loanOut.net; if (_lo != null) minBorrow = BigInt(_lo) * 99n / 100n; } catch (_) {}
+      executeTransaction(Object.assign(buildBorrowArgs({
+        chainId: state.chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
+        collateral: collateral, beneficiary: acct, prepaidFeePercent: state.prepaidFee, holder: acct,
+      }), {
         confirmTitle: approved ? 'Open loan — step 2 of 2' : 'Open loan',
         confirmText: 'Open loan',
         confirmNote: approved ? 'Approval done. This second transaction opens the loan — it burns your ' + sym + ' collateral and sends you the funds.' : undefined,
         onStatus: onStatus, onError: fail,
         onSuccess: function (m, meta) { refreshBalance(); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); renderLoanSuccess(collateral, state.loanOut, meta); },
-      });
+      }));
     }
 
     // Opening a loan burns the collateral via the controller, so REVLoans needs BURN_TOKENS on the holder.
@@ -12240,9 +12271,9 @@ function buildRepayModal(project, loanRow, requestClose) {
     // Buffer the fee 2% for per-second drift; excess native is refunded by REVLoans.
     var value = st.principal + st.fee + st.fee / 50n;
     btn.disabled = true; status.textContent = '';
-    executeTransaction({
-      chainId: chainId, address: loans, abi: repayLoanAbi, functionName: 'repayLoan',
-      args: [loanId, value, st.collateral, acct, EMPTY_PERMIT2], value: value,
+    executeTransaction(Object.assign(buildRepayArgs({
+      chainId: chainId, loansAddr: loans, loanId: loanId, maxRepay: value, collateralToReturn: st.collateral, beneficiary: acct, value: value,
+    }), {
       confirmTitle: 'Repay loan #' + String(loanId),
       confirmText: 'Repay loan',
       confirmNote: 'Repays the principal + outstanding fee and returns your ' + formatTokens(st.collateral) + ' ' + sym + ' collateral. Any overpayment from fee drift is refunded.',
@@ -12259,7 +12290,7 @@ function buildRepayModal(project, loanRow, requestClose) {
         status.textContent = '';
         st.done = true; btn.textContent = 'Done'; btn.disabled = false;
       },
-    });
+    }));
   });
   return wrap;
 }
@@ -12278,6 +12309,23 @@ var suckerBridgeAbi = [
     { name: 'minTokensReclaimed', type: 'uint256' }, { name: 'token', type: 'address' }, { name: 'metadata', type: 'bytes32' }], outputs: [] },
   { type: 'function', name: 'toRemote', stateMutability: 'payable', inputs: [{ name: 'token', type: 'address' }], outputs: [] },
 ];
+// Pure builder for JBSucker.prepare (queue a cross-chain move). `o`: { chainId, sucker, projectTokenCount
+// (bigint), beneficiary32 (bytes32), minReclaimed (bigint), termToken (the accounting token bridged),
+// metadata (bytes32), approvalToken, approvalAmount }.
+export function buildSuckerPrepareArgs(o) {
+  return {
+    chainId: o.chainId, address: o.sucker, abi: suckerBridgeAbi, functionName: 'prepare', contractName: 'JBSucker',
+    args: [o.projectTokenCount, o.beneficiary32, o.minReclaimed || 0n, o.termToken, o.metadata],
+    tokenAddr: o.approvalToken, spenderAddr: o.sucker, approvalAmount: o.approvalAmount,
+  };
+}
+// Pure builder for JBSucker.toRemote (ship the queued outbox to the remote chain). `value` = bridge fee.
+export function buildSuckerToRemoteArgs(o) {
+  return {
+    chainId: o.chainId, address: o.sucker, abi: suckerBridgeAbi, functionName: 'toRemote', contractName: 'JBSucker',
+    args: [o.termToken], value: o.value || 0n,
+  };
+}
 var erc20BalanceOfAbi = [{ type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 
 function moveChainName(cid) { return SHORT_CHAIN_NAME[Number(cid)] || (CHAINS[cid] && CHAINS[cid].name) || ('chain ' + cid); }
@@ -13018,10 +13066,10 @@ function buildMoveModal(project) {
       // Step 1: approve the sucker for the ERC-20, then prepare (cash out to terminal funds + insert outbox
       // leaf). minTokensReclaimed=0: the remote chain re-mints the same projectTokenCount regardless; the
       // local cash-out is internal sucker plumbing.
-      executeTransaction({
-        chainId: from, address: sucker, abi: suckerBridgeAbi, functionName: 'prepare', contractName: 'JBSucker',
-        args: [amount, beneficiary32, 0n, termToken, metadata],
-        tokenAddr: token, spenderAddr: sucker, approvalAmount: amount,
+      executeTransaction(Object.assign(buildSuckerPrepareArgs({
+        chainId: from, sucker: sucker, projectTokenCount: amount, beneficiary32: beneficiary32, minReclaimed: 0n,
+        termToken: termToken, metadata: metadata, approvalToken: token, approvalAmount: amount,
+      }), {
         onStatus: onStatus, onError: fail,
         onSuccess: function () {
           // Step 2: ship the outbox root to the remote chain. Discover the exact msg.value the bridge needs
@@ -13030,9 +13078,9 @@ function buildMoveModal(project) {
           findToRemoteValue(from, sucker, termToken, acct).then(function (fee) {
             if (fee == null) { fail('Prepared, but the bridge queue isn’t ready to send yet — reopen and try again shortly.'); return; }
             onStatus('Sending to ' + moveChainName(to) + '…', 'pending');
-            executeTransaction({
-              chainId: from, address: sucker, abi: suckerBridgeAbi, functionName: 'toRemote', contractName: 'JBSucker',
-              args: [termToken], value: fee,
+            executeTransaction(Object.assign(buildSuckerToRemoteArgs({
+              chainId: from, sucker: sucker, termToken: termToken, value: fee,
+            }), {
               confirmTitle: 'Transfer all queued movements',
               confirmDescription: 'Step 2 of 2. Step 1 (“prepare”) queued your move into the bridge’s outbox. '
                 + 'This step ships that queued batch to ' + moveChainName(to) + ' — it delivers every pending move in the '
@@ -13046,10 +13094,10 @@ function buildMoveModal(project) {
                 btn.disabled = false;
                 document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
               },
-            });
+            }));
           });
         },
-      });
+      }));
     });
   });
   return wrap;
@@ -13950,8 +13998,15 @@ function opsRow(c, s, b, u, isHead, isTotal, chainId) {
       cell.appendChild(chainLogo(chainId, c));
       cell.appendChild(document.createTextNode(c));
     } else if (v && typeof v === 'object' && v.lines) {
-      // { lines: [...] } — one value per line (e.g. a per-token balance: "20 USDC" then "0.005 ETH").
-      v.lines.forEach(function (ln, li) { if (li) cell.appendChild(document.createElement('br')); cell.appendChild(document.createTextNode(ln)); });
+      // { lines: [...] } — one value per line (per-token balance). A line may be a plain string OR a
+      // { main, sub } pair, where `sub` renders as the same muted sub-line the Supply column uses.
+      v.lines.forEach(function (ln, li) {
+        if (li) cell.appendChild(document.createElement('br'));
+        if (ln && typeof ln === 'object') {
+          cell.appendChild(document.createTextNode(ln.main));
+          if (ln.sub) { var s2 = el('span', 'detail-ops-sub'); s2.textContent = ln.sub; cell.appendChild(s2); }
+        } else { cell.appendChild(document.createTextNode(ln)); }
+      });
     } else if (v && typeof v === 'object') {
       // { main, sub } — main value with a muted secondary (e.g. a share-of-total percentage).
       cell.appendChild(document.createTextNode(v.main));

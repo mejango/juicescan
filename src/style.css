@@ -4881,6 +4881,12 @@ select.create-input, .create-amount-cur {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237d5a4e' stroke-width='1.5'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 8px center; background-size: 10px 6px; padding-right: 26px;
 }
+/* Auto-width select — sizes tight to its content instead of filling the row (duration, approval condition). */
+select.create-input-auto { width: auto; max-width: 100%; }
+/* Approval condition: dropdown + (when custom) the address field inline on one row. */
+.create-approval-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; }
+.create-approval-row .create-input-auto { flex: 0 0 auto; }
+.create-approval-addr { flex: 1 1 auto; min-width: 0; }
 .create-textarea { min-height: 90px; resize: vertical; }
 .create-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .create-hint { font-size: 11px; color: var(--muted-2); margin-top: 8px; line-height: 1.5; }
@@ -4979,6 +4985,30 @@ select.create-input, .create-amount-cur {
   border-left: 2px solid var(--c-orange-light); border-right: 2px solid var(--c-orange-light);
   padding: 14px 16px; margin: 14px -28px;
 }
+/* A checkbox that opens a fat (subcard) section shares the subcard's darker fill as ONE connected block. The
+   fill is painted by a ::before pseudo-element that runs full-bleed to the subcard's edges (side borders +
+   top corner accents) and joins the subcard below with no gap — so the colour reaches the borders and
+   connects. Because the fill is a pseudo-element BEHIND the content, the checkbox + text don't move at all
+   between unchecked and checked: the row's own box (margin/padding) is unchanged. */
+.create-toggle-row:has(+ .create-subcard) { position: relative; z-index: 0; margin-bottom: 0; }
+.create-toggle-row:has(+ .create-subcard)::before {
+  content: ''; position: absolute; z-index: -1;
+  top: -10px; bottom: 0; left: -28px; right: -28px; /* extend up into the gap for breathing room; down to the subcard */
+  background-color: var(--card-bg);
+  border-left: 2px solid var(--c-orange-light); border-right: 2px solid var(--c-orange-light);
+  background-image:
+    linear-gradient(var(--c-orange-light), var(--c-orange-light)),
+    linear-gradient(var(--c-orange-light), var(--c-orange-light));
+  background-repeat: no-repeat; background-size: 14px 2px;
+  background-position: top left, top right; background-origin: border-box;
+}
+.create-toggle-row:has(+ .create-subcard) + .create-subcard {
+  margin-top: 0;
+  background-image:
+    linear-gradient(var(--c-orange-light), var(--c-orange-light)),
+    linear-gradient(var(--c-orange-light), var(--c-orange-light));
+  background-position: bottom left, bottom right;
+}
 
 /* NFT rows */
 
@@ -5001,7 +5031,8 @@ select.create-input, .create-amount-cur {
 .create-review-bullets { font-size: 13px; color: var(--c-black); text-align: left; align-self: stretch; }
 .create-review-bullet { padding: 2px 0; }
 .create-tos { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--muted-2); margin: 12px 0; cursor: pointer; }
-.create-audit-link { color: var(--muted-2); text-decoration: underline; cursor: pointer; white-space: nowrap; }
+.create-tos > input { margin-top: 2px; } /* level the checkbox with the first line of the (wrapping) text */
+.create-audit-link { color: var(--muted-2); text-decoration: none; cursor: pointer; white-space: nowrap; }
 .create-audit-link:hover { color: var(--c-teal); }
 
 /* Single live status line during deploy (replaces the growing log). */
@@ -5175,6 +5206,8 @@ select.create-input, .create-amount-cur {
 /* Inline "Issues [x] tokens per [unit]" row */
 .create-inline-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--c-black); }
 .create-inline-num { width: 90px; flex: 0 0 auto; border-radius: 0; }
+.create-payout-amt { width: 51px; } /* payout amount field — compact (≈9/16 of the standard inline-num width) */
+.create-symbol-field { width: 25%; min-width: 96px; } /* token symbol is short — 1/4 width (floored for readability) */
 .create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
 /* Payout amount row: match the currency dropdown's height to the amount field; space the two lines. */
 .create-split-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
@@ -5184,6 +5217,12 @@ select.create-input, .create-amount-cur {
    as its own block. */
 .create-split-wrap { margin-top: 18px; }
 .create-split-wrap:first-child { margin-top: 8px; }
+/* Per-split lock — left-aligned with the row fields (lead width = 42px + 6px row gap), below the recipient. */
+.create-split-lock { margin-top: 10px; margin-left: 48px; }
+.create-split-lockcheck { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-2); cursor: pointer; }
+.create-split-lockcheck input { margin: 0; }
+.create-split-lockdate { margin-top: 6px; max-width: 180px; display: block; }
+.create-split-lock .create-hint { margin-top: 6px; }
 /* Baseline so every part of the row — the "Split"/"… and" lead, the % box, "to", the recipient field and
    the ✕ — sits on the field's text line (reads centered against the inputs). The fund-market chip / ENS
    hint hang below in the recipient column without dragging the baseline down. */

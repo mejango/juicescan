@@ -2,7 +2,7 @@
   "name": "jb-directory",
   "version": "0.1.0",
   "private": true,
-  "description": "Juicebox Protocol Directory \u2014 static IPFS interface to all v6 contracts",
+  "description": "Juicebox Protocol Directory — static IPFS interface to all v6 contracts",
   "scripts": {
     "extract-abis": "bash build/extract-abis.sh",
     "sync-deployments": "node build/sync-deployments.js",
@@ -20,6 +20,7 @@
     "viem": "^2.21.0"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
     "esbuild": "^0.24.0",
     "jsdom": "^29.1.1",
     "vitest": "^4.1.9"

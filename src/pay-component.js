@@ -12,7 +12,7 @@ import {
 } from './component-base.js';
 import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 
-var payAbi = [{
+export var payAbi = [{
   type: 'function', name: 'pay', stateMutability: 'payable',
   inputs: [
     { name: 'projectId', type: 'uint256' },
@@ -25,6 +25,30 @@ var payAbi = [{
   ],
   outputs: [],
 }];
+
+// Pure builder for the JBMultiTerminal.pay transaction — returns the executeTransaction config (no callbacks).
+// `o`: { chainId, projectId, token, amount (bigint), beneficiary, memo, route } where route carries the
+// resolved terminal/router address and a `preview.received` (raw, BigInt-able) token estimate.
+// minReturnedTokens is a 1% slippage floor off the previewed output — derived from route.preview.received
+// (the raw value; state.preview only holds the formatted string), 0 only when no priced preview exists.
+export function buildPayArgs(o) {
+  var isNative = String(o.token).toLowerCase() === NATIVE_TOKEN.toLowerCase();
+  var minReturned = 0n;
+  var pv = o.route && o.route.preview;
+  try { if (pv && !pv.unavailable && pv.received != null) minReturned = BigInt(pv.received) * 99n / 100n; } catch (_) {}
+  return {
+    chainId: o.chainId,
+    address: o.route.address,
+    contractName: o.route.contractName,
+    abi: payAbi,
+    functionName: 'pay',
+    args: [BigInt(o.projectId), o.token, o.amount, o.beneficiary, minReturned, o.memo || '', '0x'],
+    value: isNative ? o.amount : 0n,
+    tokenAddr: isNative ? null : o.token,
+    spenderAddr: isNative ? null : o.route.address,
+    approvalAmount: isNative ? null : o.amount,
+  };
+}
 
 function sameAddress(a, b) {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
@@ -518,26 +542,19 @@ export function renderPayComponent() {
         };
       }
 
-      // Slippage floor: require at least 99% of the previewed token output (1% tolerance). Protects the
-      // buyback/AMM route from sandwiching and the mint route from a mid-tx weight/surplus change. Falls
-      // back to 0 only when no preview is available (the user already accepted the unpriced path).
-      var minReturned = 0n;
-      try { if (state.preview && state.preview.received != null) minReturned = BigInt(state.preview.received) * 99n / 100n; } catch (_) {}
-      executeTransaction({
+      executeTransaction(Object.assign(buildPayArgs({
         chainId: state.selectedChain,
-        address: route.address,
-        contractName: route.contractName,
-        abi: payAbi,
-        functionName: 'pay',
-        args: [BigInt(state.projectId), state.selectedToken.address, amountParsed, beneficiary, minReturned, state.memo || '', '0x'],
-        value: isNative ? amountParsed : 0n,
-        tokenAddr: isNative ? null : state.selectedToken.address,
-        spenderAddr: isNative ? null : route.address,
-        approvalAmount: isNative ? null : amountParsed,
+        projectId: state.projectId,
+        token: state.selectedToken.address,
+        amount: amountParsed,
+        beneficiary: beneficiary,
+        memo: state.memo || '',
+        route: route,
+      }), {
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },
-      });
+      }));
     }).catch(function (err) {
       state.phase = 'ready';
       state.error = (err && (err.shortMessage || err.message)) || 'Could not resolve pay route';

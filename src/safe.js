@@ -204,7 +204,7 @@ export async function confirmSafeTx(chainId, safe, tx, signer) {
 // Execute a queued tx that has enough confirmations, straight from the dapp (no Safe app needed).
 // Assembles the owner signatures (sorted by owner address, as the Safe contract requires) and calls
 // execTransaction on the Safe. The connected wallet sends it and pays gas; must be on `chainId`.
-var SAFE_EXEC_ABI = [{
+export var SAFE_EXEC_ABI = [{
   type: 'function', name: 'execTransaction', stateMutability: 'payable',
   inputs: [
     { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' },
@@ -214,6 +214,13 @@ var SAFE_EXEC_ABI = [{
   ],
   outputs: [{ type: 'bool' }],
 }];
+
+// GnosisSafe.execTransaction args (shared by the direct-execute and Relayr-bundle paths). `signatures` is the
+// owner sigs concatenated in ascending owner-address order (see execSignatures); gas fields default to 0.
+export function safeExecArgs(tx, signatures) {
+  return [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0),
+    BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, signatures];
+}
 export async function executeSafeTx(chainId, safe, tx) {
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
@@ -227,7 +234,7 @@ export async function executeSafeTx(chainId, safe, tx) {
   var signatures = '0x' + confs.map(function (c) { return (c.signature || '').replace(/^0x/, ''); }).join('');
   return wallet.writeContract({
     account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0), BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, signatures],
+    args: safeExecArgs(tx, signatures),
   });
 }
 
@@ -241,7 +248,7 @@ function execSignatures(tx) {
 export function safeExecRelayrTx(chainId, safe, tx) {
   var data = encodeFunctionData({
     abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0), BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, execSignatures(tx)],
+    args: safeExecArgs(tx, execSignatures(tx)),
   });
   return { chain: Number(chainId), target: cs(safe), data: data, value: '0' };
 }

@@ -1,52 +1,50 @@
 # Transaction coverage — JB V6 web app vs the v6 contracts
 
-Gauges how completely the app's transactions are exercised by tests, and which v6 contract each maps to.
-Contracts: `nana-core-v6/src`, `revnet-core-v6/src`, `nana-suckers-v6/src`, `nana-721-hook-v6`, univ4 LP hook.
+How completely the app's transactions are pinned by tests. **Line coverage is the wrong lens here** — the
+app is ~95% DOM rendering, so per-file line % stays low even when the money path is fully tested. The metric
+that matters: **does each transaction have a pure `buildXArgs()` round-tripped through its contract ABI?**
 
-Legend: **U** = unit/encoding test (vitest, round-trips through the contract ABI); **S** = UI-smoke covered;
-**—** = not yet under automated test (manual/CDP only).
+Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg assertions); **S** = UI smoke.
 
-## Core money path (JBMultiTerminal — nana-core-v6)
-| App action | Contract fn | Test |
-|---|---|---|
-| Pay a project | `pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata)` | — (encoder inline in pay-component; **arg-builder extraction + test recommended**) |
-| Cash out | `cashOutTokensOf(holder, projectId, cashOutCount, tokenToReclaim, minTokensReclaimed, beneficiary, metadata)` | — (**note: `minTokensReclaimed` is sent as `0` — verify slippage intent**) |
-| Add to balance | `addToBalanceOf(...)` | — |
+## Transactions — builder + test status
 
-## Project lifecycle (JBController / JBOmnichainDeployer)
-| App action | Contract fn | Test |
-|---|---|---|
-| Launch project | `launchProjectFor(owner, projectUri, rulesetConfigurations, terminalConfigurations, memo)` | **U** (`buildLaunchArgs` round-trip; baseCurrency; terminal contexts; custom-token decimals) + **S** |
-| Launch w/ 721 store | `JB721TiersHookProjectDeployer.launchProjectFor(...)` | U (ABI round-trip via buildLaunchArgs 721 branch) |
-| Queue rulesets | `queueRulesetsOf(...)` / omnichain deployer | — (parity with launch encoders — **dedup candidate**) |
-| Mint / burn tokens | `mintTokensOf(...)` / `burnTokensOf(...)` | — |
-| Deploy ERC-20 | `deployERC20For(...)` | — |
-| Send payouts / reserved | `sendPayoutsOf(...)` / `sendReservedTokensToSplitsOf(...)` | — |
+| App action | Contract function | Builder | Test |
+|---|---|---|---|
+| Pay | `JBMultiTerminal.pay` | `buildPayArgs` | **U** (+ slippage-floor regression) |
+| Cash out | `JBMultiTerminal.cashOutTokensOf` | `buildCashOutArgs` / `cashOutMinReclaimed` | **U** |
+| Send payouts | `JBMultiTerminal.sendPayoutsOf` | `buildSendPayoutsArgs` | **U** |
+| Launch project | `JBController.launchProjectFor` / omnichain | `buildLaunchArgs` | **U** + **S** |
+| Deploy revnet | `REVDeployer.deployFor` | `buildRevnetArgs` | **U** + **S** |
+| Queue rulesets | `JBController.queueRulesetsOf` | `buildQueueRulesetsArgs` | **U** |
+| Mint | `JBController.mintTokensOf` | `buildMintArgs` | **U** |
+| Burn | `JBController.burnTokensOf` | `buildBurnArgs` | **U** |
+| Deploy ERC-20 | `JBController.deployERC20For` | `buildDeployErc20Args` | **U** |
+| Send reserved | `JBController.sendReservedTokensToSplitsOf` | `buildSendReservedArgs` | **U** |
+| Claim credits | `JBController.claimTokensFor` | `buildClaimTokensArgs` | **U** |
+| Set permissions | `JBPermissions.setPermissionsFor` | `buildSetPermissionsArgs` | **U** (ids vs JBPermissionIds.sol) |
+| Borrow | `REVLoans.borrowFrom` | `buildBorrowArgs` | **U** (+ slippage floor wired) |
+| Repay | `REVLoans.repayLoan` | `buildRepayArgs` | **U** |
+| Move between chains | `JBSucker.prepare` → `toRemote` | `buildSuckerPrepareArgs` / `buildSuckerToRemoteArgs` | **U** |
 
-## Revnet (REVDeployer / REVLoans — revnet-core-v6)
-| App action | Contract fn | Test |
-|---|---|---|
-| Deploy revnet | `deployFor(revnetId, REVConfig, accountingContextsToAccept[], suckerDeploymentConfig[, 721])` | **U** (`buildRevnetArgs` round-trip; multi-token ETH+USDC accept; baseCurrency=custom id) + **S** |
-| Borrow / repay | `REVLoans.borrowFrom(...)` / `repayLoan(...)` | — |
-| Auto-issue | `autoIssueFor(...)` | — |
+Plus create-flow encoding invariants (**U**): custom-token currency id consistency, `splitState` per recipient
+type, split-group sums, the approval-hook (preset/custom/per-chain) + split-lock encoding, the deploy preflight
+gates (recipient / over-100% / custom-token / approval), `parseAmount`/`addrOrZero` safety, `deploySalt`.
 
-## Suckers / omnichain (nana-suckers-v6) and permissions
-| App action | Contract fn | Test |
-|---|---|---|
-| Bridge / move tokens | `JBSucker.prepare(...)` / claim | — |
-| Sync accounting | `syncAccountingData` path | — |
-| Set operator / permissions | `JBPermissions.setPermissionsForOperator(...)` (IDs 1-23) | — |
-| Safe owner txs | `GnosisSafe.execTransaction(...)` (safe.js) | — |
+## Views (display logic)
 
-## Pure encoding invariants (always-on guards)
-- Custom-token currency id `== uint32(uint160(token)) == BigInt & 0xffffffff` across baseCurrency / payout / surplus / shop / terminal context. **U**
-- `splitState` JBSplit shape for wallet / project / lphook / customhook; per-chain projectId override. **U**
-- Reserved/payout split groups sum to one `SPLITS_TOTAL` (`fillSplits`). **U**
-- Recipient preflight (no funds to `0x0`) + over-100% split gate. **U**
-- `parseAmount`/`formatAmount` decimals (6 vs 18) + `addrOrZero`/`isAddr` recipient safety. **U**
-- Deterministic `deploySalt` (omnichain address consistency). **U**
+| Area | Test |
+|---|---|
+| `bendystraw-format` volumeUsd / bigint / bool | **U** (`views.test.js`) |
+| create-flow steps, accounting pills, approval condition, split lock, deploy gating | **S** (`ui-smoke.mjs`) |
 
-## Next test priorities (transaction-focused)
-1. Extract pay/cashout/mint/burn arg-builders → unit-test arg encoding + the cashout `minTokensReclaimed` slippage choice.
-2. Queue-ruleset encoder parity with launch (shared encoder → one test covers both).
-3. Sucker `prepare`/move amount cap (uint128) + beneficiary; Safe `execTransaction` to/value/data.
+## Not yet under unit test
+- **autoIssueFor**, **adjustTiers (721)**, **queue via omnichain** — built as pre-encoded `data` for the
+  relayr/Safe payload path (`encodeFunctionData` is runtime-validated; a wrong arg throws at build time).
+- **Safe `execTransaction`** (`safe.js`) — the Safe-owner flow; encoded via the Safe SDK shape.
+- **addToBalanceOf** — ABI present, no active call site.
+- Broader view rendering (discover cards, project-detail tabs) — covered by UI smoke + manual CDP, not unit.
+
+## Adherence
+`verify-tx-builders-vs-contracts` (workflow, 5 agents) confirmed **every builder encodes correctly** against the
+deployed V6 contracts (selectors, arg order, types, payability) — zero HIGH/MEDIUM. The three LOW findings
+(deploy-erc20 permission label, permission display grouping, borrow slippage floor) are fixed.
