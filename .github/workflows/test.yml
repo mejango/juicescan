@@ -1,0 +1,24 @@
+name: test
+
+# Runs the vitest unit/encoding suite (transaction arg-builders round-tripped through the contract ABIs,
+# encoding invariants, deploy preflights, view formatters) on every push and PR. The UI smoke suite
+# (test:ui) needs Brave + a served build, so it is not run here — it's a local/manual check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  vitest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      # `npm run bundle` (not `build`) — bundle uses the committed abi-registry.js + data/; the full build's
+      # sync step needs the deploy-all-v6 sibling repo, which isn't present in this repo's CI.
+      - run: npm run bundle
+      - run: npm test

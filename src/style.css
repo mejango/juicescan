@@ -58,14 +58,14 @@
   align-items: center;
   gap: 5px;
   padding: 3px 6px;
-  background: var(--card-bg, #fcd0c2);
-  border: 1px solid var(--c-pink-light, #eda3b0);
+  background: var(--card-bg);
+  border: 1px solid var(--c-pink-light);
   border-radius: 5px;
   opacity: 0.6;
   transition: opacity 0.15s ease;
 }
 .font-selector:hover { opacity: 1; }
-.font-selector-label { font-size: 11px; font-weight: bold; color: var(--muted-2, #7d5a4e); }
+.font-selector-label { font-size: 11px; font-weight: bold; color: var(--muted-2); }
 .font-selector-sel {
   font-family: inherit;
   font-size: 11px;
@@ -103,7 +103,7 @@ a:hover { color: var(--c-teal); }
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.15);
+  border: 1px solid rgba(44,32,24,0.15);
 }
 
 /* Focus ring — accessibility */
@@ -127,11 +127,6 @@ a:hover { color: var(--c-teal); }
   gap: 36px;
 }
 
-.header-emoji {
-  font-size: 16px;
-  line-height: 1;
-  margin-bottom: 3px;
-}
 
 .header-center {
   text-align: center;
@@ -145,13 +140,6 @@ a:hover { color: var(--c-teal); }
   margin: 0;
 }
 
-.subheading {
-  font-size: 11px;
-  font-weight: bold;
-  color: var(--c-orange);
-  letter-spacing: 1px;
-  margin: 0 0 2px 0;
-}
 
 .subtitle {
   font-size: 14px;
@@ -172,15 +160,17 @@ a:hover { color: var(--c-teal); }
 
 .audit-link a,
 .risk-notice a {
-  color: var(--c-teal);
+  color: var(--muted-2);
   text-decoration: none;
   cursor: pointer;
 }
 
 .audit-link a:hover,
 .risk-notice a:hover {
-  color: var(--c-black);
+  color: var(--c-teal);
 }
+/* Keep the "[copy system audit prompt]" link on one line (wrap it as a whole). */
+#audit-prompt-link { white-space: nowrap; }
 
 /* In-form chain selector */
 .fn-chain-selector {
@@ -192,15 +182,6 @@ a:hover { color: var(--c-teal); }
   flex-wrap: wrap;
 }
 
-.chain-section-label {
-  color: var(--muted-2);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  align-self: center;
-  padding: 0 2px;
-  user-select: none;
-}
 
 .chain-pills-row {
   display: flex;
@@ -340,15 +321,18 @@ a:hover { color: var(--c-teal); }
   display: flex;
   align-items: baseline;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .contract-summary:hover {
-  background: rgba(0,0,0,0.03);
+  background: rgba(44,32,24,0.03);
 }
 
 .contract-name {
   color: var(--c-orange);
   font-weight: bold;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .contract-fn-count {
@@ -394,7 +378,7 @@ a:hover { color: var(--c-teal); }
 }
 
 .fn-summary:hover {
-  background: rgba(0,0,0,0.03);
+  background: rgba(44,32,24,0.03);
 }
 
 .fn-arrow {
@@ -458,16 +442,6 @@ a:hover { color: var(--c-teal); }
   color: var(--text);
 }
 
-.fn-header {
-  padding: 8px 12px;
-  background: var(--card-bg);
-  border-bottom: 1px solid var(--c-teal-light);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
 
 .fn-name {
   font-weight: bold;
@@ -734,10 +708,6 @@ a:hover { color: var(--c-teal); }
   color: var(--c-green);
 }
 
-.auto-hint {
-  color: var(--muted-3);
-  font-size: 9px;
-}
 
 .payable-field {
   background: var(--input-bg);
@@ -838,12 +808,6 @@ a:hover { color: var(--c-teal); }
   color: var(--bg);
 }
 
-.btn-prompt {
-  background: none;
-  border: 1px solid var(--c-orange-light);
-  color: var(--muted-3);
-  margin-left: auto;
-}
 
 .btn:hover {
   opacity: 0.9;
@@ -970,6 +934,10 @@ footer {
   justify-content: center;
   gap: 16px;
 }
+.footer-meta a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; }
+.footer-meta a:hover { color: var(--c-teal); }
+/* Safe-queue DELEGATECALL warning badge */
+.backoffice-warn { color: var(--warning); font-weight: 600; }
 
 /* Checkbox styling for bool inputs */
 input[type="checkbox"].field {
@@ -1001,7 +969,6 @@ input[type="checkbox"].field {
 .component-wrapper .field,
 .component-wrapper .btn,
 .component-wrapper .pay-preview,
-.component-wrapper .buyback-indicator,
 .component-wrapper .network-dropdown,
 .component-wrapper .token-dropdown,
 .component-wrapper .pay-memo,
@@ -1107,21 +1074,6 @@ input[type="checkbox"].field {
   cursor: pointer;
 }
 
-.component-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  border-bottom: var(--c-border-width, 1px) solid var(--c-border, var(--c-teal-light));
-  background: var(--c-bg, var(--c-pink-light));
-  border-radius: var(--c-radius, 3px) var(--c-radius, 3px) 0 0;
-}
-
-.component-header .component-title {
-  font-weight: bold;
-  font-size: var(--c-title-size, 13px);
-  color: var(--c-text, var(--text));
-}
 
 /* Cascade border-width to inner elements */
 .component-wrapper .field,
@@ -1151,36 +1103,9 @@ input[type="checkbox"].field {
 }
 
 /* Components top bar */
-.components-top-bar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-  position: relative;
-}
 
-.style-editor-toggle {
-  background: none;
-  border: 1px solid var(--c-orange-light);
-  color: var(--muted-2);
-  font-family: inherit;
-  font-size: 9px;
-  font-weight: bold;
-  letter-spacing: 1px;
-  padding: 3px 10px;
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.style-editor-toggle:hover {
-  color: var(--text);
-  border-color: var(--muted-2);
-}
 
 /* Style editor panel — absolute within tab, top-right */
-#tab-components {
-  position: relative;
-}
 
 .style-editor {
   position: absolute;
@@ -1193,7 +1118,7 @@ input[type="checkbox"].field {
   border-radius: 3px;
   font-size: 10px;
   max-width: 240px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 8px rgba(44,32,24,0.08);
 }
 
 @media (max-width: 600px) {
@@ -1205,7 +1130,7 @@ input[type="checkbox"].field {
     right: 0;
     max-width: none;
     border-radius: 8px 8px 0 0;
-    box-shadow: 0 -4px 16px rgba(0,0,0,0.15);
+    box-shadow: 0 -4px 16px rgba(44,32,24,0.15);
     max-height: 70vh;
     overflow-y: auto;
   }
@@ -1235,19 +1160,6 @@ input[type="checkbox"].field {
   color: var(--text);
 }
 
-.style-editor-title {
-  font-weight: bold;
-  font-size: 10px;
-  color: var(--muted);
-  margin-bottom: 1px;
-  letter-spacing: 1px;
-}
-
-.style-editor-subtitle {
-  color: var(--muted-3);
-  font-size: 9px;
-  margin-bottom: 10px;
-}
 
 .style-editor-grid {
   display: flex;
@@ -1369,11 +1281,6 @@ input[type="checkbox"].field {
   padding-top: 6px;
 }
 
-.style-editor-buttons {
-  display: flex;
-  gap: 6px;
-  margin-top: 10px;
-}
 
 .component-section {
   margin-bottom: 14px;
@@ -1412,32 +1319,7 @@ input[type="checkbox"].field {
 }
 
 /* Buyback indicator badges */
-.buyback-indicator {
-  display: inline-block;
-  font-size: 9px;
-  font-weight: bold;
-  padding: 1px 6px;
-  border-radius: 2px;
-  letter-spacing: 0.5px;
-}
 
-.buyback-indicator.terminal-mint {
-  color: var(--c-teal);
-  background: var(--c-teal-light);
-  border: 1px solid var(--c-teal);
-}
-
-.buyback-indicator.buyback {
-  color: var(--c-green);
-  background: var(--c-green-light);
-  border: 1px solid var(--c-green);
-}
-
-.buyback-indicator.split-route {
-  color: var(--c-orange);
-  background: var(--c-orange-light);
-  border: 1px solid var(--c-orange);
-}
 
 /* Component status messages */
 .component-status {
@@ -1450,10 +1332,6 @@ input[type="checkbox"].field {
   color: var(--read);
 }
 
-.component-error {
-  color: var(--error);
-  font-size: 10px;
-}
 
 /* Amount field with inline token dropdown */
 .amount-with-token {
@@ -1532,83 +1410,10 @@ input[type="checkbox"].field {
 }
 
 /* Component picker pills */
-.component-picker {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
-}
 
-.component-picker-pill {
-  background: var(--pill-bg);
-  border: 1px solid var(--pill-border);
-  padding: 4px 12px;
-  color: var(--muted-2);
-  border-radius: 2px;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 10px;
-  font-weight: bold;
-  letter-spacing: 0.5px;
-}
-
-.component-picker-pill:hover {
-  border-color: var(--muted-2);
-  color: var(--text);
-}
-
-.component-picker-pill.active {
-  background: var(--selected-bg);
-  border-color: var(--selected-border);
-  color: var(--write);
-}
 
 /* Dashboard grid */
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
 
-@media (max-width: 480px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.dashboard-card {
-  background: var(--c-input-bg, var(--card-bg));
-  border: var(--c-border-width, 1px) solid var(--c-border, var(--muted-4));
-  border-radius: var(--c-radius, 3px);
-  padding: 10px;
-}
-
-.dashboard-card-title {
-  font-weight: bold;
-  font-size: 10px;
-  color: var(--muted-2);
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--c-border, var(--muted-4));
-}
-
-.dashboard-card .preview-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 2px 0;
-  font-size: 11px;
-}
-
-.dashboard-card .preview-label {
-  color: var(--muted);
-}
-
-.dashboard-card .preview-value {
-  color: var(--c-text, var(--text));
-  font-weight: bold;
-}
 
 /* Permission selector */
 .permission-group {
@@ -1636,7 +1441,7 @@ input[type="checkbox"].field {
 }
 
 .permission-row:hover {
-  background: rgba(0,0,0,0.02);
+  background: rgba(44,32,24,0.02);
 }
 
 .permission-row input[type="checkbox"] {
@@ -2068,94 +1873,9 @@ input[type="checkbox"].field {
   margin-bottom: 10px;
 }
 
-.why-lead {
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1.65;
-  margin: 0;
-}
-
-.why-lead + .why-lead {
-  margin-top: 10px;
-}
-
-.why-closing {
-  background: var(--card-bg);
-  border: 1px solid var(--c-orange-light);
-  color: var(--text);
-  font-size: 16px;
-  font-weight: bold;
-  line-height: 1.6;
-  margin: 10px 0 24px;
-  padding: 12px 14px;
-}
 
 /* Story (chapter) styling for the Why? page */
-.why-story .why-hero {
-  text-align: left;
-  border-bottom-color: var(--c-orange-light);
-}
 
-.why-credo {
-  margin: 10px 0 18px;
-  padding: 8px 14px;
-  border-left: 2px solid var(--c-pink);
-  background: var(--bg);
-  font-style: italic;
-  color: var(--text);
-}
-
-.why-credo-text {
-  margin: 0 0 4px;
-  font-size: 15px;
-  line-height: 1.6;
-}
-
-.why-credo-attr {
-  display: block;
-  font-style: normal;
-  font-size: 11px;
-  color: var(--muted-2);
-  letter-spacing: 0.5px;
-}
-
-.why-chapter {
-  margin: 36px 0 28px;
-}
-
-.why-chapter-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  margin-bottom: 14px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--c-orange-light);
-}
-
-.why-chapter-num {
-  color: var(--c-pink);
-  font-size: 12px;
-  font-weight: bold;
-  letter-spacing: 2px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.why-chapter-title {
-  color: var(--text);
-  font-size: 18px;
-  font-weight: bold;
-  letter-spacing: 0.3px;
-}
-
-.why-story-para {
-  font-size: 15px;
-  line-height: 1.7;
-  margin-bottom: 12px;
-}
-
-.why-story-para:last-child {
-  margin-bottom: 0;
-}
 
 /* Paired project ID + chain field (pretty action components) */
 .project-chain-section .project-chain-wrap {
@@ -2209,24 +1929,7 @@ input[type="checkbox"].field {
 }
 
 /* Poem rendering for the Why? page */
-.why-poem {
-  margin: 32px 0 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
 
-.why-poem-line {
-  margin: 0;
-  font-size: 17px;
-  line-height: 1.5;
-  color: var(--text);
-}
-
-.why-poem-line.why-poem-emphasis {
-  font-weight: bold;
-  color: var(--c-pink);
-}
 
 /* Table of Contents */
 .guide-toc {
@@ -2304,7 +2007,28 @@ input[type="checkbox"].field {
   color: var(--c-pink);
   letter-spacing: 0.5px;
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
 }
+/* Per-section link icon — sits right after the title, small + muted so it doesn't compete with the header. */
+.guide-copy-link {
+  display: inline-flex; align-items: center;
+  color: var(--muted-2); background: none; border: none; cursor: pointer;
+  padding: 0 2px; opacity: 0.5; flex: 0 0 auto;
+}
+.guide-copy-link:hover { opacity: 1; color: var(--c-teal); }
+.guide-copy-link--ok { opacity: 1; color: var(--c-teal); }
+.guide-info a, .guide-text a { color: var(--c-teal); text-decoration: none; border-bottom: 1px solid currentColor; }
+/* "[copy build prompt]" text link, tight in the card's bottom-right corner (no padding of its own). */
+.comp-prompt-foot { display: flex; justify-content: flex-end; padding: 0; margin-top: 4px; }
+.comp-prompt-foot--left { justify-content: flex-start; }
+.comp-prompt-link { font-family: inherit; font-size: 11px; color: var(--muted-2); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.55; white-space: nowrap; }
+.comp-prompt-link:hover { opacity: 1; color: var(--c-teal); }
+.comp-prompt-link--ok { opacity: 1; color: var(--c-teal); }
+/* In a modal/form the tag sits right under the submit button — give it room to breathe. */
+.modal-dialog > .comp-prompt-foot { margin-top: 14px; }
 
 .guide-text {
   color: var(--text);
@@ -2339,38 +2063,7 @@ input[type="checkbox"].field {
 }
 
 /* Contract tables */
-.guide-contract-table {
-  margin: 8px 0;
-  border: 1px solid var(--c-orange-light);
-  background: var(--card-bg);
-  padding: 4px 10px;
-}
 
-.guide-contract-row {
-  display: flex;
-  gap: 12px;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--c-orange-light);
-  align-items: baseline;
-}
-
-.guide-contract-row:last-child {
-  border-bottom: none;
-}
-
-.guide-contract-name {
-  font-weight: bold;
-  font-size: 13px;
-  color: var(--text);
-  min-width: 160px;
-  flex-shrink: 0;
-}
-
-.guide-contract-desc {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.5;
-}
 
 /* Property tables */
 .guide-prop-table {
@@ -2522,15 +2215,8 @@ input[type="checkbox"].field {
 
 /* Responsive adjustments */
 @media (max-width: 600px) {
-  .guide-contract-row {
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .guide-contract-name {
-    min-width: auto;
-  }
-
+  
+  
   .guide-prop-row,
   .guide-fn-row {
     flex-direction: column;
@@ -2601,28 +2287,6 @@ input[type="checkbox"].field {
   color: var(--text);
 }
 
-.discover-card-id {
-  font-size: 11px;
-  color: var(--muted-3);
-  margin-left: auto;
-}
-
-.discover-card-tags {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-.discover-tag {
-  font-size: 9px;
-  font-weight: bold;
-  letter-spacing: 0.5px;
-  color: var(--muted-2);
-  background: var(--pill-bg);
-  border: 1px solid var(--pill-border);
-  padding: 1px 6px;
-  border-radius: 2px;
-}
 
 .discover-card-desc {
   font-size: 11px;
@@ -2676,11 +2340,6 @@ input[type="checkbox"].field {
 }
 
 /* Pay Panel */
-.pay-panel {
-  background: var(--card-bg);
-  border: 1px solid var(--c-orange-light);
-  padding: 14px;
-}
 
 .pay-amount-row {
   display: flex;
@@ -2810,21 +2469,6 @@ input[type="checkbox"].field {
   border-color: var(--c-orange);
 }
 
-.pay-details-toggle {
-  font-size: 11px;
-  color: var(--muted-3);
-  margin-top: 6px;
-}
-
-.pay-details-toggle:hover {
-  color: var(--muted-2);
-}
-
-.pay-details {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--muted-4);
-}
 
 .detail-back {
   display: inline-block;
@@ -2867,10 +2511,6 @@ input[type="checkbox"].field {
   flex-shrink: 0;
 }
 
-.detail-meta {
-  flex: 1;
-  min-width: 0;
-}
 
 .detail-name-row {
   display: flex;
@@ -2922,7 +2562,7 @@ input[type="checkbox"].field {
   background: var(--card-bg);
   border: 1px solid var(--c-pink-light);
   border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 18px rgba(44, 32, 24, 0.12);
   opacity: 0;
   visibility: hidden;
   transform: translateY(-2px);
@@ -2956,13 +2596,20 @@ input[type="checkbox"].field {
 .detail-head-meta {
   font-size: 12px;
   color: var(--muted-2);
-  margin-top: 3px;
+  margin-top: 5px; /* each meta row is its own block (Flavor|On / Operator / Site); matches the Discover card */
 }
 .detail-head-meta a { color: inherit; }
 .detail-head-meta a:hover { color: var(--c-teal); }
 .detail-head-lbl { color: var(--muted-2); }
 .detail-head-val { color: var(--text); font-weight: bold; }
+/* Inline "|" separator (stat line: "$X balance | N owners"). Same pink-light + spacing as the meta-line pairs. */
 .detail-head-sep { color: var(--c-pink-light); margin: 0 7px; }
+/* Keep each "label: value" together when the meta line wraps (no orphaned labels), and draw the
+   "|" separator INSIDE each pair (via ::after) so it trails the previous line on a wrap rather than
+   starting the next line. Pairs are joined by a single breakable space (the wrap point). */
+.detail-head-pair { white-space: nowrap; }
+.detail-head-pair:not(:last-child)::after { content: '|'; color: var(--c-pink-light); margin-left: 7px; }
+.detail-head-url { white-space: normal; overflow-wrap: anywhere; } /* long site URLs may still break */
 .detail-about-desc { margin-bottom: 12px; }
 .detail-about-para { margin: 0 0 10px; }
 .detail-about-para:last-child { margin-bottom: 0; }
@@ -2999,14 +2646,13 @@ input[type="checkbox"].field {
 
 /* Operator CTAs — subtle underlined text actions, no buttons. */
 .detail-about-foot { display: flex; justify-content: flex-start; margin-top: 10px; }
-.shop-foot { justify-content: space-between; align-items: center; }
+.shop-foot { justify-content: flex-start; align-items: center; gap: 14px; }
 .shop-collection-addr { font-size: 11px; color: var(--muted-2); }
 .operator-cta {
   font-size: 11px; color: var(--muted-2); text-decoration: underline; cursor: pointer;
   text-underline-offset: 2px;
 }
 .operator-cta:hover { color: var(--c-teal); }
-.operator-transfer-cta { display: inline-block; margin-top: 6px; font-size: 11px; }
 
 /* Edit-description modal. */
 .operator-edit .operator-gate {
@@ -3053,7 +2699,6 @@ input[type="checkbox"].field {
   background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 6px;
 }
 .operator-cat-select:focus { outline: none; border-color: var(--c-teal); }
-.operator-catadd-link { display: inline-block; margin-top: 6px; font-size: 11px; }
 .operator-cat-add { margin-top: 6px; }
 .operator-cat-names { display: flex; flex-direction: column; gap: 6px; }
 .operator-cat-namerow { display: flex; align-items: center; gap: 6px; }
@@ -3259,21 +2904,23 @@ input[type="checkbox"].field {
   border: 1px solid var(--c-black-light); background: transparent; color: var(--muted-2); border-radius: 2px;
 }
 .ops-percent-btn:hover { color: var(--text); border-color: var(--write); }
-.ops-move-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.ops-move-grid .ops-select { max-width: 100%; width: 100%; border-right: 2px solid var(--write); }
 /* Cross-chain accounting knowledge (Settlement) */
-.xchain-knowledge { display: flex; flex-direction: column; gap: 12px; }
+.xchain-knowledge { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
 .xchain-block { display: flex; flex-direction: column; gap: 4px; }
 .xchain-head { display: flex; align-items: center; gap: 6px; font-weight: bold; font-size: 12px; color: var(--text); }
-/* Match the Composition/Bridges tables: orange outline, bg-filled header, bg-coloured row dividers — but
-   keep the slight left indent so each table sits under its "{chain} knows" heading. */
+/* Match the Composition/Bridges tables: orange outline, bg-filled header, bg-coloured row dividers.
+   Left-aligned to the "{chain} knows" heading icon (no indent). */
 /* overflow-x: auto so the absolute "also syncs …" note (which can extend past the last column) is clipped
    to the table and reachable by horizontal scroll, never spilling into the page. */
-.gossip-table { margin: 6px 0 0 22px; font-size: 12px; border: 1px solid var(--c-orange-light); padding-bottom: 16px; overflow-x: auto; }
+.gossip-table { margin: 6px 0 0 0; font-size: 12px; border: 1px solid var(--c-orange-light); padding-bottom: 16px; overflow-x: auto; }
 .gossip-row {
   display: grid;
-  /* Fixed fr (no minmax / auto) so every row resolves identical column widths → header aligns with data. */
-  grid-template-columns: 0.7fr 1fr 1fr 0.8fr 1fr 0.9fr;
+  /* Each row is its OWN grid, so a bare `1fr` (= minmax(auto,1fr)) sizes column 1 to the chain NAME's
+     min-content — long names (Arbitrum) widen that row's first column and shift every value out of line
+     vs short names (Base). Fixed-LENGTH minimums (minmax(92px,…) / minmax(0,…)) are content-independent,
+     so every row resolves identical columns and the numbers align. */
+  /* Columns: Chain · Status · Sync · Supply · Balance · Snapshot (status + sync lead so they show first). */
+  grid-template-columns: minmax(92px, 0.7fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr);
   gap: 10px;
   align-items: center;
   padding: 11px 14px;
@@ -3292,13 +2939,10 @@ input[type="checkbox"].field {
    overflow / header-bg gap). The right offset is the trailing padding after the text. */
 .gossip-sync-note { position: absolute; top: 100%; right: 4px; margin-top: 3px; font-size: 10px; color: var(--muted-2); white-space: nowrap; }
 .xchain-status { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.xchain-status--synced { background: var(--c-green, #2e8b57); }
-.xchain-status--slight { background: var(--c-orange, #b8602e); }
-.xchain-status--danger { background: var(--c-pink, #c43550); }
 .xchain-status-label { font-size: 11px; white-space: nowrap; }
-.xchain-status-label--synced { color: var(--c-green, #2e8b57); }
-.xchain-status-label--slight { color: var(--c-orange, #b8602e); }
-.xchain-status-label--danger { color: var(--c-pink, #c43550); font-weight: bold; }
+.xchain-status-label--synced { color: var(--c-green); }
+.xchain-status-label--slight { color: var(--c-orange); }
+.xchain-status-label--danger { color: var(--c-pink); font-weight: bold; }
 .xchain-sync {
   font-family: inherit;
   font-size: 11px;
@@ -3320,7 +2964,6 @@ input[type="checkbox"].field {
 .ops-bridge-note a { color: var(--c-teal); }
 .move-backing { color: var(--text); }
 .move-backing strong { font-weight: bold; }
-.modal-info { margin: 12px 0 0; padding-left: 18px; font-size: 11px; color: var(--muted-2); line-height: 1.6; }
 
 /* ── Loan modal: variable fee structure + summary ── */
 .loan-section { margin-top: 18px; border-top: 1px solid var(--c-orange-light); padding-top: 12px; }
@@ -3335,19 +2978,19 @@ input[type="checkbox"].field {
 .loan-slider::-webkit-slider-runnable-track {
   height: 6px; border-radius: 3px;
   background:
-    linear-gradient(to right, var(--c-orange, #b8602e) 0 var(--loan-pct, 0%), rgba(0,0,0,0) var(--loan-pct, 0%)),
+    linear-gradient(to right, var(--c-orange) 0 var(--loan-pct, 0%), rgba(44,32,24,0) var(--loan-pct, 0%)),
     linear-gradient(var(--c-black-light), var(--c-black-light)) left center / 100% 4px no-repeat;
 }
-.loan-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--c-orange, #b8602e); cursor: pointer; border: none; margin-top: -5px; }
-.loan-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--c-orange, #b8602e); cursor: pointer; border: none; }
+.loan-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--c-orange); cursor: pointer; border: none; margin-top: -5px; }
+.loan-slider::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--c-orange); cursor: pointer; border: none; }
 .loan-slider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--c-black-light); }
-.loan-slider::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--c-orange, #b8602e); }
+.loan-slider::-moz-range-progress { height: 6px; border-radius: 3px; background: var(--c-orange); }
 .loan-slider-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted-2); margin-top: 6px; }
 .loan-fee-chart { margin-top: 12px; position: relative; }
 .loan-fee-svg { display: block; width: 100%; height: auto; }
 .loan-fee-cursor { position: absolute; width: 1px; background: rgba(184, 96, 46, 0.5); pointer-events: none; }
-.loan-fee-dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--c-orange, #b8602e); transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-bg); pointer-events: none; }
-.loan-fee-tip { position: absolute; background: var(--c-black); color: #fbe9e2; font-size: 10px; line-height: 1.45; padding: 5px 8px; border-radius: 3px; pointer-events: none; max-width: 190px; z-index: 3; }
+.loan-fee-dot { position: absolute; width: 8px; height: 8px; border-radius: 50%; background: var(--c-orange); transform: translate(-50%, -50%); box-shadow: 0 0 0 2px var(--card-bg); pointer-events: none; }
+.loan-fee-tip { position: absolute; background: var(--c-black); color: var(--card-bg); font-size: 10px; line-height: 1.45; padding: 5px 8px; border-radius: 3px; pointer-events: none; max-width: 190px; z-index: 3; }
 .loan-fee-tip-t { font-weight: bold; }
 .loan-fee-caption { text-align: center; font-size: 11px; color: var(--muted-2); margin-top: 6px; }
 .loan-summary { margin-top: 16px; border-top: 1px solid var(--c-orange-light); padding-top: 12px; }
@@ -3400,15 +3043,6 @@ input[type="checkbox"].field {
 }
 .rf-chainselect:focus { outline: none; border-color: var(--write); }
 .rf-queue-btn { margin-top: 0; flex: 0 0 auto; }
-.queue-rs-block { border: 1px solid var(--bg); padding: 4px 12px 12px; margin-top: 12px; }
-.queue-rs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; font-weight: bold; color: var(--text); margin: 8px 0 14px; }
-.queue-rs-rm { font-size: 11px; font-weight: normal; }
-.queue-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
-.queue-row-label { font-size: 12px; color: var(--muted); }
-.queue-num { width: 130px; text-align: right; }
-.queue-inline { display: flex; align-items: center; gap: 6px; }
-.queue-inline .queue-num { width: 90px; }
-.queue-unlim { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted-2); cursor: pointer; }
 .rf-arrow {
   font-family: inherit; font-size: 12px; font-weight: bold; padding: 2px 9px; cursor: pointer;
   border: 1px solid var(--c-black-light); background: transparent; color: var(--muted-2); border-radius: 2px;
@@ -3426,18 +3060,18 @@ input[type="checkbox"].field {
 .rf-title-meta { font-size: 11px; color: var(--muted-2); margin-top: 3px; }
 .rf-title-meta .bo-sep { color: var(--c-pink-light); }
 .rf-rulesbox { background: transparent; padding: 10px 12px; }
-.rf-cyclelabel { font-size: 11px; color: var(--muted-2); margin-bottom: 6px; }
-.rf-section { font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;
-  color: var(--muted-2); margin: 12px 0 4px; }
+.rf-section { font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--text); margin: 12px 0 6px; }
 .rf-section:first-of-type { margin-top: 0; }
 .rf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 32px; align-items: start; }
 .rf-col { min-width: 0; }
 .rf-col .rf-section { margin-top: 14px; }
 .rf-col .rf-section:first-child { margin-top: 4px; }
+/* FUNDS ACCESS lives in a sub-container; its first section header should keep the normal section gap. */
+.rf-col .rf-fa .rf-section:first-child { margin-top: 14px; }
 .rf-diff { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .rf-diff-old { color: var(--c-pink); background: rgba(196,53,80,0.10); padding: 1px 6px; border-radius: 2px; }
 .rf-diff-new { color: var(--c-green); background: rgba(61,122,90,0.12); padding: 1px 6px; border-radius: 2px; }
-.rf-funds-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 4px 40px; align-items: start; }
 .rf-funds-col { min-width: 0; }
 .rf-funds-label { font-size: 11px; color: var(--muted-2); margin-bottom: 2px; }
 .rf-funds-big { font-size: 20px; font-weight: bold; color: var(--text); margin-bottom: 8px; }
@@ -3447,7 +3081,6 @@ input[type="checkbox"].field {
   padding: 5px 0; border-top: 1px solid var(--bg); font-size: 12px; }
 .rf-perchain-name { display: flex; align-items: center; gap: 7px; }
 .rf-perchain-val { font-weight: bold; }
-.rf-funds-surrow { display: flex; align-items: baseline; gap: 10px; }
 .rf-funds-sub { font-size: 11px; color: var(--muted-2); }
 .rf-ruleset-link { color: inherit; text-decoration: underline; cursor: pointer; }
 .rf-ruleset-link:hover { color: var(--c-teal); }
@@ -3456,15 +3089,6 @@ input[type="checkbox"].field {
 /* Secondary tab row — a smaller mirror of the main tabs, left-aligned with them (the main tab labels
    start 14px in due to button padding, so the sub-tab row matches with padding-left). Each sub-tab keeps
    its own underline: faint when inactive, teal when active. */
-.detail-subtabs { display: flex; gap: 20px; margin: -4px 0 14px; padding-left: 14px; }
-.detail-subtab-btn {
-  font-family: inherit; font-size: 11px; font-weight: bold; color: var(--muted-2);
-  text-transform: uppercase; letter-spacing: 0.5px;
-  background: none; border: none; padding: 5px 0; cursor: pointer;
-  border-bottom: 2px solid transparent;
-}
-.detail-subtab-btn:hover { color: var(--text); }
-.detail-subtab-btn.active { color: var(--c-teal); border-bottom-color: var(--c-teal); }
 
 /* Owners → All */
 .owners-intro { margin-bottom: 14px; }
@@ -3488,7 +3112,7 @@ input[type="checkbox"].field {
 .owners-pie-svg .owners-pie-slice.is-hover { fill: var(--c-pink); }
 .owners-pie-tip {
   position: absolute; pointer-events: none; z-index: 5; white-space: nowrap;
-  background: var(--c-black, #2c2018); color: #fbe9e2; font-size: 11px; line-height: 1.4;
+  background: var(--c-black); color: var(--card-bg); font-size: 11px; line-height: 1.4;
   padding: 4px 7px; border-radius: 3px; text-align: left;
 }
 .owners-pie-svg {
@@ -3500,9 +3124,6 @@ input[type="checkbox"].field {
 .owners-pie-svg path {
   stroke: var(--card-bg);
   stroke-width: 1.25;
-}
-.owners-pie-ring {
-  stroke-width: 38;
 }
 /* Colorless donut: no fills, slices distinguished by their borders only.
    Scoped under .owners-pie-svg so it beats the `.owners-pie-svg path` (card-bg) divider rule. */
@@ -3544,7 +3165,7 @@ input[type="checkbox"].field {
 }
 .owners-row:last-child { border-bottom: none; }
 .owners-row-link { cursor: pointer; }
-.owners-row-link:hover { background: rgba(0,0,0,0.03); }
+.owners-row-link:hover { background: rgba(44,32,24,0.03); }
 .owners-head {
   background: var(--bg);
   color: var(--muted-2);
@@ -3563,12 +3184,6 @@ input[type="checkbox"].field {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.owners-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex: 0 0 10px;
 }
 .owners-amm-tag {
   margin-left: 7px; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;
@@ -3590,7 +3205,6 @@ input[type="checkbox"].field {
   padding: 8px 12px; border-top: 1px solid var(--c-orange-light);
 }
 .bridge-group-foot-lbl { font-size: 11px; color: var(--muted-2); margin-right: auto; }
-.lp-amm-section { margin-top: 22px; grid-column: 1 / -1; }
 .lp-amm-title {
   font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;
   color: var(--muted-2); margin-bottom: 8px;
@@ -3607,7 +3221,6 @@ input[type="checkbox"].field {
 .lp-amm-rightcol { flex: 1; min-width: 320px; display: flex; flex-direction: column; }
 .lp-amm-rightcol .lp-pos-table-wrap { flex: 0 0 auto; }
 .lp-amm-rightcol .lp-depth { margin-top: auto; }
-.lp-amm-barcol { flex: 1; min-width: 220px; }
 .lp-amm-bartitle { margin: 14px 0 8px; } /* appearance via .detail-card-title */
 .lp-pos-table { min-width: 320px; }
 .lp-pos-table .owners-row { grid-template-columns: 1.6fr 1fr 1fr 0.6fr; }
@@ -3617,7 +3230,7 @@ input[type="checkbox"].field {
 .loans-row { grid-template-columns: 1.4fr 1fr 0.9fr 0.7fr 0.7fr 1fr 1fr 1fr; }
 .loans-table-mine .loans-row { grid-template-columns: 1.3fr 0.9fr 0.85fr 0.65fr 0.6fr 0.9fr 0.95fr 0.9fr 0.7fr; }
 .loans-muted { color: var(--muted-2); }
-.loans-fee { color: var(--c-orange, #b8602e); font-weight: bold; }
+.loans-fee { color: var(--c-orange); font-weight: bold; }
 .loans-act { text-align: right; }
 .loans-repay-btn { font-family: inherit; font-size: 11px; font-weight: bold; padding: 4px 12px; border: 2px solid var(--write); background: var(--c-green-light); color: var(--c-black); cursor: pointer; }
 .loans-repay-btn:hover { opacity: 0.9; }
@@ -3631,8 +3244,11 @@ input[type="checkbox"].field {
 .owners-chains {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
 }
+/* Overlap the chain icons in table cells, like the activity filter. */
+.owners-chains .chain-logo { width: 16px; height: 16px; border-radius: 50%; margin-left: -5px; box-shadow: 0 0 0 1.5px var(--bg); }
+.owners-chains .chain-logo:first-child { margin-left: 0; }
+.owners-chains .chain-logo svg { width: 16px; height: 16px; display: block; }
 .owners-paid { color: var(--text); }
 .owners-footnote {
   grid-column: 1 / -1;
@@ -3770,72 +3386,20 @@ input[type="checkbox"].field {
 
 .detail-chain-logos { display: inline-flex; gap: 2px; align-items: center; vertical-align: middle; }
 .discover-chain-logos { display: inline-flex; gap: 2px; align-items: center; vertical-align: middle; }
-.discover-basic-badge { color: var(--muted-2); border-color: var(--muted-3); }
 .discover-card-meta { font-size: 12px; color: var(--muted-2); margin-top: 5px; }
 .discover-card-lbl { color: var(--muted-2); }
 .discover-card-val { color: var(--text); font-weight: bold; }
-.discover-card-sep { color: var(--c-pink-light); margin: 0 7px; }
-.discover-card-meta .discover-tag { margin-right: 4px; vertical-align: middle; }
+.discover-card-pair { white-space: nowrap; }
+.discover-card-pair:not(:last-child)::after { content: '|'; color: var(--c-pink-light); margin-left: 7px; }
 .discover-card-on { margin-bottom: 12px; }
-.discover-card-row { display: flex; flex-wrap: wrap; align-items: baseline; }
-.discover-card-seg { display: inline-flex; align-items: baseline; gap: 5px; }
-.discover-card-tagseg { min-width: 0; }
-.discover-card-chips { display: inline-flex; flex-wrap: wrap; row-gap: 4px; }
 .chain-logo-link { cursor: pointer; }
 .chain-logo-link:hover { opacity: 0.7; }
 .chain-logo { width: 15px; height: 15px; line-height: 0; display: inline-flex; }
 .chain-logo svg { display: block; }
 
-.detail-id {
-  font-size: 12px;
-  color: var(--muted-3);
-}
-
-.detail-desc {
-  font-size: 11px;
-  color: var(--muted);
-  line-height: 1.5;
-  margin-bottom: 6px;
-}
-
-.detail-tags {
-  display: flex;
-  gap: 4px;
-}
 
 /* Stats bar */
-.project-detail-stats {
-  display: flex;
-  gap: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--c-orange-light);
-  margin-bottom: 16px;
-}
 
-.detail-stat {
-  flex: 1;
-  padding: 10px 14px;
-  border-right: 1px solid var(--muted-4);
-  text-align: center;
-}
-
-.detail-stat:last-child {
-  border-right: none;
-}
-
-.detail-stat-label {
-  font-size: 9px;
-  color: var(--muted-3);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 2px;
-}
-
-.detail-stat-value {
-  font-size: 13px;
-  font-weight: bold;
-  color: var(--text);
-}
 
 /* Sub-tabs */
 .project-detail-tabs {
@@ -3897,7 +3461,7 @@ input[type="checkbox"].field {
 .skel {
   position: relative;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(44, 32, 24, 0.06);
   border-radius: 0; /* square ghost blocks; the pie ghost (.skel-circle) keeps its radius */
 }
 .skel::after {
@@ -3956,58 +3520,7 @@ input[type="checkbox"].field {
 .detail-spacious .project-detail-tabs { margin-bottom: 20px; }
 
 /* Activity rows */
-.detail-activity-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--depth-bg-1);
-  font-size: 11px;
-}
 
-.detail-activity-row:last-child {
-  border-bottom: none;
-}
-
-.detail-activity-type {
-  font-size: 9px;
-  font-weight: bold;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 1px 6px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.detail-activity-type--pay {
-  color: var(--c-green);
-  background: var(--c-green-light);
-}
-
-.detail-activity-type--cash_out {
-  color: var(--c-pink);
-  background: var(--c-pink-light);
-}
-
-.detail-activity-type--payout {
-  color: var(--c-teal);
-  background: var(--c-teal-light);
-}
-
-.detail-activity-info {
-  flex: 1;
-  color: var(--text);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.detail-activity-time {
-  color: var(--muted-3);
-  font-size: 10px;
-  flex-shrink: 0;
-}
 
 .activity-head {
   display: flex;
@@ -4125,14 +3638,11 @@ input[type="checkbox"].field {
 .backoffice-chain-head .chain-logo { width: 15px; height: 15px; }
 .backoffice-chain-link { font-size: 12px; color: var(--c-teal); opacity: 0.7; text-decoration: none; margin-left: 2px; }
 .backoffice-chain-link:hover { opacity: 1; }
-.backoffice-safeaddr { margin-bottom: 8px; }
-.backoffice-blurb { margin-top: 10px; }
 .backoffice-list { display: flex; flex-direction: column; }
 .backoffice-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--bg); }
 .backoffice-label { font-weight: bold; color: var(--text); font-size: 13px; }
 .backoffice-sub { font-size: 12px; color: var(--muted-2); }
 .backoffice-actions { display: flex; align-items: center; gap: 10px; flex: none; }
-.backoffice-link { font-size: 12px; color: var(--c-teal); }
 .backoffice-signed { font-size: 12px; color: var(--muted-2); }
 .backoffice-none { font-size: 13px; color: var(--muted-2); }
 .backoffice-batch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -4154,7 +3664,7 @@ input[type="checkbox"].field {
 .token-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 13px; color: var(--text); }
 .token-line-seg { display: inline-flex; align-items: center; gap: 6px; }
 .token-line-key {
-  font-size: 11px; text-transform: lowercase; letter-spacing: 0.5px; color: var(--muted-2);
+  font-size: 11px; text-transform: none; letter-spacing: 0.5px; color: var(--muted-2);
 }
 .token-line-val { font-weight: bold; }
 .token-line .bo-sep { color: var(--c-pink-light); margin: 0 2px; }
@@ -4173,9 +3683,11 @@ input[type="checkbox"].field {
 .addr-tip {
   position: absolute; left: 0; top: 100%; margin-top: 4px; z-index: 60; white-space: nowrap;
   background: var(--c-black); color: var(--bg); padding: 4px 8px; font-size: 12px;
-  visibility: hidden;
+  display: none; max-width: min(320px, calc(100vw - 16px)); overflow-wrap: anywhere;
 }
-.detail-address:hover > .addr-tip { visibility: visible; }
+/* display:none (not visibility:hidden) so the off-flow tip adds nothing to page width
+   when idle; on touch screens there is no hover, so it stays out of the way entirely. */
+.detail-address:hover > .addr-tip { display: block; }
 .backoffice-batch-note { font-size: 13px; color: var(--muted-2); }
 .relayr-preview { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .relayr-preview-row { display: flex; align-items: center; font-size: 13px; color: var(--text); }
@@ -4276,8 +3788,6 @@ input[type="checkbox"].field {
 .funds-bottom-grid > .rf-funds-col { align-self: start; }
 .funds-bottom-grid > .rf-funds-col:first-child { padding-right: 32px; }
 .funds-bottom-grid > .rf-funds-col + .rf-funds-col { border-left: 1px solid var(--bg); padding-left: 32px; }
-.rf-funds-btnrow { display: flex; flex-wrap: wrap; gap: 8px; }
-.rf-funds-btnrow .detail-check-btn { margin-top: 0; }
 .funds-chain-table { margin-top: 6px; }
 .funds-chain-row {
   display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr; align-items: center; gap: 8px;
@@ -4298,22 +3808,11 @@ input[type="checkbox"].field {
 .payouts-recipient { color: var(--text); min-width: 0; overflow: hidden; }
 .payouts-amt { color: var(--muted); text-align: right; white-space: nowrap; }
 
-@media (max-width: 480px) {
+/* 600px so the detail columns stack at the SAME width Activity becomes a subtab (renderProjectDetail's
+   activityAsTab) — otherwise there's an in-between range with the Activity card wedged above the tabs. */
+@media (max-width: 600px) {
   .discover-card {
     width: 100%;
-  }
-
-  .project-detail-stats {
-    flex-wrap: wrap;
-  }
-
-  .detail-stat {
-    flex: 1 1 45%;
-    border-bottom: 1px solid var(--c-teal-light);
-  }
-
-  .detail-stat:nth-child(even) {
-    border-right: none;
   }
 
   .project-detail-header {
@@ -4371,7 +3870,7 @@ input[type="checkbox"].field {
 }
 
 .fn-section-header:hover {
-  background: rgba(0,0,0,0.03);
+  background: rgba(44,32,24,0.03);
 }
 
 .fn-section[data-open="true"] .fn-section-header,
@@ -4504,11 +4003,6 @@ input[type="checkbox"].field {
   background: transparent;
 }
 
-.function-form.fn-form-compact .fn-header {
-  padding: 4px 8px;
-  font-size: 11px;
-  gap: 4px;
-}
 
 .function-form.fn-form-compact .fn-name {
   font-size: 11px;
@@ -4568,15 +4062,14 @@ input[type="checkbox"].field {
    to data: settings strip, query result tables, load-more. */
 
 .bendystraw-settings {
-  margin: 8px 0 12px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--c-orange-light);
+  margin: 0 0 16px;
+  padding: 0;
 }
 .bendystraw-settings-note {
   color: var(--muted);
   font-size: 11px;
-  line-height: 1.4;
-  margin-bottom: 6px;
+  line-height: 1.6;
+  margin-bottom: 12px;
 }
 .bendystraw-settings-note a { color: inherit; }
 .bendystraw-settings-note a:hover { color: var(--c-teal); }
@@ -4586,29 +4079,6 @@ input[type="checkbox"].field {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-.bendystraw-net-toggle {
-  display: inline-flex;
-  border: 1px solid var(--c-orange-light);
-  border-radius: 2px;
-  overflow: hidden;
-}
-.bendystraw-net-btn {
-  background: transparent;
-  border: none;
-  padding: 3px 12px;
-  font-size: 11px;
-  font-family: inherit;
-  cursor: pointer;
-  color: var(--muted);
-  text-transform: lowercase;
-}
-.bendystraw-net-btn.active {
-  background: var(--c-teal);
-  color: white;
-}
-.bendystraw-net-btn + .bendystraw-net-btn {
-  border-left: 1px solid var(--c-orange-light);
 }
 .bendystraw-key-input {
   flex: 1;
@@ -4736,7 +4206,7 @@ input[type="checkbox"].field {
   color: var(--c-teal);
 }
 .data-cell-json pre {
-  background: rgba(0,0,0,0.03);
+  background: rgba(44,32,24,0.03);
   padding: 6px;
   margin: 4px 0 0 0;
   font-size: 10px;
@@ -4757,42 +4227,19 @@ input[type="checkbox"].field {
 
 
 /* Revnet badge + stage rows (discover tab) */
-.discover-revnet-badge {
-  font-size: 9px;
-  font-weight: bold;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  color: var(--accent, #1a8a8a);
-  border: 1px solid var(--accent, #1a8a8a);
-  padding: 1px 6px;
-  border-radius: 2px;
-  margin-left: 6px;
-}
-.detail-stage-head {
-  font-weight: bold;
-  margin: 12px 0 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--pill-border, rgba(0,0,0,0.1));
-}
-.detail-stage-head:first-of-type { border-top: none; padding-top: 0; }
-.detail-stage-current { color: var(--accent, #1a8a8a); }
 .detail-address { white-space: nowrap; }
 
 /* Revnet stage countdown + auto-issuance controls */
-.detail-stage-countdown { font-size: 11px; font-weight: bold; color: var(--accent, #1a8a8a); margin: 2px 0 8px; }
 .detail-autoissue-row { display: flex; gap: 8px; margin: 8px 0 4px; }
 .detail-autoissue-input { flex: 1; min-width: 0; }
 .detail-check-btn {
   font-size: 11px; font-weight: bold; letter-spacing: 0.5px; padding: 3px 12px; cursor: pointer;
-  color: var(--fg, #2c2018); background: var(--pill-bg, rgba(0,0,0,0.04));
-  border: 1px solid var(--pill-border, rgba(0,0,0,0.2)); border-radius: 2px;
+  color: var(--text); background: var(--pill-bg);
+  border: 1px solid var(--pill-border); border-radius: 2px;
 }
-.detail-check-btn:hover { border-color: var(--accent, #1a8a8a); color: var(--accent, #1a8a8a); }
+.detail-check-btn:hover { border-color: var(--c-teal); color: var(--c-teal); }
 .detail-check-btn:disabled { opacity: 0.6; cursor: default; }
 .detail-autoissue-results { margin-top: 4px; font-size: 12px; }
-.autoissue-load {
-  color: var(--muted-2);
-}
 .autoissue-tablewrap {
   border: 1px solid var(--c-orange-light);
   container-type: inline-size;
@@ -4866,16 +4313,15 @@ input[type="checkbox"].field {
   color: var(--c-teal);
   text-decoration: underline;
 }
-.autoissue-check {
-  color: var(--c-teal);
-  font-weight: bold;
-}
 
 /* Cross-chain Ops table */
 /* Per-chain settlement table — matches the owners/market table chrome (wrapping border + filled head). */
 .detail-ops-table { margin-top: 10px; font-size: 12px; border: 1px solid var(--c-orange-light); }
-.detail-ops-row { display: grid; grid-template-columns: 0.5fr 1fr 1fr 1fr; gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--c-orange-light); }
-.detail-ops-row.detail-ops-3 { grid-template-columns: 0.5fr 1fr 1fr; }
+/* minmax with fixed-LENGTH minimums (not bare `1fr` = minmax(auto,1fr)) so columns are content-independent
+   and align across rows — otherwise a short chain name (Base) gets a narrower col 1 than a long one
+   (Arbitrum) and the per-row values don't line up. */
+.detail-ops-row { display: grid; grid-template-columns: minmax(92px, 0.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--c-orange-light); }
+.detail-ops-row.detail-ops-3 { grid-template-columns: minmax(92px, 0.5fr) minmax(0, 1fr) minmax(0, 1fr); }
 .detail-ops-row:last-child { border-bottom: none; }
 .detail-ops-head { background: var(--bg); color: var(--muted-2); font-size: 10px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
 .detail-ops-total { font-weight: bold; }
@@ -4911,7 +4357,6 @@ input[type="checkbox"].field {
   min-width: 130px;
 }
 
-.bridge-load,
 .bridge-empty {
   color: var(--muted-2);
 }
@@ -4999,11 +4444,6 @@ input[type="checkbox"].field {
 }
 
 /* Per-card cross-chain badges (omnichain projects) */
-.discover-chain-tags { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
-.discover-chain-tag {
-  font-size: 8px; font-weight: bold; letter-spacing: 0.3px; text-transform: uppercase;
-  color: var(--muted-2); border: 1px solid var(--pill-border); padding: 1px 4px; border-radius: 2px;
-}
 
 /* Hero price chart (above the tabs, revnets) */
 .price-hero { margin-bottom: 16px; }
@@ -5018,11 +4458,10 @@ input[type="checkbox"].field {
 .price-chip-col { display: inline-flex; flex-direction: column; line-height: 1.3; }
 .price-chip-label { font-weight: bold; }
 .price-chip-val { font-size: 11px; font-weight: normal; color: var(--muted); white-space: nowrap; display: inline-block; min-width: 78px; }
-.pc-amm .price-chip-val { min-width: 200px; }
 .price-chip-unit { color: var(--muted-2); opacity: 0.8; }
 .price-chip-skel { display: inline-block; height: 11px; vertical-align: middle; }
 .price-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.pc-issuance .price-dot { background: #6ec4c4; }
+.pc-issuance .price-dot { background: var(--c-teal-light); }
 .pc-amm .price-dot { background: var(--c-orange); }
 .pc-cashout .price-dot { background: var(--c-pink); }
 .price-ranges { margin: 0; }
@@ -5030,16 +4469,28 @@ input[type="checkbox"].field {
 /* Shop: 721 NFT tiers */
 /* Shop tab: items grouped under category headings (juicy-vision), 3 per row, larger cards */
 .shop-cat-group { margin: 0 0 26px; }
-.shop-cat-heading { font-size: 14px; font-weight: bold; color: var(--muted); margin: 6px 0 12px; }
+.shop-cat-heading { font-size: 14px; font-weight: bold; color: var(--text); margin: 6px 0 12px; }
+/* Checkout bar is mobile-only (desktop keeps the Pay card visible in the left column). */
+.shop-checkout-bar { display: none; }
+
+/* Category filter chips leading the shop — multi-select, "All" is the default (active = teal). */
+.shop-cat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
+.shop-cat-chip {
+  font-family: inherit; font-size: 12px; font-weight: bold; padding: 6px 14px;
+  border: 1px solid var(--c-orange-light); background: none; color: var(--muted-2);
+  border-radius: 2px; cursor: pointer; white-space: nowrap;
+}
+.shop-cat-chip:hover { color: var(--c-teal); border-color: var(--c-teal); }
+.shop-cat-chip.active { color: var(--c-teal); border-color: var(--c-teal); }
 .shop-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .shop-tier { border: 1px solid var(--c-orange-light); border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; transition: box-shadow 0.2s, border-color 0.2s; }
 .shop-tier.selected { border-color: var(--c-teal); }
 .shop-tier.shop-tier-focus { border-color: var(--c-teal); box-shadow: 0 0 0 3px rgba(110,196,196,0.35); }
-.shop-tier-img { aspect-ratio: 1; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+.shop-tier-img { aspect-ratio: 1; background: var(--card-bg); display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
 .shop-tier-img img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
-.shop-tier-img video { width: 100%; height: 100%; object-fit: contain; background: #000; }
-.tier-media-frame { width: 100%; height: 100%; border: none; background: #fff; }
-.tier-media-text { width: 100%; height: 100%; margin: 0; overflow: auto; padding: 10px; box-sizing: border-box; font-size: 11px; line-height: 1.5; color: var(--c-black); background: #fff; white-space: pre-wrap; word-break: break-word; }
+.shop-tier-img video { width: 100%; height: 100%; object-fit: contain; background: var(--c-black); }
+.tier-media-frame { width: 100%; height: 100%; border: none; background: var(--card-bg); }
+.tier-media-text { width: 100%; height: 100%; margin: 0; overflow: auto; padding: 10px; box-sizing: border-box; font-size: 11px; line-height: 1.5; color: var(--c-black); background: var(--card-bg); white-space: pre-wrap; word-break: break-word; }
 .tier-media-audio { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: var(--card-bg); padding: 8px; box-sizing: border-box; }
 .tier-media-audio img { max-width: 100%; max-height: calc(100% - 36px); object-fit: contain; }
 .tier-media-audio audio { width: 100%; }
@@ -5052,6 +4503,43 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .shop-tier-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .shop-tier-pricecol { display: flex; flex-direction: column; min-width: 0; }
 .shop-tier-price { font-size: 15px; font-weight: bold; color: var(--text); }
+/* Tier discount: an enticing badge over the art + the original price struck through. */
+.shop-tier-discount { position: absolute; top: 6px; left: 6px; background: var(--c-teal); color: var(--bg); font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.3px; z-index: 1; }
+.shop-tier-price-orig { font-size: 11px; color: var(--muted-2); text-decoration: line-through; }
+.paybox-shop-discount { position: absolute; top: 3px; left: 3px; background: var(--c-teal); color: var(--bg); font-size: 8px; font-weight: bold; padding: 1px 4px; border-radius: 2px; z-index: 1; }
+/* Item-detail popup */
+.tier-detail { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.tier-detail-art { aspect-ratio: 1; background: var(--card-bg); border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; max-height: 280px; position: relative; }
+.tier-detail-art img, .tier-detail-art svg { width: 100%; height: 100%; object-fit: contain; }
+.tier-detail-name { font-size: 16px; font-weight: bold; }
+.tier-detail-price { display: flex; align-items: baseline; gap: 8px; }
+.tier-detail-price-eff { font-size: 18px; font-weight: bold; }
+.tier-detail-price-orig { font-size: 13px; color: var(--muted-2); text-decoration: line-through; }
+.tier-detail-discount { background: var(--c-teal); color: var(--bg); font-size: 11px; font-weight: bold; padding: 2px 6px; border-radius: 3px; }
+.tier-detail-section-h { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted-2); margin-bottom: 4px; }
+.tier-detail-supply-row, .tier-detail-fact { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 2px 0; }
+.tier-detail-supply-chain { display: inline-flex; align-items: center; gap: 3px; }
+.tier-detail-supply-val, .tier-detail-fact-l { color: var(--muted-2); }
+.tier-detail-op { display: flex; flex-direction: column; gap: 8px; }
+.tier-detail-op-row { display: flex; align-items: center; gap: 8px; }
+.tier-detail-op-input { width: 70px; }
+.tier-detail-remove { align-self: flex-start; }
+.tier-detail-buy { display: flex; align-items: center; gap: 8px; }
+.tier-detail-soldout { font-size: 12px; color: var(--muted-2); }
+.tier-detail-flag { padding: 4px 0; }
+.tier-detail-flag-name { font-size: 13px; font-weight: bold; }
+.tier-detail-flag-sub { font-size: 12px; color: var(--muted-2); }
+/* "+ Add another item" — own line, divided from the current item's fields above. */
+.tier-add-another { display: block; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--c-pink-light); }
+/* Queue-ruleset 721-shop choice (keep / remove / new). */
+.queue-shop-choice { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.queue-shop-opt { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.queue-shop-opt.disabled { opacity: 0.5; cursor: default; }
+.queue-shop-opt-name { font-size: 13px; font-weight: bold; }
+.queue-shop-opt-sub { font-size: 12px; color: var(--muted-2); }
+/* Shop header: title left, "+ Add items" operator CTA top-right. */
+.shop-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.shop-head-add { font-size: 13px; white-space: nowrap; }
 .shop-tier-supply { font-size: 11px; color: var(--muted-2); }
 .shop-tier-step { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .shop-tier-stepbtn { width: 26px; height: 26px; border: 1px solid var(--c-orange-light); border-radius: 4px; background: none; color: var(--c-teal); font-size: 16px; font-weight: bold; line-height: 1; cursor: pointer; }
@@ -5067,16 +4555,16 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* top padding leaves room for the badge (sticks up 6px); overflow-x:auto would otherwise clip it */
 .paybox-shop-strip { display: flex; gap: 8px; overflow-x: auto; padding: 8px 3px 4px; }
 .paybox-shop-item { position: relative; flex: 0 0 auto; width: 72px; border: 1px solid var(--c-orange-light); border-radius: 4px; display: flex; flex-direction: column; }
-.paybox-shop-thumb { width: 100%; aspect-ratio: 1; background: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 3px 3px 0 0; overflow: hidden; }
+.paybox-shop-thumb { width: 100%; aspect-ratio: 1; background: var(--card-bg); display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 3px 3px 0 0; overflow: hidden; position: relative; }
 .paybox-shop-item:not(.soldout):hover { border-color: var(--c-teal); }
 .paybox-shop-item.selected { border-color: var(--c-teal); }
 .paybox-shop-item.soldout { opacity: 0.45; }
 .paybox-shop-item.soldout .paybox-shop-thumb { cursor: default; }
 .paybox-shop-thumb img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
-.paybox-shop-thumb video { width: 100%; height: 100%; object-fit: cover; background: #000; }
+.paybox-shop-thumb video { width: 100%; height: 100%; object-fit: cover; background: var(--c-black); }
 .paybox-shop-thumb .tier-media-badge-ext { font-size: 10px; padding: 3px 6px; }
 .paybox-shop-thumb span { font-size: 11px; color: var(--muted-3); }
-.paybox-shop-badge { position: absolute; top: -6px; right: -6px; z-index: 2; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--c-teal); color: #fff; font-size: 11px; font-weight: bold; line-height: 18px; text-align: center; }
+.paybox-shop-badge { position: absolute; top: -6px; right: -6px; z-index: 2; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--c-teal); color: var(--card-bg); font-size: 11px; font-weight: bold; line-height: 18px; text-align: center; }
 .paybox-shop-foot { min-height: 20px; display: flex; align-items: center; justify-content: center; }
 .paybox-shop-price { font-size: 10px; font-weight: bold; color: var(--text); padding: 3px 4px; white-space: nowrap; }
 .paybox-shop-step { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 1px 2px; }
@@ -5085,12 +4573,10 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .paybox-shop-qty { font-size: 12px; font-weight: bold; color: var(--text); min-width: 14px; text-align: center; }
 .paybox-nft-list { margin: 4px 0 2px; }
 .paybox-nft-row { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: bold; color: var(--c-teal); margin: 2px 0; }
-.paybox-nft-thumb { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 4px; overflow: hidden; background: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.paybox-nft-thumb { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 4px; overflow: hidden; background: var(--card-bg); display: inline-flex; align-items: center; justify-content: center; }
 .paybox-nft-thumb img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
 /* Settlement: per-route bridge infra (native / CCIP) */
 .settlement-infra { font-size: 11px; color: var(--muted-2); margin: 4px 0 10px; }
-.settlement-infra-label { font-weight: bold; }
-.settlement-infra-route { white-space: nowrap; }
 .settlement-infra-tag { font-size: 9px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; padding: 1px 5px; border-radius: 2px; border: 1px solid var(--c-orange-light); }
 .settlement-infra-tag--native { color: var(--c-orange); border-color: var(--c-orange); }
 .settlement-infra-tag--ccip { color: var(--c-orange); border-color: var(--c-orange); }
@@ -5109,10 +4595,17 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 
 /* Chart hover tooltip + guide line (both charts) */
 .chart-wrap { position: relative; }
-.chart-holder { width: 100%; }
-.chart-guide { position: absolute; top: 0; bottom: 18px; width: 1px; background: rgba(0,0,0,0.4); pointer-events: none; }
+.chart-holder { width: 100%; position: relative; }
+/* Chart axis years + "Today" — HTML overlays (not SVG text) so they stay at the regular font size
+   regardless of the chart's responsive width. */
+.chart-axis { position: absolute; bottom: 2px; font-size: 12px; color: var(--muted-2); pointer-events: none; }
+.chart-axis-l { left: 4px; }
+.chart-axis-r { right: 4px; }
+.chart-today { position: absolute; top: 4px; font-size: 12px; font-weight: bold; color: var(--c-teal); white-space: nowrap; pointer-events: none; transform: translateX(3px); }
+.chart-today-r { transform: translateX(calc(-100% - 3px)); }
+.chart-guide { position: absolute; top: 0; bottom: 18px; width: 1px; background: rgba(44,32,24,0.4); pointer-events: none; }
 .chart-tip {
-  position: absolute; top: 4px; background: var(--c-black, #2c2018); color: #fff; padding: 6px 8px;
+  position: absolute; top: 4px; background: var(--c-black); color: var(--card-bg); padding: 6px 8px;
   border-radius: 3px; font-size: 10px; line-height: 1.5; pointer-events: none; white-space: nowrap; z-index: 5;
 }
 .chart-tip-date { font-weight: bold; margin-bottom: 2px; }
@@ -5125,8 +4618,8 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .issuance-ranges { display: flex; gap: 4px; margin: 10px 0 6px; }
 .issuance-range-btn {
   font-size: 10px; font-weight: bold; padding: 2px 8px; cursor: pointer;
-  color: var(--muted-2); background: var(--pill-bg, rgba(0,0,0,0.04));
-  border: 1px solid var(--pill-border, rgba(0,0,0,0.15)); border-radius: 2px;
+  color: var(--muted-2); background: var(--pill-bg);
+  border: 1px solid var(--pill-border, rgba(44,32,24,0.15)); border-radius: 2px;
 }
 .issuance-range-btn.active { color: var(--c-orange); border-color: var(--c-orange); }
 .issuance-chart { width: 100%; }
@@ -5197,11 +4690,6 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .paybox-feedback { margin: 8px 0; }
 .paybox-yg-label { font-size: 11px; color: var(--muted-2); }
 .paybox-yg-row { display: flex; align-items: center; gap: 11px; margin: 1px 0; flex-wrap: wrap; }
-.paybox-slippage { display: flex; align-items: center; gap: 6px; margin: 6px 0 2px; flex-wrap: wrap; }
-.paybox-slippage-label { font-size: 11px; color: var(--muted-2); margin-right: 2px; }
-.paybox-slippage-btn { font-size: 11px; padding: 2px 8px; border: 1px solid var(--c-orange-light); background: transparent; color: var(--muted); border-radius: 3px; cursor: pointer; }
-.paybox-slippage-btn:hover { border-color: var(--c-teal); }
-.paybox-slippage-btn.active { background: var(--c-teal-light); color: var(--c-teal); border-color: var(--c-teal); font-weight: bold; }
 .paybox-yg-val { font-size: 16px; font-weight: bold; color: var(--text); }
 .paybox-yg-val.muted { font-size: 12px; font-weight: normal; color: var(--muted); }
 .paybox-splits {
@@ -5231,7 +4719,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .pay-routing-tag {
   display: inline-block; font-size: 10px; font-weight: bold; text-transform: uppercase;
   letter-spacing: 0.5px; padding: 2px 7px; border-radius: 2px;
-  background: rgba(0,0,0,0.06); color: var(--muted-2); border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(44,32,24,0.06); color: var(--muted-2); border: 1px solid rgba(44,32,24,0.12);
 }
 .pay-routing-tag.amm {
   background: transparent; color: var(--c-orange); border-color: var(--c-orange);
@@ -5264,7 +4752,6 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* Active stage: no row fill — just a pink dot beside the stage number. */
 .terms-current-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--c-teal); margin-left: 7px; vertical-align: middle; }
 .terms-stage { font-weight: bold; }
-.terms-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-orange, #b8602e); display: inline-block; margin-left: 6px; vertical-align: middle; }
 .terms-period { color: var(--text); }
 .terms-sub { font-size: 10px; color: var(--muted-2); margin-top: 1px; }
 .terms-issuance { display: flex; flex-direction: column; }
@@ -5287,11 +4774,11 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .discover-net-select:hover { opacity: 1; }
 .discover-net-select:focus { outline: none; border: none; box-shadow: none; }
 .tab-create {
-  font-family: inherit; font-size: 13px; font-weight: bold; cursor: default;
-  padding: 4px 14px; background: transparent; color: var(--c-black-light);
-  border: 2px solid var(--c-black-light);
+  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
+  padding: 4px 14px; background: transparent; color: var(--c-black);
+  border: 2px solid var(--c-teal);
 }
-.tab-create:hover { color: var(--c-black-light); }
+.tab-create:hover { color: var(--c-teal); }
 /* Connect wallet: top-right of the site header, black. */
 #header > #connect-btn {
   position: absolute; top: 18px; right: 16px; margin: 0;
@@ -5306,7 +4793,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .wallet-menu {
   position: fixed; z-index: 1000; min-width: 150px;
   background: var(--c-black); border: 1px solid var(--c-black-light);
-  box-shadow: 0 6px 24px rgba(0,0,0,0.25); padding: 4px;
+  box-shadow: 0 6px 24px rgba(44,32,24,0.25); padding: 4px;
 }
 .wallet-menu-item {
   display: block; width: 100%; text-align: left; font-family: inherit; font-size: 12px; font-weight: bold;
@@ -5350,6 +4837,84 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 }
 .create-wip strong { color: var(--c-pink); }
 
+/* Soft notice band — same treatment as the "Work in progress" banner (palette pink on pink-light, no harsh
+   red border/wash). Used for per-chain signature notices and cautionary warnNote()s. */
+.create-banner {
+  display: block; padding: 8px 12px; margin: 12px 0; font-size: 12px; line-height: 1.5;
+  color: var(--c-pink); background: var(--c-pink-light); font-weight: bold;
+}
+.create-banner strong { color: var(--c-pink); }
+
+/* Powers card (Owner/Operator tab) — one row per owner-power flag. */
+.powers-row { padding: 11px 0; }
+.powers-row + .powers-row { border-top: 1px solid var(--muted-4); }
+.powers-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.powers-label { font-weight: bold; color: var(--text); }
+.powers-state { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.03em; }
+.powers-state.on { color: var(--c-teal); }
+.powers-state.off { color: var(--muted-3); }
+.powers-desc { font-size: 12px; color: var(--muted-2); line-height: 1.5; margin-top: 3px; }
+.powers-act { display: inline-block; margin-top: 8px; }
+.powers-warn { font-size: 12px; font-weight: bold; color: var(--c-pink); line-height: 1.5; margin-top: 6px; }
+/* Protocol Admin tab. Left-aligned (no auto-centering) like the other tabs. */
+.admin-tab { max-width: 820px; }
+.admin-head { margin-bottom: 16px; }
+.admin-blurb { font-size: 13px; color: var(--muted-2); line-height: 1.55; }
+.admin-blurb + .admin-blurb { margin-top: 8px; }
+.admin-audit-link { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--c-teal); cursor: pointer; }
+.admin-lazy { display: flex; flex-direction: column; gap: 16px; }
+/* No underline beneath the card titles on the admin tab. */
+.admin-tab .detail-card-title { border-bottom: none; padding-bottom: 0; }
+/* Admin power action buttons (one per onlyOwner tx). */
+.admin-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.admin-act { font-size: 12px; }
+/* Read-only list of what an operator can do — one row per power, label + plain-English context beneath. */
+.perm-list { display: flex; flex-direction: column; gap: 9px; margin-top: 10px; }
+.perm-list-item { display: flex; flex-direction: column; gap: 1px; }
+.perm-list-name { font-size: 13px; font-weight: bold; color: var(--text); }
+.perm-list-desc { font-size: 12px; color: var(--muted-2); line-height: 1.45; }
+/* Grant/revoke checklist (Add operator / Edit permissions modal) — checkbox + label + context per row. */
+.perm-checklist { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 18px; margin-top: 6px; max-height: 320px; overflow-y: auto; padding: 8px; border: 1px solid var(--muted-4); background: var(--bg); }
+.perm-check { display: flex; align-items: flex-start; gap: 8px; color: var(--text); cursor: pointer; padding: 5px 2px; }
+.perm-check input { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 2px; accent-color: var(--c-teal); cursor: pointer; }
+.perm-check-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.perm-check-name { font-size: 12px; font-weight: bold; color: var(--text); }
+.perm-check-desc { font-size: 11px; color: var(--muted-2); line-height: 1.4; }
+/* Deliberate-confirmation gate for irreversible owner actions. */
+.danger-confirm { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; font-size: 12px; font-weight: bold; color: var(--c-pink); cursor: pointer; line-height: 1.5; }
+.danger-confirm input { margin-top: 2px; }
+.cta-disabled { opacity: 0.45; }
+
+/* Cash-out "how it's calculated" breakdown. */
+.ops-cash-breakdown { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--muted-4); font-size: 12px; }
+.ops-cash-bd-head { font-weight: bold; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.ops-cash-bd-row { display: flex; justify-content: space-between; gap: 12px; color: var(--muted-2); line-height: 1.7; }
+.ops-cash-bd-row span:last-child { color: var(--text); font-weight: bold; }
+.ops-cash-bd-formula { margin-top: 6px; color: var(--muted-3); font-size: 11px; }
+
+/* Cash-out / Move: per-chain balance tables (in a card) + the "Cash out on [chain], reclaim in [token]" line. */
+.cashout-bal-table { margin: 4px 0 14px; padding: 12px 14px; background: var(--bg); border: 1px solid var(--muted-4); }
+/* Section title (bold, dark) — visually distinct from the muted uppercase column headers. */
+.cashout-bal-title { font-size: 13px; font-weight: bold; color: var(--text); margin-bottom: 4px; }
+/* Owners-table-style rows: a row-grid each, with separators. */
+.cashout-tbl-row { display: grid; gap: 12px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--muted-4); font-size: 12px; }
+.cashout-tbl-row:last-child { border-bottom: none; }
+.cashout-tbl-headrow { padding: 4px 0; }
+.cashout-tbl-th { font-size: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted-2); }
+.cashout-tbl-th.num, .cashout-tbl-num { text-align: right; }
+.cashout-tbl-num { font-weight: bold; color: var(--text); }
+.cashout-tbl-chain { display: inline-flex; align-items: center; gap: 5px; color: var(--text); }
+.move-backing-why { font-size: 12px; color: var(--muted-2); margin-top: 4px; }
+.cashout-selrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0 6px; color: var(--muted-2); }
+.cashout-reclaim { align-items: center; gap: 6px; }
+.operator-edit-cur { font-size: 12px; color: var(--muted-2); margin-top: 10px; }
+.create-split-chiprow { display: flex; gap: 6px; }
+
+/* Funds: one block per accounting context (e.g. ETH + USDC). */
+.rf-funds-token + .rf-funds-token { margin-top: 26px; border-top: 1px solid var(--muted-4); padding-top: 22px; }
+.rf-funds-token-head { font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.04em; color: var(--c-teal); margin-bottom: 8px; }
+/* Per-token sub-header inside the Rulesets-tab FUNDS ACCESS section. */
+
 /* Stepper */
 .create-stepper { display: flex; align-items: center; padding: 16px 22px 6px; flex-wrap: wrap; gap: 2px; }
 .create-step-conn { flex: 1; height: 2px; min-width: 10px; background: var(--c-pink-light); }
@@ -5367,12 +4932,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* Step body */
 .create-step { padding: 10px 22px 4px; }
 .create-step-head { margin-bottom: 14px; }
-.create-step-title { font-size: 22px; font-weight: bold; color: var(--c-black); display: flex; align-items: center; gap: 10px; }
 .create-step-desc { font-size: 13px; color: var(--muted-2); margin-top: 6px; line-height: 1.55; }
-.create-step-badge {
-  font-size: 9px; font-weight: bold; letter-spacing: 0.5px; color: var(--muted-2);
-  border: 1px solid var(--c-orange-light); border-radius: 10px; padding: 2px 8px;
-}
 
 /* Fields */
 .create-field { margin-bottom: 16px; }
@@ -5386,9 +4946,17 @@ select.create-input, .create-amount-cur {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%237d5a4e' stroke-width='1.5'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 8px center; background-size: 10px 6px; padding-right: 26px;
 }
+/* Auto-width select — sizes tight to its content instead of filling the row (duration, approval condition). */
+select.create-input-auto { width: auto; max-width: 100%; }
+/* Approval condition: dropdown + (when custom) the address field inline on one row. */
+.create-approval-row { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; }
+.create-approval-row .create-input-auto { flex: 0 0 auto; }
+.create-approval-addr { flex: 1 1 auto; min-width: 0; }
 .create-textarea { min-height: 90px; resize: vertical; }
 .create-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.create-hint { font-size: 11px; color: var(--muted-2); margin-top: 4px; line-height: 1.5; }
+.create-hint { font-size: 11px; color: var(--muted-2); margin-top: 8px; line-height: 1.5; }
+/* Consecutive subtext lines stay tight; only the first one (under a control) gets the full 8px gap. */
+.create-hint + .create-hint { margin-top: 4px; }
 .create-hint.warn { color: var(--c-pink); }
 /* Resolved-ENS address shown small under an address field. */
 .create-resolve-hint { font-size: 11px; color: var(--muted-2); margin-top: 4px; word-break: break-all; line-height: 1.4; }
@@ -5397,13 +4965,12 @@ select.create-input, .create-amount-cur {
 /* Column wrapper: address input with its resolve-hint directly below, left-aligned to the field. */
 .create-recip-box { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .create-recip-box > .field { width: 100%; }
-.create-split-row { align-items: flex-start; }
-.create-note {
-  font-size: 12px; color: var(--muted-2); background: var(--depth-bg-1); padding: 10px 12px;
-  margin: 10px 0; line-height: 1.5; border-left: 3px solid var(--c-orange-light);
-}
-.create-suffix-row { display: flex; align-items: center; gap: 8px; }
-.create-suffix-row .field { flex: 1; }
+/* "to" + recipient field as one unit (so they wrap together — see the mobile rule). */
+/* baseline so the "to" sits on the field's text line (centered against the input), not floating at its top. */
+.create-split-tofield { display: flex; align-items: baseline; gap: 6px; flex: 1 1 auto; min-width: 0; }
+/* "per" + currency selector kept together so they wrap as a unit ("per [ETH]"). 6px gap matches the row's
+   flex gap, so the space after "per" reads the same as the space after "Issues". */
+.create-inline-unit { display: inline-flex; align-items: center; gap: 6px; }
 .create-suffix { font-size: 12px; color: var(--muted-2); white-space: nowrap; }
 
 /* Inline pills */
@@ -5462,32 +5029,55 @@ select.create-input, .create-amount-cur {
 .create-tag.selected { border-color: var(--c-teal); color: var(--c-teal); background: var(--c-teal-light); }
 
 /* Subcards (payouts / token / reserved) */
-.create-subcard { background: var(--card-bg); border: 1px solid var(--c-orange-light); padding: 14px 16px; margin: 14px 0; }
-.create-subcard-head { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
-.create-subcard-title { font-size: 14px; font-weight: bold; color: var(--c-black); }
-.create-empty { text-align: center; color: var(--muted-2); font-size: 12px; padding: 16px 0; }
+/* Nested card: lighter bg band that breaks 12px past the parent stage card on each side (−28px margin minus
+   the stage card's 2px border and 14px body padding). The left/right borders run full height; the TOP and
+   BOTTOM borders show ONLY on the small overhang corner tabs — drawn as four 14px×2px background segments
+   pinned to the four corners (origin: border-box). 14px = the 12px overhang + the stage card's 2px border,
+   so each cap runs into the parent border and reads as a connected corner; the central top/bottom stay open
+   so the card blends into the surrounding sections. Match the parent's 2px border weight. */
+.create-subcard {
+  background-color: var(--card-bg);
+  background-image:
+    linear-gradient(var(--c-orange-light), var(--c-orange-light)),
+    linear-gradient(var(--c-orange-light), var(--c-orange-light)),
+    linear-gradient(var(--c-orange-light), var(--c-orange-light)),
+    linear-gradient(var(--c-orange-light), var(--c-orange-light));
+  background-repeat: no-repeat;
+  background-size: 14px 2px;
+  background-position: top left, top right, bottom left, bottom right;
+  background-origin: border-box;
+  border: none;
+  border-left: 2px solid var(--c-orange-light); border-right: 2px solid var(--c-orange-light);
+  padding: 14px 16px; margin: 14px -28px;
+}
+/* A checkbox that opens a fat (subcard) section shares the subcard's darker fill as ONE connected block. The
+   fill is painted by a ::before pseudo-element that runs full-bleed to the subcard's edges (side borders +
+   top corner accents) and joins the subcard below with no gap — so the colour reaches the borders and
+   connects. Because the fill is a pseudo-element BEHIND the content, the checkbox + text don't move at all
+   between unchecked and checked: the row's own box (margin/padding) is unchanged. */
+.create-toggle-row:has(+ .create-subcard) { position: relative; z-index: 0; margin-bottom: 0; }
+.create-toggle-row:has(+ .create-subcard)::before {
+  content: ''; position: absolute; z-index: -1;
+  top: -10px; bottom: 0; left: -28px; right: -28px; /* extend up into the gap for breathing room; down to the subcard */
+  background-color: var(--card-bg);
+  border-left: 2px solid var(--c-orange-light); border-right: 2px solid var(--c-orange-light);
+  background-image:
+    linear-gradient(var(--c-orange-light), var(--c-orange-light)),
+    linear-gradient(var(--c-orange-light), var(--c-orange-light));
+  background-repeat: no-repeat; background-size: 14px 2px;
+  background-position: top left, top right; background-origin: border-box;
+}
+.create-toggle-row:has(+ .create-subcard) + .create-subcard {
+  margin-top: 0;
+  background-image:
+    linear-gradient(var(--c-orange-light), var(--c-orange-light)),
+    linear-gradient(var(--c-orange-light), var(--c-orange-light));
+  background-position: bottom left, bottom right;
+}
 
 /* NFT rows */
-.create-add-nft {
-  width: 100%; font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer; padding: 18px;
-  background: var(--c-teal-light); border: 2px dashed var(--c-teal); color: var(--c-teal); margin-top: 8px;
-}
-.create-nft-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--c-orange-light); }
-.create-nft-thumb { width: 44px; height: 44px; object-fit: cover; border-radius: 4px; }
-.create-nft-meta { flex: 1; }
-.create-nft-name { font-size: 13px; font-weight: bold; color: var(--c-black); }
-.create-nft-price { font-size: 11px; color: var(--muted-2); margin-top: 2px; }
 
 /* Deadline options */
-.create-deadline {
-  width: 100%; text-align: left; font-family: inherit; cursor: pointer; padding: 16px;
-  background: var(--card-bg); border: 2px solid var(--c-orange-light); margin-bottom: 10px;
-  display: flex; align-items: center; gap: 12px;
-}
-.create-deadline.selected { border-color: var(--c-teal); }
-.create-radio { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--c-orange-light); flex-shrink: 0; }
-.create-radio.on { border-color: var(--c-teal); background: var(--c-teal); box-shadow: inset 0 0 0 2px var(--bg); }
-.create-deadline-label { font-size: 15px; font-weight: bold; color: var(--c-black); }
 
 /* Deploy step */
 .create-chain-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
@@ -5506,10 +5096,9 @@ select.create-input, .create-amount-cur {
 .create-review-bullets { font-size: 13px; color: var(--c-black); text-align: left; align-self: stretch; }
 .create-review-bullet { padding: 2px 0; }
 .create-tos { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: var(--muted-2); margin: 12px 0; cursor: pointer; }
-.create-log { margin: 10px 0; font-size: 12px; }
-.create-log-line { padding: 3px 0; color: var(--muted-2); }
-.create-log-line.ok { color: var(--c-green); }
-.create-log-line.err { color: var(--c-pink); }
+.create-tos > input { margin-top: 2px; } /* level the checkbox with the first line of the (wrapping) text */
+.create-audit-link { color: var(--muted-2); text-decoration: none; cursor: pointer; white-space: nowrap; }
+.create-audit-link:hover { color: var(--c-teal); }
 
 /* Single live status line during deploy (replaces the growing log). */
 .create-status { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; font-size: 13px; color: var(--muted-2); min-width: 0; }
@@ -5519,7 +5108,7 @@ select.create-input, .create-amount-cur {
 .create-quote-choice { margin: 14px 0; border: 1px solid var(--c-green-light); padding: 12px; }
 .create-deploy-progress { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
 .create-deploy-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.create-deploy-ic { width: 13px; flex: 0 0 auto; text-align: center; font-weight: bold; }
+.create-deploy-ic { flex: 0 0 auto; text-align: center; font-weight: bold; font-size: 11px; }
 .create-deploy-name { font-weight: bold; color: var(--text); flex: 1; }
 .create-deploy-state { color: var(--muted-2); }
 .create-deploy-ok { color: var(--c-teal); }
@@ -5556,7 +5145,18 @@ select.create-input, .create-amount-cur {
 
 @media (max-width: 560px) {
   .create-grid2 { grid-template-columns: 1fr; }
-  .create-step-label { display: none; }
+  /* Step labels all sit below the dots (no stagger — 5 steps fit in one row). Absolute-positioned so the
+     dots stay vertically centered on the connector line. */
+  .create-stepper { flex-wrap: nowrap; padding: 10px 10px 24px; }
+  .create-step-dot { position: relative; }
+  .create-step-label {
+    position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+    width: max-content; max-width: 62px; text-align: center; font-size: 8px; line-height: 1.15;
+  }
+  /* End labels would overflow the sheet edge if centered on their near-edge dots — pin the first one
+     left-aligned and the last one right-aligned so they stay inside. */
+  .create-step-dot:first-of-type .create-step-label { left: 0; transform: none; text-align: left; }
+  .create-step-dot:last-of-type .create-step-label { left: auto; right: 0; transform: none; text-align: right; }
 }
 
 /* Create wizard — full tx payload preview */
@@ -5606,6 +5206,8 @@ select.create-input, .create-amount-cur {
 .create-stage-headtext { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .create-stage-title { font-size: 14px; font-weight: bold; color: var(--c-black); }
 .create-stage-sum { font-size: 12px; color: var(--muted-2); line-height: 1.6; white-space: pre-line; }
+/* Hanging indent: the "• " sits in the negative text-indent, so a wrapped line aligns under the text. */
+.create-sum-li { padding-left: 1.2em; text-indent: -1.2em; }
 
 /* Cash-out tax presets + bonding-curve preview */
 .create-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
@@ -5630,7 +5232,6 @@ select.create-input, .create-amount-cur {
 .create-stage-remove:hover { color: var(--c-pink); }
 .create-stage-body { padding: 4px 14px 14px; border-top: 1px solid var(--c-orange-light); background: var(--bg); }
 
-.create-note.warn { border-left-color: var(--c-pink); color: var(--c-pink); }
 
 /* Revnet stage editor */
 .create-stage-editor { padding: 4px 14px 14px; border-top: 1px solid var(--c-orange-light); background: var(--bg); }
@@ -5655,7 +5256,7 @@ select.create-input, .create-amount-cur {
   font-size: 12px; line-height: 1.55; color: var(--muted); margin: 0 0 10px;
 }
 .tx-audit-prompt { margin: 6px 0 10px; }
-.tx-audit-link { font-size: 11px; color: var(--muted-2); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.tx-audit-link { font-size: 11px; color: var(--muted-2); text-decoration: none; cursor: pointer; }
 .tx-audit-link:hover { color: var(--c-teal); }
 
 /* Create wizard — amount field with trailing currency selector (mirrors the Pay value field) */
@@ -5670,17 +5271,34 @@ select.create-input, .create-amount-cur {
 /* Inline "Issues [x] tokens per [unit]" row */
 .create-inline-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; color: var(--c-black); }
 .create-inline-num { width: 90px; flex: 0 0 auto; border-radius: 0; }
+.create-payout-amt { width: 51px; } /* payout amount field — compact (≈9/16 of the standard inline-num width) */
+.create-symbol-field { width: 25%; min-width: 96px; } /* token symbol is short — 1/4 width (floored for readability) */
 .create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
 /* Payout amount row: match the currency dropdown's height to the amount field; space the two lines. */
 .create-split-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
 .payout-line2 { margin-top: 8px; }
 /* Inline reserved-split rows: "Split [%] to [recipient]" */
-.create-split-wrap { margin-top: 8px; }
-.create-split-row { display: flex; align-items: center; gap: 6px; }
+/* Gap BETWEEN splits — larger than the ~4px line-break gap within a single split, so each split reads
+   as its own block. */
+.create-split-wrap { margin-top: 18px; }
+.create-split-wrap:first-child { margin-top: 8px; }
+/* Per-split lock — left-aligned with the row fields (lead width = 42px + 6px row gap), below the recipient. */
+.create-split-lock { margin-top: 10px; margin-left: 48px; }
+.create-split-lockcheck { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-2); cursor: pointer; }
+.create-split-lockcheck input { margin: 0; }
+.create-split-lockdate { margin-top: 6px; max-width: 180px; display: block; }
+.create-split-lock .create-hint { margin-top: 6px; }
+/* Baseline so every part of the row — the "Split"/"… and" lead, the % box, "to", the recipient field and
+   the ✕ — sits on the field's text line (reads centered against the inputs). The fund-market chip / ENS
+   hint hang below in the recipient column without dragging the baseline down. */
+.create-split-row { display: flex; align-items: baseline; gap: 6px; }
 .create-split-lead, .create-split-to, .create-split-sign { font-size: 12px; color: var(--muted-2); flex: 0 0 auto; }
 /* Fixed lead width so every row's fields line up regardless of "Payout" vs "… and". */
 .create-split-lead { display: inline-block; width: 42px; }
-.create-split-pct { width: 60px; flex: 0 0 auto; border-radius: 0; }
+.create-split-pct { width: 44px; flex: 0 0 auto; border-radius: 0; }
+/* No spinner arrows on any create-flow number input (percent, ID, amount, per-chain id). */
+.create-sheet input[type="number"]::-webkit-inner-spin-button, .create-sheet input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.create-sheet input[type="number"] { -moz-appearance: textfield; }
 .create-inline-check { flex: 0 0 auto; width: 15px; height: 15px; margin: 0; cursor: pointer; accent-color: var(--c-teal); }
 .create-inline-prompt { font-style: italic; color: var(--muted-2); }
 /* Amount box with an inline suffix label (e.g. "[ 10 ] $TOKEN"), used in auto-issuance rows. */
@@ -5692,20 +5310,39 @@ select.create-input, .create-amount-cur {
 .create-split-rm:hover { color: var(--c-pink); }
 .create-split-benef { margin-top: 6px; padding-left: 60px; }
 .create-split-benef .field { border-radius: 0; }
-/* When a row shows the "fund market" chip the recipient box is a taller column (field + chip); top-align
-   the row so the field stays level with the % box, and nudge the labels down to stay centered with it. */
-.create-split-row.has-chip { align-items: flex-start; }
-.create-split-row.has-chip > .create-split-lead,
-.create-split-row.has-chip > .create-split-sign,
-.create-split-row.has-chip > .create-split-to { padding-top: 7px; }
-.create-split-row.has-chip > .create-split-rm { padding-top: 5px; }
+/* Recipient picker: type dropdown on top, dependent fields beneath — all left-aligned with the dropdown. */
+.create-split-picker { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 6px; }
+.create-split-pickerhead { display: flex; align-items: flex-start; gap: 6px; }
+.create-split-typesel { width: auto; min-width: 0; flex: 0 0 auto; }
+.create-split-idnum { flex: 1 1 auto; min-width: 0; border-radius: 0; }
+/* ID field + its per-chain control stacked, so the per-chain chain icons line up with the ID field's left. */
+.create-split-idcol { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 6px; }
+/* When the per-chain rows replace the inline ID field, drop the wrap's top margin so the first row is
+   exactly level with the dropdown/% row. */
+.create-split-idcol > .create-pcaddr { margin-top: 0; }
+.create-split-subsel { flex: 1 1 auto; min-width: 0; }
+.create-split-sublabel { font-size: 12px; color: var(--muted-2); margin-bottom: -2px; }
+/* Inline labels in a picker head (e.g. "with project") stay on one line so the field fills the rest. */
+/* Offset the bare-text label by the field's padding+border so its text lines up with the field's text. */
+.create-split-pickerhead .create-split-sublabel { flex: 0 0 auto; white-space: nowrap; margin-bottom: 0; padding-top: 7px; }
+.create-split-sub > .create-recip-box, .create-split-sub > .field, .create-split-sub > select { width: 100%; }
+/* "same on all chains" per-address control + its expanded per-chain inputs. */
+.create-pcaddr { margin-top: 2px; }
+.create-pcaddr-collapsed { text-align: right; }
+.create-pcaddr-toggle { font-size: 11px; color: var(--muted-2); text-decoration: underline; cursor: pointer; }
+.create-pcaddr-toggle:hover { color: var(--c-teal); }
+/* "Use same on all chains" sits below the per-chain rows, right-aligned like the "Set per chain" link. */
+.create-pcaddr-foot { text-align: right; margin-top: 6px; }
+.create-pcaddr-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.create-pcaddr-row:first-child { margin-top: 0; } /* top option lines up with the dropdown/% row it replaces */
+.create-pcaddr-chain { flex: 0 0 auto; display: flex; align-items: center; justify-content: flex-start; }
+.create-pcaddr-row .create-recip-box { flex: 1 1 auto; min-width: 0; }
 .create-split-chip { font-family: inherit; font-size: 11px; font-weight: bold; padding: 2px 9px; margin-top: 6px; align-self: flex-start;
   border: 1px solid var(--c-black-light); background: transparent; color: var(--muted-2); border-radius: 2px; cursor: pointer; }
 .create-split-chip:hover { color: var(--text); border-color: var(--write); }
 .create-split-chip.active { color: var(--c-teal); border-color: var(--c-teal); }
 .create-split-lphint { font-size: 11px; color: var(--muted-2); margin-top: 4px; }
 
-.create-note-sub { margin-top: 4px; }
 .create-inline-toggle { color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .create-inline-toggle:hover { color: var(--c-teal); }
 
@@ -5721,3 +5358,92 @@ select.create-input, .create-amount-cur {
 /* Terms table (real <table>): subtle dividers; no line under the header. */
 .terms-table td { border-bottom-color: var(--bg); }
 .terms-table th { border-bottom-color: transparent; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   MOBILE RESPONSIVE LAYER
+   App-wide phone/tablet rules in one auditable place. Component-local @media
+   blocks still live next to their components above; this section holds the
+   systemic rules (header, tab nav, page gutters, global data-dense grids and
+   tables). Primary phone breakpoint: 600px; tablet tweaks at 900px.
+   ════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 600px) {
+  /* Header — connect button drops into flow (centered) instead of being
+     absolutely positioned top-right where it overlaps the wrapped title. */
+  #header { padding: 16px 12px 10px; }
+  #header > #connect-btn { position: static; display: block; margin: 0 auto 10px; width: fit-content; }
+  #header h1 { font-size: 18px; letter-spacing: 0.5px; }
+  .subtitle { font-size: 13px; }
+
+  /* Split-recipient rows: the "0x… or project ID" field collapses to a couple chars when the whole row
+     (Split [%] to [field] ✕) is forced onto one phone line. Wrap it to its own full-width line; keep the
+     label/percent + remove-✕ on the first line (✕ pushed right). */
+  .create-split-row { flex-wrap: wrap; }
+  .create-split-row > .create-split-tofield { flex: 1 1 100%; order: 10; margin-top: 4px; }
+  .create-split-row > .create-split-rm { order: 9; margin-left: auto; }
+
+  /* Tab nav — single row that scrolls horizontally (preferred over wrapping to
+     multiple lines). The row scrolls within itself; page width is unaffected. */
+  #tabs {
+    flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto;
+    margin: 8px 0 0; padding: 0 12px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  #tabs::-webkit-scrollbar { display: none; }
+  .tab { padding: 8px 12px; flex: 0 0 auto; white-space: nowrap; }
+
+  /* Detail subtab row — space it from the stacked Pay card above, and scroll horizontally
+     the same way as the top nav (Activity adds a 6th tab on phones). */
+  .project-detail-tabs { overflow-x: auto; scrollbar-width: none; margin-top: 18px; }
+  .project-detail-tabs::-webkit-scrollbar { display: none; }
+  .detail-tab-btn { flex: 0 0 auto; white-space: nowrap; }
+
+  /* Owners sub-subtab row (Accounts / Market / Settlement / …) — scroll instead of wrapping to 2 rows. */
+  .owners-subtabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .owners-subtabs::-webkit-scrollbar { display: none; }
+  .owners-subtab { flex: 0 0 auto; white-space: nowrap; }
+
+  /* Settlement / composition / "{chain} knows" tables: keep the fixed-fr columns above readable width
+     and scroll horizontally instead of squishing (which caused awkward cell wraps + row 0-misalignment). */
+  .detail-ops-table { overflow-x: auto; }
+  .detail-ops-row { min-width: 440px; }
+  .gossip-row { min-width: 520px; }
+
+  /* Page gutters — reclaim the 40px side padding phones can't spare. */
+  .tab-content { padding: 14px 12px; }
+
+  /* Stacked detail columns: the desktop two-column gaps (left col padded on its RIGHT, right col padded
+     on its LEFT) become lopsided once stacked — offsetting cards toward one screen edge. Drop the side
+     paddings so cards sit in the symmetric tab-content gutters. */
+  .detail-spacious .project-detail-left,
+  .detail-spacious .project-detail-right { padding-left: 0; padding-right: 0; }
+
+  /* Shop tiers — 3-across squeezes the price+stepper row below usable width on
+     phones; drop to 2 so each card keeps a tappable quantity stepper. */
+  .shop-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+
+  /* Shop section — drop the card-in-card chrome (the tab is already named SHOP and padded):
+     no border/background/padding, and hide the redundant "Shop" title, so categories + items
+     sit straight on the page background. */
+  .shop-card { border: none; background: none; padding: 0; }
+  .shop-card > .detail-card-title { display: none; }
+
+  /* Shop tier card — stack name/price/supply, then the -/+ stepper UNDER everything (right-aligned), so
+     the narrow 2-across card stops breaking "0.1 ETH" / "1000 left" awkwardly across the stepper. */
+  .shop-tier-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .shop-tier-step { justify-content: flex-end; }
+
+  /* Category chips — scroll horizontally instead of wrapping to many rows on phones. */
+  .shop-cat-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .shop-cat-chips::-webkit-scrollbar { display: none; }
+  .shop-cat-chip { flex: 0 0 auto; }
+
+  /* Checkout bar — fixed to the bottom while shopping; jumps up to the Pay card (above the tabs). */
+  .shop-checkout-bar.shown {
+    display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    margin: 0; border: none; border-top: 2px solid var(--c-black);
+    background: var(--c-green); color: var(--card-bg);
+    font-family: inherit; font-size: 15px; font-weight: bold; letter-spacing: 0.5px;
+    padding: 15px; cursor: pointer; text-align: center;
+  }
+  .shop-checkout-bar.shown:active { background: var(--c-green-light); color: var(--c-black); }
+}

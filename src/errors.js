@@ -24,9 +24,3 @@ export function renderError(message) {
   return box;
 }
 
-export function renderValidationError(message) {
-  var span = document.createElement('span');
-  span.className = 'validation-error';
-  span.textContent = message;
-  return span;
-}

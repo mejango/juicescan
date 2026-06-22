@@ -46,20 +46,38 @@ var CONTRACT_DESCRIPTIONS = {
   JB721TiersHookStore: 'Storage for 721 tier data, pricing, and metadata.',
   JB721TiersHookDeployer: 'Factory for deploying 721 tiered hooks.',
   JB721TiersHookProjectDeployer: 'Combined project + 721 hook deployment.',
+  JBBuybackHook: 'Pay data hook that routes a payment through a Uniswap pool to buy back the project token when that yields more tokens than minting. Otherwise minting proceeds normally.',
   JBBuybackHookRegistry: 'Registry for buyback hooks that route payments through DEXs when cheaper than minting.',
   JBSuckerRegistry: 'Registry for cross-chain sucker bridges.',
   JBAddressRegistry: 'Maps deployed contract addresses to their deployers for trust verification.',
   REVDeployer: 'Deploys and manages revnet (revenue network) projects.',
+  REVOwner: 'Runtime data hook for every revnet — coordinates the 721 and buyback hooks at pay time, aggregates cross-chain supply/surplus, and routes the 2.5% fee at cash-out. Split from REVDeployer for EIP-170 size limits.',
   REVLoans: 'Loan system using project tokens as collateral.',
-  JBRouterTerminal: 'Routes payments through a DEX before forwarding to a project terminal.',
+  JBRouterTerminal: 'Universal payment terminal: accepts any token and converts it into whatever the destination project accepts, picking the route (direct forward, Uniswap V3/V4 swap, recursive cash-out) that yields the most project tokens. Never holds a balance.',
   JBRouterTerminalRegistry: 'Registry for router terminal configurations.',
   JBProjectHandles: 'Maps ENS names to project IDs.',
-  JBTokenDistributor: 'Distributes tokens to multiple recipients.',
+  JBProjectPayer: 'Payment relay that auto-forwards received ETH/ERC-20 to a project\'s terminal via receive(), or routes explicitly via pay/addToBalanceOf. Deployed as an EIP-1167 clone.',
+  JBProjectPayerDeployer: 'Factory that deploys JBProjectPayer EIP-1167 minimal-proxy clones.',
+  JBOmnichainDeployer: 'One-stop deployer for omnichain projects: launches a project with a tiered 721 hook and cross-chain suckers in one transaction, then inserts itself as every ruleset data hook to coordinate the 721/buyback hooks and compute cross-chain total supply and surplus.',
+  JBOptimismSucker: 'Cross-chain bridge to/from Optimism: cashes out a project\'s tokens locally and queues funds+tokens into an outbox merkle tree, then mints them to beneficiaries on the peer chain via an inbox merkle proof. Registered via JBSuckerRegistry.',
+  JBArbitrumSucker: 'Cross-chain bridge to/from Arbitrum, using merkle outbox/inbox trees to move a project\'s tokens and backing funds between chains. Registered via JBSuckerRegistry.',
+  JBBaseSucker: 'Cross-chain bridge to/from Base, using merkle outbox/inbox trees to move a project\'s tokens and backing funds between chains. Registered via JBSuckerRegistry.',
+  JBUniswapV4Hook: 'Uniswap V4 hook that routes swaps to whichever venue — V4 pool or Juicebox project — gives the user more tokens. Uses a 30-minute TWAP oracle to resist price manipulation.',
+  JBUniswapV4LPSplitHook: 'Split hook that builds and manages a project-owned Uniswap V4 liquidity position, seeded by the project\'s reserved-token distributions via a two-stage accumulate-then-deploy lifecycle.',
+  JBUniswapV4LPSplitHookDeployer: 'Factory that deploys lightweight JBUniswapV4LPSplitHook clones.',
+  DefifaDeployer: 'Deploys and manages Defifa prediction-market games — each game has tiers representing outcomes; players mint tier NFTs during the MINT phase, a scorecard assigns cash-out weights after the event, and the pooled funds are distributed proportionally to winning holders. Phases: COUNTDOWN → MINT → REFUND → SCORING → COMPLETE/NO_CONTEST.',
+  DefifaHook: 'The 721 hook powering Defifa games — enforces game-phase rules on minting and cash-out, and applies the scorecard cash-out weights per tier.',
+  DefifaGovernor: 'Manages ratification of Defifa scorecards via token-weighted attestation — NFT holders attest to proposed cash-out weights with power proportional to NFTs held; a scorecard ratifies once it reaches quorum.',
+  CTPublisher: 'The Croptop publishing engine. Anyone can publish NFT posts to a project\'s 721 hook subject to per-category criteria (min price, supply bounds, allowlist) set by the collection owner; routes a 5% fee to the fee project, pays the remainder into the project terminal, and dedups duplicate IPFS URIs to reuse existing tiers.',
+  CTDeployer: 'Deploys Juicebox projects pre-configured for Croptop — a permissionless NFT publishing system — and registers posting permissions/criteria.',
+  CTProjectOwner: 'A dead-end project owner that locks ownership while preserving Croptop posting permissions.',
+  JBMatchingPriceFeed: 'A 1:1 price feed used when a payout limit is denominated in the same currency as the terminal token, so no conversion is needed.',
+  JBHeldFees: 'External library for held-fee storage operations used by JBMultiTerminal during the 28-day fee hold.',
 };
 
 export function getAuditPrompt() {
   return [
-    'You are helping audit the Juicebox V6 protocol — an open-source, permissionless programmable treasury system deployed on Ethereum and L2s (Optimism, Arbitrum, Base, and possibly more).',
+    'You are a world-class security engineer auditing the Juicebox V6 protocol — an open-source, permissionless programmable money system deployed on Ethereum and L2s (Optimism, Arbitrum, Base, and possibly more). Your goal is to prove me wrong: once we have deployed projects (revnets) 1-7 alongside the ecosystem in deploy-all-v6 Deploy.s.sol, and other juicebox projects begin being created (revnets and omnichain deployed), and they all start receiving payments and being used in their full capacity, you cannot find a way to brick any of them, steal their funds, or corrupt project owner and token holder invariants on your own, you cannot find a way to have made project operations more efficient for any and all network participants that we should have considered before deployment, and you cannot find ways to have made documentation more clear, efficient, and friendly for both AIs and humans looking to get things done with the protocol. find as many ways as you can to prove me wrong, dont stop at just your first find – the wellbeing and safety of the protocol that we will be deploying depends on you. Start from first principles, using the other audit files in the repos as reference but not as a priority guide. use a new .md file as a scratchpad as needed and for results.',
     '',
     'Start by cloning the full ecosystem repo and following its top-level audit engine:',
     '',
@@ -171,89 +189,6 @@ export function getAuditPrompt() {
     '',
     'Report findings with: affected function, severity, description, and proof of concept.',
   ].join('\n');
-}
-
-export function getFunctionPrompt(fn, contractName, fnNatspec) {
-  var lines = [];
-  lines.push('You are helping me interact with a Juicebox V6 smart contract function.');
-  lines.push('');
-
-  pushRepoContext(lines, contractName);
-
-  // Contract context
-  lines.push('## Contract: ' + contractName);
-  if (CONTRACT_DESCRIPTIONS[contractName]) {
-    lines.push(CONTRACT_DESCRIPTIONS[contractName]);
-  }
-  lines.push('');
-
-  // Function signature
-  var paramList = fn.inputs.map(function(p) {
-    return p.type + ' ' + (p.name || '');
-  }).join(', ');
-  lines.push('## Function');
-  lines.push(fn.name + '(' + paramList + ')');
-  lines.push('State mutability: ' + fn.stateMutability);
-  lines.push('');
-
-  // NatSpec
-  if (fnNatspec) {
-    if (fnNatspec.notice) {
-      lines.push('## Description');
-      lines.push(fnNatspec.notice);
-      lines.push('');
-    }
-    if (fnNatspec.details) {
-      lines.push('## Details');
-      lines.push(fnNatspec.details);
-      lines.push('');
-    }
-  }
-
-  // Parameters
-  if (fn.inputs.length > 0) {
-    lines.push('## Parameters');
-    for (var i = 0; i < fn.inputs.length; i++) {
-      var p = fn.inputs[i];
-      var desc = '';
-      if (fnNatspec && fnNatspec.params) {
-        desc = fnNatspec.params[p.name] || fnNatspec.params[p.name.replace(/^_/, '')] || '';
-      }
-      var typeStr = p.type;
-      if (p.components) {
-        typeStr = formatTupleType(p);
-      }
-      lines.push('- ' + (p.name || 'param' + i) + ' (' + typeStr + ')' + (desc ? ': ' + desc : ''));
-    }
-    lines.push('');
-  }
-
-  // Returns
-  if (fn.outputs && fn.outputs.length > 0) {
-    lines.push('## Returns');
-    for (var j = 0; j < fn.outputs.length; j++) {
-      var o = fn.outputs[j];
-      var retDesc = '';
-      if (fnNatspec && fnNatspec.returns) {
-        retDesc = fnNatspec.returns[o.name] || fnNatspec.returns['_' + j] || '';
-      }
-      var retType = o.type;
-      if (o.components) {
-        retType = formatTupleType(o);
-      }
-      lines.push('- ' + (o.name || 'output' + j) + ' (' + retType + ')' + (retDesc ? ': ' + retDesc : ''));
-    }
-    lines.push('');
-  }
-
-  // Context
-  lines.push('## Protocol Context');
-  lines.push('Juicebox V6 is an open-source programmable treasury protocol. Projects receive payments, issue tokens, distribute payouts to splits, and allow token holders to cash out their share of the surplus.');
-  if (fn.stateMutability === 'payable') {
-    lines.push('This function accepts ETH (or the chain\'s native token) via msg.value.');
-  }
-
-  return lines.join('\n');
 }
 
 function formatTupleType(param) {
@@ -393,7 +328,7 @@ export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl
 
   // Protocol context
   lines.push('## Protocol Context');
-  lines.push('Juicebox V6 is an open-source programmable treasury. Key invariants: terminal solvency, no over-withdrawal, correct bonding curve cashout, privilege containment via JBPermissions.');
+  lines.push('Juicebox V6 is an open-source programmable money protocol. Key invariants: terminal solvency, no over-withdrawal, correct bonding curve cashout, privilege containment via JBPermissions.');
   lines.push('');
   lines.push('Known gotchas: empty fundAccessLimitGroups = zero payouts (not unlimited), cashOut(0) with totalSupply==0 returns entire surplus, pending reserved tokens inflate totalSupply reducing cashout value, currency (uint32) != baseCurrency (1=ETH, 2=USD).');
 

@@ -9,11 +9,19 @@ import {
   getChainTokens, formatAmount, parseHashDefaults,
 } from './component-base.js';
 
-var sendReservedAbi = [{
+export var sendReservedAbi = [{
   type: 'function', name: 'sendReservedTokensToSplitsOf', stateMutability: 'nonpayable',
   inputs: [{ name: 'projectId', type: 'uint256' }],
   outputs: [{ name: '', type: 'uint256' }],
 }];
+
+// Pure builder for JBController.sendReservedTokensToSplitsOf. `o`: { chainId, controllerAddr, projectId }.
+export function buildSendReservedArgs(o) {
+  return {
+    chainId: o.chainId, address: o.controllerAddr, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf',
+    args: [BigInt(o.projectId)],
+  };
+}
 
 var pendingReservedAbi = [{
   type: 'function', name: 'pendingReservedTokenBalanceOf', stateMutability: 'view',
@@ -142,11 +150,7 @@ export function renderReservedComponent() {
     if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
 
     executeTransaction({
-      chainId: state.selectedChain,
-      address: controllerAddr,
-      abi: sendReservedAbi,
-      functionName: 'sendReservedTokensToSplitsOf',
-      args: [BigInt(state.projectId)],
+      ...buildSendReservedArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId }),
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadPending(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

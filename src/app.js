@@ -8,7 +8,7 @@ import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
 import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
-import { renderDiscoverTab, applyDiscoverRoute } from './discover.js';
+import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab } from './discover.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 
@@ -71,8 +71,8 @@ var PRETTY_COMPONENTS = {
 // --- Tab switching ---
 
 // URL nav-name <-> data-tab id mapping (the hash uses friendly names).
-var NAV_TO_TAB = { discover: 'discover', actions: 'common', learn: 'learn', build: 'build', api: 'directory', data: 'data', why: 'why' };
-var TAB_TO_NAV = { discover: 'discover', common: 'actions', learn: 'learn', build: 'build', directory: 'api', data: 'data', why: 'why' };
+var NAV_TO_TAB = { discover: 'discover', actions: 'common', learn: 'learn', build: 'build', api: 'directory', data: 'data', admin: 'admin', why: 'why' };
+var TAB_TO_NAV = { discover: 'discover', common: 'actions', learn: 'learn', build: 'build', directory: 'api', data: 'data', admin: 'admin', why: 'why' };
 
 function activateNavTab(dataTab) {
   document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -157,12 +157,15 @@ function initTabs() {
 // Parse the hash and apply it: pick the nav tab, and (for discover) open the project route.
 function applyHash() {
   var raw = (location.hash || '').replace(/^#\/?/, '');
-  var nav, projectRoute = null;
+  var nav, projectRoute = null, sectionId = null;
   if (raw === '' || raw === 'discover') { nav = 'discover'; }
   else if (raw.indexOf(':') !== -1) { nav = 'discover'; projectRoute = raw; } // <slug>:<id>[/tab]
+  else if (/^(learn|build|why)-/.test(raw)) { nav = raw.split('-')[0]; sectionId = raw; } // guide section deep link
   else { nav = raw.split('/')[0]; }
   activateNavTab(NAV_TO_TAB[nav] || 'discover');
   if ((NAV_TO_TAB[nav] || 'discover') === 'discover') applyDiscoverRoute(projectRoute);
+  // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit these).
+  else if (sectionId) setTimeout(function () { var t = document.getElementById(sectionId); if (t) t.scrollIntoView({ block: 'start' }); }, 60);
 }
 
 function onHashChange() {
@@ -325,11 +328,6 @@ function findFunction(fns, name) {
 function renderDirectory() {
   var container = document.getElementById('tab-directory');
   container.innerHTML = '';
-
-  var wipBanner = document.createElement('div');
-  wipBanner.className = 'discover-header';
-  wipBanner.textContent = 'Work in progress';
-  container.appendChild(wipBanner);
 
   var categoryNames = Object.keys(categories);
   for (var c = 0; c < categoryNames.length; c++) {
@@ -884,6 +882,7 @@ function init() {
   renderDataTab();
   renderLearnTab();
   renderBuildTab();
+  renderAdminTab();
   renderWhyTab();
   window.addEventListener('hashchange', onHashChange);
   applyHash(); // restore the nav tab / deep-linked project from the URL on load

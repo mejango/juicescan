@@ -9,7 +9,7 @@ import {
   getChainTokens, parseAmount, formatAmount, parseHashDefaults,
 } from './component-base.js';
 
-var burnTokensAbi = [{
+export var burnTokensAbi = [{
   type: 'function', name: 'burnTokensOf', stateMutability: 'nonpayable',
   inputs: [
     { name: 'holder', type: 'address' },
@@ -19,6 +19,14 @@ var burnTokensAbi = [{
   ],
   outputs: [],
 }];
+
+// Pure builder for JBController.burnTokensOf. `o`: { chainId, controllerAddr, holder, projectId, tokenCount (bigint), memo }.
+export function buildBurnArgs(o) {
+  return {
+    chainId: o.chainId, address: o.controllerAddr, abi: burnTokensAbi, functionName: 'burnTokensOf',
+    args: [o.holder, BigInt(o.projectId), o.tokenCount, o.memo || ''],
+  };
+}
 
 var totalBalanceOfAbi = [{
   type: 'function', name: 'totalBalanceOf', stateMutability: 'view',
@@ -195,11 +203,7 @@ export function renderBurnComponent() {
     if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
 
     executeTransaction({
-      chainId: state.selectedChain,
-      address: controllerAddr,
-      abi: burnTokensAbi,
-      functionName: 'burnTokensOf',
-      args: [holder, BigInt(state.projectId), tokenCount, state.memo || ''],
+      ...buildBurnArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, holder: holder, projectId: state.projectId, tokenCount: tokenCount, memo: state.memo || '' }),
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

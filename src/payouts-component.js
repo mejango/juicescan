@@ -9,17 +9,26 @@ import {
   getChainTokens, parseAmount, parseHashDefaults,
 } from './component-base.js';
 
-var sendPayoutsAbi = [{
+export var sendPayoutsAbi = [{
   type: 'function', name: 'sendPayoutsOf', stateMutability: 'nonpayable',
   inputs: [
     { name: 'projectId', type: 'uint256' },
     { name: 'token', type: 'address' },
     { name: 'amount', type: 'uint256' },
-    { name: 'currency', type: 'uint32' },
+    { name: 'currency', type: 'uint256' }, // JBCurrencyIds is uint256 on-chain — uint32 here changed the selector → tx reverted
     { name: 'minTokensPaidOut', type: 'uint256' },
   ],
   outputs: [{ name: '', type: 'uint256' }],
 }];
+
+// Pure builder for JBMultiTerminal.sendPayoutsOf. `o`: { chainId, terminalAddr, projectId, token, amount
+// (bigint), currency (the project's payout-limit currency id), minPaidOut (bigint) }.
+export function buildSendPayoutsArgs(o) {
+  return {
+    chainId: o.chainId, address: o.terminalAddr, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf',
+    args: [BigInt(o.projectId), o.token, o.amount, BigInt(o.currency), o.minPaidOut || 0n],
+  };
+}
 
 export function renderPayoutsComponent() {
   var defaults = parseHashDefaults('payouts');
@@ -164,11 +173,7 @@ export function renderPayoutsComponent() {
     var currency = Number(BigInt(tokenAddr) & 0xFFFFFFFFn);
 
     executeTransaction({
-      chainId: state.selectedChain,
-      address: terminalAddr,
-      abi: sendPayoutsAbi,
-      functionName: 'sendPayoutsOf',
-      args: [BigInt(state.projectId), tokenAddr, amountParsed, currency, 0n],
+      ...buildSendPayoutsArgs({ chainId: state.selectedChain, terminalAddr: terminalAddr, projectId: state.projectId, token: tokenAddr, amount: amountParsed, currency: currency, minPaidOut: 0n }),
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

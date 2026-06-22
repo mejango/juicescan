@@ -4,12 +4,12 @@
 
 import { parseEther } from 'viem';
 import {
-  el, createComponentWrapper, createWalletButton, executeTransaction,
-  renderError, getAddress, getAccount, NATIVE_TOKEN,
+  el, createComponentWrapper, createWalletButton, executeTransaction, executeRead,
+  renderError, getAddress, getAccount, NATIVE_TOKEN, ZERO_ADDRESS as ZERO, addrOrZero,
 } from './component-base.js';
 
 export var launchProjectAbi = [{
-  type: 'function', name: 'launchProjectFor', stateMutability: 'nonpayable',
+  type: 'function', name: 'launchProjectFor', stateMutability: 'payable',
   inputs: [
     { name: 'owner', type: 'address' },
     { name: 'projectUri', type: 'string' },
@@ -77,8 +77,6 @@ export var launchProjectAbi = [{
   outputs: [{ name: 'projectId', type: 'uint256' }],
 }];
 
-export var ZERO = '0x0000000000000000000000000000000000000000';
-
 var CHAIN_OPTIONS = [
   { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
   { id: 42161, name: 'Arbitrum', testnet: false }, { id: 8453, name: 'Base', testnet: false },
@@ -115,7 +113,7 @@ function createDefaultSurplusAllowance() {
   return { amount: '', currency: 1 };
 }
 
-function createDefaultFundAccessLimitGroup() {
+export function createDefaultFundAccessLimitGroup() {
   return { terminal: '', token: '', payoutLimits: [createDefaultPayoutLimit()], surplusAllowances: [createDefaultSurplusAllowance()] };
 }
 
@@ -235,7 +233,7 @@ export function renderLaunchComponent() {
     body.appendChild(createWalletButton('LAUNCH', executeLaunch, comp.permissionNote));
   }
 
-  function executeLaunch() {
+  async function executeLaunch() {
     state.error = null;
     state.txStatus = null;
 
@@ -244,6 +242,16 @@ export function renderLaunchComponent() {
 
     var controllerAddr = getAddress('JBController', state.chainIds[0]);
     if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+
+    // launchProjectFor charges msg.value == JBProjects.creationFee() — omitting it reverts on fee chains.
+    var creationFee = 0n;
+    try {
+      var projectsAddr = getAddress('JBProjects', state.chainIds[0]);
+      if (projectsAddr) creationFee = await executeRead({
+        chainId: state.chainIds[0], address: projectsAddr, functionName: 'creationFee', args: [],
+        abi: [{ type: 'function', name: 'creationFee', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }],
+      });
+    } catch (_) {}
 
     var terminalAddr = getAddress('JBMultiTerminal', state.chainIds[0]);
 
@@ -269,6 +277,7 @@ export function renderLaunchComponent() {
       abi: launchProjectAbi,
       functionName: 'launchProjectFor',
       args: [owner, state.projectUri || '', rulesetConfigs, terminalConfigs, state.memo || ''],
+      value: creationFee,
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
@@ -318,7 +327,7 @@ export function buildRulesetConfigs(rulesets, opts) {
       meta.useTotalSurplusForCashOuts = !!rs.useTotalSurplusForCashOuts;
       meta.useDataHookForPay = !!rs.useDataHookForPay;
       meta.useDataHookForCashOut = !!rs.useDataHookForCashOut;
-      meta.dataHook = (rs.dataHook && /^0x[0-9a-fA-F]{40}$/.test(rs.dataHook)) ? rs.dataHook : ZERO;
+      meta.dataHook = addrOrZero(rs.dataHook);
       meta.metadata = Number(rs.metadataExtra) || 0;
     }
     configs.push({
@@ -326,7 +335,7 @@ export function buildRulesetConfigs(rulesets, opts) {
       duration: getDurationSeconds(rs),
       weight: weightRaw,
       weightCutPercent: Math.round(rs.weightCutPercent * 10000000),
-      approvalHook: (rs.approvalHook && /^0x[0-9a-fA-F]{40}$/.test(rs.approvalHook)) ? rs.approvalHook : ZERO,
+      approvalHook: addrOrZero(rs.approvalHook),
       metadata: meta,
       splitGroups: buildSplitGroups(rs.splitGroups),
       fundAccessLimitGroups: buildFundAccessLimitGroups(rs.fundAccessLimitGroups),
@@ -350,9 +359,9 @@ export function buildSplitGroups(groups) {
         preferAddToBalance: s.preferAddToBalance,
         percent: Number(s.percent) || 0,
         projectId: Number(s.projectId) || 0,
-        beneficiary: (s.beneficiary && /^0x[0-9a-fA-F]{40}$/.test(s.beneficiary)) ? s.beneficiary : ZERO,
+        beneficiary: addrOrZero(s.beneficiary),
         lockedUntil: Number(s.lockedUntil) || 0,
-        hook: (s.hook && /^0x[0-9a-fA-F]{40}$/.test(s.hook)) ? s.hook : ZERO,
+        hook: addrOrZero(s.hook),
       });
     }
     if (splits.length > 0) {
@@ -389,7 +398,7 @@ export function buildFundAccessLimitGroups(groups) {
     }
     result.push({
       terminal: g.terminal,
-      token: (g.token && /^0x[0-9a-fA-F]{40}$/.test(g.token)) ? g.token : ZERO,
+      token: addrOrZero(g.token),
       payoutLimits: payoutLimits,
       surplusAllowances: surplusAllowances,
     });
@@ -905,7 +914,7 @@ function splitPercentRow(split) {
   return row;
 }
 
-function percentSlider(label, rs, key, max) {
+export function percentSlider(label, rs, key, max) {
   var row = el('div', 'config-row');
   var lbl = el('label', 'input-label');
   lbl.textContent = label;
@@ -985,7 +994,7 @@ function fundCurrencyRow(st, updateUI) {
   return row;
 }
 
-function configRow(label, hint, st, key, placeholder) {
+export function configRow(label, hint, st, key, placeholder) {
   var row = el('div', 'config-row');
   var lbl = el('label', 'input-label');
   lbl.innerHTML = label + ' <span class="type-hint">' + hint + '</span>';

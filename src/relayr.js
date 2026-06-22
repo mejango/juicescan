@@ -136,8 +136,3 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
 }
 
 // Pull the destination tx hash off a polled transaction record, whatever its state shape.
-export function relayrTxHash(t) {
-  var d = t && t.status && t.status.data;
-  if (!d) return null;
-  return d.hash || (d.transaction && d.transaction.hash) || null;
-}

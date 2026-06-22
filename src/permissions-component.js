@@ -4,10 +4,10 @@
 
 import {
   el, createComponentWrapper, createWalletButton, executeTransaction,
-  renderError, getAddress, getAccount, parseHashDefaults,
+  renderError, getAddress, getAccount, parseHashDefaults, isAddr,
 } from './component-base.js';
 
-var setPermissionsAbi = [{
+export var setPermissionsAbi = [{
   type: 'function', name: 'setPermissionsFor', stateMutability: 'nonpayable',
   inputs: [
     { name: 'account', type: 'address' },
@@ -19,6 +19,15 @@ var setPermissionsAbi = [{
   ],
   outputs: [],
 }];
+
+// Pure builder for JBPermissions.setPermissionsFor. `o`: { chainId, permissionsAddr, account, operator,
+// projectId, permissionIds (uint8[]) }. The permissionIds map to nana-permission-ids-v6 (see PERMISSIONS).
+export function buildSetPermissionsArgs(o) {
+  return {
+    chainId: o.chainId, address: o.permissionsAddr, abi: setPermissionsAbi, functionName: 'setPermissionsFor',
+    args: [o.account, { operator: o.operator, projectId: Number(o.projectId) || 0, permissionIds: o.permissionIds }],
+  };
+}
 
 // Complete permission IDs from nana-permission-ids-v6
 var PERMISSION_IDS = [
@@ -55,9 +64,11 @@ var PERMISSION_IDS = [
   { id: 31, name: 'SET_ROUTER_TERMINAL', desc: 'Configure router terminal' },
   { id: 32, name: 'MAP_SUCKER_TOKEN', desc: 'Map cross-chain token' },
   { id: 33, name: 'DEPLOY_SUCKERS', desc: 'Deploy cross-chain bridges' },
-  { id: 34, name: 'SUCKER_SAFETY', desc: 'Emergency token recovery' },
-  { id: 35, name: 'SET_SUCKER_DEPRECATION', desc: 'Deprecate sucker' },
-  { id: 36, name: 'HIDE_TOKENS', desc: 'Hide tokens' },
+  // Canonical JBPermissionIds.sol: 34=SET_SUCKER_PEER, 35=SUCKER_SAFETY, 36=SET_SUCKER_DEPRECATION.
+  // (Previously shifted — checking "SUCKER_SAFETY" granted SET_SUCKER_PEER, a materially more dangerous role.)
+  { id: 34, name: 'SET_SUCKER_PEER', desc: 'Set a sucker’s cross-chain peer' },
+  { id: 35, name: 'SUCKER_SAFETY', desc: 'Emergency token recovery' },
+  { id: 36, name: 'SET_SUCKER_DEPRECATION', desc: 'Deprecate sucker' },
   { id: 37, name: 'OPEN_LOAN', desc: 'Open loan against tokens' },
   { id: 38, name: 'REALLOCATE_LOAN', desc: 'Move loan collateral' },
   { id: 39, name: 'REPAY_LOAN', desc: 'Repay loan' },
@@ -66,9 +77,10 @@ var PERMISSION_IDS = [
 var PERMISSION_GROUPS = [
   { label: 'Core', ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] },
   { label: 'NFT', ids: [24, 25, 26, 27] },
-  { label: 'Buyback', ids: [28, 29, 30, 31] },
-  { label: 'Omnichain', ids: [32, 33, 34, 35] },
-  { label: 'RevNet', ids: [36, 37, 38, 39] },
+  { label: 'Buyback', ids: [28, 29, 30] },
+  { label: 'Router', ids: [31] }, // SET_ROUTER_TERMINAL — its own concern, not buyback
+  { label: 'Omnichain', ids: [32, 33, 34, 35, 36] }, // 36 = SET_SUCKER_DEPRECATION (a sucker permission)
+  { label: 'RevNet', ids: [37, 38, 39] },
 ];
 
 export function renderPermissionsComponent() {
@@ -237,7 +249,7 @@ export function renderPermissionsComponent() {
     state.error = null;
     state.txStatus = null;
 
-    if (!state.operator || !/^0x[0-9a-fA-F]{40}$/.test(state.operator)) {
+    if (!state.operator || !isAddr(state.operator)) {
       state.error = 'Enter a valid operator address'; updateUI(); return;
     }
 
@@ -259,11 +271,7 @@ export function renderPermissionsComponent() {
     var projectId = state.projectId ? Number(state.projectId) : 0;
 
     executeTransaction({
-      chainId: state.chainId,
-      address: permissionsAddr,
-      abi: setPermissionsAbi,
-      functionName: 'setPermissionsFor',
-      args: [account, { operator: state.operator, projectId: projectId, permissionIds: selectedArr }],
+      ...buildSetPermissionsArgs({ chainId: state.chainId, permissionsAddr: permissionsAddr, account: account, operator: state.operator, projectId: projectId, permissionIds: selectedArr }),
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

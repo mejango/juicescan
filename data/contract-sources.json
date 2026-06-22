@@ -2,7 +2,7 @@
   "JBMultiTerminal": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBMultiTerminal.sol",
     "startLine": 58,
     "endLine": 2289,
@@ -729,7 +729,7 @@
   "JBController": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBController.sol",
     "startLine": 52,
     "endLine": 1418,
@@ -1256,7 +1256,7 @@
   "JBDirectory": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBDirectory.sol",
     "startLine": 21,
     "endLine": 369,
@@ -1362,7 +1362,7 @@
   "JBTerminalStore": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBTerminalStore.sol",
     "startLine": 34,
     "endLine": 1430,
@@ -1703,7 +1703,7 @@
   "JBTokens": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBTokens.sol",
     "startLine": 17,
     "endLine": 451,
@@ -1829,7 +1829,7 @@
   "JBRulesets": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBRulesets.sol",
     "startLine": 23,
     "endLine": 1132,
@@ -2086,7 +2086,7 @@
   "JBSplits": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBSplits.sol",
     "startLine": 17,
     "endLine": 390,
@@ -2173,7 +2173,7 @@
   "JBPermissions": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBPermissions.sol",
     "startLine": 15,
     "endLine": 266,
@@ -2250,7 +2250,7 @@
   "JBPrices": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBPrices.sol",
     "startLine": 21,
     "endLine": 406,
@@ -2407,7 +2407,7 @@
   "JBProjects": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBProjects.sol",
     "startLine": 18,
     "endLine": 210,
@@ -2500,7 +2500,7 @@
   "JBFundAccessLimits": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBFundAccessLimits.sol",
     "startLine": 16,
     "endLine": 381,
@@ -2581,7 +2581,7 @@
   "JBERC20": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBERC20.sol",
     "startLine": 26,
     "endLine": 311,
@@ -2791,7 +2791,7 @@
   "JBFeelessAddresses": {
     "repo": "nana-core-v6",
     "githubUrl": "https://github.com/Bananapus/nana-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBFeelessAddresses.sol",
     "startLine": 14,
     "endLine": 130,
@@ -2861,7 +2861,7 @@
   "JB721TiersHook": {
     "repo": "nana-721-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JB721TiersHook.sol",
     "startLine": 39,
     "endLine": 811,
@@ -3182,7 +3182,7 @@
   "JB721TiersHookStore": {
     "repo": "nana-721-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JB721TiersHookStore.sol",
     "startLine": 25,
     "endLine": 1643,
@@ -3717,7 +3717,7 @@
   "JB721TiersHookDeployer": {
     "repo": "nana-721-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JB721TiersHookDeployer.sol",
     "startLine": 19,
     "endLine": 117,
@@ -3740,7 +3740,7 @@
   "JB721TiersHookProjectDeployer": {
     "repo": "nana-721-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-721-hook-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JB721TiersHookProjectDeployer.sol",
     "startLine": 32,
     "endLine": 489,
@@ -3880,7 +3880,7 @@
   "JBBuybackHookRegistry": {
     "repo": "nana-buyback-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-buyback-hook-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBBuybackHookRegistry.sol",
     "startLine": 32,
     "endLine": 577,
@@ -4093,7 +4093,7 @@
   "JBSuckerRegistry": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBSuckerRegistry.sol",
     "startLine": 35,
     "endLine": 1191,
@@ -4532,7 +4532,7 @@
   "JBOptimismSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBOptimismSucker.sol",
     "startLine": 25,
     "endLine": 169,
@@ -4590,7 +4590,7 @@
   "JBArbitrumSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBArbitrumSucker.sol",
     "startLine": 33,
     "endLine": 391,
@@ -4707,7 +4707,7 @@
   "JBCCIPSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBCCIPSucker.sol",
     "startLine": 36,
     "endLine": 399,
@@ -4821,7 +4821,7 @@
   "JBBaseSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBBaseSucker.sol",
     "startLine": 13,
     "endLine": 48,
@@ -4840,7 +4840,7 @@
   "JBOmnichainDeployer": {
     "repo": "nana-omnichain-deployers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-omnichain-deployers-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBOmnichainDeployer.sol",
     "startLine": 49,
     "endLine": 1130,
@@ -5717,7 +5717,7 @@
   "JBProjectPayer": {
     "repo": "nana-project-payer-v6",
     "githubUrl": "https://github.com/Bananapus/nana-project-payer-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBProjectPayer.sol",
     "startLine": 22,
     "endLine": 455,
@@ -5842,7 +5842,7 @@
   "JBProjectPayerDeployer": {
     "repo": "nana-project-payer-v6",
     "githubUrl": "https://github.com/Bananapus/nana-project-payer-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBProjectPayerDeployer.sol",
     "startLine": 12,
     "endLine": 82,
@@ -5868,7 +5868,7 @@
   "JBRouterTerminal": {
     "repo": "nana-router-terminal-v6",
     "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBRouterTerminal.sol",
     "startLine": 58,
     "endLine": 2867,
@@ -6925,7 +6925,7 @@
   "JBRouterTerminalRegistry": {
     "repo": "nana-router-terminal-v6",
     "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBRouterTerminalRegistry.sol",
     "startLine": 35,
     "endLine": 827,
@@ -7287,7 +7287,7 @@
   "JBPayRouteResolver": {
     "repo": "nana-router-terminal-v6",
     "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBPayRouteResolver.sol",
     "startLine": 21,
     "endLine": 1230,
@@ -7734,7 +7734,7 @@
   "JBAddressRegistry": {
     "repo": "nana-address-registry-v6",
     "githubUrl": "https://github.com/Bananapus/nana-address-registry-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBAddressRegistry.sol",
     "startLine": 12,
     "endLine": 150,
@@ -7890,7 +7890,7 @@
   "REVDeployer": {
     "repo": "revnet-core-v6",
     "githubUrl": "https://github.com/rev-net/revnet-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/REVDeployer.sol",
     "startLine": 60,
     "endLine": 1125,
@@ -8111,7 +8111,7 @@
   "REVLoans": {
     "repo": "revnet-core-v6",
     "githubUrl": "https://github.com/rev-net/revnet-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/REVLoans.sol",
     "startLine": 48,
     "endLine": 1761,
@@ -8603,7 +8603,7 @@
   "CTDeployer": {
     "repo": "croptop-core-v6",
     "githubUrl": "https://github.com/mejango/croptop-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/CTDeployer.sol",
     "startLine": 46,
     "endLine": 583,
@@ -8762,7 +8762,7 @@
   "CTPublisher": {
     "repo": "croptop-core-v6",
     "githubUrl": "https://github.com/mejango/croptop-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/CTPublisher.sol",
     "startLine": 38,
     "endLine": 1136,
@@ -9046,7 +9046,7 @@
   "CTProjectOwner": {
     "repo": "croptop-core-v6",
     "githubUrl": "https://github.com/mejango/croptop-core-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/CTProjectOwner.sol",
     "startLine": 19,
     "endLine": 91,
@@ -9910,7 +9910,7 @@
   "Banny721TokenUriResolver": {
     "repo": "banny-retail-v6",
     "githubUrl": "https://github.com/mejango/banny-retail-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/Banny721TokenUriResolver.sol",
     "startLine": 24,
     "endLine": 1798,
@@ -10379,7 +10379,7 @@
   "JBUniswapV4LPSplitHook": {
     "repo": "univ4-lp-split-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBUniswapV4LPSplitHook.sol",
     "startLine": 66,
     "endLine": 2132,
@@ -11026,7 +11026,7 @@
   "JBUniswapV4LPSplitHookDeployer": {
     "repo": "univ4-lp-split-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBUniswapV4LPSplitHookDeployer.sol",
     "startLine": 19,
     "endLine": 178,
@@ -11072,7 +11072,7 @@
   "JBUniswapV4Hook": {
     "repo": "univ4-router-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-router-v6",
-    "branch": "chore/v6-deployment-artifacts-1.1.0",
+    "branch": "main",
     "path": "src/JBUniswapV4Hook.sol",
     "startLine": 58,
     "endLine": 1387,

@@ -6,7 +6,6 @@ import { createWalletClient, createPublicClient, custom, http } from 'viem';
 import { CHAINS, getCurrentChainId, getCustomRpc, defaultRpcFor } from './chain.js';
 
 let walletClient = null;
-let publicClient = null;
 let account = null;
 const listeners = [];
 const WALLET_FLAG = 'jb-wallet-connected'; // remember a prior connection so we can silently restore it
@@ -36,7 +35,6 @@ export function getProviders() {
 
 function setupClients(chain) {
   walletClient = createWalletClient({ chain, transport: custom(activeProvider) });
-  publicClient = createPublicClient({ chain, transport: custom(activeProvider) });
 }
 
 export function getAccount() {
@@ -45,10 +43,6 @@ export function getAccount() {
 
 export function getWalletClient() {
   return walletClient;
-}
-
-export function getPublicClient() {
-  return publicClient;
 }
 
 export function onWalletChange(fn) {
@@ -115,7 +109,6 @@ export async function disconnect() {
     if (activeProvider) await activeProvider.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] });
   } catch (_) {}
   walletClient = null;
-  publicClient = null;
   account = null;
   try { localStorage.removeItem(WALLET_FLAG); localStorage.removeItem(WALLET_RDNS); } catch (_) {}
   notify();
@@ -192,7 +185,7 @@ function onAccountsChanged(accounts) {
     setupClients(CHAINS[getCurrentChainId()] || CHAINS[11155111]);
     try { localStorage.setItem(WALLET_FLAG, '1'); } catch (_) {}
   } else {
-    walletClient = null; publicClient = null;
+    walletClient = null;
     try { localStorage.removeItem(WALLET_FLAG); } catch (_) {}
   }
   notify();

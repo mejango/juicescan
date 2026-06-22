@@ -11,10 +11,9 @@
 // the "Open in Safe app" deep link.
 
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData } from 'viem';
-import { getWalletClient, getAccount, switchChain, createPublicClientForChain } from './component-base.js';
+import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO } from './component-base.js';
 import { CHAINS } from './chain.js';
 
-var ZERO = '0x0000000000000000000000000000000000000000';
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
 function cs(a) { try { return checksumAddress(a); } catch (_) { return a; } }
 
@@ -205,7 +204,7 @@ export async function confirmSafeTx(chainId, safe, tx, signer) {
 // Execute a queued tx that has enough confirmations, straight from the dapp (no Safe app needed).
 // Assembles the owner signatures (sorted by owner address, as the Safe contract requires) and calls
 // execTransaction on the Safe. The connected wallet sends it and pays gas; must be on `chainId`.
-var SAFE_EXEC_ABI = [{
+export var SAFE_EXEC_ABI = [{
   type: 'function', name: 'execTransaction', stateMutability: 'payable',
   inputs: [
     { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' },
@@ -215,6 +214,23 @@ var SAFE_EXEC_ABI = [{
   ],
   outputs: [{ type: 'bool' }],
 }];
+
+// GnosisSafe.execTransaction args (shared by the direct-execute and Relayr-bundle paths). `signatures` is the
+// owner sigs concatenated in ascending owner-address order (see execSignatures); gas fields default to 0.
+export function safeExecArgs(tx, signatures) {
+  return [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0),
+    BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, signatures];
+}
+// Signature bytes (no 0x) for one confirmation. A real off-chain signature passes through; an on-chain
+// approveHash confirmation has a null signature, so synthesize Safe's pre-validated signature: r = the owner
+// left-padded to 32 bytes, s = 0 (32 bytes), v = 1. Dropping these shifted owner recovery → GS026/GS020 revert.
+function sigBytesFor(c) {
+  var s = (c.signature || '').replace(/^0x/, '');
+  if (s) return s;
+  var owner = (c.owner || '').replace(/^0x/, '').toLowerCase().padStart(64, '0');
+  return owner + '0'.repeat(64) + '01';
+}
+
 export async function executeSafeTx(chainId, safe, tx) {
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
@@ -225,24 +241,24 @@ export async function executeSafeTx(chainId, safe, tx) {
   // Safe requires signatures concatenated in ascending owner-address order.
   var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
   if (!confs.length) throw new Error('No confirmations to execute with.');
-  var signatures = '0x' + confs.map(function (c) { return (c.signature || '').replace(/^0x/, ''); }).join('');
+  var signatures = '0x' + confs.map(sigBytesFor).join('');
   return wallet.writeContract({
     account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0), BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, signatures],
+    args: safeExecArgs(tx, signatures),
   });
 }
 
 // The signatures bytes for a ready tx (owner sigs concatenated, ASC by owner address).
 function execSignatures(tx) {
   var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
-  return '0x' + confs.map(function (c) { return (c.signature || '').replace(/^0x/, ''); }).join('');
+  return '0x' + confs.map(sigBytesFor).join('');
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.
 export function safeExecRelayrTx(chainId, safe, tx) {
   var data = encodeFunctionData({
     abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0), BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, execSignatures(tx)],
+    args: safeExecArgs(tx, execSignatures(tx)),
   });
   return { chain: Number(chainId), target: cs(safe), data: data, value: '0' };
 }

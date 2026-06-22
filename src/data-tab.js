@@ -4,7 +4,6 @@
 
 import queries from '../data/bendystraw-queries.json';
 import { bendystrawQuery, renderBendystrawSettings } from './bendystraw-client.js';
-import { renderPinataSettings } from './ipfs-pin.js';
 import { FORMATTERS } from './bendystraw-format.js';
 import { getManifestChains } from './chain.js';
 
@@ -28,9 +27,8 @@ export function renderDataTab() {
   if (!container) return;
   container.innerHTML = '';
 
-  // Compact settings strips at the top.
-  container.appendChild(renderBendystrawSettings());
-  container.appendChild(renderPinataSettings());
+  // Compact settings strip at the top. (No Pinata field — the Create flow pins via a baked-in scoped key.)
+  container.appendChild(renderBendystrawSettings({ onNetworkChange: renderDataTab }));
 
   // Sections, identical structure to ACTIONS.
   for (const section of queries.sections) {

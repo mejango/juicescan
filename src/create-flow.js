@@ -16,12 +16,13 @@ import { mainnet } from 'viem/chains';
 import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
-  createPublicClientForChain, getWalletClient, switchChain, truncAddr,
+  createPublicClientForChain, getWalletClient, switchChain, truncAddr, ZERO_ADDRESS as ZERO, errMessage, isAddr, addrOrZero, promptFoot,
 } from './component-base.js';
 import {
-  launchProjectAbi, buildRulesetConfigs, createDefaultRuleset, ZERO,
+  launchProjectAbi, buildRulesetConfigs, createDefaultRuleset,
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
+import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 
 // ---------------------------------------------------------------------------
@@ -31,8 +32,8 @@ import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './rel
 // Steps depend on the chosen project type (defaults to Custom). Type is always the first step.
 // Revnet is a reduced flow (no Shop/Settlement — ETH-only, single canonical terminal, suckers on Deploy).
 function stepsFor(state) {
-  if (state.projectType === 'revnet') return ['Flavor', 'Details', 'Stages', 'Shop', 'Settlement', 'Deploy'];
-  return ['Flavor', 'Details', 'Rulesets', 'Shop', 'Settlement', 'Deploy'];
+  if (state.projectType === 'revnet') return ['Flavor', 'Basics', 'Stages', 'Shop', 'Deploy'];
+  return ['Flavor', 'Basics', 'Rulesets', 'Shop', 'Deploy'];
 }
 
 // The chain selector shows canonical (mainnet) names; the mainnet/testnet toggle (at Deploy) maps each to
@@ -183,7 +184,7 @@ var HOOK_FLAGS = [
   { name: 'noNewTiersWithOwnerMinting', type: 'bool' }, { name: 'preventOverspending', type: 'bool' },
   { name: 'issueTokensForSplits', type: 'bool' },
 ];
-var DEPLOY_721_COMPONENTS = [
+export var DEPLOY_721_COMPONENTS = [
   { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'baseUri', type: 'string' },
   { name: 'tokenUriResolver', type: 'address' }, { name: 'contractUri', type: 'string' },
   { name: 'tiersConfig', type: 'tuple', components: [
@@ -405,6 +406,10 @@ function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
 // ---------------------------------------------------------------------------
 
 function initState() {
+  // Match the Discover network toggle, and default to deploying on ALL of that network's chains.
+  var network = 'mainnet';
+  try { if (localStorage.getItem('jb-network') === 'testnet') network = 'testnet'; } catch (_) {}
+  var allChains = CHAIN_PAIRS.map(function (p) { return network === 'mainnet' ? p.canon : p.testnet; });
   return {
     step: 0,
     projectType: 'custom',           // 'custom' | 'revnet' — chosen on the Type step; defaults to Custom
@@ -416,25 +421,27 @@ function initState() {
     },
     revOperator: '',                 // revnet operator (receives splits, can reassign) — blank => owner/wallet
     revBaseCurrency: 1,              // revnet issuance-pricing currency: 1=ETH (native, 61166) | 2=USD
-    accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth' and/or 'usdc'
+    accepts: ['eth'],                // accounting token(s) the project HOLDS / issues against: 'eth', 'usdc', or ['custom']
+    customToken: { address: '', name: '', symbol: '', decimals: null, status: 'idle', error: '' }, // 'custom' accounting token (one ERC-20, same address on all chains; its own currency id, no price feed)
     swapRouter: true,                // include the router terminal (any token auto-converts) — on by default
+    approvalAddress: '',             // custom ruleset-approval-hook address (when the approval condition is 'custom'); per-chain overrides live under key 'approval'
     stages: [createStage()],         // ordered rulesets queued at launch (revnet-style stages)
     afterMode: 'wait',               // what happens after a single timed ruleset: wait | terminal | cycle (custom adds a 2nd stage)
     shopEnabled: false, // off by default — the Shop step starts as a single opt-in checkbox
     storePricingCurrency: 1, // store-item price denomination (1=ETH / 2=USD) — JB721 tiersConfig.currency
-    network: 'testnet', // mainnet | testnet — chosen at Deploy; maps the selected canonical chains to actual ids
-    suckerType: 'native', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both
+    network: network, // mainnet | testnet — follows the Discover toggle; maps the selected canonical chains to actual ids
+    suckerType: 'both', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both — default Both (broadest coverage)
     nfts: [], // item drafts — see itemDraft() for shape
     perChain: {}, // multichain overrides: { [chainId]: { payouts:{[stageIdx]:{[recipIdx]:amtStr}}, items:{[itemIdx]:{include,supply}} } }
     storeCategories: [], // {id, name} named categories the user adds locally in the Shop step
     collection: { // top-level JB721 hook config (name/symbol auto-derive from the project until edited)
       name: '', symbol: '', nameTouched: false, symbolTouched: false, extrasOpen: false,
       preventOverspending: false, noNewTiersWithReserves: false, noNewTiersWithVotes: false,
-      noNewTiersWithOwnerMinting: false, issueTokensForSplits: false,
+      noNewTiersWithOwnerMinting: false, issueTokensForSplits: false, useForRedemptions: false,
       // revnet-only: extra 721 permissions the operator gets (default on — REVDeployer grants all four).
       opCanAdjustTiers: true, opCanUpdateMetadata: true, opCanMint: true, opCanIncreaseDiscount: true,
     },
-    chainIds: [11155111],
+    chainIds: allChains,
     tos: false,
     deploying: false, statusLines: [], done: false, quoteChoice: null,
   };
@@ -450,7 +457,9 @@ var DRAFT_KEY = 'jb-create-draft';
 // in-flight logo-upload flag so a refresh/import never restores a half-deploy or "uploading…" state.
 function sanitizeState(state) {
   var c = {};
-  Object.keys(state).forEach(function (k) { if (k === '_close' || typeof state[k] === 'function') return; c[k] = state[k]; });
+  // Skip transient UI flags (any `_`-prefixed key: _bridgeOpen, _pcOpen, _close, …) and functions — they
+  // must not persist in the draft, so panels like the bridge selector always start collapsed on reopen.
+  Object.keys(state).forEach(function (k) { if (k.charAt(0) === '_' || typeof state[k] === 'function') return; c[k] = state[k]; });
   c = JSON.parse(JSON.stringify(c)); // deep clone + strip any nested functions
   c.deploying = false; c.statusLines = []; c.done = false; delete c.deployed; c.quoteChoice = null;
   if (c.details) c.details.logoUploading = false;
@@ -461,8 +470,11 @@ function sanitizeState(state) {
 function mergeDraft(obj) {
   if (!obj || typeof obj !== 'object') return null;
   var s = Object.assign(initState(), obj);
+  Object.keys(s).forEach(function (k) { if (k.charAt(0) === '_') delete s[k]; }); // drop stale transient flags
   s.details = Object.assign(initState().details, obj.details || {});
   s.collection = Object.assign(initState().collection, obj.collection || {});
+  s.customToken = Object.assign(initState().customToken, obj.customToken || {}); // tolerate partial/missing custom token
+  if (s.customToken.status === 'loading') s.customToken.status = 'idle'; // never import a stuck in-flight lookup (re-verified on import)
   s.deploying = false; s.statusLines = []; s.done = false; delete s.deployed; s.quoteChoice = null;
   if (s.details) s.details.logoUploading = false;
   s.step = Math.max(0, Math.min(Number(s.step) || 0, stepsFor(s).length - 1));
@@ -511,6 +523,9 @@ export function openCreateFlow() {
     Object.keys(state).forEach(function (k) { if (k !== '_close') delete state[k]; });
     Object.assign(state, merged);
     render();
+    // Re-verify a custom accounting token against the imported chain set (its on-chain state isn't in the file).
+    if (customAccounting(state) && isAddr((state.customToken || {}).address)) lookupCustomToken(state, render);
+    reresolveApproval(state, render); // re-resolve a custom approval-hook ENS name (cache isn't in the file)
   }
   function onImport(file) {
     var reader = new FileReader();
@@ -528,10 +543,12 @@ export function openCreateFlow() {
     body.appendChild(renderStep(state, render));
     sheet.appendChild(body);
     sheet.appendChild(renderFooter(state, render, close));
+    sheet.appendChild(promptFoot('Launch a project', 'launch')); // [copy build prompt] for the whole create flow
     // Persist the draft after every render so a refresh restores the work. Clear it once deployed.
     if (state.done) clearDraft(); else saveDraft(state);
   }
   render();
+  reresolveApproval(state, render); // a restored draft's approval ENS isn't in the cache yet — re-resolve it
 
   document.body.appendChild(overlay);
   return { close: close };
@@ -605,11 +622,10 @@ function renderFooter(state, render, close) {
 function renderStep(state, render) {
   switch (stepsFor(state)[state.step]) {
     case 'Flavor': return renderType(state, render);
-    case 'Details': return renderDetails(state, render);
+    case 'Basics': return renderDetails(state, render);
     case 'Rulesets': return renderStages(state, render);
     case 'Stages': return renderRevnetStages(state, render);
     case 'Shop': return renderNfts(state, render);
-    case 'Settlement': return renderSettlement(state, render);
     case 'Deploy': return renderDeploy(state, render);
   }
   return el('div');
@@ -627,43 +643,217 @@ function renderType(state, render) {
   });
   sel.addEventListener('change', function () {
     state.projectType = sel.value;
+    // Revnets hold a single reserve asset — collapse a custom ETH+USDC selection to one.
+    if (sel.value === 'revnet' && state.accepts.length > 1) state.accepts = [state.accepts[0] || 'eth'];
     state.step = Math.min(state.step, stepsFor(state).length - 1); // clamp if the new flow has fewer steps
     render();
   });
-  wrap.appendChild(fieldBlock('Flavor', false, sel));
-
-  var desc = el('div', 'create-hint');
+  // Keep the description inside the field block (tight under the select), like the other sections' subtexts.
+  var flavorContent = el('div', '');
+  flavorContent.appendChild(sel);
+  var desc = el('div', 'create-hint'); // 8px subtext gap via the standardized base .create-hint
   desc.textContent = isRev
     ? 'Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability.'
     : 'Full control and customizability.';
-  desc.style.marginBottom = '18px';
-  wrap.appendChild(desc);
+  flavorContent.appendChild(desc);
+  wrap.appendChild(fieldBlock('Flavor', false, flavorContent));
+
+  // Settlement basics (chains + accounting token) are collected up front, so every downstream address and
+  // currency field knows the chain set and accounting token(s). Chains first, then accounting.
+  wrap.appendChild(chainBridgeBlock(state, render));
+  wrap.appendChild(accountingBlock(state, render));
 
   // Owner (custom) or operator (revnet) is collected here.
   wrap.appendChild(isRev ? operatorSection(state, render) : ownerSection(state, render));
   return wrap;
 }
 
+// Accounting token(s) the project holds. Revnets pick exactly one (single reserve asset); custom projects
+// can hold ETH and/or USDC at the same time. Also carries the router-terminal (any-token auto-swap) toggle.
+// When the accounting token resolves to a single currency, point the ETH/USD dropdowns at it (USDC → USD).
+// --- Custom accounting token (one ERC-20, same address on every chain; its own currency id = uint32(uint160),
+// so every ruleset/shop currency equals it and no JBPrices feed is needed). ---
+function customAccounting(state) { return ((state.accepts || [])[0] === 'custom'); }
+function customCurrencyId(state) { var a = state.customToken && state.customToken.address; return isAddr(a) ? Number(BigInt(a) % (1n << 32n)) : 0; }
+function customAcctSym(state) { return customAccounting(state) ? ((state.customToken && state.customToken.symbol) || 'TOKEN') : null; }
+function customAcctDecimals(state) { var d = state.customToken && state.customToken.decimals; return (d != null && !isNaN(Number(d))) ? Number(d) : 18; }
+function customReady(state) { return customAccounting(state) && isAddr(state.customToken && state.customToken.address) && state.customToken.status === 'ok'; }
+
+// Point every ruleset/shop currency at the right base id. A custom ERC-20 → its own currency id. Otherwise,
+// USD(2) whenever USDC is accepted (alone OR alongside ETH) so BOTH ETH and USDC resolve via the default
+// ETH/USD + USDC/USD feeds — a base of ETH(1) has no USDC→ETH feed and every USDC payment would revert.
+// Pure ETH stays ETH(1) (the user may still switch it to USD via the dropdown; ETH→USD has a feed).
+function applyAccountingDefaults(state) {
+  var accepts = state.accepts || [];
+  if (!accepts.length) return;
+  var cur;
+  if (accepts[0] === 'custom') { cur = customCurrencyId(state); if (!cur) return; } // token not resolved yet
+  else cur = accepts.indexOf('usdc') !== -1 ? 2 : 1;
+  state.storePricingCurrency = cur;
+  if (state.projectType === 'revnet') state.revBaseCurrency = cur;
+  else (state.stages || []).forEach(function (s) { s.baseCurrency = cur; s.payoutCurrency = cur; s.surplusAllowanceCurrency = cur; });
+}
+// True when the base currency is forced (USDC accepted → USD, or a custom token) and the user must not pick ETH.
+function usdcAccounting(state) { return !customAccounting(state) && (state.accepts || []).indexOf('usdc') !== -1; }
+function lockedCurrencySym(state) { return customAcctSym(state) || (usdcAccounting(state) ? 'USD' : null); }
+
+// Verify the custom ERC-20 exists at the SAME address on EVERY selected chain, with matching symbol +
+// decimals (a per-chain decimals/contract mismatch breaks the accounting math). status: loading → ok|error.
+function lookupCustomToken(state, render) {
+  var ct = state.customToken; var addr = (ct.address || '').trim();
+  if (!isAddr(addr)) { ct.status = addr ? 'error' : 'idle'; ct.error = addr ? 'Not a valid address' : ''; ct.name = ct.symbol = ''; ct.decimals = null; ct.chains = null; return; }
+  var chainIds = (state.chainIds || []).slice(); if (!chainIds.length) return;
+  ct.status = 'loading'; ct.error = ''; ct.chains = null;
+  var ERC20 = [
+    { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+    { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+    { type: 'function', name: 'decimals', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint8' }] },
+  ];
+  var stale = function () { return (state.customToken.address || '').trim().toLowerCase() !== addr.toLowerCase(); };
+  Promise.all(chainIds.map(function (cid) {
+    var pub = createPublicClientForChain(cid);
+    return Promise.all([
+      pub.readContract({ address: addr, abi: ERC20, functionName: 'name' }).catch(function () { return null; }),
+      pub.readContract({ address: addr, abi: ERC20, functionName: 'symbol' }),
+      pub.readContract({ address: addr, abi: ERC20, functionName: 'decimals' }),
+    ]).then(function (r) { return { cid: cid, ok: true, name: r[0], symbol: r[1], decimals: Number(r[2]) }; })
+      .catch(function () { return { cid: cid, ok: false }; });
+  })).then(function (results) {
+    if (stale()) return;
+    var first = results.filter(function (r) { return r.ok; })[0];
+    if (!first) { ct.status = 'error'; ct.error = 'No ERC-20 found at this address on any selected chain.'; ct.symbol = ''; ct.decimals = null; ct.chains = null; render(); return; }
+    ct.name = first.name || ''; ct.symbol = first.symbol || ''; ct.decimals = Number(first.decimals); ct.chains = results;
+    // Every selected chain must have the same token (same symbol + decimals) at this address.
+    var bad = results.filter(function (r) { return !r.ok || r.symbol !== first.symbol || Number(r.decimals) !== Number(first.decimals); });
+    if (bad.length) {
+      ct.status = 'error';
+      ct.error = 'Not the same token on ' + bad.map(function (r) { return chainName(r.cid) + (r.ok ? ' (' + r.symbol + ', ' + r.decimals + ' dec)' : ' — not found'); }).join('; ') + '. Deploy ' + ct.symbol + ' at this exact address on every selected chain, or deselect those chains.';
+    } else { ct.status = 'ok'; ct.error = ''; }
+    applyAccountingDefaults(state); render();
+  }).catch(function () {
+    if (stale()) return;
+    ct.status = 'error'; ct.error = 'Token lookup failed (RPC error). Try again.'; render();
+  });
+}
+
+function accountingBlock(state, render) {
+  var isRev = state.projectType === 'revnet';
+  var isCustom = customAccounting(state);
+  return fieldBlock('Accounting', false, (function () {
+    var w = el('div', '');
+    var opts = [{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }, { key: 'custom', label: 'Custom' }];
+    // Both custom projects and revnets can hold ETH and/or USDC (multi-select); a custom ERC-20 is exclusive.
+    var row = el('div', 'create-pills');
+    opts.forEach(function (o) {
+      var on = state.accepts.indexOf(o.key) !== -1;
+      var p = el('button', 'create-pill' + (on ? ' selected' : ''));
+      p.textContent = o.label;
+      p.addEventListener('click', function () {
+        if (o.key === 'custom') { if (!isCustom) { state.accepts = ['custom']; applyAccountingDefaults(state); render(); } return; }
+        // ETH/USDC are multi-select among themselves but mutually exclusive with a custom token.
+        var a = isCustom ? [] : state.accepts.slice();
+        if (a.indexOf(o.key) !== -1) { a = a.filter(function (x) { return x !== o.key; }); if (!a.length) a = [o.key === 'eth' ? 'usdc' : 'eth']; }
+        else a.push(o.key);
+        state.accepts = ['eth', 'usdc'].filter(function (k) { return a.indexOf(k) !== -1; }); // canonical order
+        applyAccountingDefaults(state);
+        render();
+      });
+      row.appendChild(p);
+    });
+    w.appendChild(row);
+    if (isCustom) { w.appendChild(customTokenBlock(state, render)); return w; }
+    var note = el('div', 'create-hint');
+    note.textContent = isRev
+      ? ('The reserve asset(s) that back the value of $' + tickerLabel(state) + ' — hold ETH, USDC, or both.')
+      : 'The token(s) that make up your project’s balance — hold ETH, USDC, or both.';
+    w.appendChild(note);
+    // Router-terminal (any-token auto-swap) note stays grouped right under the main note (custom only).
+    if (!isRev) {
+      var line2 = el('div', 'create-hint');
+      line2.appendChild(document.createTextNode(state.swapRouter
+        ? 'Other payment tokens auto-swap to your chosen accounting token(s) as they’re paid in. '
+        : 'Payers can only pay in your accounting token(s). '));
+      var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
+      toggle.textContent = state.swapRouter ? 'Make payers pay in your accounting token' : 'Allow payers to pay in any token';
+      toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
+      line2.appendChild(toggle);
+      w.appendChild(line2);
+    }
+    var immut = el('div', 'create-hint');
+    immut.textContent = isRev ? 'Accounting contexts cannot be added or removed later.' : 'Accounting tokens cannot be removed later.';
+    w.appendChild(immut);
+    return w;
+  })());
+}
+
+// Custom accounting token: address input + on-chain ERC-20 lookup (name/symbol/decimals), shown below the
+// pills. Updates a status line in place (no full re-render) so the address field keeps focus while typing.
+function customTokenBlock(state, render) {
+  var ct = state.customToken;
+  var wrap = el('div', ''); wrap.style.marginTop = '10px';
+  var input = el('input', 'field create-input'); input.type = 'text'; input.placeholder = '0x… (ERC-20 token address)'; input.value = ct.address || '';
+  var status = el('div', 'create-hint');
+  function renderStatus() {
+    status.className = 'create-hint';
+    if (ct.status === 'loading') { status.textContent = 'Looking up token…'; status.style.color = ''; }
+    else if (ct.status === 'ok') {
+      var n = (state.chainIds || []).length;
+      status.textContent = (ct.name ? ct.name + ' — ' : '') + ct.symbol + ' · ' + ct.decimals + ' decimals' + (n > 1 ? ' · verified on all ' + n + ' chains' : '');
+      status.style.color = 'var(--c-teal)';
+    }
+    else if (ct.status === 'error') { status.textContent = ct.error; status.className = 'create-hint warn'; status.style.color = ''; }
+    else { status.textContent = ''; status.style.color = ''; }
+  }
+  var deb;
+  input.addEventListener('input', function () {
+    ct.address = input.value.trim(); ct.status = 'idle';
+    saveDraft(state); // persist the address immediately so export captures it even before the lookup resolves
+    clearTimeout(deb);
+    deb = setTimeout(function () {
+      // Full render on resolve → saves the draft (symbol/decimals/status) and refreshes the locked currency
+      // dropdowns on the Rulesets/Shop steps. By now the user has finished typing, so losing focus is fine.
+      lookupCustomToken(state, render);
+      renderStatus(); // reflect the synchronous 'loading' / 'error' state set by lookupCustomToken
+    }, 400);
+    renderStatus();
+  });
+  wrap.appendChild(input);
+  wrap.appendChild(status);
+  var note = el('div', 'create-hint');
+  note.textContent = 'Must be deployed at the SAME address on every selected chain. Every ruleset, payout, and shop currency is denominated in ' + (ct.symbol || 'this token') + ' (no price feed).';
+  wrap.appendChild(note);
+  renderStatus();
+  return wrap;
+}
+
 // Project-owner field (custom flow) — required. We confirm it exists on each chain at the Settlement step.
 function ownerSection(state, render) {
   var d = state.details;
-  var ownerInput = textInput(d.owner, '0x…', function (v) { d.owner = v.trim(); });
-  var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; });
-  var box = el('div', ''); box.appendChild(recipBoxWith(ownerInput, ownerHint));
+  var box = el('div', '');
+  if (!perChainOpen(state, 'owner')) {
+    var ownerInput = textInput(d.owner, '0x… or name.eth', function (v) { d.owner = v.trim(); });
+    var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; });
+    box.appendChild(recipBoxWith(ownerInput, ownerHint));
+  }
+  box.appendChild(perChainAddrControl(state, render, 'owner', d.ownerResolved || d.owner || ''));
+  box.appendChild(infoNote('The address that can make changes around the configured rulesets.'));
   var wrap = el('div', '');
   wrap.appendChild(fieldBlock('Project owner', false, box));
-  wrap.appendChild(infoNote('The address that can make changes around the configured rulesets.'));
   return wrap;
 }
 
 // Revnet operator field — required. We confirm it exists on each chain at the Settlement step.
 function operatorSection(state, render) {
   var wrap = el('div', '');
-  var opInput = textInput(state.revOperator, '0x…', function (v) { state.revOperator = v.trim(); });
-  var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; });
-  var box = el('div', ''); box.appendChild(recipBoxWith(opInput, opHint));
+  var box = el('div', '');
+  if (!perChainOpen(state, 'op')) {
+    var opInput = textInput(state.revOperator, '0x… or name.eth', function (v) { state.revOperator = v.trim(); });
+    var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; });
+    box.appendChild(recipBoxWith(opInput, opHint));
+  }
+  box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
+  box.appendChild(infoNote('The address that operates the few controls available in revnets.'));
   wrap.appendChild(fieldBlock('Operator', false, box));
-  wrap.appendChild(infoNote('The address that operates the few controls available in revnets.'));
   return wrap;
 }
 
@@ -734,9 +924,32 @@ function infoNote(text) {
 }
 
 function warnNote(text) {
-  var n = el('div', 'create-note warn');
+  var n = el('div', 'create-banner'); // soft pink band (palette), not the harsh red note
   n.textContent = text;
   return n;
+}
+
+// Size a <select> tight to its CURRENTLY selected option's text. Native `width:auto` sizes to the widest
+// option (leaving slack when a shorter one is picked); this measures the selection after layout (rAF, once
+// attached) and sets an explicit width. No-op where measurement is unavailable (e.g. jsdom → width 0).
+function fitSelect(sel) {
+  if (typeof requestAnimationFrame !== 'function') return sel;
+  requestAnimationFrame(function () {
+    if (!sel.isConnected) return;
+    var opt = sel.options[sel.selectedIndex]; if (!opt) return;
+    var cs = getComputedStyle(sel);
+    var span = el('span', '');
+    span.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;';
+    span.style.font = cs.font || (cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily);
+    span.style.letterSpacing = cs.letterSpacing;
+    span.textContent = opt.textContent;
+    document.body.appendChild(span);
+    var w = span.getBoundingClientRect().width;
+    document.body.removeChild(span);
+    if (w > 0) sel.style.width = Math.ceil(w + parseFloat(cs.paddingLeft || 0) + parseFloat(cs.paddingRight || 0)
+      + parseFloat(cs.borderLeftWidth || 0) + parseFloat(cs.borderRightWidth || 0) + 1) + 'px';
+  });
+  return sel;
 }
 
 // Pink notice band, same color treatment as the "Work in progress" band.
@@ -827,6 +1040,7 @@ function renderDetails(state, render) {
   // Token ticker — required for revnets (it names the ERC-20 deployed for the token). Optional otherwise.
   wrap.appendChild(fieldBlock('Token symbol', state.projectType !== 'revnet', (function () {
     var n = textInput(d.ticker, 'TOKEN', function (v) { d.ticker = v.trim().toUpperCase().slice(0, 11); });
+    n.classList.add('create-symbol-field'); // a symbol is short — 1/4 width
     n.addEventListener('input', function () { n.value = n.value.toUpperCase(); });
     return n;
   })()));
@@ -848,6 +1062,8 @@ function renderDetails(state, render) {
     g.appendChild(fieldBlock('Twitter handle', true, textInput(d.twitter, '@handle', function (v) { d.twitter = v; })));
     g.appendChild(fieldBlock('Discord', true, textInput(d.discord, 'https://discord.gg/…', function (v) { d.discord = v; })));
     g.appendChild(fieldBlock('Telegram', true, textInput(d.telegram, 'https://t.me/…', function (v) { d.telegram = v; })));
+    g.appendChild(fieldBlock('Instagram', true, textInput(d.instagram, 'https://instagram.com/…', function (v) { d.instagram = v; })));
+    g.appendChild(fieldBlock('WhatsApp', true, textInput(d.whatsapp, 'https://wa.me/…', function (v) { d.whatsapp = v; })));
     return g;
   }));
 
@@ -896,7 +1112,7 @@ function renderImagePicker(uri, busy, onChange) {
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
     if (!f) { onChange('', false); return; } // picker dismissed → clear
-    if (!hasPinata()) { alert('Add a Pinata JWT in DATA → settings to upload images.'); return; }
+    if (!hasPinata()) { alert('IPFS pinning isn’t available right now — you can add a logo later by editing the project.'); return; }
     onChange(uri, true);
     pinFile(f, f.name).then(function (ipfs) { onChange(ipfs, false); })
       .catch(function (e) { alert('Upload failed: ' + (e && e.message || e)); onChange(uri, false); });
@@ -926,8 +1142,8 @@ export function createStage() {
     reservedRecipients: [], tokenAdvancedOpen: false,
     // revnet-only stage fields (ignored by the custom flow)
     cutFreqDays: '30', autoIssuances: [], startDaysAfter: '30',
-    // payouts
-    payoutMode: 'none', payoutRecipients: [],
+    // payouts (single-token). Multi-accounting-context queues use payoutByKind instead (keyed by token kind).
+    payoutMode: 'none', payoutRecipients: [], payoutByKind: {},
     // surplus allowance — owner can withdraw from surplus (beyond payouts) up to a cap each ruleset
     surplusAllowanceOn: false, surplusAllowanceUnlimited: false, surplusAllowanceAmount: '', surplusAllowanceCurrency: 1,
     // deadline + rules
@@ -997,21 +1213,38 @@ export function renderStages(state, render, opts) {
   }
   // A flexible (no-duration) last ruleset is terminal — owner-managed, nothing scheduled after it.
 
-  // Edit deadline — project-wide, at the bottom of the tab. Only shown when a future ruleset edit can
-  // actually happen, so the deadline has something to govern (see deadlineApplies).
+  // Ruleset approval condition — project-wide, at the bottom of the tab. The approval hook decides whether a
+  // queued edit can take effect; presets are time deadlines, "Custom address" points at any approval-hook
+  // contract (per-chain). Only shown when a future ruleset edit can actually happen (see deadlineApplies).
   if (deadlineApplies(state)) {
     var cur = (state.stages[0] && state.stages[0].deadline) || '3days';
     var dField = el('div', 'create-field'); dField.style.marginTop = '22px';
-    var dLab = el('label', 'create-label'); dLab.textContent = 'Edit deadline'; dField.appendChild(dLab);
-    dField.appendChild(infoNote('Owner edits must be queued this far ahead of the next ruleset, giving token holders time to review changes before they take effect.'));
-    var dSel = el('select', 'field create-input'); dSel.style.marginTop = '6px';
+    var dLab = el('label', 'create-label'); dLab.textContent = 'Ruleset approval condition'; dField.appendChild(dLab);
+    dField.appendChild(infoNote('The condition a queued edit must satisfy before it takes effect, giving token holders time to review changes.'));
+    // Dropdown sits tight to its text; when Custom is picked the address field sits inline beside it.
+    var dRow = el('div', 'create-approval-row');
+    var dSel = el('select', 'field create-input create-input-auto');
     DEADLINE_OPTIONS.forEach(function (o) {
-      var op = el('option', ''); op.value = o.key; op.textContent = o.label + (o.def ? ' (default)' : '');
+      var op = el('option', ''); op.value = o.key; op.textContent = o.label;
       if (cur === o.key) op.selected = true; dSel.appendChild(op);
     });
+    var custOpt = el('option', ''); custOpt.value = 'custom'; custOpt.textContent = 'Custom address';
+    if (cur === 'custom') custOpt.selected = true; dSel.appendChild(custOpt);
     dSel.addEventListener('change', function () { state.stages.forEach(function (s) { s.deadline = dSel.value; }); render(); });
-    dField.appendChild(dSel);
-    if (cur === 'none') dField.appendChild(warnNote('⚠ No deadline lets the owner make last-second edits before a ruleset takes effect, which supporters may see as risky.'));
+    fitSelect(dSel); dRow.appendChild(dSel);
+    // Inline address — only when custom and not in per-chain mode (per-chain rows render full-width below).
+    if (cur === 'custom' && !perChainOpen(state, 'approval')) {
+      var ai = textInput(state.approvalAddress || '', '0x… or name.eth', function (v) { state.approvalAddress = v.trim(); });
+      var ah = attachEns(ai, function (name, addr) { state.approvalAddressResolved = addr || null; state.approvalAddressResolvedFor = addr ? name : null; });
+      var ab = recipBoxWith(ai, ah); ab.classList.add('create-approval-addr'); dRow.appendChild(ab);
+    }
+    dField.appendChild(dRow);
+    if (cur === 'custom') {
+      dField.appendChild(perChainAddrControl(state, render, 'approval', state.approvalAddressResolved || state.approvalAddress || ''));
+      dField.appendChild(infoNote('A JBRulesetApprovalHook contract that approves or rejects queued edits. Must be deployed on every selected chain.'));
+    } else if (cur === 'none') {
+      dField.appendChild(warnNote('No condition lets the owner make last-second edits before a ruleset takes effect, which supporters may see as risky.'));
+    }
     wrap.appendChild(dField);
   }
   return wrap;
@@ -1034,7 +1267,7 @@ function renderStageCard(stage, idx, state, render) {
   head.addEventListener('click', function (e) { if (e.target.closest('.create-stage-remove')) return; stage.expanded = !stage.expanded; render(); });
   var left = el('div', 'create-stage-headtext');
   var title = el('div', 'create-stage-title'); title.textContent = 'Ruleset #' + (idx + 1); left.appendChild(title);
-  var sum = el('div', 'create-stage-sum'); sum.textContent = stageSummary(stage, idx, state); left.appendChild(sum);
+  var sum = el('div', 'create-stage-sum'); setBulletSummary(sum, stageSummaryParts(stage, idx, state)); left.appendChild(sum);
   head.appendChild(left);
   if (idx > 0) {
     var rm = el('button', 'create-stage-remove'); rm.textContent = '✕';
@@ -1129,7 +1362,7 @@ function revStageEditor(stage, idx, state, render) {
   issRow.appendChild(issIn);
   issRow.appendChild(document.createTextNode(' $' + tk + ' per '));
   // Base currency (revnet-wide): issue per ETH or per USD. Small inline dropdown (no full-width `field`).
-  issRow.appendChild(currencySelect(state.revBaseCurrency, function (v) { state.revBaseCurrency = v; render(); }));
+  issRow.appendChild(currencySelect(state.revBaseCurrency, function (v) { state.revBaseCurrency = v; render(); }, null, lockedCurrencySym(state)));
   // "add auto cuts?" prompt + checkbox sit to the right of the currency selector (kept even when checked).
   var cutPrompt = el('span', 'create-inline-prompt'); cutPrompt.textContent = 'add auto cuts?'; issRow.appendChild(cutPrompt);
   var cutCb = el('input', 'create-inline-check'); cutCb.type = 'checkbox'; cutCb.checked = !!stage.issuanceCutOn;
@@ -1170,7 +1403,7 @@ function revStageEditor(stage, idx, state, render) {
     }
   }
   setSplitHead();
-  (stage.reservedRecipients || []).forEach(function (rec, i) { s1.appendChild(reservedSplitRow(stage, rec, i, render, setSplitHead)); });
+  (stage.reservedRecipients || []).forEach(function (rec, i) { s1.appendChild(reservedSplitRow(stage, rec, i, render, setSplitHead, state, idx)); });
   var addSplit = el('button', 'create-add-btn'); addSplit.textContent = '+ Add split';
   addSplit.addEventListener('click', function (e) { e.preventDefault(); stage.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
   s1.appendChild(addSplit);
@@ -1178,7 +1411,7 @@ function revStageEditor(stage, idx, state, render) {
 
   // Auto-issuance — inline rows (no box).
   var aiHint = el('div', 'create-hint'); aiHint.textContent = 'Optionally, auto-issue $' + tk + ' when the stage starts.'; aiHint.style.marginTop = '22px'; s1.appendChild(aiHint);
-  (stage.autoIssuances || []).forEach(function (ai, i) { s1.appendChild(autoIssuanceRow(stage, ai, i, tk, render)); });
+  (stage.autoIssuances || []).forEach(function (ai, i) { s1.appendChild(autoIssuanceRow(stage, ai, i, tk, render, state, idx)); });
   var addAi = el('button', 'create-add-btn'); addAi.textContent = '+ Add auto issuance';
   addAi.addEventListener('click', function (e) { e.preventDefault(); stage.autoIssuances.push({ count: '', address: '' }); render(); });
   s1.appendChild(addAi);
@@ -1257,7 +1490,8 @@ function revStageTiming(state, stage, idx, render) {
   return w;
 }
 
-function autoIssuanceRow(stage, ai, idx, tk, render) {
+function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
+  var wrap = el('div', 'create-split-wrap');
   var row = el('div', 'create-split-row');
   var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Issue' : '… and'; row.appendChild(lead);
   // Amount box with a "$TOKEN" suffix inside, mirroring the issuance field.
@@ -1267,16 +1501,23 @@ function autoIssuanceRow(stage, ai, idx, tk, render) {
   amtWrap.appendChild(cnt);
   var suf = el('span', 'create-amt-suffix-label'); suf.textContent = '$' + tk; amtWrap.appendChild(suf);
   row.appendChild(amtWrap);
-  row.appendChild((function () { var t = el('span', 'create-split-to'); t.textContent = 'to'; return t; })());
-  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x…';
-  recip.value = ai.address || '';
-  var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; });
-  recip.addEventListener('input', function () { ai.address = recip.value.trim(); });
-  row.appendChild(recipBoxWith(recip, ensHint));
+  var to = el('span', 'create-split-to'); to.textContent = 'to';
+  var toField = el('div', 'create-split-tofield'); toField.appendChild(to);
+  var key = 'ai:' + stageIdx + ':' + idx;
+  if (!(state && perChainOpen(state, key))) {
+    var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or name.eth';
+    recip.value = ai.address || '';
+    var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; });
+    recip.addEventListener('input', function () { ai.address = recip.value.trim(); });
+    toField.appendChild(recipBoxWith(recip, ensHint));
+  }
+  row.appendChild(toField);
   var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = stage.autoIssuances.indexOf(ai); if (i >= 0) stage.autoIssuances.splice(i, 1); render(); });
   row.appendChild(rm);
-  return row;
+  wrap.appendChild(row);
+  if (state) wrap.appendChild(perChainAddrControl(state, render, key, pickResolved(ai.address, ai)));
+  return wrap;
 }
 
 function recipLabel(rec) {
@@ -1291,6 +1532,11 @@ function stageSummaryParts(stage, idx, state) {
 }
 function stageSummary(stage, idx, state) {
   return stageSummaryParts(stage, idx, state).map(function (p) { return '• ' + p; }).join('\n');
+}
+// Render bullets as per-line divs with a hanging indent, so a wrapped line aligns under the text
+// (after the "• "), not under the bullet.
+function setBulletSummary(elx, parts) {
+  parts.forEach(function (p) { var d = el('div', 'create-sum-li'); d.textContent = '• ' + p; elx.appendChild(d); });
 }
 
 function stageSummaryRaw(stage, idx, state) {
@@ -1356,8 +1602,8 @@ function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 function renderStageEditor(stage, idx, state, render) {
   var c = el('div', 'create-stage-body');
   c.appendChild(stageTiming(stage, idx, idx === state.stages.length - 1, render));
-  c.appendChild(tokenSection(stage, render));
-  c.appendChild(payoutsSection(stage, render)); // Schedule payouts + Surplus allowance — top-level, no disclosure
+  c.appendChild(tokenSection(stage, render, state, idx));
+  c.appendChild(payoutsSection(stage, render, state)); // Schedule payouts + Surplus allowance — top-level, no disclosure
   c.appendChild(collapse(stage, 'otherOpen', 'Other rules', true, render, function () { return otherRulesSection(stage, render); }));
   return c;
 }
@@ -1367,7 +1613,7 @@ function stageTiming(stage, idx, isLast, render) {
   // Duration (None + presets)
   var f = el('div', 'create-field');
   var lab = el('label', 'create-label'); lab.textContent = 'Duration'; f.appendChild(lab);
-  var sel = el('select', 'field create-input');
+  var sel = el('select', 'field create-input create-input-auto');
   var flex = el('option', ''); flex.value = '0'; flex.textContent = 'Flexible';
   if (!stage.durationCustom && !stage.durationSeconds) flex.selected = true; sel.appendChild(flex);
   DURATION_PRESETS.forEach(function (p) {
@@ -1383,7 +1629,7 @@ function stageTiming(stage, idx, isLast, render) {
     else { stage.durationCustom = false; stage.durationSeconds = Number(sel.value); }
     render();
   });
-  f.appendChild(sel);
+  fitSelect(sel); f.appendChild(sel);
   if (stage.durationCustom) {
     var crow = el('div', 'create-amount-row'); crow.style.marginTop = '8px';
     var num = el('input', 'field create-amount-input'); num.type = 'number'; num.min = '1'; num.step = '1'; num.placeholder = '1'; num.value = stage.customDurVal;
@@ -1423,26 +1669,22 @@ function stageTiming(stage, idx, isLast, render) {
   // A non-final stage with no duration would never advance — the next stage would start at the same
   // instant and immediately clobber it. Require a duration on every non-final stage.
   if (!isLast && !stage.durationSeconds) {
-    w.appendChild(warnNote('⚠ This stage isn’t the last, so it needs a duration. With “no expiry”, the next stage would start at the same moment and override this one. Set a duration so Stage ' + (idx + 2) + ' begins when this stage’s cycle ends.'));
+    w.appendChild(warnNote('This stage isn’t the last, so it needs a duration. With “no expiry”, the next stage would start at the same moment and override this one. Set a duration so Stage ' + (idx + 2) + ' begins when this stage’s cycle ends.'));
   }
   return w;
 }
 
-function choiceCardsInline(opts, current, onPick) {
-  var row = el('div', 'create-pills');
-  opts.forEach(function (o) {
-    var p = el('button', 'create-pill' + (current === o.key ? ' selected' : ''));
-    p.textContent = o.label;
-    p.addEventListener('click', function () { onPick(o.key); });
-    row.appendChild(p);
-  });
-  return row;
-}
-
 // ETH/USD currency <select> (JBCurrencyIds 1/2). `onChange` receives the numeric id; `cls` overrides the
 // default compact inline style. Consolidates the identical option-loop used across the wizard.
-export function currencySelect(current, onChange, cls) {
+export function currencySelect(current, onChange, cls, lockedSym) {
   var sel = el('select', cls || 'create-amount-cur');
+  // A custom accounting token forces every currency to itself (no ETH/USD choice, no price feed) — show it
+  // as a single locked option.
+  if (lockedSym) {
+    var lop = el('option'); lop.value = String(current || ''); lop.textContent = lockedSym; lop.selected = true; sel.appendChild(lop);
+    sel.disabled = true;
+    return sel;
+  }
   [['ETH', 1], ['USD', 2]].forEach(function (o) {
     var op = el('option'); op.value = String(o[1]); op.textContent = o[0];
     if ((current || 1) === o[1]) op.selected = true;
@@ -1453,63 +1695,156 @@ export function currencySelect(current, onChange, cls) {
 }
 
 
+// Split lock (JBSplit.lockedUntil). A checked "Locked" + date stores a unix timestamp; the split then can't
+// be edited or removed by the owner until that date. Only offered when the ruleset has a fixed duration —
+// a "Flexible" (no-duration) ruleset has no bounded window for the lock to govern, so the control is hidden.
+function splitLockAllowed(stage) { return !!stage && (Number(stage.durationSeconds) || 0) > 0; }
+function tsToDateInput(ts) { try { return new Date(Number(ts) * 1000).toISOString().slice(0, 10); } catch (_) { return ''; } }
+function splitLockRow(stage, rec, render) {
+  if (!splitLockAllowed(stage)) { if (rec.lockedUntil) rec.lockedUntil = 0; return null; } // flexible → no lock; clear any stale value
+  var wrap = el('div', 'create-split-lock');
+  var lbl = el('label', 'create-split-lockcheck');
+  var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = !!rec.lockedUntil;
+  cb.addEventListener('change', function () {
+    // Default to the end of this ruleset, capped at ~10y so a "Forever" duration doesn't seed a year-4159 date.
+    var span = Math.min(Number(stage.durationSeconds) || 2592000, 315360000);
+    rec.lockedUntil = cb.checked ? (rec.lockedUntil || (Math.floor(Date.now() / 1000) + span)) : 0;
+    render();
+  });
+  lbl.appendChild(cb); var t = el('span', 'create-split-locklabel'); t.textContent = 'Locked'; lbl.appendChild(t);
+  wrap.appendChild(lbl);
+  if (rec.lockedUntil) {
+    var d = el('input', 'field create-split-lockdate'); d.type = 'date'; d.value = tsToDateInput(rec.lockedUntil);
+    d.min = tsToDateInput(Math.floor(Date.now() / 1000)); // no past dates (a lock in the past is meaningless)
+    // Clamp ≥ 0 — a negative timestamp would overflow JBSplit.lockedUntil (uint48) and abort the whole deploy build.
+    d.addEventListener('change', function () { rec.lockedUntil = d.value ? Math.max(0, Math.floor(Date.parse(d.value + 'T00:00:00Z') / 1000)) : 0; render(); });
+    wrap.appendChild(d);
+    wrap.appendChild(infoNote("Locked until this date — the split can't be edited or removed for the rest of this ruleset."));
+  }
+  return wrap;
+}
+
 // Payouts section for a stage (folded into the stage editor).
-function payoutRow(stage, rec, idx, mode, render) {
-  var wrap = el('div', 'create-split-wrap');
-  if (idx > 0) wrap.style.marginTop = '18px'; // separate each recipient block
-  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
-  recip.value = rec.type === 'project' ? String(rec.projectId || '') : (rec.address || '');
+function payoutRow(stage, rec, idx, mode, render, state) {
+  var wrap = el('div', 'create-split-wrap'); if (idx > 0) wrap.style.marginTop = '18px';
+  var lockLast = mode === 'amount' && stage.payoutRecipients.length <= 1;
   var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = stage.payoutRecipients.indexOf(rec); if (i >= 0) stage.payoutRecipients.splice(i, 1); render(); });
-  // A specific (limited) payout needs at least one entry — don't let the user remove the last one.
-  var lockLast = mode === 'amount' && stage.payoutRecipients.length <= 1;
-  // Resolve an ENS recipient (wallet path only — project IDs are numeric); the address shows under the field.
-  var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
-
+  var to = el('span', 'create-split-to'); to.textContent = 'to';
+  var toField = el('div', 'create-split-tofield'); toField.appendChild(to);
+  var row = el('div', 'create-split-row');
   if (mode === 'percent') {
-    var row = el('div', 'create-split-row');
     var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Split' : '… and'; row.appendChild(lead);
     var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.max = '100'; pct.step = 'any'; pct.placeholder = '10';
     pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; }); row.appendChild(pct);
     var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
-    var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
-    row.appendChild(recipBoxWith(recip, ensHint)); row.appendChild(rm);
-    wrap.appendChild(row);
+    row.appendChild(toField); row.appendChild(rm);
   } else {
-    // Two lines: "Payout [amount] [ETH/USD] to" then the recipient field, left-aligned under the amount
-    // (line 2's lead is an invisible copy of line 1's so the inputs line up in the monospace grid).
-    var leadText = idx === 0 ? 'Payout' : '… and';
-    var l1 = el('div', 'create-split-row');
-    var lead1 = el('span', 'create-split-lead'); lead1.textContent = leadText; l1.appendChild(lead1);
-    var amt = el('input', 'field create-inline-num'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
-    amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); l1.appendChild(amt);
-    l1.appendChild(currencySelect(stage.payoutCurrency, function (v) { stage.payoutCurrency = v; render(); }));
-    var toEnd = el('span', 'create-split-to'); toEnd.textContent = 'to'; l1.appendChild(toEnd);
-    wrap.appendChild(l1);
-    var l2 = el('div', 'create-split-row payout-line2');
-    var lead2 = el('span', 'create-split-lead'); lead2.textContent = leadText; lead2.style.visibility = 'hidden'; l2.appendChild(lead2);
-    l2.appendChild(recipBoxWith(recip, ensHint)); if (!lockLast) l2.appendChild(rm);
-    wrap.appendChild(l2);
+    var lead2 = el('span', 'create-split-lead'); lead2.textContent = idx === 0 ? 'Pay' : '… and'; row.appendChild(lead2);
+    var amt = el('input', 'field create-inline-num create-payout-amt'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
+    amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); row.appendChild(amt);
+    row.appendChild(currencySelect(stage.payoutCurrency, function (v) { stage.payoutCurrency = v; render(); }, null, lockedCurrencySym(state)));
+    row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
-
-  var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
-  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
-  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth';
-  benef.value = rec.type === 'project' ? (rec.address || '') : '';
-  benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
-  var benefHint = attachEns(benef, function () {}); // resolves on Ethereum mainnet; populates the global ENS cache resolvedStr reads
-  benefRow.appendChild(recipBoxWith(benef, benefHint)); wrap.appendChild(benefRow);
-  function refresh() {
-    var v = (recip.value || '').trim();
-    if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; }
-    else { rec.type = 'wallet'; rec.projectId = 0; rec.address = v; benefRow.style.display = 'none'; }
-  }
-  recip.addEventListener('input', refresh); refresh();
+  wrap.appendChild(row);
+  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'p:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, pidKey: 'ppid:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx });
+  var plk = splitLockRow(stage, rec, render); if (plk) wrap.appendChild(plk);
   return wrap;
 }
 
-function payoutsSection(stage, render) {
+// Per-accounting-context payout state (multi-token queues): { mode:'none'|'unlimited'|'limited', recipients[] }.
+function pkState(stage, key) {
+  if (!stage.payoutByKind) stage.payoutByKind = {};
+  if (!stage.payoutByKind[key]) stage.payoutByKind[key] = { mode: 'none', recipients: [] };
+  return stage.payoutByKind[key];
+}
+// One recipient row for a per-token payout block. `kind` provides the token symbol for limited amounts.
+function payoutKindRow(pk, kind, rec, idx, render, state, stage) {
+  var mode = pk.mode === 'unlimited' ? 'percent' : 'amount';
+  var wrap = el('div', 'create-split-wrap'); if (idx > 0) wrap.style.marginTop = '18px';
+  var lockLast = pk.recipients.length <= 1;
+  var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
+  rm.addEventListener('click', function () { var i = pk.recipients.indexOf(rec); if (i >= 0) pk.recipients.splice(i, 1); render(); });
+  var to = el('span', 'create-split-to'); to.textContent = 'to';
+  var toField = el('div', 'create-split-tofield'); toField.appendChild(to);
+  var row = el('div', 'create-split-row');
+  if (mode === 'percent') {
+    var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Split' : '… and'; row.appendChild(lead);
+    var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.max = '100'; pct.step = 'any'; pct.placeholder = '10';
+    pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; }); row.appendChild(pct);
+    var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
+    row.appendChild(toField); row.appendChild(rm);
+  } else {
+    var lead2 = el('span', 'create-split-lead'); lead2.textContent = idx === 0 ? 'Pay' : '… and'; row.appendChild(lead2);
+    var amt = el('input', 'field create-inline-num create-payout-amt'); amt.type = 'number'; amt.min = '0'; amt.step = 'any'; amt.placeholder = '0.0';
+    amt.value = rec.amountEth || ''; amt.addEventListener('input', function () { rec.amountEth = amt.value.trim(); }); row.appendChild(amt);
+    var u = el('span', 'create-suffix'); u.textContent = ' ' + kind.symbol + ' '; row.appendChild(u);
+    row.appendChild(toField); if (!lockLast) row.appendChild(rm);
+  }
+  wrap.appendChild(row);
+  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'pk:' + kind.key + ':' + idx, pidKey: 'pkpid:' + kind.key + ':' + idx });
+  var klk = splitLockRow(stage, rec, render); if (klk) wrap.appendChild(klk);
+  return wrap;
+}
+// A "Payout <SYM> funds" block for one accounting context.
+function payoutKindBlock(stage, kind, render, state) {
+  var pk = pkState(stage, kind.key);
   var wrap = el('div', '');
+  wrap.appendChild(toggleRow('Payout ' + kind.symbol + ' funds', dz('Routing some of the project’s ' + kind.symbol + ' to other accounts or projects.', 'All ' + kind.symbol + ' stays in the project for cash outs / later cycles.'), pk.mode !== 'none', function (v) { pk.mode = v ? 'unlimited' : 'none'; render(); }));
+  if (pk.mode !== 'none') {
+    var card = el('div', 'create-subcard');
+    card.appendChild(toggleRow('Payout all received ' + kind.symbol, dz('Paying out everything received; recipients get a percentage and the rest goes to the owner.', 'Paying out fixed amounts; anything else stays in the project.'), pk.mode === 'unlimited', function (v) { pk.mode = v ? 'unlimited' : 'limited'; if (!v && !pk.recipients.length) pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); }));
+    pk.recipients.forEach(function (rec, i) { card.appendChild(payoutKindRow(pk, kind, rec, i, render, state, stage)); });
+    var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add payout'; add.style.marginTop = pk.recipients.length ? '14px' : '4px';
+    add.addEventListener('click', function (e) { e.preventDefault(); pk.recipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
+    card.appendChild(add);
+    if (pk.mode === 'unlimited') { var on = el('div', 'create-hint'); on.style.marginTop = '10px'; on.textContent = 'Any ' + kind.symbol + ' not allocated above goes to the project owner.'; card.appendChild(on); }
+    wrap.appendChild(card);
+  }
+  return wrap;
+}
+
+// Token "kind" objects (key/symbol/decimals/addrForChain) for the create flow's accepted tokens.
+function createPayoutKinds(state) {
+  return (state.accepts || []).map(function (k) {
+    if (k === 'custom') {
+      var ct = state.customToken || {};
+      return { key: 'custom', symbol: ct.symbol || 'TOKEN', decimals: customAcctDecimals(state), addrForChain: function () { return ct.address; } };
+    }
+    return k === 'usdc'
+      ? { key: 'usdc', symbol: 'USDC', decimals: 6, addrForChain: function (cid) { return USDC_BY_CHAIN[cid] || null; } }
+      : { key: 'eth', symbol: 'ETH', decimals: 18, addrForChain: function () { return NATIVE_TOKEN; } };
+  });
+}
+// Single source of truth for whether payouts/surplus are configured per-token. The queue form sets
+// `state.payoutKinds` from the project's contexts; the create flow derives it from `accepts` — multi-token
+// only when a CUSTOM project holds more than one accounting token. Both the UI and the deploy build read this.
+function currentPayoutKinds(state) {
+  if (state.payoutKinds && state.payoutKinds.length) return state.payoutKinds; // queue form
+  if (state.projectType !== 'revnet' && (state.accepts || []).length > 1) return createPayoutKinds(state); // custom-both
+  // A custom ERC-20 routes through the per-token path too (token-keyed currency + token decimals, no feed).
+  if (state.projectType !== 'revnet' && customAccounting(state) && isAddr(state.customToken.address)) return createPayoutKinds(state);
+  return null;
+}
+
+function payoutsSection(stage, render, state) {
+  var wrap = el('div', '');
+  // Multi-accounting-context (custom-both / queue): one "Payout <SYM> funds" block per token; surplus is cumulative.
+  var kinds = state && currentPayoutKinds(state);
+  if (kinds) {
+    kinds.forEach(function (kind) { wrap.appendChild(payoutKindBlock(stage, kind, render, state)); });
+    var allUnlimited = kinds.every(function (k) { return pkState(stage, k.key).mode === 'unlimited'; });
+    if (allUnlimited) {
+      wrap.appendChild(idleToggle('Give owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
+      wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus to cash out.'));
+    } else {
+      // Surplus is the project's TOTAL across all accepted tokens (cash-out reclaim prices against the
+      // cumulative surplus). Owner access is unlimited-across-tokens here to avoid per-token cap ambiguity.
+      wrap.appendChild(toggleRow('Give owner access to surplus funds', dz('The owner can withdraw the project’s surplus (funds beyond payouts) — an unlimited allowance per accepted token (ETH, USDC, …), each in its own currency.', 'The owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
+      wrap.appendChild(cashOutSection(state, stage, render));
+    }
+    return wrap;
+  }
   wrap.appendChild(toggleRow('Payout funds', dz('Routing some of the project’s funds to other accounts or projects.', 'All funds stay in the project for cash outs / later stages.'), stage.payoutMode !== 'none', function (v) { stage.payoutMode = v ? 'unlimited' : 'none'; render(); }));
 
   if (stage.payoutMode !== 'none') {
@@ -1521,7 +1856,7 @@ function payoutsSection(stage, render) {
       render();
     }));
     var mode = stage.payoutMode === 'unlimited' ? 'percent' : 'amount';
-    stage.payoutRecipients.forEach(function (rec, i) { card.appendChild(payoutRow(stage, rec, i, mode, render)); });
+    stage.payoutRecipients.forEach(function (rec, i) { card.appendChild(payoutRow(stage, rec, i, mode, render, state)); });
     var add = el('a', 'operator-cta create-add-link'); add.href = '#'; add.textContent = '+ Add payout';
     add.style.marginTop = stage.payoutRecipients.length ? '14px' : '4px'; // only need the gap when there are rows above
     add.addEventListener('click', function (e) { e.preventDefault(); stage.payoutRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }); render(); });
@@ -1550,88 +1885,146 @@ function payoutsSection(stage, render) {
         var saAmt = el('input', 'field create-inline-num'); saAmt.type = 'text'; saAmt.placeholder = '0.0'; saAmt.value = stage.surplusAllowanceAmount;
         saAmt.addEventListener('input', function () { stage.surplusAllowanceAmount = saAmt.value.trim(); });
         saRow.appendChild(saAmt);
-        saRow.appendChild(currencySelect(stage.surplusAllowanceCurrency, function (v) { stage.surplusAllowanceCurrency = v; }));
+        saRow.appendChild(currencySelect(stage.surplusAllowanceCurrency, function (v) { stage.surplusAllowanceCurrency = v; }, null, lockedCurrencySym(state)));
         saRow.appendChild(document.createTextNode(' allowed.'));
         saCard.appendChild(saRow);
       }
       wrap.appendChild(saCard);
     }
     // Token-holder cash outs live right after the owner's surplus allowance (both draw from surplus).
-    wrap.appendChild(cashOutSection(stage, render));
+    wrap.appendChild(cashOutSection(state, stage, render));
   }
   return wrap;
 }
 
 // Inline reserved-token split row: "Split [%] to [0x / project ID]". A project ID reveals a
 // "token beneficiary" field (who receives that project's tokens). Edits `rec` in place.
-function reservedSplitRow(t, rec, idx, render, onTotal) {
+// Recipient type picker (Address / Project ID / Hook) + the dependent fields beneath it. Shared by the
+// reserved-token and payout split rows. The type <select> is appended to `toFieldNode` (the inline
+// "to […]"); the dependent inputs (address / project-id + beneficiary / hook selector + custom hook
+// address) are appended to `wrap` below the row. Edits `rec` in place; `rec.type` is one of
+// wallet | project | lphook (fund-market hook) | customhook.
+function appendRecipientPicker(toFieldNode, rec, render, opts) {
+  opts = opts || {};
+  // Build a column placed after the "to" label: the type dropdown on top, dependent fields beneath it —
+  // so the address / beneficiary / hook selector all left-align with the dropdown.
+  var col = el('div', 'create-split-picker');
+  var head = el('div', 'create-split-pickerhead');
+  var typeSel = el('select', 'field create-input create-split-typesel');
+  var curType = rec.type === 'project' ? 'project' : (rec.type === 'lphook' || rec.type === 'customhook') ? 'hook' : 'address';
+  [['address', 'Address'], ['project', 'Project'], ['hook', 'Hook']].forEach(function (o) {
+    var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (curType === o[0]) op.selected = true; typeSel.appendChild(op);
+  });
+  // Switching recipient type must drop any per-chain overrides for this slot — they're keyed per slot and
+  // would otherwise leak a wallet address into a project beneficiary slot (or vice-versa) at deploy time.
+  function clearPerChain() {
+    if (!opts.state) return;
+    (opts.state.chainIds || []).forEach(function (cid) {
+      var pc = perChainPeek(opts.state, cid);
+      if (pc && pc.addr) { if (opts.perChainKey) delete pc.addr[opts.perChainKey]; if (opts.pidKey) delete pc.addr[opts.pidKey]; }
+    });
+  }
+  // Fund market (the shared LP hook) pools project TOKENS — only meaningful for reserved-token splits, not
+  // payout (funds) splits. When it's off, "Hook" means a custom hook directly.
+  var hookDefault = opts.allowFundMarket ? 'lphook' : 'customhook';
+  typeSel.addEventListener('change', function () {
+    clearPerChain();
+    rec.type = typeSel.value === 'address' ? 'wallet' : typeSel.value === 'project' ? 'project' : hookDefault;
+    render();
+  });
+  head.appendChild(typeSel);
+
+  function sub(node) { var d = el('div', 'create-split-sub'); d.appendChild(node); col.appendChild(d); return d; }
+
+  // Project-ID input (small) + its per-chain override; project IDs differ per chain for the same project.
+  function projectIdField() {
+    var idInput = el('input', 'field create-split-idnum'); idInput.type = 'number'; idInput.min = '1'; idInput.placeholder = 'ID'; idInput.value = rec.projectId || '';
+    idInput.addEventListener('input', function () { rec.projectId = Number(idInput.value) || 0; });
+    return idInput;
+  }
+  // Column holding the inline ID field + its per-chain control, so the per-chain chain icons line up with
+  // the ID field's left edge. When per-chain is expanded the single field is replaced by the per-chain rows.
+  function projectIdCol() {
+    var c = el('div', 'create-split-idcol');
+    var pcOpen = opts.state && opts.pidKey && perChainOpen(opts.state, opts.pidKey);
+    if (!pcOpen) c.appendChild(projectIdField());
+    if (opts.state && opts.pidKey) c.appendChild(perChainNumControl(opts.state, render, opts.pidKey, rec.projectId || ''));
+    return c;
+  }
+  // Token beneficiary input + its per-chain override. When per-chain is expanded the single field is replaced.
+  function beneficiaryField() {
+    var pcOpen = opts.state && opts.perChainKey && perChainOpen(opts.state, opts.perChainKey);
+    if (!pcOpen) {
+      var benef = el('input', 'field create-split-recip'); benef.type = 'text'; benef.placeholder = '0x… or name.eth'; benef.value = rec.address || '';
+      benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
+      sub(recipBoxWith(benef, attachEns(benef, function () {})));
+    }
+    if (opts.state && opts.perChainKey) col.appendChild(perChainAddrControl(opts.state, render, opts.perChainKey, pickResolved(rec.address, rec)));
+  }
+
+  if (rec.type === 'project') {
+    head.appendChild(projectIdCol()); col.appendChild(head); // ID + its per-chain control sit right of the dropdown
+    var benefLabel = el('div', 'create-split-sublabel'); benefLabel.textContent = 'with token beneficiary'; col.appendChild(benefLabel);
+    beneficiaryField();
+  } else if (rec.type === 'lphook' || rec.type === 'customhook') {
+    // A custom split hook (address) that can also carry a project id + beneficiary, all per-chain settable.
+    var customHookFields = function () {
+      var hookInput = el('input', 'field create-split-recip'); hookInput.type = 'text'; hookInput.placeholder = '0x… (split hook address)'; hookInput.value = rec.hookAddress || '';
+      hookInput.addEventListener('input', function () { rec.hookAddress = hookInput.value.trim(); }); sub(hookInput);
+      var projRow = el('div', 'create-split-pickerhead');
+      var projLbl = el('span', 'create-split-sublabel'); projLbl.textContent = 'with project'; projRow.appendChild(projLbl);
+      projRow.appendChild(projectIdCol()); col.appendChild(projRow);
+      var benLbl = el('div', 'create-split-sublabel'); benLbl.textContent = 'and beneficiary'; col.appendChild(benLbl);
+      beneficiaryField();
+    };
+    if (opts.allowFundMarket) {
+      var hookSel = el('select', 'field create-input create-split-subsel');
+      [['fundmarket', 'Fund market'], ['custom', 'Custom']].forEach(function (o) {
+        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((rec.type === 'customhook' ? 'custom' : 'fundmarket') === o[0]) op.selected = true; hookSel.appendChild(op);
+      });
+      hookSel.addEventListener('change', function () { clearPerChain(); rec.type = hookSel.value === 'custom' ? 'customhook' : 'lphook'; render(); });
+      head.appendChild(hookSel); col.appendChild(head); // Fund market / Custom sits inline to the right of "Hook"
+      if (rec.type === 'customhook') customHookFields();
+      else { var lpHint = el('div', 'create-split-lphint'); lpHint.textContent = 'Pools split tokens into a Uniswap V4 buyback position. Trading fees route back to your project.'; col.appendChild(lpHint); }
+    } else {
+      // Payout splits: custom hook only (no Fund market). No sub-selector — the dropdown is just "Hook".
+      if (rec.type === 'lphook') rec.type = 'customhook';
+      col.appendChild(head);
+      customHookFields();
+    }
+  } else { // wallet (address)
+    col.appendChild(head);
+    if (!(opts.state && opts.perChainKey && perChainOpen(opts.state, opts.perChainKey))) {
+      var addrInput = el('input', 'field create-split-recip'); addrInput.type = 'text'; addrInput.placeholder = '0x… or name.eth'; addrInput.value = rec.address || '';
+      addrInput.addEventListener('input', function () { rec.address = addrInput.value.trim(); });
+      sub(recipBoxWith(addrInput, attachEns(addrInput, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; })));
+    }
+    if (opts.state && opts.perChainKey) col.appendChild(perChainAddrControl(opts.state, render, opts.perChainKey, pickResolved(rec.address, rec)));
+  }
+  toFieldNode.appendChild(col);
+}
+// Whether the per-chain control for `key` is expanded (explicitly opened, or has any stored override).
+function perChainOpen(state, key) {
+  if ((state.chainIds || []).length < 2) return false;
+  if (state._pcOpen && state._pcOpen[key]) return true;
+  return (state.chainIds || []).some(function (cid) { var pc = perChainPeek(state, cid); return pc && pc.addr && pc.addr[key]; });
+}
+
+function reservedSplitRow(t, rec, idx, render, onTotal, state, stageIdx) {
   var wrap = el('div', 'create-split-wrap');
   var row = el('div', 'create-split-row');
   var lead = el('span', 'create-split-lead'); lead.textContent = idx === 0 ? 'Split' : '… and'; row.appendChild(lead);
   var pct = el('input', 'field create-split-pct'); pct.type = 'number'; pct.min = '0'; pct.max = '100'; pct.step = 'any'; pct.placeholder = '10';
   pct.value = rec.percent || ''; pct.addEventListener('input', function () { rec.percent = parseFloat(pct.value) || 0; if (onTotal) onTotal(); }); row.appendChild(pct);
   var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
-  var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
-  var hookAddr = getAddress('BannyLPSplitHook', 1);
-  var isLp = rec.type === 'lphook';
-  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
-  // When this split funds the market, the recipient IS the shared LP split hook — show it (read-only).
-  recip.value = isLp ? (hookAddr || '') : (rec.type === 'project' ? String(rec.projectId || '') : (rec.address || ''));
-  if (isLp) recip.readOnly = true;
-  var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
-  var recipBox = recipBoxWith(recip, ensHint);
-  row.appendChild(recipBox);
+  var to = el('span', 'create-split-to'); to.textContent = 'to';
+  var toField = el('div', 'create-split-tofield'); toField.appendChild(to); row.appendChild(toField);
   var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = t.reservedRecipients.indexOf(rec); if (i >= 0) t.reservedRecipients.splice(i, 1); render(); });
   row.appendChild(rm);
   wrap.appendChild(row);
-  // Project-ID beneficiary line — "with beneficiary [0x…]" (who receives that project's tokens).
-  var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
-  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
-  var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth';
-  benef.value = rec.type === 'project' ? (rec.address || '') : '';
-  benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
-  var benefHint = attachEns(benef, function () {}); // resolves on Ethereum mainnet; populates the global ENS cache resolvedStr reads
-  benefRow.appendChild(recipBoxWith(benef, benefHint)); wrap.appendChild(benefRow);
-  // "fund market" chip — routes this split to the shared zero-fee BannyLPSplitHook. Offered only when this
-  // row is already the market-funder OR no other row is (one buyback market per project). Sits under the
-  // field (inside recipBox) so it left-aligns with it.
-  var otherLp = t.reservedRecipients.some(function (r) { return r !== rec && r.type === 'lphook'; });
-  var lpChip = null;
-  if (hookAddr && (isLp || !otherLp)) {
-    lpChip = el('button', 'create-split-chip'); lpChip.type = 'button'; lpChip.textContent = 'fund market';
-    if (isLp) lpChip.classList.add('active');
-    lpChip.title = 'Pool reserved tokens into a Uniswap V4 buyback position for your token';
-    lpChip.addEventListener('click', function () {
-      if (rec.type === 'lphook') { rec.type = 'wallet'; rec.address = ''; rec.projectId = 0; }
-      else { rec.type = 'lphook'; }
-      render();
-    });
-    recipBox.appendChild(lpChip);
-    if (isLp) {
-      var lpHint = el('div', 'create-split-lphint');
-      lpHint.textContent = 'Pools splits tokens into a Uniswap V4 position. Trading fees route back to your project.';
-      wrap.appendChild(lpHint);
-    }
-  }
-  // The chip only makes sense on an empty row — once a real recipient is typed, hide it (and drop the
-  // top-align so the row centers normally). When this row IS the market-funder it stays shown + active.
-  function updateChip() {
-    if (!lpChip) return;
-    var show = isLp || !(recip.value || '').trim();
-    lpChip.style.display = show ? '' : 'none';
-    row.classList.toggle('has-chip', show);
-  }
-  function refresh() {
-    if (rec.type === 'lphook') return; // handled by the chip
-    var v = (recip.value || '').trim();
-    if (/^[0-9]+$/.test(v) && Number(v) > 0) { rec.type = 'project'; rec.projectId = Number(v); benefRow.style.display = ''; }
-    else { rec.type = 'wallet'; rec.projectId = 0; rec.address = v; benefRow.style.display = 'none'; }
-    updateChip();
-  }
-  recip.addEventListener('input', refresh);
-  if (isLp) row.classList.add('has-chip');
-  else refresh();
+  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'r:' + stageIdx + ':' + idx, pidKey: 'rpid:' + stageIdx + ':' + idx, allowFundMarket: true });
+  var rlk = splitLockRow(t, rec, render); if (rlk) wrap.appendChild(rlk);
   return wrap;
 }
 
@@ -1656,7 +2049,7 @@ function cashOutCurveSvg(r) {
     + '</svg>';
 }
 
-// Hover the bonding-curve graph: show a dot + tooltip with "X% cashed out → Y% of treasury" at the cursor.
+// Hover the bonding-curve graph: show a dot + tooltip with "X% cashed out → Y% of funds" at the cursor.
 // `holder` is the element whose innerHTML carries the SVG (redrawn on input); dot/tip are siblings in `wrap`.
 function attachCurveHover(wrap, holder, getR) {
   wrap.style.position = 'relative';
@@ -1674,7 +2067,7 @@ function attachCurveHover(wrap, holder, getR) {
     var cx = plotL + x * (plotR - plotL), cy = plotB - f * (plotB - plotT);
     var wr = wrap.getBoundingClientRect();
     dot.style.display = ''; dot.style.left = (cx - wr.left) + 'px'; dot.style.top = (cy - wr.top) + 'px';
-    tip.style.display = ''; tip.textContent = Math.round(x * 100) + '% cashed out → ' + (Math.round(f * 1000) / 10) + '% of treasury';
+    tip.style.display = ''; tip.textContent = (x * 100).toFixed(1) + '% cashed out → ' + (f * 100).toFixed(1) + '% of funds';
     tip.style.left = Math.max(28, Math.min(cx - wr.left, wr.width - 28)) + 'px';
     tip.style.top = (cy - wr.top - 24) + 'px';
   });
@@ -1689,14 +2082,38 @@ function idleToggle(label, subtext) {
   return t;
 }
 
+// The accounting token(s) the project's surplus is held in (for cash-out copy). Custom → its symbol; ETH/USDC
+// (either or both) → "ETH", "USDC", or "ETH and USDC" — honors a project that accepts more than one token.
+function surplusTokenLabel(state) {
+  if (customAccounting(state)) return customAcctSym(state) || 'TOKEN';
+  var a = state.accepts || [];
+  var syms = [];
+  if (a.indexOf('eth') !== -1) syms.push('ETH');
+  if (a.indexOf('usdc') !== -1) syms.push('USDC');
+  return syms.length ? syms.join(' and ') : 'ETH';
+}
+// Token cash-out (rulesets) and item cash-out (the 721 store) are MUTUALLY EXCLUSIVE on-chain: with the 721
+// hook as the cash-out data hook, JB721Hook.beforeCashOutRecordedWith reverts on any project-token cash-out
+// (JB721Hook.sol:107). So enabling one idles the other in the UI.
+function itemCashOutOn(state) { return !!(state.shopEnabled && state.collection && state.collection.useForRedemptions); }
+function anyTokenCashOut(state) { return (state.stages || []).some(function (s) { return s.cashOutEnabled; }); }
+
 // Cash-out access for token holders — they reclaim a share of the project's surplus by burning tokens.
 // Lives next to the owner's surplus allowance (both draw from surplus). Tax rate shapes the bonding curve.
-export function cashOutSection(stage, render) {
+export function cashOutSection(state, stage, render) {
   var t = stage;
   var wrap = el('div', '');
-  var acctSym = t.baseCurrency === 2 ? 'USDC' : 'ETH';
-  wrap.appendChild(toggleRow('Give tokens cash out access to surplus funds', dz('Token holders can cash out their tokens for a share of the project’s surplus ' + acctSym + '.', 'Token holders can’t cash out their tokens.'), t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
-  if (t.cashOutEnabled) wrap.appendChild(cashOutTaxCard(t, render, acctSym));
+  var label = surplusTokenLabel(state);
+  // Item cash-out (Shop) overrides token cash-out — they can't both be on. Idle the token toggle, but keep the
+  // tax card: the same ruleset cashOutTaxRate governs item redemption (JB721Hook forwards it).
+  if (itemCashOutOn(state) && !t.cashOutEnabled) {
+    wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'Items cash out for surplus instead (enabled in the Shop) — tokens and items can’t both be cashed out.'));
+    wrap.appendChild(cashOutTaxCard(t, render, label));
+    wrap.appendChild(infoNote('This cash-out tax applies to item redemptions.'));
+    return wrap;
+  }
+  wrap.appendChild(toggleRow('Give tokens cash out access to surplus funds', dz('Token holders can cash out their tokens for a share of the project’s surplus ' + label + '.', 'Token holders can’t cash out their tokens.'), t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
+  if (t.cashOutEnabled) wrap.appendChild(cashOutTaxCard(t, render, label));
   return wrap;
 }
 
@@ -1734,7 +2151,7 @@ function cashOutTaxCard(t, render, acctSym, reclaimVerb, bare) {
   var svgHolder = el('div'); graphWrap.appendChild(svgHolder); // hover overlay (dot/tip) lives beside this, not wiped on redraw
   var cashViz = function () {
     var r = Math.max(0, Math.min(100, Number(t.cashOutTaxRate) || 0)) / 100;
-    var pct10 = 0.1 * ((1 - r) + r * 0.1) * 100; // % of treasury for cashing out 10% of supply
+    var pct10 = 0.1 * ((1 - r) + r * 0.1) * 100; // % of funds for cashing out 10% of supply
     sub.textContent = reclaimVerb
       ? ('Cashing out 10% of $' + reclaimVerb + ' gets ' + (Math.round(pct10 * 10) / 10) + '% of the revnet’s ' + acctSym + '.')
       : ('Cashing out 10% of your tokens returns ' + (Math.round(pct10 * 10) / 10) + '% of the project’s surplus ' + acctSym + '.');
@@ -1742,8 +2159,9 @@ function cashOutTaxCard(t, render, acctSym, reclaimVerb, bare) {
   };
   if (isCustom) {
     var crow = el('div', 'create-inline-row');
-    var cin = el('input', 'field create-inline-num'); cin.type = 'number'; cin.min = '0'; cin.max = '1'; cin.step = '0.01'; cin.value = String(Math.round(t.cashOutTaxRate) / 100);
-    cin.addEventListener('input', function () { t.cashOutTaxRate = Math.max(0, Math.min(1, Number(cin.value) || 0)) * 100; cashViz(); });
+    // Contract requires cashOutTaxRate STRICTLY < MAX (100%); 1.0 reverts. Cap at 0.99 (step is 0.01).
+    var cin = el('input', 'field create-inline-num'); cin.type = 'number'; cin.min = '0'; cin.max = '0.99'; cin.step = '0.01'; cin.value = String(Math.round(t.cashOutTaxRate) / 100);
+    cin.addEventListener('input', function () { t.cashOutTaxRate = Math.max(0, Math.min(0.99, Number(cin.value) || 0)) * 100; cashViz(); });
     crow.appendChild(document.createTextNode('Cash out tax ')); crow.appendChild(cin); crow.appendChild(document.createTextNode(' (0–1)'));
     coCard.appendChild(crow);
   }
@@ -1754,7 +2172,7 @@ function cashOutTaxCard(t, render, acctSym, reclaimVerb, bare) {
   return coCard;
 }
 
-function tokenSection(stage, render) {
+function tokenSection(stage, render, state, stageIdx) {
   var t = stage;
   var wrap = el('div', '');
   // Paused payments → no one can pay → no issuance possible; show the issuance toggle idle.
@@ -1774,8 +2192,12 @@ function tokenSection(stage, render) {
       var n = el('input', 'field create-inline-num'); n.type = 'text'; n.placeholder = '0'; n.value = t.weight;
       n.addEventListener('input', function () { t.weight = n.value.trim(); });
       row.appendChild(n);
-      row.appendChild(document.createTextNode(' tokens per '));
-      row.appendChild(currencySelect(t.baseCurrency, function (v) { t.baseCurrency = v; render(); }));
+      row.appendChild(document.createTextNode(' tokens '));
+      // Keep "per" attached to the currency selector so they wrap together as "per [ETH]".
+      var perUnit = el('span', 'create-inline-unit');
+      perUnit.appendChild(document.createTextNode('per '));
+      perUnit.appendChild(currencySelect(t.baseCurrency, function (v) { t.baseCurrency = v; render(); }, null, lockedCurrencySym(state)));
+      row.appendChild(perUnit);
       return row;
     })());
 
@@ -1790,7 +2212,7 @@ function tokenSection(stage, render) {
         : 'Payer receives 100% of issuance.';
       sumNote.className = 'create-hint' + (tot > 100 ? ' warn' : '');
     }
-    t.reservedRecipients.forEach(function (rec, i) { card.appendChild(reservedSplitRow(t, rec, i, render, updateReservedSummary)); });
+    t.reservedRecipients.forEach(function (rec, i) { card.appendChild(reservedSplitRow(t, rec, i, render, updateReservedSummary, state, stageIdx)); });
     var addSplit = el('a', 'operator-cta create-add-link'); addSplit.href = '#'; addSplit.textContent = '+ Add split'; addSplit.style.marginTop = '14px';
     addSplit.addEventListener('click', function (e) { e.preventDefault(); t.reservedRecipients.push({ type: 'wallet', address: '', projectId: 0, percent: 0 }); render(); });
     card.appendChild(addSplit);
@@ -1832,7 +2254,11 @@ function collectionExtrasSection(state, render) {
   var ownerNote = el('div', 'create-hint'); ownerNote.textContent = 'The project owner can set or change these anytime after launch.'; ownerNote.style.marginTop = '0'; f.appendChild(ownerNote);
   var nameField = fieldBlock('Collection name', false, textInput(collectionNameOf(state), state.details.name || 'Collection name', function (v) { c.name = v; c.nameTouched = true; }));
   f.appendChild(nameField);
-  f.appendChild(fieldBlock('Collection symbol', false, textInput(collectionSymbolOf(state), state.details.ticker || 'Symbol', function (v) { c.symbol = v; c.symbolTouched = true; })));
+  f.appendChild(fieldBlock('Collection symbol', false, (function () {
+    var s = textInput(collectionSymbolOf(state), state.details.ticker || 'Symbol', function (v) { c.symbol = v; c.symbolTouched = true; });
+    s.classList.add('create-symbol-field'); // a symbol is short — 1/4 width
+    return s;
+  })()));
 
   // Pinata JWT — needed to pin item media + metadata to IPFS. Only shown when one isn't set yet.
   if (!hasPinata()) {
@@ -1849,6 +2275,17 @@ function collectionExtrasSection(state, render) {
   f.appendChild(toggleRow('Lock voting items after launch', dz('New items added after launch can’t carry custom voting power.', 'New items added after launch can carry custom voting power.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
   f.appendChild(toggleRow('Lock owner minting after launch', dz('New items added after launch can’t let the owner mint for free.', 'New items added after launch can let the owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
   f.appendChild(toggleRow('Give split recipients project tokens', dz('Sale-split recipients also receive project tokens for their share.', 'Sale-split recipients receive funds only, no project tokens.'), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
+  // useDataHookForCashOut — item holders redeem items against project surplus. Revnets force this on at the
+  // deployer (so it's custom-only). Mutually exclusive with TOKEN cash-out (set in rulesets): the 721 hook
+  // reverts on any token cash-out, so if token cash-outs are on we idle this instead of letting both be set.
+  if (state.projectType !== 'revnet') {
+    if (anyTokenCashOut(state) && !c.useForRedemptions) {
+      f.appendChild(idleToggle('Give items cash out access to surplus funds', 'Token cash outs are enabled in your rulesets — tokens and items can’t both be cashed out. Turn off token cash outs to let items redeem.'));
+    } else {
+      f.appendChild(toggleRow('Give items cash out access to surplus funds', dz('Item holders can cash out their items for a share of the project’s surplus ' + surplusTokenLabel(state) + '.', 'Items can’t be cashed out — they grant no claim on surplus.'), c.useForRedemptions, function (v) { c.useForRedemptions = v; render(); }));
+      if (c.useForRedemptions) f.appendChild(infoNote('Items redeem at the cash-out tax you set in your rulesets.'));
+    }
+  }
 
   // Revnet operator 721 permissions — REVDeployer grants the operator all four by default; these let the
   // user revoke individual ones at deploy time (encoded as the REVDeploy721TiersHookConfig preventOperator* flags).
@@ -1866,22 +2303,22 @@ function collectionExtrasSection(state, render) {
 // Store-item price currency (independent of the ruleset base currency).
 function storeCur(state) { return state.storePricingCurrency || 1; }
 function storeUnit(state) { return storeCur(state) === 2 ? 'USDC' : 'ETH'; }
-function storeDecimals(state) { return storeCur(state) === 2 ? 6 : 18; }
+function storeDecimals(state) { return customAccounting(state) ? customAcctDecimals(state) : (storeCur(state) === 2 ? 6 : 18); }
 
-function renderNfts(state, render) {
+export function renderNfts(state, render) {
   var wrap = el('div', '');
   var head = stepHead('Shop', 'Sell items to customers and supporters.');
   wrap.appendChild(head);
 
   // Store pricing currency — what every item's price is denominated in.
   wrap.appendChild(fieldBlock('Store pricing currency', false, (function () {
-    var sel = currencySelect(storeCur(state), function (v) { state.storePricingCurrency = v; render(); }, 'field create-input');
+    var sel = currencySelect(storeCur(state), function (v) { state.storePricingCurrency = v; render(); }, 'field create-input', lockedCurrencySym(state));
     sel.style.width = 'auto'; sel.style.minWidth = '0';
     return sel;
   })()));
 
   // Opt-in: the Shop is off by default. Ticking it on reveals the first item to fill out.
-  wrap.appendChild(toggleRow('Launch with store items in stock', dz('Your project launches with items already for sale.', 'You can add items to sell anytime after launch.'), state.shopEnabled, function (v) {
+  wrap.appendChild(toggleRow('Launch with items in stock', dz('Your project launches with items already for sale.', 'You can add items to sell anytime after launch.'), state.shopEnabled, function (v) {
     state.shopEnabled = v;
     if (v && !state.nfts.length) state.nfts.push(itemDraft());
     render();
@@ -2047,7 +2484,7 @@ function itemEditor(state, nft, idx, render) {
       var bHint = attachEns(bInp, function () { render(); }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
       rRow.appendChild(recipBoxWith(bInp, bHint)); a.appendChild(rRow);
       // Reserving requires a beneficiary, or the deploy reverts (JB721TiersHookStore_MissingReserveBeneficiary).
-      if (Number(nft.reserveFrequency) > 0 && !/^0x[0-9a-fA-F]{40}$/.test(resolvedStr(nft.reserveBeneficiary))) {
+      if (Number(nft.reserveFrequency) > 0 && !isAddr(resolvedStr(nft.reserveBeneficiary))) {
         a.appendChild(warnNote('Add the address that receives the reserved set-aside, or this item will fail to deploy.'));
       }
     }
@@ -2073,7 +2510,7 @@ function itemSplitRow(nft, rec, idx, render) {
   pct.addEventListener('input', function () { rec.pct = pct.value.trim(); }); row.appendChild(pct);
   var sign = el('span', 'create-split-sign'); sign.textContent = '%'; row.appendChild(sign);
   var to = el('span', 'create-split-to'); to.textContent = 'to'; row.appendChild(to);
-  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID'; recip.value = rec.recip || '';
+  var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x…, name.eth, or project ID'; recip.value = rec.recip || '';
   var ensHint = attachEns(recip, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; });
   var rm = el('button', 'create-split-rm'); rm.textContent = '✕'; rm.title = 'Remove';
   rm.addEventListener('click', function () { var i = nft.splitRecipients.indexOf(rec); if (i >= 0) nft.splitRecipients.splice(i, 1); render(); });
@@ -2114,51 +2551,11 @@ function otherRulesSection(stage, render) {
 // ---------------------------------------------------------------------------
 
 // Settlement — how/where the project settles: accounting token, chains, and per-chain refinements.
-function renderSettlement(state, render) {
-  var wrap = el('div', '');
-  wrap.appendChild(stepHead('Settlement', 'Decide where you can receive payments and how money settles.'));
-
-  // Accounting token — what the project HOLDS in its treasury. The router terminal (any-token
-  // auto-convert) is always part of the tx and toggled via an inline enable/disable in the description.
-  // Revnets are ETH-only (fixed native accounting context), so the accounting card is hidden for them.
-  wrap.appendChild(fieldBlock('Accounting', false, (function () {
-    var w = el('div', '');
-    w.appendChild(choiceCardsInline([{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }], state.accepts[0] || 'eth', function (k) {
-      state.accepts = [k]; render();
-    }));
-    var note = el('div', 'create-hint');
-    note.textContent = state.projectType === 'revnet'
-      ? ('Pick which reserve asset will back the value of $' + tickerLabel(state) + '.')
-      : 'The token that makes up your project’s balance.';
-    w.appendChild(note);
-    // The router terminal (any-token auto-swap) is a custom-flow feature; revnets use only the canonical terminal.
-    if (state.projectType !== 'revnet') {
-      var line2 = el('div', 'create-hint');
-      line2.appendChild(document.createTextNode(state.swapRouter
-        ? 'Other payment tokens auto-swap to your chosen accounting token as they’re paid in. '
-        : 'Payers can only pay in your accounting token. '));
-      var toggle = el('a', 'create-inline-toggle'); toggle.href = '#';
-      toggle.textContent = state.swapRouter ? 'Disable giving payers this option' : 'Enable giving payers this option';
-      toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
-      line2.appendChild(toggle);
-      w.appendChild(line2);
-    }
-    return w;
-  })()));
-
-  // Chain + bridge selection (shared with the revnet Deploy step).
-  wrap.appendChild(chainBridgeBlock(state, render));
-
-  // Per-chain overrides (multichain only) — confirm/adapt amounts, items, and addresses per chain.
-  if (state.chainIds.length > 1) wrap.appendChild(perChainSection(state, render));
-  return wrap;
-}
-
 // Chain multi-select (canonical names) + the bridge selector shown when >1 chain is chosen. Shared by the
 // custom Settlement step and the revnet Deploy step.
 function chainBridgeBlock(state, render) {
-  var wrap = el('div', '');
-  var label = el('div', 'create-label'); label.style.marginTop = '18px'; label.textContent = 'Select chains:'; wrap.appendChild(label);
+  var wrap = el('div', ''); wrap.style.marginBottom = '18px'; // breathing room before the owner/operator field
+  var label = el('div', 'create-label'); label.style.marginTop = '18px'; label.textContent = 'On'; wrap.appendChild(label);
   var chainRow = el('div', 'create-chain-row');
   CHAIN_PAIRS.forEach(function (p) {
     var actual = actualChainId(p.canon, state.network);
@@ -2170,31 +2567,46 @@ function chainBridgeBlock(state, render) {
       if (on) ids = ids.filter(function (x) { return x !== actual; });
       else ids.push(actual);
       state.chainIds = ids.length ? ids : [actual];
+      if (customAccounting(state) && isAddr(state.customToken.address)) lookupCustomToken(state, render); // re-verify the token on the new chain set
       render();
     });
     chainRow.appendChild(pill);
   });
   wrap.appendChild(chainRow);
-  wrap.appendChild(infoNote(state.chainIds.length > 1
-    ? 'Deploys on ' + state.chainIds.length + ' chains, linked so your token and balances can move between them. You sign once per chain and pay gas once (via Relayr).'
-    : 'Deploys on a single chain. You can add more chains here before launching.'));
 
   if (state.chainIds.length > 1) {
-    var bField = el('div', 'create-field'); bField.style.marginTop = '16px';
-    var bl = el('label', 'create-label'); bl.textContent = 'Connect chains via'; bField.appendChild(bl);
-    var bsel = el('select', 'field create-input'); bsel.style.width = 'auto'; bsel.style.minWidth = '0';
-    [['native', 'Native bridges'], ['ccip', 'CCIP'], ['both', 'Both']].forEach(function (o) {
-      var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((state.suckerType || 'native') === o[0]) op.selected = true; bsel.appendChild(op);
-    });
-    bsel.addEventListener('change', function () { state.suckerType = bsel.value; render(); });
-    bField.appendChild(bsel);
-    var bh = el('div', 'create-hint'); bh.textContent = 'Native bridges connect Ethereum with L2s (strongest guarantees). CCIP (Chainlink) connects any chains.'; bField.appendChild(bh);
-    wrap.appendChild(bField);
+    // Single line, with "linked" as the toggle that opens the bridge selector.
+    var note = el('div', 'create-hint');
+    note.appendChild(document.createTextNode('Your project will exist on ' + state.chainIds.length + ' chains, '));
+    var linked = el('a', 'create-inline-toggle'); linked.href = '#'; linked.textContent = 'linked'; linked.title = 'Choose how the chains are connected';
+    linked.addEventListener('click', function (e) { e.preventDefault(); state._bridgeOpen = !state._bridgeOpen; render(); });
+    note.appendChild(linked);
+    note.appendChild(document.createTextNode(' so your token and balances can move between them.'));
+    wrap.appendChild(note);
+
+    if (state._bridgeOpen) {
+      // Compact inline bridge selector: "Connect chains via [select]" + the always-shown explanation.
+      var bRow = el('div', 'create-inline-row'); bRow.style.marginTop = '12px';
+      bRow.appendChild(document.createTextNode('Connect chains via '));
+      var bsel = el('select', 'field create-input'); bsel.style.width = 'auto'; bsel.style.minWidth = '0';
+      [['native', 'Native bridges'], ['ccip', 'CCIP'], ['both', 'Native and CCIP']].forEach(function (o) {
+        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((state.suckerType || 'both') === o[0]) op.selected = true; bsel.appendChild(op);
+      });
+      bsel.addEventListener('change', function () { state.suckerType = bsel.value; render(); });
+      bRow.appendChild(bsel);
+      wrap.appendChild(bRow);
+      var bh = el('div', 'create-hint'); bh.textContent = 'Native bridges connect Ethereum with L2s (strongest guarantees). CCIP (Chainlink) connects any chains. Native and CCIP gives the broadest coverage.'; wrap.appendChild(bh);
+    }
     var unc = uncoveredPairs(state);
-    if (unc.length) wrap.appendChild(warnNote('⚠ ' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Both to link L2↔L2 pairs.'));
+    if (unc.length) wrap.appendChild(warnNote('' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Native and CCIP to link L2↔L2 pairs.'));
+  } else {
+    wrap.appendChild(infoNote('Deploys on a single chain. ' + (state.projectType === 'revnet'
+      ? 'You can add more chains later if they exactly match the configuration you deploy with now.'
+      : 'You can add more chains later.')));
   }
   return wrap;
 }
+
 
 // Selected-chain pairs that won't link under the chosen sucker type (e.g. L2↔L2 under native bridges).
 function uncoveredPairs(state) {
@@ -2228,10 +2640,25 @@ function renderDeploy(state, render) {
   var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = state.tos;
   cb.addEventListener('change', function () { state.tos = cb.checked; updateLaunch(); });
   tos.appendChild(cb);
-  tos.appendChild(document.createTextNode(' I understand this is a brand-new protocol and accept the risks of deploying.'));
+  var tosContent = el('span', '');
+  tosContent.appendChild(document.createTextNode(' I understand this is a public protocol that can’t be changed and accept the risks of deploying. '));
+  var auditLink = el('a', 'create-audit-link'); auditLink.href = '#'; auditLink.textContent = '[copy system audit prompt]';
+  // preventDefault stops the surrounding label from toggling the checkbox when the link is clicked.
+  auditLink.addEventListener('click', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var p = getAuditPrompt();
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(p).then(function () {
+        auditLink.textContent = '[copied to clipboard]';
+        setTimeout(function () { auditLink.textContent = '[copy system audit prompt]'; }, 2000);
+      }).catch(function () {});
+    }
+  });
+  tosContent.appendChild(auditLink);
+  tos.appendChild(tosContent);
   wrap.appendChild(tos);
 
-  if (!hasPinata()) wrap.appendChild(infoNote('No Pinata JWT set — add one in DATA → settings to pin your logo & metadata. Otherwise they’re skipped at launch and you can add them by editing the project later.'));
+  if (!hasPinata()) wrap.appendChild(infoNote('IPFS pinning isn’t configured, so your logo & metadata will be skipped at launch — you can add them later by editing the project.'));
 
   // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
   if (state.done) {
@@ -2273,7 +2700,7 @@ function renderDeploy(state, render) {
         row.appendChild(el('span', 'create-spinner'));
       } else {
         var ic = el('span', 'create-deploy-ic create-deploy-' + p.status.kind);
-        ic.textContent = p.status.kind === 'ok' ? '✓' : '✕';
+        ic.textContent = p.status.kind === 'ok' ? 'done' : 'failed';
         row.appendChild(ic);
       }
       var nm = el('span', 'create-deploy-name'); nm.textContent = chainName(p.chainId); row.appendChild(nm);
@@ -2322,23 +2749,109 @@ function renderDeploy(state, render) {
   var needTicker = isRev && !state.details.ticker;
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  var needOwner = !isRev && !/^0x[0-9a-fA-F]{40}$/.test(ownerRaw);
-  var needOperator = isRev && !/^0x[0-9a-fA-F]{40}$/.test(opRaw);
+  var needOwner = !isRev && !isAddr(ownerRaw);
+  var needOperator = isRev && !isAddr(opRaw);
+  var needCustomToken = customAccounting(state) && !customReady(state); // custom accounting token not resolved yet
+  var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
+  var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
+  var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
   updateLaunch();
   wrap.appendChild(launch);
+  // Spell out every reason the launch button is disabled, so the user knows exactly what to fix.
   if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
   if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
   if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Flavor step to launch.'));
   if (needOperator) wrap.appendChild(infoNote('Set an operator on the Flavor step to deploy your revnet.'));
+  if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet — fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
+  if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying — otherwise those funds/tokens go to the zero address.'));
+  if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
+  if (approvalBad) wrap.appendChild(warnNote(approvalBad + ' Without it the approval condition silently becomes “none” (no review window for edits).'));
+  if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
+  if (!state.tos) wrap.appendChild(infoNote('Check the box above to confirm you accept the risks before ' + (isRev ? 'deploying.' : 'launching.')));
 
   return wrap;
+}
+
+function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+// When the approval condition is "Custom address", every selected chain must resolve to a real contract.
+// A blank / mistyped / unresolved-ENS value would silently encode approvalHook = address(0) — no review
+// window for owner edits — with nothing else to catch it, so it's a hard deploy gate.
+function approvalIssue(state) {
+  if (!(state.stages || []).some(function (s) { return s.deadline === 'custom'; })) return null;
+  var def = pickResolved(state.approvalAddress, { resolvedAddress: state.approvalAddressResolved, resolvedFor: state.approvalAddressResolvedFor });
+  var bad = (state.chainIds || []).filter(function (cid) { return !isAddr(chainAddr(state, cid, 'approval', def)); });
+  if (!bad.length) return null;
+  return 'The custom ruleset approval condition needs a valid contract address on ' + bad.map(function (c) { return chainName(c); }).join(', ') + '.';
+}
+
+// Repopulate the volatile _ensCache for a custom approval-hook ENS name after a reload/import, so the
+// Deploy-step gate (approvalIssue) sees the resolved address instead of treating a valid name as missing.
+function reresolveApproval(state, render) {
+  if (!(state.stages || []).some(function (s) { return s.deadline === 'custom'; })) return;
+  if (!isEnsName(state.approvalAddress || '')) return;
+  resolveEns(state.approvalAddress).then(function (addr) {
+    if (addr) { state.approvalAddressResolved = addr; state.approvalAddressResolvedFor = (state.approvalAddress || '').trim(); if (render) render(); }
+  });
+}
+
+// First stage whose reserved-token or percent-mode payout splits sum over 100% (silently clamped at build).
+function splitTotalIssue(state) {
+  var stages = state.stages || [];
+  function over(recips) { return (recips || []).reduce(function (s, r) { return s + (Number(r.percent) || 0); }, 0); }
+  for (var si = 0; si < stages.length; si++) {
+    var st = stages[si]; var pre = stages.length > 1 ? ('stage ' + (si + 1) + ' ') : '';
+    var rTot = over(st.reservedRecipients);
+    if (rTot > 100.0001) return pre + 'reserved-token splits total ' + round2(rTot) + '%, over 100%.';
+    var kinds = currentPayoutKinds(state);
+    if (kinds && st.payoutByKind) {
+      for (var ki = 0; ki < kinds.length; ki++) {
+        var pk = st.payoutByKind[kinds[ki].key];
+        if (pk && pk.mode === 'unlimited' && over(pk.recipients) > 100.0001) return pre + kinds[ki].symbol + ' payout splits total ' + round2(over(pk.recipients)) + '%, over 100%.';
+      }
+    } else if (st.payoutMode === 'unlimited' && over(st.payoutRecipients) > 100.0001) {
+      return pre + 'payout splits total ' + round2(over(st.payoutRecipients)) + '%, over 100%.';
+    }
+  }
+  return null;
+}
+
+// Walk every split / payout / auto-issuance recipient with a non-zero value; return a one-line description
+// of the first that has no valid destination (so funds/tokens would be sent to 0x0), or null if all are fine.
+function recipientIssue(state) {
+  var stages = state.stages || [];
+  function badSplit(recips, kindLabel) {
+    for (var i = 0; i < (recips || []).length; i++) {
+      var r = recips[i];
+      if (!((Number(r.percent) || 0) > 0 || (Number(r.amountEth) || 0) > 0)) continue; // empty row — ignore
+      if (r.type === 'project') { if (!(Number(r.projectId) > 0)) return 'a ' + kindLabel + ' to a project is missing its project ID.'; }
+      else if (r.type === 'lphook') { /* fund-market hook needs no address */ }
+      else if (r.type === 'customhook') { if (!isAddr(r.hookAddress)) return 'a ' + kindLabel + ' uses a custom hook with no valid hook address.'; }
+      else if (!isAddr(resolvedStr(pickResolved(r.address, r)))) return 'a ' + kindLabel + ' has no valid recipient address.';
+    }
+    return null;
+  }
+  for (var si = 0; si < stages.length; si++) {
+    var st = stages[si];
+    var pre = stages.length > 1 ? ('on stage ' + (si + 1) + ', ') : '';
+    var kinds = currentPayoutKinds(state);
+    var checks = [badSplit(st.reservedRecipients, 'reserved-token split')];
+    if (kinds && st.payoutByKind) kinds.forEach(function (k) { var pk = st.payoutByKind[k.key]; checks.push(pk && badSplit(pk.recipients, 'payout split')); });
+    else checks.push(badSplit(st.payoutRecipients, 'payout split'));
+    for (var c = 0; c < checks.length; c++) if (checks[c]) return pre + checks[c];
+    for (var a = 0; a < (st.autoIssuances || []).length; a++) {
+      var ai = st.autoIssuances[a];
+      if ((Number(ai.count) || 0) > 0 && !isAddr(resolvedStr(pickResolved(ai.address, ai)))) return pre + 'an auto-issuance has no valid recipient address.';
+    }
+  }
+  return null;
 }
 
 // ---- Per-chain overrides (multichain): limited payout amounts + store-item inclusion/quantity ----
@@ -2397,94 +2910,56 @@ function pcAddrField(state, chainId, key, defStr) {
   input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
   return recipBoxWith(input, attachEns(input, function () {}));
 }
-function isWalletRecip(rec) { return rec && rec.type !== 'project' && (rec.address || '').trim(); }
-function pcLabelRow(card, text) { var d = el('div', 'create-hint'); d.style.marginTop = '8px'; d.textContent = text; card.appendChild(d); }
+// Per-chain numeric field (project ID) — stored in the same `addr[key]` store as a raw string, no ENS.
+function pcNumField(state, chainId, key, defStr) {
+  var input = el('input', 'field create-split-recip'); input.type = 'number'; input.min = '1'; input.placeholder = 'ID';
+  input.value = pcAddrGet(state, chainId, key, defStr || '');
+  input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
+  return input;
+}
 
-function perChainSection(state, render) {
-  var hasItems = state.shopEnabled && state.nfts.length > 0;
-  var anyPayouts = state.stages.some(function (s) { return s.payoutMode !== 'none' && (s.payoutRecipients || []).length; });
-  var anyReserved = state.stages.some(function (s) { return s.tokenMode === 'custom' && (s.reservedRecipients || []).some(function (r) { return Number(r.percent) > 0; }); });
-  if (!anyPayouts && !anyReserved && !hasItems) return el('div', '');
-  var wrap = el('div', '');
-  var lbl = el('div', 'create-label'); lbl.style.marginTop = '18px'; lbl.textContent = 'Per-chain settings'; wrap.appendChild(lbl);
-  wrap.appendChild(infoNote('Amounts, store items, and addresses default to the same on every chain. Adjust any chain below — addresses can differ since an account may not exist on all chains.'));
-
+// Inline "same on all chains" control shown under an address field (only when >1 chain is selected). The
+// address defaults to the same on every chain; clicking the indicator reveals a per-chain input for each
+// chain (since an account may not exist at the same address on all chains). Overrides are stored under
+// `key` in state.perChain[cid].addr and consumed by the deploy build via chainAddr(state, cid, key, def).
+function perChainAddrControl(state, render, key, defStr) {
+  return perChainControl(state, render, key, defStr, pcAddrField);
+}
+// Same control, numeric per-chain field — for project IDs (which differ per chain for the same project).
+function perChainNumControl(state, render, key, defStr) {
+  return perChainControl(state, render, key, defStr, pcNumField);
+}
+function perChainControl(state, render, key, defStr, fieldFn) {
+  var wrap = el('div', 'create-pcaddr');
+  if ((state.chainIds || []).length < 2) return wrap; // single chain — nothing to differ
+  if (!state._pcOpen) state._pcOpen = {};
+  var hasOverrides = state.chainIds.some(function (cid) { var pc = perChainPeek(state, cid); return pc && pc.addr && pc.addr[key]; });
+  var open = !!state._pcOpen[key] || hasOverrides;
+  if (!open) {
+    wrap.classList.add('create-pcaddr-collapsed'); // right-align the link under the field
+    var link = el('a', 'create-pcaddr-toggle'); link.href = '#'; link.textContent = 'Set per chain';
+    link.title = 'Set a different value on each chain';
+    link.addEventListener('click', function (e) { e.preventDefault(); state._pcOpen[key] = true; render(); });
+    wrap.appendChild(link);
+    return wrap;
+  }
+  // Per-chain rows first, so the top row lines up with the field/dropdown row it replaces…
   state.chainIds.forEach(function (cid) {
-    var card = el('div', 'create-subcard');
-    var h = el('div', 'create-stage-title'); h.textContent = chainName(cid); card.appendChild(h);
-    var multiStage = state.stages.length > 1;
-
-    // Payouts — per recipient: amount (limited) and address (wallet recipients).
-    state.stages.forEach(function (stage, si) {
-      if (stage.payoutMode === 'none' || !(stage.payoutRecipients || []).length) return;
-      var cur = stage.payoutCurrency === 2 ? 'USD' : 'ETH';
-      var limited = stage.payoutMode === 'limited';
-      if (multiStage) pcLabelRow(card, 'Ruleset #' + (si + 1) + ' payouts');
-      stage.payoutRecipients.forEach(function (rec, ri) {
-        if (limited) {
-          var row = el('div', 'create-inline-row');
-          row.appendChild(document.createTextNode('Pay '));
-          var amt = el('input', 'field create-inline-num'); amt.type = 'text'; amt.placeholder = '0.0'; amt.value = chainPayoutAmount(state, cid, si, ri);
-          amt.addEventListener('input', function () { var pc = perChainOf(state, cid); pc.payouts[si] = pc.payouts[si] || {}; pc.payouts[si][ri] = amt.value.trim(); });
-          row.appendChild(amt); row.appendChild(document.createTextNode(' ' + cur + ' to'));
-          card.appendChild(row);
-        } else {
-          pcLabelRow(card, round2(Number(rec.percent) || 0) + '% to');
-        }
-        if (isWalletRecip(rec)) card.appendChild(pcAddrField(state, cid, 'p:' + si + ':' + ri, rec.address));
-        else { var pl = el('div', 'create-hint'); pl.textContent = recipLabel(rec); card.appendChild(pl); }
-      });
-    });
-
-    // Reserved-token splits — per wallet recipient, an address override.
-    state.stages.forEach(function (stage, si) {
-      if (stage.tokenMode !== 'custom') return;
-      var wallets = (stage.reservedRecipients || []).map(function (r, i) { return { r: r, i: i }; }).filter(function (e) { return Number(e.r.percent) > 0 && isWalletRecip(e.r); });
-      if (!wallets.length) return;
-      pcLabelRow(card, (multiStage ? 'Ruleset #' + (si + 1) + ' reserved' : 'Reserved tokens'));
-      wallets.forEach(function (e) {
-        pcLabelRow(card, round2(Number(e.r.percent) || 0) + '% to');
-        card.appendChild(pcAddrField(state, cid, 'r:' + si + ':' + e.i, e.r.address));
-      });
-    });
-
-    // Store items — include + quantity, plus reserve beneficiary and sale-split addresses.
-    if (hasItems) {
-      state.nfts.forEach(function (nft, ii) {
-        var name = nft.name || ('Item #' + (ii + 1));
-        var inc = chainItemIncluded(state, cid, ii);
-        card.appendChild(toggleRow('Sell “' + name + '” here', dz('Sold on ' + chainName(cid) + '.', 'Not sold on ' + chainName(cid) + '.'), inc, function (v) {
-          var pc = perChainOf(state, cid); pc.items[ii] = pc.items[ii] || {}; pc.items[ii].include = v; render();
-        }));
-        if (!inc) return;
-        var unlimited = chainItemUnlimited(state, cid, ii);
-        card.appendChild(toggleRow('Unlimited inventory', dz('Any number can be sold on ' + chainName(cid) + '.', 'Only a set quantity is sold on ' + chainName(cid) + '.'), unlimited, function (v) {
-          var pc = perChainOf(state, cid); pc.items[ii] = pc.items[ii] || {}; pc.items[ii].unlimited = v; render();
-        }));
-        if (!unlimited) {
-          var qrow = el('div', 'create-inline-row');
-          qrow.appendChild(document.createTextNode('Quantity '));
-          var q = el('input', 'field create-inline-num'); q.type = 'text'; q.placeholder = '100'; q.value = chainItemSupply(state, cid, ii);
-          q.addEventListener('input', function () { var pc = perChainOf(state, cid); pc.items[ii] = pc.items[ii] || {}; pc.items[ii].supply = q.value.trim(); });
-          qrow.appendChild(q);
-          card.appendChild(qrow);
-        }
-        if (nft.reserveOn && Number(nft.reserveFrequency) > 0) {
-          pcLabelRow(card, 'Reserve set-aside to');
-          card.appendChild(pcAddrField(state, cid, 'rb:' + ii, nft.reserveBeneficiary));
-        }
-        if (nft.splitOn) {
-          (nft.splitRecipients || []).forEach(function (r, sj) {
-            var v = (r.recip || '').trim();
-            if (!v || (/^[0-9]+$/.test(v) && Number(v) > 0)) return; // skip empty + project-ID recipients
-            pcLabelRow(card, round2(Number(r.pct) || 0) + '% of “' + name + '” sales to');
-            card.appendChild(pcAddrField(state, cid, 'is:' + ii + ':' + sj, v));
-          });
-        }
-      });
-    }
-    wrap.appendChild(card);
+    var rowc = el('div', 'create-pcaddr-row');
+    var nm = el('span', 'create-pcaddr-chain'); nm.appendChild(chainIcon(cid, chainName(cid))); rowc.appendChild(nm);
+    rowc.appendChild(fieldFn(state, cid, key, defStr));
+    wrap.appendChild(rowc);
   });
+  // …then the "use same on all chains" collapse link beneath them (right-aligned, like "Set per chain").
+  var foot = el('div', 'create-pcaddr-foot');
+  var collapse = el('a', 'create-pcaddr-toggle'); collapse.href = '#'; collapse.textContent = 'Use same on all chains';
+  collapse.addEventListener('click', function (e) {
+    e.preventDefault();
+    state.chainIds.forEach(function (cid) { var pc = perChainPeek(state, cid); if (pc && pc.addr) delete pc.addr[key]; });
+    state._pcOpen[key] = false; render();
+  });
+  foot.appendChild(collapse);
+  wrap.appendChild(foot);
   return wrap;
 }
 
@@ -2575,7 +3050,7 @@ function itemSplits(d, state, chainId, itemIdx) {
     return {
       percent: Math.round(Number(r.pct) / tot * 1e9),
       projectId: isProj ? BigInt(v) : 0n,
-      beneficiary: isProj ? ((resolvedStr(r.benef) && /^0x[0-9a-fA-F]{40}$/.test(resolvedStr(r.benef))) ? resolvedStr(r.benef) : ZERO) : ((benef && /^0x[0-9a-fA-F]{40}$/.test(benef)) ? benef : ZERO),
+      beneficiary: isProj ? ((resolvedStr(r.benef) && isAddr(resolvedStr(r.benef))) ? resolvedStr(r.benef) : ZERO) : (addrOrZero(benef)),
       preferAddToBalance: false, lockedUntil: 0, hook: ZERO,
     };
   });
@@ -2604,7 +3079,7 @@ var DEPLOY_ERROR_GUIDE = [
 // Turn a raw sim/contract/wallet error into a friendly, fixable message. Walks the cause chain so a custom
 // error's 4-byte selector (or decoded name) is matched even when it's nested in viem's error data.
 function friendlyDeployError(err) {
-  var raw = (err && (err.shortMessage || err.message)) || 'The transaction reverted.';
+  var raw = errMessage(err, 'The transaction reverted.');
   var parts = [], e = err;
   for (var i = 0; e && i < 8; i++) {
     parts.push(e.shortMessage || '', e.message || '', e.details || '');
@@ -2643,7 +3118,7 @@ function deploy(state, render) {
   }
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
-  var owner = /^0x[0-9a-fA-F]{40}$/.test(ownerRaw) ? ownerRaw : signer;
+  var owner = isAddr(ownerRaw) ? ownerRaw : signer;
   state.deploying = true; render();
   // Set the status pusher BEFORE runDeploy — with no Pinata JWT, runDeploy calls push() synchronously
   // (the "launching without metadata" line) before its first await, so the assignment must precede the call.
@@ -2857,7 +3332,7 @@ function projectCountOf(chainId) {
 }
 
 // Deterministic salt — same on every chain (so omnichain sucker addresses match). No Math.random.
-function deploySalt(state, owner) {
+export function deploySalt(state, owner) {
   return keccak256(stringToHex((state.details.name || 'project') + ':' + String(owner).toLowerCase()));
 }
 
@@ -2866,12 +3341,18 @@ function deploySalt(state, owner) {
 // byte-for-byte what they sign.
 function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var multi = state.chainIds.length > 1;
+  // Per-chain owner override (the "same on all chains" control may set a different address per chain). The
+  // CREATE2 `salt` stays derived from the default owner (passed in) so omnichain addresses still match.
+  var chainOwner = chainAddr(state, chainId, 'owner', owner);
+  if (isAddr(chainOwner)) owner = chainOwner;
   // Multichain "start immediately" → pin every chain's first ruleset to the one shared deploy-time start
   // (~10 min ahead) so they all begin at the same moment. Single chain starts at its own deploy block (0).
   var immediateStart = multi ? deployStart : 0;
-  // Items can be included/excluded per chain — a chain with no included items uses the non-721 path.
-  var hasNfts = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
-  var terminalConfigs = buildTerminalConfigs(chainId, state.accepts, state.swapRouter);
+  // Always deploy a 721 shop hook (empty if no items) so any project can sell NFTs later without re-deploying —
+  // matches revnets, which always ship a default empty 721 hook. build721Config still filters items per chain;
+  // _deploy721Hook is unconditional at launch (the tiers.length gate is queue-only, so 0 tiers won't revert).
+  var hasNfts = true; // ponytail: always-on shop
+  var terminalConfigs = buildTerminalConfigs(chainId, state, state.swapRouter);
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
   var stageRulesets = function (payHook) {
@@ -2904,7 +3385,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var addr = getAddress('JBOmnichainDeployer', chainId);
   var missing = sucker.missing.length > 0;
   if (hasNfts) {
-    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: false, salt: salt };
+    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions), salt: salt };
     return { contract: 'JBOmnichainDeployer', address: addr, abi: omnichain721Abi, missingSuckers: missing,
       args: [owner, projectUri, deploy721, rulesetsFull, terminalConfigs, '', sucker] };
   }
@@ -2919,7 +3400,9 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
 // encodes the identical config (matching cross-chain addresses).
 function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  var operator = /^0x[0-9a-fA-F]{40}$/.test(opRaw) ? opRaw : owner;
+  // Per-chain operator override ("same on all chains" control); salt stays on the default for matching addresses.
+  var opChain = chainAddr(state, chainId, 'op', opRaw);
+  var operator = isAddr(opChain) ? opChain : (isAddr(opRaw) ? opRaw : owner);
 
   var stages = [];
   var prevStart = deployStart;
@@ -2940,7 +3423,7 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
 
   var configuration = {
     description: { name: state.details.name || '', ticker: state.details.ticker || '', uri: projectUri || '', salt: salt },
-    baseCurrency: state.revBaseCurrency === 2 ? 2 : 1, // standard JBCurrencyIds (ETH=1 / USD=2); JBPrices bridges to the accounting context
+    baseCurrency: customAccounting(state) ? customCurrencyId(state) : ((state.accepts || []).indexOf('usdc') !== -1 ? 2 : (state.revBaseCurrency === 2 ? 2 : 1)), // custom id, USD(2) if USDC accepted, else ETH(1)
     operator: operator,
     scopeCashOutsToLocalBalances: false,
     stageConfigurations: stages,
@@ -2996,6 +3479,9 @@ function buildRevnet721Config(state, projectUri, chainId, salt) {
 // Payout splits (group id), fund-access-limit token, and unlimited-limit currency must all use THIS token,
 // not native, or a USDC project's payouts are denominated in the wrong token.
 function acctTokenFor(state, chainId) {
+  if (customAccounting(state) && isAddr(state.customToken.address)) {
+    return { token: state.customToken.address, decimals: customAcctDecimals(state), currency: customCurrencyId(state) };
+  }
   if ((state.accepts[0] || 'eth') === 'usdc') {
     var usdc = USDC_BY_CHAIN[chainId];
     if (usdc) return { token: usdc, decimals: 6, currency: Number(BigInt(usdc) % (1n << 32n)) };
@@ -3006,7 +3492,16 @@ function acctTokenFor(state, chainId) {
 // The revnet's accounting context — ETH (native) or USDC, per the Settlement accounting choice.
 // JBAccountingContext.currency = uint32(uint160(token)).
 function revnetAccept(state, chainId) {
-  return [acctTokenFor(state, chainId)];
+  // A revnet can accept multiple reserve assets (ETH and/or USDC), or one custom ERC-20 — REVDeployer.deployFor
+  // takes accountingContextsToAccept as a tuple[]. Mirror the custom-project terminal contexts.
+  if (customAccounting(state) && isAddr(state.customToken.address)) {
+    return [{ token: state.customToken.address, decimals: customAcctDecimals(state), currency: customCurrencyId(state) }];
+  }
+  var ctx = [];
+  var accepts = state.accepts || [];
+  if (accepts.indexOf('eth') !== -1) ctx.push({ token: NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY });
+  if (accepts.indexOf('usdc') !== -1 && USDC_BY_CHAIN[chainId]) ctx.push({ token: USDC_BY_CHAIN[chainId], decimals: 6, currency: Number(BigInt(USDC_BY_CHAIN[chainId]) % (1n << 32n)) });
+  return ctx.length ? ctx : [{ token: NATIVE_TOKEN, decimals: 18, currency: NATIVE_CURRENCY }];
 }
 
 // One REVStageConfig from a revnet stage object.
@@ -3022,8 +3517,9 @@ function buildRevStage(state, stage, idx, chainId, start) {
     // exactly SPLITS_TOTAL (1e9) so rounding drift can't exceed it and revert.
     var shares = fillSplits(rows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / totalPct * SPLITS_TOTAL); }));
     splits = rows.map(function (e, k) {
-      var benef = e.x.type === 'project' ? resolvedStr(e.x.address) : pickResolved(e.x.address, e.x);
-      return splitState(e.x, shares[k], benef);
+      var benef = chainAddr(state, chainId, 'r:' + idx + ':' + e.origIdx, pickResolved(e.x.address, e.x)); // per-chain beneficiary/address
+      var pid = (e.x.type === 'project' || e.x.type === 'customhook') ? (Number(pcAddrGet(state, chainId, 'rpid:' + idx + ':' + e.origIdx, e.x.projectId || 0)) || 0) : 0;
+      return splitState(e.x, shares[k], benef, chainId, pid, false);
     });
   }
   // initialIssuance: tokens per base unit × 1e18 (18-dec fixed point). 0 on later stages = inherit (with cut).
@@ -3035,8 +3531,8 @@ function buildRevStage(state, stage, idx, chainId, start) {
     : 0;
   var taxRate = Math.round(Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) * 100); // percent → out of 10000
   var autos = (stage.autoIssuances || [])
-    .map(function (a) { return { count: tokenAmount18(a.count, UINT104_MAX), addr: pickResolved(a.address, a) }; })
-    .filter(function (a) { return a.count > 0n && /^0x[0-9a-fA-F]{40}$/.test(a.addr); })
+    .map(function (a, aiIdx) { return { count: tokenAmount18(a.count, UINT104_MAX), addr: chainAddr(state, chainId, 'ai:' + idx + ':' + aiIdx, pickResolved(a.address, a)) }; })
+    .filter(function (a) { return a.count > 0n && isAddr(a.addr); })
     .map(function (a) { return { chainId: chainId, count: a.count, beneficiary: a.addr }; });
   return {
     startsAtOrAfter: start,
@@ -3068,11 +3564,16 @@ export function buildQueueRulesetConfigs(state, chainId, immediateStart) {
 }
 
 function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn, immediateStart) {
+  var lockOk = splitLockAllowed(stage); // split locks only encode for a fixed-duration ruleset (not Flexible)
   // Per-chain overrides (amount + beneficiary), keyed by user-stage + recipient index; fall back to defaults.
   var amtAt = function (x, idx) { return chainPayoutAmount(state, chainId, userStageIdx, idx); };
   // For project recipients, the token beneficiary is held in x.address and resolved via the global ENS cache.
-  var payoutBenef = function (x, idx) { return x.type === 'project' ? resolvedStr(x.address) : chainAddr(state, chainId, 'p:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
-  var reservedBenef = function (x, idx) { return x.type === 'project' ? resolvedStr(x.address) : chainAddr(state, chainId, 'r:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
+  var payoutBenef = function (x, idx) { return chainAddr(state, chainId, 'p:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
+  var reservedBenef = function (x, idx) { return chainAddr(state, chainId, 'r:' + userStageIdx + ':' + idx, pickResolved(x.address, x)); };
+  // Per-chain project id for project / custom-hook splits (override → default); 0 for wallet / lphook.
+  var projAt = function (x, key) { return (x.type === 'project' || x.type === 'customhook') ? (Number(pcAddrGet(state, chainId, key, x.projectId || 0)) || 0) : 0; };
+  var payoutPid = function (x, idx) { return projAt(x, 'ppid:' + userStageIdx + ':' + idx); };
+  var reservedPid = function (x, idx) { return projAt(x, 'rpid:' + userStageIdx + ':' + idx); };
   var rs = createDefaultRuleset();
   rs.baseCurrency = stage.baseCurrency || 1;
   // First ruleset start: scheduled time if set; else 0 ("start at the deploy block") for single chain. For
@@ -3084,19 +3585,55 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   var custom = stage.tokenMode === 'custom';
   // Reserved rate = sum of the split-row percentages (each is a % of issuance reserved for that recipient).
   var reservedTotalPct = (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
+  // Multi-accounting-context (queue): payouts are per token (stage.payoutByKind). There's surplus to cash
+  // out / withdraw unless EVERY accepted token pays out everything (all unlimited).
+  var pkAll = currentPayoutKinds(state);
+  var allKindsUnlimited = pkAll ? pkAll.every(function (k) { return ((stage.payoutByKind || {})[k.key] || {}).mode === 'unlimited'; }) : false;
+  var noSurplus = pkAll ? allKindsUnlimited : (stage.payoutMode === 'unlimited');
   rs.weight = custom ? (stage.weight || '0') : '0';
   rs.reservedPercent = custom ? Math.max(0, Math.min(100, reservedTotalPct)) : 0;
   rs.weightCutPercent = custom ? Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) : 0;
   // Cash outs / owner minting / pausing apply to the project's tokens regardless of whether THIS stage
   // issues new tokens (tokens can exist from prior stages or owner mints). Clamp 0–100 so a stray value
   // can't overflow MAX_CASH_OUT_TAX_RATE and revert at deploy.
-  rs.cashOutTaxRate = (stage.cashOutEnabled && stage.payoutMode !== 'unlimited')
-    ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100; // 100% = cash outs off (no surplus under unlimited payouts)
+  // Item redemptions route cash-out through the 721 hook (item holders redeem for surplus). Only when a store
+  // is actually on this chain AND the project opted in. Mutually exclusive with token cash-out by contract.
+  var storeRedeem = state.shopEnabled && !!(state.collection && state.collection.useForRedemptions)
+    && (state.nfts || []).some(function (_, i) { return chainItemIncluded(state, chainId, i); });
+  // The cash-out tax governs whoever can cash out — token holders OR (mutually exclusively) item holders — so
+  // it applies when either is on. 100% = cash outs off (also forced when payouts leave no surplus).
+  rs.cashOutTaxRate = ((stage.cashOutEnabled || storeRedeem) && !noSurplus)
+    ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100;
   rs.allowOwnerMinting = !!stage.allowOwnerMinting;
   rs.pauseCreditTransfers = !!stage.pauseTransfers;
+  rs.useDataHookForCashOut = storeRedeem;
 
-  var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
-  rs.approvalHook = (deadlineOn !== false && dl && dl.contract && getAddress(dl.contract, chainId)) || ZERO;
+  // Queue-only 721-shop choice. The discover Rulesets tab sets state.shopChoice; the LAUNCH path leaves it
+  // undefined so this whole block no-ops (launch stays exactly as-is). On the SINGLE-CHAIN queue path the 721
+  // hook IS metadata.dataHook, and the default encodes dataHook=0 — which silently DETACHES a live shop. So
+  // "continue" must re-pass the current hook to keep it. On the OMNICHAIN path the shop rides the deploy721
+  // empty-tiers carry-forward (metadata.dataHook is the extra/buyback slot), so we leave the metadata alone.
+  if (state.shopChoice && !state.isOmnichain) {
+    if (state.shopChoice === 'continue') {
+      rs.dataHook = state.currentDataHook || '';
+      rs.useDataHookForPay = true;
+      rs.useDataHookForCashOut = !!state.currentUseDataHookForCashOut;
+    } else if (state.shopChoice === 'remove') {
+      rs.dataHook = '';
+      rs.useDataHookForPay = false;
+      rs.useDataHookForCashOut = false;
+    }
+  }
+
+  if (deadlineOn === false) {
+    rs.approvalHook = ZERO;
+  } else if (stage.deadline === 'custom') {
+    // Custom approval-hook contract — per-chain override → the global default; ENS resolved.
+    rs.approvalHook = addrOrZero(chainAddr(state, chainId, 'approval', pickResolved(state.approvalAddress, { resolvedAddress: state.approvalAddressResolved, resolvedFor: state.approvalAddressResolvedFor })));
+  } else {
+    var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === stage.deadline; });
+    rs.approvalHook = (dl && dl.contract && getAddress(dl.contract, chainId)) || ZERO;
+  }
 
   rs.pausePay = stage.pausePay; rs.holdFees = stage.holdFees;
   rs.allowSetTerminals = stage.allowSetTerminals; rs.allowSetController = stage.allowSetController;
@@ -3105,61 +3642,86 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   rs.allowAddAccountingContext = !!stage.allowAddAccountingContext;
   rs.allowAddPriceFeed = !!stage.allowAddPriceFeed;
 
-  // Splits
+  // Splits + fund access.
   rs.splitGroups = [];
-  if (stage.payoutMode !== 'none' && stage.payoutRecipients.length) {
-    var payoutSplits;
-    if (stage.payoutMode === 'unlimited') {
-      // % of payouts each recipient gets; any unallocated remainder goes to the project owner. Clamp the
-      // running total to SPLITS_TOTAL so over-100% (or rounding drift) can't revert the group.
-      var pacc = 0;
-      payoutSplits = stage.payoutRecipients.map(function (x, idx) {
-        var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
-        if (pacc + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc);
-        pacc += raw;
-        return splitState(x, raw, payoutBenef(x, idx));
-      });
-    } else {
-      // Limited: the payout limit is the sum of the amounts; each recipient's split is its share of that sum.
-      var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
-      var lshares = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
-      payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares[idx], payoutBenef(x, idx)); });
+  rs.fundAccessLimitGroups = [];
+  if (pkAll) {
+    // MULTI-TOKEN: one payout split group + one fund-access group per accounting context, each denominated
+    // in that token's own currency/decimals. Surplus allowance (when owner access is on) is unlimited per
+    // token — surplus is the project's cumulative total across tokens.
+    // Per-token recipient address (per-chain override → default), keyed by token + recipient index.
+    var benefK = function (x, kind, idx) { return chainAddr(state, chainId, 'pk:' + kind.key + ':' + idx, pickResolved(x.address, x)); };
+    var pidK = function (x, kind, idx) { return projAt(x, 'pkpid:' + kind.key + ':' + idx); };
+    var puK = function (v, d) { try { return parseUnits(String(v || '0'), d); } catch (_) { return 0n; } };
+    pkAll.forEach(function (kind) {
+      var pk = (stage.payoutByKind || {})[kind.key] || { mode: 'none', recipients: [] };
+      var token = kind.addrForChain(chainId); if (!token) return;
+      var cur = Number(BigInt(token) & 0xffffffffn);
+      var payoutLimits = [], surplusAllowances = [], splits = [];
+      if (pk.mode === 'unlimited') {
+        payoutLimits.push({ amount: UINT224_MAX, currency: cur });
+        var pacc = 0;
+        splits = (pk.recipients || []).map(function (x, idx) {
+          var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
+          if (pacc + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc);
+          pacc += raw;
+          return splitState(x, raw, benefK(x, kind, idx), chainId, pidK(x, kind, idx), lockOk);
+        });
+      } else if (pk.mode === 'limited') {
+        var totalAmt = (pk.recipients || []).reduce(function (s, x) { return s + puK(x.amountEth, kind.decimals); }, 0n);
+        if (totalAmt > 0n) payoutLimits.push({ amount: totalAmt, currency: cur });
+        var totalNum = (pk.recipients || []).reduce(function (s, x) { return s + (Number(x.amountEth) || 0); }, 0) || 1;
+        var lshares = fillSplits((pk.recipients || []).map(function (x) { return Math.round(((Number(x.amountEth) || 0) / totalNum) * SPLITS_TOTAL); }));
+        splits = (pk.recipients || []).map(function (x, idx) { return splitState(x, lshares[idx], benefK(x, kind, idx), chainId, pidK(x, kind, idx), lockOk); });
+      }
+      if (stage.surplusAllowanceOn && pk.mode !== 'unlimited') surplusAllowances.push({ amount: UINT224_MAX, currency: cur });
+      if (splits.length) rs.splitGroups.push({ groupId: uint256FromAddress(token), splits: splits });
+      if (payoutLimits.length || surplusAllowances.length) {
+        rs.fundAccessLimitGroups.push({ terminal: getAddress('JBMultiTerminal', chainId), token: token, payoutLimits: payoutLimits, surplusAllowances: surplusAllowances });
+      }
+    });
+  } else if (stage.payoutMode !== 'none' || (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited')) {
+    // SINGLE-TOKEN (create flow): one accounting token chosen at Settlement.
+    if (stage.payoutMode !== 'none' && stage.payoutRecipients.length) {
+      var payoutSplits;
+      if (stage.payoutMode === 'unlimited') {
+        var pacc1 = 0;
+        payoutSplits = stage.payoutRecipients.map(function (x, idx) {
+          var raw = Math.round((Number(x.percent) || 0) / 100 * SPLITS_TOTAL);
+          if (pacc1 + raw > SPLITS_TOTAL) raw = Math.max(0, SPLITS_TOTAL - pacc1);
+          pacc1 += raw;
+          return splitState(x, raw, payoutBenef(x, idx), chainId, payoutPid(x, idx), lockOk);
+        });
+      } else {
+        var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
+        var lshares1 = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
+        payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares1[idx], payoutBenef(x, idx), chainId, payoutPid(x, idx), lockOk); });
+      }
+      rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
     }
-    // Payout split group is keyed by the accounting token (uint256(uint160(token))) — USDC, not native.
-    rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
+    var acct = acctTokenFor(state, chainId);
+    var payoutLimits1 = [];
+    if (stage.payoutMode !== 'none') {
+      if (stage.payoutMode === 'unlimited') payoutLimits1.push({ amount: UINT224_MAX, currency: acct.currency });
+      else payoutLimits1.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n), currency: stage.payoutCurrency || 1 });
+    }
+    var surplusAllowances1 = [];
+    if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
+      if (stage.surplusAllowanceUnlimited) surplusAllowances1.push({ amount: UINT224_MAX, currency: acct.currency });
+      else { var saAmt = safeParseEther(stage.surplusAllowanceAmount); if (saAmt > 0n) surplusAllowances1.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 }); }
+    }
+    if (payoutLimits1.length || surplusAllowances1.length) {
+      rs.fundAccessLimitGroups.push({ terminal: getAddress('JBMultiTerminal', chainId), token: acct.token, payoutLimits: payoutLimits1, surplusAllowances: surplusAllowances1 });
+    }
   }
+  // Reserved-token splits (group 1) — token-agnostic; same in both paths.
   if (custom && reservedTotalPct > 0) {
-    // Each recipient's share of the reserved group = its row % ÷ the total reserved %. fillSplits keeps the
-    // group summing to exactly SPLITS_TOTAL so rounding drift can't exceed it and revert.
     var rrows = stage.reservedRecipients.map(function (x, origIdx) { return { x: x, origIdx: origIdx }; })
       .filter(function (e) { return (Number(e.x.percent) || 0) > 0; });
     var rshares = fillSplits(rrows.map(function (e) { return Math.round((Number(e.x.percent) || 0) / reservedTotalPct * SPLITS_TOTAL); }));
     rs.splitGroups.push({
       groupId: '1',
-      splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx), chainId); }),
-    });
-  }
-
-  // Fund access (payout limits + surplus allowance) — on the ACCOUNTING token's terminal (USDC, not native).
-  // An "unlimited" (uint224 max) limit must be denominated in the accounting token's own currency so the
-  // terminal doesn't try to JBPrices-convert MAX from ETH/USD (which would overflow); a finite/limited
-  // amount keeps the user's chosen ETH/USD denomination (JBPrices converts it to the token at payout).
-  var acct = acctTokenFor(state, chainId);
-  rs.fundAccessLimitGroups = [];
-  var payoutLimits = [];
-  if (stage.payoutMode !== 'none') {
-    if (stage.payoutMode === 'unlimited') payoutLimits.push({ amount: UINT224_MAX, currency: acct.currency });
-    else payoutLimits.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n), currency: stage.payoutCurrency || 1 });
-  }
-  var surplusAllowances = [];
-  if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
-    if (stage.surplusAllowanceUnlimited) surplusAllowances.push({ amount: UINT224_MAX, currency: acct.currency });
-    else { var saAmt = safeParseEther(stage.surplusAllowanceAmount); if (saAmt > 0n) surplusAllowances.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 }); }
-  }
-  if (payoutLimits.length || surplusAllowances.length) {
-    rs.fundAccessLimitGroups.push({
-      terminal: getAddress('JBMultiTerminal', chainId), token: acct.token,
-      payoutLimits: payoutLimits, surplusAllowances: surplusAllowances,
+      splits: rrows.map(function (e, k) { return splitState(e.x, rshares[k], reservedBenef(e.x, e.origIdx), chainId, reservedPid(e.x, e.origIdx), lockOk); }),
     });
   }
   return rs;
@@ -3181,7 +3743,11 @@ function fillSplits(rawShares) {
   return rawShares;
 }
 
-function splitState(rec, rawPercent, beneficiaryOverride, chainId) {
+function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOverride, allowLock) {
+  // lockedUntil only encodes when the stage actually allows locks (splitLockAllowed at the call site) — a
+  // stale value from a draft/import or a non-lockable (revnet/Flexible) stage must NOT reach the chain.
+  // `allowLock === undefined` (e.g. a direct unit-test call) keeps the value, so existing behavior holds.
+  var lockTs = (allowLock !== false && rec.lockedUntil) ? Number(rec.lockedUntil) : 0;
   // "Buyback liquidity" reserved split → routes to the shared BannyLPSplitHook (same address on every
   // chain). The hook keys off the distributing project, so projectId/beneficiary are pass-through.
   if (rec.type === 'lphook' && chainId != null) {
@@ -3189,21 +3755,27 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId) {
     if (hookAddr) {
       var b = getAccount && getAccount();
       return { preferAddToBalance: false, percent: rawPercent, projectId: 0,
-        beneficiary: (b && /^0x[0-9a-fA-F]{40}$/.test(b)) ? b : ZERO, lockedUntil: 0, hook: hookAddr };
+        beneficiary: addrOrZero(b), lockedUntil: lockTs, hook: hookAddr };
     }
   }
+  // The address-bearing field is the wallet recipient OR the project / custom-hook token beneficiary.
   var addr = (beneficiaryOverride != null) ? beneficiaryOverride : pickResolved(rec.address, rec); // resolve ENS → 0x
+  // Project and custom-hook splits can target a project id (per-chain override → default).
+  var pid = (rec.type === 'project' || rec.type === 'customhook')
+    ? (projectIdOverride != null ? projectIdOverride : (Number(rec.projectId) || 0)) : 0;
+  // Custom split hook → user-supplied hook contract (carries the projectId + beneficiary above to the hook).
+  var hook = (rec.type === 'customhook' && isAddr(rec.hookAddress)) ? rec.hookAddress : ZERO;
   return {
     preferAddToBalance: false,
     percent: rawPercent,
-    projectId: rec.type === 'project' ? (Number(rec.projectId) || 0) : 0,
-    beneficiary: (addr && /^0x[0-9a-fA-F]{40}$/.test(addr)) ? addr : ZERO,
-    lockedUntil: rec.lockedUntil ? Number(rec.lockedUntil) : 0,
-    hook: ZERO,
+    projectId: pid,
+    beneficiary: addrOrZero(addr),
+    lockedUntil: lockTs,
+    hook: hook,
   };
 }
 
-function build721Config(state, projectUri, chainId) {
+export function build721Config(state, projectUri, chainId) {
   var name = collectionNameOf(state);
   var symbol = collectionSymbolOf(state);
   var col = state.collection || {};
@@ -3219,7 +3791,7 @@ function build721Config(state, projectUri, chainId) {
     var flags = nft.flags || {};
     var freq = nft.reserveOn ? (Number(nft.reserveFrequency) || 0) : 0;
     var rb = freq > 0 ? chainAddr(state, chainId, 'rb:' + e.idx, resolvedStr(nft.reserveBeneficiary)) : '';
-    var reserveBenef = (rb && /^0x[0-9a-fA-F]{40}$/.test(rb)) ? rb : ZERO;
+    var reserveBenef = addrOrZero(rb);
     var votes = nft.votingOn ? (Number(nft.votingUnits) || 0) : 0;
     var discountPercent = nft.discountOn ? Math.min(200, Math.round((parseFloat(nft.discountPct) || 0) / 100 * 200)) : 0;
     var sp = itemSplits(nft, state, chainId, e.idx);
@@ -3257,13 +3829,33 @@ function build721Config(state, projectUri, chainId) {
   };
 }
 
+// Pin each store item's metadata JSON (name + already-pinned media) so its tier resolves to {name, image}.
+// Sets it.metaUri + it.encodedIpfsUri in place. Standalone (mirrors the launch deploy flow) so the queue
+// "start a new shop" path can pin before build721Config without touching the launch sequence.
+export async function pinShopItemsMetadata(state) {
+  if (!(state.nfts && state.nfts.length && hasPinata())) return;
+  for (var n = 0; n < state.nfts.length; n++) {
+    var it = state.nfts[n];
+    if (it.encodedIpfsUri) continue; // already pinned this submit
+    var meta = { name: it.name || ('Item #' + (n + 1)) };
+    if (it.description) meta.description = it.description;
+    if (it.imageUri) { if ((it.mediaType || '').indexOf('image') === 0) meta.image = it.imageUri; else meta.animation_url = it.imageUri; meta.mediaType = it.mediaType; }
+    try { it.metaUri = await pinJson(meta, (it.name || 'item') + '-item'); it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri); } catch (_) {}
+  }
+}
+
 // Terminal configs: the project's accounting terminal (which token[s] it HOLDS, currency =
 // uint32(uint160(token))) plus, optionally, the router terminal (empty contexts — it swaps any incoming
 // token into the accounting token[s], like REVDeployer does).
-function buildTerminalConfigs(chainId, accepts, swapRouter) {
+function buildTerminalConfigs(chainId, state, swapRouter) {
   var terminal = getAddress('JBMultiTerminal', chainId);
   if (!terminal) return [];
+  var accepts = state.accepts || [];
   var contexts = [];
+  // Custom ERC-20 accounting token (same address on every chain; its own currency id, no feed).
+  if (customAccounting(state) && isAddr(state.customToken.address)) {
+    contexts.push({ token: state.customToken.address, decimals: customAcctDecimals(state), currency: customCurrencyId(state) });
+  }
   if (accepts.indexOf('eth') !== -1) {
     contexts.push({ token: NATIVE_TOKEN, decimals: 18, currency: Number(uint32FromAddress(NATIVE_TOKEN)) });
   }
@@ -3293,6 +3885,8 @@ function buildMetadata(d) {
   if (d.twitter) m.twitter = d.twitter.replace(/^@/, '');
   if (d.discord) m.discord = d.discord;
   if (d.telegram) m.telegram = d.telegram;
+  if (d.instagram) m.instagram = d.instagram;
+  if (d.whatsapp) m.whatsapp = d.whatsapp;
   if (d.payDisclosure) m.payDisclosure = d.payDisclosure;
   if (d.tags && d.tags.length) m.tags = d.tags;
   return m;
@@ -3303,7 +3897,20 @@ function buildMetadata(d) {
 // ---------------------------------------------------------------------------
 
 function chainName(id) { var c = CHAIN_OPTIONS.find(function (x) { return x.id === id; }); return c ? c.name : ('chain ' + id); }
-function shortAddr(a) { return a && a.length > 10 ? (a.slice(0, 6) + '…' + a.slice(-4)) : (a || '—'); }
+// Chain icons (mirror discover.js CHAIN_LOGO_SVG — static brand marks) for the per-chain address rows.
+var CHAIN_ICON_SVG = {
+  eth: '<svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="12" fill="#627EEA"/><path d="M12 4v5.9l5 2.25z" fill="#fff" fill-opacity=".6"/><path d="M12 4L7 12.15l5-2.25z" fill="#fff"/><path d="M12 16v3.99l5-6.92z" fill="#fff" fill-opacity=".6"/><path d="M12 19.99V16l-5-3.07z" fill="#fff"/><path d="M12 15.07l5-2.92-5-2.24z" fill="#fff" fill-opacity=".2"/><path d="M7 12.15l5 2.92v-5.16z" fill="#fff" fill-opacity=".6"/></svg>',
+  op: '<svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="12" fill="#FF0420"/><text x="12" y="15.6" font-size="8.5" font-weight="700" fill="#fff" text-anchor="middle" font-family="Helvetica,Arial,sans-serif">OP</text></svg>',
+  base: '<svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="12" fill="#0052FF"/><path d="M12 6.2A5.8 5.8 0 0 0 12 17.8V6.2z" fill="#fff"/></svg>',
+  arb: '<svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="12" fill="#2D374B"/><path d="M12 6l4.8 11h-2.4L12 11.2 9.6 17H7.2z" fill="#28A0F0"/><path d="M12 6l-1.05 2.45L12 11.2l1.05-2.75z" fill="#fff"/></svg>',
+};
+function chainIcon(id, titleName) {
+  var fam = (id === 1 || id === 11155111) ? 'eth' : (id === 10 || id === 11155420) ? 'op' : (id === 8453 || id === 84532) ? 'base' : (id === 42161 || id === 421614) ? 'arb' : null;
+  var span = el('span', 'chain-logo'); if (titleName) span.title = titleName;
+  if (fam) span.innerHTML = CHAIN_ICON_SVG[fam]; else span.textContent = '◦';
+  return span;
+}
+function shortAddr(a) { return a && a.length > 10 ? truncAddr(a) : (a || '—'); }
 function secondsLabel(s) {
   var p = DURATION_PRESETS.find(function (x) { return x.seconds === s; });
   if (p) return p.label;
@@ -3353,7 +3960,7 @@ function pickResolved(name, rec) {
 // (populated when the field resolved in the UI); unresolved → '' so it encodes as ZERO rather than garbage.
 function resolvedStr(str) {
   str = (str || '').trim();
-  if (/^0x[0-9a-fA-F]{40}$/.test(str)) return str;
+  if (isAddr(str)) return str;
   if (isEnsName(str)) { var c = _ensCache[str.toLowerCase()]; return c || ''; }
   return str;
 }
@@ -3366,7 +3973,7 @@ function attachEns(input, store) {
     var v = (input.value || '').trim();
     if (!isEnsName(v)) {
       store(v, null);
-      if (/^0x[0-9a-fA-F]{40}$/.test(v)) {
+      if (isAddr(v)) {
         // Valid address → reverse-resolve and show its ENS name underneath (only if one exists).
         hint.style.display = ''; hint.className = 'create-resolve-hint'; hint.textContent = 'Looking up ENS…';
         var myR = ++token;
@@ -3419,3 +4026,13 @@ function tsToLocal(ts) {
 function localTimezoneLabel() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time'; } catch (e) { return 'local time'; }
 }
+
+// ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
+export const __test = {
+  initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
+  assembleRuleset, splitState, fillSplits, build721Config, customCurrencyId, customAcctDecimals,
+  customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
+  createPayoutKinds, safeParseEther, priceUnits, uint256FromAddress, deploySalt,
+  splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
+  surplusTokenLabel, itemCashOutOn, anyTokenCashOut,
+};

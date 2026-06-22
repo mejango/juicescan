@@ -5,7 +5,7 @@ import { getAccount, getWalletClient, createPublicClientForChain, connect, disco
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
-import { decodeFunctionData } from 'viem';
+import { decodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
@@ -101,6 +101,39 @@ export function truncAddr(addr) {
   return addr.slice(0, 6) + '...' + addr.slice(-4);
 }
 
+// Pretty-print a tx payload for the confirm/decode views: BigInt → decimal string, then unquote
+// JSON keys ({ "to": … } → { to: … }) so it reads like a config rather than wire JSON.
+export function formatPayloadJson(obj) {
+  return JSON.stringify(obj, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
+    .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
+}
+
+// The user-facing message from a thrown error: viem's concise `shortMessage` if present, else `.message`,
+// else the caller's fallback. One place so every catch handler reads errors the same way.
+export function errMessage(e, fallback) {
+  return (e && (e.shortMessage || e.message)) || fallback;
+}
+
+// One address-format check for the whole app (replaces ~39 inline `/^0x[0-9a-fA-F]{40}$/` regexes).
+// strict:false = format only (any case), matching the old regex; the `typeof` guard matches `.test()`'s
+// string coercion so isAddr(undefined) === false. addrOrZero coerces a blank/invalid address to 0x0.
+export function isAddr(s) {
+  return typeof s === 'string' && isAddress(s, { strict: false });
+}
+export function addrOrZero(s) {
+  return (s && isAddr(s)) ? s : ZERO_ADDRESS;
+}
+
+// A status-line setter bound to an element: `set(msg, kind)` writes `<baseClass> <kind>` + text.
+// Replaces the ~7 copy-pasted `function setStatus(msg, kind){ status.className=…; status.textContent=… }`.
+export function makeStatusSetter(elem, baseClass) {
+  baseClass = baseClass || 'modal-status';
+  return function (msg, kind) {
+    elem.className = baseClass + (kind ? ' ' + kind : '');
+    elem.textContent = msg;
+  };
+}
+
 // --- URL hash helpers ---
 
 export function parseHashDefaults(prefix) {
@@ -173,29 +206,6 @@ export function discoverChains(projectId, callback) {
 }
 
 // --- Shared UI builders ---
-
-export function createProjectInput(state, onUpdate) {
-  var section = el('div', 'component-section');
-  var label = el('label', 'input-label');
-  label.innerHTML = 'project ID <span class="type-hint">uint256</span>';
-  section.appendChild(label);
-  var input = el('input', 'field numeric-field');
-  input.type = 'text';
-  input.placeholder = '1';
-  input.value = state.projectId;
-  input.addEventListener('input', function() {
-    state.projectId = input.value.trim();
-    onUpdate();
-  });
-  section.appendChild(input);
-
-  if (state.phase === 'discovering') {
-    var disc = el('div', 'component-status component-discovering');
-    disc.textContent = 'Searching chains...';
-    section.appendChild(disc);
-  }
-  return section;
-}
 
 // Combined project ID + chain selector. The chain summary sits ABOVE the
 // project ID input as a compact "on <chain>" link — click it to reveal the
@@ -305,114 +315,6 @@ export function createProjectAndChainInput(state, onProjectUpdate, onChainChange
   });
   section.appendChild(input);
 
-  return section;
-}
-
-export function createChainSelector(state, onChainChange) {
-  var chainSection = el('div', 'component-section');
-  var chains = getManifestChains();
-
-  var chainHeader = el('div', 'chain-header-row');
-  var chainLabel = el('label', 'input-label');
-  chainLabel.textContent = 'chain';
-  chainHeader.appendChild(chainLabel);
-
-  var netSelect = el('select', 'network-dropdown');
-  var mainOpt = document.createElement('option');
-  mainOpt.value = 'mainnet';
-  mainOpt.textContent = 'mainnet';
-  if (state.network === 'mainnet') mainOpt.selected = true;
-  netSelect.appendChild(mainOpt);
-  var testOpt = document.createElement('option');
-  testOpt.value = 'testnet';
-  testOpt.textContent = 'testnet';
-  if (state.network === 'testnet') testOpt.selected = true;
-  netSelect.appendChild(testOpt);
-  netSelect.addEventListener('change', function() {
-    state.network = netSelect.value;
-    onChainChange(null); // null means "pick first for network"
-  });
-  chainHeader.appendChild(netSelect);
-  chainSection.appendChild(chainHeader);
-
-  var pillsRow = el('div', 'chain-pills-row');
-  var isTestnet = state.network === 'testnet';
-  for (var i = 0; i < state.liveChains.length; i++) {
-    (function(cid) {
-      var ch = chains[String(cid)];
-      if (!ch) return;
-      if (isTestnet !== !!ch.testnet) return;
-      var pill = el('button', 'chain-pill' + (ch.testnet ? ' testnet' : '') + (state.selectedChain === cid ? ' selected' : ''));
-      pill.textContent = ch.name;
-      pill.addEventListener('click', function() {
-        onChainChange(cid);
-      });
-      pillsRow.appendChild(pill);
-    })(state.liveChains[i]);
-  }
-  chainSection.appendChild(pillsRow);
-  return chainSection;
-}
-
-export function createTokenSelector(state, onChange) {
-  var amtSection = el('div', 'component-section');
-  var amtLabel = el('label', 'input-label');
-  amtLabel.textContent = 'amount';
-  amtSection.appendChild(amtLabel);
-
-  var amtWrapper = el('div', 'amount-with-token');
-  var amtInput = el('input', 'field numeric-field amount-input');
-  amtInput.type = 'text';
-  amtInput.placeholder = '0.1';
-  amtInput.value = state.amount;
-  amtInput.addEventListener('input', function() {
-    state.amount = amtInput.value.trim();
-    onChange();
-  });
-  amtWrapper.appendChild(amtInput);
-
-  if (state.tokens.length > 0) {
-    var tokenSelect = el('select', 'token-dropdown');
-    for (var t = 0; t < state.tokens.length; t++) {
-      var opt = document.createElement('option');
-      opt.value = state.tokens[t].address;
-      opt.textContent = state.tokens[t].symbol;
-      if (state.selectedToken && state.selectedToken.address.toLowerCase() === state.tokens[t].address.toLowerCase()) {
-        opt.selected = true;
-      }
-      tokenSelect.appendChild(opt);
-    }
-    tokenSelect.addEventListener('change', function() {
-      var addr = tokenSelect.value;
-      for (var ti = 0; ti < state.tokens.length; ti++) {
-        if (state.tokens[ti].address === addr) {
-          state.selectedToken = state.tokens[ti];
-          state.decimals = state.tokens[ti].decimals || 18;
-          onChange();
-          break;
-        }
-      }
-    });
-    amtWrapper.appendChild(tokenSelect);
-  }
-  amtSection.appendChild(amtWrapper);
-  return amtSection;
-}
-
-export function createAmountInput(state, onAmountChange, label) {
-  var section = el('div', 'component-section');
-  var lbl = el('label', 'input-label');
-  lbl.textContent = label || 'amount';
-  section.appendChild(lbl);
-  var input = el('input', 'field numeric-field');
-  input.type = 'text';
-  input.placeholder = '0';
-  input.value = state.amount || '';
-  input.addEventListener('input', function() {
-    state.amount = input.value.trim();
-    onAmountChange();
-  });
-  section.appendChild(input);
   return section;
 }
 
@@ -569,7 +471,7 @@ function contractRepoFor(name) {
   if (name === 'JBOmnichainDeployer') return name + ' (nana-omnichain-deployers-v6): https://github.com/Bananapus/nana-omnichain-deployers-v6';
   if (name === 'JBRouterTerminalRegistry') return name + ' (nana-router-terminal-v6): https://github.com/Bananapus/nana-router-terminal-v6';
   if (/^REV/.test(name)) return name + ' (revnet-core-v6): https://github.com/rev-net/revnet-core-v6';
-  if (/^JB/.test(name)) return name + ' (nana-core-v6): https://github.com/Bananapus/nana-core-v6';
+  if (/^JB/.test(name)) return name + ' (Juicebox V6): https://github.com/Bananapus/version-6';
   return null;
 }
 function contractSourceRefs(payload) {
@@ -645,15 +547,15 @@ function auditLinksFromPayload(payload) {
 
 // Append a subtle "[copy prompt to verify with your LLM]" link that copies buildTxAuditPrompt(payload).
 export function appendAuditPromptLink(container, payload) {
-  var DEFAULT = 'Copy tx audit prompt';
+  var DEFAULT = '[Copy tx audit prompt]';
   var wrap = el('div', 'tx-audit-prompt');
   var link = el('a', 'tx-audit-link'); link.href = '#'; link.textContent = DEFAULT;
   link.addEventListener('click', function (e) {
     e.preventDefault();
     var text = buildTxAuditPrompt(payload);
     var p = (navigator.clipboard && navigator.clipboard.writeText) ? navigator.clipboard.writeText(text) : Promise.reject();
-    p.then(function () { link.textContent = 'Copied — paste into your LLM'; })
-     .catch(function () { link.textContent = 'Copy failed — select the payload above'; });
+    p.then(function () { link.textContent = '[copied — paste into your LLM]'; })
+     .catch(function () { link.textContent = '[copy failed — select the payload above]'; });
     setTimeout(function () { link.textContent = DEFAULT; }, 2200);
   });
   wrap.appendChild(link); container.appendChild(wrap);
@@ -720,6 +622,57 @@ export function decodeCallForDisplay(tx) {
   if (tx.function) return shapeDecoded(abi, tx.function, tx.args || []);
   return null;
 }
+// Rich decode that PRESERVES structure (nested tuples/arrays) so the renderer can build a tree, not a JSON
+// blob. Returns { fn, inputs:[abiInput]|null, values:[raw] } (inputs null when no ABI — caller falls back).
+function decodeCallRich(tx) {
+  if (!tx) return null;
+  var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
+  var abi = null; try { if (name) abi = getABI(name); } catch (_) {}
+  if (tx.calldata && tx.calldata !== '0x' && abi) {
+    try {
+      var dec = decodeFunctionData({ abi: abi, data: tx.calldata });
+      var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];
+      return { fn: dec.functionName, inputs: (frag && frag.inputs) || [], values: Array.from(dec.args || []) };
+    } catch (_) {}
+  }
+  if (tx.function) {
+    var frag2 = abi && abi.filter(function (e) { return e.type === 'function' && e.name === tx.function; })[0];
+    if (frag2) return { fn: tx.function, inputs: frag2.inputs || [], values: tx.args || [] };
+    return { fn: tx.function, inputs: null, shaped: shapeDecoded(abi, tx.function, tx.args || []).args };
+  }
+  return null;
+}
+
+// One decoded arg as a DOM row. Recurses into tuples / tuple[] so each field sits on its own indented line
+// (the "pretty" tree view) instead of a single inline JSON blob.
+function renderArgNode(input, value, depth) {
+  var type = input.type || '';
+  var baseType = type.replace(/\[\]$/, '');
+  var isArray = /\[\]$/.test(type);
+  var label = (input.name || '') + (type ? ' (' + type + ')' : '');
+  if (input.components && baseType === 'tuple') {
+    var wrap = el('div', 'tx-decoded-arg'); wrap.style.marginLeft = (depth * 14) + 'px';
+    var head = el('span', 'tx-decoded-argname'); head.textContent = label + ':'; wrap.appendChild(head);
+    if (isArray) {
+      var arr = value || [];
+      if (!arr.length) { var empty = el('span', 'tx-decoded-argval'); empty.textContent = ' []'; wrap.appendChild(empty); return wrap; }
+      arr.forEach(function (item, idx) {
+        var ih = el('div', 'tx-decoded-arg'); ih.style.marginLeft = ((depth + 1) * 14) + 'px';
+        var ik = el('span', 'tx-decoded-argname'); ik.textContent = '[' + idx + ']:'; ih.appendChild(ik); wrap.appendChild(ih);
+        input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, item ? (item[c.name] !== undefined ? item[c.name] : item[ci]) : undefined, depth + 2)); });
+      });
+    } else {
+      input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, value ? (value[c.name] !== undefined ? value[c.name] : value[ci]) : undefined, depth + 1)); });
+    }
+    return wrap;
+  }
+  var r = el('div', 'tx-decoded-arg'); r.style.marginLeft = (depth * 14) + 'px';
+  var k = el('span', 'tx-decoded-argname'); k.textContent = label + ': ';
+  var val = el('span', 'tx-decoded-argval'); val.textContent = formatArgValue(type, value);
+  r.appendChild(k); r.appendChild(val);
+  return r;
+}
+
 export function renderDecodedTx(tx) {
   var box = el('div', 'tx-decoded');
   if (tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; box.appendChild(ch); }
@@ -727,16 +680,21 @@ export function renderDecodedTx(tx) {
   var nm = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : null;
   who.textContent = (nm ? nm + ' | ' : '') + (tx.address || tx.to || tx.contract || '');
   box.appendChild(who);
-  var dec = decodeCallForDisplay(tx);
-  if (dec) {
+  var rich = decodeCallRich(tx);
+  if (rich) {
     var call = el('div', 'tx-decoded-call');
-    var fn = el('div', 'tx-decoded-fn'); fn.textContent = dec.fn + (dec.args.length ? '' : '()'); call.appendChild(fn);
-    dec.args.forEach(function (a) {
-      var r = el('div', 'tx-decoded-arg');
-      var k = el('span', 'tx-decoded-argname'); k.textContent = a.name + (a.type ? ' (' + a.type + ')' : '') + ': ';
-      var val = el('span', 'tx-decoded-argval'); val.textContent = a.value;
-      r.appendChild(k); r.appendChild(val); call.appendChild(r);
-    });
+    var hasArgs = rich.inputs ? rich.inputs.length : (rich.shaped && rich.shaped.length);
+    var fn = el('div', 'tx-decoded-fn'); fn.textContent = rich.fn + (hasArgs ? '' : '()'); call.appendChild(fn);
+    if (rich.inputs) {
+      rich.inputs.forEach(function (inp, i) { call.appendChild(renderArgNode(inp, rich.values[i], 0)); });
+    } else {
+      (rich.shaped || []).forEach(function (a) {
+        var r = el('div', 'tx-decoded-arg');
+        var k = el('span', 'tx-decoded-argname'); k.textContent = a.name + (a.type ? ' (' + a.type + ')' : '') + ': ';
+        var val = el('span', 'tx-decoded-argval'); val.textContent = a.value;
+        r.appendChild(k); r.appendChild(val); call.appendChild(r);
+      });
+    }
     box.appendChild(call);
   } else {
     var raw = el('div', 'tx-decoded-unknown'); raw.textContent = 'Could not decode this call — review the raw data below before signing.'; box.appendChild(raw);
@@ -749,6 +707,40 @@ export function renderDecodedTx(tx) {
   }
   return box;
 }
+
+// A full single-tx review block: the pretty decoded tree + a "Show raw data" toggle (named-arg JSON, with
+// addresses + start-times annotated). Used by the Safe-propose modal and anywhere a single call is reviewed.
+export function renderTxReview(tx) {
+  var wrap = el('div', 'tx-review');
+  wrap.appendChild(renderDecodedTx(tx));
+  var details = document.createElement('details'); details.className = 'tx-rawdata';
+  var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
+  var pre = el('pre', 'create-payload');
+  pre.textContent = annotateTimestamps(annotateAddresses(txRawJson(tx)));
+  details.appendChild(pre);
+  wrap.appendChild(details);
+  return wrap;
+}
+
+// The raw view: decoded function + NAMED args as indented JSON (tuples expanded), falling back to the raw
+// call fields when the ABI can't decode it.
+function txRawJson(tx) {
+  var obj = null;
+  try {
+    var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
+    var abi = name ? getABI(name) : null;
+    if (tx.calldata && tx.calldata !== '0x' && abi) {
+      var dec = decodeFunctionData({ abi: abi, data: tx.calldata });
+      var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];
+      var inputs = (frag && frag.inputs) || [];
+      var named = {};
+      (dec.args || []).forEach(function (v, i) { named[(inputs[i] && inputs[i].name) || ('arg' + i)] = v; });
+      obj = { contract: name, address: tx.address || tx.to, chain: tx.chain, function: dec.functionName, args: named, calldata: tx.calldata };
+    }
+  } catch (_) {}
+  if (!obj) obj = { contract: tx.contract, address: tx.address || tx.to, chain: tx.chain, function: tx.function, args: tx.args, calldata: tx.calldata, value: tx.value };
+  return formatPayloadJson(obj);
+}
 function renderDecodedSummary(payload) {
   var list = Array.isArray(payload.transactions) ? payload.transactions : (Array.isArray(payload.chains) ? payload.chains : null);
   var wrap = el('div', 'tx-decoded-list');
@@ -757,6 +749,29 @@ function renderDecodedSummary(payload) {
   // Single-tx payload (executeTransaction): function + args, or calldata.
   if (payload.function || payload.calldata || payload.address) { wrap.appendChild(renderDecodedTx(payload)); return wrap; }
   return null;
+}
+
+// Shared confirm-dialog BODY (safety note, optional description, decoded summary first, exact raw payload
+// behind a "Show raw data" toggle, audit-prompt link). Both confirmTransactionModal and discover's
+// openTxConfirm append this into their own modal chrome, so every confirm dialog reads identically.
+export function renderConfirmBody(content, payload, opts) {
+  opts = opts || {};
+  var note = el('div', 'tx-confirm-note');
+  note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
+  content.appendChild(note);
+  if (opts.description) { var desc = el('div', 'tx-confirm-desc'); desc.textContent = opts.description; content.appendChild(desc); }
+  var decoded = renderDecodedSummary(payload);
+  if (decoded) content.appendChild(decoded);
+  var pre = el('pre', 'create-payload');
+  pre.textContent = annotateTimestamps(annotateAddresses(formatPayloadJson(payload)));
+  if (decoded) {
+    var details = document.createElement('details'); details.className = 'tx-rawdata';
+    var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
+    details.appendChild(pre); content.appendChild(details);
+  } else {
+    content.appendChild(pre);
+  }
+  appendAuditPromptLink(content, payload);
 }
 
 export function confirmTransactionModal(payload, opts) {
@@ -769,30 +784,7 @@ export function confirmTransactionModal(payload, opts) {
     var x = document.createElement('button'); x.className = 'modal-close'; x.textContent = '✕'; head.appendChild(x);
     dialog.appendChild(head);
     var content = el('div', 'pay-confirm');
-    var note = el('div', 'tx-confirm-note');
-    note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
-    content.appendChild(note);
-    // Optional plain-English explanation of WHAT this step does / WHY it exists (e.g. the bridge's
-    // second "send" step). Sits between the safety banner and the decoded payload.
-    if (opts.description) {
-      var desc = el('div', 'tx-confirm-desc'); desc.textContent = opts.description; content.appendChild(desc);
-    }
-    // Legible decode first (function + named args), so users don't parse calldata themselves…
-    var decoded = renderDecodedSummary(payload);
-    if (decoded) content.appendChild(decoded);
-    // …with the exact raw payload still one click away.
-    var pre = el('pre', 'create-payload');
-    pre.textContent = annotateTimestamps(annotateAddresses(JSON.stringify(payload, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
-      .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:')));
-    if (decoded) {
-      var details = document.createElement('details'); details.className = 'tx-rawdata';
-      var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
-      details.appendChild(pre);
-      content.appendChild(details);
-    } else {
-      content.appendChild(pre);
-    }
-    appendAuditPromptLink(content, payload);
+    renderConfirmBody(content, payload, opts); // safety note + decoded summary + raw-in-details + audit link
     var foot = el('div', 'create-modal-foot');
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
     var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
@@ -1024,11 +1016,89 @@ export function lookupDecimals(chainId, tokenAddr, callback) {
 
 // --- Component wrapper factory ---
 
+// Each component → the code file + contract function + a plain-English account of what it does and the
+// gotchas that make it correct and safe, so the "copy prompt" link tells an LLM exactly what to build.
+// EXPORTED so discover.js's project-page cards/modals reuse the same descriptions.
+export var COMPONENT_SPECS = {
+  pay: { file: 'pay-component.js (buildPayArgs)', fn: 'JBMultiTerminal.pay(uint256 projectId, address token, uint256 amount, address beneficiary, uint256 minReturnedTokens, string memo, bytes metadata) payable returns (uint256 beneficiaryTokenCount)', desc: "Pays a Juicebox project through its terminal (the explorer resolves the best of JBRouterTerminalRegistry vs the direct JBMultiTerminal by comparing previewed token output) and mints project tokens to the beneficiary at the ruleset weight, excluding the reserved % that goes to splits. It calls pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) in exactly that tuple order; amount is in the payment token's own decimals, while minReturnedTokens and the returned beneficiaryTokenCount are 18-decimal project-token units measured as the beneficiary's balance delta (so reserved tokens are excluded from the floor check). For native ETH, pass the NATIVE_TOKEN sentinel as token and set msg.value=amount — the contract ignores the amount arg and uses msg.value; for ERC-20s the payer must first approve the resolved terminal/router address (not always JBMultiTerminal) for amount. minReturnedTokens is the only sandwich protection and the builder hardcodes it to 99% of the previewed output (1% slippage), falling back to 0 (no protection) whenever no priced preview exists, which is dangerous because a buyback/data hook can reroute the payment through a Uniswap swap — a faithful, safe rebuild should require a real floor rather than shipping 0. pay is permissionless (anyone can pay any project), the component sends memo as-is and empty 0x metadata (no hookdata), and any currency conversion (base currency vs paid token) is applied inside the ruleset/data hook, not in the pay args." },
+  cashout: { file: 'cashout-component.js (buildCashOutArgs)', fn: 'JBMultiTerminal.cashOutTokensOf(address holder, uint256 projectId, uint256 cashOutCount, address tokenToReclaim, uint256 minTokensReclaimed, address payable beneficiary, bytes metadata) returns (uint256 reclaimAmount)', desc: "Burns a holder's project tokens to reclaim a pro-rata share of the project's terminal surplus (terminal balance minus the unmet payout limit) along the ruleset's bonding curve. It calls cashOutTokensOf with args in this exact order: holder (address), projectId (uint256), cashOutCount (uint256, the project tokens to burn as 18-decimal fixed point), tokenToReclaim (address of the terminal token), minTokensReclaimed (uint256 in the TERMINAL token's accounting-context decimals — e.g. 6 for USDC, not 18), beneficiary (address that receives the reclaimed terminal tokens), and metadata (the component hardcodes '0x'). The reclaim is computed from cashOutTaxRate and cashOutCount/totalSupply, then a single 2.5% protocol fee (STANDARD_FEE/MAX_FEE = 25/1000) is subtracted only when cashOutTaxRate != 0 and the beneficiary is not a feeless address (there is no separate revnet fee here); for zero-tax cash-outs the fee applies only up to feeFreeSurplus. To set the slippage floor, read previewCashOutFrom (which runs the data hook and returns the reclaim BEFORE the protocol fee), take 95% of its reclaimAmount, and pass that as minTokensReclaimed — the contract reverts via _checkMin if the realized reclaim is below it; on preview failure (e.g. an active revnet 7-day cash-out delay) fall back to 0n so the tx stays submittable with no floor. Access is gated by _requirePermissionFrom(holder, CASH_OUT_TOKENS). If the ruleset's data hook supplies cash-out hookSpecifications (e.g. a 721 redemption hook), those are fulfilled in the same call and are also fee-eligible, so a faithful rebuild must account for hook-driven reclaim paths, not just the plain token-for-surplus path." },
+  payouts: { file: 'payouts-component.js (buildSendPayoutsArgs)', fn: 'JBMultiTerminal.sendPayoutsOf(uint256 projectId, address token, uint256 amount, uint256 currency, uint256 minTokensPaidOut) returns (uint256 amountPaidOut)', desc: "Distributes a project's terminal balance to its current ruleset's payout splits, with any leftover (splits under 100%) going to the project owner and any wildcard/empty split paying msg.sender; calling is permissionless unless the ruleset sets ownerMustSendPayouts, which then requires the SEND_PAYOUTS permission. Pass exactly [projectId, token, amount, currency, minTokensPaidOut] — all five must be uint256/address or the selector breaks (declaring currency as uint32 reverts every tx). amount and minTokensPaidOut are fixed-point in the terminal token's accounting-context decimals (18 for native/ETH, 6 for USDC), and currency is a JBCurrencyIds id (ETH=1 / USD=2) that must match one of the ruleset's payout-limit currencies or the call pays nothing (returns 0, no revert). amount auto-caps to the remaining payout limit rather than reverting when over, but still reverts if the capped amount exceeds the terminal balance; a fully-used limit or a cross-currency conversion that rounds to zero is a silent no-op. The component hardcodes minTokensPaidOut=0 (no floor) — for cross-currency limits a safe rebuild should let the user set a non-zero minTokensPaidOut, checked against the gross (pre-fee) amount. A 2.5% protocol fee (25/1000) is taken in the terminal token on payouts leaving the Juicebox ecosystem (feeless addresses exempt; can be held if holdFees is set)." },
+  mint: { file: 'mint-component.js (buildMintArgs)', fn: 'JBController.mintTokensOf(uint256 projectId, uint256 tokenCount, address beneficiary, string memo, bool useReservedPercent) returns (uint256 beneficiaryTokenCount)', desc: "Mints new project tokens directly to a beneficiary with no payment, by calling mintTokensOf(projectId, tokenCount, beneficiary, memo, useReservedPercent) on the project's chain-specific controller (nonpayable). tokenCount is a fixed-point integer with 18 decimals and is the TOTAL minted; it must be non-zero or the call reverts. The useReservedPercent flag (an 'Apply reserved percent' checkbox in the UI) controls whether the ruleset's reservedPercent is applied: when true the beneficiary gets tokenCount minus the reserved share and the reserved portion accrues to the project's pending reserved balance (released later via sendReservedTokensToSplitsOf); when false the beneficiary receives the full tokenCount. Minting is allowed for the project owner, an operator with MINT_TOKENS permission, the project's terminals, or its data hook — but for the owner/operator path used by this component the current ruleset must have allowOwnerMinting=true (otherwise it reverts). There is no slippage floor or msg.value; preserve the exact arg order, and note the beneficiary receives ERC-20 tokens or internal credits depending on whether the project has deployed an ERC-20." },
+  burn: { file: 'burn-component.js (buildBurnArgs)', fn: 'JBController.burnTokensOf(address holder, uint256 projectId, uint256 tokenCount, string memo)', desc: "Burns a holder's project tokens (and/or unclaimed internal credits) via burnTokensOf, permanently removing them from the project's token supply on the selected chain. Args are the tuple [holder (address), projectId (uint256), tokenCount (uint256), memo (string)], nonpayable, no return; tokenCount is an 18-decimal fixed-point amount (the UI parses with parseAmount(amount, 18)). Access is _requirePermissionAllowingOverrideFrom on the holder with BURN_TOKENS, with an override for project terminals: the holder can always burn their own tokens, an operator needs the holder's BURN_TOKENS grant, and terminals are auto-allowed — there is no ERC-20 approval involved (the component burns from the connected wallet, so no grant is needed). Burns consume internal credits before deployed ERC-20, and the call reverts on tokenCount==0 (JBController_ZeroTokensToBurn) or when it exceeds the holder's combined credit+ERC-20 balance. There is no fee, no slippage floor, and no currency id — and unlike cash out, burning returns no surplus/ETH; it simply destroys tokens, raising the cash-out value for remaining holders." },
+  'deploy-erc20': { file: 'deploy-erc20-component.js (buildDeployErc20Args)', fn: 'JBController.deployERC20For(uint256 projectId, string name, string symbol, bytes32 salt) returns (address token)', desc: "Deploys a project's claimable ERC-20 token via deployERC20For(projectId, name, symbol, salt), which delegates to JBTokens; the builder passes [BigInt(projectId), name, symbol, salt]. The caller does not choose decimals or currency — the token is a fixed JBERC20 clone (18 decimals, with ERC20Votes governance and ERC20Permit). This is a one-time action per project: it reverts if the project already has a token (JBTokens_ProjectAlreadyHasToken) and on an empty name or symbol (the component trims both client-side). Access is gated to the project owner or an operator with the DEPLOY_ERC20 permission; nonpayable, no fee. Note this component hardcodes salt = bytes32(0), which takes the NON-deterministic Clones.clone (CREATE) path, so the deployed address is sequence-dependent and will generally DIFFER across chains; cross-chain-identical addresses require a non-zero salt AND the same caller address per chain (the contract re-hashes the salt with the caller and controller addresses). Before deployment, holder balances live as internal credits in JBTokens; deploying does not auto-migrate them — holders must separately claim credits into the new ERC-20." },
+  reserved: { file: 'reserved-component.js (buildSendReservedArgs)', fn: 'JBController.sendReservedTokensToSplitsOf(uint256 projectId)', desc: "Calls sendReservedTokensToSplitsOf(projectId), which mints the project's entire accrued pending reserved-token balance and distributes it to the reserved-token split recipients of the project's currently-active ruleset, sending any leftover (if the splits sum to less than 100%) to the project owner. The only argument is projectId (uint256) — there is no amount, currency id, slippage, or min-floor, because the amount is fixed by the contract as the full pendingReservedTokenBalanceOf[projectId] (18-decimal project-token base units), so do not add an amount input. The call is permissionless (anyone may trigger it) and takes no protocol fee. It reverts with JBController_NoReservedTokens when nothing is pending, so read pendingReservedTokenBalanceOf first and disable execute when it is zero. It flushes the whole balance (resetting pending to 0) — all-or-nothing, not partial — and split recipients may be split hooks (external calls). This does not change the bonding-curve/cash-out denominator since pending reserved tokens already count toward total supply, so it does not dilute cash-out value." },
+  permissions: { file: 'permissions-component.js (buildSetPermissionsArgs)', fn: 'JBPermissions.setPermissionsFor(address account, (address operator, uint64 projectId, uint8[] permissionIds))', desc: "Builds setPermissionsFor(account, (operator, projectId, permissionIds)) to grant or revoke an operator's permissions for one project. The call OVERWRITES the operator's entire packed uint256 bitmap for that (operator, account, projectId) slot, so the permissionIds array must include every id you want to keep — omitted ids are revoked. permissionIds is a uint8[] of ids 0–255 (e.g. 1=ROOT, which implicitly grants all permissions for the scoped project); id 0 is reserved and reverts (JBPermissions_NoZeroPermission), and projectId is a uint64 where 0 is a wildcard granting access across all of the account's projects — use with care. Encoding order matters: the first top-level arg is the `account` whose permissions are set, and operator/projectId/permissionIds are the fields of the second tuple struct in that exact order. Access control: only the account itself (msg.sender == account) may set permissions freely; a ROOT operator can set on the account's behalf but CANNOT grant ROOT and CANNOT target wildcard projectId 0. There is no payment, currency, or slippage; the call is ERC2771-relayable, so the authorizing identity is _msgSender() (the meta-tx signer through a trusted forwarder), not necessarily tx.origin." },
+  launch: { file: 'create-flow.js (buildLaunchArgs) + launch-component.js', fn: 'JBController.launchProjectFor(address owner, string projectUri, JBRulesetConfig[] rulesetConfigurations, JBTerminalConfig[] terminalConfigurations, string memo) payable returns (uint256 projectId)', desc: "Launches a Juicebox project in one transaction via launchProjectFor(owner, projectUri, rulesetConfigurations[], terminalConfigurations[], memo): it mints the project ERC-721 to `owner`, queues the initial rulesets, configures terminals + fund-access limits, and registers the project's controller in JBDirectory. This call is PERMISSIONLESS — anyone can launch on behalf of any owner, so a successful launch is not proof of owner consent (the caller pays the fee; the NFT goes to `owner`). The standalone controller path must send msg.value exactly equal to JBProjects.creationFee() or it reverts; there is no slippage or min-floor. Encoding gotchas: payoutLimits/surplusAllowances are (uint224 amount, uint32 currency) where amount is in the token's own decimals and currency is the token address's lower 32 bits (ETH=1/USD=2 in the single-token path), an EMPTY fundAccessLimitGroups means ZERO payouts (use uint224.max for unlimited), split shares are out of 1e9 and a group reverts if it exceeds 1e9, weight is 18-decimal fixed-point uint112 where 0 = no issuance and 1 = inherit the previous decayed weight, and reservedPercent/cashOutTaxRate/weightCutPercent must be 0–100% (cashOutTaxRate 100% disables cash-outs). Path selection is mutually exclusive: single-chain-no-store uses JBController directly, single-chain-with-store uses JB721TiersHookProjectDeployer, and any multichain uses JBOmnichainDeployer with a sucker config (distinct ABI/arg tuple each), where omnichain launches need the same CREATE2 address on every chain (salt derived from the default owner) and a shared deploy-time start." },
+  'queue-ruleset': { file: 'queue-ruleset-component.js (buildQueueRulesetsArgs)', fn: 'JBController.queueRulesetsOf(uint256 projectId, JBRulesetConfig[] rulesetConfigurations, string memo) returns (uint256 rulesetId)', desc: "Queues one or more new rulesets for an existing project via queueRulesetsOf(projectId, JBRulesetConfig[], memo); queued rulesets take effect only after the current ruleset's duration ends (subject to its approval hook, which can delay or reject the change), and multiple configs queue sequentially. Caller must be the project owner or hold the QUEUE_RULESETS permission, the array must be non-empty, and a ruleset with a duration auto-cycles so do not queue duplicates. Encoding units differ per field and must be exact: weight is 18-decimal fixed point (use parseEther); weightCutPercent is out of 1_000_000_000 (percent*10_000_000); metadata.reservedPercent and metadata.cashOutTaxRate are out of 10_000 (percent*100, each reverts if over 10_000); split percents are out of SPLITS_TOTAL_PERCENT = 1_000_000_000; baseCurrency is a currency id (1 = native/ETH), not an address. The JBSplit tuple order is load-bearing — {percent uint32, projectId uint64, beneficiary address, preferAddToBalance bool, lockedUntil uint48, hook address} — as are the ruleset-metadata struct order and the payoutLimits {amount uint224, currency uint32} tuples; any reorder changes the selector and reverts. There is no protocol fee and no slippage/min-out on this call." },
+  loan: { file: 'discover.js (buildBorrowArgs / buildRepayArgs, doBorrow)', fn: 'REVLoans.borrowFrom(uint256 revnetId, address token, uint256 minBorrowAmount, uint256 collateralCount, address payable beneficiary, uint256 prepaidFeePercent, address holder) / REVLoans.repayLoan(uint256 loanId, uint256 maxRepayBorrowAmount, uint256 collateralCountToReturn, address payable beneficiary, JBSingleAllowance allowance) payable', desc: "Borrows ETH against project tokens as collateral via REVLoans (revnets only), or repays an open loan to reclaim that collateral; in this UI it disburses only in the revnet's native/accounting token and only repays native loans. borrowFrom takes (revnetId, token, minBorrowAmount, collateralCount, beneficiary, prepaidFeePercent, holder) in that exact order — collateralCount is the project token amount (18 dec) to post, and the UI sets minBorrowAmount to 0 (no slippage floor, because its borrowable preview is base-currency/18-dec and cannot be safely converted to the source token's decimals/currency; a safer rebuild reads borrowableAmountFrom in the source token's own units and floors that). Opening a loan BURNS the collateral through the controller, so it is a two-step first-time flow: REVLoans must first be granted BURN_TOKENS on the holder (a one-off setPermissionsFor tx) or borrowFrom reverts; borrowFrom itself requires OPEN_LOAN and repayLoan requires REPAY_LOAN — in both, a permissioned operator controls beneficiary and can redirect funds/collateral, so grant only to trusted operators. prepaidFeePercent (out of MAX_FEE=1000, bounded 25..500 i.e. 2.5%..50%) buys a fee-free DURATION = prepaidFeePercent/500 x 10 years rather than a fixed rate, plus a fixed 1% goes to $REV; after the prepaid window a source fee accrues per second. repayLoan is payable: the UI quotes principal + determineSourceFeeAmount and pays msg.value = principal + fee + a 2% drift buffer, sets maxRepayBorrowAmount to the same (reverts REVLoans_OverMaxRepayBorrowAmount if the computed repay exceeds it), returns full collateral (collateralCountToReturn <= loan.collateral), and native overpayment is auto-refunded. Collateral is re-minted only on repayment — an unrepaid loan past the 10-year liquidation duration loses its collateral permanently." },
+  move: { file: 'discover.js (buildSuckerPrepareArgs / buildSuckerToRemoteArgs)', fn: 'JBSucker.prepare(uint256 projectTokenCount, bytes32 beneficiary, uint256 minTokensReclaimed, address token, bytes32 metadata) / JBSucker.toRemote(address token) payable', desc: "Bridges a project's tokens to the same project on another chain via its JBSucker, in two on-chain steps: prepare() on the source chain, then toRemote() to ship the bridge message. prepare(projectTokenCount, beneficiary, minTokensReclaimed, token, metadata) pulls the caller's project ERC-20 (safeTransferFrom, so the sucker must be approved and the holder must have claimed credits into the ERC-20, or it reverts), cashes it out into the project's backing/terminal token, and inserts a leaf into the outbox merkle tree; beneficiary is the destination address left-padded to bytes32 (zero reverts), and `token` is the TERMINAL/accounting token (NATIVE_TOKEN for an ETH project, USDC for a USDC project) that keys the outbox and must be mapped on both chains or it reverts. The component hardcodes minTokensReclaimed=0 (no slippage floor on the local cash-out, since the remote chain re-mints the identical projectTokenCount), and the contract reverts if projectTokenCount==0 or if either the projectTokenCount or the cashed-out terminal amount exceeds uint128 (SVM compatibility). Step two, toRemote(token), is permissionless and batched — it ships the outbox root for that token, delivering every queued move (yours and others') in one message — and requires msg.value >= the registry's toRemoteFee plus the bridge transport fee; the component discovers the exact value by simulating at increasing amounts (findToRemoteValue), and toRemote reverts on NothingToSend, an enabled emergency hatch, or a deprecated/sending-disabled sucker. Delivery is asynchronous; the beneficiary must separately claim the minted tokens on the destination chain." },
+  'items-for-sale': { file: 'discover.js (buildAddItemsModal / tiersFor)', fn: 'JB721TiersHook.adjustTiers(JB721TierConfig[] tiersToAdd, uint256[] tierIdsToRemove)', desc: "Adds NFT tiers (items) to a project's 721 tiers hook so payers receive an NFT (ADJUST_721_TIERS, operator-only). Gotchas: the call targets the project's 721 HOOK address (resolve per chain), NOT JBController; tiers are SORTED BY CATEGORY not price (the store reverts InvalidCategorySortOrder if out of order); supply caps at 1e9-1, which also doubles as the 'unlimited' sentinel; per-tier reserve splits use 1e9-scaled percents and a per-chain projectId; tierIdsToRemove is the second arg." },
+  'transfer-ownership': { file: 'discover.js (openTransferAuthorityModal, non-rev branch)', fn: 'JBProjects.transferFrom(address from, address to, uint256 projectId)', desc: "Transfers project ownership by moving the JBProjects ERC-721 NFT to a new owner across every chain. Gotchas: ownership IS the NFT — a plain ERC-721 transferFrom(owner, to, projectId), not a JB-specific call; it hands the new owner ALL owner-only powers and does not move funds or change rulesets; must run on each chain (the NFT exists per chain); a Safe owner can't use Relayr — propose to the Safe queue instead." },
+  'transfer-operator': { file: 'discover.js (openTransferAuthorityModal, rev branch)', fn: 'REVOwner.setOperatorOf(uint256 revnetId, address operator)', desc: "Hands the revnet operator role to a new address on every chain via REVOwner (revnet-only). Gotchas: the operator is NOT the NFT owner — setOperatorOf rebinds the operator the REVOwner permission account trusts; the zero address relinquishes operator powers permanently; does not move funds or change rulesets; run on each chain (Safe → Safe queue, EOA → Relayr)." },
+  'edit-project': { file: 'discover.js (openProjectEditModal / submitProjectEdit)', fn: 'JBController.setUriOf(uint256 projectId, string uri)', desc: "Updates a project's off-chain metadata (name, tagline, description, logo, socials, store categories) by pinning new JSON to IPFS and pushing the new URI on every chain (SET_PROJECT_URI, operator-only). Gotchas: only the URI is on-chain — the content lives on IPFS, so it needs a Pinata JWT to pin; the same URI is set per chain via an ERC-2771 meta-tx through Relayr (or the Safe queue); a custom-project token symbol is stashed in this metadata, not an ERC-20." },
+  'token-metadata': { file: 'discover.js (openEditTokenModal / submitTokenEdit, deployed branch)', fn: 'JBController.setTokenMetadataOf(uint256 projectId, string name, string symbol)', desc: "Renames an ALREADY-DEPLOYED project ERC-20 (name + symbol) on every chain. Gotchas: only the name/symbol change — the CREATE2 clone address is identical on every chain and never moves; if no ERC-20 exists yet this is deployERC20For instead (see deploy-erc20); operator-only, run per chain." },
+  'accounting-token': { file: 'discover.js (openAddAccountingTokenModal)', fn: 'JBMultiTerminal.addAccountingContextsFor(uint256 projectId, JBAccountingContext[] accountingContexts)', desc: "Registers a token the project's terminal will accept for payments (native ETH, USDC, custom). Gotchas: the JBAccountingContext.currency is uint32(uint160(token)) — token-keyed, NOT the standard currency id (ETH=1/USD=2); decimals must match the token (USDC=6); USDC is a DIFFERENT address per chain (native is the same 0x…EEEe everywhere), so per-chain token resolution matters; adding a context is effectively irreversible (danger-gated); needs a JBPrices feed if the project's base currency differs." },
+  'split-groups': { file: 'discover.js (openEditSplitsModal / submitSplitsEdit)', fn: 'JBController.setSplitGroupsOf(uint256 projectId, uint256 rulesetId, JBSplitGroup[] splitGroups)', desc: "Replaces a ruleset's split groups (reserved-token recipients or payout recipients) for the current cycle, per chain. Gotchas: the call REPLACES the whole group — omitted recipients are dropped; split percents are 1e9-scaled (SPLITS_TOTAL_PERCENT = 1,000,000,000); the reserved group id differs from a payout group id (keyed by currency/token); the JBSplit tuple field order is load-bearing (wrong order changes the selector and reverts); a split can target another project, an address, or a split hook; locked splits can't be removed before lockedUntil." },
+  'add-liquidity': { file: 'discover.js (buildAddLiquidityModal / lpMint)', fn: 'Uniswap V4 PositionManager.modifyLiquidities(bytes unlockData, uint256 deadline)', desc: "Seeds the project's Uniswap V4 buyback pool so payers can route through the AMM, minting a concentrated-liquidity position over a price range. Gotchas: this is a Uniswap V4 PositionManager call, NOT a Juicebox terminal — the actions are abi-encoded (MINT_POSITION, CLOSE, CLOSE, +SWEEP for native); the pair token is native ETH or the project's accounting token (USDC 6-dec) — match its decimals; the range defaults span the cash-out floor to the issuance ceiling (1e18/weight); the Permit2 → PositionManager allowance is folded into the multicall to save a tx; only chains with a V4 position+pool manager support it." },
+};
+var LINK_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+
+// An LLM prompt: the code file + contract + an English account of the component's extent and gotchas, plus
+// a directive to build it completely and safely. `fileHint` overrides the source file (discover.js modals
+// reuse a component's spec but live in a different file).
+export function componentReproPrompt(title, prefix, fileHint) {
+  var s = COMPONENT_SPECS[prefix];
+  var file = fileHint || (s && s.file);
+  return 'Reproduce the Juicebox V6 "' + (title || prefix) + '" component from this open-source explorer.\n'
+    + (s && s.fn ? 'It builds a ' + s.fn + ' transaction.\n' : '')
+    + (s && s.desc ? '\nWhat it does, and the gotchas that make it correct + safe:\n' + s.desc + '\n' : '')
+    + '\nReference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicebox-v6-website'
+    + (file ? ' — read src/' + file + '. Transactions are built in-browser; the README maps every action to its contract function.' : '.') + '\n'
+    + 'V6 contracts (Juicebox version 6): https://github.com/Bananapus/version-6.\n'
+    + 'Build it COMPLETELY — handle the loading, empty, error, multi-chain, and permission-preflight states, not just the happy path. Before trusting this summary, READ the builder function named above and its round-trip/encoding test in the reference repo: the builder is the source of truth for arg order, decimals, currency ids, and any hardcoded value. Cross-check every arg against the on-chain ABI in the V6 contracts repo and match the tuple order, integer widths, and 4-byte selector EXACTLY (a uint32-vs-uint256 swap or a reordered tuple changes the selector and reverts every tx).\n'
+    + 'SAFELY: match token decimals and the currency id per the gotchas (they often differ from 18 / from the standard ETH=1/USD=2 id); validate every address; and treat any multi-step preflight as a labeled step (ERC-20 approval, a one-off setPermissionsFor grant, or claiming credits into the ERC-20 before the action). Note which calls are permissionless vs permission-gated and do not add or drop access control. For slippage: the reference often ships a 0 or fixed-percent floor that falls back to 0 when no priced preview exists — a faithful-but-safer rebuild should EXPOSE a real user-set floor and call out where the reference ships 0 rather than silently copying the unprotected default.\n'
+    + 'If you might miss a gotcha, surface it.\n'
+    + 'Live reference: ' + location.href;
+}
+
+// A "[copy build prompt]" text link that copies whatever buildText() returns (an LLM build prompt). buildText
+// is a function so the prompt captures the CURRENT url at click time. Used by components AND by discover.js's
+// project-page cards/modals/forms.
+export function promptLinkButton(buildText) {
+  var btn = el('button', 'comp-prompt-link');
+  btn.type = 'button';
+  btn.title = 'Copy an LLM prompt to build this';
+  btn.textContent = '[copy build prompt]';
+  btn.addEventListener('click', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var text = buildText();
+    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.textContent = '[copied]'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.textContent = '[copy build prompt]'; }, 1400); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, ok);
+    else { try { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
+  });
+  return btn;
+}
+
+// Component-specific link — names the exact code file + contract function via COMPONENT_SPECS.
+export function componentPromptLink(title, prefix) {
+  return promptLinkButton(function () { return componentReproPrompt(title, prefix); });
+}
+
+// The prompt link wrapped in its footer row. Used by createComponentWrapper AND by discover.js's inline
+// project-page cards (Pay, Cash out, …), which don't go through the wrapper but still want the affordance.
+export function promptFoot(title, prefix) {
+  var foot = el('div', 'comp-prompt-foot');
+  foot.appendChild(componentPromptLink(title, prefix));
+  return foot;
+}
+
 export function createComponentWrapper(title, prefix, state, getEmbedParams, opts) {
   var wrapper = el('div', 'component-wrapper' + ((opts && opts.wide) ? ' component-wrapper-wide' : ''));
 
   var body = el('div', 'component-body');
   wrapper.appendChild(body);
+  // A "copy LLM prompt" link at the bottom of every component — recreate this element with your own LLM.
+  wrapper.appendChild(promptFoot(title, prefix));
 
   // Attach metadata to the DOM element for toolbar access
   wrapper._compTitle = title;
@@ -1046,26 +1116,6 @@ export function createComponentWrapper(title, prefix, state, getEmbedParams, opt
 }
 
 // --- Common state initialization ---
-
-export function createBaseState(prefix) {
-  var defaults = parseHashDefaults(prefix);
-  return {
-    phase: 'idle',
-    projectId: defaults.projectId || '',
-    liveChains: [],
-    selectedChain: defaults.chain ? Number(defaults.chain) : null,
-    tokens: [],
-    selectedToken: null,
-    amount: defaults.amount || '',
-    decimals: 18,
-    beneficiary: defaults.beneficiary ? 'custom' : 'self',
-    customBeneficiary: defaults.beneficiary || '',
-    network: defaults.network || 'mainnet',
-    error: null,
-    txStatus: null,
-    _defaultChain: defaults.chain ? Number(defaults.chain) : null,
-  };
-}
 
 // --- Discovery + chain selection helpers ---
 
@@ -1093,7 +1143,7 @@ export function selectChain(state, chainId) {
 export function getBeneficiaryAddress(state) {
   if (state.beneficiary === 'custom') {
     var addr = state.customBeneficiary;
-    if (!addr || !/^0x[0-9a-fA-F]{40}$/.test(addr)) return null;
+    if (!addr || !isAddr(addr)) return null;
     return addr;
   }
   return getAccount() || null;

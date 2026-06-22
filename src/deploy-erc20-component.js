@@ -9,7 +9,7 @@ import {
   getChainTokens, parseHashDefaults,
 } from './component-base.js';
 
-var deployERC20Abi = [{
+export var deployERC20Abi = [{
   type: 'function', name: 'deployERC20For', stateMutability: 'nonpayable',
   inputs: [
     { name: 'projectId', type: 'uint256' },
@@ -19,6 +19,14 @@ var deployERC20Abi = [{
   ],
   outputs: [{ name: '', type: 'address' }],
 }];
+
+// Pure builder for JBController.deployERC20For. `o`: { chainId, controllerAddr, projectId, name, symbol, salt (bytes32) }.
+export function buildDeployErc20Args(o) {
+  return {
+    chainId: o.chainId, address: o.controllerAddr, abi: deployERC20Abi, functionName: 'deployERC20For',
+    args: [BigInt(o.projectId), o.name, o.symbol, o.salt],
+  };
+}
 
 export function renderDeployERC20Component() {
   var defaults = parseHashDefaults('deploy-erc20');
@@ -49,7 +57,7 @@ export function renderDeployERC20Component() {
     if (state.tokenSymbol) params.symbol = state.tokenSymbol;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Requires project owner or SET_CUSTOM_TOKEN permission.' });
+  }, { permissionNote: 'Requires project owner or DEPLOY_ERC20 permission.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -139,11 +147,7 @@ export function renderDeployERC20Component() {
     var salt = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
     executeTransaction({
-      chainId: state.selectedChain,
-      address: controllerAddr,
-      abi: deployERC20Abi,
-      functionName: 'deployERC20For',
-      args: [BigInt(state.projectId), state.tokenName.trim(), state.tokenSymbol.trim(), salt],
+      ...buildDeployErc20Args({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, name: state.tokenName.trim(), symbol: state.tokenSymbol.trim(), salt: salt }),
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

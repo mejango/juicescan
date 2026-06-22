@@ -9,7 +9,7 @@ import {
   getChainTokens, parseAmount, parseHashDefaults, getBeneficiaryAddress,
 } from './component-base.js';
 
-var mintTokensAbi = [{
+export var mintTokensAbi = [{
   type: 'function', name: 'mintTokensOf', stateMutability: 'nonpayable',
   inputs: [
     { name: 'projectId', type: 'uint256' },
@@ -20,6 +20,15 @@ var mintTokensAbi = [{
   ],
   outputs: [{ name: '', type: 'uint256' }],
 }];
+
+// Pure builder for JBController.mintTokensOf. `o`: { chainId, controllerAddr, projectId, tokenCount (bigint),
+// beneficiary, memo, useReservedPercent (bool) }.
+export function buildMintArgs(o) {
+  return {
+    chainId: o.chainId, address: o.controllerAddr, abi: mintTokensAbi, functionName: 'mintTokensOf',
+    args: [BigInt(o.projectId), o.tokenCount, o.beneficiary, o.memo || '', !!o.useReservedPercent],
+  };
+}
 
 export function renderMintComponent() {
   var defaults = parseHashDefaults('mint');
@@ -170,11 +179,7 @@ export function renderMintComponent() {
     if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
 
     executeTransaction({
-      chainId: state.selectedChain,
-      address: controllerAddr,
-      abi: mintTokensAbi,
-      functionName: 'mintTokensOf',
-      args: [BigInt(state.projectId), tokenCount, beneficiary, state.memo || '', state.useReservedPercent],
+      ...buildMintArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, tokenCount: tokenCount, beneficiary: beneficiary, memo: state.memo || '', useReservedPercent: state.useReservedPercent }),
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

@@ -58,10 +58,6 @@ export function getManifestChains() {
   return manifest.chains;
 }
 
-export function getChainManifest(chainId) {
-  return manifest.chains[String(chainId)] || null;
-}
-
 const NATIVE_NAMES = {};
 
 export function getChainTokens(chainId) {
@@ -75,17 +71,6 @@ export function getChainTokens(chainId) {
     return t.address.toLowerCase() !== native.address.toLowerCase();
   });
   return [native, ...extras];
-}
-
-export function getContractAddress(contractName, chainId) {
-  const contract = manifest.contracts[contractName];
-  if (!contract || !contract.addresses) return null;
-  return contract.addresses[String(chainId || currentChainId)] || null;
-}
-
-export function isContractSingleton(contractName) {
-  const contract = manifest.contracts[contractName];
-  return contract ? contract.singleton : true;
 }
 
 // Reverse map: lowercased address → contractName, across every chain in the manifest.

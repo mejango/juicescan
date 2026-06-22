@@ -11,12 +11,18 @@
     "bundle": "node build/bundle.js",
     "build": "npm run sync-deployments && npm run extract-sources && npm run generate && npm run bundle",
     "dev": "npm run sync-deployments && npm run extract-sources && npm run generate && npm run bundle -- --watch",
-    "publish": "npm run build && node build/publish-ipfs.js"
+    "publish": "npm run build && node build/publish-ipfs.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "node test/ui-smoke.mjs"
   },
   "dependencies": {
     "viem": "^2.21.0"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0"
+    "@vitest/coverage-v8": "^4.1.9",
+    "esbuild": "^0.24.0",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.9"
   }
 }

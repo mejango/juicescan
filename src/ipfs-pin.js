@@ -1,10 +1,10 @@
 // src/ipfs-pin.js
 // IPFS pinning for the project-create flow, via Pinata.
 //
-// A default JWT is baked in at build time from `.env` (injected as `__PINATA_JWT__` by esbuild) so the
-// site can pin without the user supplying one. A user's own JWT in localStorage ('jb-pinata-jwt') still
-// takes precedence. NOTE: the published bundle is public, so the baked-in JWT is publicly extractable —
-// use a scoped, rotatable Pinata key.
+// A SCOPED, PUBLIC Pinata key is baked in at build time (from `PINATA_PUBLIC_JWT` via esbuild's
+// `__PINATA_JWT__` define) so the Create flow pins on users' behalf without per-user setup. It is public/
+// extractable by design — must be scoped to pinFileToIPFS + pinJSONToIPFS and rate-limited. A user's own JWT
+// in localStorage ('jb-pinata-jwt', set via the create-flow inline field) still takes precedence if present.
 //
 // Endpoints (classic Pinata API, scoped-key friendly):
 //   POST https://api.pinata.cloud/pinning/pinFileToIPFS   (multipart, for logo / NFT images)
@@ -18,7 +18,7 @@ var JWT_KEY = 'jb-pinata-jwt';
 // 403 NO_SCOPES_FOUND for these keys). Multipart `file` + `network: public`; response is { data: { cid } }.
 var UPLOAD_URL = 'https://uploads.pinata.cloud/v3/files';
 
-// Build-time default (injected from .env via esbuild `define`). The user's own JWT takes precedence.
+// No baked-in JWT in the public bundle (see header). Defined empty by esbuild; kept guarded for safety.
 var BUILTIN_JWT = (typeof __PINATA_JWT__ === 'string' && __PINATA_JWT__) ? __PINATA_JWT__ : '';
 
 export function getPinataJwt() {
@@ -37,34 +37,6 @@ export function hasPinata() { return !!getPinataJwt(); }
 
 // Settings strip for the DATA tab — mirrors renderBendystrawSettings. Lets the user paste a Pinata
 // JWT used by the Create flow to pin logos/metadata. Stored in this browser only.
-export function renderPinataSettings() {
-  var panel = document.createElement('div');
-  panel.className = 'bendystraw-settings';
-  var note = document.createElement('div');
-  note.className = 'bendystraw-settings-note';
-  note.innerHTML = 'IPFS pinning for the <b>+ Create</b> flow (project logo + metadata). '
-    + 'Paste a <a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Pinata JWT</a> '
-    + 'with pinFileToIPFS + pinJSONToIPFS scopes. Stored only in this browser.';
-  panel.appendChild(note);
-  var row = document.createElement('div');
-  row.className = 'bendystraw-settings-row';
-  var input = document.createElement('input');
-  input.type = 'password';
-  input.className = 'field bendystraw-key-input';
-  input.placeholder = 'pinata JWT (for project creation)';
-  input.value = getPinataJwt();
-  input.autocomplete = 'off';
-  input.spellcheck = false;
-  var t = null;
-  input.addEventListener('input', function () {
-    if (t) clearTimeout(t);
-    t = setTimeout(function () { setPinataJwt(input.value.trim()); }, 250);
-  });
-  row.appendChild(input);
-  panel.appendChild(row);
-  return panel;
-}
-
 // Pin a File/Blob. Returns "ipfs://<cid>". Throws on misconfig or HTTP error (caller shows the message).
 export async function pinFile(file, name) {
   var jwt = getPinataJwt();
