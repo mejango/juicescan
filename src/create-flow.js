@@ -3348,8 +3348,10 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   // Multichain "start immediately" → pin every chain's first ruleset to the one shared deploy-time start
   // (~10 min ahead) so they all begin at the same moment. Single chain starts at its own deploy block (0).
   var immediateStart = multi ? deployStart : 0;
-  // Items can be included/excluded per chain — a chain with no included items uses the non-721 path.
-  var hasNfts = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
+  // Always deploy a 721 shop hook (empty if no items) so any project can sell NFTs later without re-deploying —
+  // matches revnets, which always ship a default empty 721 hook. build721Config still filters items per chain;
+  // _deploy721Hook is unconditional at launch (the tiers.length gate is queue-only, so 0 tiers won't revert).
+  var hasNfts = true; // ponytail: always-on shop
   var terminalConfigs = buildTerminalConfigs(chainId, state, state.swapRouter);
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
