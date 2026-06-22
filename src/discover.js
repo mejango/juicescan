@@ -10710,7 +10710,9 @@ function renderAcrossChainsBody(project) {
     });
     var totAcct = project.acctToken || { decimals: 18, symbol: 'ETH' };
     var totKeys = Object.keys(totByTok);
-    var totBalCell = !totKeys.length ? formatBalance(totBalance, totAcct.decimals, totAcct.symbol)
+    // No chain holds a positive balance (new / drained / fully-paid-out project) → show a real zero, not a
+    // reference to an undeclared var (which threw ReferenceError and blanked the whole table via the catch).
+    var totBalCell = !totKeys.length ? formatBalance(0n, totAcct.decimals, totAcct.symbol)
       : (totKeys.length === 1 ? formatBalance(totByTok[totKeys[0]].sum, totByTok[totKeys[0]].decimals, totByTok[totKeys[0]].symbol)
         : { lines: totKeys.map(function (k) { return formatBalance(totByTok[k].sum, totByTok[k].decimals, totByTok[k].symbol); }) });
     table.appendChild(opsRow('Total', formatTokens(totSupply), totBalCell, '', false, true));
@@ -11027,9 +11029,12 @@ function renderYouCard(project, opts) {
       claimBtn.style.display = (project.tokenAddress && claimRows.length) ? '' : 'none';
       var totBalSub = subFor(anyCredit, anyErc20);
       var totBalCell = totBalSub ? { main: formatTokenCount(totBal) + ' ' + sym, sub: totBalSub } : (formatTokenCount(totBal) + ' ' + sym);
-      var totCashCell = locked ? { main: fmtCash(held[0], totCash), sub: 'locked' } : fmtCash(held[0], totCash);
+      // Per-chain cash-out values are each in that chain's accounting token; summing across chains is only
+      // meaningful when they all hold the SAME token. Mixed tokens (e.g. ETH + USDC) → no honest Total.
+      var mixedAcct = held.some(function (r) { return r.acct && held[0].acct && (r.acct.symbol !== held[0].acct.symbol || r.acct.decimals !== held[0].acct.decimals); });
+      var totCashCell = mixedAcct ? '—' : (locked ? { main: fmtCash(held[0], totCash), sub: 'locked' } : fmtCash(held[0], totCash));
       // Locked total loan ≈ total cash-out value (same bonding-curve reclaim, in the accounting token).
-      var totLoanCell = anyLoan ? fmtLoan(totLoan) : (locked && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (locked ? 'Locked' : '—'));
+      var totLoanCell = anyLoan ? fmtLoan(totLoan) : (mixedAcct ? '—' : (locked && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (locked ? 'Locked' : '—')));
       // A Total row is redundant when there's only one chain row.
       if (held.length > 1) table.appendChild(opsRow('Total', totBalCell, totCashCell, noLoans ? undefined : totLoanCell, false, true));
       body.appendChild(table);
@@ -11563,7 +11568,10 @@ function buildCashOutModal(project, requestClose) {
       state.acct = acct;
       return Promise.all([
         read(state.chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
-        terminal ? read(state.chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, acct.address]).catch(function () { return null; }) : Promise.resolve(null),
+        // Actual reclaimable SURPLUS (= terminal balance − remaining payout limit), in the accounting token's
+        // own decimals/currency. Reading raw `balanceOf` here overstated it when a payout limit exists and could
+        // push the fallback min-reclaimed floor above the real reclaim → cashOutTokensOf revert.
+        terminal ? read(state.chainId, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), BigInt(Number(BigInt(acct.address) & 0xffffffffn))]).catch(function () { return null; }) : Promise.resolve(null),
         // The 2.5% protocol fee on cash-out only applies when the ruleset's cash-out tax rate is non-zero.
         read(state.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).catch(function () { return null; }),
       ]);
@@ -12142,11 +12150,12 @@ function buildLoanModal(project, requestClose) {
     // token = native, minBorrowAmount 0 (best price), prepaidFeePercent from the slider, holder/beneficiary = caller.
     function doBorrow(approved) {
       var loanToken = (state.acct && state.acct.address) || NATIVE_TOKEN; // disburse in the accounting token
-      // Slippage floor: 99% of the previewed disbursed amount. REVLoans reverts if borrowAmount < minBorrow,
-      // so an adverse move in the revnet's cash-out value between quote and execution reverts instead of
-      // silently under-delivering funds. 0 when no preview is available.
+      // No slippage floor: REVLoans checks minBorrowAmount against the GROSS borrow in the SOURCE token's
+      // decimals/currency (REVLoans.sol:517-527,1383), but our `state.borrowable` preview is in the BASE
+      // currency at 18 decimals (borrowableAmountFrom(…, 18n, baseCur), :12108). Those scales differ for a
+      // 6-dec USDC source (floor always reverts) and whenever base ≠ source-token currency. A correct floor
+      // needs borrowableAmountFrom read in the source token's own decimals+currency — follow-up; until then 0.
       var minBorrow = 0n;
-      try { var _lo = state.loanOut && state.loanOut.net; if (_lo != null) minBorrow = BigInt(_lo) * 99n / 100n; } catch (_) {}
       executeTransaction(Object.assign(buildBorrowArgs({
         chainId: state.chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
         collateral: collateral, beneficiary: acct, prepaidFeePercent: state.prepaidFee, holder: acct,
