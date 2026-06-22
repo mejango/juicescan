@@ -4503,6 +4503,10 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .shop-tier-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .shop-tier-pricecol { display: flex; flex-direction: column; min-width: 0; }
 .shop-tier-price { font-size: 15px; font-weight: bold; color: var(--text); }
+/* Tier discount: an enticing badge over the art + the original price struck through. */
+.shop-tier-discount { position: absolute; top: 6px; left: 6px; background: var(--c-teal); color: var(--bg); font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.3px; z-index: 1; }
+.shop-tier-price-orig { font-size: 11px; color: var(--muted-2); text-decoration: line-through; }
+.paybox-shop-discount { position: absolute; top: 3px; left: 3px; background: var(--c-teal); color: var(--bg); font-size: 8px; font-weight: bold; padding: 1px 4px; border-radius: 2px; z-index: 1; }
 .shop-tier-supply { font-size: 11px; color: var(--muted-2); }
 .shop-tier-step { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .shop-tier-stepbtn { width: 26px; height: 26px; border: 1px solid var(--c-orange-light); border-radius: 4px; background: none; color: var(--c-teal); font-size: 16px; font-weight: bold; line-height: 1; cursor: pointer; }
@@ -4518,7 +4522,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 /* top padding leaves room for the badge (sticks up 6px); overflow-x:auto would otherwise clip it */
 .paybox-shop-strip { display: flex; gap: 8px; overflow-x: auto; padding: 8px 3px 4px; }
 .paybox-shop-item { position: relative; flex: 0 0 auto; width: 72px; border: 1px solid var(--c-orange-light); border-radius: 4px; display: flex; flex-direction: column; }
-.paybox-shop-thumb { width: 100%; aspect-ratio: 1; background: var(--card-bg); display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 3px 3px 0 0; overflow: hidden; }
+.paybox-shop-thumb { width: 100%; aspect-ratio: 1; background: var(--card-bg); display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 3px 3px 0 0; overflow: hidden; position: relative; }
 .paybox-shop-item:not(.soldout):hover { border-color: var(--c-teal); }
 .paybox-shop-item.selected { border-color: var(--c-teal); }
 .paybox-shop-item.soldout { opacity: 0.45; }

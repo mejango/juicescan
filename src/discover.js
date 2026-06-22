@@ -352,6 +352,26 @@ function fetchProjectTiers(project) {
 }
 function bustTiersCache(project) { delete _tiersCache[project.chainId + ':' + project.id]; }
 
+// A tier's effective (discounted) price. Mirrors JB721TiersHookStore: effective = price - mulDiv(price,
+// discountPercent, 200), where DISCOUNT_DENOMINATOR = 200 (so discountPercent 200 = 100% off). Integer-floor
+// division matches the on-chain mulDiv, so the displayed/charged amount equals what the store charges at mint.
+export function tierEffectivePrice(price, discountPercent) {
+  var p = BigInt(price || 0);
+  var d = BigInt(discountPercent || 0);
+  if (d <= 0n) return p;
+  if (d > 200n) d = 200n;
+  return p - (p * d) / 200n;
+}
+
+// Human "% off" label for a tier's discount. discountPercent is out of 200, so the shopper-facing % off is
+// discountPercent / 2 (e.g. discountPercent 40 → "20% off"). Returns null when there is no active discount.
+export function tierDiscountLabel(tier) {
+  var d = Number((tier && tier.discountPercent) || 0);
+  if (d <= 0) return null;
+  var pct = d / 2;
+  return (Number.isInteger(pct) ? String(pct) : pct.toFixed(1)) + '% off';
+}
+
 async function fetchProjectTiersUncached(project) {
   var hook = await readShopHook(project);
   if (!hook) return null;
@@ -365,7 +385,11 @@ async function fetchProjectTiersUncached(project) {
   var raw = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }).catch(function () { return []; });
   var tiers = (raw || []).map(function (t) {
     return { id: Number(t.id), price: toBigInt(t.price), remaining: Number(t.remainingSupply), initial: Number(t.initialSupply),
-      category: Number(t.category), encodedIpfsUri: t.encodedIpfsUri, allowOwnerMint: t.flags && t.flags.allowOwnerMint };
+      category: Number(t.category), encodedIpfsUri: t.encodedIpfsUri,
+      discountPercent: Number(t.discountPercent || 0), // out of 200 (DISCOUNT_DENOMINATOR); see tierEffectivePrice
+      reserveFrequency: Number(t.reserveFrequency || 0), votingUnits: toBigInt(t.votingUnits || 0),
+      reserveBeneficiary: t.reserveBeneficiary, splitPercent: Number(t.splitPercent || 0),
+      flags: t.flags || {}, allowOwnerMint: t.flags && t.flags.allowOwnerMint };
   }).filter(function (t) { return t.initial > 0; });
   return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, tiers: tiers };
 }
@@ -1258,12 +1282,17 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   var c = el('div', 'shop-tier');
   c.setAttribute('data-tier-id', String(tier.id));
   var imgWrap = el('div', 'shop-tier-img'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; imgWrap.appendChild(ph); c.appendChild(imgWrap);
+  // Discount badge — enticing, top-left over the art.
+  var discLabel = tierDiscountLabel(tier);
+  if (discLabel) { var badge = el('span', 'shop-tier-discount'); badge.textContent = discLabel; imgWrap.appendChild(badge); }
 
   var info = el('div', 'shop-tier-info');
   var nameEl = el('div', 'shop-tier-name'); nameEl.textContent = 'Tier ' + tier.id; info.appendChild(nameEl);
   var row = el('div', 'shop-tier-row');
   var left = el('div', 'shop-tier-pricecol');
-  var priceEl = el('span', 'shop-tier-price'); priceEl.textContent = formatEth(tier.price); left.appendChild(priceEl);
+  // Show the discounted price the buyer actually pays; strike through the original when discounted.
+  var priceEl = el('span', 'shop-tier-price'); priceEl.textContent = formatEth(tierEffectivePrice(tier.price, tier.discountPercent)); left.appendChild(priceEl);
+  if (discLabel) { var origEl = el('span', 'shop-tier-price-orig'); origEl.textContent = formatEth(tier.price); left.appendChild(origEl); }
   var supplyEl = el('span', 'shop-tier-supply');
   supplyEl.textContent = soldOut ? 'sold out' : (tier.initial >= 999999999 ? 'unlimited' : tier.remaining + ' left');
   left.appendChild(supplyEl);
@@ -1340,9 +1369,12 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
   var it = el('div', 'paybox-shop-item' + (soldOut ? ' soldout' : ''));
   var badge = el('span', 'paybox-shop-badge'); it.appendChild(badge);
   var imgWrap = el('div', 'paybox-shop-thumb'); var ph = el('span'); ph.textContent = '#' + tier.id; imgWrap.appendChild(ph); it.appendChild(imgWrap);
+  var discLabel = tierDiscountLabel(tier);
+  if (discLabel) { var disc = el('span', 'paybox-shop-discount'); disc.textContent = discLabel; imgWrap.appendChild(disc); }
 
   var foot = el('div', 'paybox-shop-foot');
-  var price = el('span', 'paybox-shop-price'); price.textContent = formatEth(tier.price); foot.appendChild(price);
+  // Discounted price the buyer pays (the original is implied by the badge; keep the strip compact).
+  var price = el('span', 'paybox-shop-price'); price.textContent = formatEth(tierEffectivePrice(tier.price, tier.discountPercent)); foot.appendChild(price);
   var step = el('div', 'paybox-shop-step');
   var minus = el('button', 'paybox-shop-stepbtn'); minus.textContent = '−';
   var qtyEl = el('span', 'paybox-shop-qty');
@@ -3633,7 +3665,8 @@ function renderPayCard(project, cart) {
   function nftTierById(id) { return state.shop ? state.shop.tiers.filter(function (t) { return t.id === id; })[0] : null; }
   function nftTotalWei() {
     var s = 0n, sel = cart.entries();
-    Object.keys(sel).forEach(function (id) { var t = nftTierById(Number(id)); if (t) s += t.price * BigInt(sel[id]); });
+    // Charge the DISCOUNTED price the store actually applies at mint, not the raw tier price.
+    Object.keys(sel).forEach(function (id) { var t = nftTierById(Number(id)); if (t) s += tierEffectivePrice(t.price, t.discountPercent) * BigInt(sel[id]); });
     return s;
   }
   function selectedTierIds() {
