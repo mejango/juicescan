@@ -184,7 +184,7 @@ var HOOK_FLAGS = [
   { name: 'noNewTiersWithOwnerMinting', type: 'bool' }, { name: 'preventOverspending', type: 'bool' },
   { name: 'issueTokensForSplits', type: 'bool' },
 ];
-var DEPLOY_721_COMPONENTS = [
+export var DEPLOY_721_COMPONENTS = [
   { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'baseUri', type: 'string' },
   { name: 'tokenUriResolver', type: 'address' }, { name: 'contractUri', type: 'string' },
   { name: 'tiersConfig', type: 'tuple', components: [
@@ -2305,7 +2305,7 @@ function storeCur(state) { return state.storePricingCurrency || 1; }
 function storeUnit(state) { return storeCur(state) === 2 ? 'USDC' : 'ETH'; }
 function storeDecimals(state) { return customAccounting(state) ? customAcctDecimals(state) : (storeCur(state) === 2 ? 6 : 18); }
 
-function renderNfts(state, render) {
+export function renderNfts(state, render) {
   var wrap = el('div', '');
   var head = stepHead('Shop', 'Sell items to customers and supporters.');
   wrap.appendChild(head);
@@ -3332,7 +3332,7 @@ function projectCountOf(chainId) {
 }
 
 // Deterministic salt — same on every chain (so omnichain sucker addresses match). No Math.random.
-function deploySalt(state, owner) {
+export function deploySalt(state, owner) {
   return keccak256(stringToHex((state.details.name || 'project') + ':' + String(owner).toLowerCase()));
 }
 
@@ -3773,7 +3773,7 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   };
 }
 
-function build721Config(state, projectUri, chainId) {
+export function build721Config(state, projectUri, chainId) {
   var name = collectionNameOf(state);
   var symbol = collectionSymbolOf(state);
   var col = state.collection || {};
@@ -3825,6 +3825,21 @@ function build721Config(state, projectUri, chainId) {
       issueTokensForSplits: !!col.issueTokensForSplits,
     },
   };
+}
+
+// Pin each store item's metadata JSON (name + already-pinned media) so its tier resolves to {name, image}.
+// Sets it.metaUri + it.encodedIpfsUri in place. Standalone (mirrors the launch deploy flow) so the queue
+// "start a new shop" path can pin before build721Config without touching the launch sequence.
+export async function pinShopItemsMetadata(state) {
+  if (!(state.nfts && state.nfts.length && hasPinata())) return;
+  for (var n = 0; n < state.nfts.length; n++) {
+    var it = state.nfts[n];
+    if (it.encodedIpfsUri) continue; // already pinned this submit
+    var meta = { name: it.name || ('Item #' + (n + 1)) };
+    if (it.description) meta.description = it.description;
+    if (it.imageUri) { if ((it.mediaType || '').indexOf('image') === 0) meta.image = it.imageUri; else meta.animation_url = it.imageUri; meta.mediaType = it.mediaType; }
+    try { it.metaUri = await pinJson(meta, (it.name || 'item') + '-item'); it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri); } catch (_) {}
+  }
 }
 
 // Terminal configs: the project's accounting terminal (which token[s] it HOLDS, currency =

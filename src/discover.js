@@ -14,7 +14,7 @@ import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, exe
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
-import { toggleRow, dz, currencySelect, cashOutSection, DURATION_PRESETS, FOREVER_SECONDS, renderStages, createStage, buildQueueRulesetConfigs } from './create-flow.js';
+import { toggleRow, dz, currencySelect, cashOutSection, DURATION_PRESETS, FOREVER_SECONDS, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata } from './create-flow.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
 // component-base) — one cache for the whole app, keyed by chainId|customRpc so a custom RPC takes
@@ -2358,6 +2358,37 @@ var omnichainQueueAbi = [{
   inputs: [{ name: 'projectId', type: 'uint256' }, RULESET_CFG_COMPONENT, { name: 'memo', type: 'string' }],
   outputs: [{ name: 'rulesetId', type: 'uint256' }, { name: 'hook', type: 'address' }],
 }];
+// "Start a new shop" at queue time. Both overloads deploy a fresh 721 hook, transfer its ownership to the
+// PROJECT, and queue a ruleset wired to it — in one owner-signed tx (no stranded-ownership EOA path).
+// Single-chain: JB721TiersHookProjectDeployer.queueRulesetsOf(projectId, deployTiersHookConfig, rulesets, controller, salt).
+var projectDeployer721QueueAbi = [{
+  type: 'function', name: 'queueRulesetsOf', stateMutability: 'nonpayable',
+  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'deployTiersHookConfig', type: 'tuple', components: DEPLOY_721_COMPONENTS },
+    RULESET_CFG_COMPONENT, { name: 'controller', type: 'address' }, { name: 'salt', type: 'bytes32' }],
+  outputs: [{ name: 'rulesetId', type: 'uint256' }, { name: 'hook', type: 'address' }],
+}];
+// Omnichain: JBOmnichainDeployer.queueRulesetsOf(projectId, deploy721Config, rulesets, memo) — non-empty tiers
+// triggers the deploy-fresh branch (ownership → project).
+var omnichainQueueDeploy721Abi = [{
+  type: 'function', name: 'queueRulesetsOf', stateMutability: 'nonpayable',
+  inputs: [{ name: 'projectId', type: 'uint256' },
+    { name: 'deploy721Config', type: 'tuple', components: [{ name: 'deployTiersHookConfig', type: 'tuple', components: DEPLOY_721_COMPONENTS }, { name: 'useDataHookForCashOut', type: 'bool' }, { name: 'salt', type: 'bytes32' }] },
+    RULESET_CFG_COMPONENT, { name: 'memo', type: 'string' }],
+  outputs: [{ name: 'rulesetId', type: 'uint256' }, { name: 'hook', type: 'address' }],
+}];
+
+// Pure builder for the "new shop" queue call — picks the right deployer + arg-order per chain mode so the
+// money-path routing is unit-testable (mis-routing "new" to plain JBController.queueRulesetsOf would queue a
+// ruleset with no shop). Returns { to, abi, functionName, args }.
+export function buildNewShopQueueCall(o) {
+  var pid = BigInt(o.projectId);
+  if (o.isOmnichain) {
+    return { to: o.omnichainDeployer, abi: omnichainQueueDeploy721Abi, functionName: 'queueRulesetsOf',
+      args: [pid, { deployTiersHookConfig: o.deployConfig, useDataHookForCashOut: !!o.useDataHookForCashOut, salt: o.salt }, o.cfgs, o.memo || ''] };
+  }
+  return { to: o.projectDeployer, abi: projectDeployer721QueueAbi, functionName: 'queueRulesetsOf',
+    args: [pid, o.deployConfig, o.cfgs, o.controller, o.salt] };
+}
 // Approval-hook (rule-change deadline) options — JBDeadline singletons, resolved per chain via getAddress.
 var DEADLINE_OPTIONS = [
   { key: 'none', label: 'No deadline', contract: null },
@@ -10411,6 +10442,14 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
 // JBOmnichainDeployer + relayr. Owner/operator-gated (QUEUE_RULESETS). Splits & fund-access are carried
 // forward from the current ruleset (edit recipients via the dedicated Payouts/Reserved editors); the
 // ruleset parameters here are fully editable.
+// Initialize the create-flow shop fields the "new shop" path needs (renderNfts + build721Config read these).
+function ensureNewShopState(state, allChains) {
+  state.shopEnabled = true;
+  if (!state.collection) state.collection = { useForRedemptions: false };
+  if (!state.nfts) state.nfts = [];
+  if (!state.chainIds || !state.chainIds.length) state.chainIds = allChains.map(function (c) { return c.id; });
+}
+
 function openQueueRulesetModal(project) {
   var pid = BigInt(project.id);
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
@@ -10483,21 +10522,30 @@ function openQueueRulesetModal(project) {
     if (state.currentDataHook) {
       var shopH = el('div', 'operator-edit-label'); shopH.style.marginTop = '18px'; shopH.textContent = 'Shop (NFT items)'; body.appendChild(shopH);
       var shopBox = el('div', 'queue-shop-choice');
+      // 'remove' is gated on omnichain because JBOmnichainDeployer ALWAYS keeps a shop attached (no detach
+      // path) — a contract limitation, not a TODO. 'new' deploys a fresh collection via the one-call deployer.
       [['continue', 'Keep the current shop', 'Buyers keep minting the existing NFT items.', false],
-       ['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.', state.isOmnichain],
-       ['new', 'Start a new shop', 'Deploy a fresh NFT collection — coming soon.', true]
+       ['remove', 'Remove the shop', state.isOmnichain ? 'Not available on omnichain projects — the omnichain deployer always keeps a shop attached (single-chain projects can remove a shop).' : 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.', state.isOmnichain],
+       ['new', 'Start a new shop', 'Deploy a fresh NFT collection — it replaces the current shop.', false]
       ].forEach(function (o) {
         var dis = !!o[3];
         var row = el('label', 'queue-shop-opt' + (dis ? ' disabled' : ''));
         var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0]; rb.disabled = dis;
-        rb.addEventListener('change', function () { if (rb.checked) { state.shopChoice = o[0]; renderEditor(); } });
+        rb.addEventListener('change', function () { if (rb.checked) { state.shopChoice = o[0]; if (o[0] === 'new') ensureNewShopState(state, allChains); renderEditor(); } });
         var txt = el('div', 'queue-shop-opt-txt');
-        var nm = el('div', 'queue-shop-opt-name'); nm.textContent = o[1] + (dis && o[0] === 'remove' ? ' (omnichain: not supported yet)' : ''); txt.appendChild(nm);
+        var nm = el('div', 'queue-shop-opt-name'); nm.textContent = o[1]; txt.appendChild(nm);
         var sub = el('div', 'queue-shop-opt-sub'); sub.textContent = o[2]; txt.appendChild(sub);
         row.appendChild(rb); row.appendChild(txt); shopBox.appendChild(row);
       });
       body.appendChild(shopBox);
-      if (state.isOmnichain) { var sn = el('div', 'rf-funds-sub'); sn.style.marginTop = '6px'; sn.textContent = 'On omnichain projects the shop is carried forward automatically.'; body.appendChild(sn); }
+      // Starting a new shop → the full collection + items form (reused verbatim from the create flow).
+      if (state.shopChoice === 'new') {
+        ensureNewShopState(state, allChains);
+        var nftWrap = el('div', 'queue-new-shop-form'); nftWrap.style.marginTop = '12px';
+        nftWrap.appendChild(renderNfts(state, renderEditor)); body.appendChild(nftWrap);
+      } else if (state.isOmnichain) {
+        var sn = el('div', 'rf-funds-sub'); sn.style.marginTop = '6px'; sn.textContent = 'On omnichain projects the shop is carried forward automatically.'; body.appendChild(sn);
+      }
     }
     if (omnichain) {
       var ch = el('div', 'operator-edit-label'); ch.style.marginTop = '18px'; ch.textContent = 'Queue on'; body.appendChild(ch);
@@ -10671,11 +10719,25 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // (USDC) and approval-hook addresses differ per chain.
   var immediateStart = multi ? (Math.floor(Date.now() / 1000) + 1200) : 0;
 
-  // One per-chain call, routed identically for EOA and Safe: a MULTI-chain queue must go through
-  // JBOmnichainDeployer.queueRulesetsOf (it re-wraps the project's data hook for the sucker setup — calling
-  // JBController directly would bypass that); a single-chain queue calls JBController.queueRulesetsOf.
+  // "Start a new shop" deploys a fresh 721 collection + wires it, via the one-call deployer (ownership → the
+  // project). Pin the new items' metadata once up front (images are already pinned on upload).
+  var newShop = state.shopChoice === 'new';
+  var newShopSalt = newShop ? deploySalt(state, operatorAddr) : ('0x' + '0'.repeat(64));
+  var projUri = project.metadataUri || project.uri || '';
+  if (newShop) { setStatus('Pinning new shop items…', 'pending'); await pinShopItemsMetadata(state); }
+
+  // One per-chain call, routed identically for EOA and Safe. continue/remove: omnichain → JBOmnichainDeployer,
+  // single → JBController. NEW: omnichain → JBOmnichainDeployer (explicit deploy721 overload), single →
+  // JB721TiersHookProjectDeployer. buildNewShopQueueCall picks the deployer + arg-order (unit-tested).
   var buildCall = function (cid) {
     var cfgs = buildQueueRulesetConfigs(state, cid, immediateStart);
+    if (newShop) {
+      var nc = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
+        useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
+        controller: getAddress('JBController', cid), projectDeployer: getAddress('JB721TiersHookProjectDeployer', cid),
+        omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: multi, memo: memo });
+      return { to: nc.to, data: encodeFunctionData({ abi: nc.abi, functionName: nc.functionName, args: nc.args }) };
+    }
     return multi
       ? { to: getAddress('JBOmnichainDeployer', cid), data: encodeFunctionData({ abi: omnichainQueueAbi, functionName: 'queueRulesetsOf', args: [pid, cfgs, memo] }) }
       : { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, cfgs, memo] }) };
@@ -10705,17 +10767,27 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   if (!account) return;
 
   if (!multi) {
-    // Single chain → JBController.queueRulesetsOf directly.
-    var ctrl = getAddress('JBController', selected[0].id);
-    if (!ctrl) { setStatus('No controller on this chain', 'error'); return; }
+    // Single chain → JBController.queueRulesetsOf directly, or JB721TiersHookProjectDeployer for a new shop.
+    var cid0 = selected[0].id;
     var configs;
-    try { configs = buildQueueRulesetConfigs(state, selected[0].id, 0); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
+    try { configs = buildQueueRulesetConfigs(state, cid0, 0); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
+    var exec;
+    if (newShop) {
+      var dep = getAddress('JB721TiersHookProjectDeployer', cid0);
+      if (!dep) { setStatus('No 721 deployer on this chain', 'error'); return; }
+      var nc1 = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid0), cfgs: configs, controller: getAddress('JBController', cid0), projectDeployer: dep, salt: newShopSalt, isOmnichain: false });
+      exec = { address: nc1.to, abi: nc1.abi, functionName: nc1.functionName, args: nc1.args, contractName: 'JB721TiersHookProjectDeployer', label: 'Start a new shop' };
+    } else {
+      var ctrl = getAddress('JBController', cid0);
+      if (!ctrl) { setStatus('No controller on this chain', 'error'); return; }
+      exec = { address: ctrl, abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, configs, memo], contractName: 'JBController', label: 'Queue ruleset' };
+    }
     await new Promise(function (resolve, reject) {
       executeTransaction({
-        chainId: selected[0].id, address: ctrl, abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', contractName: 'JBController',
-        args: [pid, configs, memo], label: 'Queue ruleset',
+        chainId: cid0, address: exec.address, abi: exec.abi, functionName: exec.functionName, contractName: exec.contractName,
+        args: exec.args, label: exec.label,
         onStatus: function (m, k) { setStatus(m, k); }, onError: function (m) { reject(new Error(m)); },
-        onSuccess: function () { setStatus('Ruleset queued on ' + chainNameOf(selected[0].id) + '.', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); resolve(); },
+        onSuccess: function () { setStatus((newShop ? 'New shop deployed + ruleset queued on ' : 'Ruleset queued on ') + chainNameOf(cid0) + '.', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); resolve(); },
       });
     });
     return;
