@@ -1044,22 +1044,36 @@ export function componentReproPrompt(title, prefix) {
     + 'Live reference: ' + location.href;
 }
 
-// Small link icon (bottom of a component) that copies the repro prompt — so a builder can hand any component
-// straight to an LLM. Title-cased to a recognizable chain-link glyph; flashes teal on copy.
-export function componentPromptLink(title, prefix) {
+// Small chain-link icon that copies whatever buildText() returns (an LLM prompt). Flashes teal on copy.
+// buildText is a function so the prompt captures the CURRENT url at click time. Used by components AND by
+// discover.js's modals/forms (which build their own generic prompt).
+export function promptLinkButton(buildText) {
   var btn = el('button', 'comp-prompt-link');
   btn.type = 'button';
-  btn.title = 'Copy an LLM prompt to recreate this component';
-  btn.setAttribute('aria-label', 'Copy an LLM prompt to recreate this component');
+  btn.title = 'Copy an LLM prompt to recreate this';
+  btn.setAttribute('aria-label', 'Copy an LLM prompt to recreate this');
   btn.innerHTML = LINK_ICON_SVG;
   btn.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
-    var text = componentReproPrompt(title, prefix);
-    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.title = 'Prompt copied!'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.title = 'Copy an LLM prompt to recreate this component'; }, 1400); };
+    var text = buildText();
+    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.title = 'Prompt copied!'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.title = 'Copy an LLM prompt to recreate this'; }, 1400); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, ok);
     else { try { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
   });
   return btn;
+}
+
+// Component-specific link — names the exact code file + contract function via COMPONENT_SPECS.
+export function componentPromptLink(title, prefix) {
+  return promptLinkButton(function () { return componentReproPrompt(title, prefix); });
+}
+
+// The prompt link wrapped in its footer row. Used by createComponentWrapper AND by discover.js's inline
+// project-page cards (Pay, Cash out, …), which don't go through the wrapper but still want the affordance.
+export function promptFoot(title, prefix) {
+  var foot = el('div', 'comp-prompt-foot');
+  foot.appendChild(componentPromptLink(title, prefix));
+  return foot;
 }
 
 export function createComponentWrapper(title, prefix, state, getEmbedParams, opts) {
@@ -1068,9 +1082,7 @@ export function createComponentWrapper(title, prefix, state, getEmbedParams, opt
   var body = el('div', 'component-body');
   wrapper.appendChild(body);
   // A "copy LLM prompt" link at the bottom of every component — recreate this element with your own LLM.
-  var foot = el('div', 'comp-prompt-foot');
-  foot.appendChild(componentPromptLink(title, prefix));
-  wrapper.appendChild(foot);
+  wrapper.appendChild(promptFoot(title, prefix));
 
   // Attach metadata to the DOM element for toolbar access
   wrapper._compTitle = title;

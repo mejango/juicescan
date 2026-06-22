@@ -485,7 +485,7 @@ export function renderBuildTab() {
     '<a class="guide-toc-link" href="#build-swap-terminal">18. Router Terminal</a>' +
     '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>' +
     '<div class="guide-toc-group-label" style="margin-top:8px">Build Your Own</div>' +
-    '<a class="guide-toc-link" href="#build-clients">20. Web Clients</a>';
+    '<a class="guide-toc-link" href="#build-clients">20. Copy This Site</a>';
   wrap.appendChild(toc);
 
   // --- Life of a Project ---
@@ -932,7 +932,7 @@ export function renderBuildTab() {
   ownHeader.textContent = 'BUILD YOUR OWN';
   wrap.appendChild(ownHeader);
 
-  wrap.appendChild(guideSection('build-clients', '20. WEB CLIENTS', [
+  wrap.appendChild(guideSection('build-clients', '20. COPY THIS SITE', [
     'This explorer is a complete, client-only reference implementation — there is no backend. It is a static bundle (loaded from IPFS) that reads the chain over public RPCs and builds every Juicebox transaction in the browser. The code ships unminified on purpose, so everything you see here is code you can read.',
     'That makes it a working spec you can hand to an LLM. Every section in Build and Learn has a link icon next to its header that copies a deep link — paste it to your LLM and ask it to recreate that feature against the V6 contracts. And every interactive component in Discover (Pay, Cash Out, Mint, and the rest) has a link icon at its bottom that copies a ready-made prompt — naming the exact code file and contract function — so you can hand a whole feature like your pay flow straight to a model.'
   ], [

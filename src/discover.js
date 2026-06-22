@@ -4,7 +4,7 @@
 // executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderDecodedTx, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderDecodedTx, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -4237,6 +4237,7 @@ function renderPayCard(project, cart) {
   }
 
   renderFeedback();
+  card.appendChild(promptFoot('Pay', 'pay'));
   return card;
 }
 
@@ -11336,7 +11337,23 @@ function renderBridgeTransactionsTable(rows, project) {
 }
 
 // -- Modal primitive --
-function openModal(titleText, contentNode) {
+// An LLM prompt link for a project-explorer modal/form — points at discover.js (where these flows live)
+// plus the contracts + live URL, so a builder can hand any action straight to a model. Generic by title,
+// since the modals are inline discover.js flows rather than the standalone *-component.js builders.
+function discoverPromptFoot(title) {
+  var foot = el('div', 'comp-prompt-foot');
+  foot.appendChild(promptLinkButton(function () {
+    return 'Reproduce the Juicebox V6 "' + title + '" flow from the project explorer.\n'
+      + 'Reference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicebox-v6-website — read src/discover.js; transactions are built in-browser and the README maps every action to its contract function.\n'
+      + 'V6 contracts: https://github.com/Bananapus/nana-core-v6.\n'
+      + 'Recreate it against the V6 contracts, matching the transaction encoding (arg order, decimals, currency id, slippage floor) exactly.\n'
+      + 'Live reference: ' + location.href;
+  }));
+  return foot;
+}
+
+function openModal(titleText, contentNode, opts) {
+  opts = opts || {};
   var overlay = el('div', 'modal-overlay');
   var dialog = el('div', 'modal-dialog');
   var head = el('div', 'modal-head');
@@ -11345,6 +11362,9 @@ function openModal(titleText, contentNode) {
   x.addEventListener('click', close); head.appendChild(x);
   dialog.appendChild(head);
   dialog.appendChild(contentNode);
+  // Every action modal/form is a recreatable component — give it an LLM prompt link. Skip transient
+  // pre-sign confirmations (opts.noPrompt), which aren't features to rebuild.
+  if (!opts.noPrompt) dialog.appendChild(discoverPromptFoot(titleText));
   overlay.appendChild(dialog);
   overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
   function onKey(e) { if (e.key === 'Escape') close(); }
@@ -11367,7 +11387,7 @@ function openTxConfirm(payload, onConfirm, opts) {
   var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm';
   foot.appendChild(cancel); foot.appendChild(confirm);
   content.appendChild(foot);
-  var modal = openModal(opts.title || 'Confirm transaction', content);
+  var modal = openModal(opts.title || 'Confirm transaction', content, { noPrompt: true });
   cancel.addEventListener('click', modal.close);
   function showStatus(message, kind) {
     status.style.display = message ? '' : 'none';
