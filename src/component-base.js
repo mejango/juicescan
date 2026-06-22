@@ -471,7 +471,7 @@ function contractRepoFor(name) {
   if (name === 'JBOmnichainDeployer') return name + ' (nana-omnichain-deployers-v6): https://github.com/Bananapus/nana-omnichain-deployers-v6';
   if (name === 'JBRouterTerminalRegistry') return name + ' (nana-router-terminal-v6): https://github.com/Bananapus/nana-router-terminal-v6';
   if (/^REV/.test(name)) return name + ' (revnet-core-v6): https://github.com/rev-net/revnet-core-v6';
-  if (/^JB/.test(name)) return name + ' (nana-core-v6): https://github.com/Bananapus/nana-core-v6';
+  if (/^JB/.test(name)) return name + ' (Juicebox V6): https://github.com/Bananapus/version-6';
   return null;
 }
 function contractSourceRefs(payload) {
@@ -1016,47 +1016,53 @@ export function lookupDecimals(chainId, tokenAddr, callback) {
 
 // --- Component wrapper factory ---
 
-// Each component → the code file + contract function it builds, so the "copy prompt" link can tell an LLM
-// exactly what to read to reproduce it.
-var COMPONENT_SPECS = {
-  pay: { file: 'pay-component.js (buildPayArgs)', fn: 'JBMultiTerminal.pay' },
-  cashout: { file: 'cashout-component.js (buildCashOutArgs)', fn: 'JBMultiTerminal.cashOutTokensOf' },
-  payouts: { file: 'payouts-component.js (buildSendPayoutsArgs)', fn: 'JBMultiTerminal.sendPayoutsOf' },
-  mint: { file: 'mint-component.js (buildMintArgs)', fn: 'JBController.mintTokensOf' },
-  burn: { file: 'burn-component.js (buildBurnArgs)', fn: 'JBController.burnTokensOf' },
-  'deploy-erc20': { file: 'deploy-erc20-component.js (buildDeployErc20Args)', fn: 'JBController.deployERC20For' },
-  reserved: { file: 'reserved-component.js (buildSendReservedArgs)', fn: 'JBController.sendReservedTokensToSplitsOf' },
-  permissions: { file: 'permissions-component.js (buildSetPermissionsArgs)', fn: 'JBPermissions.setPermissionsFor' },
-  launch: { file: 'create-flow.js (buildLaunchArgs) + launch-component.js', fn: 'JBController.launchProjectFor' },
-  'queue-ruleset': { file: 'queue-ruleset-component.js (buildQueueRulesetsArgs)', fn: 'JBController.queueRulesetsOf' },
+// Each component → the code file + contract function + a plain-English account of what it does and the
+// gotchas that make it correct and safe, so the "copy prompt" link tells an LLM exactly what to build.
+// EXPORTED so discover.js's project-page cards/modals reuse the same descriptions.
+export var COMPONENT_SPECS = {
+  pay: { file: 'pay-component.js (buildPayArgs)', fn: 'JBMultiTerminal.pay', desc: 'Pays a project in a token its terminal accepts and mints project tokens to the beneficiary at the ruleset weight, minus the reserved %. Gotchas: the amount is in the paid token’s own decimals; native ETH uses the 0x…EEEe sentinel plus msg.value; if the project’s base currency differs from the paid token a JBPrices feed converts it; ALWAYS pass minReturnedTokens (slippage) or the payer can be sandwiched, especially when a buyback data hook may reroute the pay through a Uniswap swap; reserved tokens go to splits, not the payer.' },
+  cashout: { file: 'cashout-component.js (buildCashOutArgs)', fn: 'JBMultiTerminal.cashOutTokensOf', desc: 'Burns project tokens to reclaim a share of the project’s surplus along the bonding curve. Gotchas: reclaim = curve(cashOutTaxRate, count/totalSupply) then minus a 2.5% protocol fee and (for revnets) a 2.5% revnet fee; compute minTokensReclaimed from previewCashOutFrom (which runs the data hook), NOT currentReclaimableSurplusOf, or the tx reverts; surplus is the terminal balance MINUS the remaining payout limit; if a 721 cash-out data hook is active, project-token cash-out reverts — token cash-out and item redemption are mutually exclusive; revnets may enforce a cash-out delay.' },
+  payouts: { file: 'payouts-component.js (buildSendPayoutsArgs)', fn: 'JBMultiTerminal.sendPayoutsOf', desc: 'Distributes up to the current payout limit to the ruleset’s payout splits, leftover to the owner. Gotchas: in V6 the amount auto-caps to the remaining limit (does NOT revert when over); the currency arg is the standard currency id (uint256, ETH=1 / USD=2), not the token address; a 2.5% fee applies to payouts leaving the Juicebox ecosystem (feeless addresses exempt); a split can pay another project or a split hook.' },
+  mint: { file: 'mint-component.js (buildMintArgs)', fn: 'JBController.mintTokensOf', desc: 'Mints project tokens directly to a beneficiary without a payment (owner/operator only). Gotchas: only works when the ruleset allows owner minting; the reserved rate does NOT apply to a direct mint; respects the credits-vs-ERC-20 split.' },
+  burn: { file: 'burn-component.js (buildBurnArgs)', fn: 'JBController.burnTokensOf', desc: 'Burns a holder’s project tokens. Gotchas: burns internal credits before ERC-20; needs the holder’s approval/permission; this does NOT return surplus — that is cash out.' },
+  'deploy-erc20': { file: 'deploy-erc20-component.js (buildDeployErc20Args)', fn: 'JBController.deployERC20For', desc: 'Deploys the project’s claimable ERC-20 (one-time). Gotchas: a deterministic CREATE2 clone, so the SAME address on every chain; before this, holders have internal credits; 18 decimals are required.' },
+  reserved: { file: 'reserved-component.js (buildSendReservedArgs)', fn: 'JBController.sendReservedTokensToSplitsOf', desc: 'Mints the project’s accrued reserved tokens to its reserved splits. Gotchas: this does NOT change the bonding-curve denominator (pending reserved already counts toward total supply), so it does not dilute cash-out value; leftover goes to the owner.' },
+  permissions: { file: 'permissions-component.js (buildSetPermissionsArgs)', fn: 'JBPermissions.setPermissionsFor', desc: 'Grants or revokes an operator’s permission ids on a project (or wildcard project 0 for all). Gotchas: a 256-bit packed set; ROOT (id 1) grants everything; the call REPLACES the operator’s set for that project, so include every id you want to keep.' },
+  launch: { file: 'create-flow.js (buildLaunchArgs) + launch-component.js', fn: 'JBController.launchProjectFor', desc: 'Launches a project: mints the owner NFT, queues the initial rulesets, sets terminals and fund-access limits, registers it in the directory. Gotchas: an empty fundAccessLimitGroups means ZERO payouts, not unlimited (use uint224.max for unlimited); weight=1 inherits the previous decayed weight; standalone launch must send value = JBProjects.creationFee(); omnichain launches need the omnichain deployer + suckers and the same address on each chain.' },
+  'queue-ruleset': { file: 'queue-ruleset-component.js (buildQueueRulesetsArgs)', fn: 'JBController.queueRulesetsOf', desc: 'Queues new rulesets that take effect after the current one ends, subject to the current ruleset’s approval hook. Gotchas: the JBSplit tuple field order is load-bearing (a wrong order changes the selector and reverts); an approval hook (edit deadline) can delay or reject the change; weight is 18-decimal; a ruleset with a duration auto-cycles, so do not queue duplicates.' },
+  loan: { file: 'discover.js (buildBorrowArgs / buildRepayArgs)', fn: 'REVLoans.borrowFrom / repayLoan', desc: 'Borrows ETH/USDC against project tokens as collateral via REVLoans (revnets only), or repays to reclaim collateral. Gotchas: the borrowable amount and any min-borrow floor must be denominated in the SOURCE token’s own decimals/currency, NOT the 18-dec base-currency preview, or a USDC loan reverts; a prepaid fee buys a fixed-rate period; the loan accrues fees over time; repaying returns the collateral tokens.' },
+  move: { file: 'discover.js (buildSuckerPrepareArgs / buildSuckerToRemoteArgs)', fn: 'JBSucker.prepare → toRemote', desc: 'Bridges project tokens to the same project on another chain through its JBSucker (prepare on the source, then toRemote). Gotchas: only the ERC-20 bridges — credits or a zero balance bridge nothing; the amount is capped at uint128 (Solana/SVM compatibility); the beneficiary is encoded as bytes32; the bridge fee varies by route and must be discovered or toRemote reverts; the token must be mapped on both chains.' },
 };
 var LINK_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 
-// An LLM prompt that gives the model the code + contract + repos needed to reproduce this component.
-export function componentReproPrompt(title, prefix) {
+// An LLM prompt: the code file + contract + an English account of the component's extent and gotchas, plus
+// a directive to build it completely and safely. `fileHint` overrides the source file (discover.js modals
+// reuse a component's spec but live in a different file).
+export function componentReproPrompt(title, prefix, fileHint) {
   var s = COMPONENT_SPECS[prefix];
-  return 'Reproduce the Juicebox V6 "' + (title || prefix) + '" web component.\n'
-    + (s ? 'It builds a ' + s.fn + ' transaction.\n' : '')
-    + 'Reference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicebox-v6-website'
-    + (s ? ' — read src/' + s.file + '. The transaction args are a pure builder round-tripped through the contract ABI; the README maps every action to its contract function.' : '.') + '\n'
-    + 'V6 contracts: https://github.com/Bananapus/nana-core-v6.\n'
-    + 'Recreate it against the V6 contracts, matching the transaction encoding (arg order, decimals, currency id, slippage floor) exactly.\n'
+  var file = fileHint || (s && s.file);
+  return 'Reproduce the Juicebox V6 "' + (title || prefix) + '" component from this open-source explorer.\n'
+    + (s && s.fn ? 'It builds a ' + s.fn + ' transaction.\n' : '')
+    + (s && s.desc ? '\nWhat it does, and the gotchas that make it correct + safe:\n' + s.desc + '\n' : '')
+    + '\nReference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicebox-v6-website'
+    + (file ? ' — read src/' + file + '. Transactions are built in-browser; the README maps every action to its contract function.' : '.') + '\n'
+    + 'V6 contracts (Juicebox version 6): https://github.com/Bananapus/version-6.\n'
+    + 'Build it COMPLETELY — handle the loading, empty, error, and multi-chain states, not just the happy path — and SAFELY: match the token decimals and currency id exactly, set a slippage floor wherever funds move, validate every address, honor the gotchas above, and match the on-chain transaction encoding (arg order, decimals, currency, slippage) exactly. If you might miss a gotcha, surface it.\n'
     + 'Live reference: ' + location.href;
 }
 
-// Small chain-link icon that copies whatever buildText() returns (an LLM prompt). Flashes teal on copy.
-// buildText is a function so the prompt captures the CURRENT url at click time. Used by components AND by
-// discover.js's modals/forms (which build their own generic prompt).
+// A "[copy build prompt]" text link that copies whatever buildText() returns (an LLM build prompt). buildText
+// is a function so the prompt captures the CURRENT url at click time. Used by components AND by discover.js's
+// project-page cards/modals/forms.
 export function promptLinkButton(buildText) {
   var btn = el('button', 'comp-prompt-link');
   btn.type = 'button';
-  btn.title = 'Copy an LLM prompt to recreate this';
-  btn.setAttribute('aria-label', 'Copy an LLM prompt to recreate this');
-  btn.innerHTML = LINK_ICON_SVG;
+  btn.title = 'Copy an LLM prompt to build this';
+  btn.textContent = '[copy build prompt]';
   btn.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
     var text = buildText();
-    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.title = 'Prompt copied!'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.title = 'Copy an LLM prompt to recreate this'; }, 1400); };
+    var ok = function () { btn.classList.add('comp-prompt-link--ok'); btn.textContent = '[copied]'; setTimeout(function () { btn.classList.remove('comp-prompt-link--ok'); btn.textContent = '[copy build prompt]'; }, 1400); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, ok);
     else { try { var ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
   });

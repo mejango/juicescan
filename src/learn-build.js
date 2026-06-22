@@ -948,7 +948,7 @@ export function renderBuildTab() {
       var lk = function (href, text) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
       box.appendChild(lk('https://github.com/mejango/juicebox-v6-website', 'this site’s repo (README + tests)'));
       box.appendChild(document.createTextNode('  ·  '));
-      box.appendChild(lk('https://github.com/Bananapus/nana-core-v6', 'V6 contracts (nana-core-v6)'));
+      box.appendChild(lk('https://github.com/Bananapus/version-6', 'V6 contracts (version-6)'));
       return box;
     })(),
     infoBox('The whole app is the source you are looking at — fetch the IPFS bundle and read app.js, or clone the repo. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.')

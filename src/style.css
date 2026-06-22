@@ -2021,11 +2021,13 @@ input[type="checkbox"].field {
 .guide-copy-link:hover { opacity: 1; color: var(--c-teal); }
 .guide-copy-link--ok { opacity: 1; color: var(--c-teal); }
 .guide-info a { color: var(--c-teal); text-decoration: none; border-bottom: 1px solid currentColor; }
-/* "Copy LLM prompt" link at the bottom of every Discover component (recreate this element with your LLM). */
-.comp-prompt-foot { display: flex; justify-content: flex-end; padding: 6px 2px 0; }
-.comp-prompt-link { display: inline-flex; align-items: center; color: var(--muted-2); background: none; border: none; cursor: pointer; padding: 2px; opacity: 0.45; }
+/* "[copy build prompt]" text link, tight in the card's bottom-right corner (no padding of its own). */
+.comp-prompt-foot { display: flex; justify-content: flex-end; padding: 0; margin-top: 4px; }
+.comp-prompt-link { font-family: inherit; font-size: 11px; color: var(--muted-2); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.55; white-space: nowrap; }
 .comp-prompt-link:hover { opacity: 1; color: var(--c-teal); }
 .comp-prompt-link--ok { opacity: 1; color: var(--c-teal); }
+/* In a modal/form the tag sits right under the submit button — give it room to breathe. */
+.modal-dialog > .comp-prompt-foot { margin-top: 14px; }
 
 .guide-text {
   color: var(--text);

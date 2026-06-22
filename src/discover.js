@@ -4,7 +4,7 @@
 // executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderDecodedTx, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderDecodedTx, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -3425,6 +3425,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   if (activityAsTab) { builders.Activity = function () { return activityCardEl; }; tabs.unshift('Activity'); }
   var tabRow = el('div', 'project-detail-tabs');
   var contentArea = el('div', 'project-detail-content');
+  attachCardPromptLinks(contentArea); // every card on every tab gets a "[copy build prompt]" link
   var built = {};
   // Resolve the initial tab (from a deep link) case-insensitively; fall back to the first tab.
   var startTab = tabs[0];
@@ -11337,19 +11338,57 @@ function renderBridgeTransactionsTable(rows, project) {
 }
 
 // -- Modal primitive --
-// An LLM prompt link for a project-explorer modal/form — points at discover.js (where these flows live)
-// plus the contracts + live URL, so a builder can hand any action straight to a model. Generic by title,
-// since the modals are inline discover.js flows rather than the standalone *-component.js builders.
+// Map a modal/card title to a known component concept, so the prompt carries that concept's contract + the
+// gotchas that make it correct and safe (defined once in COMPONENT_SPECS).
+var TITLE_CONCEPT = {
+  'cash out': 'cashout', 'get a loan': 'loan', 'repay loan': 'loan', 'move between chains': 'move',
+  'distribute payouts': 'payouts', 'use surplus allowance': 'payouts', 'queue ruleset': 'queue-ruleset',
+  'add operator': 'permissions', 'edit permissions': 'permissions',
+  'set token name & symbol': 'deploy-erc20', 'edit token name & symbol': 'deploy-erc20',
+};
+function conceptForTitle(title) {
+  var k = (title || '').trim().toLowerCase();
+  if (TITLE_CONCEPT[k]) return TITLE_CONCEPT[k];
+  for (var pre in TITLE_CONCEPT) if (k.indexOf(pre) === 0) return TITLE_CONCEPT[pre];
+  return null;
+}
+
+// The "copy LLM prompt" link for a project-explorer card/modal/form. A known concept reuses its rich spec
+// (contract + gotchas); anything else falls back to a generic prompt pointing at src/discover.js.
 function discoverPromptFoot(title) {
   var foot = el('div', 'comp-prompt-foot');
+  var concept = conceptForTitle(title);
   foot.appendChild(promptLinkButton(function () {
-    return 'Reproduce the Juicebox V6 "' + title + '" flow from the project explorer.\n'
-      + 'Reference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicebox-v6-website — read src/discover.js; transactions are built in-browser and the README maps every action to its contract function.\n'
-      + 'V6 contracts: https://github.com/Bananapus/nana-core-v6.\n'
-      + 'Recreate it against the V6 contracts, matching the transaction encoding (arg order, decimals, currency id, slippage floor) exactly.\n'
-      + 'Live reference: ' + location.href;
+    return concept ? componentReproPrompt(title, concept) : componentReproPrompt(title, null, 'discover.js');
   }));
   return foot;
+}
+
+// Add a "copy LLM prompt" link to EVERY card on EVERY project tab. Switching tabs swaps the content area's
+// children, so a MutationObserver keeps coverage without editing all ~20 card sites. Idempotent; skips the
+// pay card (it already carries its component-specific link).
+function attachCardPromptLinks(contentArea) {
+  if (!contentArea || typeof MutationObserver === 'undefined') return;
+  var tag = function (card) {
+    if (!card.classList || card.classList.contains('paybox')) return;
+    if (card.querySelector(':scope > .comp-prompt-foot')) return;
+    var t = card.querySelector('.detail-card-title');
+    var title = t ? (t.textContent || '').trim().split('\n')[0]
+      : (card.classList.contains('you-card') ? 'Your holdings & actions' : 'this section');
+    card.appendChild(discoverPromptFoot(title));
+  };
+  var scan = function (root) {
+    if (!root.querySelectorAll) return;
+    if (root.classList && (root.classList.contains('detail-card') || root.classList.contains('you-card'))) tag(root);
+    root.querySelectorAll('.detail-card, .you-card').forEach(tag);
+  };
+  scan(contentArea);
+  new MutationObserver(function (muts) {
+    for (var i = 0; i < muts.length; i++) {
+      var added = muts[i].addedNodes;
+      for (var j = 0; j < added.length; j++) if (added[j].nodeType === 1) scan(added[j]);
+    }
+  }).observe(contentArea, { childList: true, subtree: true });
 }
 
 function openModal(titleText, contentNode, opts) {
