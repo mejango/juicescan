@@ -3139,7 +3139,7 @@ function openSafeModal(address, chainId, info) {
   var addrRow = el('div', 'safe-addr'); addrRow.appendChild(fullAddressNode(address, true));
   // fullAddressNode swaps the text to the ENS name when it resolves — show the raw 0x address alongside it too.
   ensNameOf(address).then(function (n) {
-    if (n && addrRow.isConnected) { var raw = el('span', 'safe-addr-raw'); raw.textContent = truncAddr(address); addrRow.appendChild(raw); }
+    if (n && addrRow.isConnected) { var raw = el('span', 'safe-addr-raw'); raw.textContent = address; addrRow.appendChild(raw); }
   }).catch(function () {});
   content.appendChild(addrRow);
 
