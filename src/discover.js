@@ -1909,6 +1909,54 @@ function feeTokenEstimate(chainId, projectId, token, amount, beneficiary) {
     args: [BigInt(projectId), token, amount, beneficiary || '0x0000000000000000000000000000000000000001', '0x'],
   }).then(function (o) { return toBigInt(o[1]); }).catch(function () { return null; });
 }
+
+// Whether an address pays NO protocol fee for a project — feeless protocol-wide or per-project. Mirrors
+// JBMultiTerminal._isFeeless → JBFeelessAddresses.isFeelessFor(addr, projectId, caller). For these
+// self-beneficiary ops (cash out / use allowance / borrow) the caller IS the beneficiary, so we pass addr twice.
+var isFeelessForAbi = [{ type: 'function', name: 'isFeelessFor', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'caller', type: 'address' }], outputs: [{ type: 'bool' }] }];
+function isFeelessAddress(chainId, addr, projectId) {
+  var fa = getAddress('JBFeelessAddresses', chainId);
+  if (!fa || !addr || addr === ZERO_ADDRESS) return Promise.resolve(false);
+  return clientFor(chainId).readContract({ address: fa, abi: isFeelessForAbi, functionName: 'isFeelessFor', args: [addr, BigInt(projectId), addr] })
+    .then(function (b) { return !!b; }).catch(function () { return false; });
+}
+
+// A link to a project's page (the fee-beneficiary project), so the user can see where the fee goes.
+function feeProjectLink(chainId, projectId, label) {
+  var a = document.createElement('a'); a.className = 'fee-project-link';
+  a.href = '#' + slugForChain(chainId) + ':' + String(projectId);
+  a.textContent = label || ('JB #' + String(projectId));
+  return a;
+}
+// Subtle fee receipt: "<label>: <feeAmount>" then "↳ get ~<X> <token> in <project link> for the fee" — shows where
+// the protocol fee goes and the project token it mints back to the beneficiary. opts: { chainId, feeProjectId,
+// feeTokenAddr, decimals, symbol, feeAmount (bigint), beneficiary, label, projectLabel }.
+function renderFeeReceipt(container, opts) {
+  if (!opts.feeAmount || opts.feeAmount <= 0n) return;
+  var feeLine = el('div', 'ops-preview-line ops-preview-fee');
+  feeLine.textContent = (opts.label || '2.5% protocol fee') + ': ' + formatBalance(opts.feeAmount, opts.decimals, opts.symbol);
+  container.appendChild(feeLine);
+  var feeTok = el('div', 'ops-preview-line ops-preview-feetok');
+  function withLink(prefix, suffix) {
+    while (feeTok.firstChild) feeTok.removeChild(feeTok.firstChild);
+    feeTok.appendChild(document.createTextNode(prefix));
+    feeTok.appendChild(feeProjectLink(opts.chainId, opts.feeProjectId, opts.projectLabel));
+    if (suffix) feeTok.appendChild(document.createTextNode(suffix));
+  }
+  withLink('↳ paid into ', ', minting its token to you…');
+  container.appendChild(feeTok);
+  Promise.all([
+    computePayPreview({ chainId: opts.chainId, projectId: Number(opts.feeProjectId), token: opts.feeTokenAddr || NATIVE_TOKEN, amount: opts.feeAmount, beneficiary: opts.beneficiary }),
+    projectTokenSymbol(opts.chainId, opts.feeProjectId),
+  ]).then(function (r) {
+    var p = r[0], fsym = r[1] || 'tokens';
+    if (p && !p.unavailable && p.received != null && p.received > 0n) {
+      withLink('↳ get ~ ' + formatTokens(p.received) + ' ' + fsym + ' in ', ' for the fee');
+      if (opts.onReceived) opts.onReceived(p.received, fsym);
+    } else withLink('↳ fee funds ', null);
+  }).catch(function () {});
+}
+
 // JBPermissions — opening a loan requires the holder to grant REVLoans BURN_TOKENS (11), since the loan
 // burns the collateral via CONTROLLER.burnTokensOf(holder, …). Verified against nana-core-v6 + JBPermissionIds.
 var JB_PERMISSION_BURN_TOKENS = 11;
@@ -7756,13 +7804,33 @@ function buildPayoutsModal(project, acctKind) {
   var unit = el('span', 'ops-unit'); unit.textContent = '…'; field.appendChild(unit);
   inRow.appendChild(field); wrap.appendChild(inRow);
 
+  var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Distribute'; foot.appendChild(btn); wrap.appendChild(foot);
 
+  // Up-to-2.5% protocol fee on payouts to non-feeless recipients, and where it goes. The fee is per-recipient
+  // (feeless splits — other JB projects, registered addresses — pay none), so this is an upper bound.
+  function updatePayoutPreview() {
+    preview.innerHTML = '';
+    if (!state.acct || !state.meta) return;
+    var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
+    if (!amount || amount <= 0n) return;
+    var line = el('div', 'ops-preview-line ops-preview-fee');
+    line.textContent = 'Up to 2.5% protocol fee (≤ ' + formatBalance(amount / 40n, state.acct.decimals, state.acct.symbol) + ') on payouts to non-feeless recipients';
+    preview.appendChild(line);
+    var to = el('div', 'ops-preview-line ops-preview-feetok');
+    to.appendChild(document.createTextNode('↳ paid into '));
+    to.appendChild(feeProjectLink(state.chainId, FEE_BENEFICIARY_PROJECT_ID));
+    to.appendChild(document.createTextNode('; feeless recipients (JB projects, registered addresses) pay none'));
+    preview.appendChild(to);
+  }
+  amt.addEventListener('input', updatePayoutPreview);
+
   maxBtn.addEventListener('click', function () {
     if (state.balance == null || !state.meta || !state.meta.tokenKeyed) return; // balance is token units — only a valid max in the token's own currency
     amt.value = formatAmount(state.balance, state.acct.decimals);
+    updatePayoutPreview();
   });
 
   function onChainChange() {
@@ -7786,6 +7854,7 @@ function buildPayoutsModal(project, acctKind) {
         bal.textContent = state.balance > 0n
           ? ('Available on ' + chainNameOf(state.chainId) + ': ' + formatBalance(state.balance, acct.decimals, acct.symbol))
           : ('Nothing to pay out on ' + chainNameOf(state.chainId) + ' yet.');
+        updatePayoutPreview();
       });
     }).catch(function () { bal.textContent = 'Could not read the terminal.'; });
   }
@@ -7839,13 +7908,34 @@ function buildUseAllowanceModal(project, acctKind) {
   var unit = el('span', 'ops-unit'); unit.textContent = '…'; field.appendChild(unit);
   inRow.appendChild(field); wrap.appendChild(inRow);
 
+  var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Use allowance'; foot.appendChild(btn); wrap.appendChild(foot);
 
+  // Net-to-beneficiary + the 2.5% protocol fee (where it goes, the JB #1 token it mints back).
+  function updateAllowancePreview() {
+    preview.innerHTML = '';
+    if (!state.acct || !state.meta) return;
+    var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
+    if (!amount || amount <= 0n) return;
+    var fee = state.feeless ? 0n : amount / 40n; // 2.5% — waived when the beneficiary is a feeless address
+    var net = amount - fee;
+    var recv = el('div', 'ops-preview-line ops-preview-recv');
+    recv.textContent = 'Beneficiary receives ~ ' + formatBalance(net, state.acct.decimals, state.acct.symbol);
+    preview.appendChild(recv);
+    if (state.feeless) {
+      var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'No protocol fee — this address is feeless for the project.'; preview.appendChild(fl);
+    } else {
+      renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: fee, beneficiary: getAccount && getAccount() });
+    }
+  }
+  amt.addEventListener('input', updateAllowancePreview);
+
   maxBtn.addEventListener('click', function () {
     if (state.usable == null || !state.meta || !state.meta.tokenKeyed) return;
     amt.value = formatAmount(state.usable, state.acct.decimals);
+    updateAllowancePreview();
   });
 
   function onChainChange() {
@@ -7853,6 +7943,7 @@ function buildUseAllowanceModal(project, acctKind) {
     resolveAcct(state.chainId).then(function (acct) {
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
+      isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updateAllowancePreview(); });
       var term = getAddress('JBMultiTerminal', state.chainId);
       var fal = getAddress('JBFundAccessLimits', state.chainId);
       var isNative = acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
@@ -7878,6 +7969,7 @@ function buildUseAllowanceModal(project, acctKind) {
         bal.textContent = state.usable > 0n
           ? ('Usable on ' + chainNameOf(state.chainId) + ': ' + formatBalance(state.usable, acct.decimals, acct.symbol))
           : ('No usable surplus allowance on ' + chainNameOf(state.chainId) + ' right now.');
+        updateAllowancePreview();
       });
     }).catch(function () { bal.textContent = 'Could not read the terminal.'; });
   }
@@ -12329,6 +12421,8 @@ function buildCashOutModal(project, requestClose) {
     var acctP = acctForChain(state.chainId);
     acctP.then(function (acct) {
       state.acct = acct;
+      // Feeless casher → the terminal waives the 2.5% protocol fee (in addition to the cash-out-tax gate).
+      isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updatePreview(); });
       return Promise.all([
         read(state.chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
         // Actual reclaimable SURPLUS (= terminal balance − remaining payout limit), in the accounting token's
@@ -12410,7 +12504,7 @@ function buildCashOutModal(project, requestClose) {
           if (fullGross == null) { preview.innerHTML = ''; state.net = null; return; }
           var approxAfterHook = project.isRevnet ? fullGross - fullGross / 40n : fullGross;
           var taxR = state.cashOutTaxRate || 0;
-          var pFee = taxR ? approxAfterHook / 40n : 0n;
+          var pFee = (taxR && !state.feeless) ? approxAfterHook / 40n : 0n;
           state.exact = false; state.reclaim = approxAfterHook; state.net = approxAfterHook - pFee;
           renderCashPreview(seq, { net: state.net, revFee: project.isRevnet ? fullGross - approxAfterHook : 0n, protocolFee: pFee, approx: true });
         });
@@ -12430,7 +12524,7 @@ function buildCashOutModal(project, requestClose) {
       if (revFee === 0n && fullGross != null && fullGross > afterHook) revFee = fullGross - afterHook; // fallback
       // The terminal then takes the 2.5% protocol fee (`amount / 40`) on the post-hook reclaim, and checks
       // minTokensReclaimed against THIS net. Mirror it exactly so the floor isn't set above the payout.
-      var protocolFee = taxRate ? afterHook / 40n : 0n;
+      var protocolFee = (taxRate && !state.feeless) ? afterHook / 40n : 0n;
       var net = afterHook - protocolFee;
       state.reclaim = afterHook;
       state.net = net;
@@ -12485,39 +12579,26 @@ function buildCashOutModal(project, requestClose) {
             if (seq !== previewSeq) return;
             var p = r[0], rsym = r[1] || 'tokens';
             if (p && !p.unavailable && p.received != null && p.received > 0n) {
-              revTok.textContent = '↳ get ~ ' + formatTokens(p.received) + ' ' + rsym + ' in revnet #' + String(frid) + ' for the fee';
+              revTok.textContent = '';
+              revTok.appendChild(document.createTextNode('↳ get ~ ' + formatTokens(p.received) + ' ' + rsym + ' in '));
+              revTok.appendChild(feeProjectLink(state.chainId, frid, 'revnet #' + String(frid)));
+              revTok.appendChild(document.createTextNode(' for the fee'));
               if (state.outcome) state.outcome.revToken = { amount: p.received, sym: rsym, id: String(frid) };
             } else {
-              revTok.textContent = '↳ fee funds revnet #' + String(frid);
+              revTok.textContent = '';
+              revTok.appendChild(document.createTextNode('↳ fee funds '));
+              revTok.appendChild(feeProjectLink(state.chainId, frid, 'revnet #' + String(frid)));
             }
           });
         }).catch(function () { if (seq === previewSeq && revTok.parentNode) revTok.parentNode.removeChild(revTok); });
       }
     }
     if (f.protocolFee > 0n) {
-      var feeLine = el('div', 'ops-preview-line ops-preview-fee');
-      feeLine.textContent = '2.5% protocol fee: ' + formatBalance(f.protocolFee, a.decimals, a.symbol);
-      preview.appendChild(feeLine);
-      var feeTok = el('div', 'ops-preview-line ops-preview-feetok');
-      feeTok.textContent = '↳ paid into JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ', minting its token to you…';
-      preview.appendChild(feeTok);
-      // Preview the fee payment into project #1 to show the tokens returned (matches the on-chain pay).
-      var acct = (getAccount && getAccount()) || undefined;
-      Promise.all([
-        computePayPreview({ chainId: state.chainId, projectId: Number(FEE_BENEFICIARY_PROJECT_ID), token: a.address || NATIVE_TOKEN, amount: f.protocolFee, beneficiary: acct }),
-        projectTokenSymbol(state.chainId, FEE_BENEFICIARY_PROJECT_ID),
-      ]).then(function (r) {
-        if (seq !== previewSeq) return;
-        var p = r[0], fsym = r[1] || 'tokens';
-        if (p && !p.unavailable && p.received != null && p.received > 0n) {
-          feeTok.textContent = '↳ get ~ ' + formatTokens(p.received) + ' ' + fsym + ' in JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' for the fee';
-          if (state.outcome) state.outcome.protoToken = { amount: p.received, sym: fsym };
-        } else {
-          feeTok.textContent = '↳ fee funds JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' (protocol project)';
-        }
-      }).catch(function () {
-        if (seq !== previewSeq) return;
-        feeTok.textContent = '↳ fee funds JB #' + String(FEE_BENEFICIARY_PROJECT_ID) + ' (protocol project)';
+      // Protocol fee → JB #1 (the fee project), minting its token back to the casher. Linked + token-previewed.
+      renderFeeReceipt(preview, {
+        chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: a.address || NATIVE_TOKEN,
+        decimals: a.decimals, symbol: a.symbol, feeAmount: f.protocolFee, beneficiary: (getAccount && getAccount()) || undefined,
+        onReceived: function (amount, fsym) { if (seq === previewSeq && state.outcome) state.outcome.protoToken = { amount: amount, sym: fsym }; },
       });
     }
 
@@ -12785,7 +12866,7 @@ function buildLoanModal(project, requestClose) {
       var gross = state.borrowable;
       // Opening a loan disburses via the terminal (2.5% protocol fee → JB #1), then deducts the 1% REV fee
       // (→ the $REV revnet) and the chosen prepaid source fee. The borrower receives what's left now.
-      var protocolFee = gross / 40n;                                             // 2.5% via useAllowanceOf
+      var protocolFee = state.feeless ? 0n : gross / 40n;                        // 2.5% via useAllowanceOf (waived if feeless)
       var revFee = gross * BigInt(LOAN_REV_FEE_PERCENT) / BigInt(LOAN_MAX_FEE);   // 1%
       var sourceFee = gross * BigInt(p) / BigInt(LOAN_MAX_FEE);                   // prepaid source fee (now)
       var net = gross - protocolFee - revFee - sourceFee;
@@ -12820,10 +12901,16 @@ function buildLoanModal(project, requestClose) {
             return Promise.all([feeTokenEstimate(cid, id, NATIVE_TOKEN, feeAmt, who), Promise.resolve(symP).then(function (s) { return s; })]).then(function (r) {
               if (seq !== feeTokSeq) return;
               var got = r[0], tsym = r[1] || 'tokens';
+              row.textContent = '';
               if (got && got > 0n) {
-                row.textContent = '↳ get ~ ' + formatTokens(got) + ' ' + tsym + ' in ' + label + ' for the fee';
+                row.appendChild(document.createTextNode('↳ get ~ ' + formatTokens(got) + ' ' + tsym + ' in '));
+                row.appendChild(feeProjectLink(cid, id, label));
+                row.appendChild(document.createTextNode(' for the fee'));
                 if (onAmount) onAmount(got, tsym);
-              } else { row.textContent = '↳ fee funds ' + label; }
+              } else {
+                row.appendChild(document.createTextNode('↳ fee funds '));
+                row.appendChild(feeProjectLink(cid, id, label));
+              }
             });
           }).catch(function () { if (seq === feeTokSeq) row.textContent = ''; });
         }
@@ -12867,6 +12954,7 @@ function buildLoanModal(project, requestClose) {
   var pid = BigInt(project.id);
   function refreshBalance() {
     readUserBalance(project, state.chainId).then(function (b) { state.balance = b; });
+    isFeelessAddress(state.chainId, getAccount && getAccount(), Number(pid)).then(function (f) { state.feeless = f; updateSummary(); });
   }
   var previewSeq = 0;
   function updatePreview() {

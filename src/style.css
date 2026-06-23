@@ -2833,6 +2833,7 @@ input[type="checkbox"].field {
 .ops-preview-recv { font-weight: bold; }
 .ops-preview-fee, .ops-preview-feetok { font-size: 12px; color: var(--muted-2); }
 .ops-preview-feetok { padding-left: 2px; }
+.fee-project-link { color: var(--c-teal); text-decoration: underline; }
 .ops-preview-lock { font-weight: bold; color: var(--c-pink); }
 
 /* Cash-out success summary (replaces the form once the tx confirms). */
