@@ -5781,7 +5781,9 @@ var ACTIVITY_TYPE_LABELS = {
   reserved: 'Reserved distributions', auto_issue: 'Auto-issuance', borrow: 'Loans',
   repay: 'Loan repayments', liquidate: 'Liquidations', mint_nft: 'NFT mints',
   deploy_erc20: 'Token deploys', create: 'Project creation', add_to_balance: 'Add to balance',
-  queue_ruleset: 'Ruleset changes',
+  queue_ruleset: 'Ruleset changes', set_uri: 'Info updates', transfer: 'Ownership transfers',
+  operator_perms: 'Permission changes', add_tier: 'Shop items added', remove_tier: 'Shop items removed',
+  swap: 'Buyback swaps', buyback_pool: 'Buyback pools', bridge_claim: 'Bridge claims',
 };
 function activityTypeLabel(t) { return ACTIVITY_TYPE_LABELS[t] || String(t || 'activity').replace(/_/g, ' '); }
 
@@ -6289,6 +6291,53 @@ function activityRowFromEvent(event, project) {
       baseAmount: formatActivityAmount(atb.amount, acct.symbol, acct.decimals),
       tokenAmount: '', action: 'added to balance', memo: atb.memo || '',
     };
+  }
+  // --- New indexed project-config / shop / market / bridge events (bendystraw PR #14, #12). ---
+  if (event.setUriEvent) {
+    var su = event.setUriEvent;
+    return { type: 'set_uri', direction: '', chainId: chainId, txHash: su.txHash || event.txHash, timestamp: Number(su.timestamp || event.timestamp),
+      account: su.from || su.caller || event.from, from: su.from || event.from, baseAmount: '', tokenAmount: '', action: 'updated project info', memo: '' };
+  }
+  if (event.projectTransferEvent) {
+    var pt = event.projectTransferEvent;
+    return { type: 'transfer', direction: '', chainId: chainId, txHash: pt.txHash || event.txHash, timestamp: Number(pt.timestamp || event.timestamp),
+      account: pt.previousOwner || pt.from || event.from, from: pt.from || event.from, baseAmount: '', tokenAmount: '',
+      action: 'transferred ownership' + (pt.owner ? ' to ' + truncAddr(pt.owner) : ''), memo: '' };
+  }
+  if (event.operatorPermissionsSetEvent) {
+    var op = event.operatorPermissionsSetEvent;
+    return { type: 'operator_perms', direction: '', chainId: chainId, txHash: op.txHash || event.txHash, timestamp: Number(op.timestamp || event.timestamp),
+      account: op.from || op.caller || event.from, from: op.from || event.from, baseAmount: '', tokenAmount: '',
+      action: 'set ' + (op.isRevnetOperator ? 'revnet operator' : 'operator') + ' permissions' + (op.operator ? ' for ' + truncAddr(op.operator) : ''), memo: '' };
+  }
+  if (event.addNftTierEvent) {
+    var at = event.addNftTierEvent;
+    return { type: 'add_tier', direction: '', chainId: chainId, txHash: at.txHash || event.txHash, timestamp: Number(at.timestamp || event.timestamp),
+      account: at.from || at.caller || event.from, from: at.from || event.from, baseAmount: '', tokenAmount: '', action: 'added shop item #' + Number(at.tierId), memo: '' };
+  }
+  if (event.removeNftTierEvent) {
+    var rt = event.removeNftTierEvent;
+    return { type: 'remove_tier', direction: '', chainId: chainId, txHash: rt.txHash || event.txHash, timestamp: Number(rt.timestamp || event.timestamp),
+      account: rt.from || rt.caller || event.from, from: rt.from || event.from, baseAmount: '', tokenAmount: '', action: 'removed shop item #' + Number(rt.tierId), memo: '' };
+  }
+  if (event.swapEvent) {
+    var sw = event.swapEvent;
+    return { type: 'swap', direction: 'in', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
+      account: sw.from || sw.caller || event.from, from: sw.from || event.from,
+      baseAmount: '', tokenAmount: sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) : '',
+      action: 'bought ' + sym + ' via the buyback pool', memo: '' };
+  }
+  if (event.buybackPoolEvent) {
+    var bp = event.buybackPoolEvent;
+    return { type: 'buyback_pool', direction: '', chainId: chainId, txHash: bp.txHash || event.txHash, timestamp: Number(bp.timestamp || event.timestamp),
+      account: bp.from || bp.caller || event.from, from: bp.from || event.from, baseAmount: '', tokenAmount: '', action: 'set up a buyback pool', memo: '' };
+  }
+  if (event.bridgeClaimEvent) {
+    var bc = event.bridgeClaimEvent;
+    return { type: 'bridge_claim', direction: 'in', chainId: chainId, txHash: bc.txHash || event.txHash, timestamp: Number(bc.timestamp || event.timestamp),
+      account: bc.beneficiary || bc.from || event.from, from: bc.from || event.from,
+      baseAmount: '', tokenAmount: bc.projectTokenCount ? formatCompactTokenAmount(toBigInt(bc.projectTokenCount)) : '',
+      action: 'claimed ' + sym + ' from ' + moveChainName(Number(bc.peerChainId)), memo: '' };
   }
   var label = String(event.type || 'activity').replace(/_/g, ' ').toLowerCase();
   return {
@@ -9163,7 +9212,9 @@ var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutTokensEvent_
   + '{ autoIssueEvent_not: null }, { mintTokensEvent_not: null }, '
   + '{ borrowLoanEvent_not: null }, { repayLoanEvent_not: null }, { liquidateLoanEvent_not: null }, '
   + '{ mintNftEvent_not: null }, { deployErc20Event_not: null }, { projectCreateEvent_not: null }, '
-  + '{ addToBalanceEvent_not: null }]';
+  + '{ addToBalanceEvent_not: null }, { setUriEvent_not: null }, { projectTransferEvent_not: null }, '
+  + '{ operatorPermissionsSetEvent_not: null }, { addNftTierEvent_not: null }, { removeNftTierEvent_not: null }, '
+  + '{ swapEvent_not: null }, { buybackPoolEvent_not: null }, { bridgeClaimEvent_not: null }]';
 var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId timestamp txHash from type '
   + 'payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount from txHash timestamp } '
   + 'cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd holder beneficiary from txHash timestamp } '
@@ -9177,7 +9228,15 @@ var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId timestamp txHash from 
   + 'mintNftEvent { tierId tokenId beneficiary totalAmountPaid from txHash timestamp } '
   + 'deployErc20Event { symbol name token from txHash timestamp } '
   + 'projectCreateEvent { from txHash timestamp } '
-  + 'addToBalanceEvent { amount memo from txHash timestamp } } totalCount';
+  + 'addToBalanceEvent { amount memo from txHash timestamp } '
+  + 'setUriEvent { uri caller from txHash timestamp } '
+  + 'projectTransferEvent { previousOwner owner from txHash timestamp } '
+  + 'operatorPermissionsSetEvent { account operator isRevnetOperator caller from txHash timestamp } '
+  + 'addNftTierEvent { tierId price category caller from txHash timestamp } '
+  + 'removeNftTierEvent { tierId caller from txHash timestamp } '
+  + 'swapEvent { direction terminalTokenAmount projectTokenAmount caller from txHash timestamp } '
+  + 'buybackPoolEvent { terminalToken poolId caller from txHash timestamp } '
+  + 'bridgeClaimEvent { peerChainId token beneficiary projectTokenCount terminalTokenAmount caller from txHash timestamp } } totalCount';
 var BENDYSTRAW_ACTIVITY_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'activityEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds, ' + BENDYSTRAW_ACTIVITY_OR + ' }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
@@ -9769,60 +9828,56 @@ async function fetchProjectActivity(project) {
   return bendyRows.concat(rsRows);
 }
 
-var RULESET_QUEUED_EVENT = { type: 'event', name: 'RulesetQueued', inputs: [
-  { name: 'rulesetId', type: 'uint256', indexed: true },
-  { name: 'projectId', type: 'uint256', indexed: true },
-  { name: 'duration', type: 'uint256', indexed: false },
-  { name: 'weight', type: 'uint256', indexed: false },
-  { name: 'weightCutPercent', type: 'uint256', indexed: false },
-  { name: 'approvalHook', type: 'address', indexed: false },
-  { name: 'metadata', type: 'uint256', indexed: false },
-  { name: 'mustStartAtOrAfter', type: 'uint256', indexed: false },
-  { name: 'caller', type: 'address', indexed: false },
-] };
 
 // Synthesize "queued Ruleset with ID N" activity rows from chain state (bendystraw doesn't index ruleset
 // queueing — there is no RulesetQueued ActivityEvent type). JBRulesets.allOf(pid, 0, 8) gives the configured
 // rulesets, whose `id` == the queue timestamp. The genesis ruleset (`basedOnId == 0`) is queued in the same tx
 // as the project's creation, so it's dropped here — it already shows as "created the project". For each
-// remaining ruleset we recover the queuer (`caller`) and tx from the RulesetQueued event: RPCs cap eth_getLogs
-// at 50k blocks, so we estimate the ruleset's block from its timestamp (rulesetId == queue timestamp) using the
-// chain's recent block rate, then scan a ±25k window filtered by the indexed rulesetId. Found → attributed row
-// (actor + tx link); not found (very old, outside the window) → a `system` fallback row (no actor/tx).
+// remaining ruleset we recover the queuer (`caller`) and tx from the index's `rulesetQueuedEvent` (PR #14) —
+// this replaced a per-ruleset block-estimate + ±25k eth_getLogs scan per chain (RPC-capped, slow). Found →
+// attributed row (actor + tx link); not indexed → a `system` fallback row (no actor/tx), same as before.
+var RULESET_QUEUED_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 200) {'
+  + ' items { chainId rulesetId from txHash } } }';
+// Fully-indexed variant (bendystraw PR #15: basedOnId + cycleNumber on the event) — lets us drop the allOf read.
+var RULESET_QUEUED_FULL_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 200) {'
+  + ' items { chainId rulesetId from txHash basedOnId cycleNumber } } }';
 async function fetchRulesetQueueRows(project) {
   var pid = BigInt(project.id);
   var chainIds = projectBendystrawChainIds(project);
   if (!chainIds.length) return [];
+  // Preferred path — fully indexed (PR #15: rulesetQueuedEvent carries basedOnId + cycleNumber): build rows with
+  // NO on-chain read. Auto-activates when those fields land; until then the query throws and we fall through.
+  try {
+    var fd = await bendystrawQuery(RULESET_QUEUED_FULL_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
+    var fitems = (fd && fd.rulesetQueuedEvents && fd.rulesetQueuedEvents.items) || [];
+    if (fitems.length) {
+      var frows = [];
+      fitems.forEach(function (e) {
+        if (!(Number(e.basedOnId) > 0)) return; // genesis (basedOnId 0) shows as "created the project"
+        if (Number(e.rulesetId) - Number(e.basedOnId) <= 60) return; // deploy-time stages (consecutive ids)
+        frows.push({ type: 'queue_ruleset', direction: '', chainId: Number(e.chainId), txHash: e.txHash || '',
+          timestamp: Number(e.rulesetId), account: e.from, from: e.from, baseAmount: '', tokenAmount: '',
+          action: 'queued Ruleset #' + Number(e.cycleNumber), memo: '' });
+      });
+      return frows;
+    }
+  } catch (_) { /* basedOnId/cycleNumber not indexed yet — use the allOf fallback below */ }
+  // Fallback: caller + tx from the index, keyed by chainId|rulesetId; basedOnId + cycleNumber from a cheap allOf.
+  var callerByKey = {};
+  try {
+    var qd = await bendystrawQuery(RULESET_QUEUED_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
+    ((qd && qd.rulesetQueuedEvents && qd.rulesetQueuedEvents.items) || []).forEach(function (e) {
+      if (e.from) callerByKey[e.chainId + '|' + String(e.rulesetId)] = { caller: e.from, txHash: e.txHash };
+    });
+  } catch (_) {}
   var rows = [];
   await Promise.all(chainIds.map(async function (cid) {
     var rs = await read(cid, 'JBRulesets', allOfAbi, 'allOf', [pid, 0n, 8n]).catch(function () { return null; });
     if (!rs || !rs.length) return;
     var queued = rs.filter(function (r) { return Number(r.basedOnId) !== 0 && Number(r.id) > 0; });
     if (!queued.length) return;
-
-    var callerById = {};
-    try {
-      var lc = lpLogsClient(cid) || clientFor(cid);
-      var rsAddr = getAddress('JBRulesets', cid);
-      var latestNum = await lc.getBlockNumber();
-      var latestBlk = await lc.getBlock({ blockNumber: latestNum });
-      var refNum = latestNum > 20000n ? latestNum - 20000n : 0n;
-      var refBlk = await lc.getBlock({ blockNumber: refNum });
-      var spanBlocks = Number(latestNum - refNum) || 1;
-      var secPerBlock = (Number(latestBlk.timestamp) - Number(refBlk.timestamp)) / spanBlocks;
-      if (!(secPerBlock > 0)) secPerBlock = 12;
-      await Promise.all(queued.map(async function (r) {
-        var est = Number(latestNum) - Math.floor((Number(latestBlk.timestamp) - Number(r.id)) / secPerBlock);
-        var hi = Math.min(Number(latestNum), est + 25000);
-        var lo = Math.max(0, est - 25000);
-        if (hi < 0) return;
-        var logs = await lc.getLogs({
-          address: rsAddr, event: RULESET_QUEUED_EVENT, args: { rulesetId: BigInt(r.id) },
-          fromBlock: BigInt(lo), toBlock: BigInt(hi),
-        }).catch(function () { return []; });
-        if (logs && logs[0]) callerById[String(r.id)] = { caller: logs[0].args.caller, txHash: logs[0].transactionHash };
-      }));
-    } catch (_) {}
 
     queued.forEach(function (r) {
       // Hide rulesets queued as part of the deploy. The launch queues the genesis + all its stages TOGETHER in
@@ -9831,7 +9886,7 @@ async function fetchRulesetQueueRows(project) {
       // then-current ruleset but queued much later, so `id - basedOnId` is large. The genesis (basedOnId == 0)
       // is already excluded above; this drops the rest of the deploy cluster. (Verified on BAN: id-based == 1.)
       if (Number(r.id) - Number(r.basedOnId) <= 60) return;
-      var info = callerById[String(r.id)];
+      var info = callerByKey[cid + '|' + String(r.id)];
       // Label by cycle NUMBER (stable across chains) so the same ruleset queued on every chain groups into one
       // row — the rulesetId differs per chain (it's the local queue timestamp) and would split the rows apart.
       if (info && info.caller) {
@@ -13276,13 +13331,22 @@ function snapshotAge(ts) {
 // view (`peerChainAccountsOf`) — NOT individual suckers — because a transitively-gossiped record can live on
 // a different sucker than the direct A↔B one (e.g. Ethereum gossiped to Arbitrum lands on Arbitrum's Base
 // sucker). The registry folds every sucker's direct + virtually-known records, so it sees the full picture.
+var ACCOUNTING_SYNC_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
+  + ' accountingSyncEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 100, orderBy: "timestamp", orderDirection: "desc") {'
+  + ' items { chainId peerChainId sourceTimestampSeconds } } }';
 function fetchCrossChainKnowledge(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
   if (chains.length < 2) return Promise.resolve([]);
   function unpackTs(raw) { var v = toBigInt(raw || 0); return Number(v >> 128n); } // packed (ts<<128|seq) → seconds
-  return Promise.all(chains.map(function (C) {
+  // In-flight sync pushes from the index (bendystraw PR #11): destChain|srcChain → latest SENT unix seconds. Lets
+  // a row show "Syncing…" for a push ANY user triggered (the localStorage marker only covers this user's own).
+  var sentByKeyP = bendystrawQuery(ACCOUNTING_SYNC_QUERY, { projectId: Number(project.id), chainIds: chains, version: BENDYSTRAW_VERSION })
+    .then(function (d) { var m = {}; ((d && d.accountingSyncEvents && d.accountingSyncEvents.items) || []).forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); return m; })
+    .catch(function () { return {}; });
+  return Promise.all([sentByKeyP, Promise.all(chains.map(function (C) {
     return readSuckerPairsOf(project.id, C).then(function (p) { return { chain: C, pairs: p || [] }; }).catch(function () { return { chain: C, pairs: [] }; });
-  })).then(function (lists) {
+  }))]).then(function (res2) {
+    var sentByKey = res2[0]; var lists = res2[1];
     var pairsByChain = {};
     lists.forEach(function (x) { pairsByChain[x.chain] = x.pairs; });
     return Promise.all(lists.map(function (x) {
@@ -13307,7 +13371,7 @@ function fetchCrossChainKnowledge(project) {
           var rec = byChain[B] || { supply: 0n, balances: [], snapshot: 0 };
           var bPairs = pairsByChain[B] || [];
           var syncSucker = (bPairs.filter(function (q) { return q.remoteChainId === A; })[0] || {}).local || null;
-          return { peerChainId: B, peerName: moveChainName(B), supply: rec.supply, balances: rec.balances, snapshot: rec.snapshot, syncSucker: syncSucker };
+          return { peerChainId: B, peerName: moveChainName(B), supply: rec.supply, balances: rec.balances, snapshot: rec.snapshot, syncSucker: syncSucker, sentSyncAt: sentByKey[A + '|' + B] || 0 };
         });
         return { chainId: A, name: moveChainName(A), peers: peers };
       });
@@ -13465,6 +13529,8 @@ function renderGossipSection(project) {
           var key = project.id + ':' + d.chainId + ':' + p.peerChainId;
           var syncedAt = _gossipSyncAt[key];
           if (syncedAt && p.snapshot && p.snapshot >= syncedAt) { delete _gossipSyncAt[key]; saveGossipSyncAt(_gossipSyncAt); syncedAt = null; }
+          // Universal in-flight from the index (any user/device): a push SENT after the accepted snapshot landed.
+          if (!syncedAt && p.sentSyncAt && (!p.snapshot || p.sentSyncAt > p.snapshot)) syncedAt = p.sentSyncAt;
           var nowS = Math.floor(Date.now() / 1000);
           var localPending = !!(syncedAt && (nowS - syncedAt) < 1800);
 
