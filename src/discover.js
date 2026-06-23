@@ -9747,12 +9747,32 @@ async function fetchProjectActivity(project) {
 var RULESET_QUEUED_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
   + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 200) {'
   + ' items { chainId rulesetId from txHash } } }';
+// Fully-indexed variant (bendystraw PR #15: basedOnId + cycleNumber on the event) — lets us drop the allOf read.
+var RULESET_QUEUED_FULL_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 200) {'
+  + ' items { chainId rulesetId from txHash basedOnId cycleNumber } } }';
 async function fetchRulesetQueueRows(project) {
   var pid = BigInt(project.id);
   var chainIds = projectBendystrawChainIds(project);
   if (!chainIds.length) return [];
-  // Caller + tx from the index, keyed by chainId|rulesetId. The cheap JBRulesets.allOf read stays: bendystraw
-  // indexes no ruleset STATE, so basedOnId (deploy-detection) and cycleNumber (label) are still read on-chain.
+  // Preferred path — fully indexed (PR #15: rulesetQueuedEvent carries basedOnId + cycleNumber): build rows with
+  // NO on-chain read. Auto-activates when those fields land; until then the query throws and we fall through.
+  try {
+    var fd = await bendystrawQuery(RULESET_QUEUED_FULL_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
+    var fitems = (fd && fd.rulesetQueuedEvents && fd.rulesetQueuedEvents.items) || [];
+    if (fitems.length) {
+      var frows = [];
+      fitems.forEach(function (e) {
+        if (!(Number(e.basedOnId) > 0)) return; // genesis (basedOnId 0) shows as "created the project"
+        if (Number(e.rulesetId) - Number(e.basedOnId) <= 60) return; // deploy-time stages (consecutive ids)
+        frows.push({ type: 'queue_ruleset', direction: '', chainId: Number(e.chainId), txHash: e.txHash || '',
+          timestamp: Number(e.rulesetId), account: e.from, from: e.from, baseAmount: '', tokenAmount: '',
+          action: 'queued Ruleset #' + Number(e.cycleNumber), memo: '' });
+      });
+      return frows;
+    }
+  } catch (_) { /* basedOnId/cycleNumber not indexed yet — use the allOf fallback below */ }
+  // Fallback: caller + tx from the index, keyed by chainId|rulesetId; basedOnId + cycleNumber from a cheap allOf.
   var callerByKey = {};
   try {
     var qd = await bendystrawQuery(RULESET_QUEUED_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
