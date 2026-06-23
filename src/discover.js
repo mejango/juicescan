@@ -1910,6 +1910,17 @@ function feeTokenEstimate(chainId, projectId, token, amount, beneficiary) {
   }).then(function (o) { return toBigInt(o[1]); }).catch(function () { return null; });
 }
 
+// Whether an address pays NO protocol fee for a project — feeless protocol-wide or per-project. Mirrors
+// JBMultiTerminal._isFeeless → JBFeelessAddresses.isFeelessFor(addr, projectId, caller). For these
+// self-beneficiary ops (cash out / use allowance / borrow) the caller IS the beneficiary, so we pass addr twice.
+var isFeelessForAbi = [{ type: 'function', name: 'isFeelessFor', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'caller', type: 'address' }], outputs: [{ type: 'bool' }] }];
+function isFeelessAddress(chainId, addr, projectId) {
+  var fa = getAddress('JBFeelessAddresses', chainId);
+  if (!fa || !addr || addr === ZERO_ADDRESS) return Promise.resolve(false);
+  return clientFor(chainId).readContract({ address: fa, abi: isFeelessForAbi, functionName: 'isFeelessFor', args: [addr, BigInt(projectId), addr] })
+    .then(function (b) { return !!b; }).catch(function () { return false; });
+}
+
 // A link to a project's page (the fee-beneficiary project), so the user can see where the fee goes.
 function feeProjectLink(chainId, projectId, label) {
   var a = document.createElement('a'); a.className = 'fee-project-link';
@@ -7908,12 +7919,16 @@ function buildUseAllowanceModal(project, acctKind) {
     if (!state.acct || !state.meta) return;
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
-    var fee = amount / 40n; // 2.5%
+    var fee = state.feeless ? 0n : amount / 40n; // 2.5% — waived when the beneficiary is a feeless address
     var net = amount - fee;
     var recv = el('div', 'ops-preview-line ops-preview-recv');
     recv.textContent = 'Beneficiary receives ~ ' + formatBalance(net, state.acct.decimals, state.acct.symbol);
     preview.appendChild(recv);
-    renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: fee, beneficiary: getAccount && getAccount() });
+    if (state.feeless) {
+      var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'No protocol fee — this address is feeless for the project.'; preview.appendChild(fl);
+    } else {
+      renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: fee, beneficiary: getAccount && getAccount() });
+    }
   }
   amt.addEventListener('input', updateAllowancePreview);
 
@@ -7928,6 +7943,7 @@ function buildUseAllowanceModal(project, acctKind) {
     resolveAcct(state.chainId).then(function (acct) {
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
+      isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updateAllowancePreview(); });
       var term = getAddress('JBMultiTerminal', state.chainId);
       var fal = getAddress('JBFundAccessLimits', state.chainId);
       var isNative = acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
@@ -12405,6 +12421,8 @@ function buildCashOutModal(project, requestClose) {
     var acctP = acctForChain(state.chainId);
     acctP.then(function (acct) {
       state.acct = acct;
+      // Feeless casher → the terminal waives the 2.5% protocol fee (in addition to the cash-out-tax gate).
+      isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updatePreview(); });
       return Promise.all([
         read(state.chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
         // Actual reclaimable SURPLUS (= terminal balance − remaining payout limit), in the accounting token's
@@ -12486,7 +12504,7 @@ function buildCashOutModal(project, requestClose) {
           if (fullGross == null) { preview.innerHTML = ''; state.net = null; return; }
           var approxAfterHook = project.isRevnet ? fullGross - fullGross / 40n : fullGross;
           var taxR = state.cashOutTaxRate || 0;
-          var pFee = taxR ? approxAfterHook / 40n : 0n;
+          var pFee = (taxR && !state.feeless) ? approxAfterHook / 40n : 0n;
           state.exact = false; state.reclaim = approxAfterHook; state.net = approxAfterHook - pFee;
           renderCashPreview(seq, { net: state.net, revFee: project.isRevnet ? fullGross - approxAfterHook : 0n, protocolFee: pFee, approx: true });
         });
@@ -12506,7 +12524,7 @@ function buildCashOutModal(project, requestClose) {
       if (revFee === 0n && fullGross != null && fullGross > afterHook) revFee = fullGross - afterHook; // fallback
       // The terminal then takes the 2.5% protocol fee (`amount / 40`) on the post-hook reclaim, and checks
       // minTokensReclaimed against THIS net. Mirror it exactly so the floor isn't set above the payout.
-      var protocolFee = taxRate ? afterHook / 40n : 0n;
+      var protocolFee = (taxRate && !state.feeless) ? afterHook / 40n : 0n;
       var net = afterHook - protocolFee;
       state.reclaim = afterHook;
       state.net = net;
@@ -12848,7 +12866,7 @@ function buildLoanModal(project, requestClose) {
       var gross = state.borrowable;
       // Opening a loan disburses via the terminal (2.5% protocol fee → JB #1), then deducts the 1% REV fee
       // (→ the $REV revnet) and the chosen prepaid source fee. The borrower receives what's left now.
-      var protocolFee = gross / 40n;                                             // 2.5% via useAllowanceOf
+      var protocolFee = state.feeless ? 0n : gross / 40n;                        // 2.5% via useAllowanceOf (waived if feeless)
       var revFee = gross * BigInt(LOAN_REV_FEE_PERCENT) / BigInt(LOAN_MAX_FEE);   // 1%
       var sourceFee = gross * BigInt(p) / BigInt(LOAN_MAX_FEE);                   // prepaid source fee (now)
       var net = gross - protocolFee - revFee - sourceFee;
@@ -12936,6 +12954,7 @@ function buildLoanModal(project, requestClose) {
   var pid = BigInt(project.id);
   function refreshBalance() {
     readUserBalance(project, state.chainId).then(function (b) { state.balance = b; });
+    isFeelessAddress(state.chainId, getAccount && getAccount(), Number(pid)).then(function (f) { state.feeless = f; updateSummary(); });
   }
   var previewSeq = 0;
   function updatePreview() {
