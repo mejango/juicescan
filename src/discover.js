@@ -7339,7 +7339,7 @@ function renderPowersCard(project) {
 // Operator/owner buyback + swap-router setup. Three per-project registry writes — set the buyback hook, set the
 // router terminal, initialize the Uniswap buyback pool — each queued on the chains you pick and bundled into one
 // relayr payment (or proposed to the Safe) via openPowerModal, exactly like the other operator actions.
-function renderBuybackRouterCard(project) {
+export function renderBuybackRouterCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
@@ -7580,21 +7580,21 @@ var POWER_SET_TOKEN = {
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
   buildArgs: function (v, cid, pid) { return [pid, v.token]; },
 };
-var POWER_SET_BUYBACK_HOOK = {
+export var POWER_SET_BUYBACK_HOOK = {
   title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
   note: 'Points the project at its buyback hook in the registry. Blank uses the standard JBBuybackHook on each chain.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
   fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… (blank = standard JBBuybackHook)', infra: 'JBBuybackHook' }],
   buildArgs: function (v, cid, pid) { return [pid, v.hook || getAddress('JBBuybackHook', cid)]; },
 };
-var POWER_SET_ROUTER_TERMINAL = {
+export var POWER_SET_ROUTER_TERMINAL = {
   title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
   note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Blank uses the standard JBMultiTerminal on each chain.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… (blank = standard JBMultiTerminal)', infra: 'JBMultiTerminal' }],
   buildArgs: function (v, cid, pid) { return [pid, v.terminal || getAddress('JBMultiTerminal', cid)]; },
 };
-var POWER_INIT_BUYBACK_POOL = {
+export var POWER_INIT_BUYBACK_POOL = {
   title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHook', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
   note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
   danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
