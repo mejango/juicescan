@@ -255,6 +255,11 @@ var setTerminalsAbi = [{ type: 'function', name: 'setTerminalsOf', stateMutabili
 var migrateBalanceAbi = [{ type: 'function', name: 'migrateBalanceOf', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }, { name: 'to', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 var addPriceFeedAbi = [{ type: 'function', name: 'addPriceFeedFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'pricingCurrency', type: 'uint256' }, { name: 'unitCurrency', type: 'uint256' }, { name: 'feed', type: 'address' }], outputs: [] }];
 var setTokenAbi = [{ type: 'function', name: 'setTokenFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [] }];
+// Operator buyback/router setup (per-project registry writes). setHookFor → JBBuybackHookRegistry; setTerminalFor
+// → JBRouterTerminalRegistry; initializePoolFor → JBBuybackHook (singleton, keyed by projectId + terminalToken).
+var setBuybackHookForAbi = [{ type: 'function', name: 'setHookFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'hook', type: 'address' }], outputs: [] }];
+var setRouterTerminalForAbi = [{ type: 'function', name: 'setTerminalFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminal', type: 'address' }], outputs: [] }];
+var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'twapWindow', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'sqrtPriceX96', type: 'uint160' }], outputs: [] }];
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
 var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -6876,9 +6881,11 @@ function renderBackOfficeSection(project) {
   // (not the ruleset-flag owner powers, which it doesn't hold) — show those actual powers, read-only. Custom:
   // the owner exercises the ruleset-gated owner powers (Powers card) AND can manage operators (Permissions card).
   if (project.isRevnet) {
+    section.appendChild(renderBuybackRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
   } else {
     section.appendChild(renderPowersCard(project));
+    section.appendChild(renderBuybackRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
   }
   return section;
@@ -7329,6 +7336,29 @@ function renderPowersCard(project) {
   return card;
 }
 
+// Operator/owner buyback + swap-router setup. Three per-project registry writes — set the buyback hook, set the
+// router terminal, initialize the Uniswap buyback pool — each queued on the chains you pick and bundled into one
+// relayr payment (or proposed to the Safe) via openPowerModal, exactly like the other operator actions.
+function renderBuybackRouterCard(project) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
+  var intro = el('div', 'detail-card-body backoffice-intro');
+  intro.textContent = 'Wire up the project’s buyback hook + swap router and initialize its Uniswap pool. Each runs on the chains you select, bundled into one relayr payment (or proposed to the Safe).';
+  card.appendChild(intro);
+  [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL].forEach(function (action) {
+    var row = el('div', 'powers-row');
+    var head = el('div', 'powers-head');
+    var lab = el('span', 'powers-label'); lab.textContent = action.title; head.appendChild(lab);
+    row.appendChild(head);
+    var desc = el('div', 'powers-desc'); desc.textContent = action.note; row.appendChild(desc);
+    var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = action.title;
+    act.addEventListener('click', function (e) { e.preventDefault(); openPowerModal(project, action); });
+    row.appendChild(act);
+    card.appendChild(row);
+  });
+  return card;
+}
+
 // Every operator the project has authorized, deduped across chains. Source is bendystraw (no on-chain way to
 // ENUMERATE operators — only to check a known one). Stale empty grants (permissions cleared but row kept) are
 // dropped. Returns [{ operator, account, isRevnetOperator, chains:[id], permsUnion:[ids] }].
@@ -7550,6 +7580,33 @@ var POWER_SET_TOKEN = {
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
   buildArgs: function (v, cid, pid) { return [pid, v.token]; },
 };
+var POWER_SET_BUYBACK_HOOK = {
+  title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
+  note: 'Points the project at its buyback hook in the registry. Blank uses the standard JBBuybackHook on each chain.',
+  danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
+  fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… (blank = standard JBBuybackHook)', infra: 'JBBuybackHook' }],
+  buildArgs: function (v, cid, pid) { return [pid, v.hook || getAddress('JBBuybackHook', cid)]; },
+};
+var POWER_SET_ROUTER_TERMINAL = {
+  title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
+  note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Blank uses the standard JBMultiTerminal on each chain.',
+  danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
+  fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… (blank = standard JBMultiTerminal)', infra: 'JBMultiTerminal' }],
+  buildArgs: function (v, cid, pid) { return [pid, v.terminal || getAddress('JBMultiTerminal', cid)]; },
+};
+var POWER_INIT_BUYBACK_POOL = {
+  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHook', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
+  note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
+  danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
+  fields: [
+    { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
+    { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10' },
+    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)' },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'address', defaultValue: ZERO_ADDRESS, help: 'Zero address for native ETH pools; otherwise the pair token address (e.g. USDC).' },
+    { name: 'sqrtPriceX96', label: 'Initial price (sqrtPriceX96)', kind: 'uint', placeholder: 'pool price as sqrtPriceX96 (issuance rate)' },
+  ],
+  buildArgs: function (v, cid, pid) { return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), v.terminalToken, BigInt(v.sqrtPriceX96)]; },
+};
 
 // A deliberate-confirmation gate for irreversible/dangerous owner actions: a danger banner + a checkbox
 // that must be ticked for the submit to proceed (the submit greys out until then).
@@ -7589,6 +7646,7 @@ function openPowerModal(project, action) {
     var inp = el('input', 'operator-edit-jwt'); inp.type = (f.kind === 'uint' || f.kind === 'amount') ? 'text' : 'text'; inp.placeholder = f.placeholder || '';
     if (f.defaultAccount) { var a = getAccount && getAccount(); if (a) inp.value = a; }
     if (f.defaultNative) inp.value = NATIVE_TOKEN;
+    if (f.defaultValue) inp.value = f.defaultValue;
     content.appendChild(inp);
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
     inputs[f.name] = { get: function () {
