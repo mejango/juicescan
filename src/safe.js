@@ -291,4 +291,62 @@ export function safeExecRelayrTx(chainId, safe, tx) {
   return { chain: Number(chainId), target: cs(safe), data: data, value: '0' };
 }
 
+// ── On-chain Safe path (no Transaction Service) ─────────────────────────────────────────────────────
+// Some chains have no hosted Safe Transaction Service (e.g. Arbitrum/OP Sepolia). There's no off-chain queue to
+// post to, so signers coordinate ENTIRELY on-chain: each owner calls approveHash(safeTxHash), and once the
+// threshold is met anyone calls execTransaction with pre-validated "approved-hash" signatures (sigBytesFor above
+// already synthesizes those for null-signature confirmations). This makes the operator/owner flow work on any
+// chain where the Safe is deployed, regardless of Safe's API coverage.
+var SAFE_ONCHAIN_ABI = [
+  { type: 'function', name: 'approveHash', stateMutability: 'nonpayable', inputs: [{ name: 'hashToApprove', type: 'bytes32' }], outputs: [] },
+  { type: 'function', name: 'approvedHashes', stateMutability: 'view', inputs: [{ name: 'owner', type: 'address' }, { name: 'hash', type: 'bytes32' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'getThreshold', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'getOwners', stateMutability: 'view', inputs: [], outputs: [{ type: 'address[]' }] },
+  { type: 'function', name: 'nonce', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+];
+
+// True when Safe's hosted Transaction Service covers this chain. False → use the on-chain approveHash path.
+export function hasSafeService(chainId) { return !!txBase(chainId); }
+
+// The SafeTx hash for a {to, data, value, nonce} call — what signers approve and what execTransaction must match.
+export function safeTxHashForCall(chainId, safe, call) {
+  return safeTxHashOf(chainId, safe, {
+    to: call.to, value: call.value || 0, data: call.data || '0x', operation: 0,
+    safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO, refundReceiver: ZERO, nonce: call.nonce,
+  });
+}
+
+// Read the Safe's on-chain params (nonce / threshold / owners) directly — no Transaction Service.
+export async function safeOnChainContext(chainId, safe) {
+  var pub = createPublicClientForChain(chainId);
+  var r = await Promise.all([
+    pub.readContract({ address: safe, abi: SAFE_ONCHAIN_ABI, functionName: 'nonce', args: [] }),
+    pub.readContract({ address: safe, abi: SAFE_ONCHAIN_ABI, functionName: 'getThreshold', args: [] }),
+    pub.readContract({ address: safe, abi: SAFE_ONCHAIN_ABI, functionName: 'getOwners', args: [] }),
+  ]);
+  return { nonce: Number(r[0]), threshold: Number(r[1]), owners: r[2] || [] };
+}
+
+// Which of `owners` have approved `hash` on-chain (approvedHashes == 1). Returns the approved owner addresses.
+export async function safeApprovalsOf(chainId, safe, hash, owners) {
+  var pub = createPublicClientForChain(chainId);
+  var flags = await Promise.all((owners || []).map(function (o) {
+    return pub.readContract({ address: safe, abi: SAFE_ONCHAIN_ABI, functionName: 'approvedHashes', args: [o, hash] })
+      .then(function (v) { return BigInt(v) > 0n; }).catch(function () { return false; });
+  }));
+  return (owners || []).filter(function (o, i) { return flags[i]; });
+}
+
+// Approve a SafeTx hash on-chain from the connected signer (records approvedHashes[signer][hash] = 1). The wallet
+// must be on `chainId` and be a Safe owner. Returns the approveHash tx hash.
+export async function approveSafeHashOnChain(chainId, safe, hash) {
+  var wallet = getWalletClient();
+  if (!wallet) throw new Error('Connect a wallet first');
+  try {
+    var active = await wallet.getChainId();
+    if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
+  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to approve.'); }
+  return wallet.writeContract({ account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] });
+}
+
 export { SAFE_PREFIX };
