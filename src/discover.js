@@ -260,6 +260,9 @@ var setTokenAbi = [{ type: 'function', name: 'setTokenFor', stateMutability: 'no
 var setBuybackHookForAbi = [{ type: 'function', name: 'setHookFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'hook', type: 'address' }], outputs: [] }];
 var setRouterTerminalForAbi = [{ type: 'function', name: 'setTerminalFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminal', type: 'address' }], outputs: [] }];
 var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'twapWindow', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'sqrtPriceX96', type: 'uint160' }], outputs: [] }];
+// Registry getters — the project's CURRENT resolved hook / terminal, used to pre-fill the setter fields.
+var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+var terminalOfAbi = [{ type: 'function', name: 'terminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
 var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -7582,17 +7585,19 @@ var POWER_SET_TOKEN = {
 };
 export var POWER_SET_BUYBACK_HOOK = {
   title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
-  note: 'Points the project at its buyback hook in the registry. Blank uses the standard JBBuybackHook on each chain.',
+  note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
-  fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… (blank = standard JBBuybackHook)', infra: 'JBBuybackHook' }],
-  buildArgs: function (v, cid, pid) { return [pid, v.hook || getAddress('JBBuybackHook', cid)]; },
+  fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… buyback hook',
+    defaultRead: function (project) { return read(project.chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+  buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
 };
 export var POWER_SET_ROUTER_TERMINAL = {
   title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
-  note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Blank uses the standard JBMultiTerminal on each chain.',
+  note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
-  fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… (blank = standard JBMultiTerminal)', infra: 'JBMultiTerminal' }],
-  buildArgs: function (v, cid, pid) { return [pid, v.terminal || getAddress('JBMultiTerminal', cid)]; },
+  fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
+    defaultRead: function (project) { return read(project.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+  buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
   title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHook', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
@@ -7647,6 +7652,9 @@ function openPowerModal(project, action) {
     if (f.defaultAccount) { var a = getAccount && getAccount(); if (a) inp.value = a; }
     if (f.defaultNative) inp.value = NATIVE_TOKEN;
     if (f.defaultValue) inp.value = f.defaultValue;
+    // Async default: pre-fill with the project's CURRENT on-chain value (e.g. its registered hook/terminal),
+    // unless the user has already typed. No fallback default — blank stays blank.
+    if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') input.value = val; input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
     content.appendChild(inp);
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
     inputs[f.name] = { get: function () {

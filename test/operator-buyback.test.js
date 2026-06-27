@@ -36,6 +36,17 @@ describe('operator buyback/router descriptors', () => {
       { fee: '3000', tickSpacing: '60', twapWindow: '1800', terminalToken: ZERO, sqrtPriceX96: '79228162514264337593543950336' }, 1, 5n);
     expect(args).toEqual([5n, 3000n, 60n, 1800n, ZERO, 79228162514264337593543950336n]);
   });
+  it('buyback hook / router terminal pre-fill the project’s CURRENT value, with no standard-infra fallback', () => {
+    const hookField = POWER_SET_BUYBACK_HOOK.fields[0];
+    const termField = POWER_SET_ROUTER_TERMINAL.fields[0];
+    // defaultRead pre-fills the current on-chain value; absence of `infra` means no standard-default fallback.
+    expect(typeof hookField.defaultRead).toBe('function');
+    expect(typeof termField.defaultRead).toBe('function');
+    expect(hookField.infra).toBeUndefined();
+    expect(termField.infra).toBeUndefined();
+    // buildArgs send exactly what's in the field — no `|| getAddress(standard)` fallback.
+    expect(POWER_SET_BUYBACK_HOOK.buildArgs({ hook: '0x3333333333333333333333333333333333333333' }, 1, 9n)).toEqual([9n, '0x3333333333333333333333333333333333333333']);
+  });
   it('pool init defaults its pair token to the zero address (native ETH pool-currency convention)', () => {
     const tokenField = POWER_INIT_BUYBACK_POOL.fields.find((f) => f.name === 'terminalToken');
     expect(tokenField.defaultValue).toBe(ZERO);
