@@ -10,7 +10,7 @@ import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, 
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeTxLink, safeHomeLink } from './safe.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeTxLink, safeHomeLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -5621,6 +5621,17 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           return;
         }
         if (!isSigner) { block.classList.add('safe-propose-skip'); hint.textContent = ' You’re not a signer of this Safe — skipped.'; return; }
+        // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → can't queue off-chain. Offer the
+        // on-chain approve + execute panel instead; exclude it from the service "Sign & queue" loop below.
+        if (!hasSafeService(c.id)) {
+          rec.deployed = true; rec.onChain = true; nrow.style.display = 'none';
+          var ocWrap = el('div', 'safe-propose-onchain'); ocWrap.style.marginTop = '6px';
+          var ocNote = el('div', 'safe-propose-hint'); ocNote.textContent = 'No Safe service on ' + c.name + ' — approve + execute on-chain:'; ocWrap.appendChild(ocNote);
+          var ocBtn = el('a', 'operator-cta'); ocBtn.href = '#'; ocBtn.textContent = 'Operate on-chain';
+          ocBtn.addEventListener('click', function (e) { e.preventDefault(); openOnChainSafeModal(c.id, safe, { to: call.to, data: call.data, value: 0 }, { signer: signer, title: opts.title, chainName: c.name }); });
+          ocWrap.appendChild(ocBtn); block.appendChild(ocWrap);
+          return;
+        }
         rec.deployed = true; nInput.disabled = false;
         return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (r) {
           var next = r[0] || 0;
@@ -5634,9 +5645,15 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
 
     cancel.addEventListener('click', function () { finish({ queued: 0, skipped: [], cancelled: true }); });
     btn.addEventListener('click', function () {
-      var live = rows.filter(function (r) { return r.deployed; });
-      var skipped = rows.filter(function (r) { return !r.deployed; }).map(function (r) { return r.chain; });
-      if (!live.length) { status.textContent = 'The owner Safe isn’t deployed on any selected chain yet (or you’re not a signer). Add it on those chains in the Safe app first.'; return; }
+      var live = rows.filter(function (r) { return r.deployed && !r.onChain; }); // service chains queued here
+      var skipped = rows.filter(function (r) { return !r.deployed && !r.onChain; }).map(function (r) { return r.chain; });
+      if (!live.length) {
+        var anyOnChain = rows.some(function (r) { return r.onChain; });
+        status.textContent = anyOnChain
+          ? 'These chains have no hosted Safe service — use “Operate on-chain” on each above to approve + execute.'
+          : 'The owner Safe isn’t deployed on any selected chain yet (or you’re not a signer). Add it on those chains in the Safe app first.';
+        return;
+      }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
         var queued = 0;
@@ -5661,6 +5678,77 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       })();
     });
   });
+}
+
+// On-chain Safe coordination for a single chain with NO Safe Transaction Service (e.g. Arbitrum/OP Sepolia).
+// There's no off-chain queue, so each signer approves the SafeTx hash on-chain (approveHash) and anyone executes
+// once the threshold is met (execTransaction with pre-validated approved-hash signatures). Switch wallets to
+// approve from each signer; the panel re-reads on every wallet change. `call` = { to, data, value }.
+function openOnChainSafeModal(chainId, safe, call, opts) {
+  opts = opts || {};
+  var chainName = opts.chainName || chainNameOf(chainId);
+  var content = el('div', 'modal-body');
+  var intro = el('div', 'modal-balance');
+  intro.textContent = 'No Safe transaction service on ' + chainName + ' — coordinate on-chain: each signer approves the transaction hash, then anyone executes once the Safe’s threshold is met.';
+  content.appendChild(intro);
+  var bodyEl = el('div'); bodyEl.appendChild(skel('100%', '70px')); content.appendChild(bodyEl);
+  var status = el('div', 'modal-status'); content.appendChild(status);
+  var modal = openModal(opts.title ? (opts.title + ' — on-chain') : 'Operate on-chain', content);
+  function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
+
+  var state = { ctx: null, hash: null, approved: [], busy: false };
+  function refresh() {
+    return safeOnChainContext(chainId, safe).then(function (ctx) {
+      state.ctx = ctx;
+      state.hash = safeTxHashForCall(chainId, safe, { to: call.to, data: call.data, value: call.value || 0, nonce: ctx.nonce });
+      return safeApprovalsOf(chainId, safe, state.hash, ctx.owners).then(function (ap) { state.approved = ap; render(); });
+    }).catch(function (e) { setStatus(errMessage(e, 'Could not read the Safe on ' + chainName), 'error'); });
+  }
+  function render() {
+    var ctx = state.ctx; if (!ctx) return;
+    bodyEl.innerHTML = '';
+    bodyEl.appendChild(renderTxReview({ chain: chainName, contract: resolveContractName(call.to, chainId) || call.to, address: call.to, calldata: call.data, value: '0' }));
+    var meta = el('div', 'operator-edit-cur'); meta.style.marginTop = '8px';
+    meta.textContent = 'Safe nonce ' + ctx.nonce + ' · ' + state.approved.length + ' / ' + ctx.threshold + ' approvals';
+    bodyEl.appendChild(meta);
+    var list = el('div', 'perm-list'); list.style.marginTop = '8px';
+    ctx.owners.forEach(function (o) {
+      var ok = state.approved.some(function (a) { return a.toLowerCase() === o.toLowerCase(); });
+      var row = el('div', 'powers-head');
+      row.appendChild(addressNode(o, chainId));
+      var st = el('span', 'powers-state ' + (ok ? 'on' : 'off')); st.textContent = ok ? 'approved' : 'pending'; row.appendChild(st);
+      list.appendChild(row);
+    });
+    bodyEl.appendChild(list);
+    var acct = (getAccount && getAccount()) || null;
+    var isOwner = !!(acct && ctx.owners.some(function (o) { return o.toLowerCase() === acct.toLowerCase(); }));
+    var mine = !!(acct && state.approved.some(function (a) { return a.toLowerCase() === acct.toLowerCase(); }));
+    var ready = state.approved.length >= ctx.threshold;
+    var actions = el('div', 'operator-edit-actions'); actions.style.marginTop = '12px';
+    var approveBtn = el('a', 'operator-cta'); approveBtn.href = '#';
+    approveBtn.textContent = !acct ? 'Connect a signer' : (!isOwner ? 'Connected wallet isn’t a signer' : (mine ? 'You approved ✓' : 'Approve on-chain'));
+    if (acct && (!isOwner || mine)) approveBtn.classList.add('cta-disabled');
+    approveBtn.addEventListener('click', function (e) {
+      e.preventDefault(); if (state.busy) return;
+      if (!acct) { connect().then(refresh).catch(function () {}); return; }
+      if (!isOwner || mine) return;
+      state.busy = true; setStatus('Approving on ' + chainName + ' — sign in your wallet…', 'pending');
+      approveSafeHashOnChain(chainId, safe, state.hash).then(function () { state.busy = false; setStatus('Approved. Switch wallets to approve from another signer, or execute once the threshold is met.', 'success'); return refresh(); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Approve failed'), 'error'); });
+    });
+    actions.appendChild(approveBtn);
+    var execBtn = el('a', 'operator-cta'); execBtn.href = '#'; execBtn.textContent = ready ? 'Execute' : ('Execute (' + state.approved.length + '/' + ctx.threshold + ')');
+    if (!ready) execBtn.classList.add('cta-disabled');
+    execBtn.addEventListener('click', function (e) {
+      e.preventDefault(); if (state.busy || !ready) return;
+      state.busy = true; setStatus('Executing on ' + chainName + ' — sign in your wallet…', 'pending');
+      var tx = { to: call.to, value: 0, data: call.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: state.approved.map(function (o) { return { owner: o }; }) };
+      executeSafeTx(chainId, safe, tx).then(function () { state.busy = false; setStatus('Executed on ' + chainName + ' ✓', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1800); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Execute failed'), 'error'); });
+    });
+    actions.appendChild(execBtn);
+    bodyEl.appendChild(actions);
+  }
+  refresh();
+  if (onWalletChange) onWalletChange(function () { if (state.ctx) render(); });
 }
 
 // A label-over-value cell for the onchain info grid.
@@ -6920,6 +7008,13 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       block.appendChild(h);
       var list = el('div', 'backoffice-list'); list.appendChild(skel('100%', '20px')); block.appendChild(list);
       body.appendChild(block);
+      // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → there's no off-chain queue to list.
+      // Operator/owner txs there are coordinated on-chain (approve + execute via the action panels), not here.
+      if (!hasSafeService(c.id)) {
+        list.innerHTML = '';
+        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — txs are coordinated on-chain (use the action’s “Operate on-chain” panel).';
+        list.appendChild(nos); return Promise.resolve();
+      }
       return listPendingSafeTxs(c.id, safe).then(function (txs) {
         list.innerHTML = '';
         if (!txs.length) {
