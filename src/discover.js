@@ -7663,9 +7663,9 @@ export var POWER_SET_ROUTER_TERMINAL = {
   buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
-  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHook', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
+  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
   chainAvailable: function (cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }, unavailableNote: '(no Uniswap AMM here)',
-  note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
+  note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Routed through the buyback hook registry, which forwards to the project’s configured hook (your new hook once Set buyback hook executes — set the hook first). Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
   danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
   fields: [
     { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
