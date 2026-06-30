@@ -5580,6 +5580,12 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var intro = el('div', 'modal-balance');
     intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the Operator tab). Chains without one are approved + executed on-chain right here. One “Sign & queue” does your part on every chain.';
     wrap.appendChild(intro);
+    if (chains.some(function (c) { return !hasSafeService(c.id); })) {
+      var coNote = el('div', 'modal-balance');
+      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you. The status under each on-chain chain reads ✓ when your values match a pending approval — if it stays at 0, your values differ and you’d start a separate transaction.';
+      coNote.style.marginTop = '6px';
+      wrap.appendChild(coNote);
+    }
     var sigBanner = el('div', 'create-banner');
     sigBanner.textContent = 'It’s a multisig — you sign/approve once per chain. If a chain needs more signers, switch wallets and click again; on-chain chains execute automatically once the threshold is met.';
     wrap.appendChild(sigBanner);
@@ -5637,7 +5643,15 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         rec.hash = safeTxHashForCall(rec.cid, safe, { to: rec.to, data: rec.data, value: 0, nonce: ctx.nonce });
         return safeApprovalsOf(rec.cid, safe, rec.hash, ctx.owners).then(function (ap) {
           rec.approved = ap;
-          rec.st.textContent = 'No Safe service · on-chain ' + ap.length + ' / ' + ctx.threshold + ' approvals' + (ap.length >= ctx.threshold ? ' — ready to execute.' : '.');
+          // The approval count is read for the hash of THIS exact tx (these exact field values) at the current
+          // nonce. So a non-zero count is a positive "your values match a pending tx" signal for a co-signer;
+          // zero means either you're the first signer or your values differ from theirs.
+          var note = ap.length >= ctx.threshold
+            ? ' — ✓ ready to execute'
+            : ap.length > 0
+              ? ' — ✓ your values match a tx already approved by ' + ap.length + ' signer' + (ap.length > 1 ? 's' : '')
+              : ' — none yet at this nonce. Co-signing? Your values must EXACTLY match the first signer’s, or this starts a separate tx';
+          rec.st.textContent = 'No Safe service · on-chain ' + ap.length + ' / ' + ctx.threshold + ' approvals' + note;
         });
       });
     }
@@ -7701,6 +7715,13 @@ function openPowerModal(project, action) {
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to ' + action.title.toLowerCase() + '.', project.chainId));
   if (action.note) { var note = el('div', 'operator-edit-across'); note.textContent = action.note; content.appendChild(note); }
+  // Multisig co-signer heads-up: matching the first signer's values exactly is what lets you join their pending
+  // tx on chains without a hosted Safe service (any difference = a separate tx). Shown for fields-bearing actions.
+  if (action.fields && action.fields.length) {
+    var coTip = el('div', 'operator-edit-across');
+    coTip.innerHTML = '<strong>Co-signing another signer’s transaction?</strong> Enter the exact values they gave you. On chains without a Safe service, the next step shows ✓ when your values match their pending approval.';
+    coTip.style.opacity = '0.85'; content.appendChild(coTip);
+  }
 
   var inputs = {}; // name → { get(): value-or-throw }
   action.fields.forEach(function (f) {
