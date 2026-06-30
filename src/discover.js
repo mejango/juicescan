@@ -10,7 +10,7 @@ import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, 
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeTxLink, safeHomeLink } from './safe.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeTxLink, safeHomeLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -255,6 +255,14 @@ var setTerminalsAbi = [{ type: 'function', name: 'setTerminalsOf', stateMutabili
 var migrateBalanceAbi = [{ type: 'function', name: 'migrateBalanceOf', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }, { name: 'to', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 var addPriceFeedAbi = [{ type: 'function', name: 'addPriceFeedFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'pricingCurrency', type: 'uint256' }, { name: 'unitCurrency', type: 'uint256' }, { name: 'feed', type: 'address' }], outputs: [] }];
 var setTokenAbi = [{ type: 'function', name: 'setTokenFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [] }];
+// Operator buyback/router setup (per-project registry writes). setHookFor → JBBuybackHookRegistry; setTerminalFor
+// → JBRouterTerminalRegistry; initializePoolFor → JBBuybackHook (singleton, keyed by projectId + terminalToken).
+var setBuybackHookForAbi = [{ type: 'function', name: 'setHookFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'hook', type: 'address' }], outputs: [] }];
+var setRouterTerminalForAbi = [{ type: 'function', name: 'setTerminalFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminal', type: 'address' }], outputs: [] }];
+var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'twapWindow', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'sqrtPriceX96', type: 'uint160' }], outputs: [] }];
+// Registry getters — the project's CURRENT resolved hook / terminal, used to pre-fill the setter fields.
+var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+var terminalOfAbi = [{ type: 'function', name: 'terminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
 var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -3912,15 +3920,10 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     }
   }).catch(function () {});
 
-  // Drop the Owner/Operator tab unless the project's controlling account is actually a Safe.
-  fetchSafeInfo(projectAuthorityAddress(project), project.chainId).then(function (info) {
-    if (info || !tabRow.isConnected) return; // it IS a Safe → keep the tab
-    tabs = tabs.filter(function (t) { return t !== ownerTabName; });
-    delete builders[ownerTabName]; delete built[ownerTabName];
-    var bb = tabRow.querySelectorAll('.detail-tab-btn');
-    for (var b = 0; b < bb.length; b++) if (bb[b].textContent === ownerTabName) { bb[b].remove(); break; }
-    if (_activeDetail && _activeDetail.current === ownerTabName) showTab(tabs[0]);
-  }).catch(function () {});
+  // The Owner/Operator tab ALWAYS shows — it holds the owner/operator transactions, which an EOA controller can
+  // execute directly via relayr (not just Safe signers). The Safe-only queue/sign views inside are hidden for
+  // non-Safe controllers (see renderBackOfficeSection). This also keeps the tab reachable when the indexer is
+  // down and the operator can't be resolved — the actions self-gate on connect.
 
   rightCol.appendChild(tabRow);
   _activeDetail = { key: detailKey, showTab: showTab, current: startTab, project: project, isMobile: activityAsTab };
@@ -5618,6 +5621,17 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           return;
         }
         if (!isSigner) { block.classList.add('safe-propose-skip'); hint.textContent = ' You’re not a signer of this Safe — skipped.'; return; }
+        // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → can't queue off-chain. Offer the
+        // on-chain approve + execute panel instead; exclude it from the service "Sign & queue" loop below.
+        if (!hasSafeService(c.id)) {
+          rec.deployed = true; rec.onChain = true; nrow.style.display = 'none';
+          var ocWrap = el('div', 'safe-propose-onchain'); ocWrap.style.marginTop = '6px';
+          var ocNote = el('div', 'safe-propose-hint'); ocNote.textContent = 'No Safe service on ' + c.name + ' — approve + execute on-chain:'; ocWrap.appendChild(ocNote);
+          var ocBtn = el('a', 'operator-cta'); ocBtn.href = '#'; ocBtn.textContent = 'Operate on-chain';
+          ocBtn.addEventListener('click', function (e) { e.preventDefault(); openOnChainSafeModal(c.id, safe, { to: call.to, data: call.data, value: 0 }, { signer: signer, title: opts.title, chainName: c.name }); });
+          ocWrap.appendChild(ocBtn); block.appendChild(ocWrap);
+          return;
+        }
         rec.deployed = true; nInput.disabled = false;
         return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (r) {
           var next = r[0] || 0;
@@ -5631,9 +5645,15 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
 
     cancel.addEventListener('click', function () { finish({ queued: 0, skipped: [], cancelled: true }); });
     btn.addEventListener('click', function () {
-      var live = rows.filter(function (r) { return r.deployed; });
-      var skipped = rows.filter(function (r) { return !r.deployed; }).map(function (r) { return r.chain; });
-      if (!live.length) { status.textContent = 'The owner Safe isn’t deployed on any selected chain yet (or you’re not a signer). Add it on those chains in the Safe app first.'; return; }
+      var live = rows.filter(function (r) { return r.deployed && !r.onChain; }); // service chains queued here
+      var skipped = rows.filter(function (r) { return !r.deployed && !r.onChain; }).map(function (r) { return r.chain; });
+      if (!live.length) {
+        var anyOnChain = rows.some(function (r) { return r.onChain; });
+        status.textContent = anyOnChain
+          ? 'These chains have no hosted Safe service — use “Operate on-chain” on each above to approve + execute.'
+          : 'The owner Safe isn’t deployed on any selected chain yet (or you’re not a signer). Add it on those chains in the Safe app first.';
+        return;
+      }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
         var queued = 0;
@@ -5658,6 +5678,77 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       })();
     });
   });
+}
+
+// On-chain Safe coordination for a single chain with NO Safe Transaction Service (e.g. Arbitrum/OP Sepolia).
+// There's no off-chain queue, so each signer approves the SafeTx hash on-chain (approveHash) and anyone executes
+// once the threshold is met (execTransaction with pre-validated approved-hash signatures). Switch wallets to
+// approve from each signer; the panel re-reads on every wallet change. `call` = { to, data, value }.
+function openOnChainSafeModal(chainId, safe, call, opts) {
+  opts = opts || {};
+  var chainName = opts.chainName || chainNameOf(chainId);
+  var content = el('div', 'modal-body');
+  var intro = el('div', 'modal-balance');
+  intro.textContent = 'No Safe transaction service on ' + chainName + ' — coordinate on-chain: each signer approves the transaction hash, then anyone executes once the Safe’s threshold is met.';
+  content.appendChild(intro);
+  var bodyEl = el('div'); bodyEl.appendChild(skel('100%', '70px')); content.appendChild(bodyEl);
+  var status = el('div', 'modal-status'); content.appendChild(status);
+  var modal = openModal(opts.title ? (opts.title + ' — on-chain') : 'Operate on-chain', content);
+  function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
+
+  var state = { ctx: null, hash: null, approved: [], busy: false };
+  function refresh() {
+    return safeOnChainContext(chainId, safe).then(function (ctx) {
+      state.ctx = ctx;
+      state.hash = safeTxHashForCall(chainId, safe, { to: call.to, data: call.data, value: call.value || 0, nonce: ctx.nonce });
+      return safeApprovalsOf(chainId, safe, state.hash, ctx.owners).then(function (ap) { state.approved = ap; render(); });
+    }).catch(function (e) { setStatus(errMessage(e, 'Could not read the Safe on ' + chainName), 'error'); });
+  }
+  function render() {
+    var ctx = state.ctx; if (!ctx) return;
+    bodyEl.innerHTML = '';
+    bodyEl.appendChild(renderTxReview({ chain: chainName, contract: resolveContractName(call.to, chainId) || call.to, address: call.to, calldata: call.data, value: '0' }));
+    var meta = el('div', 'operator-edit-cur'); meta.style.marginTop = '8px';
+    meta.textContent = 'Safe nonce ' + ctx.nonce + ' · ' + state.approved.length + ' / ' + ctx.threshold + ' approvals';
+    bodyEl.appendChild(meta);
+    var list = el('div', 'perm-list'); list.style.marginTop = '8px';
+    ctx.owners.forEach(function (o) {
+      var ok = state.approved.some(function (a) { return a.toLowerCase() === o.toLowerCase(); });
+      var row = el('div', 'powers-head');
+      row.appendChild(addressNode(o, chainId));
+      var st = el('span', 'powers-state ' + (ok ? 'on' : 'off')); st.textContent = ok ? 'approved' : 'pending'; row.appendChild(st);
+      list.appendChild(row);
+    });
+    bodyEl.appendChild(list);
+    var acct = (getAccount && getAccount()) || null;
+    var isOwner = !!(acct && ctx.owners.some(function (o) { return o.toLowerCase() === acct.toLowerCase(); }));
+    var mine = !!(acct && state.approved.some(function (a) { return a.toLowerCase() === acct.toLowerCase(); }));
+    var ready = state.approved.length >= ctx.threshold;
+    var actions = el('div', 'operator-edit-actions'); actions.style.marginTop = '12px';
+    var approveBtn = el('a', 'operator-cta'); approveBtn.href = '#';
+    approveBtn.textContent = !acct ? 'Connect a signer' : (!isOwner ? 'Connected wallet isn’t a signer' : (mine ? 'You approved ✓' : 'Approve on-chain'));
+    if (acct && (!isOwner || mine)) approveBtn.classList.add('cta-disabled');
+    approveBtn.addEventListener('click', function (e) {
+      e.preventDefault(); if (state.busy) return;
+      if (!acct) { connect().then(refresh).catch(function () {}); return; }
+      if (!isOwner || mine) return;
+      state.busy = true; setStatus('Approving on ' + chainName + ' — sign in your wallet…', 'pending');
+      approveSafeHashOnChain(chainId, safe, state.hash).then(function () { state.busy = false; setStatus('Approved. Switch wallets to approve from another signer, or execute once the threshold is met.', 'success'); return refresh(); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Approve failed'), 'error'); });
+    });
+    actions.appendChild(approveBtn);
+    var execBtn = el('a', 'operator-cta'); execBtn.href = '#'; execBtn.textContent = ready ? 'Execute' : ('Execute (' + state.approved.length + '/' + ctx.threshold + ')');
+    if (!ready) execBtn.classList.add('cta-disabled');
+    execBtn.addEventListener('click', function (e) {
+      e.preventDefault(); if (state.busy || !ready) return;
+      state.busy = true; setStatus('Executing on ' + chainName + ' — sign in your wallet…', 'pending');
+      var tx = { to: call.to, value: 0, data: call.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: state.approved.map(function (o) { return { owner: o }; }) };
+      executeSafeTx(chainId, safe, tx).then(function () { state.busy = false; setStatus('Executed on ' + chainName + ' ✓', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1800); }).catch(function (er) { state.busy = false; setStatus(errMessage(er, 'Execute failed'), 'error'); });
+    });
+    actions.appendChild(execBtn);
+    bodyEl.appendChild(actions);
+  }
+  refresh();
+  if (onWalletChange) onWalletChange(function () { if (state.ctx) render(); });
 }
 
 // A label-over-value cell for the onchain info grid.
@@ -6870,15 +6961,24 @@ function renderBackOfficeSection(project) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   // Account card: who owns the project on each chain + what kind of account it is.
   section.appendChild(renderAccountCard(project));
-  section.appendChild(renderPendingSafeTxsCard(safe, chains, project.chainId, project.isRevnet ? 'Operator' : 'Owner'));
+  // The Safe queue/sign card is only meaningful when the controlling account is a Safe — an EOA controller
+  // executes directly via relayr (no queue to sign). Render it optimistically, then drop it if the authority
+  // isn't a Safe. Skipped entirely when the operator can't be resolved (indexer down → `safe` is null).
+  if (safe) {
+    var safeCard = renderPendingSafeTxsCard(safe, chains, project.chainId, project.isRevnet ? 'Operator' : 'Owner');
+    section.appendChild(safeCard);
+    fetchSafeInfo(safe, project.chainId).then(function (info) { if (!info && safeCard.parentNode) safeCard.parentNode.removeChild(safeCard); }).catch(function () {});
+  }
 
   // Powers / Permissions. Revnet: the controlling account is an OPERATOR with a fixed granted permission set
   // (not the ruleset-flag owner powers, which it doesn't hold) — show those actual powers, read-only. Custom:
   // the owner exercises the ruleset-gated owner powers (Powers card) AND can manage operators (Permissions card).
   if (project.isRevnet) {
+    section.appendChild(renderBuybackRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
   } else {
     section.appendChild(renderPowersCard(project));
+    section.appendChild(renderBuybackRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
   }
   return section;
@@ -6908,6 +7008,13 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       block.appendChild(h);
       var list = el('div', 'backoffice-list'); list.appendChild(skel('100%', '20px')); block.appendChild(list);
       body.appendChild(block);
+      // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → there's no off-chain queue to list.
+      // Operator/owner txs there are coordinated on-chain (approve + execute via the action panels), not here.
+      if (!hasSafeService(c.id)) {
+        list.innerHTML = '';
+        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — txs are coordinated on-chain (use the action’s “Operate on-chain” panel).';
+        list.appendChild(nos); return Promise.resolve();
+      }
       return listPendingSafeTxs(c.id, safe).then(function (txs) {
         list.innerHTML = '';
         if (!txs.length) {
@@ -7329,6 +7436,29 @@ function renderPowersCard(project) {
   return card;
 }
 
+// Operator/owner buyback + swap-router setup. Three per-project registry writes — set the buyback hook, set the
+// router terminal, initialize the Uniswap buyback pool — each queued on the chains you pick and bundled into one
+// relayr payment (or proposed to the Safe) via openPowerModal, exactly like the other operator actions.
+export function renderBuybackRouterCard(project) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
+  var intro = el('div', 'detail-card-body backoffice-intro');
+  intro.textContent = 'Wire up the project’s buyback hook + swap router and initialize its Uniswap pool. Each runs on the chains you select, bundled into one relayr payment (or proposed to the Safe).';
+  card.appendChild(intro);
+  [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL].forEach(function (action) {
+    var row = el('div', 'powers-row');
+    var head = el('div', 'powers-head');
+    var lab = el('span', 'powers-label'); lab.textContent = action.title; head.appendChild(lab);
+    row.appendChild(head);
+    var desc = el('div', 'powers-desc'); desc.textContent = action.note; row.appendChild(desc);
+    var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = action.title;
+    act.addEventListener('click', function (e) { e.preventDefault(); openPowerModal(project, action); });
+    row.appendChild(act);
+    card.appendChild(row);
+  });
+  return card;
+}
+
 // Every operator the project has authorized, deduped across chains. Source is bendystraw (no on-chain way to
 // ENUMERATE operators — only to check a known one). Stale empty grants (permissions cleared but row kept) are
 // dropped. Returns [{ operator, account, isRevnetOperator, chains:[id], permsUnion:[ids] }].
@@ -7550,6 +7680,35 @@ var POWER_SET_TOKEN = {
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
   buildArgs: function (v, cid, pid) { return [pid, v.token]; },
 };
+export var POWER_SET_BUYBACK_HOOK = {
+  title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
+  note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
+  danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
+  fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… buyback hook',
+    defaultRead: function (project) { return read(project.chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+  buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
+};
+export var POWER_SET_ROUTER_TERMINAL = {
+  title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
+  note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
+  danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
+  fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
+    defaultRead: function (project) { return read(project.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+  buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
+};
+export var POWER_INIT_BUYBACK_POOL = {
+  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHook', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
+  note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
+  danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
+  fields: [
+    { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
+    { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10' },
+    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)' },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'address', defaultValue: ZERO_ADDRESS, help: 'Zero address for native ETH pools; otherwise the pair token address (e.g. USDC).' },
+    { name: 'sqrtPriceX96', label: 'Initial price (sqrtPriceX96)', kind: 'uint', placeholder: 'pool price as sqrtPriceX96 (issuance rate)' },
+  ],
+  buildArgs: function (v, cid, pid) { return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), v.terminalToken, BigInt(v.sqrtPriceX96)]; },
+};
 
 // A deliberate-confirmation gate for irreversible/dangerous owner actions: a danger banner + a checkbox
 // that must be ticked for the submit to proceed (the submit greys out until then).
@@ -7589,6 +7748,10 @@ function openPowerModal(project, action) {
     var inp = el('input', 'operator-edit-jwt'); inp.type = (f.kind === 'uint' || f.kind === 'amount') ? 'text' : 'text'; inp.placeholder = f.placeholder || '';
     if (f.defaultAccount) { var a = getAccount && getAccount(); if (a) inp.value = a; }
     if (f.defaultNative) inp.value = NATIVE_TOKEN;
+    if (f.defaultValue) inp.value = f.defaultValue;
+    // Async default: pre-fill with the project's CURRENT on-chain value (e.g. its registered hook/terminal),
+    // unless the user has already typed. No fallback default — blank stays blank.
+    if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') input.value = val; input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
     content.appendChild(inp);
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
     inputs[f.name] = { get: function () {
