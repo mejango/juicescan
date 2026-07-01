@@ -5650,7 +5650,11 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     function refreshOnChainStatus(rec) {
       return safeOnChainContext(rec.cid, safe).then(function (ctx) {
         rec.ctx = ctx;
-        var key = safe.toLowerCase() + ':' + rec.cid;
+        // Key the sequential-nonce hint by the CONNECTED SIGNER, not just safe:chain. The hint bumps as this signer
+        // queues txs (so their next tx defaults to N+1); keying it per-signer means a second owner co-signing in the
+        // SAME browser session starts with an empty hint → defaults to the current nonce (the pending tx to match),
+        // instead of inheriting the first signer's queue advancement and landing on a non-matching nonce.
+        var key = safe.toLowerCase() + ':' + rec.cid + ':' + (((getAccount && getAccount()) || '') + '').toLowerCase();
         if (!rec.nInput) {
           var def = Math.max(Number(ctx.nonce), _onchainNonceHint[key] || 0);
           var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
@@ -5692,7 +5696,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
-        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, notOwner = 0, pendingExec = 0;
+        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, notOwner = 0, pendingExec = 0, staleNonce = 0;
         try {
           for (var i = 0; i < live.length; i++) {
             var r = live[i];
@@ -5708,13 +5712,13 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             } else {
               await refreshOnChainStatus(r); // re-read at the chosen nonce so a co-signer's earlier approval counts
               var chosen = r.chosenNonce, current = Number(r.ctx.nonce);
-              if (chosen < current) { r.st.textContent = 'Nonce ' + chosen + ' already used on ' + r.chain + ' — set it to ≥ ' + current + '.'; continue; }
+              if (chosen < current) { r.st.textContent = 'Nonce ' + chosen + ' already used on ' + r.chain + ' — set it to ≥ ' + current + '.'; staleNonce++; continue; }
               var iApproved = (r.approved || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
               if (!iApproved) {
                 setStatus('Approving on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
                 await approveSafeHashOnChain(r.cid, safe, r.hash);
                 r.approved = (r.approved || []).concat([acct]); approvedThisRun++;
-                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid] = chosen + 1; // next on-chain tx here defaults to the next nonce
+                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; // this signer's next on-chain tx here defaults to the next nonce
               }
               if ((r.approved || []).length >= r.ctx.threshold) {
                 if (chosen === current) {
@@ -5741,9 +5745,13 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           if (pendingExec) summary.push(pendingExec + ' awaiting nonce order');
           var didSomething = (queued + executed + approvedThisRun) > 0;
           var base = (summary.join(' · ') || 'No new actions') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.';
-          if (!didSomething && !pending && !pendingExec && notOwner) {
+          if (!didSomething && !pending && !pendingExec && !staleNonce && notOwner) {
             // Nothing happened because the connected wallet signs for none of these Safes — say so loudly.
             setStatus('Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe on ' + notOwner + ' selected chain' + (notOwner > 1 ? 's' : '') + '. Switch to an owner’s wallet and try again.', 'error');
+          } else if (staleNonce) {
+            // Chosen nonce is below the Safe's current nonce (already used) — actionable, so keep the modal open
+            // with an error rather than the green-success + auto-close path.
+            setStatus(base + ' ' + staleNonce + ' chain' + (staleNonce > 1 ? 's have' : ' has') + ' a stale nonce — raise it to the current value and click again.', 'error');
           } else if (!pending && !pendingExec) {
             setStatus(base, 'success');
             setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
