@@ -5569,6 +5569,12 @@ function runRelayrBundle(entries, opts) {
   });
 }
 
+// Suggested next on-chain nonce per (safe, chain), bumped each time this signer approves an on-chain tx so a run of
+// separate operator actions defaults to sequential nonces (N, N+1, N+2…) instead of all colliding at the current
+// nonce. Module-level so it survives across the separate action modals. Cleared on reload (falls back to current
+// nonce, which is safe).
+var _onchainNonceHint = {};
+
 // Open a Safe-proposal modal: per chain, show the decoded call + a nonce picker, queue on each chain the
 // Safe is actually deployed on (same address), and clearly flag chains where it isn't yet. Resolves with
 // { queued, skipped:[names], cancelled }.
@@ -5582,7 +5588,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     wrap.appendChild(intro);
     if (chains.some(function (c) { return !hasSafeService(c.id); })) {
       var coNote = el('div', 'modal-balance');
-      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you — the status under each on-chain chain reads ✓ when they match a pending approval (0 = they differ, and you’d start a separate tx). On chains without a Safe service, do <strong>one tx at a time</strong>: both signers approve, execute it, then the next. Pending on-chain txs share the current nonce, so executing one voids the others’ approvals (they must be re-approved at the new nonce).';
+      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you AND set the same <strong>nonce</strong> — the status under each on-chain chain reads ✓ when both match a pending approval (0 = they differ, and you’d start a separate tx). The first signer can queue several on-chain txs at sequential nonces; the Safe runs them lowest-nonce-first, and this modal executes the one whose nonce is current (click again to run the next).';
       coNote.style.marginTop = '6px';
       wrap.appendChild(coNote);
     }
@@ -5636,22 +5642,39 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       }).catch(function () { block.classList.add('safe-propose-skip'); rec.deployed = false; st.textContent = 'Could not read the Safe here — skipped.'; });
     });
 
-    // (Re-)read an on-chain chain's nonce/threshold/owners + current approvals and paint its status line.
+    // (Re-)read an on-chain chain's approvals AT THE CHOSEN NONCE and paint its status. On first call it renders an
+    // editable nonce input defaulting to the next sequential slot (current Safe nonce, bumped by _onchainNonceHint as
+    // this signer queues more txs) so the first signer can queue several on-chain txs without colliding at one nonce.
+    // The Safe executes in strict nonce order, so the hash is computed at the CHOSEN nonce; the submit loop only
+    // executes the tx whose chosen nonce == the Safe's current nonce.
     function refreshOnChainStatus(rec) {
       return safeOnChainContext(rec.cid, safe).then(function (ctx) {
         rec.ctx = ctx;
-        rec.hash = safeTxHashForCall(rec.cid, safe, { to: rec.to, data: rec.data, value: 0, nonce: ctx.nonce });
+        var key = safe.toLowerCase() + ':' + rec.cid;
+        if (!rec.nInput) {
+          var def = Math.max(Number(ctx.nonce), _onchainNonceHint[key] || 0);
+          var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
+          var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
+          var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = String(ctx.nonce); nInput.value = String(def); nrow.appendChild(nInput);
+          var nHint = el('span', 'safe-propose-hint'); nrow.appendChild(nHint); rec.nHint = nHint;
+          rec.block.appendChild(nrow); rec.nInput = nInput;
+          nInput.addEventListener('change', function () { refreshOnChainStatus(rec); });
+        }
+        var chosen = Number(rec.nInput.value); rec.chosenNonce = chosen;
+        var ahead = chosen - Number(ctx.nonce);
+        rec.nHint.textContent = ahead < 0 ? ' below current nonce ' + ctx.nonce + ' — already used; pick ≥ ' + ctx.nonce
+          : ahead === 0 ? ' current — this one executes next' : ' +' + ahead + ' — queued behind nonce ' + ctx.nonce + '…' + (chosen - 1);
+        rec.hash = safeTxHashForCall(rec.cid, safe, { to: rec.to, data: rec.data, value: 0, nonce: chosen });
         return safeApprovalsOf(rec.cid, safe, rec.hash, ctx.owners).then(function (ap) {
           rec.approved = ap;
-          // The approval count is read for the hash of THIS exact tx (these exact field values) at the current
-          // nonce. So a non-zero count is a positive "your values match a pending tx" signal for a co-signer;
-          // zero means either you're the first signer or your values differ from theirs.
+          // approvals read for THIS exact tx at the CHOSEN nonce → a non-zero count is the "your values (and nonce)
+          // match a pending approval" signal for a co-signer.
           var note = ap.length >= ctx.threshold
-            ? ' — ✓ ready to execute'
+            ? (ahead === 0 ? ' — ✓ ready to execute' : ' — ✓ fully approved; executes once nonce ' + ctx.nonce + '…' + (chosen - 1) + ' clear')
             : ap.length > 0
-              ? ' — ✓ your values match a tx already approved by ' + ap.length + ' signer' + (ap.length > 1 ? 's' : '')
-              : ' — none yet at this nonce. Co-signing? Your values must EXACTLY match the first signer’s, or this starts a separate tx';
-          rec.st.textContent = 'No Safe service · on-chain ' + ap.length + ' / ' + ctx.threshold + ' approvals' + note;
+              ? ' — ✓ matches a tx approved by ' + ap.length + ' signer' + (ap.length > 1 ? 's' : '')
+              : ' — none yet at nonce ' + chosen + '. Co-signing? match the first signer’s values AND nonce, or this starts a separate tx';
+          rec.st.textContent = 'No Safe service · nonce ' + chosen + ' · ' + ap.length + ' / ' + ctx.threshold + ' approvals' + note;
         });
       });
     }
@@ -5669,7 +5692,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
       btn.disabled = true; cancel.disabled = true;
       (async function () {
-        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, notOwner = 0;
+        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, notOwner = 0, pendingExec = 0;
         try {
           for (var i = 0; i < live.length; i++) {
             var r = live[i];
@@ -5683,19 +5706,28 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
               await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce });
               r.done = true; r.st.textContent = 'Queued ✓ — co-sign + execute it in the Operator tab’s “Pending Multisig Transactions”.'; queued++;
             } else {
-              await refreshOnChainStatus(r); // re-read so a co-signer's earlier approval counts
+              await refreshOnChainStatus(r); // re-read at the chosen nonce so a co-signer's earlier approval counts
+              var chosen = r.chosenNonce, current = Number(r.ctx.nonce);
+              if (chosen < current) { r.st.textContent = 'Nonce ' + chosen + ' already used on ' + r.chain + ' — set it to ≥ ' + current + '.'; continue; }
               var iApproved = (r.approved || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
               if (!iApproved) {
-                setStatus('Approving on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
+                setStatus('Approving on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
                 await approveSafeHashOnChain(r.cid, safe, r.hash);
                 r.approved = (r.approved || []).concat([acct]); approvedThisRun++;
+                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid] = chosen + 1; // next on-chain tx here defaults to the next nonce
               }
               if ((r.approved || []).length >= r.ctx.threshold) {
-                setStatus('Executing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
-                await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o }; }) });
-                r.done = true; r.st.textContent = 'Executed ✓'; executed++;
+                if (chosen === current) {
+                  setStatus('Executing on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
+                  await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o }; }) });
+                  r.done = true; r.st.textContent = 'Executed ✓ (nonce ' + chosen + ')'; executed++;
+                } else {
+                  // Fully approved but not next in line — the Safe executes in strict nonce order, so lower nonces
+                  // run first. Left un-done so a later click (once the nonce is current) picks it up and executes it.
+                  r.st.textContent = 'Fully approved ✓ at nonce ' + chosen + ' — executes after nonce ' + current + '…' + (chosen - 1) + ' run. Click again once they clear.'; pendingExec++;
+                }
               } else {
-                r.st.textContent = 'Approved ' + r.approved.length + ' / ' + r.ctx.threshold + ' — needs ' + (r.ctx.threshold - r.approved.length) + ' more signer(s). Switch wallets and click again; it executes automatically at the threshold.'; pending++;
+                r.st.textContent = 'Approved ' + r.approved.length + ' / ' + r.ctx.threshold + ' at nonce ' + chosen + ' — needs ' + (r.ctx.threshold - r.approved.length) + ' more signer(s). Switch wallets and click again.'; pending++;
               }
             }
           }
@@ -5706,20 +5738,26 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           if (executed) summary.push('executed on ' + executed);
           if (queued) summary.push('queued on ' + queued);
           if (approvedThisRun) summary.push('approved on ' + approvedThisRun);
+          if (pendingExec) summary.push(pendingExec + ' awaiting nonce order');
           var didSomething = (queued + executed + approvedThisRun) > 0;
           var base = (summary.join(' · ') || 'No new actions') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.';
-          if (!didSomething && !pending && notOwner) {
+          if (!didSomething && !pending && !pendingExec && notOwner) {
             // Nothing happened because the connected wallet signs for none of these Safes — say so loudly.
             setStatus('Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe on ' + notOwner + ' selected chain' + (notOwner > 1 ? 's' : '') + '. Switch to an owner’s wallet and try again.', 'error');
-          } else if (!pending) {
+          } else if (!pending && !pendingExec) {
             setStatus(base, 'success');
             setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
-          } else {
+          } else if (pending) {
             // Chains still short of threshold need a DIFFERENT signer — make clear the connected wallet is done.
             setStatus(base + (didSomething
-              ? ' Your part is done — ' + pending + ' chain' + (pending > 1 ? 's' : '') + ' still need another signer. Switch to a different owner’s wallet, then click below; they execute automatically at the threshold.'
+              ? ' Your part is done — ' + pending + ' chain' + (pending > 1 ? 's' : '') + ' still need another signer. Switch to a different owner’s wallet, then click below.'
               : ' You’ve already approved every chain you can with this wallet. Switch to a different owner’s wallet to add their approval — ' + pending + ' remaining.'), didSomething ? 'success' : '');
             btn.textContent = 'Approve as another signer';
+          } else {
+            // pendingExec only: fully approved, but the Safe runs txs in strict nonce order — lower nonces execute
+            // first. Keep the modal open so a later click executes the next once earlier nonces have cleared.
+            setStatus(base + ' Fully approved — the Safe runs txs in nonce order; click again to execute the next once earlier nonces clear.', 'success');
+            btn.textContent = 'Execute next in order';
           }
         } catch (e) {
           if (typeof console !== 'undefined') console.error('[safe-apply]', e);
