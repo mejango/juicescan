@@ -5582,7 +5582,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     wrap.appendChild(intro);
     if (chains.some(function (c) { return !hasSafeService(c.id); })) {
       var coNote = el('div', 'modal-balance');
-      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you. The status under each on-chain chain reads ✓ when your values match a pending approval — if it stays at 0, your values differ and you’d start a separate transaction.';
+      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you — the status under each on-chain chain reads ✓ when they match a pending approval (0 = they differ, and you’d start a separate tx). On chains without a Safe service, do <strong>one tx at a time</strong>: both signers approve, execute it, then the next. Pending on-chain txs share the current nonce, so executing one voids the others’ approvals (they must be re-approved at the new nonce).';
       coNote.style.marginTop = '6px';
       wrap.appendChild(coNote);
     }
@@ -7660,8 +7660,16 @@ var POWER_SET_TOKEN = {
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
   buildArgs: function (v, cid, pid) { return [pid, v.token]; },
 };
+// The buyback hook + swap-router terminal are only configured on chains with a full Uniswap v4 AMM. On chains
+// without one (e.g. OP Sepolia — no PositionManager) the registry has no default/allowlisted hook and no allowlisted
+// router terminal, so setHookFor / setTerminalFor / initializePoolFor all revert at execute (HookNotAllowed /
+// TerminalNotAllowed). Gate those actions so the chain picker greys the chain out instead of handing a signer a tx
+// that reverts (and wastes a Safe approve+execute round-trip).
+function ammChainAvailable(cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }
+
 export var POWER_SET_BUYBACK_HOOK = {
   title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
   fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… buyback hook',
@@ -7670,6 +7678,7 @@ export var POWER_SET_BUYBACK_HOOK = {
 };
 export var POWER_SET_ROUTER_TERMINAL = {
   title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
@@ -7678,7 +7687,7 @@ export var POWER_SET_ROUTER_TERMINAL = {
 };
 export var POWER_INIT_BUYBACK_POOL = {
   title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
-  chainAvailable: function (cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }, unavailableNote: '(no Uniswap AMM here)',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Routed through the buyback hook registry, which forwards to the project’s configured hook (your new hook once Set buyback hook executes — set the hook first). Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
   danger: 'Dangerous: a wrong initial price (sqrtPriceX96) lets arbitrageurs drain value from the pool. Set it to the issuance rate, and verify the fee / tick-spacing pair.',
   fields: [
