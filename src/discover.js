@@ -7719,7 +7719,8 @@ export var POWER_SET_BUYBACK_HOOK = {
   note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
   fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… buyback hook',
-    defaultRead: function (project) { return read(project.chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+    defaultRead: function (project) { return read(project.chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); },
+    crossChainRead: function (project, chainId) { return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
 };
 export var POWER_SET_ROUTER_TERMINAL = {
@@ -7728,7 +7729,8 @@ export var POWER_SET_ROUTER_TERMINAL = {
   note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
-    defaultRead: function (project) { return read(project.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); } }],
+    defaultRead: function (project) { return read(project.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); },
+    crossChainRead: function (project, chainId) { return read(chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
@@ -7797,6 +7799,25 @@ function openPowerModal(project, action) {
     if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') input.value = val; input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
     content.appendChild(inp);
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
+    // Cross-chain consistency: read this value's CURRENT setting on every AMM-available chain the project spans and
+    // flag if it isn't uniform, so the operator knows the starting state differs before overwriting it.
+    if (f.crossChainRead) {
+      var cc = el('div', 'operator-edit-cur'); cc.style.marginTop = '4px'; cc.textContent = 'checking current value across chains…'; content.appendChild(cc);
+      var ccChains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !action.chainAvailable || action.chainAvailable(c.id); });
+      Promise.all(ccChains.map(function (c) {
+        return f.crossChainRead(project, c.id).then(function (v) { return { name: c.name || chainNameOf(c.id), value: (v && v !== ZERO_ADDRESS) ? v : null }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null }; });
+      })).then(function (rows) {
+        var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
+        var setCount = rows.filter(function (r) { return r.value; }).length;
+        function shortA(a) { return a.slice(0, 6) + '…' + a.slice(-4); }
+        if (distinct.length <= 1) {
+          cc.textContent = setCount ? ('✓ same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortA(distinct[0])) : 'not set on any chain yet';
+        } else {
+          cc.innerHTML = '⚠ <strong>differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortA(r.value) : 'unset'); }).join(' · ') + '. The value you set applies only to the chains you check below.';
+          cc.style.color = '#b23550';
+        }
+      });
+    }
     inputs[f.name] = { get: function () {
       var raw = (inp.value || '').trim();
       if (f.kind === 'address') {
