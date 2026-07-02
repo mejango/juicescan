@@ -268,8 +268,16 @@ async function feeOverrides(chainId) {
     var pub = createPublicClientForChain(chainId);
     var block = await pub.getBlock();
     if (block.baseFeePerGas == null) return {};
-    var tip = 1000000n; // 0.001 gwei priority — ample on testnets/L2s
-    return { maxFeePerGas: BigInt(block.baseFeePerGas) * 2n + tip, maxPriorityFeePerGas: tip };
+    var base = BigInt(block.baseFeePerGas);
+    var tip = 2000000n; // 0.002 gwei priority
+    // Generous headroom + a floor. Our RPC's base-fee reading can lag the wallet's RPC (Base Sepolia's base fee is
+    // higher/more volatile than Arbitrum's), and too-low a maxFeePerGas gets the submit rejected with an opaque
+    // "empty transaction data" / "HTTP client error". Testnet gas is free, so over-cap freely: 3× base + tip, with a
+    // 0.1 gwei floor so a near-zero local reading still clears the destination chain's real base fee.
+    var maxFee = base * 3n + tip;
+    var floor = 100000000n; // 0.1 gwei
+    if (maxFee < floor) maxFee = floor;
+    return { maxFeePerGas: maxFee, maxPriorityFeePerGas: tip };
   } catch (_) { return {}; }
 }
 
