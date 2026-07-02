@@ -267,18 +267,21 @@ async function feeOverrides(chainId) {
   try {
     var pub = createPublicClientForChain(chainId);
     var block = await pub.getBlock();
-    if (block.baseFeePerGas == null) return {};
-    var base = BigInt(block.baseFeePerGas);
-    var tip = 2000000n; // 0.002 gwei priority
-    // Generous headroom + a floor. Our RPC's base-fee reading can lag the wallet's RPC (Base Sepolia's base fee is
-    // higher/more volatile than Arbitrum's), and too-low a maxFeePerGas gets the submit rejected with an opaque
-    // "empty transaction data" / "HTTP client error". Testnet gas is free, so over-cap freely: 3× base + tip, with a
-    // 0.1 gwei floor so a near-zero local reading still clears the destination chain's real base fee.
+    var base = (block && block.baseFeePerGas != null) ? BigInt(block.baseFeePerGas) : 0n;
+    // A too-low priority tip (we shipped 0.002 gwei) reads as "underpriced": some wallet submission RPCs reject it
+    // with an opaque -32603 "internal error" / "HTTP client error" rather than a clear message. Base/Arb Sepolia
+    // base fees are ~0.005–0.02 gwei, so 0.05 gwei is a healthy, still-negligible tip.
+    var tip = 50000000n; // 0.05 gwei priority
+    // maxFeePerGas is a CAP (you only pay base + tip), and testnet gas is free — so over-cap generously. Our RPC's
+    // base-fee reading can lag or differ from the wallet's SUBMISSION RPC, so floor at 1 gwei (~200× the ~0.005 gwei
+    // Base Sepolia base fee): clears any transient spike or cross-RPC disagreement at zero real cost. NOTE: this only
+    // covers fee-caused rejects — a genuinely broken/flaky wallet RPC still fails; the fix there is switching the
+    // wallet's Base Sepolia RPC (e.g. to https://sepolia.base.org).
     var maxFee = base * 3n + tip;
-    var floor = 100000000n; // 0.1 gwei
+    var floor = 1000000000n; // 1 gwei
     if (maxFee < floor) maxFee = floor;
     return { maxFeePerGas: maxFee, maxPriorityFeePerGas: tip };
-  } catch (_) { return {}; }
+  } catch (_) { return { maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 50000000n }; }
 }
 
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an on-chain revert surfaces as

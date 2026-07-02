@@ -2892,6 +2892,10 @@ input[type="checkbox"].field {
 /* Price-range chart labels in the site font, not the SVG default. */
 .lp-graph-svg text { font-family: var(--app-font, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); }
 .ops-percent { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+/* Max-slippage control on the cash-out pool routes: label pinned left, preset buttons right. */
+.ops-slippage { justify-content: flex-start; align-items: center; }
+.ops-slippage-lbl { margin-right: auto; font-size: 12px; color: var(--muted); }
+.ops-percent-btn.active { color: var(--text); border-color: var(--write); background: rgba(0, 0, 0, 0.05); }
 /* Add-liquidity range graph + inline Max buttons */
 .lp-graph { margin: 8px 0 4px; position: relative; }
 .lp-graph-holder { width: 100%; }
@@ -4356,7 +4360,11 @@ input[type="checkbox"].field {
    (Arbitrum) and the per-row values don't line up. */
 .detail-ops-row { display: grid; grid-template-columns: minmax(92px, 0.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: center; padding: 11px 14px; border-bottom: 1px solid var(--c-orange-light); }
 .detail-ops-row.detail-ops-3 { grid-template-columns: minmax(92px, 0.5fr) minmax(0, 1fr) minmax(0, 1fr); }
+.detail-ops-row.detail-ops-5 { grid-template-columns: minmax(88px, 0.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.8fr); }
 .detail-ops-row:last-child { border-bottom: none; }
+.lp-remove-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--c-orange-light); }
+.lp-remove-row:last-child { border-bottom: none; }
+.lp-remove-head { font-weight: bold; }
 .detail-ops-head { background: var(--bg); color: var(--muted-2); font-size: 10px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
 .detail-ops-total { font-weight: bold; }
 .detail-ops-cell:not(:first-child) { text-align: right; }

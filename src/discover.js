@@ -36,12 +36,30 @@ var MAINNET_CHAINS = [
   { id: 8453, name: 'Base', short: 'Base' },
   { id: 10, name: 'Optimism', short: 'OP' },
 ];
+// A testnet slug (#sep:/#arbsep:/#basesep:/#opsep:) or mainnet slug (#eth:/#arb:/#base:/#op:) in the URL hash
+// dictates the network — otherwise someone opening a shared TESTNET link with no `jb-network` in localStorage loads
+// mainnet (the default) and the project + its owner Safe resolve on the WRONG network ("connect a signer" for an
+// address that IS a signer on the testnet Safe). The saved preference is only the fallback. Self-contained (no
+// CHAIN_SLUGS dependency) so it is safe to call at module load, before that map is assigned.
+function networkModeFromHash() {
+  try {
+    var slug = (location.hash || '').replace(/^#/, '').split(/[:/]/)[0];
+    if (/^(sep|arbsep|basesep|opsep)$/.test(slug)) return 'testnet';
+    if (/^(eth|arb|base|op)$/.test(slug)) return 'mainnet';
+    return null;
+  } catch (_) { return null; }
+}
 function getNetworkMode() {
+  var fromHash = networkModeFromHash();
+  if (fromHash) return fromHash;
   // Default to mainnet (the real network — 7 canonical revnets live). Project cards read on-chain;
   // indexer-backed feeds (activity/owners) populate once prod bendystraw indexes V6. Testnets via toggle.
   try { return localStorage.getItem('jb-network') === 'testnet' ? 'testnet' : 'mainnet'; } catch (_) { return 'mainnet'; }
 }
 var DISCOVER_CHAINS = getNetworkMode() === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
+// Reconcile the indexer host with the (hash-aware) network at module load — bendystraw-client seeds its host from
+// localStorage only, so a fresh visitor on a #sep: link would otherwise get testnet chains but mainnet feeds.
+setBendystrawNetwork(getNetworkMode());
 // Switch the active network: persist, swap the chain set + indexer host, drop caches + any open project
 // route, and re-render the grid from scratch.
 function setNetwork(mode) {
@@ -263,6 +281,10 @@ var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', state
 // Registry getters — the project's CURRENT resolved hook / terminal, used to pre-fill the setter fields.
 var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 var terminalOfAbi = [{ type: 'function', name: 'terminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+var isTerminalOfAbi = [{ type: 'function', name: 'isTerminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminal', type: 'address' }], outputs: [{ type: 'bool' }] }];
+var controllerOfAbi = [{ type: 'function', name: 'controllerOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+// JBOmnichainDeployer stores a project's real ("extra") data hook here — it inserts itself as the ruleset dataHook.
+var extraDataHookOfAbi = [{ type: 'function', name: 'extraDataHookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }], outputs: [{ type: 'tuple', components: [{ name: 'dataHook', type: 'address' }, { name: 'useDataHookForPay', type: 'bool' }, { name: 'useDataHookForCashOut', type: 'bool' }] }] }];
 // The buyback hook's per-(project,terminalToken) TWAP window — public, non-zero iff a pool is initialized for that
 // pair (MIN_TWAP_WINDOW is 5 min, so 0 = unset). The PoolKey (fee/tickSpacing) is stored in an internal mapping and
 // is NOT readable on-chain, so this tells us "initialized + TWAP", not the exact fee/tick.
@@ -376,6 +398,29 @@ function buildTierMintMetadata(idTarget, tierIds) {
   var nftId = tier721MetadataId(idTarget);
   var data = encodeAbiParameters([{ type: 'bool' }, { type: 'uint16[]' }], [true, tierIds]);
   return '0x' + '00'.repeat(32) + nftId + '02' + '00'.repeat(27) + data.slice(2);
+}
+
+// Cash-out routing metadata: tells the buyback hook to sell into the pool with a slippage floor, skipping the
+// (cold) TWAP. id = getId("cashOut", buybackHook) = bytes4(hook[:4] ^ keccak256("cashOut")[:4]); data =
+// abi.encode(uint256 minimumSwapAmountOut, bool skip=false). Passing a non-zero minimum makes the hook route
+// AMM whenever it beats the direct reclaim, without waiting for the oracle to seed (see beforeCashOutRecordedWith).
+function cashOutMetadataId(hookAddr) {
+  var k = keccak256('0x636173684f7574'); // keccak256(utf8 "cashOut")
+  var a = hookAddr.slice(2, 10).toLowerCase(), b = k.slice(2, 10), out = '';
+  for (var i = 0; i < 8; i += 2) out += (parseInt(a.substr(i, 2), 16) ^ parseInt(b.substr(i, 2), 16)).toString(16).padStart(2, '0');
+  return out;
+}
+function buildCashOutAmmMetadata(hookAddr, minReturned) {
+  var data = encodeAbiParameters([{ type: 'uint256' }, { type: 'bool' }], [minReturned, false]);
+  return '0x' + '00'.repeat(32) + cashOutMetadataId(hookAddr) + '02' + '00'.repeat(27) + data.slice(2);
+}
+// The buyback hook's cash-out spec metadata is a fixed 8-word static blob: (minOut, cashOutCountToSell,
+// netDirect, twapTick, twapLiquidity, poolId, rawSwapQuote, userSpecifiedMin). Slice the two words we need
+// (tokens the hook would sell + the net direct reclaim it compares against) — no decodeAbiParameters import.
+function decodeBuybackCashOutSpec(metaHex) {
+  if (!metaHex || metaHex.length < 2 + 64 * 3) return null;
+  var h = metaHex.slice(2);
+  return { cashOutCountToSell: BigInt('0x' + h.slice(64, 128)), netDirect: BigInt('0x' + h.slice(128, 192)) };
 }
 
 // The project's 721 hook (revnets: REVOwner.tiered721HookOf). Null if none / empty.
@@ -2186,9 +2231,82 @@ function lpPairFor(project, chainId) {
   }).catch(function () { return { addr: ZERO_ADDRESS, decimals: 18, symbol: 'ETH', isNative: true }; });
 }
 
+// The project's ruleset data hook + ruleset id on `chainId`, cached. The controller is resolved PER-PROJECT from the
+// Directory — never hardcoded — because a project can run on a non-default controller and reading currentRulesetOf off
+// the wrong controller would misfire. Swapping the buyback hook via setHookFor changes hookOf, NOT the dataHook (a
+// revnet's stays REVOwner), so this cache stays correct across a swap.
+var _dataHookCache = {};
+function projectDataHook(project, chainId) {
+  var k = project.id + ':' + chainId;
+  if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
+  var pid = BigInt(project.id);
+  return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
+    if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n }; return _dataHookCache[k]; }
+    return clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] })
+      .then(function (r) { var info = { hook: (r && r[1] && r[1].dataHook) || ZERO_ADDRESS, rulesetId: (r && r[0] && r[0].id) || 0n }; _dataHookCache[k] = info; return info; });
+  }).catch(function () { return { hook: ZERO_ADDRESS, rulesetId: 0n }; });
+}
+
+// The project's ACTUAL buyback hook on `chainId`, or null if it has no buyback pool. Recognize the project's ruleset
+// data hook (resolved via the Directory, never hardcoded) against the known singleton wrappers — hookOf / the default
+// hook must NOT be trusted for a project that doesn't route through the registry (it returns a default → wrong pool):
+//   JBBuybackHookRegistry, or REVOwner (revnets forward pay to the registry) → hook = registry.hookOf(projectId).
+//   JBOmnichainDeployer → it inserts ITSELF as the dataHook and stores the project's real hook as an "extra hook";
+//                         unwrap extraDataHookOf(projectId, rulesetId) and recognize THAT.
+//   the concrete JBBuybackHook wired directly → use it.
+//   anything else (croptop CTDeployer, 721 tiers, Defifa, unknown) → no buyback pool → null.
+// readPoolState additionally null-gates on an uninitialized pool, so a mis-recognized hook can't render a phantom pool.
+function projectBuybackHook(project, chainId) {
+  var registry = getAddress('JBBuybackHookRegistry', chainId);
+  var revOwner = getAddress('REVOwner', chainId);
+  var omni = getAddress('JBOmnichainDeployer', chainId);
+  var concrete = getAddress('JBBuybackHook', chainId);
+  var pid = BigInt(project.id);
+  var lc = function (a) { return (a || '').toLowerCase(); };
+  // Recognize an already-unwrapped data hook → the buyback hook it implies, or null.
+  function recognize(dh) {
+    if (!dh || dh === ZERO_ADDRESS) return Promise.resolve(null);
+    var d = lc(dh);
+    if (d === lc(registry) || d === lc(revOwner)) {
+      return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid])
+        .then(function (h) { return (h && h !== ZERO_ADDRESS) ? h : null; }).catch(function () { return null; });
+    }
+    if (concrete && d === lc(concrete)) return Promise.resolve(dh);
+    return Promise.resolve(null);
+  }
+  return projectDataHook(project, chainId).then(function (info) {
+    var dh = info && info.hook;
+    if (!dh || dh === ZERO_ADDRESS) return null;
+    if (omni && lc(dh) === lc(omni)) {
+      return read(chainId, 'JBOmnichainDeployer', extraDataHookOfAbi, 'extraDataHookOf', [pid, info.rulesetId])
+        .then(function (cfg) { return recognize(cfg && cfg.dataHook); }).catch(function () { return null; });
+    }
+    return recognize(dh);
+  }).catch(function () { return null; });
+}
+
+// The project's router terminal on `chainId`, or null if it doesn't route through the router terminal. Symmetric to
+// projectBuybackHook, but terminals are a LIST (not a single slot), so gate on JBDirectory.isTerminalOf:
+//   registry is one of the project's terminals → return the registry's terminalOf (the downstream it forwards into).
+//   the concrete JBRouterTerminal is one of the project's terminals → the project uses the router directly → use it.
+//   neither → none. (terminalOf resolves a *default* even for non-users, so it must be gated the same way as hookOf.)
+function projectRouterTerminal(project, chainId) {
+  var registry = getAddress('JBRouterTerminalRegistry', chainId);
+  var directTerminal = getAddress('JBRouterTerminal', chainId);
+  var pid = BigInt(project.id);
+  function isTerm(addr) { return addr ? read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pid, addr]).catch(function () { return false; }) : Promise.resolve(false); }
+  return isTerm(registry).then(function (viaRegistry) {
+    if (viaRegistry) {
+      return read(chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [pid])
+        .then(function (t) { return (t && t !== ZERO_ADDRESS) ? t : null; }).catch(function () { return null; });
+    }
+    return isTerm(directTerminal).then(function (direct) { return direct ? directTerminal : null; });
+  }).catch(function () { return null; });
+}
+
 // Current AMM price as PAIR-token per project token (ETH/token for ETH pools, USDC/token for USDC pools).
 async function readAmmPrice(project, chainId) {
-  var hook = getAddress('JBBuybackHook', chainId);
+  var hook = await projectBuybackHook(project, chainId);
   var pm = POOL_MANAGER_BY_CHAIN[chainId];
   if (!hook || !pm) return null;
   try {
@@ -2226,9 +2344,10 @@ async function readAmmPrice(project, chainId) {
 
 // Resolve the buyback pool + swap direction for buying the project token with its pair token.
 function directSwapPoolFor(project, chainId) {
-  var hook = getAddress('JBBuybackHook', chainId);
-  if (!hook || !UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
-  return lpPairFor(project, chainId).then(function (pair) {
+  if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
+  return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
+    var hook = r[0], pair = r[1];
+    if (!hook) return null;
     return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] })
       .then(function (key) {
         var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
@@ -2253,6 +2372,36 @@ function quoteDirectSwap(chainId, pool, amountIn) {
     address: quoter, abi: v4QuoterAbi, functionName: 'quoteExactInputSingle',
     args: [{ poolKey: pool.key, zeroForOne: pool.zeroForOne, exactAmount: amountIn, hookData: '0x' }],
   }).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; });
+}
+
+// Resolve the buyback pool + swap direction for SELLING the project token (the mirror of directSwapPoolFor). The
+// returned object plugs into quoteDirectSwap / encodeV4SwapInput / buildDirectSwapErc20Tx unchanged: `pairAddr` is
+// the swap INPUT (here the project token being sold) and `tokenOut` the output (the pool's pair, USDC/ETH). Used
+// both to quote a sell and to execute a direct pool sell that bypasses the terminal (no 2.5% cash-out fee).
+function directSellPoolFor(project, chainId) {
+  if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
+  return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
+    var hook = r[0], pair = r[1];
+    if (!hook || !pair) return null;
+    return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] })
+      .then(function (key) {
+        var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
+        var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
+        if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null; // pool not set
+        var pairAddr = pair.addr.toLowerCase();
+        var projTok = c0 === pairAddr ? key.currency1 : key.currency0; // the non-pair currency = project token
+        var zeroForOne = projTok.toLowerCase() === c0; // selling the project token IN
+        // pairAddr := the input currency (project token); tokenOut := the pool pair (what the user receives).
+        return { key: key, zeroForOne: zeroForOne, pairAddr: projTok, tokenOut: pair.addr, projectToken: projTok, pair: pair };
+      }).catch(function () { return null; });
+  }).catch(function () { return null; });
+}
+
+// Quote selling `artCount` of the project token into the buyback pool → pair-token out (USDC). Null if no
+// pool/quoter or the quote reverts. Used to compare a pool sell against the treasury bonding-curve reclaim.
+function quoteCashOutSell(project, chainId, artCount) {
+  if (!artCount || artCount <= 0n) return Promise.resolve(null);
+  return directSellPoolFor(project, chainId).then(function (pool) { return pool ? quoteDirectSwap(chainId, pool, artCount) : null; });
 }
 
 // Encode the V4_SWAP command input for an exact-in single swap (pair token → project token), output to
@@ -2333,16 +2482,25 @@ async function readCashoutPrice(project, chainId) {
   var terminal = getAddress('JBMultiTerminal', chainId);
   if (!terminal) return null;
   try {
+    // Cash-out backing is held in the project's ACCOUNTING token — USDC (6 dec) for USDC revnets, native ETH for ETH
+    // ones — NOT always native. Reading NATIVE_TOKEN (and dividing by 1e18) made every USDC pool report "no cash-out
+    // floor" (its ETH balance is 0). Resolve the accounting token + its decimals so the reclaim price is right.
+    var acct = await resolveAcctToken(chainId, pid);
+    var token = acct.address, dec = acct.decimals || 18;
+    // Divide the surplus by the reserved-INCLUSIVE supply: pending (un-minted) reserved tokens still dilute every
+    // holder's redemption (settling them is a no-op for reclaim), so JBTokens.totalSupplyOf (minted-only) inflates the
+    // cash-out price — it made project 6 read 0.0024 (> the 0.0016 ceiling) when the real floor is 0.00144.
+    var supplyWithReservedAbi = [{ type: 'function', name: 'totalTokenSupplyWithReservedTokensOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
     // supply and balance are independent — fetch together (one multicall round-trip) before the reclaim read.
     var res = await Promise.all([
-      read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]),
-      read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, NATIVE_TOKEN]),
+      read(chainId, 'JBController', supplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]),
+      read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, token]),
     ]);
     var supply = res[0], bal = res[1];
     if (!supply || supply === 0n) return null;
     if (bal == null || bal === 0n) return null;
     var reclaim = await read(chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, bal]);
-    return reclaim ? Number(reclaim) / 1e18 : null;
+    return reclaim ? Number(reclaim) / Math.pow(10, dec) : null;
   } catch (e) { return null; }
 }
 var RULESET_OUTPUTS = [
@@ -5802,7 +5960,14 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         } catch (e) {
           if (typeof console !== 'undefined') console.error('[safe-apply]', e);
           btn.disabled = false; cancel.disabled = false;
-          setStatus((e && (e.shortMessage || e.message)) || String(e), 'error');
+          var msg = (e && (e.shortMessage || e.message)) || String(e);
+          // A wallet SUBMISSION-RPC failure (HTTP/internal error while broadcasting), NOT a contract revert or fee
+          // problem — maxFeePerGas is already over-capped. Point the signer at the real fix (switch the chain's RPC in
+          // their wallet) so they don't keep bumping gas in vain.
+          if (/HTTP client error|internal error|RPC submit|InternalRpcError|-32603/i.test(msg)) {
+            msg += ' — this is your wallet’s RPC failing to broadcast (not a gas/fee issue). Switch this chain’s RPC in your wallet (Base Sepolia → https://sepolia.base.org · Arbitrum Sepolia → https://sepolia-rollup.arbitrum.io/rpc) and click again.';
+          }
+          setStatus(msg, 'error');
         }
       })();
     });
@@ -5879,12 +6044,13 @@ function renderDetailSkeleton() {
 }
 // Ops-style table ghost: real header text up top, shimmer cells below (You / Settlement).
 function skelOpsTable(headers, nRows) {
+  var colClass = headers.length === 3 ? ' detail-ops-3' : (headers.length === 5 ? ' detail-ops-5' : '');
   var table = el('div', 'detail-ops-table skel-table');
-  var head = el('div', 'detail-ops-row detail-ops-head');
+  var head = el('div', 'detail-ops-row detail-ops-head' + colClass);
   headers.forEach(function (h) { var c = el('span', 'detail-ops-cell'); c.textContent = h; head.appendChild(c); });
   table.appendChild(head);
   for (var i = 0; i < nRows; i++) {
-    var row = el('div', 'detail-ops-row');
+    var row = el('div', 'detail-ops-row' + colClass);
     headers.forEach(function (_, j) { var c = el('span', 'detail-ops-cell'); c.appendChild(skel(j === 0 ? '52%' : '60%', '11px')); row.appendChild(c); });
     table.appendChild(row);
   }
@@ -6918,9 +7084,11 @@ function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
   var ethVal; try { ethVal = BigInt(tx.value || 0); } catch (_) { ethVal = 0n; }
   if (ethVal > 0n) warns.push('Sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe.');
   if (!nm) warns.push('⚠ Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
+  var viewOnly = actionLabel === 'View';
   return confirmTransactionModal(
     { chain: chainName, contract: nm || tx.to, address: tx.to, calldata: tx.data, value: tx.value },
-    { title: (actionLabel || 'Review') + ' Safe transaction #' + tx.nonce, confirmText: actionLabel || 'Confirm', description: warns.join(' ') || null }
+    { title: viewOnly ? ('Transaction #' + tx.nonce + ' details') : ((actionLabel || 'Review') + ' Safe transaction #' + tx.nonce),
+      confirmText: viewOnly ? 'Close' : (actionLabel || 'Confirm'), description: warns.join(' ') || null }
   );
 }
 
@@ -7126,8 +7294,32 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           if (isDelegate) { sub.appendChild(boSep()); var dc = el('span', 'backoffice-warn'); dc.textContent = '⚠ DELEGATECALL'; sub.appendChild(dc); }
           if (ethVal > 0n) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('sends ' + formatBalance(ethVal, 18, 'ETH'))); }
           main.appendChild(sub);
-          // The full decoded review (incl. these DELEGATECALL/ETH warnings) is shown by reviewQueuedSafeTx
-          // before Sign/Execute — see below.
+          // Show WHO has signed (and who's still needed), so a coordinator can chase the exact missing signer(s)
+          // instead of guessing from a bare count. Confirmations come from the Safe tx-service (hosted chains).
+          // Each owner renders as its truncated address, upgraded to its ENS name (mainnet reverse-resolve) if any.
+          var signedList = (tx.confirmations || []).map(function (cf) { return cf.owner; }).filter(Boolean);
+          var signedSet = {}; signedList.forEach(function (o) { signedSet[o.toLowerCase()] = true; });
+          function appendOwners(parent, addrs) {
+            addrs.forEach(function (o, i) {
+              if (i) parent.appendChild(document.createTextNode(', '));
+              var suf = (acc && o.toLowerCase() === acc.toLowerCase()) ? ' (you)' : '';
+              var s = el('span'); s.textContent = truncAddr(o) + suf; parent.appendChild(s);
+              ensNameOf(o).then(function (n) { if (n) s.textContent = n + suf; }).catch(function () {});
+            });
+          }
+          var who = el('div', 'backoffice-sub'); who.style.opacity = '0.85'; who.style.marginTop = '2px';
+          who.appendChild(document.createTextNode('signed: '));
+          if (signedList.length) appendOwners(who, signedList); else who.appendChild(document.createTextNode('none'));
+          if (nconf < need) {
+            var missing = (info.owners || []).filter(function (o) { return !signedSet[o.toLowerCase()]; });
+            if (missing.length) { who.appendChild(boSep()); var nd = el('span', 'backoffice-warn'); nd.textContent = 'needs: '; who.appendChild(nd); appendOwners(nd, missing); }
+          }
+          main.appendChild(who);
+          // Click the row body to inspect the full decoded tx (contract, function, args, raw calldata) read-only —
+          // the same review the Sign/Execute buttons show, without committing to either.
+          main.style.cursor = 'pointer';
+          main.title = 'View transaction details';
+          main.addEventListener('click', function () { reviewQueuedSafeTx(c.id, c.name, tx, 'View'); });
           row.appendChild(main);
           var actions = el('div', 'backoffice-actions');
           var signed = (tx.confirmations || []).some(function (cf) { return acc && cf.owner && cf.owner.toLowerCase() === acc.toLowerCase(); });
@@ -7816,8 +8008,8 @@ export var POWER_SET_BUYBACK_HOOK = {
   note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
   fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… buyback hook',
-    defaultRead: function (project) { return read(project.chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); },
-    crossChainRead: function (project, chainId) { return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]); } }],
+    defaultRead: function (project) { return projectBuybackHook(project, project.chainId).then(function (a) { return a || ''; }).catch(function () { return ''; }); },
+    crossChainRead: function (project, chainId) { return projectBuybackHook(project, chainId); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
 };
 export var POWER_SET_ROUTER_TERMINAL = {
@@ -7826,8 +8018,8 @@ export var POWER_SET_ROUTER_TERMINAL = {
   note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
-    defaultRead: function (project) { return read(project.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]).then(function (a) { return (a && a !== ZERO_ADDRESS) ? a : ''; }).catch(function () { return ''; }); },
-    crossChainRead: function (project, chainId) { return read(chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]); } }],
+    defaultRead: function (project) { return projectRouterTerminal(project, project.chainId).then(function (a) { return a || ''; }).catch(function () { return ''; }); },
+    crossChainRead: function (project, chainId) { return projectRouterTerminal(project, chainId); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
@@ -12162,7 +12354,7 @@ function renderYouCard(project, opts) {
       return;
     }
     actions.style.display = ''; // connected: reveal the action buttons
-    var status = skelOpsTable(noLoans ? ['Chain', 'Balance', 'Cash out'] : ['Chain', 'Balance', 'Cash out', 'Max loan'], 2); body.appendChild(status);
+    var status = skelOpsTable(noLoans ? ['Chain', 'Balance', 'Cash out', 'LP'] : ['Chain', 'Balance', 'Cash out', 'Max loan', 'LP'], 2); body.appendChild(status);
     Promise.all([fetchYouPosition(project), readCashOutDelay(project)]).then(function (out) {
       if (seq !== loadSeq || !body.isConnected) return; // a newer load() superseded this one
       var rows = out[0], delay = out[1];
@@ -12185,6 +12377,24 @@ function renderYouCard(project, opts) {
         if (locked && r.cashout != null && r.cashout > 0n) return { main: fmtCash(r, r.cashout), sub: 'locked' };
         return locked ? 'Locked' : fmtLoan(0n);
       }
+      // LP positions column: the connected wallet's V4 positions on this chain (current + old buyback pools), filled
+      // async (the getLogs scan is slower than the balance reads). Clickable → the remove-liquidity modal.
+      function fillLpCell(span, cid) {
+        span.innerHTML = ''; span.style.cursor = ''; span.style.textDecoration = ''; span.onclick = null;
+        var acct = getAccount && getAccount();
+        if (!acct || !POSITION_MANAGER_BY_CHAIN[cid]) { span.textContent = '—'; return; }
+        var g = skel('44px', '11px'); g.style.display = 'inline-block'; g.style.verticalAlign = 'middle';
+        span.appendChild(g); // ghost while the getLogs position scan runs
+        readUserLpPositions(project, cid, acct).then(function (ps) {
+          span.innerHTML = '';
+          if (!ps || !ps.length) { span.textContent = '—'; return; }
+          span.textContent = ps.length + (ps.length > 1 ? ' positions' : ' position');
+          span.style.cursor = 'pointer'; span.style.textDecoration = 'underline'; span.style.textDecorationStyle = 'dotted';
+          span.title = 'Manage / remove your LP positions';
+          span.onclick = function () { openRemoveLiquidityModal(project, cid, function () { fillLpCell(span, cid); }); };
+        }).catch(function () { span.textContent = '—'; });
+      }
+      function lpCell(r) { var span = el('span', 'lp-cell'); fillLpCell(span, r.id); return span; }
       status.remove();
       var held = rows.filter(function (r) { return r.balance && r.balance > 0n; });
       if (!held.length) {
@@ -12207,7 +12417,7 @@ function renderYouCard(project, opts) {
         return sub ? { main: main, sub: sub } : main;
       }
       var table = el('div', 'detail-ops-table');
-      table.appendChild(opsRow('Chain', 'Balance', 'Cash out', noLoans ? undefined : 'Max loan', true, false));
+      table.appendChild(opsRow('Chain', 'Balance', 'Cash out', noLoans ? undefined : 'Max loan', true, false, undefined, 'LP'));
       var totBal = 0n, totCash = 0n, totLoan = 0n, anyLoan = false, anyCredit = false, anyErc20 = false;
       held.forEach(function (r) {
         table.appendChild(opsRow(
@@ -12215,7 +12425,7 @@ function renderYouCard(project, opts) {
           balCell(r),
           cashCell(r),
           noLoans ? undefined : loanCell(r),
-          false, false, r.id));
+          false, false, r.id, lpCell(r)));
         totBal += r.balance;
         if (r.credit != null && r.credit > 0n) anyCredit = true;
         if (r.credit != null && r.balance != null && r.balance > r.credit) anyErc20 = true;
@@ -12234,7 +12444,7 @@ function renderYouCard(project, opts) {
       // Locked total loan ≈ total cash-out value (same bonding-curve reclaim, in the accounting token).
       var totLoanCell = anyLoan ? fmtLoan(totLoan) : (mixedAcct ? '—' : (locked && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (locked ? 'Locked' : '—')));
       // A Total row is redundant when there's only one chain row.
-      if (held.length > 1) table.appendChild(opsRow('Total', totBalCell, totCashCell, noLoans ? undefined : totLoanCell, false, true));
+      if (held.length > 1) table.appendChild(opsRow('Total', totBalCell, totCashCell, noLoans ? undefined : totLoanCell, false, true, undefined, ''));
       body.appendChild(table);
       if (locked) {
         var note = el('div', 'you-footnote');
@@ -12765,7 +12975,7 @@ function buildCashOutModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
   var pid = BigInt(project.id);
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, supply: null, surplus: null, reclaim: null, net: null, cashOutTaxRate: null, locked: false, exact: true, kinds: null, reclaimKey: null };
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, supply: null, surplus: null, reclaim: null, net: null, cashOutTaxRate: null, locked: false, exact: true, kinds: null, reclaimKey: null, slippageBps: 100, lastF: null };
 
   // Your BREADFRUIT balance on each chain (so you can see where you can cash out from).
   var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
@@ -12801,6 +13011,22 @@ function buildCashOutModal(project, requestClose) {
   wrap.appendChild(opsPercentButtons(amt, function () { return state.balance; }));
 
   var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
+  // Max-slippage control for the pool routes (direct sell / buyback). Hidden until a pool route is active — the
+  // treasury reclaim has no swap and ignores it. Changing it re-renders the floor line (no re-quote needed).
+  var slipRow = el('div', 'ops-percent ops-slippage'); slipRow.style.display = 'none'; wrap.appendChild(slipRow);
+  var slipLbl = el('span', 'ops-slippage-lbl'); slipLbl.textContent = 'Max slippage'; slipRow.appendChild(slipLbl);
+  [50, 100, 300, 500].forEach(function (bps) {
+    var b = document.createElement('button'); b.className = 'ops-percent-btn'; b.textContent = (bps / 100) + '%';
+    b.setAttribute('data-bps', String(bps));
+    b.addEventListener('click', function () { state.slippageBps = bps; syncSlip(); if (state.lastF) renderCashPreview(previewSeq, state.lastF); });
+    slipRow.appendChild(b);
+  });
+  function syncSlip() {
+    Array.prototype.forEach.call(slipRow.querySelectorAll('.ops-percent-btn'), function (b) {
+      b.classList.toggle('active', Number(b.getAttribute('data-bps')) === (state.slippageBps || 100));
+    });
+  }
+  syncSlip();
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Cash out';
@@ -12827,7 +13053,13 @@ function buildCashOutModal(project, requestClose) {
   }
   function onChainChange() {
     refreshBalance();
-    state.supply = null; state.surplus = null; state.acct = null; state.cashOutTaxRate = null; updatePreview();
+    state.supply = null; state.surplus = null; state.acct = null; state.cashOutTaxRate = null;
+    // Supersede any in-flight preview/quote and drop the AMM route on a chain/reclaim switch. updatePreview's
+    // early-return (supply == null) fires before its own seq-bump + route-reset, so without this an in-flight
+    // chain-A quote (seq still current) could re-install a stale amm route with the wrong-chain hook + no
+    // on-terminal floor, submittable during the async RPC gap. Bump the seq here so those guards fire.
+    state.cashOutRoute = { via: 'treasury' }; state.net = null; ++previewSeq; if (btn) btn.disabled = true;
+    updatePreview();
     var terminal = getAddress('JBMultiTerminal', state.chainId);
     var acctP = acctForChain(state.chainId);
     acctP.then(function (acct) {
@@ -12882,6 +13114,10 @@ function buildCashOutModal(project, requestClose) {
     if (!terminal) { preview.innerHTML = ''; return; }
     var a = state.acct || { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' };
     var seq = ++previewSeq;
+    // Reset the route to the safe default the instant the amount changes — the AMM route is re-offered only after
+    // the new preview + pool quote resolve. Prevents a stale `amm` route (old minReturned) from being submitted with
+    // a freshly-edited count (a shrunk count would make the hook's swap miss the old floor and revert).
+    state.cashOutRoute = { via: 'treasury' };
     preview.textContent = 'Calculating…';
     // Beneficiary drives feeless + REV-fee math; use the connected wallet so the preview matches what
     // that wallet will see. A placeholder (not feeless) is fine for the disconnected preview.
@@ -12943,8 +13179,57 @@ function buildCashOutModal(project, requestClose) {
       var net = afterHook - protocolFee;
       state.reclaim = afterHook;
       state.net = net;
+      state.cashOutRoute = { via: 'treasury' };
       renderCashPreview(seq, { net: net, revFee: revFee, protocolFee: protocolFee });
-    }).catch(function () { if (seq === previewSeq) { preview.innerHTML = ''; state.reclaim = null; state.net = null; } });
+      // Probe the two pool routes: a direct sell (bypass the terminal) and the buyback-routed cash-out. Offer
+      // whichever nets more than the treasury reclaim. Async; leaves the treasury route on failure.
+      maybeOfferCashOutRoutes(seq, specs, net, count);
+    }).catch(function () { if (seq === previewSeq) { preview.innerHTML = ''; state.reclaim = null; state.net = null; btn.disabled = false; } });
+  }
+
+  // Offer the more lucrative pool route above the treasury reclaim:
+  //   • DIRECT SELL (route 'directsell') — sell the whole cash-out amount straight on the pool via the Universal
+  //     Router, bypassing the terminal. Keeps the 2.5% cash-out fee the terminal route pays (it sells the full
+  //     `count`, not `count`−fee), so it strictly wins when available — but it can only move CLAIMED ERC-20, so
+  //     it's offered only when the user holds enough of it to cover the whole cash-out.
+  //   • BUYBACK via terminal (route 'amm') — the credits fallback: the terminal cash-out routed through the hook
+  //     via a minReturned. Works when part of the balance is unclaimed credits (a direct sell can't touch those).
+  // The buyback spec (hook == projectBuybackHook) from the treasury-path preview carries the fee-net sell count.
+  function maybeOfferCashOutRoutes(seq, specs, treasuryNet, count) {
+    var acct = getAccount && getAccount();
+    Promise.all([directSellPoolFor(project, state.chainId), projectBuybackHook(project, state.chainId)]).then(function (r) {
+      if (seq !== previewSeq) return;
+      var pool = r[0], hookAddr = r[1];
+      var dec = null;
+      if (hookAddr && specs && specs.length) {
+        var lc = hookAddr.toLowerCase();
+        var bspec = specs.filter(function (s) { return s && (s.hook || '').toLowerCase() === lc; })[0];
+        if (bspec) dec = decodeBuybackCashOutSpec(bspec.metadata);
+      }
+      var qDirect = (pool && count > 0n) ? quoteDirectSwap(state.chainId, pool, count) : Promise.resolve(null);
+      var qBuyback = (pool && dec && dec.cashOutCountToSell > 0n) ? quoteDirectSwap(state.chainId, pool, dec.cashOutCountToSell) : Promise.resolve(null);
+      // Claimed ERC-20 balance = the pool's project-token currency held by the user (credits are excluded).
+      var erc20P = (pool && acct) ? clientFor(state.chainId).readContract({ address: pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n);
+      Promise.all([qDirect, qBuyback, erc20P]).then(function (q) {
+        if (seq !== previewSeq) return;
+        var directOut = q[0], buybackOut = q[1], erc20Bal = q[2] || 0n;
+        // Route 3 — direct pool sell (preferred when the user holds enough claimed ERC-20 to cover the cash-out).
+        if (pool && directOut != null && directOut > treasuryNet && erc20Bal >= count) {
+          state.cashOutRoute = { via: 'directsell', pool: pool, out: directOut, count: count, treasuryNet: treasuryNet };
+          renderCashPreview(seq, { net: directOut, revFee: 0n, protocolFee: 0n, route: 'directsell', treasuryNet: treasuryNet });
+          return;
+        }
+        // Route 2 — buyback via terminal (credits fallback). The hook routes AMM only when the floor exceeds its
+        // net direct reclaim, so a pool that doesn't clearly beat the treasury stays on the treasury path.
+        if (dec && hookAddr && buybackOut != null && buybackOut > treasuryNet) {
+          var minReturned = buybackOut * BigInt(10000 - (state.slippageBps || 100)) / 10000n;
+          if (minReturned > dec.netDirect) {
+            state.cashOutRoute = { via: 'amm', hook: hookAddr, minReturned: minReturned, ammOut: buybackOut, cashOutCountToSell: dec.cashOutCountToSell, netDirect: dec.netDirect, treasuryNet: treasuryNet };
+            renderCashPreview(seq, { net: buybackOut, revFee: 0n, protocolFee: 0n, route: 'amm', treasuryNet: treasuryNet });
+          }
+        }
+      });
+    }).catch(function () {});
   }
 
   // Render the post-fee payout, a line per fee (revnet fee + protocol fee), and — for the protocol fee —
@@ -12955,10 +13240,38 @@ function buildCashOutModal(project, requestClose) {
     var a = state.acct || { decimals: 18, symbol: 'ETH' };
     // Snapshot the outcome for the success panel (fee-token amounts fill in as their previews resolve).
     state.outcome = { net: f.net, sym: a.symbol, decimals: a.decimals, revToken: null, protoToken: null };
+    state.lastF = f; // keep the last render so a slippage change can re-render the floor without a re-quote
+    var poolRoute = f.route === 'amm' || f.route === 'directsell';
+    slipRow.style.display = poolRoute ? '' : 'none';
+    if (poolRoute) syncSlip();
     preview.innerHTML = '';
     var recv = el('div', 'ops-preview-line ops-preview-recv');
     recv.textContent = 'You’ll receive ~ ' + formatBalance(f.net, a.decimals, a.symbol);
     preview.appendChild(recv);
+    // Route indicator — confirm how this settles: a direct pool sell (bypasses the terminal), the buyback pool
+    // via the terminal, or the project treasury.
+    if (f.route === 'directsell') {
+      var viaDS = el('div', 'ops-preview-line ops-preview-feetok');
+      viaDS.textContent = 'via a direct pool sell — bypasses the terminal (no 2.5% cash-out fee), beats ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the treasury';
+      preview.appendChild(viaDS);
+    } else if (f.route === 'amm') {
+      var viaAmm = el('div', 'ops-preview-line ops-preview-feetok');
+      viaAmm.textContent = 'via the buyback pool — beats ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the treasury';
+      preview.appendChild(viaAmm);
+    } else if (f.net != null && f.net > 0n && !f.approx) {
+      var viaT = el('div', 'ops-preview-line ops-preview-feetok');
+      viaT.textContent = 'via the project treasury';
+      preview.appendChild(viaT);
+    }
+    // Pool routes: the ~ amount is the quote; the on-chain floor = quote × (1 − max slippage). The swap REVERTS
+    // below it (protection, not an expected loss). Reads state.slippageBps so the slippage control updates it live.
+    if (poolRoute && f.net != null) {
+      var slip = state.slippageBps || 100;
+      var floor = f.net * BigInt(10000 - slip) / 10000n;
+      var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
+      floorLine.textContent = 'Reverts below ' + formatBalance(floor, a.decimals, a.symbol) + ' floor (' + (slip / 100) + '% max slippage)';
+      preview.appendChild(floorLine);
+    }
     if (f.approx) {
       var note = el('div', 'ops-preview-line ops-preview-feetok');
       note.textContent = '(estimate — exact reclaim couldn’t be previewed)';
@@ -13021,7 +13334,18 @@ function buildCashOutModal(project, requestClose) {
     // aggregated across chains for omnichain projects), the project's total surplus across all tokens, and
     // the cash-out tax. reclaim = surplus × share × ((1 − tax) + tax × share), where share = count / supply.
     var count2; try { count2 = parseAmount(amt.value, 18); } catch (_) { count2 = 0n; }
-    if (state.aggSupply != null && state.aggSupply > 0n && count2 > 0n) {
+    if (f.route === 'amm' || f.route === 'directsell') {
+      // Pool route: the payout is a swap, not the surplus×share bonding curve — show that instead of the treasury
+      // formula (which would misleadingly read "100% cash-out tax", the routing mechanism, not a fee).
+      var bd2 = el('div', 'ops-cash-breakdown');
+      var bh2 = el('div', 'ops-cash-bd-head'); bh2.textContent = 'How this is calculated'; bd2.appendChild(bh2);
+      var fm2 = el('div', 'ops-cash-bd-formula');
+      fm2.textContent = f.route === 'directsell'
+        ? 'Sold straight into the buyback pool via the Universal Router — the terminal (and its 2.5% cash-out fee) is bypassed entirely. The ~ amount is the current quote; you receive the actual swap output, which the max-slippage floor guarantees (the swap reverts below it).'
+        : 'Sold into the buyback pool at the current AMM price; the treasury bonding curve is bypassed. The ~ amount is the current quote; you receive the actual swap output, which the max-slippage floor guarantees (the swap reverts below it).';
+      bd2.appendChild(fm2);
+      preview.appendChild(bd2);
+    } else if (state.aggSupply != null && state.aggSupply > 0n && count2 > 0n) {
       var multi = (state.aggChains || 1) > 1;
       var bd = el('div', 'ops-cash-breakdown');
       var bh = el('div', 'ops-cash-bd-head'); bh.textContent = 'How this is calculated'; bd.appendChild(bh);
@@ -13056,26 +13380,88 @@ function buildCashOutModal(project, requestClose) {
     var count; try { count = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (count === 0n) { status.textContent = 'Enter an amount'; return; }
     if (state.locked) { status.textContent = 'Cash outs are not unlocked yet'; return; }
+    // The preview must have resolved (net + accounting token) before submit — a chain/reclaim switch or first
+    // load nulls these until it does. Blocks a stale route / wrong reclaim token / missing floor mid-gap.
+    if (state.net == null || !state.acct) { status.textContent = 'Preview still loading…'; return; }
     var terminal = getAddress('JBMultiTerminal', state.chainId);
     if (!terminal) { status.textContent = 'No terminal on this chain'; return; }
-    // Slippage floor under the previewed NET payout. The terminal checks `minTokensReclaimed` against the
-    // post-everything amount: bonding curve → REVOwner's 2.5% revnet fee (via the data hook) → the 2.5%
-    // protocol fee. `state.net` mirrors all of that (from previewCashOutFrom). Using the raw curve reclaim
-    // here was the bug that reverted cash-outs. 1% buffer when exact; 5% on a fallback estimate.
-    var bps = state.exact === false ? 9500n : 9900n;
-    var minReclaimed = state.net != null ? state.net * bps / 10000n : 0n;
-    var reclaimToken = (state.acct && state.acct.address) || NATIVE_TOKEN; // cash out in the accounting token
+    var reclaimToken = state.acct.address || NATIVE_TOKEN; // cash out in the accounting token
+    var route = state.cashOutRoute || { via: 'treasury' };
     btn.disabled = true; status.textContent = '';
-    // Snapshot what the user is cashing out + the previewed outcome, for the success panel.
-    var outCount = count;
-    var outcome = state.outcome ? Object.assign({}, state.outcome) : { net: state.net, sym: (state.acct && state.acct.symbol) || 'ETH', decimals: (state.acct && state.acct.decimals) || 18 };
-    executeTransaction({
-      chainId: state.chainId, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
-      args: [acct, pid, count, reclaimToken, minReclaimed, acct, '0x'],
-      onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
-      onSuccess: function (m, meta) { renderCashSuccess(outCount, outcome, meta); },
-      onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-    });
+
+    // A TERMINAL cash-out: treasury reclaim, or the buyback route via a minReturned metadata. For the buyback
+    // route, RE-QUOTE at submit — minReturned is a hard on-chain floor (userSpecifiedMin=true) that reverts the
+    // swap if the realized fill misses it, so a >1% adverse move since the preview would revert the whole
+    // cash-out against a stale floor. If the pool no longer beats the treasury (or the quote fails), fall to the
+    // treasury path. `r` may differ from the outer route (the direct-sell fallback passes a forced treasury r).
+    function submitTerminalCashOut(r) {
+      var routeP = (r.via === 'amm' && r.hook && r.cashOutCountToSell)
+        ? quoteCashOutSell(project, state.chainId, r.cashOutCountToSell).then(function (fresh) {
+            var freshMin = fresh != null ? fresh * BigInt(10000 - (state.slippageBps || 100)) / 10000n : 0n;
+            if (fresh != null && fresh > (r.treasuryNet || 0n) && freshMin > (r.netDirect || 0n)) {
+              return { metadata: buildCashOutAmmMetadata(r.hook, freshMin), minReclaimed: 0n, net: fresh };
+            }
+            return null;
+          }).catch(function () { return null; })
+        : Promise.resolve(null);
+      routeP.then(function (amm) {
+        var metadata, minReclaimed, outNet, ammRoute = !!amm;
+        if (amm) {
+          metadata = amm.metadata; minReclaimed = amm.minReclaimed; outNet = amm.net;
+        } else {
+          if (r.via === 'amm') status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
+          metadata = '0x';
+          // Floor under the previewed NET payout (bonding curve → REVOwner 2.5% fee → 2.5% protocol fee, all in
+          // state.net). 1% buffer when exact; 5% on a fallback estimate.
+          var bps = state.exact === false ? 9500n : 9900n;
+          minReclaimed = state.net != null ? state.net * bps / 10000n : 0n;
+          outNet = state.net;
+        }
+        var outcome = state.outcome ? Object.assign({}, state.outcome) : { sym: (state.acct && state.acct.symbol) || 'ETH', decimals: (state.acct && state.acct.decimals) || 18 };
+        outcome.net = outNet; outcome.approxAmount = ammRoute; outcome.sold = false;
+        executeTransaction({
+          chainId: state.chainId, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
+          args: [acct, pid, count, reclaimToken, minReclaimed, acct, metadata],
+          onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
+          onSuccess: function (m, meta) { renderCashSuccess(count, outcome, meta); },
+          onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
+        });
+      });
+    }
+
+    // DIRECT pool sell — a Universal Router swap that bypasses the terminal entirely (not cashOutTokensOf). It
+    // sells the claimed ERC-20 straight into the pool, dodging the 2.5% cash-out fee. Re-quote for a fresh floor;
+    // if the pool no longer beats the treasury (or the quote fails), fall back to the terminal cash-out.
+    if (route.via === 'directsell' && route.pool && route.count) {
+      // Re-quote the pool AND re-read the claimed ERC-20 balance at submit: a direct sell pulls `count` via
+      // Permit2, so if the balance dropped below `count` since the preview (e.g. a sell in another tab) the swap
+      // would approve+sign+revert. Fall back to the terminal cash-out (credits-safe) when either check fails.
+      Promise.all([
+        quoteDirectSwap(state.chainId, route.pool, route.count),
+        clientFor(state.chainId).readContract({ address: route.pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }),
+      ]).then(function (rr) {
+        var fresh = rr[0], bal = rr[1];
+        if (fresh == null || fresh <= (route.treasuryNet || 0n) || bal < route.count) {
+          status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
+          submitTerminalCashOut({ via: 'treasury' });
+          return;
+        }
+        var minOut = fresh * BigInt(10000 - (state.slippageBps || 100)) / 10000n; // slippage floor = swap amountOutMinimum
+        var statusCb = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
+        var outcome = { net: fresh, sym: (state.acct && state.acct.symbol) || 'USDC', decimals: (state.acct && state.acct.decimals) || 18, approxAmount: true, sold: true };
+        buildDirectSwapErc20Tx(state.chainId, route.pool, route.pool.projectToken, route.count, minOut, acct, statusCb)
+          .then(function (tx) {
+            executeTransaction(Object.assign({}, tx, {
+              onStatus: statusCb,
+              onSuccess: function (m, meta) { renderCashSuccess(route.count, outcome, meta); },
+              onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
+            }));
+          })
+          .catch(function (e) { status.classList.remove('pending'); status.textContent = errMessage(e, 'Swap authorization failed'); btn.disabled = false; });
+      }).catch(function () { btn.disabled = false; status.textContent = 'Could not quote the pool.'; });
+      return;
+    }
+    submitTerminalCashOut(route);
   });
 
   // Replace the form with a satisfying summary of what landed: tokens burned, value received, and the
@@ -13083,17 +13469,19 @@ function buildCashOutModal(project, requestClose) {
   function renderCashSuccess(count, o, meta) {
     var done = el('div', 'cashout-success');
     var title = el('div', 'cashout-success-title');
-    title.textContent = 'Cashed out';
+    // A direct pool sell isn't a protocol cash-out (nothing is burned) — it's a secondary-market sale.
+    title.textContent = o && o.sold ? 'Sold on the pool' : 'Cashed out';
     done.appendChild(title);
 
     var burned = el('div', 'cashout-success-sub');
-    burned.textContent = 'You cashed out ' + formatTokens(count) + ' ' + sym + '.';
+    burned.textContent = (o && o.sold ? 'You sold ' : 'You cashed out ') + formatTokens(count) + ' ' + sym + (o && o.sold ? ' on the buyback pool.' : '.');
     done.appendChild(burned);
 
     var recvLbl = el('div', 'cashout-success-reclbl'); recvLbl.textContent = 'You received';
     done.appendChild(recvLbl);
     var recv = el('div', 'cashout-success-amount');
-    recv.textContent = formatBalance(o.net, o.decimals || 18, o.sym || 'ETH');
+    // AMM route shows the pre-swap quote (actual fill is ≥ the minReturned floor), so mark it approximate.
+    recv.textContent = (o.approxAmount ? '~ ' : '') + formatBalance(o.net, o.decimals || 18, o.sym || 'ETH');
     done.appendChild(recv);
 
     // Bonus tokens minted from the two fees.
@@ -14445,25 +14833,35 @@ function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   if (pa > 0 && pb > pa) {
     svg += '<rect x="' + X(pa).toFixed(1) + '" y="' + (baseY - 9) + '" width="' + Math.max(1, X(pb) - X(pa)).toFixed(1) + '" height="18" fill="rgba(110,196,196,0.35)" stroke="#1a8a8a" stroke-width="1"/>';
   }
-  function marker(v, color, label, up) {
+  function marker(v, color, label, up, forceAnchor) {
     if (!(v > 0)) return '';
     var xv = X(v);
     var valStr = formatPrice(v);
     // Keep the whole label inside the chart: anchor by where its half-width would overflow an edge.
     // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.) Use the wider of label/value.
     var half = Math.max(label.length, valStr.length) * 8 * 0.3;
-    var anchor = 'middle', tx = xv;
-    if (xv - half < padL) { anchor = 'start'; tx = padL; }
-    else if (xv + half > W - padR) { anchor = 'end'; tx = W - padR; }
+    var anchor = forceAnchor || 'middle', tx = xv;
+    if (anchor === 'middle') {
+      if (xv - half < padL) { anchor = 'start'; tx = padL; }
+      else if (xv + half > W - padR) { anchor = 'end'; tx = W - padR; }
+    } else if (anchor === 'start' && xv + 2 * half > W - padR) { tx = Math.max(padL, W - padR - 2 * half); }
+    else if (anchor === 'end' && xv - 2 * half < padL) { tx = Math.min(W - padR, padL + 2 * half); }
     var x = xv.toFixed(1);
     var labelY = up ? 10 : H - 13, valY = up ? 20 : H - 3;
     return '<line x1="' + x + '" y1="' + (baseY - 13) + '" x2="' + x + '" y2="' + (baseY + 13) + '" stroke="' + color + '" stroke-width="1.5"/>'
       + '<text x="' + tx.toFixed(1) + '" y="' + labelY + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>'
       + '<text x="' + tx.toFixed(1) + '" y="' + valY + '" font-size="8" font-weight="bold" fill="' + color + '" text-anchor="' + anchor + '">' + valStr + '</text>';
   }
-  svg += marker(floor, '#2c2018', 'Cash out floor', true);
+  // Floor + ceiling share the top row; when their markers sit close (e.g. cash-out just below the ceiling) the full
+  // labels collide. Shorten to Floor/Ceiling and anchor them outward (lower-priced one's text left, other's right).
+  var floorLbl = 'Cash out floor', ceilLbl = 'Issuance ceiling', floorAnc, ceilAnc;
+  if (floor > 0 && ceiling > 0 && Math.abs(X(ceiling) - X(floor)) < 90) {
+    floorLbl = 'Floor'; ceilLbl = 'Ceiling';
+    if (X(floor) <= X(ceiling)) { floorAnc = 'end'; ceilAnc = 'start'; } else { floorAnc = 'start'; ceilAnc = 'end'; }
+  }
+  svg += marker(floor, '#2c2018', floorLbl, true, floorAnc);
   svg += marker(poolP, '#b8602e', 'Current pool price', false);
-  svg += marker(ceiling, '#1a8a8a', 'Issuance ceiling', true);
+  svg += marker(ceiling, '#1a8a8a', ceilLbl, true, ceilAnc);
   svg += '</svg>';
   return { html: svg, maxV: maxV, W: W, padL: padL, padR: padR };
 }
@@ -14476,13 +14874,19 @@ var LP_Q96 = 1n << 96n;
 var LP_LOGS_RPC = {
   1: 'https://ethereum-rpc.publicnode.com', 10: 'https://optimism-rpc.publicnode.com',
   8453: 'https://base-rpc.publicnode.com', 42161: 'https://arbitrum-rpc.publicnode.com',
-  11155111: 'https://ethereum-sepolia-rpc.publicnode.com', 11155420: 'https://optimism-sepolia-rpc.publicnode.com',
-  84532: 'https://base-sepolia-rpc.publicnode.com', 421614: 'https://arbitrum-sepolia-rpc.publicnode.com',
+  // Testnet publicnode endpoints reject the archive getLogs scan (403 / "Archive requires a personal token"); Tenderly's
+  // public gateways serve the address-filtered ModifyLiquidity scan the LP-position table needs. Override per chain via
+  // localStorage['jb-lp-logs-rpc:<id>'] (e.g. an archive endpoint of your own).
+  11155111: 'https://sepolia.gateway.tenderly.co', 11155420: 'https://optimism-sepolia.gateway.tenderly.co',
+  84532: 'https://base-sepolia.gateway.tenderly.co', 421614: 'https://arbitrum-sepolia.gateway.tenderly.co',
 };
 var _lpLogClients = {};
 function lpLogsClient(chainId) {
   if (_lpLogClients[chainId]) return _lpLogClients[chainId];
-  var url = LP_LOGS_RPC[chainId]; if (!url || !CHAINS[chainId]) return null;
+  // Per-chain override for a getLogs-capable (archive) RPC, e.g. Base Sepolia publicnode 403s on archive getLogs.
+  // Set localStorage['jb-lp-logs-rpc:84532'] = '<archive rpc url>' — keeps API-key-bearing URLs out of the build.
+  var override; try { override = localStorage.getItem('jb-lp-logs-rpc:' + chainId); } catch (e) {}
+  var url = override || LP_LOGS_RPC[chainId]; if (!url || !CHAINS[chainId]) return null;
   _lpLogClients[chainId] = createPublicClient({ chain: CHAINS[chainId], transport: http(url) });
   return _lpLogClients[chainId];
 }
@@ -14566,7 +14970,7 @@ function lpAlignDown(tick, s) { var r = tick % s; if (r !== 0 && tick < 0) r += 
 function lpAlignUp(tick, s) { return lpAlignDown(tick + s - 1, s); }
 // Read the buyback pool key + current sqrtPriceX96. Null if no pool.
 async function readPoolState(project, chainId) {
-  var hook = getAddress('JBBuybackHook', chainId);
+  var hook = await projectBuybackHook(project, chainId);
   var pm = POOL_MANAGER_BY_CHAIN[chainId];
   if (!hook || !pm) return null;
   try {
@@ -14957,6 +15361,15 @@ async function prepareAddLiquidity(opts) {
   var tickLower = Math.max(minUsable, lpAlignDown(Math.floor(Math.min(tA, tB)), s));
   var tickUpper = Math.min(maxUsable, lpAlignUp(Math.ceil(Math.max(tA, tB)), s));
   if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
+  // Single-sided deposits: tick-alignment can nudge the CURRENT price just inside the range (e.g. price == the range
+  // top, but alignDown drops tickLower below it), so the position would need a sliver of the un-funded token and
+  // lpGetLiquidityForAmounts returns min(L, 0) = 0 → "Amounts too small". When only one side is funded, keep the
+  // current price OUTSIDE the range: only token0 funded → range entirely above the price (all token0); only token1 →
+  // entirely below (all token1). (amount0/amount1 are already mapped to pool currency0/currency1.)
+  var curTick = Math.floor(2 * Math.log(Number(sqrtP) / Math.pow(2, 96)) / Math.log(1.0001));
+  if (amount1 <= 0n && amount0 > 0n && curTick >= tickLower) tickLower = Math.min(maxUsable, lpAlignUp(curTick + 1, s));
+  if (amount0 <= 0n && amount1 > 0n && curTick < tickUpper) tickUpper = Math.max(minUsable, lpAlignDown(curTick, s));
+  if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
 
   var sqrtA = lpSqrtAtTick(tickLower), sqrtB = lpSqrtAtTick(tickUpper);
   var liquidity = lpGetLiquidityForAmounts(sqrtP, sqrtA, sqrtB, amount0, amount1);
@@ -15089,6 +15502,131 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
   };
 }
 
+// --- Remove liquidity: find the connected user's V4 positions (across the CURRENT + OLD buyback pools) and burn them ---
+
+// Scan ONE buyback pool (identified by its hook) for every LP position, keeping tokenId + owner + pool key so a
+// specific owner's position can be removed. Mirrors readLpPositions' internals. Returns [] on failure.
+async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
+  try {
+    var posm = POSITION_MANAGER_BY_CHAIN[chainId], pm = POOL_MANAGER_BY_CHAIN[chainId];
+    if (!posm || !pm || !hookAddr || hookAddr === ZERO_ADDRESS) return [];
+    var client = clientFor(chainId);
+    var pair = await lpPairFor(project, chainId);
+    var key = await client.readContract({ address: hookAddr, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
+    if (!key || !key.currency0) return [];
+    var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase(), c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
+    if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return [];
+    var poolId = keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]));
+    var stateSlot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [poolId, 6n]));
+    var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
+    var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n);
+    if (sqrtP === 0n) return [];
+    var pairIsC0 = (c0 === pair.addr);
+    var sp = Number(sqrtP) / Math.pow(2, 96), rawP = sp * sp;
+    var poolPrice = (pairIsC0 ? (rawP > 0 ? 1 / rawP : 0) : rawP) * Math.pow(10, 18 - pair.decimals);
+    var logClient = lpLogsClient(chainId) || client;
+    var latest = await logClient.getBlockNumber();
+    var W = 45000n, windows = [];
+    for (var n = 0; n < 8 && latest - BigInt(n) * W > 0n; n++) { var hi = latest - BigInt(n) * W; var lo = hi > W ? hi - W + 1n : 0n; windows.push({ lo: lo, hi: hi }); if (lo === 0n) break; }
+    var seen = {}, tokenIds = [];
+    (await Promise.all(windows.map(function (w) { return logClient.getLogs({ address: pm, event: LP_MODIFY_LIQUIDITY_EVENT, args: { id: poolId }, fromBlock: w.lo, toBlock: w.hi }).catch(function () { return []; }); })))
+      .forEach(function (lg) { lg.forEach(function (l) { if (!l.args || l.args.salt == null) return; var t = BigInt(l.args.salt); if (t > 0n && !seen[t.toString()]) { seen[t.toString()] = true; tokenIds.push(t); } }); });
+    if (!tokenIds.length) return [];
+    var det = await Promise.all(tokenIds.map(function (tid) {
+      return Promise.all([
+        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'positionInfo', args: [tid] }).then(function (x) { return BigInt(x); }).catch(function () { return 0n; }),
+        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'ownerOf', args: [tid] }).catch(function () { return null; }),
+        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'getPositionLiquidity', args: [tid] }).then(function (x) { return BigInt(x); }).catch(function () { return 0n; }),
+      ]).then(function (r) { return { tokenId: tid, info: r[0], owner: r[1], liquidity: r[2] }; });
+    }));
+    var out = [];
+    det.forEach(function (p) {
+      if (!p.owner || p.liquidity <= 0n || p.info === 0n) return;
+      var tickUpper = Number(lpSignExtend24((p.info >> 32n) & 0xffffffn));
+      var tickLower = Number(lpSignExtend24((p.info >> 8n) & 0xffffffn));
+      var amt = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), p.liquidity);
+      out.push({ tokenId: p.tokenId, owner: p.owner, key: key, poolId: poolId, hookIsCurrent: hookIsCurrent, oracleHook: key.hooks,
+        tickLower: tickLower, tickUpper: tickUpper, liquidity: p.liquidity,
+        pairAmt: pairIsC0 ? amt.amount0 : amt.amount1, tokAmt: pairIsC0 ? amt.amount1 : amt.amount0,
+        pairIsC0: pairIsC0, poolPrice: poolPrice, pair: pair });
+    });
+    return out;
+  } catch (e) { return []; }
+}
+
+// The connected account's LP positions for a project on a chain, across the CURRENT buyback pool AND the OLD/default
+// hook pool (so stranded positions from a prior hook are included). Empty array if none / on failure.
+async function readUserLpPositions(project, chainId, account) {
+  if (!account) return [];
+  var lc = function (a) { return (a || '').toLowerCase(); };
+  var newHook = await projectBuybackHook(project, chainId).catch(function () { return null; });
+  var oldHook = getAddress('JBBuybackHook', chainId);
+  var tasks = [];
+  if (newHook) tasks.push(lpScanPoolPositions(project, chainId, newHook, true));
+  if (oldHook && lc(oldHook) !== lc(newHook)) tasks.push(lpScanPoolPositions(project, chainId, oldHook, false));
+  var all = [].concat.apply([], await Promise.all(tasks));
+  return all.filter(function (p) { return p.owner && lc(p.owner) === lc(account); });
+}
+
+// Encode a full-exit remove: BURN_POSITION(tokenId) + TAKE_PAIR(c0, c1, user). No Permit2/approval needed — the NFT
+// owner burns their own position. amount0Min/amount1Min = 0 (full exit; you receive whatever the position holds).
+function prepareRemoveLiquidity(chainId, pos, acct) {
+  var posm = POSITION_MANAGER_BY_CHAIN[chainId];
+  if (!posm) throw new Error('No position manager on this chain');
+  var burnParams = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }], [BigInt(pos.tokenId), 0n, 0n, '0x']);
+  var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [pos.key.currency0, pos.key.currency1, acct]);
+  var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x0311', [burnParams, takeParams]]); // BURN_POSITION(0x03), TAKE_PAIR(0x11)
+  return { posm: posm, unlockData: unlockData, deadline: BigInt(Math.floor(Date.now() / 1000) + 1200), value: 0n };
+}
+
+// Modal: the connected wallet's LP positions on a chain (current + old pools), each with a Remove (burn) action.
+function openRemoveLiquidityModal(project, chainId, onDone) {
+  var sym = project.tokenSymbol || 'tokens';
+  var wrap = el('div', 'modal-body');
+  var intro = el('div', 'modal-balance');
+  intro.textContent = 'Your Uniswap V4 LP positions in this project’s buyback pools. Removing burns the position NFT and returns both tokens to your wallet (no approval needed).';
+  wrap.appendChild(intro);
+  var list = el('div'); list.appendChild(skel('100%', '50px')); wrap.appendChild(list);
+  openModal('Remove liquidity', wrap);
+  var acct = getAccount && getAccount();
+  if (!acct) { list.innerHTML = ''; var w0 = el('div', 'modal-status'); w0.textContent = 'Connect a wallet to see your positions.'; list.appendChild(w0); return; }
+  readUserLpPositions(project, chainId, acct).then(function (positions) {
+    list.innerHTML = '';
+    if (!positions.length) { var none = el('div', 'modal-status'); none.textContent = 'No LP positions found for your wallet on this chain.'; list.appendChild(none); return; }
+    positions.forEach(function (pos) {
+      var row = el('div', 'lp-remove-row');
+      var info = el('div', 'lp-remove-info');
+      var head = el('div', 'lp-remove-head'); head.textContent = 'Position #' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' · current pool' : ' · old pool'); info.appendChild(head);
+      var pairH = formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol), tokH = formatTokens(pos.tokAmt) + ' ' + sym;
+      var amts = el('div', 'modal-balance'); amts.textContent = tokH + ' + ' + pairH + '  ·  oracle ' + truncAddr(pos.oracleHook); info.appendChild(amts);
+      row.appendChild(info);
+      var rm = el('button', 'detail-check-btn'); rm.textContent = 'Remove';
+      rm.addEventListener('click', function () {
+        var prep = prepareRemoveLiquidity(chainId, pos, acct);
+        openTxConfirm({
+          chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
+          'function': 'modifyLiquidities', value: '0',
+          position: { actions: 'BURN_POSITION, TAKE_PAIR (0x0311)', tokenId: pos.tokenId.toString(), returns: tokH + ' + ' + pairH, recipient: acct },
+          args: { unlockData: prep.unlockData, deadline: 'set at signing (~20 min)' },
+        }, function (ctx) {
+          ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Removing liquidity…', 'pending');
+          lpSendTx(chainId, { address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n }).then(function (hash) {
+            ctx.modal.close();
+            var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Removed | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
+            row.innerHTML = ''; row.appendChild(ok);
+            if (onDone) onDone();
+          }).catch(function (e) {
+            ctx.confirm.disabled = false; ctx.cancel.disabled = false;
+            var msg = errMessage(e, 'Remove failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
+          });
+        }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove', closeOnConfirm: false });
+      });
+      row.appendChild(rm);
+      list.appendChild(row);
+    });
+  }).catch(function () { list.innerHTML = ''; var er = el('div', 'modal-status error'); er.textContent = 'Could not load positions.'; list.appendChild(er); });
+}
+
 function buildAddLiquidityModal(project) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
@@ -15176,6 +15714,8 @@ function buildAddLiquidityModal(project) {
 
   var pairNote = el('div', 'modal-balance'); pairNote.style.marginTop = '6px';
   wrap.appendChild(pairNote);
+  var sideNote = el('div', 'modal-balance'); sideNote.style.marginTop = '4px'; sideNote.style.color = '#b8602e'; sideNote.style.display = 'none';
+  wrap.appendChild(sideNote);
 
   // Re-label everything that names the pair token (range unit, second amount, ratio note) once it's known.
   function applyPairLabels() {
@@ -15185,7 +15725,7 @@ function buildAddLiquidityModal(project) {
     eu.textContent = ps;
     pairNote.textContent = 'Concentrated liquidity is deposited as a fixed ' + sym + ':' + ps + ' ratio set by the current pool '
       + 'price within your range — so entering one side fills the other. The ratio shifts as you move the range: '
-      + 'when the pool price sits near the top of your range the deposit is mostly ' + sym + ', near the bottom mostly ' + ps + '.';
+      + 'when the pool price sits near the top of your range the deposit is mostly ' + ps + ', near the bottom mostly ' + sym + '.';
   }
   applyPairLabels();
 
@@ -15218,8 +15758,37 @@ function buildAddLiquidityModal(project) {
     graphHolder.innerHTML = g.html;
     graphScale = g.maxV ? g : null;
   }
+  // Which token(s) the position actually needs at the current price + range. At/above the range top the position is
+  // single-sided in the PAIR (USDC/ETH); at/below the bottom it's single-sided in the project token; strictly inside,
+  // both. Order-independent: lpCounterpart returns 0/null on these same boundaries regardless of pool token ordering.
+  function activeSides(r) {
+    var p = state.poolP;
+    if (!(p > 0) || !(r.pa > 0) || !(r.pb > r.pa)) return { tok: true, eth: true };
+    if (p >= r.pb) return { tok: false, eth: true };   // all pair — the project token isn't part of the position here
+    if (p <= r.pa) return { tok: true, eth: false };   // all project token — the pair isn't part of the position here
+    return { tok: true, eth: true };
+  }
+  // Enable only the side(s) the position needs; disable + zero the other so typing there can't clear the active side.
+  function applySides() {
+    var s = activeSides(currentRange());
+    tokAmt.disabled = !s.tok; ethAmt.disabled = !s.eth;
+    tokCol.style.opacity = s.tok ? '' : '0.45'; ethCol.style.opacity = s.eth ? '' : '0.45';
+    tokMax.style.visibility = s.tok ? '' : 'hidden'; ethMax.style.visibility = s.eth ? '' : 'hidden';
+    if (!s.tok) tokAmt.value = '0';
+    if (!s.eth) ethAmt.value = '0';
+    if (s.tok && s.eth) { sideNote.style.display = 'none'; sideNote.textContent = ''; }
+    else {
+      sideNote.style.display = '';
+      sideNote.textContent = s.eth
+        ? 'At the current price (top of your range) the position is single-sided ' + pairSym() + ' — add ' + pairSym() + ' only. To seed ' + sym + ', the pool price has to be lower within your range (move the price down with a swap, or widen the range).'
+        : 'At the current price (bottom of your range) the position is single-sided ' + sym + ' — add ' + sym + ' only. To seed ' + pairSym() + ', the pool price has to be higher within your range.';
+    }
+  }
   function autofill() {
     var r = currentRange();
+    var s = activeSides(r);
+    // Single-sided: the inactive side is 0; leave the active side's user-entered amount alone (no counterpart to fill).
+    if (!(s.tok && s.eth)) { if (!s.tok) tokAmt.value = '0'; if (!s.eth) ethAmt.value = '0'; return; }
     if (state.driver === 'eth') {
       var eth = parseFloat(ethAmt.value);
       if (!(eth > 0)) { tokAmt.value = ''; return; }
@@ -15232,7 +15801,7 @@ function buildAddLiquidityModal(project) {
       if (e != null) ethAmt.value = lpTrimNum(e);
     }
   }
-  function onRangeChange() { drawGraph(); autofill(); }
+  function onRangeChange() { drawGraph(); applySides(); autofill(); }
 
   // Resolve the pair (accounting) token for the selected chain, then refresh labels, balances, and price.
   function refreshPair() {
@@ -15260,17 +15829,25 @@ function buildAddLiquidityModal(project) {
       state.poolP = (amm && amm > 0) ? amm : 0;
       state.floor = (floor && floor > 0) ? floor : 0;
       priceLine.textContent = amm ? ('Pool price: ~' + formatPrice(amm) + ' ' + pairSym() + ' / ' + sym) : 'Pool not initialized on this chain.';
-      var hasFloor = state.floor > 0;
       var poolP = state.poolP > 0 ? state.poolP : (ceiling > 0 ? ceiling / 10 : 0);
+      var maxDefault = ceiling > 0 ? ceiling : poolP;
+      // Meaningful AMM range = [cash-out floor, issuance ceiling]: below the cash-out price, redeeming beats selling.
+      // Use the cash-out floor as Min WHEN it sits below the ceiling (the normal case). If cash-out >= ceiling the
+      // pool is priced below its own cash-out floor (anomalous), so [floor, ceiling] would invert — fall back to a band.
+      var floorUsed = state.floor > 0 && state.floor < maxDefault;
       var minDefault;
-      if (hasFloor) minDefault = state.floor;
+      if (floorUsed) minDefault = state.floor;
       else if (poolP > 0 && ceiling > poolP) { var mirror = 2 * poolP - ceiling; minDefault = mirror > 0 ? mirror : poolP * 0.1; }
-      else minDefault = poolP;
+      else minDefault = maxDefault * 0.1; // price at/above the ceiling → "mirror below" collapses; 10x band below instead
+      // Never let the default range be degenerate (Min must be strictly below Max).
+      if (!(minDefault > 0) || minDefault >= maxDefault) minDefault = maxDefault * 0.1;
       if (minDefault > 0) minInput.value = formatPrice(minDefault);
-      if (ceiling > 0) maxInput.value = formatPrice(ceiling);
-      rnote.textContent = hasFloor
-        ? 'Defaults span the current cash-out floor to the issuance ceiling.'
-        : 'No cash-out floor yet, so the range centers on the current pool price: Max is the issuance ceiling, and Min is set the same distance below the price.';
+      if (maxDefault > 0) maxInput.value = formatPrice(maxDefault);
+      rnote.textContent = floorUsed
+        ? 'Defaults span the cash-out floor (' + formatPrice(state.floor) + ') to the issuance ceiling.'
+        : (state.floor > 0
+          ? 'Cash-out price (' + formatPrice(state.floor) + ') is ABOVE the issuance ceiling — the pool is priced below its cash-out floor, so [floor, ceiling] would invert. Range defaults to a band below the ceiling; re-price the pool (a swap) to seed normally.'
+          : 'No cash-out floor yet — Max defaults to the issuance ceiling and Min to a band below the current price. Adjust either bound; at the current price the deposit is single-sided (widen or move the price to add both).');
       onRangeChange();
     });
   }
@@ -15318,16 +15895,22 @@ function buildAddLiquidityModal(project) {
   return wrap;
 }
 
-function opsRow(c, s, b, u, isHead, isTotal, chainId) {
-  // `u === undefined` → 3-column row (e.g. the You table without the Max-loan column for custom projects).
-  var threeCol = (u === undefined);
-  var row = el('div', 'detail-ops-row' + (threeCol ? ' detail-ops-3' : '') + (isHead ? ' detail-ops-head' : '') + (isTotal ? ' detail-ops-total' : ''));
-  (threeCol ? [c, s, b] : [c, s, b, u]).forEach(function (v, i) {
+function opsRow(c, s, b, u, isHead, isTotal, chainId, lp) {
+  // `u === undefined` → drop the Max-loan column (custom projects). `lp` (trailing, optional) adds an LP-positions
+  // column; existing callers that pass ≤7 args are unaffected. Column count drives the grid class (3 / 4 / 5).
+  var cells = [c, s, b];
+  if (u !== undefined) cells.push(u);
+  if (lp !== undefined) cells.push(lp);
+  var colClass = cells.length === 3 ? ' detail-ops-3' : (cells.length === 5 ? ' detail-ops-5' : '');
+  var row = el('div', 'detail-ops-row' + colClass + (isHead ? ' detail-ops-head' : '') + (isTotal ? ' detail-ops-total' : ''));
+  cells.forEach(function (v, i) {
     var cell = el('span', 'detail-ops-cell');
     if (i === 0 && chainId != null) {
       cell.classList.add('detail-ops-chain');
       cell.appendChild(chainLogo(chainId, c));
       cell.appendChild(document.createTextNode(c));
+    } else if (v && v.nodeType === 1) {
+      cell.appendChild(v); // pre-built DOM node (e.g. the clickable LP-positions cell)
     } else if (v && typeof v === 'object' && v.lines) {
       // { lines: [...] } — one value per line (per-token balance). A line may be a plain string OR a
       // { main, sub } pair, where `sub` renders as the same muted sub-line the Supply column uses.
