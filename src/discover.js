@@ -5064,7 +5064,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
       setStatus('Connected wallet isn’t a signer of the Safe (' + truncAddr(authorityAddr) + ').', 'error'); return null;
     }
-    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title });
+    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces });
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
@@ -5607,6 +5607,8 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var btn = el('button', 'modal-submit'); btn.textContent = 'Sign & queue';
     foot.appendChild(cancel); foot.appendChild(btn); wrap.appendChild(foot);
     var modal = openModal(opts.title || 'Queue on Safe', wrap);
+    // Replace the input modal rather than stacking a second one over it — the review reads as the "next page".
+    if (opts.replaces && opts.replaces.close) { try { opts.replaces.close(); } catch (_) {} }
     var done = false;
     function finish(res) { if (done) return; done = true; modal.close(); resolve(res); }
 
@@ -5674,14 +5676,14 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         rec.nHint.textContent = ahead < 0 ? ' below current nonce ' + ctx.nonce + ' — already used; pick ≥ ' + ctx.nonce
           : ahead === 0 ? ' current — this one executes next'
           : ahead === 1 ? ' +1 — queued behind nonce ' + ctx.nonce
-          : ' +' + ahead + ' — queued behind nonces ' + ctx.nonce + '…' + (chosen - 1);
+          : ' +' + ahead + ' — queued behind nonces ' + ctx.nonce + '-' + (chosen - 1);
         rec.hash = safeTxHashForCall(rec.cid, safe, { to: rec.to, data: rec.data, value: 0, nonce: chosen });
         return safeApprovalsOf(rec.cid, safe, rec.hash, ctx.owners).then(function (ap) {
           rec.approved = ap;
           // approvals read for THIS exact tx at the CHOSEN nonce → a non-zero count is the "your values (and nonce)
           // match a pending approval" signal for a co-signer.
           var note = ap.length >= ctx.threshold
-            ? (ahead === 0 ? ' — ✓ ready to execute' : ' — ✓ fully approved; executes once nonce ' + ctx.nonce + '…' + (chosen - 1) + ' clear')
+            ? (ahead === 0 ? ' — ✓ ready to execute' : ' — ✓ fully approved; executes once nonce ' + ctx.nonce + '-' + (chosen - 1) + ' clear')
             : ap.length > 0
               ? ' — ✓ matches a tx approved by ' + ap.length + ' signer' + (ap.length > 1 ? 's' : '')
               : ' — none yet at nonce ' + chosen + '. Co-signing? match the first signer’s values AND nonce, or this starts a separate tx';
@@ -5735,7 +5737,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                 } else {
                   // Fully approved but not next in line — the Safe executes in strict nonce order, so lower nonces
                   // run first. Left un-done so a later click (once the nonce is current) picks it up and executes it.
-                  r.st.textContent = 'Fully approved ✓ at nonce ' + chosen + ' — executes after nonce ' + current + '…' + (chosen - 1) + ' run. Click again once they clear.'; pendingExec++;
+                  r.st.textContent = 'Fully approved ✓ at nonce ' + chosen + ' — executes after nonce ' + current + '-' + (chosen - 1) + ' run. Click again once they clear.'; pendingExec++;
                 }
               } else {
                 r.st.textContent = 'Approved ' + r.approved.length + ' / ' + r.ctx.threshold + ' at nonce ' + chosen + ' — needs ' + (r.ctx.threshold - r.approved.length) + ' more signer(s). Switch wallets and click again.'; pending++;
@@ -7934,7 +7936,7 @@ function openPowerModal(project, action) {
         return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(values, cid, pid) }) };
       };
       var shim = Object.assign({}, project, { chains: selected });
-      var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas }, setStatus)
+      var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Failed'), 'error'); return null; });
       busy = false;
       if (!res) return;
