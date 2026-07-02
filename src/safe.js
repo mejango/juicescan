@@ -377,8 +377,15 @@ export async function deploySafeSameAddress(chainId, creation, expectedSafe) {
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to deploy.'); }
   var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce');
-  var code = await createPublicClientForChain(chainId).getBytecode({ address: cs(expectedSafe) }).catch(function () { return null; });
-  if (!code || code === '0x') throw new Error('Deployed, but the Safe did not land at ' + expectedSafe + ' — the factory/singleton on this chain must differ from the original.');
+  // Verify the Safe landed at the expected address — but RETRY, because a flaky RPC (Base/OP Sepolia especially) can
+  // return empty code for a just-deployed contract and produce a false "did not land". Only fail after several misses.
+  var pub = createPublicClientForChain(chainId), code = null;
+  for (var attempt = 0; attempt < 6; attempt++) {
+    code = await pub.getBytecode({ address: cs(expectedSafe) }).catch(function () { return null; });
+    if (code && code !== '0x') break;
+    await new Promise(function (r) { setTimeout(r, 1500); });
+  }
+  if (!code || code === '0x') throw new Error('Deployed, but the Safe isn’t readable at ' + expectedSafe + ' yet — the RPC may be lagging. Reload to check; if it stays missing, the factory/singleton on this chain differ from the original.');
   return hash;
 }
 

@@ -5640,7 +5640,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             }).then(function () {
               block.classList.remove('safe-propose-skip'); rec.nInput = null;
               return fetchSafeInfo(safe, c.id).then(function (info2) {
-                if (!info2) { st.textContent = 'Deployed ✓ — reopen this action to queue on ' + c.name + '.'; return; }
+                if (!info2) { st.textContent = 'Deploy on ' + c.name + ' successful — reopen this action to queue there.'; return; }
                 rec.deployed = true; rec.threshold = info2.threshold; rec.owners = info2.owners; rec.onChain = true;
                 return refreshOnChainStatus(rec);
               });
@@ -6996,17 +6996,21 @@ function renderAccountCard(project) {
       // Truncated (click-to-copy, hover-full) so it sits inline with the label instead of wrapping to a new
       // row — the full address is one click/hover away, and Type/Safe details already identify the account.
       kv.appendChild(ownerKv(addrLabel, r.owner ? addressNode(r.owner) : document.createTextNode('—')));
-      kv.appendChild(ownerKv('Type', r.type));
+      // A non-Safe whose SAME address is a deployed Safe elsewhere is an undeployed Safe, not an EOA — label it so.
+      var undeployedSafe = !r.safe && r.owner && safeByAddr[r.owner.toLowerCase()];
+      kv.appendChild(ownerKv('Type', undeployedSafe ? 'Safe Multisig (not deployed here yet)' : r.type));
       if (r.safe) {
         kv.appendChild(ownerKv('Policy', 'Requires ' + r.safe.threshold + ' of ' + r.safe.owners.length + ' signatures'));
         var sv = el('span', 'account-signers');
         r.safe.owners.forEach(function (o, i) { if (i) sv.appendChild(document.createTextNode(', ')); sv.appendChild(addressNode(o, r.c.id)); });
         kv.appendChild(ownerKv('Signers', sv));
-      } else if (r.owner && safeByAddr[r.owner.toLowerCase()]) {
+      } else if (undeployedSafe) {
         // Same address is a deployed Safe elsewhere → an UNDEPLOYED Safe here (the Safe app can't add every chain).
-        // Offer to deploy the same-address Safe per chain by replaying its original creation.
+        // Show its policy (same Safe) and offer to deploy it per chain by replaying its original creation.
+        var sinfo = safeByAddr[r.owner.toLowerCase()];
+        kv.appendChild(ownerKv('Policy', 'Requires ' + sinfo.threshold + ' of ' + sinfo.owners.length + ' signatures (once deployed)'));
         var note = el('div', 'account-kvrow'); note.style.opacity = '0.85';
-        note.appendChild(document.createTextNode('Same Safe address — not deployed here yet.')); kv.appendChild(note);
+        note.appendChild(document.createTextNode('Same Safe address — deploy it to activate here.')); kv.appendChild(note);
         g.chains.forEach(function (ch) {
           var drow = el('div', 'account-kvrow');
           var db = el('a', 'operator-cta'); db.href = '#'; db.textContent = 'Deploy Safe on ' + ch.name;
@@ -7018,7 +7022,7 @@ function renderAccountCard(project) {
               stat.textContent = 'deploying on ' + ch.name + ' — confirm in your wallet…';
               return deploySafeSameAddress(ch.id, creation, r.owner);
             }).then(function () {
-              stat.textContent = 'deployed ✓'; db.remove();
+              stat.textContent = 'Deploy on ' + ch.name + ' successful'; db.remove();
               try { delete _safeCache[ch.id + ':' + r.owner.toLowerCase()]; } catch (_) {}
             }).catch(function (err) { stat.textContent = '— ' + ((err && (err.shortMessage || err.message)) || String(err)); });
           });
