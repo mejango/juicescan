@@ -6982,6 +6982,9 @@ function renderAccountCard(project) {
       if (!g) { g = byKey[key] = { rep: r, chains: [] }; groups.push(g); }
       g.chains.push(r.c);
     });
+    // Addresses that ARE a deployed Safe on at least one chain — so the same address showing as "EOA" elsewhere is
+    // really the SAME Safe, just not deployed there yet (deployable via createProxyWithNonce replay).
+    var safeByAddr = {}; groups.forEach(function (g) { if (g.rep.safe && g.rep.owner) safeByAddr[g.rep.owner.toLowerCase()] = g.rep.safe; });
     groups.forEach(function (g) {
       var r = g.rep;
       var block = el('div', 'account-chain');
@@ -6999,6 +7002,28 @@ function renderAccountCard(project) {
         var sv = el('span', 'account-signers');
         r.safe.owners.forEach(function (o, i) { if (i) sv.appendChild(document.createTextNode(', ')); sv.appendChild(addressNode(o, r.c.id)); });
         kv.appendChild(ownerKv('Signers', sv));
+      } else if (r.owner && safeByAddr[r.owner.toLowerCase()]) {
+        // Same address is a deployed Safe elsewhere → an UNDEPLOYED Safe here (the Safe app can't add every chain).
+        // Offer to deploy the same-address Safe per chain by replaying its original creation.
+        var note = el('div', 'account-kvrow'); note.style.opacity = '0.85';
+        note.appendChild(document.createTextNode('Same Safe address — not deployed here yet.')); kv.appendChild(note);
+        g.chains.forEach(function (ch) {
+          var drow = el('div', 'account-kvrow');
+          var db = el('a', 'operator-cta'); db.href = '#'; db.textContent = 'Deploy Safe on ' + ch.name;
+          var stat = el('span'); stat.style.marginLeft = '8px'; stat.style.opacity = '0.85';
+          db.addEventListener('click', function (e) {
+            e.preventDefault(); stat.textContent = 'reading config…';
+            fetchSafeCreation(r.owner).then(function (creation) {
+              if (!creation) throw new Error('couldn’t read the Safe’s creation config');
+              stat.textContent = 'deploying on ' + ch.name + ' — confirm in your wallet…';
+              return deploySafeSameAddress(ch.id, creation, r.owner);
+            }).then(function () {
+              stat.textContent = 'deployed ✓'; db.remove();
+              try { delete _safeCache[ch.id + ':' + r.owner.toLowerCase()]; } catch (_) {}
+            }).catch(function (err) { stat.textContent = '— ' + ((err && (err.shortMessage || err.message)) || String(err)); });
+          });
+          drow.appendChild(db); drow.appendChild(stat); kv.appendChild(drow);
+        });
       }
       block.appendChild(kv);
       body.appendChild(block);
