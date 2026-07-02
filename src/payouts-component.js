@@ -30,19 +30,70 @@ export function buildSendPayoutsArgs(o) {
   };
 }
 
+export function tokenCurrencyId(tokenAddr) {
+  try { return BigInt(tokenAddr) & 0xFFFFFFFFn; } catch (_) { return null; }
+}
+
+export function parsePayoutCurrencyId(value) {
+  try {
+    if (value == null || String(value).trim() === '') return null;
+    var currency = BigInt(String(value).trim());
+    return currency >= 0n ? currency : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function payoutCurrencyIdForSelection(mode, customCurrency, tokenAddr) {
+  if (mode === 'eth') return 1n;
+  if (mode === 'usd') return 2n;
+  if (mode === 'custom') return parsePayoutCurrencyId(customCurrency);
+  return tokenCurrencyId(tokenAddr);
+}
+
+// sendPayoutsOf's `amount` is denominated in the SELECTED payout-limit currency, so it must be parsed in that
+// currency's fixed-point decimals — NOT the token's transfer decimals. A token-accounting-context currency
+// ('token' mode) uses the token's own decimals; the standard JB currencies ETH(1)/USD(2) are 18-dec. A custom
+// id isn't decimal-derivable, so assume the 18-dec JB standard (the amount hint states this). Parsing on the
+// token decimals for a non-token currency mis-scales — e.g. USD on a 6-dec USDC token is a 1e12 under-scale.
+export function payoutAmountDecimals(mode, tokenDecimals) {
+  return mode === 'token' ? (tokenDecimals || 18) : 18;
+}
+
+function initialCurrencyMode(defaultCurrency) {
+  if (defaultCurrency === '1' || defaultCurrency === 'eth') return 'eth';
+  if (defaultCurrency === '2' || defaultCurrency === 'usd') return 'usd';
+  if (defaultCurrency && defaultCurrency !== 'token') return 'custom';
+  return 'token';
+}
+
+function tokenByAddress(tokens, addr) {
+  if (!addr) return null;
+  var lower = String(addr).toLowerCase();
+  for (var i = 0; i < tokens.length; i++) {
+    if (tokens[i].address && tokens[i].address.toLowerCase() === lower) return tokens[i];
+  }
+  return null;
+}
+
 export function renderPayoutsComponent() {
   var defaults = parseHashDefaults('payouts');
+  var initialChain = defaults.chain ? Number(defaults.chain) : 1;
+  var initialTokens = getChainTokens(initialChain);
+  var initialToken = tokenByAddress(initialTokens, defaults.token) || initialTokens[0] || null;
 
   var state = {
     phase: 'idle',
     projectId: defaults.projectId || '',
     liveChains: [],
-    selectedChain: defaults.chain ? Number(defaults.chain) : 1,
+    selectedChain: initialChain,
     network: defaults.network || 'mainnet',
-    tokens: getChainTokens(defaults.chain ? Number(defaults.chain) : 1),
-    selectedToken: getChainTokens(defaults.chain ? Number(defaults.chain) : 1)[0] || null,
-    decimals: 18,
+    tokens: initialTokens,
+    selectedToken: initialToken,
+    decimals: initialToken ? (initialToken.decimals || 18) : 18,
     amount: defaults.amount || '',
+    currencyMode: initialCurrencyMode(defaults.currency),
+    customCurrency: defaults.currency && !/^(token|eth|usd|1|2)$/.test(defaults.currency) ? defaults.currency : '',
     error: null,
     txStatus: null,
     _defaultChain: defaults.chain ? Number(defaults.chain) : null,
@@ -56,6 +107,8 @@ export function renderPayoutsComponent() {
     if (state.selectedChain) params.chain = state.selectedChain;
     if (state.selectedToken) params.token = state.selectedToken.address;
     if (state.amount) params.amount = state.amount;
+    if (state.currencyMode === 'custom' && state.customCurrency) params.currency = state.customCurrency;
+    else if (state.currencyMode && state.currencyMode !== 'token') params.currency = state.currencyMode;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
   }, { permissionNote: 'Permissionless unless ruleset has ownerMustSendPayouts enabled.' });
@@ -98,6 +151,7 @@ export function renderPayoutsComponent() {
             break;
           }
         }
+        updateUI();
       });
       tokenSection.appendChild(tokenSelect);
     }
@@ -115,6 +169,52 @@ export function renderPayoutsComponent() {
     amtInput.addEventListener('input', function() { state.amount = amtInput.value.trim(); });
     amtSection.appendChild(amtInput);
     body.appendChild(amtSection);
+
+    // Payout limit currency
+    var curSection = el('div', 'component-section');
+    var curLabel = el('label', 'input-label');
+    curLabel.textContent = 'payout limit currency';
+    curSection.appendChild(curLabel);
+    var curSelect = el('select', 'field');
+    curSelect.style.maxWidth = '320px';
+    var tokenCurrency = state.selectedToken ? tokenCurrencyId(state.selectedToken.address) : null;
+    var options = [
+      { value: 'token', label: state.selectedToken ? ('Token currency (' + String(tokenCurrency) + ')') : 'Token currency' },
+      { value: 'eth', label: 'ETH (1)' },
+      { value: 'usd', label: 'USD (2)' },
+      { value: 'custom', label: 'Custom id' },
+    ];
+    for (var ci = 0; ci < options.length; ci++) {
+      var copt = document.createElement('option');
+      copt.value = options[ci].value;
+      copt.textContent = options[ci].label;
+      if (state.currencyMode === options[ci].value) copt.selected = true;
+      curSelect.appendChild(copt);
+    }
+    curSelect.addEventListener('change', function() {
+      state.currencyMode = curSelect.value;
+      updateUI();
+    });
+    curSection.appendChild(curSelect);
+    if (state.currencyMode === 'custom') {
+      var customInput = el('input', 'field numeric-field');
+      customInput.type = 'text';
+      customInput.placeholder = '1';
+      customInput.value = state.customCurrency;
+      customInput.addEventListener('input', function() { state.customCurrency = customInput.value.trim(); });
+      curSection.appendChild(customInput);
+    }
+    // The amount is parsed in the selected currency's decimals — spell out the non-token scale so a 6-dec token
+    // paired with an 18-dec ETH/USD/custom limit doesn't get silently mis-scaled.
+    if (state.currencyMode !== 'token') {
+      var curHint = el('div');
+      curHint.style.fontSize = '12px'; curHint.style.color = 'var(--muted)'; curHint.style.marginTop = '4px';
+      curHint.textContent = state.currencyMode === 'eth' ? 'Amount is in ETH (18 decimals), converted to the token at the on-chain price.'
+        : state.currencyMode === 'usd' ? 'Amount is in USD (18 decimals), converted to the token at the on-chain price.'
+        : 'Amount is in this currency’s units — 18 decimals assumed (the JB standard). If your id is a token accounting context with different decimals, enter the raw-scaled value accordingly.';
+      curSection.appendChild(curHint);
+    }
+    body.appendChild(curSection);
 
     if (state.error) body.appendChild(renderError(state.error));
     if (state.txStatus) {
@@ -161,16 +261,18 @@ export function renderPayoutsComponent() {
     if (!state.amount) { state.error = 'Enter an amount'; updateUI(); return; }
 
     var amountParsed;
-    try { amountParsed = parseAmount(state.amount, state.decimals); } catch (_) {
+    // Parse in the SELECTED currency's decimals, not the token's transfer decimals — sendPayoutsOf reads `amount`
+    // in the payout-limit currency (token mode = token decimals; ETH/USD/custom = the 18-dec JB standard).
+    try { amountParsed = parseAmount(state.amount, payoutAmountDecimals(state.currencyMode, state.decimals)); } catch (_) {
       state.error = 'Invalid amount'; updateUI(); return;
     }
 
     var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
     if (!terminalAddr) { state.error = 'No terminal address for this chain'; updateUI(); return; }
 
-    // currency = uint32(uint160(token))
     var tokenAddr = state.selectedToken.address;
-    var currency = Number(BigInt(tokenAddr) & 0xFFFFFFFFn);
+    var currency = payoutCurrencyIdForSelection(state.currencyMode, state.customCurrency, tokenAddr);
+    if (currency == null) { state.error = 'Invalid payout limit currency'; updateUI(); return; }
 
     executeTransaction({
       ...buildSendPayoutsArgs({ chainId: state.selectedChain, terminalAddr: terminalAddr, projectId: state.projectId, token: tokenAddr, amount: amountParsed, currency: currency, minPaidOut: 0n }),

@@ -4,17 +4,20 @@
 // executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, appendAuditPromptLink, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderDecodedTx, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeTxLink, safeHomeLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
-import { toggleRow, dz, currencySelect, cashOutSection, DURATION_PRESETS, FOREVER_SECONDS, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata } from './create-flow.js';
+import { toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata } from './create-flow.js';
+import { DEADLINE_OPTIONS } from './deadline-options.js';
+import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
+import { TIER_UNLIMITED_SUPPLY, build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
 // component-base) — one cache for the whole app, keyed by chainId|customRpc so a custom RPC takes
@@ -491,9 +494,7 @@ export function tierDiscountLabel(tier) {
 // A shopper-facing "% off" (0–100) → the on-chain discountPercent (0–200, denominator 200). The operator
 // edit form takes % off; the store stores discountPercent. round(pctOff/100 * 200) = round(pctOff * 2).
 export function pctOffToDiscountPercent(pctOff) {
-  var p = Number(pctOff) || 0;
-  if (p < 0) p = 0; if (p > 100) p = 100;
-  return Math.round(p / 100 * 200);
+  return tierDiscountPercentFromPct(pctOff);
 }
 // One entry of setDiscountPercentsOf — {tierId, discountPercent} for the 721 hook.
 export function buildSetDiscountConfig(tierId, pctOff) {
@@ -817,9 +818,6 @@ function renderShopSection(project, shop, cart) {
   wrap.appendChild(checkoutBar);
   return wrap;
 }
-
-// JB721 tiers cap supply at one billion − 1; that maximum doubles as the "unlimited" sentinel.
-var TIER_UNLIMITED_SUPPLY = 999999999;
 
 // Resolve a project (by its id on `chainId`) to a display name + its projectId on each chain in its
 // sucker group. Lets a tier split route to the SAME project on every chain it's offered on, and lets us
@@ -1293,7 +1291,7 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     if (discountStr !== '') {
       var dpct = parseFloat(discountStr);
       if (!(dpct >= 0) || dpct > 100) { setStatus(label + 'discount must be between 0 and 100%', 'error'); return; }
-      discountPercent = Math.min(200, Math.round(dpct / 100 * 200));
+      discountPercent = tierDiscountPercentFromPct(dpct);
     }
     if (reserveFreq > 0) {
       if (supply === 1) { setStatus(label + 'a reserved item needs a supply of at least 2 (or unlimited)', 'error'); return; }
@@ -1338,9 +1336,9 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     setStatus(label + 'pinning metadata…', 'pending');
     var metaUri = await pinJson(tierMeta, name + '-tier');
     built.push({
-      tierBase: {
-        price: price, initialSupply: supply, votingUnits: votingUnits, reserveFrequency: reserveFreq,
-        reserveBeneficiary: reserveFreq > 0 ? reserveBenef : ZERO_ADDRESS,
+      tierBase: build721TierConfig({
+        price: price, initialSupply: supply, unlimited: supplyStr === '', votingUnits: votingUnits, reserveFrequency: reserveFreq,
+        reserveBeneficiary: reserveBenef,
         encodedIpfsUri: encodeIpfsUriToBytes32(metaUri), category: category, discountPercent: discountPercent,
         flags: {
           allowOwnerMint: !!form.flags.allowOwnerMint, useReserveBeneficiaryAsDefault: false,
@@ -1348,13 +1346,13 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
           cantBeRemoved: !!form.flags.cantBeRemoved, cantIncreaseDiscountPercent: !!form.flags.cantIncreaseDiscountPercent,
           cantBuyWithCredits: !!form.flags.cantBuyWithCredits,
         },
-      },
+      }),
       splitOn: form.splitOn, splitTotalPct: splitTotalPct, splitDefs: splitDefs,
     });
   }
 
   // The hook requires tiers added in ascending category order.
-  built.sort(function (a, b) { return a.tierBase.category - b.tierBase.category; });
+  built = sortTierEntriesByCategory(built, function (b) { return b.tierBase; });
 
   setStatus('Reading 721 hooks…', 'pending');
   var hookMap = {};
@@ -1418,7 +1416,7 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
 
 function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   var soldOut = tier.remaining === 0;
-  var cap = (tier.initial >= 999999999) ? Infinity : tier.remaining; // unlimited tiers have no per-tx cap
+  var cap = (tier.initial >= TIER_UNLIMITED_SUPPLY) ? Infinity : tier.remaining; // unlimited tiers have no per-tx cap
   var c = el('div', 'shop-tier');
   c.setAttribute('data-tier-id', String(tier.id));
   var imgWrap = el('div', 'shop-tier-img'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; imgWrap.appendChild(ph); c.appendChild(imgWrap);
@@ -1434,7 +1432,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   var priceEl = el('span', 'shop-tier-price'); priceEl.textContent = formatEth(tierEffectivePrice(tier.price, tier.discountPercent)); left.appendChild(priceEl);
   if (discLabel) { var origEl = el('span', 'shop-tier-price-orig'); origEl.textContent = formatEth(tier.price); left.appendChild(origEl); }
   var supplyEl = el('span', 'shop-tier-supply');
-  supplyEl.textContent = soldOut ? 'sold out' : (tier.initial >= 999999999 ? 'unlimited' : tier.remaining + ' left');
+  supplyEl.textContent = soldOut ? 'sold out' : (tier.initial >= TIER_UNLIMITED_SUPPLY ? 'unlimited' : tier.remaining + ' left');
   left.appendChild(supplyEl);
   row.appendChild(left);
 
@@ -1523,7 +1521,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   // pay strip via the cart subscription; sold-out tiers are inert; unlimited tiers have no per-tx cap).
   if (cart) {
     var soldOut = tier.remaining === 0;
-    var cap = (tier.initial >= 999999999) ? Infinity : tier.remaining;
+    var cap = (tier.initial >= TIER_UNLIMITED_SUPPLY) ? Infinity : tier.remaining;
     var buyRow = el('div', 'tier-detail-buy');
     var minus = el('button', 'shop-tier-stepbtn'); minus.textContent = '−';
     var qtyEl = el('span', 'shop-tier-qty');
@@ -1547,7 +1545,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
       var row = el('div', 'tier-detail-supply-row');
       var nm = el('span', 'tier-detail-supply-chain'); nm.appendChild(chainLogo(r.chainId, r.name)); var tn = el('span'); tn.textContent = ' ' + r.name; nm.appendChild(tn); row.appendChild(nm);
       var v = el('span', 'tier-detail-supply-val');
-      v.textContent = r.none ? 'not on this chain' : r.err ? '—' : (r.initial >= 999999999 ? 'unlimited' : (r.remaining + ' / ' + r.initial + ' left'));
+      v.textContent = r.none ? 'not on this chain' : r.err ? '—' : (r.initial >= TIER_UNLIMITED_SUPPLY ? 'unlimited' : (r.remaining + ' / ' + r.initial + ' left'));
       row.appendChild(v); sup.appendChild(row);
     });
   }).catch(function () { if (sup.isConnected) sup.textContent = 'Could not read supply.'; });
@@ -1705,7 +1703,7 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
   step.appendChild(minus); step.appendChild(qtyEl); step.appendChild(plus); foot.appendChild(step);
   it.appendChild(foot);
 
-  var cap = (tier.initial >= 999999999) ? Infinity : tier.remaining; // unlimited tiers have no per-tx cap
+  var cap = (tier.initial >= TIER_UNLIMITED_SUPPLY) ? Infinity : tier.remaining; // unlimited tiers have no per-tx cap
   function refresh() {
     var q = cart.get(tier.id);
     it.classList.toggle('selected', q > 0);
@@ -1925,6 +1923,25 @@ export function buildBorrowArgs(o) {
     chainId: o.chainId, address: o.loansAddr, abi: borrowFromAbi, functionName: 'borrowFrom',
     args: [BigInt(o.revnetId), o.token, o.minBorrow || 0n, o.collateral, o.beneficiary, BigInt(o.prepaidFeePercent), o.holder],
   };
+}
+export function borrowLoanTokenForAccountContext(acct, loading) {
+  if (loading || !acct || !acct.address) return null;
+  return acct.address;
+}
+export function tokenCurrencyIdForAccounting(token) {
+  try { return BigInt(token) & 0xffffffffn; } catch (_) { return null; }
+}
+export function borrowCurrencyForAccountContext(acct) {
+  if (!acct) return null;
+  if (acct.currency != null) {
+    try { return BigInt(acct.currency); } catch (_) { return null; }
+  }
+  return tokenCurrencyIdForAccounting(acct.address);
+}
+export function borrowMinAmountFromPreview(borrowableAmount) {
+  var amount;
+  try { amount = BigInt(borrowableAmount || 0); } catch (_) { return 0n; }
+  return amount > 0n ? amount * 99n / 100n : 0n;
 }
 // Pure builder for REVLoans.repayLoan (payable). `o`: { chainId, loansAddr, loanId, maxRepay (bigint),
 // collateralToReturn (bigint), beneficiary, value (bigint), allowance? (permit2 tuple) }.
@@ -2673,20 +2690,12 @@ export function buildNewShopQueueCall(o) {
   return { to: o.projectDeployer, abi: projectDeployer721QueueAbi, functionName: 'queueRulesetsOf',
     args: [pid, o.deployConfig, o.cfgs, o.controller, o.salt] };
 }
-// Approval-hook (rule-change deadline) options — JBDeadline singletons, resolved per chain via getAddress.
-var DEADLINE_OPTIONS = [
-  { key: 'none', label: 'No deadline', contract: null },
-  { key: '3hours', label: '3 hours', contract: 'JBDeadline3Hours' },
-  { key: '1day', label: '1 day', contract: 'JBDeadline1Day' },
-  { key: '3days', label: '3 days', contract: 'JBDeadline3Days' },
-  { key: '7days', label: '7 days', contract: 'JBDeadline7Days' },
-];
 // Map an approval-hook address → friendly deadline label for the current chain ('Custom' if unknown).
 function deadlineLabelOf(addr, chainId) {
   if (!addr || addr === ZERO_ADDRESS) return 'No deadline';
   for (var i = 0; i < DEADLINE_OPTIONS.length; i++) {
     var c = DEADLINE_OPTIONS[i].contract;
-    if (c && (getAddress(c, chainId) || '').toLowerCase() === addr.toLowerCase()) return DEADLINE_OPTIONS[i].label;
+    if (c && (getAddress(c, chainId) || '').toLowerCase() === addr.toLowerCase()) return DEADLINE_OPTIONS[i].detailLabel || DEADLINE_OPTIONS[i].label;
   }
   return 'Custom';
 }
@@ -2937,16 +2946,17 @@ function formatBalance(amount, decimals, symbol) {
 // The project's primary accounting token (what its balance is denominated in). Reads the
 // terminal's accounting contexts; defaults to native ETH when none are recorded.
 function resolveAcctToken(chainId, pid) {
-  var fallback = { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' };
+  var fallback = { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH', currency: tokenCurrencyIdForAccounting(NATIVE_TOKEN) };
   if (!getAddress('JBMultiTerminal', chainId)) return Promise.resolve(fallback);
   return read(chainId, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [pid]).then(function (ctxs) {
     if (!ctxs || !ctxs.length) return fallback;
     var primary = ctxs[0];
-    if (primary.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return { address: primary.token, decimals: Number(primary.decimals), symbol: 'ETH' };
+    var currency = primary.currency != null ? BigInt(primary.currency) : tokenCurrencyIdForAccounting(primary.token);
+    if (primary.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return { address: primary.token, decimals: Number(primary.decimals), symbol: 'ETH', currency: currency };
     var chainTokens = getChainTokens(chainId); var usdc = USDC_BY_CHAIN[chainId];
     var t = chainTokens.filter(function (x) { return x.address.toLowerCase() === primary.token.toLowerCase(); })[0];
     var sym = t ? t.symbol : ((usdc && primary.token.toLowerCase() === usdc.toLowerCase()) ? 'USDC' : truncAddr(primary.token));
-    return { address: primary.token, decimals: Number(primary.decimals), symbol: sym };
+    return { address: primary.token, decimals: Number(primary.decimals), symbol: sym, currency: currency };
   }).catch(function () { return fallback; });
 }
 
@@ -2968,13 +2978,6 @@ function formatUsd(n) {
   if (n === 0) return '$0';
   if (n > 0 && n < 0.01) return '<$0.01';
   return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-// The indexer's volumeUsd/*Usd fields are 18-decimal scaled USD (value of all intake regardless of the
-// project's accounting token). Convert to a plain number; null/empty -> null so callers can show '—'.
-function usdFromScaled(value) {
-  if (value == null || value === '') return null;
-  try { return Number(BigInt(String(value).split('.')[0]) / 1000000000000n) / 1e6; } catch (_) { return null; }
 }
 
 // ETH/USD spot from the protocol's own Chainlink feed (cached per chain). currentUnitPrice(18) returns
@@ -7277,7 +7280,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           list.appendChild(none); return;
         }
         txs.forEach(function (tx) {
-          var nconf = (tx.confirmations || []).length, need = tx.confirmationsRequired || info.threshold;
+          var nconf = safeUsableConfirmationCount(tx), need = tx.confirmationsRequired || info.threshold;
           var row = el('div', 'backoffice-row');
           var main = el('div', 'backoffice-main');
           var lab = el('div', 'backoffice-label');
@@ -13558,7 +13561,7 @@ function renderLoanFeeSvg(p) {
 function buildLoanModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, prepaidFee: LOAN_MIN_PREPAID, acct: null, loanOut: null };
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, prepaidFee: LOAN_MIN_PREPAID, acct: null, acctLoading: true, loanOut: null };
   // Loans are denominated in the base currency (USD/ETH) and disbursed in the accounting token (USDC/ETH).
   var baseLbl = baseUnitLabel(project);
   var baseCur = BigInt((project.metadata && project.metadata.baseCurrency) || 1);
@@ -13573,7 +13576,7 @@ function buildLoanModal(project, requestClose) {
 
   // Chain selector on its own row above the amount.
   var chainRow = el('div', 'ops-chainrow');
-  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshBalance(); });
+  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
   chainRow.appendChild(chainSel);
   wrap.appendChild(chainRow);
 
@@ -13689,8 +13692,8 @@ function buildLoanModal(project, requestClose) {
       // Each fee pays into a project on the borrower's behalf, minting that project's token to them:
       // protocol fee → JB #1, REV fee → the $REV revnet, source fee → THIS revnet (its own token).
       // Native-ETH only — base == disbursed token there; for USDC the base→token conversion isn't 1:1.
-      var acct = state.acct || { address: NATIVE_TOKEN, decimals: 18 };
-      var isNative = (acct.address || NATIVE_TOKEN) === NATIVE_TOKEN;
+      var acct = state.acct;
+      var isNative = !state.acctLoading && acct && (acct.address || NATIVE_TOKEN) === NATIVE_TOKEN;
       if (isNative) {
         var who = (getAccount && getAccount()) || undefined;
         var cid = state.chainId;
@@ -13759,6 +13762,21 @@ function buildLoanModal(project, requestClose) {
     readUserBalance(project, state.chainId).then(function (b) { state.balance = b; });
     isFeelessAddress(state.chainId, getAccount && getAccount(), Number(pid)).then(function (f) { state.feeless = f; updateSummary(); });
   }
+  var acctSeq = 0;
+  function refreshAccountingToken() {
+    var seq = ++acctSeq;
+    state.acct = null;
+    state.acctLoading = true;
+    updateSummary();
+    function done(a) {
+      if (seq !== acctSeq) return;
+      state.acct = a;
+      state.acctLoading = false;
+      updateSummary();
+    }
+    if (!getAddress('JBMultiTerminal', state.chainId)) { done({ address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH', currency: tokenCurrencyIdForAccounting(NATIVE_TOKEN) }); return; }
+    resolveAcctToken(state.chainId, pid).then(done).catch(function () { done(null); });
+  }
   var previewSeq = 0;
   function updatePreview() {
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
@@ -13782,8 +13800,7 @@ function buildLoanModal(project, requestClose) {
   amt.addEventListener('input', updatePreview);
   function onChainChange() {
     refreshBalance(); updatePreview();
-    state.acct = null;
-    if (getAddress('JBMultiTerminal', state.chainId)) resolveAcctToken(state.chainId, pid).then(function (a) { state.acct = a; });
+    refreshAccountingToken();
   }
   onChainChange();
 
@@ -13793,25 +13810,26 @@ function buildLoanModal(project, requestClose) {
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (collateral === 0n) { status.textContent = 'Enter an amount'; return; }
     if (state.borrowable === 0n) { status.textContent = 'Nothing borrowable yet — loans are locked until this revnet’s cash-out delay passes.'; return; }
-    var loans = getAddress('REVLoans', state.chainId);
-    var perms = getAddress('JBPermissions', state.chainId);
+    var chainId = state.chainId;
+    var prepaidFee = state.prepaidFee;
+    var loanToken = borrowLoanTokenForAccountContext(state.acct, state.acctLoading);
+    if (!loanToken) { status.textContent = state.acctLoading ? 'Accounting token still loading...' : 'Could not resolve the loan token for this chain.'; return; }
+    var loanCurrency = borrowCurrencyForAccountContext(state.acct);
+    if (loanCurrency == null) { status.textContent = 'Could not resolve the loan currency for this chain.'; return; }
+    var loanDecimals = BigInt((state.acct && state.acct.decimals != null) ? state.acct.decimals : 18);
+    var loans = getAddress('REVLoans', chainId);
+    var perms = getAddress('JBPermissions', chainId);
     if (!loans || !perms) { status.textContent = 'Loans not available on this chain'; return; }
     btn.disabled = true; status.textContent = '';
     var onStatus = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
     var fail = function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; };
 
-    // token = native, minBorrowAmount 0 (best price), prepaidFeePercent from the slider, holder/beneficiary = caller.
-    function doBorrow(approved) {
-      var loanToken = (state.acct && state.acct.address) || NATIVE_TOKEN; // disburse in the accounting token
-      // No slippage floor: REVLoans checks minBorrowAmount against the GROSS borrow in the SOURCE token's
-      // decimals/currency (REVLoans.sol:517-527,1383), but our `state.borrowable` preview is in the BASE
-      // currency at 18 decimals (borrowableAmountFrom(…, 18n, baseCur), :12108). Those scales differ for a
-      // 6-dec USDC source (floor always reverts) and whenever base ≠ source-token currency. A correct floor
-      // needs borrowableAmountFrom read in the source token's own decimals+currency — follow-up; until then 0.
-      var minBorrow = 0n;
+    // token = resolved accounting token. REVLoans compares minBorrowAmount against the gross borrow in this
+    // source token's own accounting context, so read that context freshly at submit time and floor at 99%.
+    function doBorrow(approved, minBorrow) {
       executeTransaction(Object.assign(buildBorrowArgs({
-        chainId: state.chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
-        collateral: collateral, beneficiary: acct, prepaidFeePercent: state.prepaidFee, holder: acct,
+        chainId: chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
+        collateral: collateral, beneficiary: acct, prepaidFeePercent: prepaidFee, holder: acct,
       }), {
         confirmTitle: approved ? 'Open loan — step 2 of 2' : 'Open loan',
         confirmText: 'Open loan',
@@ -13820,27 +13838,36 @@ function buildLoanModal(project, requestClose) {
         onSuccess: function (m, meta) { refreshBalance(); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); renderLoanSuccess(collateral, state.loanOut, meta); },
       }));
     }
+    function continueWithFloor(minBorrow) {
+      // Opening a loan burns the collateral via the controller, so REVLoans needs BURN_TOKENS on the holder.
+      // Grant it once (if missing) before borrowing — otherwise borrowFrom reverts. Make the two-step nature
+      // explicit so the approval tx isn't mistaken for the loan itself.
+      onStatus('Checking approval…', 'pending');
+      read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [loans, acct, pid, BigInt(JB_PERMISSION_BURN_TOKENS), true, false])
+        .then(function (has) {
+          if (has) { doBorrow(false, minBorrow); return; }
+          status.classList.remove('pending');
+          status.textContent = 'First-time loan: this needs 2 transactions — a one-off approval, then the loan.';
+          executeTransaction({
+            chainId: chainId, address: perms, abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor',
+            args: [acct, { operator: loans, projectId: pid, permissionIds: [JB_PERMISSION_BURN_TOKENS] }],
+            confirmTitle: 'Approve the loan contract — step 1 of 2',
+            confirmText: 'Approve',
+            confirmNote: 'This is NOT the loan yet. First-time loans need a one-off approval letting the loan contract burn your ' + sym + ' collateral. After you sign this, a second transaction will open the loan and send you the funds.',
+            onStatus: function (m, kind) { onStatus(m === 'Awaiting wallet confirmation...' ? 'Step 1 of 2 — approve the loan contract…' : m, kind); },
+            onError: fail,
+            onSuccess: function () { onStatus('Approved — now confirm step 2 to open the loan…', 'pending'); doBorrow(true, minBorrow); },
+          });
+        }).catch(function () { doBorrow(false, minBorrow); }); // if the permission read fails, attempt the borrow (it will revert clearly if truly unauthorized)
+    }
 
-    // Opening a loan burns the collateral via the controller, so REVLoans needs BURN_TOKENS on the holder.
-    // Grant it once (if missing) before borrowing — otherwise borrowFrom reverts. Make the two-step nature
-    // explicit so the approval tx isn't mistaken for the loan itself.
-    onStatus('Checking approval…', 'pending');
-    read(state.chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [loans, acct, pid, BigInt(JB_PERMISSION_BURN_TOKENS), true, false])
-      .then(function (has) {
-        if (has) { doBorrow(false); return; }
-        status.classList.remove('pending');
-        status.textContent = 'First-time loan: this needs 2 transactions — a one-off approval, then the loan.';
-        executeTransaction({
-          chainId: state.chainId, address: perms, abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor',
-          args: [acct, { operator: loans, projectId: pid, permissionIds: [JB_PERMISSION_BURN_TOKENS] }],
-          confirmTitle: 'Approve the loan contract — step 1 of 2',
-          confirmText: 'Approve',
-          confirmNote: 'This is NOT the loan yet. First-time loans need a one-off approval letting the loan contract burn your ' + sym + ' collateral. After you sign this, a second transaction will open the loan and send you the funds.',
-          onStatus: function (m, kind) { onStatus(m === 'Awaiting wallet confirmation...' ? 'Step 1 of 2 — approve the loan contract…' : m, kind); },
-          onError: fail,
-          onSuccess: function () { onStatus('Approved — now confirm step 2 to open the loan…', 'pending'); doBorrow(true); },
-        });
-      }).catch(function () { doBorrow(false); }); // if the permission read fails, attempt the borrow (it will revert clearly if truly unauthorized)
+    onStatus('Checking current loan amount…', 'pending');
+    read(chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, loanDecimals, loanCurrency])
+      .then(function (r) {
+        var sourceBorrowable = toBigInt(Array.isArray(r) ? r[0] : r);
+        if (sourceBorrowable === 0n) { fail('Nothing borrowable yet — loans are locked until this revnet’s cash-out delay passes.'); return; }
+        continueWithFloor(borrowMinAmountFromPreview(sourceBorrowable));
+      }).catch(function () { fail('Could not read the current loan amount for this token.'); });
   });
 
   // Replace the form with a summary of what landed: the funds received, the loan NFT, the fee-minted
@@ -16007,4 +16034,3 @@ function splitConfigRow(recipientNode, pct) {
   var v = el('span', 'detail-ruleset-val'); v.textContent = (Math.round(pct * 100) / 100) + '%'; row.appendChild(v);
   return row;
 }
-

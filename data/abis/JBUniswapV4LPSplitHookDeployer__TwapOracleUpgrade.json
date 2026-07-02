@@ -1,0 +1,257 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "addressRegistry",
+          "type": "address",
+          "internalType": "contract IJBAddressRegistry"
+        },
+        {
+          "name": "newHookImplementation",
+          "type": "address",
+          "internalType": "contract JBUniswapV4LPSplitHook"
+        },
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "ADDRESS_REGISTRY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBAddressRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "deployHookFor",
+      "inputs": [
+        {
+          "name": "feeProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "feePercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "buybackHook",
+          "type": "address",
+          "internalType": "contract IJBBuybackHookRegistry"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "hook",
+          "type": "address",
+          "internalType": "contract IJBUniswapV4LPSplitHook"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "hookImplementation",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract JBUniswapV4LPSplitHook"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "oracleHook",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IHooks"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "poolManager",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IPoolManager"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "positionManager",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IPositionManager"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "setChainSpecificConstants",
+      "inputs": [
+        {
+          "name": "newPoolManager",
+          "type": "address",
+          "internalType": "contract IPoolManager"
+        },
+        {
+          "name": "newPositionManager",
+          "type": "address",
+          "internalType": "contract IPositionManager"
+        },
+        {
+          "name": "newOracleHook",
+          "type": "address",
+          "internalType": "contract IHooks"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "HookDeployed",
+      "inputs": [
+        {
+          "name": "feeProjectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "feePercent",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "indexed": false,
+          "internalType": "contract IJBUniswapV4LPSplitHook"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHookDeployer_AlreadyConfigured",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHookDeployer_NotConfigured",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHookDeployer_Unauthorized",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "addressRegistry": "A registry which stores references to contracts and their deployers.",
+        "deployer": "The address authorized to call `setChainSpecificConstants` exactly once.",
+        "newHookImplementation": "The chain-same `JBUniswapV4LPSplitHook` implementation clones should use."
+      }
+    },
+    "deployHookFor(uint256,uint256,address,bytes32)": {
+      "params": {
+        "buybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. Pass the zero address for none. Per-deploy so different projects can use different buyback hooks.",
+        "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
+        "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
+        "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
+      },
+      "returns": {
+        "hook": "The newly deployed hook."
+      }
+    },
+    "hookImplementation()": {
+      "returns": {
+        "_0": "The hook implementation contract."
+      }
+    },
+    "setChainSpecificConstants(address,address,address)": {
+      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call the stored V4 addresses are effectively immutable for the contract's lifetime. They are passed into every freshly cloned hook by `deployHookFor`.",
+      "params": {
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    }
+  },
+  "userdoc": {
+    "ADDRESS_REGISTRY()": {
+      "notice": "A registry which stores references to contracts and their deployers."
+    },
+    "deployHookFor(uint256,uint256,address,bytes32)": {
+      "notice": "Deploy a new `JBUniswapV4LPSplitHook` clone with the caller as its initial owner."
+    },
+    "hookImplementation()": {
+      "notice": "The implementation contract used as the base for clones."
+    },
+    "oracleHook()": {
+      "notice": "The Uniswap V4 oracle hook clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "poolManager()": {
+      "notice": "The Uniswap V4 PoolManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "positionManager()": {
+      "notice": "The Uniswap V4 PositionManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "setChainSpecificConstants(address,address,address)": {
+      "notice": "One-shot setter for chain-specific Uniswap V4 addresses."
+    }
+  },
+  "contractName": "JBUniswapV4LPSplitHookDeployer",
+  "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHookDeployer.sol"
+}

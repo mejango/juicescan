@@ -24,6 +24,8 @@ import {
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
+import { DEADLINE_OPTIONS } from './deadline-options.js';
+import { build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -69,14 +71,6 @@ export var DURATION_PRESETS = [
   { label: '7 days', seconds: 604800 }, { label: '14 days', seconds: 1209600 },
   { label: '28 days', seconds: 2419200 }, { label: '30 days', seconds: 2592000 },
   { label: '90 days', seconds: 7776000 }, { label: '365 days', seconds: 31536000 },
-];
-
-var DEADLINE_OPTIONS = [
-  { key: '3hours', label: '3-hour deadline', short: '3h', contract: 'JBDeadline3Hours' },
-  { key: '1day', label: '1-day deadline', short: '1 day', contract: 'JBDeadline1Day', def: true },
-  { key: '3days', label: '3-day deadline', short: '3 days', contract: 'JBDeadline3Days' },
-  { key: '7days', label: '7-day deadline', short: '7 days', contract: 'JBDeadline7Days' },
-  { key: 'none', label: 'No deadline', short: '', contract: null },
 ];
 
 var TAG_OPTIONS = ['AI', 'Art', 'Brand', 'Business', 'Charity', 'Climate', 'Collectibles', 'Community',
@@ -3786,7 +3780,7 @@ export function build721Config(state, projectUri, chainId) {
   var symbol = collectionSymbolOf(state);
   var col = state.collection || {};
   var priceDecimals = storeDecimals(state);
-  var tiers = state.nfts
+  var tierEntries = state.nfts
     .map(function (nft, idx) { return { nft: nft, idx: idx }; })
     .filter(function (e) { return chainId == null || chainItemIncluded(state, chainId, e.idx); })
     .map(function (e) {
@@ -3799,12 +3793,12 @@ export function build721Config(state, projectUri, chainId) {
     var rb = freq > 0 ? chainAddr(state, chainId, 'rb:' + e.idx, resolvedStr(nft.reserveBeneficiary)) : '';
     var reserveBenef = addrOrZero(rb);
     var votes = nft.votingOn ? (Number(nft.votingUnits) || 0) : 0;
-    var discountPercent = nft.discountOn ? Math.min(200, Math.round((parseFloat(nft.discountPct) || 0) / 100 * 200)) : 0;
+    var discountPercent = nft.discountOn ? tierDiscountPercentFromPct(nft.discountPct) : 0;
     var sp = itemSplits(nft, state, chainId, e.idx);
-    return {
+    var tier = build721TierConfig({
       price: priceUnits(nft.priceEth, priceDecimals),
-      // Clamp to [0, 999999999] — the store caps initialSupply at _ONE_BILLION-1; a larger value reverts (uint32 overflow / InvalidQuantity).
-      initialSupply: limited ? Math.max(0, Math.min(999999999, Math.floor(Number(chainSupply) || 0))) : 999999999,
+      initialSupply: chainSupply,
+      unlimited: !limited,
       votingUnits: votes,
       reserveFrequency: freq,
       reserveBeneficiary: reserveBenef,
@@ -3822,8 +3816,11 @@ export function build721Config(state, projectUri, chainId) {
       },
       splitPercent: sp.splitPercent,
       splits: sp.splits,
-    };
+    });
+    return { tier: tier, order: e.idx };
   });
+  var tiers = sortTierEntriesByCategory(tierEntries, function (e) { return e.tier; })
+    .map(function (e) { return e.tier; });
   return {
     name: name, symbol: symbol, baseUri: 'ipfs://', tokenUriResolver: ZERO, contractUri: projectUri || '',
     tiersConfig: { tiers: tiers, currency: storeCur(state), decimals: priceDecimals },

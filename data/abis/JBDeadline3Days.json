@@ -140,6 +140,5 @@
     }
   },
   "contractName": "JBDeadline3Days",
-  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline3Days.sol",
-  "contractNotice": "A reusable deadline implementation with a fixed three-day duration."
+  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline3Days.sol"
 }

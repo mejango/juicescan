@@ -2,7 +2,7 @@
 // Entry point: tabs, wallet, directory rendering
 // Chain selection is per-function-form, not global.
 
-import { registry, contracts, meta, natspec, categories, commonActions, getFunctions, getAddress, getFunctionSource, getGithubUrl } from './abi-registry.js';
+import { contracts, meta, natspec, categories, commonActions, getFunctions, getAddress, getFunctionSource, getGithubUrl } from './abi-registry.js';
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';

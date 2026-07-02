@@ -123,12 +123,21 @@ export function amount(value, row, opts) {
 }
 
 // volumeUsd / amountUsd are 18-decimal scaled USD. Use BigInt to avoid Number precision loss.
+export function scaledUsdToNumber(value) {
+  if (value == null || value === '') return null;
+  try {
+    return Number(BigInt(String(value).split('.')[0]) / 1000000000000n) / 1e6;
+  } catch (_) {
+    return null;
+  }
+}
+
 export function volumeUsd(value) {
   const span = document.createElement('span');
   if (value == null || value === '' || value === '0') { span.textContent = '—'; return span; }
   try {
-    const raw = BigInt(String(value).split('.')[0]);
-    const usd = Number(raw / BigInt(1e12)) / 1e6;
+    const usd = scaledUsdToNumber(value);
+    if (usd == null) throw new Error('invalid USD amount');
     let str;
     if (usd >= 1_000_000) str = '$' + (usd / 1_000_000).toFixed(2) + 'M';
     else if (usd >= 1_000) str = '$' + (usd / 1_000).toFixed(2) + 'k';

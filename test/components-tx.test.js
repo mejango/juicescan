@@ -11,8 +11,8 @@ import { buildBurnArgs, burnTokensAbi } from '../src/burn-component.js';
 import { buildDeployErc20Args, deployERC20Abi } from '../src/deploy-erc20-component.js';
 import { buildSendReservedArgs, sendReservedAbi } from '../src/reserved-component.js';
 import { buildSetPermissionsArgs, setPermissionsAbi } from '../src/permissions-component.js';
-import { buildSendPayoutsArgs, sendPayoutsAbi } from '../src/payouts-component.js';
-import { safeExecArgs, SAFE_EXEC_ABI } from '../src/safe.js';
+import { buildSendPayoutsArgs, payoutCurrencyIdForSelection, payoutAmountDecimals, sendPayoutsAbi, tokenCurrencyId } from '../src/payouts-component.js';
+import { safeExecArgs, safeExecSignatures, safeUsableConfirmationCount, SAFE_EXEC_ABI } from '../src/safe.js';
 
 const CTRL = '0x4444444444444444444444444444444444444444';
 const PERM = '0x5555555555555555555555555555555555555555';
@@ -134,6 +134,30 @@ describe('send payouts — JBMultiTerminal.sendPayoutsOf', () => {
     expect(tx.args[3]).toBe(BigInt(cur));
     expect(roundTrips(sendPayoutsAbi, 'sendPayoutsOf', tx.args)).toBe(true);
   });
+  it('supports standard and custom payout-limit currencies, not just token-derived currency', () => {
+    expect(tokenCurrencyId(USDC)).toBe(BigInt(USDC) & 0xffffffffn);
+    expect(payoutCurrencyIdForSelection('token', '', USDC)).toBe(BigInt(USDC) & 0xffffffffn);
+    expect(payoutCurrencyIdForSelection('eth', '', USDC)).toBe(1n);
+    expect(payoutCurrencyIdForSelection('usd', '', USDC)).toBe(2n);
+    expect(payoutCurrencyIdForSelection('custom', '12345', USDC)).toBe(12345n);
+    expect(payoutCurrencyIdForSelection('custom', '-1', USDC)).toBeNull();
+
+    const tx = buildSendPayoutsArgs({ chainId: 1, terminalAddr: TERMINAL, projectId: 5, token: USDC, amount: parseUnits('100', 6), currency: 2n, minPaidOut: 0n });
+    expect(tx.args[3]).toBe(2n);
+    expect(roundTrips(sendPayoutsAbi, 'sendPayoutsOf', tx.args)).toBe(true);
+  });
+  it('parses the payout amount in the selected currency decimals, not the token transfer decimals', () => {
+    // sendPayoutsOf reads `amount` in the payout-limit currency. token mode = the token's own decimals
+    // (byte-identical to pre-audit); ETH/USD/custom = the 18-dec JB standard (_MAX_FIXED_POINT_FIDELITY).
+    expect(payoutAmountDecimals('token', 6)).toBe(6);
+    expect(payoutAmountDecimals('token', 18)).toBe(18);
+    expect(payoutAmountDecimals('eth', 6)).toBe(18);
+    expect(payoutAmountDecimals('usd', 6)).toBe(18);
+    expect(payoutAmountDecimals('custom', 6)).toBe(18);
+    // The regression this guards: a USD payout on a 6-dec USDC token must scale by 1e18, not 1e6.
+    expect(parseUnits('100', payoutAmountDecimals('usd', 6))).toBe(parseUnits('100', 18));
+    expect(parseUnits('100', payoutAmountDecimals('token', 6))).toBe(parseUnits('100', 6));
+  });
 });
 
 describe('Safe — GnosisSafe.execTransaction', () => {
@@ -148,5 +172,21 @@ describe('Safe — GnosisSafe.execTransaction', () => {
     expect(args[4]).toBe(0n); // safeTxGas defaults
     expect(args[9]).toBe(sigs);
     expect(roundTrips(SAFE_EXEC_ABI, 'execTransaction', args)).toBe(true);
+  });
+  it('serializes on-chain approveHash confirmations as prevalidated signatures sorted by owner', () => {
+    const ownerA = '0x1111111111111111111111111111111111111111';
+    const ownerB = '0x2222222222222222222222222222222222222222';
+    const ownerBSig = 'aa'.repeat(65);
+    const prevalidatedA = ownerA.replace(/^0x/, '').padStart(64, '0') + '0'.repeat(64) + '01';
+    const tx = {
+      confirmations: [
+        { owner: ownerB, signature: '0x' + ownerBSig },
+        { owner: ownerA, signature: null },
+        { signature: '0x' + 'bb'.repeat(65) },
+        { owner: null, signature: null },
+      ],
+    };
+    expect(safeUsableConfirmationCount(tx)).toBe(2);
+    expect(safeExecSignatures(tx)).toBe('0x' + prevalidatedA + ownerBSig);
   });
 });

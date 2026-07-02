@@ -2,7 +2,7 @@
 // ABI encoding/decoding — thin wrappers around viem
 // All blockchain data transformation in one place for auditability
 
-import { encodeFunctionData, decodeFunctionResult, decodeErrorResult, parseEther, parseUnits, formatEther, formatUnits } from 'viem';
+import { encodeFunctionData, decodeErrorResult, parseEther, parseUnits, formatEther, formatUnits } from 'viem';
 
 export function encodeCalldata(abi, functionName, args) {
   return encodeFunctionData({ abi, functionName, args });

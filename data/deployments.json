@@ -1,6 +1,6 @@
 {
   "source": "../deploy-all-v6/deployments",
-  "generatedAt": "2026-06-21T17:10:56.004Z",
+  "generatedAt": "2026-07-02T23:41:00.453Z",
   "chains": {
     "1": {
       "id": "1",
@@ -2298,6 +2298,46 @@
           "transactionHash": "0x374d7147a25b58064865588b57958246caa899480964431cd970c10e2a2e604c",
           "blockNumber": "0xa8ec73",
           "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBBuybackHook__TwapOracleUpgrade": {
+      "deploymentName": "JBBuybackHook__TwapOracleUpgrade",
+      "contractName": "JBBuybackHook",
+      "sourceName": "node_modules/@bananapus/buyback-hook-v6/src/JBBuybackHook.sol",
+      "abi": "JBBuybackHook__TwapOracleUpgrade",
+      "addresses": {
+        "84532": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "421614": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "11155111": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBBuybackHook__TwapOracleUpgrade.json",
+          "transactionHash": "0x7038e097abb4810ab42a03a997833d29b17778d4e35a18bab38c7255fbb5b67d",
+          "blockNumber": "0x295922a",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBBuybackHook__TwapOracleUpgrade.json",
+          "transactionHash": "0x47b46a336014878ea95f54db480df93b524cb15571665bfc39e45dfb22ba6ed1",
+          "blockNumber": "0x10c44df5",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "file": "../deploy-all-v6/deployments/sepolia/JBBuybackHook__TwapOracleUpgrade.json",
+          "transactionHash": "0xbaa7e6830b9b9adba3543fabc7f2fe103ebc2342cb6cc9fc6d64e810503d2d26",
+          "blockNumber": "0xaa0c76",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.1.1",
           "gitDirty": false
         }
       }
@@ -5962,6 +6002,46 @@
         }
       }
     },
+    "JBRouterTerminal__TwapOracleUpgrade": {
+      "deploymentName": "JBRouterTerminal__TwapOracleUpgrade",
+      "contractName": "JBRouterTerminal",
+      "sourceName": "node_modules/@bananapus/router-terminal-v6/src/JBRouterTerminal.sol",
+      "abi": "JBRouterTerminal__TwapOracleUpgrade",
+      "addresses": {
+        "84532": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "421614": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "11155111": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBRouterTerminal__TwapOracleUpgrade.json",
+          "transactionHash": "0x52cade2b99f30994e28375769d2ed5914f5888a25f37fbac57d14ca8fc238a75",
+          "blockNumber": "0x2959235",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.1.1",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBRouterTerminal__TwapOracleUpgrade.json",
+          "transactionHash": "0x1c6db9612ba83b34e500d8851de35eb22b0cd554cf9df8f85212e214a5a32a55",
+          "blockNumber": "0x10c44e4a",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.1.1",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "file": "../deploy-all-v6/deployments/sepolia/JBRouterTerminal__TwapOracleUpgrade.json",
+          "transactionHash": "0xd502af3392259f92cf3e297e7bba8d0d5ea566f4bf67f1147712138876048e05",
+          "blockNumber": "0xaa0c7a",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.1.1",
+          "gitDirty": false
+        }
+      }
+    },
     "JBRouterTerminalRegistry": {
       "deploymentName": "JBRouterTerminalRegistry",
       "contractName": "JBRouterTerminalRegistry",
@@ -6672,6 +6752,46 @@
         }
       }
     },
+    "JBUniswapV4Hook__TwapOracleUpgrade": {
+      "deploymentName": "JBUniswapV4Hook__TwapOracleUpgrade",
+      "contractName": "JBUniswapV4Hook",
+      "sourceName": "node_modules/@bananapus/univ4-router-v6/src/JBUniswapV4Hook.sol",
+      "abi": "JBUniswapV4Hook__TwapOracleUpgrade",
+      "addresses": {
+        "84532": "0xf7ce556c8c10cff2c8da6ea521c6232598f7d5c8",
+        "421614": "0xd27bd395dfb5741a7cc66df836e3039c563955c8",
+        "11155111": "0x7494930fbfa2fdd06549526c805d48b4f22a15c8"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0xf7ce556c8c10cff2c8da6ea521c6232598f7d5c8",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4Hook__TwapOracleUpgrade.json",
+          "transactionHash": "0xd5d6fa4129b161de8506fcd9479d743b6d1b1198c808bcc54f12702bb8083399",
+          "blockNumber": "0x2959225",
+          "gitCommit": "npm:@bananapus/univ4-router-v6@1.1.2",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xd27bd395dfb5741a7cc66df836e3039c563955c8",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4Hook__TwapOracleUpgrade.json",
+          "transactionHash": "0x6f5c3eebafd49b0bf726f85cbdd9d02654540debb4f49121eff0eeb364da544e",
+          "blockNumber": "0x10c44dca",
+          "gitCommit": "npm:@bananapus/univ4-router-v6@1.1.2",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0x7494930fbfa2fdd06549526c805d48b4f22a15c8",
+          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4Hook__TwapOracleUpgrade.json",
+          "transactionHash": "0x50efc6676ec1400ab44a18463f060c856285f660dc5444f407a4e97e01ce7abe",
+          "blockNumber": "0xaa0c74",
+          "gitCommit": "npm:@bananapus/univ4-router-v6@1.1.2",
+          "gitDirty": false
+        }
+      }
+    },
     "JBUniswapV4LPSplitHook": {
       "deploymentName": "JBUniswapV4LPSplitHook",
       "contractName": "JBUniswapV4LPSplitHook",
@@ -6752,6 +6872,46 @@
         }
       }
     },
+    "JBUniswapV4LPSplitHook__TwapOracleUpgrade": {
+      "deploymentName": "JBUniswapV4LPSplitHook__TwapOracleUpgrade",
+      "contractName": "JBUniswapV4LPSplitHook",
+      "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHook.sol",
+      "abi": "JBUniswapV4LPSplitHook__TwapOracleUpgrade",
+      "addresses": {
+        "84532": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "421614": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "11155111": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHook__TwapOracleUpgrade.json",
+          "transactionHash": "0x79cebc71704143e6a8e47457b124755e55481e8fb04f167bc6e48d240f9faf20",
+          "blockNumber": "0x2959240",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHook__TwapOracleUpgrade.json",
+          "transactionHash": "0x6aee87db282fba843baef868ea706b76f62ddaad250cc5ebafe0f9b22019d067",
+          "blockNumber": "0x10c44e9f",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHook__TwapOracleUpgrade.json",
+          "transactionHash": "0x2acb3ebc1498d2f0ae33a8dd353abefec7a3fda4db0a5b4d9224a9419115868a",
+          "blockNumber": "0xaa0c7e",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        }
+      }
+    },
     "JBUniswapV4LPSplitHookDeployer": {
       "deploymentName": "JBUniswapV4LPSplitHookDeployer",
       "contractName": "JBUniswapV4LPSplitHookDeployer",
@@ -6828,6 +6988,46 @@
           "transactionHash": "0xd7e09d015dff94e002eb36687f37f29068edcacadf7bafb5e91f0dc08eb0a51e",
           "blockNumber": "0xa8ecce",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBUniswapV4LPSplitHookDeployer__TwapOracleUpgrade": {
+      "deploymentName": "JBUniswapV4LPSplitHookDeployer__TwapOracleUpgrade",
+      "contractName": "JBUniswapV4LPSplitHookDeployer",
+      "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHookDeployer.sol",
+      "abi": "JBUniswapV4LPSplitHookDeployer__TwapOracleUpgrade",
+      "addresses": {
+        "84532": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
+        "421614": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
+        "11155111": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHookDeployer__TwapOracleUpgrade.json",
+          "transactionHash": "0x4b52474f802c57340a80b73e535b4bd978f61e7adb162c5b1dbe4d99caa834b3",
+          "blockNumber": "0x2959245",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHookDeployer__TwapOracleUpgrade.json",
+          "transactionHash": "0xd903d96d788ac2d808deddf21751d2882d3817aa2d4c54583b9388647c23ba86",
+          "blockNumber": "0x10c44ec9",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
+          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHookDeployer__TwapOracleUpgrade.json",
+          "transactionHash": "0xf81fae6acedce681f7dac34f5b5336abd43c14b23a457f4dc40ba3e5c96940a7",
+          "blockNumber": "0xaa0c80",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
           "gitDirty": false
         }
       }

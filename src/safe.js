@@ -255,8 +255,20 @@ export function safeExecArgs(tx, signatures) {
 function sigBytesFor(c) {
   var s = (c.signature || '').replace(/^0x/, '');
   if (s) return s;
+  if (!c.owner) return null;
   var owner = (c.owner || '').replace(/^0x/, '').toLowerCase().padStart(64, '0');
   return owner + '0'.repeat(64) + '01';
+}
+function sortedUsableConfirmations(tx) {
+  return (tx.confirmations || []).slice()
+    .filter(function (c) { return c && c.owner && !!sigBytesFor(c); })
+    .sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
+}
+export function safeUsableConfirmationCount(tx) {
+  return sortedUsableConfirmations(tx).length;
+}
+export function safeExecSignatures(tx) {
+  return '0x' + sortedUsableConfirmations(tx).map(sigBytesFor).join('');
 }
 
 // A base-fee-buffered EIP-1559 fee cap. Some wallets under-estimate maxFeePerGas on L2s (e.g. set 0.02 gwei when
@@ -308,23 +320,17 @@ export async function executeSafeTx(chainId, safe, tx) {
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to execute.'); }
   // Safe requires signatures concatenated in ascending owner-address order.
-  var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
+  var confs = sortedUsableConfirmations(tx);
   if (!confs.length) throw new Error('No confirmations to execute with.');
   var signatures = '0x' + confs.map(sigBytesFor).join('');
   return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: safeExecArgs(tx, signatures) }, 'execTransaction');
-}
-
-// The signatures bytes for a ready tx (owner sigs concatenated, ASC by owner address).
-function execSignatures(tx) {
-  var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
-  return '0x' + confs.map(sigBytesFor).join('');
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.
 export function safeExecRelayrTx(chainId, safe, tx) {
   var data = encodeFunctionData({
     abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: safeExecArgs(tx, execSignatures(tx)),
+    args: safeExecArgs(tx, safeExecSignatures(tx)),
   });
   return { chain: Number(chainId), target: cs(safe), data: data, value: '0' };
 }

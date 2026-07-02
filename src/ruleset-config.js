@@ -1,0 +1,188 @@
+import { parseEther } from 'viem';
+import { addrOrZero } from './component-base.js';
+
+export var UINT112_MAX = (1n << 112n) - 1n;
+
+export var DURATION_PRESETS = [
+  { label: 'None (no expiry)', seconds: 0 },
+  { label: '1 day', seconds: 86400 },
+  { label: '3 days', seconds: 259200 },
+  { label: '7 days', seconds: 604800 },
+  { label: '14 days', seconds: 1209600 },
+  { label: '28 days', seconds: 2419200 },
+  { label: '30 days', seconds: 2592000 },
+  { label: '90 days', seconds: 7776000 },
+  { label: '365 days', seconds: 31536000 },
+  { label: 'Custom', seconds: -1 },
+];
+
+export function parseRulesetWeight(value) {
+  var weight;
+  try {
+    weight = (value == null || String(value).trim() === '') ? 0n : parseEther(String(value).trim());
+  } catch (_) {
+    return 0n;
+  }
+  if (weight < 0n) return 0n;
+  return weight > UINT112_MAX ? UINT112_MAX : weight;
+}
+
+export function createDefaultSplit() {
+  return { preferAddToBalance: false, percent: '', projectId: '', beneficiary: '', lockedUntil: '', hook: '' };
+}
+
+export function createDefaultSplitGroup() {
+  return { groupId: '', splits: [createDefaultSplit()] };
+}
+
+export function createDefaultPayoutLimit() {
+  return { amount: '', currency: 1 };
+}
+
+export function createDefaultSurplusAllowance() {
+  return { amount: '', currency: 1 };
+}
+
+export function createDefaultFundAccessLimitGroup() {
+  return { terminal: '', token: '', payoutLimits: [createDefaultPayoutLimit()], surplusAllowances: [createDefaultSurplusAllowance()] };
+}
+
+export function createDefaultRuleset(opts) {
+  opts = opts || {};
+  return {
+    mustStartAtOrAfter: opts.mustStartAtOrAfter != null ? opts.mustStartAtOrAfter : 0,
+    durationPreset: 0,
+    durationCustom: '',
+    weight: opts.weight != null ? opts.weight : '1000000',
+    weightCutPercent: 0,
+    reservedPercent: 0,
+    cashOutTaxRate: 0,
+    baseCurrency: 1,
+    pausePay: false,
+    pauseCreditTransfers: false,
+    allowOwnerMinting: false,
+    allowSetCustomToken: true,
+    allowTerminalMigration: false,
+    allowSetTerminals: true,
+    allowSetController: true,
+    allowAddAccountingContext: true,
+    allowAddPriceFeed: false,
+    ownerMustSendPayouts: false,
+    holdFees: false,
+    useTotalSurplusForCashOuts: false,
+    useDataHookForPay: false,
+    useDataHookForCashOut: false,
+    approvalHook: '',
+    dataHook: '',
+    metadataExtra: '0',
+    splitGroups: [],
+    fundAccessLimitGroups: [],
+    flagsExpanded: false,
+    splitsExpanded: false,
+    fundAccessExpanded: false,
+    advancedExpanded: false,
+  };
+}
+
+export function getDurationSeconds(rs) {
+  if (rs.durationPreset === -1) return Number(rs.durationCustom) || 0;
+  return rs.durationPreset;
+}
+
+export function buildRulesetConfigs(rulesets, opts) {
+  opts = opts || {};
+  var payDataHook = !!opts.payDataHookVariant;
+  var configs = [];
+  for (var i = 0; i < rulesets.length; i++) {
+    var rs = rulesets[i];
+    var meta = {
+      reservedPercent: Math.round(rs.reservedPercent * 100),
+      cashOutTaxRate: Math.round(rs.cashOutTaxRate * 100),
+      baseCurrency: rs.baseCurrency,
+      pausePay: rs.pausePay,
+      pauseCreditTransfers: rs.pauseCreditTransfers,
+      allowOwnerMinting: rs.allowOwnerMinting,
+      allowSetCustomToken: rs.allowSetCustomToken,
+      allowTerminalMigration: rs.allowTerminalMigration,
+      allowSetTerminals: rs.allowSetTerminals,
+      allowSetController: rs.allowSetController,
+      allowAddAccountingContext: rs.allowAddAccountingContext,
+      allowAddPriceFeed: rs.allowAddPriceFeed,
+      ownerMustSendPayouts: rs.ownerMustSendPayouts,
+      holdFees: rs.holdFees,
+    };
+    if (payDataHook) {
+      meta.scopeCashOutsToLocalBalances = !!rs.useTotalSurplusForCashOuts;
+      meta.useDataHookForCashOut = !!rs.useDataHookForCashOut;
+      meta.metadata = Number(rs.metadataExtra) || 0;
+    } else {
+      meta.useTotalSurplusForCashOuts = !!rs.useTotalSurplusForCashOuts;
+      meta.useDataHookForPay = !!rs.useDataHookForPay;
+      meta.useDataHookForCashOut = !!rs.useDataHookForCashOut;
+      meta.dataHook = addrOrZero(rs.dataHook);
+      meta.metadata = Number(rs.metadataExtra) || 0;
+    }
+    configs.push({
+      mustStartAtOrAfter: BigInt(rs.mustStartAtOrAfter || 0),
+      duration: getDurationSeconds(rs),
+      weight: parseRulesetWeight(rs.weight),
+      weightCutPercent: Math.round(rs.weightCutPercent * 10000000),
+      approvalHook: addrOrZero(rs.approvalHook),
+      metadata: meta,
+      splitGroups: buildSplitGroups(rs.splitGroups),
+      fundAccessLimitGroups: buildFundAccessLimitGroups(rs.fundAccessLimitGroups),
+    });
+  }
+  return configs;
+}
+
+export function buildSplitGroups(groups) {
+  var result = [];
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    if (!g.groupId) continue;
+    var splits = [];
+    for (var j = 0; j < g.splits.length; j++) {
+      var s = g.splits[j];
+      var percent = Number(s.percent) || 0;
+      if (percent <= 0) continue;
+      splits.push({
+        preferAddToBalance: s.preferAddToBalance,
+        percent: percent,
+        projectId: Number(s.projectId) || 0,
+        beneficiary: addrOrZero(s.beneficiary),
+        lockedUntil: Number(s.lockedUntil) || 0,
+        hook: addrOrZero(s.hook),
+      });
+    }
+    if (splits.length > 0) result.push({ groupId: BigInt(g.groupId), splits: splits });
+  }
+  return result;
+}
+
+export function buildFundAccessLimitGroups(groups) {
+  var result = [];
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    if (!g.terminal) continue;
+    var payoutLimits = [];
+    for (var j = 0; j < g.payoutLimits.length; j++) {
+      var pl = g.payoutLimits[j];
+      if (!pl.amount && pl.amount !== '0') continue;
+      payoutLimits.push({ amount: BigInt(pl.amount), currency: Number(pl.currency) || 0 });
+    }
+    var surplusAllowances = [];
+    for (var k = 0; k < g.surplusAllowances.length; k++) {
+      var sa = g.surplusAllowances[k];
+      if (!sa.amount && sa.amount !== '0') continue;
+      surplusAllowances.push({ amount: BigInt(sa.amount), currency: Number(sa.currency) || 0 });
+    }
+    result.push({
+      terminal: g.terminal,
+      token: addrOrZero(g.token),
+      payoutLimits: payoutLimits,
+      surplusAllowances: surplusAllowances,
+    });
+  }
+  return result;
+}
