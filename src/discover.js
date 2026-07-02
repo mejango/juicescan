@@ -10,7 +10,7 @@ import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, 
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeTxLink, safeHomeLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain } from './safe.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeTxLink, safeHomeLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -5627,8 +5627,31 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         if (!info) {
           block.classList.add('safe-propose-skip'); st.innerHTML = '';
           st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — '));
-          var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'add it (same address) in the Safe app ↗'; st.appendChild(a);
-          st.appendChild(document.createTextNode('. Skipped.')); return;
+          // Deploy the SAME-address Safe here by replaying its original creation (works even where the Safe app has
+          // no UI, e.g. Arbitrum Sepolia). On success, re-check the chain so it's queue-able without reopening.
+          var dep = el('a', 'operator-cta'); dep.href = '#'; dep.textContent = 'deploy it here (same address)';
+          dep.addEventListener('click', function (e) {
+            e.preventDefault();
+            st.innerHTML = ''; st.appendChild(document.createTextNode('Reading the Safe’s deployment config…'));
+            fetchSafeCreation(safe).then(function (creation) {
+              if (!creation) throw new Error('couldn’t read the Safe’s creation config (needs a chain where it already exists + a Safe service)');
+              st.textContent = 'Deploying the Safe on ' + c.name + ' — confirm in your wallet…';
+              return deploySafeSameAddress(c.id, creation, safe);
+            }).then(function () {
+              block.classList.remove('safe-propose-skip'); rec.nInput = null;
+              return fetchSafeInfo(safe, c.id).then(function (info2) {
+                if (!info2) { st.textContent = 'Deployed ✓ — reopen this action to queue on ' + c.name + '.'; return; }
+                rec.deployed = true; rec.threshold = info2.threshold; rec.owners = info2.owners; rec.onChain = true;
+                return refreshOnChainStatus(rec);
+              });
+            }).catch(function (err) {
+              st.innerHTML = ''; st.appendChild(document.createTextNode('Safe not deployed on ' + c.name + ' — ' + ((err && (err.shortMessage || err.message)) || String(err))));
+            });
+          });
+          st.appendChild(dep);
+          st.appendChild(document.createTextNode(' · or '));
+          var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'the Safe app ↗'; st.appendChild(a);
+          st.appendChild(document.createTextNode('. Skipped for now.')); return;
         }
         rec.deployed = true; rec.threshold = info.threshold; rec.owners = info.owners;
         if (hasSafeService(c.id)) {

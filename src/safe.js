@@ -343,6 +343,45 @@ var SAFE_ONCHAIN_ABI = [
 // True when Safe's hosted Transaction Service covers this chain. False → use the on-chain approveHash path.
 export function hasSafeService(chainId) { return !!txBase(chainId); }
 
+// Deploy the SAME-address Safe on a chain the Safe app doesn't list, by replaying its original creation. The Safe
+// address is CREATE2(factory, keccak(initializer)+saltNonce, singleton), so re-running createProxyWithNonce with the
+// exact factory/singleton/initializer/saltNonce the Safe was first deployed with reproduces the identical address on
+// any chain where that same factory+singleton exist (the canonical Safe deploys are on essentially every chain).
+var PROXY_FACTORY_ABI = [{ type: 'function', name: 'createProxyWithNonce', stateMutability: 'nonpayable', inputs: [{ name: '_singleton', type: 'address' }, { name: 'initializer', type: 'bytes' }, { name: 'saltNonce', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+
+// Read the Safe's original creation params from the tx-service of ANY chain where it already exists (params are
+// chain-independent). Public endpoint (no key required); the address MUST be checksummed or it 422s.
+export async function fetchSafeCreation(safe) {
+  var candidates = [11155111, 1, 42161, 8453, 10]; // chains with a hosted tx-service
+  for (var i = 0; i < candidates.length; i++) {
+    var base = txBase(candidates[i]); if (!base) continue;
+    try {
+      var res = await fetch(base + '/api/v1/safes/' + cs(safe) + '/creation/', { headers: headers(false) });
+      if (!res.ok) continue;
+      var j = await res.json();
+      if (j && j.factoryAddress && j.masterCopy && j.setupData) {
+        return { factory: cs(j.factoryAddress), singleton: cs(j.masterCopy), initializer: j.setupData, saltNonce: BigInt(j.saltNonce || 0) };
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Deploy the same-address Safe on `chainId` from a fetched creation record, then verify it actually landed at the
+// expected address (a differing factory/singleton on the target chain would produce a different address).
+export async function deploySafeSameAddress(chainId, creation, expectedSafe) {
+  var wallet = getWalletClient();
+  if (!wallet) throw new Error('Connect a wallet first');
+  try {
+    var active = await wallet.getChainId();
+    if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
+  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to deploy.'); }
+  var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce');
+  var code = await createPublicClientForChain(chainId).getBytecode({ address: cs(expectedSafe) }).catch(function () { return null; });
+  if (!code || code === '0x') throw new Error('Deployed, but the Safe did not land at ' + expectedSafe + ' — the factory/singleton on this chain must differ from the original.');
+  return hash;
+}
+
 // The SafeTx hash for a {to, data, value, nonce} call — what signers approve and what execTransaction must match.
 export function safeTxHashForCall(chainId, safe, call) {
   return safeTxHashOf(chainId, safe, {
