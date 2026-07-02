@@ -8149,7 +8149,7 @@ function openPowerModal(project, action) {
     var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = avail && chainSelected[c.id] !== false; cb.disabled = !avail;
     cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
     r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
-    if (!avail) { var un = el('span', 'operator-edit-cur'); un.style.marginLeft = '6px'; un.textContent = action.unavailableNote || '(unavailable here)'; r2.appendChild(un); r2.style.opacity = '0.55'; }
+    if (!avail) { var un = el('span', 'operator-edit-cur'); un.style.marginLeft = '6px'; un.style.marginTop = '0'; un.textContent = action.unavailableNote || '(unavailable here)'; r2.appendChild(un); r2.style.opacity = '0.55'; }
     chainBox.appendChild(r2);
   });
   content.appendChild(chainBox);
