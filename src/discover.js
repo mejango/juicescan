@@ -7279,7 +7279,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           var none = el('div', 'backoffice-none'); none.textContent = 'No pending transactions.';
           list.appendChild(none); return;
         }
-        txs.forEach(function (tx) {
+        txs.forEach(function (tx, txIdx) {
           var nconf = safeUsableConfirmationCount(tx), need = tx.confirmationsRequired || info.threshold;
           var row = el('div', 'backoffice-row');
           var main = el('div', 'backoffice-main');
@@ -7340,19 +7340,28 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           } else if (signed) {
             var done = el('span', 'backoffice-signed'); done.textContent = 'You signed'; actions.appendChild(done);
           }
-          // Enough signatures → execute straight from here (connected wallet sends it + pays gas).
+          // Enough signatures → execute straight from here (connected wallet sends it + pays gas). But a Safe runs
+          // its queue in STRICT nonce order, so only the FRONT tx (txIdx 0 = the current nonce) is executable now;
+          // a higher-nonce tx reverts until the lower one lands, and Relayr can't batch-simulate them (it quotes
+          // every bundled tx against the current nonce, so future-nonce ones fail signature/nonce validation — the
+          // reported "SimulationReverted"). So only the front tx is batch-eligible + clickable; the rest are gated.
           if (nconf >= need) {
-            ready.push({ cid: c.id, chain: c.name, tx: tx });
             var execBtn = el('button', 'detail-check-btn'); execBtn.textContent = 'Execute';
-            execBtn.addEventListener('click', function () {
-              if (!(getAccount && getAccount())) { connect(); return; }
-              reviewQueuedSafeTx(c.id, c.name, tx, 'Execute').then(function (ok) {
-                if (!ok) return;
-                execBtn.disabled = true; execBtn.textContent = 'Executing…';
-                executeSafeTx(c.id, safe, tx).then(function () { execBtn.textContent = 'Sent'; setTimeout(function () { loadQueues(info); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }, 2000); })
-                  .catch(function (e) { execBtn.disabled = false; execBtn.textContent = 'Execute'; alert((e && (e.shortMessage || e.message)) || e); });
+            if (txIdx === 0) {
+              ready.push({ cid: c.id, chain: c.name, tx: tx });
+              execBtn.addEventListener('click', function () {
+                if (!(getAccount && getAccount())) { connect(); return; }
+                reviewQueuedSafeTx(c.id, c.name, tx, 'Execute').then(function (ok) {
+                  if (!ok) return;
+                  execBtn.disabled = true; execBtn.textContent = 'Executing…';
+                  executeSafeTx(c.id, safe, tx).then(function () { execBtn.textContent = 'Sent'; setTimeout(function () { loadQueues(info); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }, 2000); })
+                    .catch(function (e) { execBtn.disabled = false; execBtn.textContent = 'Execute'; alert((e && (e.shortMessage || e.message)) || e); });
+                });
               });
-            });
+            } else {
+              execBtn.disabled = true;
+              execBtn.title = 'Executes after #' + txs[0].nonce + ' lands — the Safe runs its queue in nonce order';
+            }
             actions.appendChild(execBtn);
           }
           row.appendChild(actions);
@@ -7365,17 +7374,19 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       });
     });
 
-    // Once every chain's queue has loaded, offer to execute all ready txs in ONE Relayr payment.
+    // Offer to execute the front-of-queue txs (one per chain — `ready` is already filtered to txIdx 0) in ONE
+    // Relayr payment. These are all at each chain's current nonce, so Relayr can simulate them together; later
+    // nonces surface as their own batch once these land.
     Promise.all(chainLoads).then(function () {
       batchBar.innerHTML = '';
-      if (ready.length < 2) return; // a single ready tx → just use its own Execute button
-      var note = el('span', 'backoffice-batch-note'); note.textContent = ready.length + ' transactions ready across ' + (chains.length) + ' chains. '; batchBar.appendChild(note);
+      if (ready.length < 2) return; // 0/1 chain executable now → just use its own Execute button
+      var note = el('span', 'backoffice-batch-note'); note.textContent = ready.length + ' transactions executable now (one per chain). '; batchBar.appendChild(note);
       var allBtn = el('button', 'detail-check-btn'); allBtn.textContent = 'Execute all';
       allBtn.addEventListener('click', function () {
         if (!(getAccount && getAccount())) { connect(); return; }
         var entries = ready.map(function (r) { return safeExecRelayrTx(r.cid, safe, r.tx); });
         var preview = ready.map(function (r) { return { cid: r.cid, chain: r.chain, label: labelForQueuedTx(r.tx) + ' → ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to) + ' (#' + r.tx.nonce + ')' }; });
-        runRelayrBundle(entries, { title: 'Execute on ' + ready.length + ' chains', preview: preview }).then(function (res) {
+        runRelayrBundle(entries, { title: 'Execute on ' + ready.length + ' chain' + (ready.length > 1 ? 's' : ''), preview: preview }).then(function (res) {
           if (res && res.done) loadQueues(info);
         });
       });
