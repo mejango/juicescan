@@ -160,7 +160,7 @@ export function renderPayoutsComponent() {
     // Amount
     var amtSection = el('div', 'component-section');
     var amtLabel = el('label', 'input-label');
-    amtLabel.innerHTML = 'amount <span class="type-hint">' + state.decimals + ' decimals</span>';
+    amtLabel.innerHTML = 'amount <span class="type-hint">' + payoutAmountDecimals(state.currencyMode, state.decimals) + ' decimals</span>';
     amtSection.appendChild(amtLabel);
     var amtInput = el('input', 'field numeric-field');
     amtInput.type = 'text';

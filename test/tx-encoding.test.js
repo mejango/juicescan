@@ -8,7 +8,7 @@ import { __test } from '../src/create-flow.js';
 const {
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, customCurrencyId, customAcctDecimals, customAccounting,
-  applyAccountingDefaults, uint256FromAddress, deploySalt, priceUnits,
+  applyAccountingDefaults, uint256FromAddress, deploySalt, priceUnits, fundAccessAmountDecimals, fundAccessUnits,
 } = __test;
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
@@ -17,6 +17,7 @@ const ALICE = '0x1111111111111111111111111111111111111111';
 const BOB = '0x2222222222222222222222222222222222222222';
 const HOOK = '0x3333333333333333333333333333333333333333';
 const DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F'; // 18-dec
+const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'; // 6-dec
 const cur32 = (a) => Number(BigInt(a) % (1n << 32n));
 
 // A minimal custom-flow state on Ethereum mainnet with one stage.
@@ -155,6 +156,48 @@ describe('ruleset currency/decimals — the money-pricing path', () => {
     expect(lim).toBeTruthy();
     expect(lim.amount).toBe(priceUnits('1.5', 6)); // 1500000 — NOT 1.5e18
     expect(lim.currency).toBe(cur32(SIXDEC));
+  });
+  it('single-token fund access uses token decimals only when the limit currency is token-keyed', () => {
+    const s = baseState({ accepts: ['usdc'] });
+    const acct = acctTokenFor(s, 1);
+    expect(acct.token.toLowerCase()).toBe(USDC.toLowerCase());
+    expect(fundAccessAmountDecimals(cur32(USDC), acct)).toBe(6);
+    expect(fundAccessAmountDecimals(2, acct)).toBe(18);
+    expect(fundAccessUnits('1.5', cur32(USDC), acct)).toBe(parseUnits('1.5', 6));
+    expect(fundAccessUnits('1.5', 2, acct)).toBe(parseUnits('1.5', 18));
+  });
+  it('single-token USDC payout limits round-trip token-keyed and USD currencies at different scales', () => {
+    const s = baseState({ accepts: ['usdc'] });
+    const st = s.stages[0];
+    st.tokenMode = 'none';
+    st.payoutMode = 'limited';
+    st.payoutRecipients = [{ type: 'wallet', address: BOB, amountEth: '1.5' }];
+
+    st.payoutCurrency = cur32(USDC);
+    let rs = assembleRuleset(s, st, 0, 1, true, false, 0);
+    let lim = (rs.fundAccessLimitGroups || []).flatMap((g) => g.payoutLimits || [])[0];
+    expect(lim.currency).toBe(cur32(USDC));
+    expect(lim.amount).toBe(parseUnits('1.5', 6));
+
+    st.payoutCurrency = 2;
+    rs = assembleRuleset(s, st, 0, 1, true, false, 0);
+    lim = (rs.fundAccessLimitGroups || []).flatMap((g) => g.payoutLimits || [])[0];
+    expect(lim.currency).toBe(2);
+    expect(lim.amount).toBe(parseUnits('1.5', 18));
+  });
+  it('single-token USDC surplus allowances use the allowance currency decimals', () => {
+    const s = baseState({ accepts: ['usdc'] });
+    const st = s.stages[0];
+    st.tokenMode = 'none';
+    st.payoutMode = 'none';
+    st.surplusAllowanceOn = true;
+    st.surplusAllowanceUnlimited = false;
+    st.surplusAllowanceAmount = '2.25';
+    st.surplusAllowanceCurrency = cur32(USDC);
+    const rs = assembleRuleset(s, st, 0, 1, true, false, 0);
+    const allowance = (rs.fundAccessLimitGroups || []).flatMap((g) => g.surplusAllowances || [])[0];
+    expect(allowance.currency).toBe(cur32(USDC));
+    expect(allowance.amount).toBe(parseUnits('2.25', 6));
   });
 });
 

@@ -14,7 +14,7 @@ import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, exe
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
-import { toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata } from './create-flow.js';
+import { toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
 import { TIER_UNLIMITED_SUPPLY, build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
@@ -8371,9 +8371,19 @@ function rfNewRow(label, newVal) {
 // Unit + decimals for a JB currency id (1=ETH, 2=USD as 18-dec; token-keyed → the accounting token).
 function currencyMeta(cur, acct) {
   cur = Number(cur);
-  if (cur === 1) return { decimals: 18, symbol: 'ETH', tokenKeyed: false };
+  var isNativeAcct = !!(acct && acct.address && acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase());
+  if (cur === 1) return { decimals: 18, symbol: 'ETH', tokenKeyed: isNativeAcct };
   if (cur === 2) return { decimals: 18, symbol: 'USD', tokenKeyed: false };
-  return { decimals: acct.decimals, symbol: acct.symbol, tokenKeyed: true };
+  var acctCur = 0;
+  if (acct) {
+    try { acctCur = acct.currency != null ? Number(acct.currency) : Number(BigInt(acct.address) & 0xffffffffn); } catch (_) { acctCur = 0; }
+  }
+  if (cur === acctCur) return { decimals: acct.decimals, symbol: acct.symbol, tokenKeyed: true };
+  return { decimals: 18, symbol: 'currency ' + cur, tokenKeyed: false };
+}
+
+function formatCurrencyAmount(amount, meta) {
+  return formatAmount(amount, meta.decimals) + ' ' + meta.symbol;
 }
 
 // Distribute payouts: send the project's funds to its recipients (splits, then owner) on one chain.
@@ -8417,7 +8427,7 @@ function buildPayoutsModal(project, acctKind) {
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
     var line = el('div', 'ops-preview-line ops-preview-fee');
-    line.textContent = 'Up to 2.5% protocol fee (≤ ' + formatBalance(amount / 40n, state.acct.decimals, state.acct.symbol) + ') on payouts to non-feeless recipients';
+    line.textContent = 'Up to 2.5% protocol fee (≤ ' + formatCurrencyAmount(amount / 40n, state.meta) + ') on payouts to non-feeless recipients';
     preview.appendChild(line);
     var to = el('div', 'ops-preview-line ops-preview-feetok');
     to.appendChild(document.createTextNode('↳ paid into '));
@@ -8522,12 +8532,16 @@ function buildUseAllowanceModal(project, acctKind) {
     var fee = state.feeless ? 0n : amount / 40n; // 2.5% — waived when the beneficiary is a feeless address
     var net = amount - fee;
     var recv = el('div', 'ops-preview-line ops-preview-recv');
-    recv.textContent = 'Beneficiary receives ~ ' + formatBalance(net, state.acct.decimals, state.acct.symbol);
+    recv.textContent = 'Beneficiary receives ~ ' + formatCurrencyAmount(net, state.meta);
     preview.appendChild(recv);
     if (state.feeless) {
       var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'No protocol fee — this address is feeless for the project.'; preview.appendChild(fl);
-    } else {
+    } else if (state.meta.tokenKeyed) {
       renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: fee, beneficiary: getAccount && getAccount() });
+    } else {
+      var cv = el('div', 'ops-preview-line ops-preview-feetok');
+      cv.textContent = 'Protocol fee is converted by the terminal at the on-chain price.';
+      preview.appendChild(cv);
     }
   }
   amt.addEventListener('input', updateAllowancePreview);
@@ -8546,29 +8560,32 @@ function buildUseAllowanceModal(project, acctKind) {
       isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updateAllowancePreview(); });
       var term = getAddress('JBMultiTerminal', state.chainId);
       var fal = getAddress('JBFundAccessLimits', state.chainId);
-      var isNative = acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
-      var acctCur = isNative ? 1 : Number(BigInt(acct.address) & 0xffffffffn);
-      var matchCur = function (c) { c = Number(c); return isNative ? (c === 1 || c === 61166) : c === acctCur; };
+      var acctCur = acct.currency != null ? Number(acct.currency) : Number(BigInt(acct.address) & 0xffffffffn);
       return Promise.all([
         term ? read(state.chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, acct.address]).catch(function () { return null; }) : Promise.resolve(null),
         (fal && term && project.ruleset) ? read(state.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, BigInt(project.ruleset.id), term, acct.address]).catch(function () { return []; }) : Promise.resolve([]),
         (fal && term && project.ruleset) ? read(state.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, BigInt(project.ruleset.id), term, acct.address]).catch(function () { return []; }) : Promise.resolve([]),
       ]).then(function (r) {
         var balance = r[0] != null ? BigInt(r[0]) : 0n;
-        var payoutCap = 0n; (r[1] || []).forEach(function (l) { if (matchCur(l.currency)) payoutCap += l.amount; });
-        var allowCap = 0n; (r[2] || []).forEach(function (l) { if (matchCur(l.currency)) allowCap += l.amount; });
-        var unlimitedPayout = payoutCap >= (2n ** 200n);
-        var surplus = unlimitedPayout ? 0n : (balance > payoutCap ? balance - payoutCap : 0n);
+        var allowances = r[2] || [];
+        state.currency = allowances.length ? Number(allowances[0].currency) : ((r[1] && r[1].length) ? Number(r[1][0].currency) : acctCur);
+        state.meta = currencyMeta(state.currency, acct);
+        var sameCurrency = function (c) { return Number(c) === Number(state.currency); };
+        var payoutCap = 0n; (r[1] || []).forEach(function (l) { if (sameCurrency(l.currency)) payoutCap += BigInt(l.amount); });
+        var allowCap = 0n; allowances.forEach(function (l) { if (sameCurrency(l.currency)) allowCap += BigInt(l.amount); });
+        var unlimitedPayout = state.meta.tokenKeyed && payoutCap >= (2n ** 200n);
+        var surplus = state.meta.tokenKeyed ? (unlimitedPayout ? 0n : (balance > payoutCap ? balance - payoutCap : 0n)) : null;
         var allowUnlimited = allowCap >= (2n ** 200n);
         // Usable = surplus capped by the allowance (the terminal enforces both).
-        state.usable = allowUnlimited ? surplus : (surplus < allowCap ? surplus : allowCap);
-        state.currency = (r[1] && r[1].length) ? Number(r[1][0].currency) : acctCur;
-        state.meta = currencyMeta(state.currency, acct);
+        state.usable = state.meta.tokenKeyed ? (allowUnlimited ? surplus : (surplus < allowCap ? surplus : allowCap)) : (allowUnlimited ? null : allowCap);
         unit.textContent = state.meta.symbol;
         maxBtn.style.display = state.meta.tokenKeyed ? '' : 'none';
-        bal.textContent = state.usable > 0n
+        bal.textContent = state.meta.tokenKeyed ? (state.usable > 0n
           ? ('Usable on ' + chainNameOf(state.chainId) + ': ' + formatBalance(state.usable, acct.decimals, acct.symbol))
-          : ('No usable surplus allowance on ' + chainNameOf(state.chainId) + ' right now.');
+          : ('No usable surplus allowance on ' + chainNameOf(state.chainId) + ' right now.'))
+          : (allowUnlimited
+            ? ('Allowance on ' + chainNameOf(state.chainId) + ': unlimited ' + state.meta.symbol)
+            : (allowCap > 0n ? ('Allowance on ' + chainNameOf(state.chainId) + ': ' + formatCurrencyAmount(allowCap, state.meta)) : ('No usable surplus allowance on ' + chainNameOf(state.chainId) + ' right now.')));
         updateAllowancePreview();
       });
     }).catch(function () { bal.textContent = 'Could not read the terminal.'; });
@@ -8581,7 +8598,7 @@ function buildUseAllowanceModal(project, acctKind) {
     if (!state.acct || !state.meta) { status.textContent = 'Loading…'; return; }
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (amount === 0n) { status.textContent = 'Enter an amount'; return; }
-    if (state.meta.tokenKeyed && state.usable != null && amount > state.usable) { status.textContent = 'Amount exceeds usable allowance'; return; }
+    if (state.usable != null && amount > state.usable) { status.textContent = 'Amount exceeds usable allowance'; return; }
     var term = getAddress('JBMultiTerminal', state.chainId);
     if (!term) { status.textContent = 'No terminal on this chain'; return; }
     btn.disabled = true;
@@ -11510,6 +11527,27 @@ function openQueueRulesetModal(project) {
   };
   var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = true; });
 
+  function queueDefaultCurrency(acct) {
+    if (!acct || !acct.address) return 1;
+    if (acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return 1;
+    var usdc = (USDC_BY_CHAIN[project.chainId] || '').toLowerCase();
+    if (usdc && acct.address.toLowerCase() === usdc) return 2;
+    return Number(acct.currency || (BigInt(acct.address) & 0xffffffffn));
+  }
+
+  function applyQueueAccounting(acct) {
+    var isNative = acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
+    var usdc = (USDC_BY_CHAIN[project.chainId] || '').toLowerCase();
+    var isUsdc = !isNative && usdc && acct.address.toLowerCase() === usdc;
+    if (isNative) state.accepts = ['eth'];
+    else if (isUsdc) state.accepts = ['usdc'];
+    else {
+      state.accepts = ['custom'];
+      state.customToken = { address: acct.address, symbol: acct.symbol || acctTokenLabel(acct.address), decimals: Number(acct.decimals) || 18, status: 'ok' };
+    }
+    state.storePricingCurrency = queueDefaultCurrency(acct);
+  }
+
   // Read the current ruleset's data hook (the 721 shop; on single-chain it IS metadata.dataHook). Default the
   // choice to "continue" so queueing re-passes the hook — the encoder's default would silently DETACH the shop.
   read(project.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (r) {
@@ -11582,9 +11620,7 @@ function openQueueRulesetModal(project) {
   // queued ruleset if a distinct one is already queued (upcoming), otherwise the current ruleset. All values
   // (params + reserved/payout splits + fund access) default to that base, keyed on its id.
   resolveAcctToken(project.chainId, pid).then(function (acct) {
-    var isNative = acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
-    var usdc = USDC_BY_CHAIN[project.chainId];
-    state.accepts = [(!isNative && usdc && acct.address.toLowerCase() === usdc.toLowerCase()) ? 'usdc' : 'eth'];
+    applyQueueAccounting(acct);
 
     return read(project.chainId, 'JBController', upcomingRulesetAbi, 'upcomingRulesetOf', [pid]).catch(function () { return null; }).then(function (up) {
       // A genuinely-queued upcoming ruleset has an id distinct from the current one (an auto-cycle reuses the
@@ -11608,7 +11644,8 @@ function openQueueRulesetModal(project) {
         // If the project accepts more than one token, switch payouts to per-token blocks ("Payout USDC
         // funds" / "Payout ETH funds"), prefilling each token's payout limit + splits from the base ruleset.
         acctKindsForFunds(project).then(function (kinds) {
-          if (!kinds || kinds.length <= 1) return;
+          if (!kinds || !kinds.length) return;
+          if (kinds.length <= 1 && state.accepts[0] !== 'custom') return;
           var lpHook = (getAddress('BannyLPSplitHook', project.chainId) || '').toLowerCase();
           var tokCurOf = function (t) { return Number(BigInt(t) & 0xffffffffn); };
           return Promise.all(kinds.map(function (kind) {
@@ -11640,6 +11677,10 @@ function openQueueRulesetModal(project) {
   function stageFromBaseRuleset(r, m, payoutLims, surplusAllows, payoutSplits, reservedSplits) {
     var s = createStage();
     s.expanded = true;
+    var defaultCurrency = queueDefaultCurrency(acct);
+    s.baseCurrency = defaultCurrency;
+    s.payoutCurrency = defaultCurrency;
+    s.surplusAllowanceCurrency = defaultCurrency;
     if (r) {
       s.durationSeconds = Number(r.duration) || 0;
       s.durationCustom = false;
@@ -11683,18 +11724,23 @@ function openQueueRulesetModal(project) {
     } else {
       s.payoutMode = 'limited';
       s.payoutCurrency = Number(lim.currency) || 1;
-      var total = BigInt(lim.amount); // 18-decimal (parseEther on encode)
+      var total = BigInt(lim.amount);
+      var payoutDec = fundAccessAmountDecimals(s.payoutCurrency, acct);
       s.payoutRecipients = (payoutSplits || []).map(function (sp) {
-        return recFromSplit(sp, lpHook, 0, formatEther(total * BigInt(sp.percent) / BigInt(SPLITS_TOTAL)));
+        return recFromSplit(sp, lpHook, 0, formatAmount(total * BigInt(sp.percent) / BigInt(SPLITS_TOTAL), payoutDec));
       });
       if (!s.payoutRecipients.length) s.payoutRecipients = [{ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }];
     }
-    // Surplus allowance — owner withdrawal cap (18-decimal, like the create flow).
+    // Surplus allowance — owner withdrawal cap, denominated in its own fund-access currency.
     var sa = (surplusAllows || [])[0];
     if (sa && BigInt(sa.amount) > 0n) {
       s.surplusAllowanceOn = true;
       if (BigInt(sa.amount) >= (2n ** 200n)) { s.surplusAllowanceUnlimited = true; }
-      else { s.surplusAllowanceUnlimited = false; s.surplusAllowanceAmount = formatEther(BigInt(sa.amount)); s.surplusAllowanceCurrency = Number(sa.currency) || 1; }
+      else {
+        s.surplusAllowanceUnlimited = false;
+        s.surplusAllowanceCurrency = Number(sa.currency) || 1;
+        s.surplusAllowanceAmount = formatAmount(BigInt(sa.amount), fundAccessAmountDecimals(s.surplusAllowanceCurrency, acct));
+      }
     }
     return s;
   }

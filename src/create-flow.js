@@ -673,6 +673,43 @@ function customAcctSym(state) { return customAccounting(state) ? ((state.customT
 function customAcctDecimals(state) { var d = state.customToken && state.customToken.decimals; return (d != null && !isNaN(Number(d))) ? Number(d) : 18; }
 function customReady(state) { return customAccounting(state) && isAddr(state.customToken && state.customToken.address) && state.customToken.status === 'ok'; }
 
+function tokenCurrencyIdFromAddress(token) {
+  try { return token ? Number(BigInt(token) & 0xffffffffn) : 0; } catch (_) { return 0; }
+}
+
+// JBFundAccessLimits amount decimals depend on the LIMIT currency, not blindly on the terminal token.
+// Token-keyed currencies use the accounting token's own decimals; ETH/USD/custom price-feed currencies use
+// the JB fixed-point standard (18). This keeps imported/queued USDC-token limits at 6 decimals while leaving
+// USD limits at 18.
+export function fundAccessAmountDecimals(currency, acct) {
+  var cur; try { cur = Number(currency || 0); } catch (_) { cur = 0; }
+  var acctCur = 0;
+  if (acct) {
+    try { if (acct.currency != null) acctCur = Number(acct.currency); } catch (_) { acctCur = 0; }
+    if (!acctCur) acctCur = tokenCurrencyIdFromAddress(acct.token || acct.address);
+  }
+  return cur && acctCur && cur === acctCur ? (Number(acct && acct.decimals) || 18) : 18;
+}
+
+function fundAccessUnits(value, currency, acct) {
+  return priceUnits(value, fundAccessAmountDecimals(currency, acct));
+}
+
+function fundAccessCurrencyLabel(currency, state) {
+  var cur; try { cur = Number(currency || 1); } catch (_) { cur = 1; }
+  if (cur === 1) return 'ETH';
+  if (cur === 2) return 'USD';
+  var chainId = (state && state.chainIds && state.chainIds[0]) || 1;
+  var acct = state ? acctTokenFor(state, chainId) : null;
+  if (acct && cur === Number(acct.currency || 0)) {
+    if (state && customAcctSym(state)) return customAcctSym(state);
+    if (acct.token && acct.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return 'ETH';
+    if ((state.accepts || [])[0] === 'usdc') return 'USDC';
+    return 'TOKEN';
+  }
+  return 'currency ' + cur;
+}
+
 // Point every ruleset/shop currency at the right base id. A custom ERC-20 → its own currency id. Otherwise,
 // USD(2) whenever USDC is accepted (alone OR alongside ETH) so BOTH ETH and USDC resolve via the default
 // ETH/USD + USDC/USD feeds — a base of ETH(1) has no USDC→ETH feed and every USDC payment would revert.
@@ -1547,7 +1584,7 @@ function stageSummaryRaw(stage, idx, state) {
 
   // Issuance — weight, reserved split, issuance cut.
   if (stage.tokenMode === 'custom') {
-    parts.push('issues ' + (stage.weight || '0') + ' tokens / ' + (stage.baseCurrency === 2 ? 'USD' : 'ETH'));
+    parts.push('issues ' + (stage.weight || '0') + ' tokens / ' + fundAccessCurrencyLabel(stage.baseCurrency, state));
     var reservedPct = (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
     if (reservedPct > 0) {
       var rLine = round2(reservedPct) + '% reserved';
@@ -1573,7 +1610,7 @@ function stageSummaryRaw(stage, idx, state) {
       parts.push('remainder → owner');
     }
   } else if (stage.payoutMode === 'limited') {
-    var pc = stage.payoutCurrency === 2 ? 'USD' : 'ETH';
+    var pc = fundAccessCurrencyLabel(stage.payoutCurrency, state);
     var named = (stage.payoutRecipients || []).filter(function (r) { return Number(r.amountEth) > 0; });
     if (named.length) named.forEach(function (r) { parts.push('pays ' + r.amountEth + ' ' + pc + ' → ' + recipLabel(r)); });
     else parts.push('payouts set, no recipients yet');
@@ -1582,7 +1619,7 @@ function stageSummaryRaw(stage, idx, state) {
   // Surplus allowance.
   if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
     if (stage.surplusAllowanceUnlimited) parts.push('owner can withdraw all surplus');
-    else if (Number(stage.surplusAllowanceAmount) > 0) parts.push('owner can withdraw ' + stage.surplusAllowanceAmount + ' ' + (stage.surplusAllowanceCurrency === 2 ? 'USD' : 'ETH') + ' of surplus');
+    else if (Number(stage.surplusAllowanceAmount) > 0) parts.push('owner can withdraw ' + stage.surplusAllowanceAmount + ' ' + fundAccessCurrencyLabel(stage.surplusAllowanceCurrency, state) + ' of surplus');
     else parts.push('surplus allowance on');
   }
 
@@ -3703,12 +3740,19 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     var payoutLimits1 = [];
     if (stage.payoutMode !== 'none') {
       if (stage.payoutMode === 'unlimited') payoutLimits1.push({ amount: UINT224_MAX, currency: acct.currency });
-      else payoutLimits1.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n), currency: stage.payoutCurrency || 1 });
+      else {
+        var payoutCurrency = stage.payoutCurrency || 1;
+        payoutLimits1.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + fundAccessUnits(amtAt(x, idx), payoutCurrency, acct); }, 0n), currency: payoutCurrency });
+      }
     }
     var surplusAllowances1 = [];
     if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
       if (stage.surplusAllowanceUnlimited) surplusAllowances1.push({ amount: UINT224_MAX, currency: acct.currency });
-      else { var saAmt = safeParseEther(stage.surplusAllowanceAmount); if (saAmt > 0n) surplusAllowances1.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 }); }
+      else {
+        var saCurrency = stage.surplusAllowanceCurrency || 1;
+        var saAmt = fundAccessUnits(stage.surplusAllowanceAmount, saCurrency, acct);
+        if (saAmt > 0n) surplusAllowances1.push({ amount: saAmt, currency: saCurrency });
+      }
     }
     if (payoutLimits1.length || surplusAllowances1.length) {
       rs.fundAccessLimitGroups.push({ terminal: getAddress('JBMultiTerminal', chainId), token: acct.token, payoutLimits: payoutLimits1, surplusAllowances: surplusAllowances1 });
@@ -4035,7 +4079,7 @@ export const __test = {
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
-  createPayoutKinds, safeParseEther, priceUnits, uint256FromAddress, deploySalt,
+  createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress, deploySalt,
   splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut,
 };
