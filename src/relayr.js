@@ -83,9 +83,20 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.
 export async function relayrPostBundle(transactions) {
+  // Order each chain's transactions by their position in the array (per-chain 0,1,2… virtual nonces) and run in
+  // ChainIndependent mode: chains execute in parallel, but a single chain's txs run STRICTLY in that order — each
+  // after the previous confirms, against the updated state. This lets a bundle carry sequential same-chain txs
+  // (e.g. Safe execTransactions at consecutive nonces) without Relayr quoting every one against the current state
+  // (which reverts future-nonce txs — the "Disabled"-mode SimulationReverted). Cross-chain one-per-chain bundles
+  // are unchanged (every tx gets virtual nonce 0). Callers must build the array in intended per-chain order.
+  var perChain = {};
+  var ordered = transactions.map(function (t) {
+    var vn = perChain[t.chain] || 0; perChain[t.chain] = vn + 1;
+    return Object.assign({}, t, { virtual_nonce: vn });
+  });
   var res = await fetch(RELAYR_API + '/v1/bundle/prepaid', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transactions: transactions, virtual_nonce_mode: 'Disabled' }),
+    body: JSON.stringify({ transactions: ordered, virtual_nonce_mode: 'ChainIndependent' }),
   });
   if (!res.ok) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}

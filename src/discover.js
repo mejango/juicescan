@@ -7346,9 +7346,12 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           // every bundled tx against the current nonce, so future-nonce ones fail signature/nonce validation — the
           // reported "SimulationReverted"). So only the front tx is batch-eligible + clickable; the rest are gated.
           if (nconf >= need) {
+            // Every ready tx joins the batch — "Execute all" bundles them via Relayr in ChainIndependent mode,
+            // which runs each chain's txs in nonce order in ONE payment. But DIRECT (non-Relayr) execution from a
+            // per-tx button can only run the current nonce, so only the front tx (txIdx 0) is individually clickable.
+            ready.push({ cid: c.id, chain: c.name, tx: tx });
             var execBtn = el('button', 'detail-check-btn'); execBtn.textContent = 'Execute';
             if (txIdx === 0) {
-              ready.push({ cid: c.id, chain: c.name, tx: tx });
               execBtn.addEventListener('click', function () {
                 if (!(getAccount && getAccount())) { connect(); return; }
                 reviewQueuedSafeTx(c.id, c.name, tx, 'Execute').then(function (ok) {
@@ -7360,7 +7363,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
               });
             } else {
               execBtn.disabled = true;
-              execBtn.title = 'Executes after #' + txs[0].nonce + ' lands — the Safe runs its queue in nonce order';
+              execBtn.title = 'Executes after #' + txs[0].nonce + ' lands — or use "Execute all" to run them in order in one payment';
             }
             actions.appendChild(execBtn);
           }
@@ -7375,18 +7378,21 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
     });
 
     // Offer to execute the front-of-queue txs (one per chain — `ready` is already filtered to txIdx 0) in ONE
-    // Relayr payment. These are all at each chain's current nonce, so Relayr can simulate them together; later
-    // nonces surface as their own batch once these land.
+    // Relayr payment. Relayr runs each chain's txs in nonce order (ChainIndependent virtual nonces), so this can
+    // include multiple sequential same-chain txs — they execute in order off the one payment.
     Promise.all(chainLoads).then(function () {
       batchBar.innerHTML = '';
-      if (ready.length < 2) return; // 0/1 chain executable now → just use its own Execute button
-      var note = el('span', 'backoffice-batch-note'); note.textContent = ready.length + ' transactions executable now (one per chain). '; batchBar.appendChild(note);
+      if (ready.length < 2) return; // a single ready tx → just use its own Execute button
+      var nChains = Object.keys(ready.reduce(function (m, r) { m[r.cid] = 1; return m; }, {})).length;
+      var note = el('span', 'backoffice-batch-note');
+      note.textContent = ready.length + ' transactions ready' + (nChains > 1 ? ' across ' + nChains + ' chains' : '') + ' — executed in nonce order in one payment. ';
+      batchBar.appendChild(note);
       var allBtn = el('button', 'detail-check-btn'); allBtn.textContent = 'Execute all';
       allBtn.addEventListener('click', function () {
         if (!(getAccount && getAccount())) { connect(); return; }
         var entries = ready.map(function (r) { return safeExecRelayrTx(r.cid, safe, r.tx); });
         var preview = ready.map(function (r) { return { cid: r.cid, chain: r.chain, label: labelForQueuedTx(r.tx) + ' → ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to) + ' (#' + r.tx.nonce + ')' }; });
-        runRelayrBundle(entries, { title: 'Execute on ' + ready.length + ' chain' + (ready.length > 1 ? 's' : ''), preview: preview }).then(function (res) {
+        runRelayrBundle(entries, { title: 'Execute ' + ready.length + ' transaction' + (ready.length > 1 ? 's' : ''), preview: preview }).then(function (res) {
           if (res && res.done) loadQueues(info);
         });
       });
