@@ -952,31 +952,76 @@ function openAddTierModal(project, shop) {
     var nameHint = el('div', 'tier-split-projname'); nameHint.style.display = 'none'; row.appendChild(nameHint);
     var benefRow = el('div', 'tier-split-benef'); benefRow.style.display = 'none';
     var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… who receives the project’s tokens'; benefRow.appendChild(benef);
+    var benefHint = el('div', 'splits-edit-hint'); benefRow.appendChild(benefHint);
     row.appendChild(benefRow);
+    var recipEnsAddr = null;
+    function parseRecipientAddress() {
+      var v = (recip.value || '').trim();
+      if (isAddr(v)) return v;
+      if (isEnsInput(v)) {
+        if (!recipEnsAddr) throw new Error(v + ' has not resolved to an address yet');
+        return recipEnsAddr;
+      }
+      throw new Error('Enter a 0x address or ENS name');
+    }
+    var recipPerChain = makePerChainAddressControl(allChains, parseRecipientAddress, {
+      label: 'Recipient',
+      defaultRaw: function () { return recipEnsAddr || (recip.value || '').trim(); },
+      projectId: project.id,
+      projectSymbol: project.tokenSymbol,
+    });
+    row.appendChild(recipPerChain.node);
+    var benefDefaultValue = attachAddressRecognition(benef, benefHint, splitRefChain, {
+      label: 'Project token beneficiary',
+      projectId: project.id,
+      projectSymbol: project.tokenSymbol,
+    });
+    var benefPerChain = makePerChainAddressControl(allChains, benefDefaultValue, {
+      label: 'Project token beneficiary',
+      defaultRaw: function () { return (benef.value || '').trim(); },
+      projectId: project.id,
+      projectSymbol: project.tokenSymbol,
+    });
+    benefRow.appendChild(benefPerChain.node);
     var rec = { pct: pct, recip: recip, benef: benef, nameHint: nameHint };
     function refresh() {
       var v = (recip.value || '').trim();
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
+        recipPerChain.node.style.display = 'none';
         benefRow.style.display = ''; nameHint.style.display = ''; nameHint.className = 'tier-split-projname'; nameHint.textContent = 'Looking up project #' + v + '…';
         resolveSplitProject(v, splitRefChain).then(function (info) {
           if ((recip.value || '').trim() !== v) return;
           if (info) { nameHint.textContent = '→ ' + info.name; }
           else { nameHint.className = 'tier-split-projname warn'; nameHint.textContent = 'No project #' + v + ' found on this chain.'; }
         });
-      } else { benefRow.style.display = 'none'; nameHint.style.display = 'none'; }
+      } else {
+        benefRow.style.display = 'none';
+        recipPerChain.node.style.display = allChains.length > 1 ? '' : 'none';
+        if (isEnsInput(v)) {
+          recipEnsAddr = null; nameHint.style.display = ''; nameHint.className = 'tier-split-projname'; nameHint.textContent = 'Resolving ' + v + '…';
+          ensAddressOf(v).then(function (addr) {
+            if ((recip.value || '').trim() !== v) return;
+            if (addr) { recipEnsAddr = addr; nameHint.className = 'tier-split-projname'; nameHint.textContent = addr; }
+            else { recipEnsAddr = null; nameHint.className = 'tier-split-projname warn'; nameHint.textContent = 'No address set for ' + v; }
+          }).catch(function () { if ((recip.value || '').trim() === v) { recipEnsAddr = null; nameHint.className = 'tier-split-projname warn'; nameHint.textContent = 'Could not resolve ' + v; } });
+        } else if (isAddr(v)) {
+          recipEnsAddr = null; nameHint.style.display = ''; describeKnownAddress(splitRefChain, v, nameHint, { hintClass: 'tier-split-projname', projectId: project.id, projectSymbol: project.tokenSymbol });
+        } else { recipEnsAddr = null; nameHint.style.display = 'none'; }
+      }
     }
     recip.addEventListener('input', refresh);
     rm.addEventListener('click', function (e) { e.preventDefault(); splitRows = splitRows.filter(function (x) { return x !== rec; }); row.remove(); if (!splitRows.length) { splitCb.checked = false; splitWrap.style.display = 'none'; } });
     rec.isEmpty = function () { return !(recip.value || '').trim() && !(pct.value || '').trim(); };
     rec.parse = function () {
       var v = (recip.value || '').trim();
-      if (isAddr(v)) return { projectId: 0, beneficiary: v };
+      if (isAddr(v) || isEnsInput(v)) return { projectId: 0, beneficiary: recipPerChain.snapshot() };
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
-        var b = (benef.value || '').trim();
-        if (!isAddr(b)) throw new Error('Project #' + v + ' needs a token beneficiary address');
-        return { projectId: Number(v), beneficiary: b };
+        return { projectId: Number(v), beneficiary: benefPerChain.snapshot() };
       }
-      throw new Error('Enter a 0x address or a project ID');
+      throw new Error('Enter a 0x address, ENS name, or a project ID');
+    };
+    rec.snapshot = function () {
+      return { pct: (pct.value || '').trim(), recip: (recip.value || '').trim(), benef: (benef.value || '').trim(), parsed: rec.parse() };
     };
     splitRowsBox.appendChild(row); splitRows.push(rec);
   }
@@ -1110,6 +1155,19 @@ function openAddTierModal(project, shop) {
   var reserveBenefInput = el('input', 'operator-edit-jwt operator-inline-addr'); reserveBenefInput.type = 'text'; reserveBenefInput.placeholder = '0x… address';
   freqRow.appendChild(reserveBenefInput);
   reserveWrap.appendChild(freqRow);
+  var reserveBenefHint = el('div', 'operator-edit-token-name'); reserveWrap.appendChild(reserveBenefHint);
+  var reserveBenefValue = attachAddressRecognition(reserveBenefInput, reserveBenefHint, splitRefChain, {
+    label: 'Reserve beneficiary',
+    projectId: project.id,
+    projectSymbol: project.tokenSymbol,
+  });
+  var reserveBenefPerChain = makePerChainAddressControl(allChains, reserveBenefValue, {
+    label: 'Reserve beneficiary',
+    defaultRaw: function () { return (reserveBenefInput.value || '').trim(); },
+    projectId: project.id,
+    projectSymbol: project.tokenSymbol,
+  });
+  reserveWrap.appendChild(reserveBenefPerChain.node);
   reserveCb.addEventListener('change', function () { reserveWrap.style.display = reserveCb.checked ? '' : 'none'; });
 
   // Flags — one per row, each with a plain-language subtitle.
@@ -1166,14 +1224,14 @@ function openAddTierModal(project, shop) {
   // Snapshot the current form (and its split rows, read into plain data) so it can be staged + reset.
   function snapshotSplits() {
     return splitRows.filter(function (r) { return !r.isEmpty(); }).map(function (r) {
-      return { pct: (r.pct.value || '').trim(), recip: (r.recip.value || '').trim(), benef: (r.benef.value || '').trim() };
+      return r.snapshot ? r.snapshot() : { pct: (r.pct.value || '').trim(), recip: (r.recip.value || '').trim(), benef: (r.benef.value || '').trim() };
     });
   }
   function collectForm() {
     return {
       name: nameInput.value, price: priceInput.value, supply: unlimitedCb.checked ? '' : supplyInput.value, priceDecimals: priceDecimals,
       imageFile: selectedMedia,
-      category: categorySelect.value, reserveFreq: reserveCb.checked ? reserveFreqInput.value : '', reserveBenef: reserveBenefInput.value,
+      category: categorySelect.value, reserveFreq: reserveCb.checked ? reserveFreqInput.value : '', reserveBenef: reserveCb.checked ? reserveBenefPerChain.snapshot() : '',
       votingUnits: votingInput.value,
       splitOn: splitCb.checked, splits: snapshotSplits(), splitRefChain: splitRefChain,
       discountPct: discCb.checked ? discInput.value : '',
@@ -1193,6 +1251,7 @@ function openAddTierModal(project, shop) {
     unlimitedCb.checked = true; supplyWrap.style.display = 'none'; supplyInput.value = '';
     categorySelect.value = '0'; lastCatValue = '0';
     reserveCb.checked = false; reserveWrap.style.display = 'none'; reserveFreqInput.value = ''; reserveBenefInput.value = '';
+    reserveBenefInput.dispatchEvent(new Event('input')); reserveBenefPerChain.reset();
     votingCb.checked = false; votingWrap.style.display = 'none'; votingInput.value = '';
     allowOwnerMintCb.checked = false; if (transfersPausableCb) transfersPausableCb.checked = false;
     cantBeRemovedCb.checked = false; allowCreditsCb.checked = true; ownerDiscountCb.checked = true;
@@ -1225,7 +1284,8 @@ function openAddTierModal(project, shop) {
 
   addAnother.addEventListener('click', function (e) {
     e.preventDefault();
-    var f = collectForm();
+    var f;
+    try { f = collectForm(); } catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
     if (!(f.name || '').trim()) { setStatus('Enter a name for this item before adding another', 'error'); return; }
     staged.push(f); renderStaged(); resetForm();
     setStatus(staged.length + ' item' + (staged.length > 1 ? 's' : '') + ' ready — fill the next, or “Add items for sale”.', 'ok');
@@ -1239,7 +1299,8 @@ function openAddTierModal(project, shop) {
     if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     var forms = staged.slice();
-    var cur = collectForm();
+    var cur;
+    try { cur = collectForm(); } catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
     if (!formIsEmpty(cur)) forms.push(cur);
     if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
     busy = true;
@@ -1251,6 +1312,7 @@ function openAddTierModal(project, shop) {
 
 // Parse a plain split row ({recip, benef}) → {projectId, beneficiary}. Mirrors the live-row parse().
 function parsePlainSplit(s) {
+  if (s && s.parsed) return s.parsed;
   var v = (s.recip || '').trim();
   if (isAddr(v)) return { projectId: 0, beneficiary: v };
   if (/^[0-9]+$/.test(v) && Number(v) > 0) {
@@ -1284,7 +1346,7 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     if (supplyStr !== '' && !(supply > 0)) { setStatus(label + 'enter a supply above 0, or leave empty for unlimited', 'error'); return; }
     var category = parseInt(form.category || '0', 10) || 0;
     var reserveFreq = parseInt(form.reserveFreq || '0', 10) || 0;
-    var reserveBenef = (form.reserveBenef || '').trim();
+    var reserveBenef = form.reserveBenef || '';
     var votingUnits = parseInt(form.votingUnits || '0', 10) || 0;
     var discountPercent = 0;
     var discountStr = (form.discountPct || '').trim();
@@ -1295,7 +1357,10 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     }
     if (reserveFreq > 0) {
       if (supply === 1) { setStatus(label + 'a reserved item needs a supply of at least 2 (or unlimited)', 'error'); return; }
-      if (!isAddr(reserveBenef)) { setStatus(label + 'enter a reserve beneficiary address', 'error'); return; }
+      for (var rci = 0; rci < selectedChains.length; rci++) {
+        var rb = materializeChainValue(reserveBenef, selectedChains[rci].id);
+        if (!isAddr(rb)) { setStatus(label + 'enter a reserve beneficiary address on ' + (selectedChains[rci].name || selectedChains[rci].id), 'error'); return; }
+      }
     }
     // Split sales — plain split data; resolve project recipients across chains.
     var splitDefs = [], splitTotalPct = 0;
@@ -1307,6 +1372,10 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
         var parsedS;
         try { parsedS = parsePlainSplit(sr[si]); } catch (e) { setStatus(label + 'recipient ' + (si + 1) + ': ' + e.message, 'error'); return; }
         splitTotalPct += sp;
+        for (var sbi = 0; sbi < selectedChains.length; sbi++) {
+          var sb = materializeChainValue(parsedS.beneficiary, selectedChains[sbi].id);
+          if (!isAddr(sb)) { setStatus(label + 'recipient ' + (si + 1) + ': enter a valid beneficiary on ' + (selectedChains[sbi].name || selectedChains[sbi].id), 'error'); return; }
+        }
         splitDefs.push({ pct: sp, projectId: parsedS.projectId, beneficiary: parsedS.beneficiary });
       }
       if (!splitDefs.length) { setStatus(label + 'add a recipient, or turn off Split sales', 'error'); return; }
@@ -1336,7 +1405,7 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     setStatus(label + 'pinning metadata…', 'pending');
     var metaUri = await pinJson(tierMeta, name + '-tier');
     built.push({
-      tierBase: build721TierConfig({
+      tierInput: {
         price: price, initialSupply: supply, unlimited: supplyStr === '', votingUnits: votingUnits, reserveFrequency: reserveFreq,
         reserveBeneficiary: reserveBenef,
         encodedIpfsUri: encodeIpfsUriToBytes32(metaUri), category: category, discountPercent: discountPercent,
@@ -1346,13 +1415,14 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
           cantBeRemoved: !!form.flags.cantBeRemoved, cantIncreaseDiscountPercent: !!form.flags.cantIncreaseDiscountPercent,
           cantBuyWithCredits: !!form.flags.cantBuyWithCredits,
         },
-      }),
+      },
+      category: category,
       splitOn: form.splitOn, splitTotalPct: splitTotalPct, splitDefs: splitDefs,
     });
   }
 
   // The hook requires tiers added in ascending category order.
-  built = sortTierEntriesByCategory(built, function (b) { return b.tierBase; });
+  built = sortTierEntriesByCategory(built, function (b) { return { category: b.category }; });
 
   setStatus('Reading 721 hooks…', 'pending');
   var hookMap = {};
@@ -1366,9 +1436,13 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
   function tiersFor(cid) {
     return built.map(function (b) {
       var splits = b.splitOn ? b.splitDefs.map(function (d) {
-        return { percent: Math.round(d.pct / b.splitTotalPct * 1e9), projectId: d.projectId > 0 ? BigInt(d.byChain[cid]) : 0n, beneficiary: d.beneficiary, preferAddToBalance: false, lockedUntil: 0, hook: ZERO_ADDRESS };
+        return { percent: Math.round(d.pct / b.splitTotalPct * 1e9), projectId: d.projectId > 0 ? BigInt(d.byChain[cid]) : 0n, beneficiary: materializeChainValue(d.beneficiary, cid), preferAddToBalance: false, lockedUntil: 0, hook: ZERO_ADDRESS };
       }) : [];
-      return Object.assign({}, b.tierBase, { splitPercent: b.splitOn ? Math.round(b.splitTotalPct / 100 * 1e9) : 0, splits: splits });
+      return build721TierConfig(Object.assign({}, b.tierInput, {
+        reserveBeneficiary: b.tierInput.reserveFrequency > 0 ? materializeChainValue(b.tierInput.reserveBeneficiary, cid) : ZERO_ADDRESS,
+        splitPercent: b.splitOn ? Math.round(b.splitTotalPct / 100 * 1e9) : 0,
+        splits: splits,
+      }));
     });
   }
 
@@ -5173,6 +5247,8 @@ function openTransferOperatorModal(project) {
 
   var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = 'New operator'; content.appendChild(nlbl);
   var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new operator address'; content.appendChild(addrInput);
+  var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
+  var operatorValueOf = attachAddressRecognition(addrInput, addrHint, project.chainId, { label: 'New operator' });
 
   var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '12px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
   var chainBox = el('div', 'splits-edit-chains');
@@ -5200,7 +5276,9 @@ function openTransferOperatorModal(project) {
     e.preventDefault();
     if (busy) return;
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
-    submitTransferOperator(project, selected, operatorAddr, addrInput.value, setStatus, modal).catch(function (err) {
+    var nextOperator;
+    try { nextOperator = operatorValueOf(); } catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
+    submitTransferOperator(project, selected, operatorAddr, nextOperator, setStatus, modal).catch(function (err) {
       busy = false; setStatus(errMessage(err, 'Transfer failed'), 'error');
     });
     busy = true;
@@ -5247,6 +5325,8 @@ function openTransferAuthorityModal(project) {
   content.appendChild(warn);
   var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = isRev ? 'New operator' : 'New owner'; content.appendChild(nlbl);
   var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'operator' : 'owner') + ' address'; content.appendChild(addrInput);
+  var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
+  var authorityValueOf = attachAddressRecognition(addrInput, addrHint, project.chainId, { label: isRev ? 'New operator' : 'New owner' });
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
@@ -5256,9 +5336,10 @@ function openTransferAuthorityModal(project) {
   var busy = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault(); if (busy) return; busy = true;
-    var to = (addrInput.value || '').trim();
     (async function () {
-      if (!isAddr(to)) { setStatus('Enter a valid 0x address', 'error'); busy = false; return; }
+      var to;
+      try { to = authorityValueOf(); }
+      catch (err0) { setStatus(err0.message || String(err0), 'error'); busy = false; return; }
       var buildCall = isRev
         ? function (cid) { var revOwner = getAddress('REVOwner', cid); if (!revOwner) throw new Error('No REVOwner on ' + chainNameOf(cid)); return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [BigInt(project.id), to] }) }; }
         : function (cid) { var jbp = getAddress('JBProjects', cid); if (!jbp) throw new Error('No JBProjects on ' + chainNameOf(cid)); return { to: jbp, data: encodeFunctionData({ abi: jbProjectsTransferAbi, functionName: 'transferFrom', args: [authorityAddr, to, BigInt(project.id)] }) }; };
@@ -7662,6 +7743,15 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode('admin', adminAddr, 'to ' + action.title.toLowerCase() + '.', homeChainId));
 
+  var chainSelected = {}; chains.forEach(function (c) { chainSelected[c.id] = true; });
+  var chainFieldRows = [];
+  function syncChainFieldRows() {
+    chainFieldRows.forEach(function (row) {
+      var on = chainSelected[row.cid] !== false;
+      row.node.classList.toggle('disabled', !on);
+      row.input.disabled = !on;
+    });
+  }
   var inputs = {};
   action.fields.forEach(function (f) {
     var lab = el('div', 'operator-edit-label'); lab.style.marginTop = '12px'; lab.textContent = f.label; content.appendChild(lab);
@@ -7671,10 +7761,43 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
       inputs[f.name] = { get: function () { return cb.checked; } };
       return;
     }
+    if (f.kind === 'address' && chains.length > 1) {
+      var wrap = el('div', 'operator-chain-addresses');
+      var rows = {};
+      chains.forEach(function (c) {
+        var row = el('div', 'operator-chain-address-row');
+        var chain = el('div', 'operator-chain-address-chain');
+        chain.appendChild(chainLogo(c.id, c.name));
+        var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
+        row.appendChild(chain);
+        var field = el('div', 'operator-chain-address-field');
+        var input = el('input', 'operator-edit-jwt operator-chain-address-input');
+        input.type = 'text'; input.placeholder = f.placeholder || '0x… address';
+        var hint = el('div', 'operator-edit-token-name');
+        var valueOf = attachAddressRecognition(input, hint, c.id, { label: f.label + ' on ' + (c.name || chainNameOf(c.id)) });
+        field.appendChild(input); field.appendChild(hint); row.appendChild(field); wrap.appendChild(row);
+        rows[c.id] = { input: input, valueOf: valueOf };
+        chainFieldRows.push({ cid: c.id, node: row, input: input });
+      });
+      content.appendChild(wrap);
+      syncChainFieldRows();
+      inputs[f.name] = { get: function () {
+        return chainValue(function (cid) {
+          if (!rows[cid]) throw new Error('No ' + f.label + ' field for ' + chainNameOf(cid));
+          return rows[cid].valueOf();
+        });
+      } };
+      return;
+    }
     var inp = el('input', 'operator-edit-jwt'); inp.type = 'text'; inp.placeholder = f.placeholder || ''; content.appendChild(inp);
+    var scalarAddressValue = null;
+    if (f.kind === 'address') {
+      var ah = el('div', 'operator-edit-token-name'); content.appendChild(ah);
+      scalarAddressValue = attachAddressRecognition(inp, ah, homeChainId, { label: f.label });
+    }
     inputs[f.name] = { get: function () {
       var raw = (inp.value || '').trim();
-      if (f.kind === 'address') { if (!isAddr(raw)) throw new Error('Enter a valid address for ' + f.label); return raw; }
+      if (f.kind === 'address') return scalarAddressValue ? scalarAddressValue() : raw;
       if (f.kind === 'bytes32') { if (!/^0x[0-9a-fA-F]{64}$/.test(raw)) throw new Error('Enter a 32-byte hex value (0x + 64 hex) for ' + f.label); return raw; }
       if (f.kind === 'uint') { if (!/^\d+$/.test(raw)) throw new Error('Enter a whole number for ' + f.label); return BigInt(raw); }
       return raw;
@@ -7682,11 +7805,10 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
   });
 
   var chlbl = el('div', 'operator-edit-label'); chlbl.style.marginTop = '14px'; chlbl.textContent = 'Set on'; content.appendChild(chlbl);
-  var chainSelected = {}; chains.forEach(function (c) { chainSelected[c.id] = true; });
   var chainBox = el('div', 'splits-edit-chains');
   chains.forEach(function (c) {
     var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
-    cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
+    cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; syncChainFieldRows(); });
     r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
     chainBox.appendChild(r2);
   });
@@ -7714,7 +7836,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
       var buildCall = function (cid) {
         var to = getAddress(contract, cid);
         if (!to) throw new Error('No ' + contract + ' on ' + chainNameOf(cid));
-        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(values, cid) }) };
+        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid) }) };
       };
       var shim = { owner: adminAddr, chains: selected, chainId: homeChainId, isRevnet: false };
       var res = await runAuthorityActionAcrossChains(shim, selected, adminAddr, buildCall, { label: action.title, title: action.title, gas: action.gas }, setStatus)
@@ -7781,6 +7903,205 @@ function crossChainValues(project, field, chainAvailable) {
   }));
 }
 function shortAddr6(a) { return a.slice(0, 6) + '…' + a.slice(-4); }
+function chainValue(fn) { fn._chainValue = true; return fn; }
+function materializeChainValue(value, chainId) {
+  return (typeof value === 'function' && value._chainValue) ? value(chainId) : value;
+}
+export function materializeChainValues(values, chainId) {
+  var out = {};
+  Object.keys(values || {}).forEach(function (k) {
+    var v = values[k];
+    out[k] = materializeChainValue(v, chainId);
+  });
+  return out;
+}
+function isEnsInput(v) { return v && v.indexOf('.') !== -1 && !isAddr(v) && !/^[0-9]+$/.test(v); }
+function tokenSymbolClean(s) { return String(s || '').replace(/\s*\(native\)/i, ''); }
+function commonTokenLabel(chainId, addr) {
+  var lc = String(addr || '').toLowerCase();
+  var toks = [];
+  try { toks = getChainTokens(Number(chainId)) || []; } catch (_) {}
+  for (var i = 0; i < toks.length; i++) {
+    if (toks[i].address && toks[i].address.toLowerCase() === lc) return tokenSymbolClean(toks[i].symbol);
+  }
+  return '';
+}
+var _projectTokenInfoCache = {};
+function projectTokenInfoFor(chainId, projectId, fallbackSymbol) {
+  if (projectId == null) return Promise.resolve(null);
+  var key = chainId + ':' + String(projectId);
+  if (!_projectTokenInfoCache[key]) {
+    _projectTokenInfoCache[key] = read(chainId, 'JBTokens', tokenOfAbi, 'tokenOf', [BigInt(projectId)]).then(function (tokenAddr) {
+      if (!tokenAddr || tokenAddr === ZERO_ADDRESS) return null;
+      return clientFor(chainId).readContract({ address: tokenAddr, abi: erc20SymbolAbi, functionName: 'symbol', args: [] })
+        .catch(function () { return fallbackSymbol || ''; })
+        .then(function (sym) { return { token: String(tokenAddr).toLowerCase(), label: (sym || fallbackSymbol || 'Project token') + ' project token' }; });
+    }).catch(function () { return null; });
+  }
+  return _projectTokenInfoCache[key];
+}
+function describeKnownAddress(chainId, addr, hint, opts) {
+  opts = opts || {};
+  var baseClass = opts.hintClass || 'operator-edit-token-name';
+  var raw = String(addr || '');
+  var lc = raw.toLowerCase();
+  hint._raw = raw;
+  hint.className = baseClass;
+  if (lc === ZERO_ADDRESS.toLowerCase()) { hint.textContent = opts.zeroLabel || 'Zero address'; return; }
+  if (lc === NATIVE_TOKEN.toLowerCase()) { hint.textContent = 'Native ETH token'; return; }
+  var cname = resolveContractName(raw, chainId);
+  if (cname) { hint.textContent = 'Known contract: ' + cname + ' on ' + chainNameOf(chainId); return; }
+  var tok = commonTokenLabel(chainId, raw);
+  if (tok) { hint.textContent = 'Known token: ' + tok + ' on ' + chainNameOf(chainId); return; }
+  var projectId = opts.projectId;
+  if (projectId != null) {
+    hint.textContent = opts.pendingLabel || 'Checking address…';
+    projectTokenInfoFor(chainId, projectId, opts.projectSymbol).then(function (info) {
+      if ((hint._raw || '').toLowerCase() !== lc) return;
+      if (info && info.token === lc) hint.textContent = 'JB ' + info.label + ' on ' + chainNameOf(chainId);
+      else if (opts.unknownLabel) hint.textContent = opts.unknownLabel(raw, chainId);
+      else hint.textContent = '';
+    });
+    return;
+  }
+  if (opts.unknownLabel) { hint.textContent = opts.unknownLabel(raw, chainId); return; }
+  ensNameOf(raw).then(function (name) {
+    if ((hint._raw || '').toLowerCase() !== lc) return;
+    hint.textContent = name ? ('ENS: ' + name) : '';
+  }).catch(function () { if ((hint._raw || '').toLowerCase() === lc) hint.textContent = ''; });
+}
+function attachAddressRecognition(input, hint, chainId, opts) {
+  opts = opts || {};
+  var baseClass = opts.hintClass || 'operator-edit-token-name';
+  function setHint(text, warn) {
+    hint.className = baseClass + (warn ? ' warn' : '');
+    hint.textContent = text || '';
+  }
+  function refresh() {
+    var raw = (input.value || '').trim();
+    input._resolvedAddress = null;
+    input._addressResolving = false;
+    if (!raw) { setHint(''); return; }
+    if (isEnsInput(raw)) {
+      input._addressResolving = true;
+      setHint('Resolving ' + raw + '…');
+      ensAddressOf(raw).then(function (addr) {
+        if ((input.value || '').trim() !== raw) return;
+        input._addressResolving = false;
+        if (!addr) { setHint('No address set for ' + raw, true); return; }
+        input._resolvedAddress = addr;
+        setHint(raw + ' → ' + addr);
+      }).catch(function () { if ((input.value || '').trim() === raw) { input._addressResolving = false; setHint('Could not resolve ' + raw, true); } });
+      return;
+    }
+    if (!isAddr(raw)) { setHint('Not a valid address', true); return; }
+    input._resolvedAddress = raw;
+    describeKnownAddress(chainId, raw, hint, opts);
+  }
+  input.addEventListener('input', refresh);
+  input.addEventListener('change', refresh);
+  refresh();
+  return function () {
+    var raw = (input.value || '').trim();
+    if (isEnsInput(raw)) {
+      if (input._resolvedAddress) return input._resolvedAddress;
+      throw new Error(raw + ' has not resolved to an address yet');
+    }
+    if (!isAddr(raw)) throw new Error('Enter a valid address' + (opts.label ? (' for ' + opts.label) : ''));
+    if (opts.normalizeNativeToZero && raw.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return ZERO_ADDRESS;
+    return raw;
+  };
+}
+function describeAddressListInput(input, hint, chainId, opts) {
+  opts = opts || {};
+  var raw = (input.value || '').trim();
+  hint.className = 'operator-edit-token-name';
+  if (!raw) { hint.textContent = ''; return; }
+  var list = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  var labels = [];
+  for (var i = 0; i < list.length; i++) {
+    if (!isAddr(list[i])) { hint.className = 'operator-edit-token-name warn'; hint.textContent = 'Invalid address: ' + list[i]; return; }
+    labels.push(resolveContractName(list[i], chainId) || commonTokenLabel(chainId, list[i]) || shortAddr6(list[i]));
+  }
+  hint.textContent = labels.length ? labels.join(', ') : '';
+}
+function parseAddressListInput(input, label) {
+  var raw = (input.value || '').trim();
+  var list = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  list.forEach(function (a2) { if (!isAddr(a2)) throw new Error('Invalid address in ' + label + ': ' + a2); });
+  return list;
+}
+function makePerChainAddressControl(chains, defaultValueOf, opts) {
+  opts = opts || {};
+  var wrap = el('div', 'operator-chain-address-compact');
+  var chainList = (chains || []).slice();
+  var rows = {};
+  var open = false;
+  if (chainList.length < 2) return {
+    node: wrap,
+    snapshot: function () { return defaultValueOf(); },
+    reset: function () {},
+  };
+  function openRows() {
+    if (open) return;
+    open = true;
+    wrap.innerHTML = '';
+    var table = el('div', 'operator-chain-addresses');
+    chainList.forEach(function (c) {
+      var row = el('div', 'operator-chain-address-row');
+      var chain = el('div', 'operator-chain-address-chain');
+      chain.appendChild(chainLogo(c.id, c.name));
+      var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
+      row.appendChild(chain);
+      var field = el('div', 'operator-chain-address-field');
+      var input = el('input', 'operator-edit-jwt operator-chain-address-input');
+      input.type = 'text'; input.placeholder = opts.placeholder || '0x… or name.eth';
+      if (opts.defaultRaw) input.value = opts.defaultRaw(c.id) || '';
+      var hint = el('div', 'operator-edit-token-name');
+      var valueOf = attachAddressRecognition(input, hint, c.id, {
+        label: (opts.label || 'Address') + ' on ' + (c.name || chainNameOf(c.id)),
+        projectId: opts.projectId,
+        projectSymbol: opts.projectSymbol,
+        normalizeNativeToZero: !!opts.normalizeNativeToZero,
+        zeroLabel: opts.zeroLabel,
+        unknownLabel: opts.unknownLabel,
+      });
+      field.appendChild(input); field.appendChild(hint); row.appendChild(field); table.appendChild(row);
+      rows[c.id] = { input: input, valueOf: valueOf };
+      if (input.value) input.dispatchEvent(new Event('input'));
+    });
+    wrap.appendChild(table);
+    var foot = el('div', 'operator-chain-address-foot');
+    var same = el('a', 'operator-cta'); same.href = '#'; same.textContent = 'Use same on all chains';
+    same.addEventListener('click', function (e) { e.preventDefault(); open = false; rows = {}; wrap.innerHTML = ''; collapsed(); });
+    foot.appendChild(same); wrap.appendChild(foot);
+  }
+  function collapsed() {
+    var link = el('a', 'operator-cta operator-chain-address-toggle'); link.href = '#'; link.textContent = 'Set per chain';
+    link.title = 'Set a different address on each selected chain';
+    link.addEventListener('click', function (e) { e.preventDefault(); openRows(); });
+    wrap.appendChild(link);
+  }
+  collapsed();
+  return {
+    node: wrap,
+    snapshot: function () {
+      if (!open) return defaultValueOf();
+      var vals = {};
+      chainList.forEach(function (c) {
+        if (!rows[c.id]) throw new Error('Missing address field for ' + (c.name || chainNameOf(c.id)));
+        vals[c.id] = rows[c.id].valueOf();
+      });
+      return chainValue(function (cid) {
+        if (!vals[cid]) throw new Error('No address value for ' + chainNameOf(cid));
+        return vals[cid];
+      });
+    },
+    reset: function () {
+      Object.keys(rows).forEach(function (cid) { rows[cid].input.value = ''; rows[cid].input.dispatchEvent(new Event('input')); });
+    },
+  };
+}
 
 export function renderBuybackRouterCard(project) {
   var card = el('div', 'detail-card');
@@ -7926,6 +8247,8 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var opInput = el('input', 'operator-edit-jwt'); opInput.type = 'text'; opInput.placeholder = '0x… operator address';
   if (editing) { opInput.value = existingOperator; opInput.disabled = true; }
   content.appendChild(opInput);
+  var opHint = el('div', 'operator-edit-token-name'); content.appendChild(opHint);
+  var operatorValueOf = attachAddressRecognition(opInput, opHint, project.chainId, { label: 'Operator' });
 
   var plbl = el('div', 'operator-edit-label'); plbl.style.marginTop = '14px'; plbl.textContent = 'Permissions'; content.appendChild(plbl);
   var have = {}; (existingPermIds || []).forEach(function (id) { have[id] = true; });
@@ -7966,8 +8289,9 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   submit.addEventListener('click', function (e) {
     e.preventDefault(); if (busy) return;
     if (gate && !gate.ok()) { setStatus('Tick the confirmation box to proceed.', 'error'); return; }
-    var operator = editing ? existingOperator : (opInput.value || '').trim();
-    if (!isAddr(operator)) { setStatus('Enter a valid operator address', 'error'); return; }
+    var operator;
+    try { operator = editing ? existingOperator : operatorValueOf(); }
+    catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
     var ids = []; for (var i = 1; i <= JB_PERMISSION_MAX_ID; i++) if (checks[i].checked) ids.push(i);
     busy = true;
     (async function () {
@@ -8043,7 +8367,7 @@ var POWER_ADD_PRICE_FEED = {
 };
 var POWER_SET_TOKEN = {
   title: 'Set custom token', actionVerb: 'Set', contract: 'JBController', abi: setTokenAbi, fn: 'setTokenFor', gas: 250000n, chainsDefault: 'all',
-  note: 'Replaces the project’s token with a custom ERC-20 (it must conform to IJBToken). Same address is set on every selected chain.',
+  note: 'Replaces the project’s token with a custom ERC-20 (it must conform to IJBToken). Set the token address per selected chain when it differs.',
   danger: 'Irreversible: replacing the project token is permanent and affects every holder.',
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
   buildArgs: function (v, cid, pid) { return [pid, v.token]; },
@@ -8100,7 +8424,7 @@ export var POWER_INIT_BUYBACK_POOL = {
     { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
     { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10' },
     { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)' },
-    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: ZERO_ADDRESS, help: 'Set the pair token per selected chain. Use the zero address for native ETH pools; USDC and project-token addresses can differ by chain.' },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: ZERO_ADDRESS, normalizeNativeToZero: true, zeroLabel: 'Native ETH (zero address pool token)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); }, help: 'Set the pair token per selected chain. Use the zero address for native ETH pools; USDC and project-token addresses can differ by chain.' },
     { name: 'sqrtPriceX96', label: 'Initial price (sqrtPriceX96)', kind: 'uint', placeholder: 'pool price as sqrtPriceX96 (issuance rate)' },
   ],
   buildArgs: function (v, cid, pid) {
@@ -8150,39 +8474,12 @@ function openPowerModal(project, action) {
       row.input.disabled = !on;
     });
   }
-  var pairProjectTokenCache = {};
-  function projectTokenInfo(chainId) {
-    if (!pairProjectTokenCache[chainId]) {
-      pairProjectTokenCache[chainId] = read(chainId, 'JBTokens', tokenOfAbi, 'tokenOf', [pid]).then(function (tokenAddr) {
-        if (!tokenAddr || tokenAddr === ZERO_ADDRESS) return null;
-        return clientFor(chainId).readContract({ address: tokenAddr, abi: erc20SymbolAbi, functionName: 'symbol', args: [] })
-          .catch(function () { return project.tokenSymbol || ''; })
-          .then(function (sym) {
-            return {
-              token: String(tokenAddr).toLowerCase(),
-              label: (sym || project.tokenSymbol || 'Project token') + ' project token',
-            };
-          });
-      }).catch(function () { return null; });
-    }
-    return pairProjectTokenCache[chainId];
-  }
-  function describeChainAddress(chainId, raw, target) {
-    raw = (raw || '').trim();
-    target._raw = raw;
-    target.className = 'operator-edit-token-name';
-    if (!raw) { target.textContent = ''; return; }
-    if (!isAddr(raw)) { target.className = 'operator-edit-token-name warn'; target.textContent = 'Not a valid address'; return; }
-    var lc = raw.toLowerCase();
-    if (lc === ZERO_ADDRESS.toLowerCase() || lc === NATIVE_TOKEN.toLowerCase()) { target.textContent = 'Native ETH (zero address pool token)'; return; }
-    var usdc = USDC_BY_CHAIN[chainId];
-    if (usdc && lc === usdc.toLowerCase()) { target.textContent = 'USDC on ' + chainNameOf(chainId); return; }
-    target.textContent = 'Checking token…';
-    projectTokenInfo(chainId).then(function (info) {
-      if ((target._raw || '').toLowerCase() !== lc) return;
-      if (info && info.token === lc) target.textContent = info.label + ' on ' + chainNameOf(chainId);
-      else target.textContent = 'Custom token ' + truncAddr(raw);
-    });
+  function defaultForFieldChain(f, cid) {
+    if (f.defaultAccount) { var a = getAccount && getAccount(); if (a) return a; }
+    if (f.defaultNative) return NATIVE_TOKEN;
+    if (f.defaultValue) return f.defaultValue;
+    if (f.infra) return getAddress(f.infra, cid) || '';
+    return '';
   }
 
   var inputs = {}; // name → { get(): value-or-throw }
@@ -8195,7 +8492,7 @@ function openPowerModal(project, action) {
       inputs[f.name] = { get: function () { return cb.checked; } };
       return;
     }
-    if (f.kind === 'chainAddress') {
+    if (f.kind === 'chainAddress' || (f.kind === 'address' && allChains.length > 1)) {
       var wrap = el('div', 'operator-chain-addresses');
       var rows = {};
       allChains.forEach(function (c) {
@@ -8208,26 +8505,75 @@ function openPowerModal(project, action) {
         row.appendChild(chain);
         var field = el('div', 'operator-chain-address-field');
         var input = el('input', 'operator-edit-jwt operator-chain-address-input');
-        input.type = 'text'; input.placeholder = f.placeholder || '0x… token address'; input.value = f.defaultValue || '';
+        input.type = 'text'; input.placeholder = f.placeholder || '0x… address'; input.value = defaultForFieldChain(f, c.id);
         var name = el('div', 'operator-edit-token-name');
-        input.addEventListener('input', function () { describeChainAddress(c.id, input.value, name); });
+        var valueOf = attachAddressRecognition(input, name, c.id, {
+          label: f.label + ' on ' + (c.name || chainNameOf(c.id)),
+          projectId: project.id,
+          projectSymbol: project.tokenSymbol,
+          normalizeNativeToZero: !!f.normalizeNativeToZero,
+          zeroLabel: f.zeroLabel || 'Zero address',
+          unknownLabel: f.unknownLabel,
+        });
+        if (f.crossChainRead) {
+          input.placeholder = 'reading current…';
+          f.crossChainRead(project, c.id).then(function (val) {
+            if (val && input.value === defaultForFieldChain(f, c.id)) {
+              input.value = val; input.placeholder = f.placeholder || '0x… address';
+              input.dispatchEvent(new Event('input'));
+            }
+          }).catch(function () { input.placeholder = f.placeholder || '0x… address'; });
+        }
         field.appendChild(input); field.appendChild(name); row.appendChild(field);
         wrap.appendChild(row);
-        rows[c.id] = { input: input, name: name, available: avail };
+        rows[c.id] = { input: input, name: name, available: avail, valueOf: valueOf };
         chainFieldRows.push({ cid: c.id, node: row, input: input, available: avail });
-        describeChainAddress(c.id, input.value, name);
       });
       content.appendChild(wrap);
       if (f.help) { var h2 = el('div', 'operator-edit-cur'); h2.textContent = f.help; content.appendChild(h2); }
       syncChainFieldRows();
       inputs[f.name] = { get: function () {
-        return function (cid) {
+        return chainValue(function (cid) {
           var row = rows[cid];
-          var raw = ((row && row.input.value) || f.defaultValue || '').trim();
-          if (!isAddr(raw)) throw new Error('Enter a valid address for ' + f.label + ' on ' + chainNameOf(cid));
-          if (raw.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return ZERO_ADDRESS;
-          return raw;
-        };
+          if (!row) throw new Error('No ' + f.label + ' field for ' + chainNameOf(cid));
+          return row.valueOf();
+        });
+      } };
+      return;
+    }
+    if (f.kind === 'addressList' && allChains.length > 1) {
+      var listWrap = el('div', 'operator-chain-addresses');
+      var listRows = {};
+      allChains.forEach(function (c) {
+        var avail2 = !action.chainAvailable || action.chainAvailable(c.id);
+        if (!avail2) chainSelected[c.id] = false;
+        var row2 = el('div', 'operator-chain-address-row');
+        var chain2 = el('div', 'operator-chain-address-chain');
+        chain2.appendChild(chainLogo(c.id, c.name));
+        var nm2 = el('span'); nm2.textContent = c.name || ('Chain ' + c.id); chain2.appendChild(nm2);
+        row2.appendChild(chain2);
+        var field2 = el('div', 'operator-chain-address-field');
+        var input2 = el('input', 'operator-edit-jwt operator-chain-address-input');
+        input2.type = 'text'; input2.placeholder = f.placeholder || '0x…, 0x…';
+        input2.value = f.infra ? (getAddress(f.infra, c.id) || '') : (f.defaultValue || '');
+        var hint2 = el('div', 'operator-edit-token-name');
+        input2.addEventListener('input', function () { describeAddressListInput(input2, hint2, c.id); });
+        field2.appendChild(input2); field2.appendChild(hint2); row2.appendChild(field2); listWrap.appendChild(row2);
+        listRows[c.id] = { input: input2, hint: hint2 };
+        chainFieldRows.push({ cid: c.id, node: row2, input: input2, available: avail2 });
+        describeAddressListInput(input2, hint2, c.id);
+      });
+      content.appendChild(listWrap);
+      if (f.help) { var h3 = el('div', 'operator-edit-cur'); h3.textContent = f.help; content.appendChild(h3); }
+      syncChainFieldRows();
+      inputs[f.name] = { get: function () {
+        return chainValue(function (cid) {
+          var row = listRows[cid];
+          if (!row) throw new Error('No ' + f.label + ' field for ' + chainNameOf(cid));
+          var list = parseAddressListInput(row.input, f.label + ' on ' + chainNameOf(cid));
+          if (!list.length && f.infra) return [];
+          return list;
+        });
       } };
       return;
     }
@@ -8237,8 +8583,13 @@ function openPowerModal(project, action) {
     if (f.defaultValue) inp.value = f.defaultValue;
     // Async default: pre-fill with the project's CURRENT on-chain value (e.g. its registered hook/terminal),
     // unless the user has already typed. No fallback default — blank stays blank.
-    if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') input.value = val; input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
+    if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') { input.value = val; input.dispatchEvent(new Event('input')); } input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
     content.appendChild(inp);
+    var scalarAddressValue = null;
+    if (f.kind === 'address') {
+      var ah = el('div', 'operator-edit-token-name'); content.appendChild(ah);
+      scalarAddressValue = attachAddressRecognition(inp, ah, project.chainId, { label: f.label, projectId: project.id, projectSymbol: project.tokenSymbol, normalizeNativeToZero: !!f.normalizeNativeToZero, unknownLabel: f.unknownLabel });
+    }
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
     // Cross-chain consistency: read this value's CURRENT setting on every AMM-available chain the project spans and
     // flag if it isn't uniform, so the operator knows the starting state differs before overwriting it.
@@ -8259,8 +8610,7 @@ function openPowerModal(project, action) {
       var raw = (inp.value || '').trim();
       if (f.kind === 'address') {
         if (!raw && f.infra) return ''; // blank → buildArgs resolves the per-chain infra default
-        if (!isAddr(raw)) throw new Error('Enter a valid address for ' + f.label);
-        return raw;
+        return scalarAddressValue ? scalarAddressValue() : raw;
       }
       if (f.kind === 'addressList') {
         if (!raw && f.infra) return [];
@@ -8312,7 +8662,7 @@ function openPowerModal(project, action) {
       var buildCall = function (cid) {
         var to = getAddress(action.contract, cid);
         if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
-        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(values, cid, pid) }) };
+        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid, pid) }) };
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal }, setStatus)
@@ -8338,7 +8688,7 @@ function openAddAccountingContextModal(project) {
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to add an accounting token.', project.chainId));
   var note = el('div', 'operator-edit-across');
-  note.textContent = 'Registers a token the project’s terminal accepts directly. Native ETH and USDC have different addresses per chain — the presets fill the right one for each chain. The currency is derived from the token address.';
+  note.textContent = 'Registers a token the project’s terminal accepts directly. Native ETH is fixed; USDC and custom ERC-20s can differ per chain, so token addresses are set per selected chain. The currency is derived from the token address.';
   content.appendChild(note);
 
   // Show what's already accepted on the primary chain (read-only reference).
@@ -8353,7 +8703,37 @@ function openAddAccountingContextModal(project) {
   var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = true; });
 
   var tlbl = el('div', 'operator-edit-label'); tlbl.style.marginTop = '12px'; tlbl.textContent = 'Token'; content.appendChild(tlbl);
-  var tokenInput = el('input', 'operator-edit-jwt'); tokenInput.type = 'text'; tokenInput.placeholder = '0x… ERC-20 address'; content.appendChild(tokenInput);
+  var tokenInput = null, tokenHint = null, tokenValueOf = null, tokenRows = {}, tokenWrap = null;
+  function maybeReadCustomDecimals(chainId, raw) {
+    var t = (raw || '').trim();
+    if (mode.kind !== 'custom' || !isAddr(t)) return;
+    if (t.toLowerCase() === NATIVE_TOKEN.toLowerCase()) { decInput.value = '18'; return; }
+    clientFor(chainId).readContract({ address: t, abi: ERC20_DECIMALS_ABI, functionName: 'decimals', args: [] }).then(function (d) { if (d != null) decInput.value = String(Number(d)); }).catch(function () {});
+  }
+  if (allChains.length > 1) {
+    tokenWrap = el('div', 'operator-chain-addresses');
+    allChains.forEach(function (c) {
+      var row = el('div', 'operator-chain-address-row');
+      var chain = el('div', 'operator-chain-address-chain');
+      chain.appendChild(chainLogo(c.id, c.name));
+      var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
+      row.appendChild(chain);
+      var field = el('div', 'operator-chain-address-field');
+      var input = el('input', 'operator-edit-jwt operator-chain-address-input');
+      input.type = 'text'; input.placeholder = '0x… ERC-20 address';
+      var hint = el('div', 'operator-edit-token-name');
+      var valueOf = attachAddressRecognition(input, hint, c.id, { label: 'Token on ' + (c.name || chainNameOf(c.id)), projectId: project.id, projectSymbol: project.tokenSymbol, unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); } });
+      input.addEventListener('change', function () { maybeReadCustomDecimals(c.id, input.value); });
+      field.appendChild(input); field.appendChild(hint); row.appendChild(field); tokenWrap.appendChild(row);
+      tokenRows[c.id] = { input: input, valueOf: valueOf };
+    });
+    content.appendChild(tokenWrap);
+  } else {
+    tokenInput = el('input', 'operator-edit-jwt'); tokenInput.type = 'text'; tokenInput.placeholder = '0x… ERC-20 address'; content.appendChild(tokenInput);
+    tokenHint = el('div', 'operator-edit-token-name'); content.appendChild(tokenHint);
+    tokenValueOf = attachAddressRecognition(tokenInput, tokenHint, project.chainId, { label: 'Token', projectId: project.id, projectSymbol: project.tokenSymbol, unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); } });
+    tokenInput.addEventListener('change', function () { maybeReadCustomDecimals(project.chainId, tokenInput.value); });
+  }
   // Presets — fill the correct per-chain address at submit (Native ETH = same address on every chain; USDC differs).
   var chipRow = el('div', 'create-split-chiprow'); chipRow.style.marginTop = '6px';
   var nativeChip = el('button', 'create-split-chip'); nativeChip.type = 'button'; nativeChip.textContent = 'Native (ETH)';
@@ -8368,7 +8748,14 @@ function openAddAccountingContextModal(project) {
   function tokenForChain(cid) {
     if (mode.kind === 'native') return NATIVE_TOKEN;
     if (mode.kind === 'usdc') return USDC_BY_CHAIN[cid] || null;
-    return (tokenInput.value || '').trim();
+    if (tokenRows[cid]) return tokenRows[cid].valueOf();
+    return tokenValueOf ? tokenValueOf() : '';
+  }
+  function tokenPreviewForChain(cid) {
+    if (mode.kind !== 'custom') return tokenForChain(cid);
+    var row = tokenRows[cid];
+    if (row) return (row.input.value || '').trim();
+    return tokenInput ? (tokenInput.value || '').trim() : '';
   }
   function decimalsForMode() {
     if (mode.kind === 'native') return 18;
@@ -8392,22 +8779,16 @@ function openAddAccountingContextModal(project) {
     usdcChip.classList.toggle('active', mode.kind === 'usdc');
     var isPreset = mode.kind !== 'custom';
     tlbl.style.display = isPreset ? 'none' : '';
-    tokenInput.style.display = isPreset ? 'none' : '';
+    if (tokenInput) tokenInput.style.display = isPreset ? 'none' : '';
+    if (tokenHint) tokenHint.style.display = isPreset ? 'none' : '';
+    if (tokenWrap) tokenWrap.style.display = isPreset ? 'none' : '';
     decInput.disabled = isPreset;
     if (mode.kind === 'native') decInput.value = '18';
     else if (mode.kind === 'usdc') decInput.value = '6';
-    if (mode.kind === 'custom') tokenInput.value = '';
     updatePresetList();
   }
   nativeChip.addEventListener('click', function () { setMode('native'); });
   usdcChip.addEventListener('click', function () { setMode('usdc'); });
-  // Auto-read decimals for a pasted ERC-20 (best-effort, custom mode only).
-  tokenInput.addEventListener('change', function () {
-    var t = (tokenInput.value || '').trim();
-    if (mode.kind !== 'custom' || !isAddr(t)) return;
-    if (t.toLowerCase() === NATIVE_TOKEN.toLowerCase()) { decInput.value = '18'; return; }
-    clientFor(project.chainId).readContract({ address: t, abi: ERC20_DECIMALS_ABI, functionName: 'decimals', args: [] }).then(function (d) { if (d != null) decInput.value = String(Number(d)); }).catch(function () {});
-  });
 
   var chlbl = el('div', 'operator-edit-label'); chlbl.style.marginTop = '14px'; chlbl.textContent = 'Add on'; content.appendChild(chlbl);
   var chainBox = el('div', 'splits-edit-chains');
@@ -8435,11 +8816,16 @@ function openAddAccountingContextModal(project) {
     (async function () {
       var selected = selectedChains();
       if (!selected.length) { setStatus('Select at least one chain', 'error'); busy = false; return; }
-      if (mode.kind === 'custom' && !isAddr((tokenInput.value || '').trim())) { setStatus('Enter a valid token address (or pick Native / USDC)', 'error'); busy = false; return; }
+      if (mode.kind === 'custom') {
+        for (var vi = 0; vi < selected.length; vi++) {
+          try { tokenForChain(selected[vi].id); }
+          catch (e) { setStatus((e && e.message) || ('Enter a valid token address on ' + selected[vi].name), 'error'); busy = false; return; }
+        }
+      }
       var dec = decimalsForMode();
       // Per-chain token: Native = same address everywhere; USDC = each chain's own; custom = the pasted address.
-      var usable = selected.filter(function (c) { return !!tokenForChain(c.id); });
-      var skippedNoUsdc = selected.filter(function (c) { return !tokenForChain(c.id); }).map(function (c) { return c.name; });
+      var usable = selected.filter(function (c) { return mode.kind === 'custom' ? !!tokenPreviewForChain(c.id) : !!tokenForChain(c.id); });
+      var skippedNoUsdc = mode.kind === 'usdc' ? selected.filter(function (c) { return !tokenForChain(c.id); }).map(function (c) { return c.name; }) : [];
       if (!usable.length) { setStatus('USDC isn’t configured on the selected chain(s).', 'error'); busy = false; return; }
       var buildCall = function (cid) {
         var token = tokenForChain(cid);
@@ -11514,12 +11900,43 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   var wrap = el('div', 'splits-edit-item'); wrap.appendChild(row);
   var benefRow = el('div', 'splits-edit-benef'); benefRow.style.display = 'none';
   var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… token beneficiary for that project';
-  benefRow.appendChild(benef); recipBox.appendChild(benefRow); // under the recipient field, in its column
+  benefRow.appendChild(benef);
+  var benefHint = el('div', 'splits-edit-hint'); benefRow.appendChild(benefHint);
+  recipBox.appendChild(benefRow); // under the recipient field, in its column
   var ensAddr = null; // resolved address for the current ENS input
   function isEnsName(v) { return v.indexOf('.') !== -1 && !isAddr(v) && !/^[0-9]+$/.test(v); }
+  function recipientValueOf() {
+    var v = (recip.value || '').trim();
+    if (isAddr(v)) return v;
+    if (isEnsName(v)) {
+      if (!ensAddr) throw new Error(v + ' hasn’t resolved to an address yet');
+      return ensAddr;
+    }
+    throw new Error('Enter a 0x address or ENS name');
+  }
+  var recipPerChain = makePerChainAddressControl(opts.chains || [], recipientValueOf, {
+    label: 'Recipient',
+    defaultRaw: function () { return ensAddr || (recip.value || '').trim(); },
+    projectId: opts.projectId,
+    projectSymbol: opts.projectSymbol || opts.sym,
+  });
+  recipBox.appendChild(recipPerChain.node);
+  var benefValueOf = attachAddressRecognition(benef, benefHint, opts.chainId || 1, {
+    label: 'Project token beneficiary',
+    projectId: opts.projectId,
+    projectSymbol: opts.projectSymbol || opts.sym,
+  });
+  var benefPerChain = makePerChainAddressControl(opts.chains || [], benefValueOf, {
+    label: 'Project token beneficiary',
+    defaultRaw: function () { return (benef.value || '').trim(); },
+    projectId: opts.projectId,
+    projectSymbol: opts.projectSymbol || opts.sym,
+  });
+  benefRow.appendChild(benefPerChain.node);
   function refresh() {
     var v = (recip.value || '').trim();
     benefRow.style.display = /^[0-9]+$/.test(v) ? '' : 'none';
+    recipPerChain.node.style.display = (/^[0-9]+$/.test(v) || rec.lpHook) ? 'none' : '';
     if (isEnsName(v)) {
       ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = 'Resolving ' + v + '…'; ensAddr = null;
       ensAddressOf(v).then(function (addr) {
@@ -11528,12 +11945,8 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
         else { ensAddr = null; ensHint.className = 'splits-edit-hint warn'; ensHint.textContent = 'No address set for ' + v; }
       });
     } else if (isAddr(v)) {
-      ensAddr = null; ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = 'Looking up ENS…';
-      ensNameOf(v).then(function (name) {
-        if ((recip.value || '').trim() !== v) return;
-        if (name) { ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = name; }
-        else ensHint.style.display = 'none';
-      });
+      ensAddr = null; ensHint.style.display = '';
+      describeKnownAddress(opts.chainId || 1, v, ensHint, { hintClass: 'splits-edit-hint', projectId: opts.projectId, projectSymbol: opts.projectSymbol || opts.sym });
     } else { ensHint.style.display = 'none'; ensAddr = null; }
     // The "fund market" chip only belongs on an empty row — once a real recipient is entered, hide it.
     if (lpChip && !rec.lpHook) { var has = !!(recip.value || '').trim(); lpChip.style.display = has ? 'none' : ''; if (has && lpHint) lpHint.style.display = 'none'; }
@@ -11551,20 +11964,17 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   var rec = {
     pct: pct, leadEl: lead, orig: (opts.prefill && opts.prefill.orig) || null, lpHook: false,
     isEmpty: function () { return !rec.lpHook && !(recip.value || '').trim() && !(pct.value || '').trim(); },
-    hookAddr: function () { return rec.lpHook ? opts.lpHookAddr : ((rec.orig && rec.orig.hook && rec.orig.hook !== ZERO_ADDRESS) ? rec.orig.hook : ZERO_ADDRESS); },
+    hookAddr: function () {
+      if (rec.lpHook) return chainValue(function (cid) { return (opts.lpHookAddrForChain && opts.lpHookAddrForChain(cid)) || opts.lpHookAddr || ZERO_ADDRESS; });
+      return ((rec.orig && rec.orig.hook && rec.orig.hook !== ZERO_ADDRESS) ? rec.orig.hook : ZERO_ADDRESS);
+    },
     parse: function () {
       // Hook split: the hook keys off the distributing project; projectId/beneficiary are pass-through.
       if (rec.lpHook) return { projectId: 0n, beneficiary: opts.ownerAddr || getAccount() || ZERO_ADDRESS };
       var v = (recip.value || '').trim();
-      if (isAddr(v)) return { projectId: 0n, beneficiary: v };
-      if (isEnsName(v)) {
-        if (!ensAddr) throw new Error(v + ' hasn’t resolved to an address yet');
-        return { projectId: 0n, beneficiary: ensAddr };
-      }
+      if (isAddr(v) || isEnsName(v)) return { projectId: 0n, beneficiary: recipPerChain.snapshot() };
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
-        var b = (benef.value || '').trim();
-        if (!isAddr(b)) throw new Error('Project #' + v + ' recipient needs a token beneficiary address');
-        return { projectId: BigInt(v), beneficiary: b };
+        return { projectId: BigInt(v), beneficiary: benefPerChain.snapshot() };
       }
       throw new Error('Enter a 0x address, ENS name, or a project ID');
     },
@@ -11572,7 +11982,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   function setLp(on) {
     rec.lpHook = on;
     // When funding the market, the recipient IS the shared LP hook — show it (read-only).
-    if (on) { recip.value = opts.lpHookAddr; recip.readOnly = true; ensHint.style.display = 'none'; benefRow.style.display = 'none'; }
+    if (on) { recip.value = opts.lpHookAddr; recip.readOnly = true; ensHint.style.display = 'none'; benefRow.style.display = 'none'; recipPerChain.node.style.display = 'none'; }
     else { recip.value = ''; recip.readOnly = false; refresh(); }
     if (lpChip) lpChip.classList.toggle('active', on);
     if (lpHint) lpHint.style.display = on ? '' : 'none';
@@ -12036,7 +12446,17 @@ function openEditSplitsModal(project, opts) {
   //  - any other group (payouts) → 100% (the full distributable amount).
   // Each split's stored group share = its issuance% ÷ limit (so issuance% = groupShare × limit). See submit.
   var limitPct = splitLimitPctFor(project, groupId);
-  var rowOpts = { allowLpHook: !!lpHookAddr, lpHookAddr: lpHookAddr, ownerAddr: project.owner, sym: project.tokenSymbol || 'tokens' };
+  var rowOpts = {
+    allowLpHook: !!lpHookAddr,
+    lpHookAddr: lpHookAddr,
+    lpHookAddrForChain: function (cid) { return getAddress('BannyLPSplitHook', cid) || ZERO_ADDRESS; },
+    ownerAddr: project.owner,
+    sym: project.tokenSymbol || 'tokens',
+    projectSymbol: project.tokenSymbol || 'tokens',
+    projectId: project.id,
+    chainId: project.chainId,
+    chains: allChains,
+  };
   function mkRowOpts(extra) { var o = {}; for (var k in rowOpts) o[k] = rowOpts[k]; o.onChange = onRowChange; if (extra) for (var k2 in extra) o[k2] = extra[k2]; return o; }
   var rows = [];
   function updateLeads() { for (var i = 0; i < rows.length; i++) if (rows[i].leadEl) rows[i].leadEl.textContent = i === 0 ? 'Split' : '… and'; }
@@ -12127,7 +12547,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
       preferAddToBalance: orig ? !!orig.preferAddToBalance : false,
       lockedUntil: orig && orig.lockedUntil ? Number(orig.lockedUntil) : 0,
       // hookAddr() returns the LP split hook when the row's "fund market" chip is on, else preserves any
-      // existing hook. Same singleton address on every chain.
+      // existing hook. The fund-market hook is resolved per selected chain.
       hook: (rows[i].hookAddr ? rows[i].hookAddr() : ((orig && orig.hook && orig.hook !== ZERO_ADDRESS) ? orig.hook : ZERO_ADDRESS)),
     });
   }
@@ -12146,9 +12566,17 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     if (!rs || !rs[0] || !rs[0].id) throw new Error('No current ruleset on ' + (selectedChains[j].name || cid));
     ridMap[cid] = rs[0].id;
   }
-  var groups = [{ groupId: splitGroupId, splits: splits }];
+  function splitsForChain(cid) {
+    return splits.map(function (sp) {
+      var out = Object.assign({}, sp);
+      out.beneficiary = materializeChainValue(sp.beneficiary, cid);
+      out.hook = materializeChainValue(sp.hook, cid);
+      return out;
+    });
+  }
 
   await runRelayrAcrossChains(selectedChains, account, function (cid) {
+    var groups = [{ groupId: splitGroupId, splits: splitsForChain(cid) }];
     return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [BigInt(project.id), BigInt(ridMap[cid]), groups] }) };
   }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits' });
 

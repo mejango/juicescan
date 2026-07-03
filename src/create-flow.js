@@ -17,6 +17,7 @@ import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
   createPublicClientForChain, getWalletClient, switchChain, truncAddr, ZERO_ADDRESS as ZERO, errMessage, isAddr, addrOrZero, promptFoot,
+  resolveContractName, getChainTokens,
 } from './component-base.js';
 import {
   launchProjectAbi, buildRulesetConfigs, createDefaultRuleset,
@@ -869,7 +870,7 @@ function ownerSection(state, render) {
   var box = el('div', '');
   if (!perChainOpen(state, 'owner')) {
     var ownerInput = textInput(d.owner, '0x… or name.eth', function (v) { d.owner = v.trim(); });
-    var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; });
+    var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
     box.appendChild(recipBoxWith(ownerInput, ownerHint));
   }
   box.appendChild(perChainAddrControl(state, render, 'owner', d.ownerResolved || d.owner || ''));
@@ -885,7 +886,7 @@ function operatorSection(state, render) {
   var box = el('div', '');
   if (!perChainOpen(state, 'op')) {
     var opInput = textInput(state.revOperator, '0x… or name.eth', function (v) { state.revOperator = v.trim(); });
-    var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; });
+    var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
     box.appendChild(recipBoxWith(opInput, opHint));
   }
   box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
@@ -1272,7 +1273,7 @@ export function renderStages(state, render, opts) {
     // Inline address — only when custom and not in per-chain mode (per-chain rows render full-width below).
     if (cur === 'custom' && !perChainOpen(state, 'approval')) {
       var ai = textInput(state.approvalAddress || '', '0x… or name.eth', function (v) { state.approvalAddress = v.trim(); });
-      var ah = attachEns(ai, function (name, addr) { state.approvalAddressResolved = addr || null; state.approvalAddressResolvedFor = addr ? name : null; });
+      var ah = attachEns(ai, function (name, addr) { state.approvalAddressResolved = addr || null; state.approvalAddressResolvedFor = addr ? name : null; }, { chainId: (state.chainIds || [])[0] });
       var ab = recipBoxWith(ai, ah); ab.classList.add('create-approval-addr'); dRow.appendChild(ab);
     }
     dField.appendChild(dRow);
@@ -1544,7 +1545,7 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
   if (!(state && perChainOpen(state, key))) {
     var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or name.eth';
     recip.value = ai.address || '';
-    var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; });
+    var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; }, { chainId: (state.chainIds || [])[0] });
     recip.addEventListener('input', function () { ai.address = recip.value.trim(); });
     toField.appendChild(recipBoxWith(recip, ensHint));
   }
@@ -1994,7 +1995,7 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     if (!pcOpen) {
       var benef = el('input', 'field create-split-recip'); benef.type = 'text'; benef.placeholder = '0x… or name.eth'; benef.value = rec.address || '';
       benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
-      sub(recipBoxWith(benef, attachEns(benef, function () {})));
+      sub(recipBoxWith(benef, attachEns(benef, function () {}, { chainId: opts.state && (opts.state.chainIds || [])[0] })));
     }
     if (opts.state && opts.perChainKey) col.appendChild(perChainAddrControl(opts.state, render, opts.perChainKey, pickResolved(rec.address, rec)));
   }
@@ -2034,7 +2035,7 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     if (!(opts.state && opts.perChainKey && perChainOpen(opts.state, opts.perChainKey))) {
       var addrInput = el('input', 'field create-split-recip'); addrInput.type = 'text'; addrInput.placeholder = '0x… or name.eth'; addrInput.value = rec.address || '';
       addrInput.addEventListener('input', function () { rec.address = addrInput.value.trim(); });
-      sub(recipBoxWith(addrInput, attachEns(addrInput, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; })));
+      sub(recipBoxWith(addrInput, attachEns(addrInput, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; }, { chainId: opts.state && (opts.state.chainIds || [])[0] })));
     }
     if (opts.state && opts.perChainKey) col.appendChild(perChainAddrControl(opts.state, render, opts.perChainKey, pickResolved(rec.address, rec)));
   }
@@ -2518,7 +2519,7 @@ function itemEditor(state, nft, idx, render) {
       rRow.appendChild(fInp); rRow.appendChild(document.createTextNode(' sold to '));
       var bInp = el('input', 'field'); bInp.type = 'text'; bInp.placeholder = '0x… or name.eth'; bInp.value = nft.reserveBeneficiary || ''; bInp.style.flex = '1';
       bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); });
-      var bHint = attachEns(bInp, function () { render(); }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
+      var bHint = attachEns(bInp, function () { render(); }, { chainId: (state.chainIds || [])[0] }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
       rRow.appendChild(recipBoxWith(bInp, bHint)); a.appendChild(rRow);
       // Reserving requires a beneficiary, or the deploy reverts (JB721TiersHookStore_MissingReserveBeneficiary).
       if (Number(nft.reserveFrequency) > 0 && !isAddr(resolvedStr(nft.reserveBeneficiary))) {
@@ -2945,7 +2946,7 @@ function pcAddrField(state, chainId, key, defStr) {
   var input = el('input', 'field'); input.type = 'text'; input.placeholder = '0x… or name.eth';
   input.value = pcAddrGet(state, chainId, key, defStr || '');
   input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
-  return recipBoxWith(input, attachEns(input, function () {}));
+  return recipBoxWith(input, attachEns(input, function () {}, { chainId: chainId }));
 }
 // Per-chain numeric field (project ID) — stored in the same `addr[key]` store as a raw string, no ENS.
 function pcNumField(state, chainId, key, defStr) {
@@ -4011,9 +4012,26 @@ function resolvedStr(str) {
   if (isEnsName(str)) { var c = _ensCache[str.toLowerCase()]; return c || ''; }
   return str;
 }
-// Attach ENS resolution to an address input: returns a small hint element that shows the resolved address
-// (or a "resolving…/not found" state) under the field, and stores the result on `rec` via store(name,addr).
-function attachEns(input, store) {
+function createKnownAddressLabel(chainId, addr) {
+  if (!chainId || !isAddr(addr)) return '';
+  var lc = String(addr || '').toLowerCase();
+  if (lc === ZERO.toLowerCase()) return 'Zero address';
+  if (lc === NATIVE_TOKEN.toLowerCase()) return 'Native ETH token';
+  var cname = resolveContractName(addr, chainId);
+  if (cname) return 'Known contract: ' + cname + ' on ' + chainName(chainId);
+  var toks = [];
+  try { toks = getChainTokens(Number(chainId)) || []; } catch (_) {}
+  for (var i = 0; i < toks.length; i++) {
+    if (toks[i].address && toks[i].address.toLowerCase() === lc) {
+      return 'Known token: ' + String(toks[i].symbol || '').replace(/\s*\(native\)/i, '') + ' on ' + chainName(chainId);
+    }
+  }
+  return '';
+}
+// Attach ENS resolution to an address input: returns a small hint element that shows the resolved address,
+// known local contracts/tokens, or a "resolving…/not found" state, and stores ENS results via store(name,addr).
+function attachEns(input, store, opts) {
+  opts = opts || {};
   var hint = el('div', 'create-resolve-hint'); hint.style.display = 'none';
   var token = 0, timer = null;
   function go() {
@@ -4021,6 +4039,8 @@ function attachEns(input, store) {
     if (!isEnsName(v)) {
       store(v, null);
       if (isAddr(v)) {
+        var known = createKnownAddressLabel(opts.chainId, v);
+        if (known) { hint.style.display = ''; hint.className = 'create-resolve-hint ok'; hint.textContent = known; return; }
         // Valid address → reverse-resolve and show its ENS name underneath (only if one exists).
         hint.style.display = ''; hint.className = 'create-resolve-hint'; hint.textContent = 'Looking up ENS…';
         var myR = ++token;

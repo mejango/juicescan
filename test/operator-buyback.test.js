@@ -2,7 +2,7 @@
 // couldn't be exercised in the test browser — its project feed is empty), and each descriptor's buildArgs must
 // encode the registry call with correctly-typed args (BigInt projectId + numeric pool params).
 import { describe, it, expect } from 'vitest';
-import { renderBuybackRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL } from '../src/discover.js';
+import { renderBuybackRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, materializeChainValues } from '../src/discover.js';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -67,5 +67,18 @@ describe('operator buyback/router descriptors', () => {
     };
     expect(POWER_INIT_BUYBACK_POOL.buildArgs(values, 8453, 5n)[4]).toBe(baseUsdc);
     expect(POWER_INIT_BUYBACK_POOL.buildArgs(values, 42161, 5n)[4]).toBe(arbUsdc);
+  });
+  it('materializes chain-aware address values before descriptor buildArgs run', () => {
+    const values = {
+      controller: Object.assign((chainId) => chainId === 8453
+        ? '0x1111111111111111111111111111111111111111'
+        : '0x2222222222222222222222222222222222222222', { _chainValue: true }),
+      flag: true,
+    };
+    expect(materializeChainValues(values, 8453)).toEqual({
+      controller: '0x1111111111111111111111111111111111111111',
+      flag: true,
+    });
+    expect(materializeChainValues(values, 42161).controller).toBe('0x2222222222222222222222222222222222222222');
   });
 });

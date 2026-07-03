@@ -2694,6 +2694,18 @@ input[type="checkbox"].field {
 .operator-chain-address-chain .chain-logo { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; }
 .operator-chain-address-field { min-width: 0; }
 .operator-chain-address-input { margin: 0; }
+.operator-chain-address-compact {
+  margin-top: 4px; font-size: 11px;
+}
+.operator-chain-address-compact .operator-chain-addresses {
+  margin-top: 6px;
+}
+.operator-chain-address-foot {
+  display: flex; justify-content: flex-end; margin-top: 2px;
+}
+.operator-chain-address-toggle {
+  display: inline-block; margin-top: 2px;
+}
 .operator-edit-token-name {
   min-height: 16px; margin-top: 3px; font-size: 11px; line-height: 1.35;
   color: var(--muted-2); overflow-wrap: anywhere;
