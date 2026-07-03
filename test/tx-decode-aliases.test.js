@@ -4,11 +4,13 @@
 // Regression for the "Confirm auto issue" → REVOwner.autoIssueFor "could not decode" bug.
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData } from 'viem';
-import { decodeCallForDisplay } from '../src/component-base.js';
+import { decodeCallForDisplay, renderDecodedTx } from '../src/component-base.js';
 
 const REVO = '0x2ba4705ad0332cdfb299b452068438bcba3faaf3';
 const AUTOISSUE_ABI = [{ type: 'function', name: 'autoIssueFor', stateMutability: 'nonpayable',
   inputs: [{ name: 'revnetId', type: 'uint256' }, { name: 'stageId', type: 'uint256' }, { name: 'beneficiary', type: 'address' }], outputs: [] }];
+const INIT_POOL_ABI = [{ type: 'function', name: 'initializePoolFor', stateMutability: 'nonpayable',
+  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'twapWindow', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'sqrtPriceX96', type: 'uint160' }], outputs: [] }];
 
 describe('decodeCallForDisplay normalizes tx field aliases (no more spurious "could not decode")', () => {
   it('decodes the auto-issue payload shape (data + functionName + rawArgs) via the REVOwner ABI', () => {
@@ -26,5 +28,12 @@ describe('decodeCallForDisplay normalizes tx field aliases (no more spurious "co
     expect(dec).not.toBeNull();
     expect(dec.fn).toBe('autoIssueFor');
     expect(dec.args.length).toBe(3);
+  });
+  it('labels initializePoolFor terminalToken with the known token symbol for the review chain', () => {
+    const baseUsdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    const data = encodeFunctionData({ abi: INIT_POOL_ABI, functionName: 'initializePoolFor', args: [6n, 10000, 200, 172800n, baseUsdc, 792390160291139450388n] });
+    const node = renderDecodedTx({ chain: 'Base', chainId: 8453, contract: 'JBBuybackHookRegistry', calldata: data, value: '0' });
+    expect(node.textContent).toContain('terminalToken (address):');
+    expect(node.textContent).toContain('(USDC)');
   });
 });

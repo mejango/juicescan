@@ -10,7 +10,7 @@ import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, 
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -5667,16 +5667,33 @@ function runRelayrBundle(entries, opts) {
   return new Promise(function (resolve) {
     var wrap = el('div', 'modal-body');
     var pvStatus = []; // per-chain status spans, indexed in submission order (matches relayr poll order)
-    // Preview of what will run on each chain (opts.preview: [{chain,label}]), so it's not a black box.
+    function previewParts(p) {
+      var label = p.details || p.label || '';
+      var nonce = p.nonce;
+      if ((nonce == null || nonce === '') && label) {
+        var m = label.match(/\s*\(#(\d+)\)\s*$/);
+        if (m) { nonce = m[1]; label = label.slice(0, m.index); }
+      }
+      return { nonce: nonce == null || nonce === '' ? '—' : String(nonce), details: label };
+    }
+    // Preview of what will run on each chain (opts.preview: [{chain,nonce,details}]), so it's not a black box.
     if (opts.preview && opts.preview.length) {
       var pv = el('div', 'relayr-preview');
+      var head = el('div', 'relayr-preview-head');
+      ['Chain', 'Nonce', 'Tx details'].forEach(function (h) { var c = el('div'); c.textContent = h; head.appendChild(c); });
+      pv.appendChild(head);
       opts.preview.forEach(function (p) {
+        var parts = previewParts(p);
         var r = el('div', 'relayr-preview-row');
-        r.appendChild(chainLogo(p.cid || 0, p.chain));
-        var s = el('span'); s.textContent = ' ' + p.chain + ' '; r.appendChild(s);
-        r.appendChild(boSep());
-        var l = el('span', 'relayr-preview-label'); l.textContent = p.label; r.appendChild(l);
-        var st = el('span', 'relayr-preview-status'); r.appendChild(st); // per-chain execution status (filled on poll)
+        var chainCell = el('div', 'relayr-preview-chain');
+        chainCell.appendChild(chainLogo(p.cid || 0, p.chain));
+        var s = el('span'); s.textContent = p.chain || 'Chain'; chainCell.appendChild(s);
+        r.appendChild(chainCell);
+        var nonceCell = el('div', 'relayr-preview-nonce'); nonceCell.textContent = parts.nonce; r.appendChild(nonceCell);
+        var details = el('div', 'relayr-preview-details');
+        var l = el('span', 'relayr-preview-label'); l.textContent = parts.details; details.appendChild(l);
+        var st = el('span', 'relayr-preview-status'); details.appendChild(st); // per-chain execution status (filled on poll)
+        r.appendChild(details);
         pvStatus.push(st);
         pv.appendChild(r);
       });
@@ -5778,7 +5795,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       var call = buildCall(c.id);
       var block = el('div', 'safe-propose-chain');
       var head = el('div', 'safe-propose-head'); head.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm); block.appendChild(head);
-      block.appendChild(renderTxReview({ chain: c.name, contract: resolveContractName(call.to, c.id) || call.to, address: call.to, calldata: call.data, value: '0' }));
+      block.appendChild(renderTxReview({ chain: c.name, chainId: c.id, contract: resolveContractName(call.to, c.id) || call.to, address: call.to, calldata: call.data, value: '0' }));
       var st = el('div', 'safe-propose-hint'); st.style.marginTop = '6px'; st.textContent = 'checking Safe…'; block.appendChild(st);
       listEl.appendChild(block);
       var rec = { cid: c.id, chain: c.name, to: call.to, data: call.data, deployed: false, onChain: false, st: st, block: block };
@@ -7088,10 +7105,12 @@ function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
   if (ethVal > 0n) warns.push('Sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe.');
   if (!nm) warns.push('⚠ Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
   var viewOnly = actionLabel === 'View';
+  var desc = warns.join(' ') || null;
+  if (viewOnly) desc = (desc ? (desc + ' ') : '') + 'This details view is read-only. To sign, use the Sign button on the transaction row, or open the transaction in the Safe app.';
   return confirmTransactionModal(
-    { chain: chainName, contract: nm || tx.to, address: tx.to, calldata: tx.data, value: tx.value },
+    { chain: chainName, chainId: cid, contract: nm || tx.to, address: tx.to, calldata: tx.data, value: tx.value },
     { title: viewOnly ? ('Transaction #' + tx.nonce + ' details') : ((actionLabel || 'Review') + ' Safe transaction #' + tx.nonce),
-      confirmText: viewOnly ? 'Close' : (actionLabel || 'Confirm'), description: warns.join(' ') || null }
+      confirmText: viewOnly ? 'Close' : (actionLabel || 'Confirm'), description: desc, hideCancel: viewOnly }
   );
 }
 
@@ -7367,6 +7386,16 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
             }
             actions.appendChild(execBtn);
           }
+          var safeHash = tx.safeTxHash || tx.contractTransactionHash;
+          var safeHref = (safeHash && safeTxLink(c.id, safe, safeHash)) || safeQueueLink(c.id, safe);
+          if (safeHref) {
+            var safeA = document.createElement('a');
+            safeA.className = 'operator-cta backoffice-safe-tx';
+            safeA.href = safeHref; safeA.target = '_blank'; safeA.rel = 'noopener';
+            safeA.textContent = 'Open in Safe';
+            safeA.title = 'Sign or inspect this transaction in the Safe app';
+            actions.appendChild(safeA);
+          }
           row.appendChild(actions);
           list.appendChild(row);
         });
@@ -7391,7 +7420,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       allBtn.addEventListener('click', function () {
         if (!(getAccount && getAccount())) { connect(); return; }
         var entries = ready.map(function (r) { return safeExecRelayrTx(r.cid, safe, r.tx); });
-        var preview = ready.map(function (r) { return { cid: r.cid, chain: r.chain, label: labelForQueuedTx(r.tx) + ' → ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to) + ' (#' + r.tx.nonce + ')' }; });
+        var preview = ready.map(function (r) { return { cid: r.cid, chain: r.chain, nonce: r.tx.nonce, details: labelForQueuedTx(r.tx) + ' → ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to) }; });
         runRelayrBundle(entries, { title: 'Execute ' + ready.length + ' transaction' + (ready.length > 1 ? 's' : ''), preview: preview }).then(function (res) {
           if (res && res.done) loadQueues(info);
         });
@@ -7421,6 +7450,10 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
 
   // Refresh when an action queues a new tx from a modal — but only for a card that's been viewed + is connected.
   document.addEventListener('jb:safe-queued', function () {
+    if (!loaded || !card.isConnected) return;
+    fetchSafeInfo(safe, homeChainId).then(function (info) { if (info) loadQueues(info); }).catch(function () {});
+  });
+  onWalletChange(function () {
     if (!loaded || !card.isConnected) return;
     fetchSafeInfo(safe, homeChainId).then(function (info) { if (info) loadQueues(info); }).catch(function () {});
   });
@@ -8067,10 +8100,13 @@ export var POWER_INIT_BUYBACK_POOL = {
     { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
     { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10' },
     { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)' },
-    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'address', defaultValue: ZERO_ADDRESS, help: 'Zero address for native ETH pools; otherwise the pair token address (e.g. USDC).' },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: ZERO_ADDRESS, help: 'Set the pair token per selected chain. Use the zero address for native ETH pools; USDC and project-token addresses can differ by chain.' },
     { name: 'sqrtPriceX96', label: 'Initial price (sqrtPriceX96)', kind: 'uint', placeholder: 'pool price as sqrtPriceX96 (issuance rate)' },
   ],
-  buildArgs: function (v, cid, pid) { return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), v.terminalToken, BigInt(v.sqrtPriceX96)]; },
+  buildArgs: function (v, cid, pid) {
+    var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
+    return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken, BigInt(v.sqrtPriceX96)];
+  },
 };
 
 // A deliberate-confirmation gate for irreversible/dangerous owner actions: a danger banner + a checkbox
@@ -8105,6 +8141,50 @@ function openPowerModal(project, action) {
     coTip.style.opacity = '0.85'; content.appendChild(coTip);
   }
 
+  var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = action.chainsDefault === 'all' ? true : (c.id === project.chainId); });
+  var chainFieldRows = [];
+  function syncChainFieldRows() {
+    chainFieldRows.forEach(function (row) {
+      var on = row.available && chainSelected[row.cid] !== false;
+      row.node.classList.toggle('disabled', !on);
+      row.input.disabled = !on;
+    });
+  }
+  var pairProjectTokenCache = {};
+  function projectTokenInfo(chainId) {
+    if (!pairProjectTokenCache[chainId]) {
+      pairProjectTokenCache[chainId] = read(chainId, 'JBTokens', tokenOfAbi, 'tokenOf', [pid]).then(function (tokenAddr) {
+        if (!tokenAddr || tokenAddr === ZERO_ADDRESS) return null;
+        return clientFor(chainId).readContract({ address: tokenAddr, abi: erc20SymbolAbi, functionName: 'symbol', args: [] })
+          .catch(function () { return project.tokenSymbol || ''; })
+          .then(function (sym) {
+            return {
+              token: String(tokenAddr).toLowerCase(),
+              label: (sym || project.tokenSymbol || 'Project token') + ' project token',
+            };
+          });
+      }).catch(function () { return null; });
+    }
+    return pairProjectTokenCache[chainId];
+  }
+  function describeChainAddress(chainId, raw, target) {
+    raw = (raw || '').trim();
+    target._raw = raw;
+    target.className = 'operator-edit-token-name';
+    if (!raw) { target.textContent = ''; return; }
+    if (!isAddr(raw)) { target.className = 'operator-edit-token-name warn'; target.textContent = 'Not a valid address'; return; }
+    var lc = raw.toLowerCase();
+    if (lc === ZERO_ADDRESS.toLowerCase() || lc === NATIVE_TOKEN.toLowerCase()) { target.textContent = 'Native ETH (zero address pool token)'; return; }
+    var usdc = USDC_BY_CHAIN[chainId];
+    if (usdc && lc === usdc.toLowerCase()) { target.textContent = 'USDC on ' + chainNameOf(chainId); return; }
+    target.textContent = 'Checking token…';
+    projectTokenInfo(chainId).then(function (info) {
+      if ((target._raw || '').toLowerCase() !== lc) return;
+      if (info && info.token === lc) target.textContent = info.label + ' on ' + chainNameOf(chainId);
+      else target.textContent = 'Custom token ' + truncAddr(raw);
+    });
+  }
+
   var inputs = {}; // name → { get(): value-or-throw }
   action.fields.forEach(function (f) {
     var lab = el('div', 'operator-edit-label'); lab.style.marginTop = '12px'; lab.textContent = f.label; content.appendChild(lab);
@@ -8113,6 +8193,42 @@ function openPowerModal(project, action) {
       var cb = t.querySelector('input');
       lab.remove(); // toggleRow already shows the label
       inputs[f.name] = { get: function () { return cb.checked; } };
+      return;
+    }
+    if (f.kind === 'chainAddress') {
+      var wrap = el('div', 'operator-chain-addresses');
+      var rows = {};
+      allChains.forEach(function (c) {
+        var avail = !action.chainAvailable || action.chainAvailable(c.id);
+        if (!avail) chainSelected[c.id] = false;
+        var row = el('div', 'operator-chain-address-row');
+        var chain = el('div', 'operator-chain-address-chain');
+        chain.appendChild(chainLogo(c.id, c.name));
+        var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); chain.appendChild(nm);
+        row.appendChild(chain);
+        var field = el('div', 'operator-chain-address-field');
+        var input = el('input', 'operator-edit-jwt operator-chain-address-input');
+        input.type = 'text'; input.placeholder = f.placeholder || '0x… token address'; input.value = f.defaultValue || '';
+        var name = el('div', 'operator-edit-token-name');
+        input.addEventListener('input', function () { describeChainAddress(c.id, input.value, name); });
+        field.appendChild(input); field.appendChild(name); row.appendChild(field);
+        wrap.appendChild(row);
+        rows[c.id] = { input: input, name: name, available: avail };
+        chainFieldRows.push({ cid: c.id, node: row, input: input, available: avail });
+        describeChainAddress(c.id, input.value, name);
+      });
+      content.appendChild(wrap);
+      if (f.help) { var h2 = el('div', 'operator-edit-cur'); h2.textContent = f.help; content.appendChild(h2); }
+      syncChainFieldRows();
+      inputs[f.name] = { get: function () {
+        return function (cid) {
+          var row = rows[cid];
+          var raw = ((row && row.input.value) || f.defaultValue || '').trim();
+          if (!isAddr(raw)) throw new Error('Enter a valid address for ' + f.label + ' on ' + chainNameOf(cid));
+          if (raw.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return ZERO_ADDRESS;
+          return raw;
+        };
+      } };
       return;
     }
     var inp = el('input', 'operator-edit-jwt'); inp.type = (f.kind === 'uint' || f.kind === 'amount') ? 'text' : 'text'; inp.placeholder = f.placeholder || '';
@@ -8159,7 +8275,6 @@ function openPowerModal(project, action) {
   });
 
   var chlbl = el('div', 'operator-edit-label'); chlbl.style.marginTop = '14px'; chlbl.textContent = 'Run on'; content.appendChild(chlbl);
-  var chainSelected = {}; allChains.forEach(function (c, i) { chainSelected[c.id] = action.chainsDefault === 'all' ? true : (c.id === project.chainId); });
   var chainBox = el('div', 'splits-edit-chains');
   allChains.forEach(function (c) {
     // Some actions can't run on every chain (e.g. initialize buyback pool needs a Uniswap v4 AMM — OP Sepolia
@@ -8167,7 +8282,7 @@ function openPowerModal(project, action) {
     var avail = !action.chainAvailable || action.chainAvailable(c.id);
     if (!avail) chainSelected[c.id] = false;
     var r2 = el('label', 'splits-edit-chain'); var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = avail && chainSelected[c.id] !== false; cb.disabled = !avail;
-    cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; });
+    cb.addEventListener('change', function () { chainSelected[c.id] = cb.checked; syncChainFieldRows(); });
     r2.appendChild(cb); r2.appendChild(chainLogo(c.id, c.name)); var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); r2.appendChild(nm);
     if (!avail) { var un = el('span', 'operator-edit-cur'); un.style.marginLeft = '6px'; un.style.marginTop = '0'; un.textContent = action.unavailableNote || '(unavailable here)'; r2.appendChild(un); r2.style.opacity = '0.55'; }
     chainBox.appendChild(r2);

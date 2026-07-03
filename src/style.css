@@ -2679,6 +2679,26 @@ input[type="checkbox"].field {
 .operator-edit-jwt:focus { outline: none; border-color: var(--c-teal); }
 /* A little breathing room between consecutive fields. */
 .operator-edit-jwt, .operator-edit-textarea, .operator-cat-select { margin-bottom: 14px; }
+.operator-chain-addresses {
+  display: grid; gap: 6px; margin: 4px 0 8px;
+}
+.operator-chain-address-row {
+  display: grid; grid-template-columns: minmax(116px, 0.75fr) minmax(0, 2fr);
+  gap: 10px; align-items: start; padding: 6px 0;
+}
+.operator-chain-address-row.disabled { opacity: 0.5; }
+.operator-chain-address-chain {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 34px;
+  font-size: 12px; color: var(--text); font-weight: bold; min-width: 0;
+}
+.operator-chain-address-chain .chain-logo { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; }
+.operator-chain-address-field { min-width: 0; }
+.operator-chain-address-input { margin: 0; }
+.operator-edit-token-name {
+  min-height: 16px; margin-top: 3px; font-size: 11px; line-height: 1.35;
+  color: var(--muted-2); overflow-wrap: anywhere;
+}
+.operator-edit-token-name.warn { color: var(--c-pink); font-weight: bold; }
 .operator-edit .operator-edit-label { margin-top: 12px; }
 .operator-edit .operator-edit-label:first-child { margin-top: 0; }
 .operator-edit-logo { display: flex; align-items: center; gap: 10px; margin-top: 4px; margin-bottom: 24px; }
@@ -2708,6 +2728,11 @@ input[type="checkbox"].field {
 .operator-cat-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
 .operator-cat-add .operator-edit-status { margin-top: 6px; }
 .cat-id { font-size: 11px; color: var(--muted-2); min-width: 24px; }
+
+@media (max-width: 560px) {
+  .operator-chain-address-row { grid-template-columns: 1fr; gap: 4px; }
+  .operator-chain-address-chain { min-height: 0; }
+}
 .operator-edit-adv { margin-top: 10px; }
 .operator-edit-adv .operator-edit-label:first-child { margin-top: 0; }
 .operator-split-section { margin-top: -6px; margin-bottom: 24px; }
@@ -3676,6 +3701,7 @@ input[type="checkbox"].field {
 .backoffice-label { font-weight: bold; color: var(--text); font-size: 13px; }
 .backoffice-sub { font-size: 12px; color: var(--muted-2); }
 .backoffice-actions { display: flex; align-items: center; gap: 10px; flex: none; }
+.backoffice-safe-tx { white-space: nowrap; }
 .backoffice-signed { font-size: 12px; color: var(--muted-2); }
 .backoffice-none { font-size: 13px; color: var(--muted-2); }
 .backoffice-batch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -3727,11 +3753,28 @@ input[type="checkbox"].field {
   background: var(--c-black); color: var(--bg); padding: 4px 8px; font-size: 12px; display: none; }
 .has-instant-tip:hover > .instant-tip { display: block; }
 .backoffice-batch-note { font-size: 13px; color: var(--muted-2); }
-.relayr-preview { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-.relayr-preview-row { display: flex; align-items: center; font-size: 13px; color: var(--text); }
-.relayr-preview-row .chain-logo { width: 15px; height: 15px; margin-right: 6px; }
-.relayr-preview-label { font-weight: bold; }
-.relayr-preview-status { margin-left: auto; font-size: 12px; color: var(--muted-2); }
+.relayr-preview {
+  --relayr-preview-cols: minmax(112px, 0.85fr) 64px minmax(0, 2fr);
+  display: grid; grid-template-columns: var(--relayr-preview-cols);
+  margin-bottom: 12px; border: 1px solid rgba(47, 35, 29, 0.28);
+}
+.relayr-preview-head,
+.relayr-preview-row { display: grid; grid-column: 1 / -1; grid-template-columns: var(--relayr-preview-cols); align-items: center; }
+.relayr-preview-head {
+  min-height: 32px; background: rgba(47, 35, 29, 0.07); color: var(--muted-2);
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.relayr-preview-head > div,
+.relayr-preview-row > div { padding: 8px 10px; min-width: 0; }
+.relayr-preview-row { min-height: 42px; border-top: 1px solid rgba(47, 35, 29, 0.16); font-size: 13px; color: var(--text); }
+.relayr-preview-chain { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.relayr-preview-chain .chain-logo { width: 16px; height: 16px; flex: 0 0 16px; margin: 0; }
+.relayr-preview-nonce {
+  color: var(--muted-2); font-variant-numeric: tabular-nums; text-align: right;
+}
+.relayr-preview-details { display: flex; align-items: baseline; gap: 10px; justify-content: space-between; }
+.relayr-preview-label { min-width: 0; overflow-wrap: anywhere; font-weight: bold; }
+.relayr-preview-status { flex: 0 0 auto; min-width: 64px; text-align: right; font-size: 12px; color: var(--muted-2); }
 .relayr-preview-status.ok { color: var(--c-teal); }
 .relayr-preview-status.err { color: var(--c-pink); }
 .relayr-preview-status.pending { color: var(--muted-2); }

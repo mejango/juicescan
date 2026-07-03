@@ -52,6 +52,20 @@ describe('operator buyback/router descriptors', () => {
   });
   it('pool init defaults its pair token to the zero address (native ETH pool-currency convention)', () => {
     const tokenField = POWER_INIT_BUYBACK_POOL.fields.find((f) => f.name === 'terminalToken');
+    expect(tokenField.kind).toBe('chainAddress');
     expect(tokenField.defaultValue).toBe(ZERO);
+  });
+  it('pool init resolves the pair token per chain before encoding initializePoolFor', () => {
+    const baseUsdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    const arbUsdc = '0xaf88d065e77c8cc2239327c5edb3a432268e5831';
+    const values = {
+      fee: '3000',
+      tickSpacing: '60',
+      twapWindow: '1800',
+      terminalToken: (chainId) => chainId === 8453 ? baseUsdc : arbUsdc,
+      sqrtPriceX96: '79228162514264337593543950336',
+    };
+    expect(POWER_INIT_BUYBACK_POOL.buildArgs(values, 8453, 5n)[4]).toBe(baseUsdc);
+    expect(POWER_INIT_BUYBACK_POOL.buildArgs(values, 42161, 5n)[4]).toBe(arbUsdc);
   });
 });

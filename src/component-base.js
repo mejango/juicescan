@@ -87,6 +87,16 @@ export var erc20DecimalsAbi = [{
   inputs: [],
   outputs: [{ name: '', type: 'uint8' }],
 }];
+var erc20SymbolAbi = [{
+  type: 'function', name: 'symbol', stateMutability: 'view',
+  inputs: [],
+  outputs: [{ name: '', type: 'string' }],
+}];
+var tokenOfAbi = [{
+  type: 'function', name: 'tokenOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }],
+  outputs: [{ name: '', type: 'address' }],
+}];
 
 // --- DOM helpers ---
 
@@ -624,6 +634,61 @@ function formatArgValue(type, v) {
   if (Array.isArray(v)) return '[' + v.map(function (x) { return formatArgValue('', x); }).join(', ') + ']';
   try { return JSON.stringify(v, function (k, val) { return typeof val === 'bigint' ? val.toString() : val; }); } catch (_) { return String(v); }
 }
+function knownTokenLabel(chainId, addr) {
+  if (!chainId || !isAddr(addr)) return null;
+  var lc = String(addr).toLowerCase();
+  if (lc === ZERO_ADDRESS.toLowerCase() || lc === NATIVE_TOKEN.toLowerCase()) return 'ETH';
+  var toks = [];
+  try { toks = getChainTokens(Number(chainId)) || []; } catch (_) {}
+  for (var i = 0; i < toks.length; i++) {
+    if (toks[i].address && toks[i].address.toLowerCase() === lc) {
+      return String(toks[i].symbol || '').replace(/\s*\(native\)/i, '') || null;
+    }
+  }
+  return null;
+}
+function ctxArgValue(ctx, name) {
+  if (!ctx || !ctx.inputs) return null;
+  for (var i = 0; i < ctx.inputs.length; i++) {
+    if (ctx.inputs[i] && ctx.inputs[i].name === name) return ctx.values && ctx.values[i];
+  }
+  return null;
+}
+var _projectTokenLabelCache = {};
+function projectTokenLabel(chainId, projectId, addr) {
+  if (!chainId || projectId == null || !isAddr(addr)) return Promise.resolve(null);
+  var lc = String(addr).toLowerCase();
+  var key = chainId + ':' + String(projectId) + ':' + lc;
+  if (!_projectTokenLabelCache[key]) {
+    _projectTokenLabelCache[key] = (async function () {
+      var tokensAddr = null;
+      try { tokensAddr = getAddress('JBTokens', Number(chainId)); } catch (_) {}
+      if (!tokensAddr) return null;
+      var pid; try { pid = BigInt(projectId); } catch (_) { return null; }
+      var client = createPublicClientForChain(Number(chainId));
+      var tokenAddr = await client.readContract({ address: tokensAddr, abi: tokenOfAbi, functionName: 'tokenOf', args: [pid] }).catch(function () { return null; });
+      if (!tokenAddr || String(tokenAddr).toLowerCase() !== lc) return null;
+      var sym = await client.readContract({ address: tokenAddr, abi: erc20SymbolAbi, functionName: 'symbol', args: [] }).catch(function () { return ''; });
+      return (sym || 'Project token') + ' project token';
+    })();
+  }
+  return _projectTokenLabelCache[key];
+}
+function decorateArgValue(input, value, ctx, valNode, formatted) {
+  if (!ctx || (input.type || '') !== 'address' || !isAddr(String(value || ''))) return;
+  if (ctx.fn !== 'initializePoolFor' || input.name !== 'terminalToken') return;
+  var raw = String(value);
+  var label = knownTokenLabel(ctx.tx && ctx.tx.chainId, raw);
+  if (label) { valNode.textContent = formatted + ' (' + label + ')'; return; }
+  var projectId = ctxArgValue(ctx, 'projectId');
+  if (projectId == null) return;
+  valNode._tokenAddr = raw.toLowerCase();
+  valNode.textContent = formatted + ' (checking token)';
+  projectTokenLabel(ctx.tx && ctx.tx.chainId, projectId, raw).then(function (asyncLabel) {
+    if (valNode._tokenAddr !== raw.toLowerCase()) return;
+    valNode.textContent = asyncLabel ? (formatted + ' (' + asyncLabel + ')') : formatted;
+  }).catch(function () { if (valNode._tokenAddr === raw.toLowerCase()) valNode.textContent = formatted; });
+}
 // Normalize tx field aliases — builders disagree on names: calldata|data (the raw bytes), function|functionName
 // (viem's key), args|rawArgs (the positional array; some payloads also carry a named-object `args`, so only an
 // array counts here). Without this, payloads like the auto-issue confirm (data/functionName/rawArgs) render as
@@ -684,7 +749,7 @@ function decodeCallRich(tx) {
 
 // One decoded arg as a DOM row. Recurses into tuples / tuple[] so each field sits on its own indented line
 // (the "pretty" tree view) instead of a single inline JSON blob.
-function renderArgNode(input, value, depth) {
+function renderArgNode(input, value, depth, ctx) {
   var type = input.type || '';
   var baseType = type.replace(/\[\]$/, '');
   var isArray = /\[\]$/.test(type);
@@ -698,16 +763,19 @@ function renderArgNode(input, value, depth) {
       arr.forEach(function (item, idx) {
         var ih = el('div', 'tx-decoded-arg'); ih.style.marginLeft = ((depth + 1) * 14) + 'px';
         var ik = el('span', 'tx-decoded-argname'); ik.textContent = '[' + idx + ']:'; ih.appendChild(ik); wrap.appendChild(ih);
-        input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, item ? (item[c.name] !== undefined ? item[c.name] : item[ci]) : undefined, depth + 2)); });
+        input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, item ? (item[c.name] !== undefined ? item[c.name] : item[ci]) : undefined, depth + 2, ctx)); });
       });
     } else {
-      input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, value ? (value[c.name] !== undefined ? value[c.name] : value[ci]) : undefined, depth + 1)); });
+      input.components.forEach(function (c, ci) { wrap.appendChild(renderArgNode(c, value ? (value[c.name] !== undefined ? value[c.name] : value[ci]) : undefined, depth + 1, ctx)); });
     }
     return wrap;
   }
   var r = el('div', 'tx-decoded-arg'); r.style.marginLeft = (depth * 14) + 'px';
   var k = el('span', 'tx-decoded-argname'); k.textContent = label + ': ';
-  var val = el('span', 'tx-decoded-argval'); val.textContent = formatArgValue(type, value);
+  var val = el('span', 'tx-decoded-argval');
+  var formatted = formatArgValue(type, value);
+  val.textContent = formatted;
+  decorateArgValue(input, value, ctx, val, formatted);
   r.appendChild(k); r.appendChild(val);
   return r;
 }
@@ -725,7 +793,8 @@ export function renderDecodedTx(tx) {
     var hasArgs = rich.inputs ? rich.inputs.length : (rich.shaped && rich.shaped.length);
     var fn = el('div', 'tx-decoded-fn'); fn.textContent = rich.fn + (hasArgs ? '' : '()'); call.appendChild(fn);
     if (rich.inputs) {
-      rich.inputs.forEach(function (inp, i) { call.appendChild(renderArgNode(inp, rich.values[i], 0)); });
+      var ctx = { tx: tx, fn: rich.fn, inputs: rich.inputs, values: rich.values };
+      rich.inputs.forEach(function (inp, i) { call.appendChild(renderArgNode(inp, rich.values[i], 0, ctx)); });
     } else {
       (rich.shaped || []).forEach(function (a) {
         var r = el('div', 'tx-decoded-arg');
@@ -828,7 +897,8 @@ export function confirmTransactionModal(payload, opts) {
     var foot = el('div', 'create-modal-foot');
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
     var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
-    foot.appendChild(cancel); foot.appendChild(confirm); content.appendChild(foot);
+    if (!opts.hideCancel) foot.appendChild(cancel);
+    foot.appendChild(confirm); content.appendChild(foot);
     // Post-confirm progress shows HERE, inside the modal — the modal stays open after "Confirm" so callers
     // don't have to render tx status next to a button. Hidden until the tx is in flight.
     var statusEl = el('div', 'tx-confirm-status'); statusEl.style.display = 'none'; content.appendChild(statusEl);
@@ -885,6 +955,7 @@ export function executeTransaction(opts) {
     var payload = {
       action: opts.label || opts.functionName,
       chain: (CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || ('chain ' + opts.chainId),
+      chainId: opts.chainId,
       contract: cname || opts.address,
       // Keep the raw target address visible even when we resolved a name (nothing is hidden).
       address: cname ? opts.address : undefined,
