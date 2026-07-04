@@ -5463,7 +5463,9 @@ var jbProjectsTransferAbi = [{
 // propose to its per-chain queue (multichain, one payment to execute later); an EOA → Relayr (sign per
 // chain, pay once). Returns { queued, skipped, cancelled } for the Safe path, { relayr:true } for EOA, or null.
 async function runAuthorityActionAcrossChains(project, chains, authorityAddr, buildCall, opts, setStatus) {
-  var safeInfo = await fetchSafeInfo(authorityAddr, project.chainId).catch(function () { return null; });
+  opts = opts || {};
+  var homeChainId = (chains && chains[0] && chains[0].id) || project.chainId;
+  var safeInfo = await fetchSafeInfo(authorityAddr, homeChainId).catch(function () { return null; });
   if (safeInfo) {
     var signer = getAccount();
     if (!signer) { setStatus('Connecting wallet…', 'pending'); signer = await connect().then(getAccount).catch(function () { return null; }); }
@@ -5471,7 +5473,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
       setStatus('Connected wallet isn’t a signer of the Safe (' + truncAddr(authorityAddr) + ').', 'error'); return null;
     }
-    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces });
+    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains });
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
@@ -5479,22 +5481,27 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
   return { relayr: true };
 }
 
-// Transfer operator (revnet) / ownership (custom) across every chain, routed by authority type.
-function openTransferAuthorityModal(project) {
+// Transfer operator (revnet) / ownership (custom) across the requested chain group, routed by authority type.
+function openTransferAuthorityModal(project, opts) {
+  opts = opts || {};
   var isRev = project.isRevnet;
-  var authorityAddr = projectAuthorityAddress(project);
-  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
+  var authorityAddr = opts.authorityAddr || projectAuthorityAddress(project);
+  var chains = (opts.chains && opts.chains.length)
+    ? opts.chains
+    : ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]);
+  var homeChainId = (chains[0] && chains[0].id) || project.chainId;
+  var chainListText = chains.map(function (c) { return c.name || chainNameOf(c.id); }).join(', ');
   var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode((projectAuthorityLabel(project) || (isRev ? 'Operator' : 'Owner')).toLowerCase(), authorityAddr, isRev ? 'to transfer the operator role.' : 'to transfer ownership.', project.chainId));
+  content.appendChild(operatorGateNode((projectAuthorityLabel(project) || (isRev ? 'Operator' : 'Owner')).toLowerCase(), authorityAddr, isRev ? 'to transfer the operator role.' : 'to transfer ownership.', homeChainId));
   var warn = el('div', 'operator-edit-across');
   warn.textContent = isRev
-    ? 'Hands over operator control on every chain. Use the zero address to relinquish operator powers permanently. Does not move funds or change rulesets.'
-    : 'Transfers project ownership (the JBProjects NFT) on every chain. The new owner controls all owner-only actions. Does not move funds or change rulesets.';
+    ? 'Hands over operator control on ' + chainListText + '. Use the zero address to relinquish operator powers permanently. Does not move funds or change rulesets.'
+    : 'Transfers project ownership (the JBProjects NFT) on ' + chainListText + '. The new owner controls owner-only actions there. Does not move funds or change rulesets.';
   content.appendChild(warn);
   var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = isRev ? 'New operator' : 'New owner'; content.appendChild(nlbl);
   var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'operator' : 'owner') + ' address'; content.appendChild(addrInput);
   var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
-  var authorityValueOf = attachAddressRecognition(addrInput, addrHint, project.chainId, { label: isRev ? 'New operator' : 'New owner' });
+  var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New operator' : 'New owner' });
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
@@ -5516,7 +5523,11 @@ function openTransferAuthorityModal(project) {
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
-      if (res.relayr) { setStatus((isRev ? 'Operator' : 'Ownership') + ' transferred on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.', 'success'); if (isRev) project.operator = to; setTimeout(function () { modal.close(); }, 1400); return; }
+      if (res.relayr) {
+        setStatus((isRev ? 'Operator' : 'Ownership') + ' transferred on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.', 'success');
+        if (isRev && chains.some(function (c) { return Number(c.id) === Number(project.chainId); })) project.operator = to;
+        setTimeout(function () { modal.close(); }, 1400); return;
+      }
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + ' — confirm + execute in the ' + (isRev ? 'Operator' : 'Owner') + ' tab.', 'success');
       setTimeout(function () { modal.close(); }, 2400);
     })();
@@ -6013,7 +6024,9 @@ function _saveOnchainNonceHint() { try { localStorage.setItem('jb-onchain-nonce-
 function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
   opts = opts || {};
   return new Promise(function (resolve) {
-    var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
+    var chains = (opts.chains && opts.chains.length)
+      ? opts.chains
+      : ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]);
     var wrap = el('div', 'modal-body');
     var intro = el('div', 'modal-balance');
     intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the Operator tab). Chains without one are approved + executed on-chain right here. One “Sign & queue” does your part on every chain.';
@@ -7485,15 +7498,20 @@ function renderAccountCard(project) {
         });
       }
       block.appendChild(kv);
+      if (r.owner) {
+        var actions = el('div', 'account-actions');
+        var xfer = el('a', 'operator-cta'); xfer.href = '#'; xfer.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
+        xfer.title = (isRev ? 'Transfer the operator role on ' : 'Transfer project ownership on ') + g.chains.map(function (c) { return c.name; }).join(', ');
+        xfer.addEventListener('click', function (e) {
+          e.preventDefault();
+          openTransferAuthorityModal(project, { authorityAddr: r.owner, chains: g.chains });
+        });
+        actions.appendChild(xfer);
+        block.appendChild(actions);
+      }
       body.appendChild(block);
     });
   }).catch(function () { body.innerHTML = ''; body.textContent = 'Could not read ownership.'; });
-  // Transfer the controlling account, multichain (Safe → queued; EOA → relayr).
-  var foot = el('div', 'detail-about-foot');
-  var xfer = el('a', 'operator-cta'); xfer.href = '#'; xfer.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
-  xfer.title = isRev ? 'Hand over the operator role on every chain' : 'Transfer project ownership on every chain';
-  xfer.addEventListener('click', function (e) { e.preventDefault(); openTransferAuthorityModal(project); });
-  foot.appendChild(xfer); card.appendChild(foot);
   return card;
 }
 

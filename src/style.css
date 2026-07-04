@@ -3731,6 +3731,7 @@ input[type="checkbox"].field {
 .account-v { color: var(--text); min-width: 0; }
 .account-signers { font-weight: normal; }
 .account-signers .address-link, .account-signers strong { font-weight: bold; }
+.account-actions { margin-top: 8px; }
 /* Instant full-address tooltip on hover (no native-title delay). */
 /* Compact single-line Token card atop the holders view — labeled value segments. */
 .token-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 13px; color: var(--text); }
