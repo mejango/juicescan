@@ -76,7 +76,18 @@ function setNetwork(mode) {
   renderDiscoverTab();
 }
 
-var IPFS_GATEWAY = 'https://ipfs.io/ipfs/';
+var IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs/';
+var IPFS_GATEWAYS = [
+  IPFS_GATEWAY,
+  'https://dweb.link/ipfs/',
+  'https://ipfs.io/ipfs/',
+];
+var METADATA_FETCH_TIMEOUT_MS = 5500;
+var METADATA_FETCH_STAGGER_MS = 250;
+var METADATA_CACHE_PREFIX = 'jb-metadata-json-v1:';
+var METADATA_CACHE_MAX_CHARS = 200000;
+var INDEXED_STATS_TIMEOUT_MS = 3500;
+var _metadataCache = {};
 
 var LOGO_COLORS = ['#1a8a8a','#3d7a5a','#c43550','#2c2018','#b8602e','#6ec4c4','#82b89e'];
 function logoColor(id) { return LOGO_COLORS[(id - 1) % LOGO_COLORS.length]; }
@@ -550,7 +561,7 @@ function resolveTierMedia(shop, tier, chainId) {
   var fromIpfs = function () {
     var ipfs = decodeEncodedIpfs(tier.encodedIpfsUri);
     if (!ipfs) return {};
-    return fetch(ipfsToHttp(ipfs)).then(function (r) { return r.json(); }).then(pick).catch(function () { return {}; });
+    return fetchMetadata(ipfs).then(function (j) { return j ? pick(j) : {}; }).catch(function () { return {}; });
   };
   if (shop.resolver) {
     return clientFor(chainId).readContract({ address: shop.resolver, abi: TIER721_RESOLVER_ABI, functionName: 'tokenUriOf', args: [shop.hook, BigInt(tier.id) * 1000000000n] })
@@ -2911,10 +2922,122 @@ var cashOutDelayAbi = [{
 
 // -- Helpers --
 
-function ipfsToHttp(uri) {
-  if (!uri) return '';
-  if (uri.indexOf('ipfs://') === 0) return IPFS_GATEWAY + uri.slice('ipfs://'.length);
-  return uri;
+export function ipfsPath(uri) {
+  var u = (uri || '').toString().trim();
+  if (!u) return '';
+  if (u.indexOf('ipfs://') === 0) return u.slice('ipfs://'.length).replace(/^\/+/, '').replace(/^ipfs\//i, '');
+  var pathMatch = /^https?:\/\/[^/]+\/ipfs\/([^?#]+)([?#].*)?$/i.exec(u);
+  if (pathMatch) return (pathMatch[1] || '').replace(/^\/+/, '').replace(/^ipfs\//i, '') + (pathMatch[2] || '');
+  var subMatch = /^https?:\/\/([^/.]+)\.ipfs\.[^/]+(\/[^?#]*)?([?#].*)?$/i.exec(u);
+  if (subMatch) return subMatch[1] + (subMatch[2] || '') + (subMatch[3] || '');
+  return '';
+}
+
+export function ipfsGatewayUrls(uri) {
+  var path = ipfsPath(uri);
+  if (!path) return uri ? [uri] : [];
+  return IPFS_GATEWAYS.map(function (gw) { return gw + path; });
+}
+
+export function ipfsToHttp(uri) {
+  var urls = ipfsGatewayUrls(uri);
+  return urls[0] || '';
+}
+
+function metadataCacheKey(uri) {
+  var path = ipfsPath(uri);
+  return path ? ('ipfs:' + path) : (uri || '').toString().trim();
+}
+
+function readMetadataCache(uri) {
+  var key = metadataCacheKey(uri);
+  if (!key) return undefined;
+  if (Object.prototype.hasOwnProperty.call(_metadataCache, key)) return _metadataCache[key];
+  try {
+    var raw = localStorage.getItem(METADATA_CACHE_PREFIX + key);
+    if (!raw) return undefined;
+    var parsed = JSON.parse(raw);
+    _metadataCache[key] = parsed;
+    return parsed;
+  } catch (_) {
+    return undefined;
+  }
+}
+
+function writeMetadataCache(uri, value) {
+  var key = metadataCacheKey(uri);
+  if (!key || !value || typeof value !== 'object') return;
+  _metadataCache[key] = value;
+  try {
+    var raw = JSON.stringify(value);
+    if (raw.length <= METADATA_CACHE_MAX_CHARS) localStorage.setItem(METADATA_CACHE_PREFIX + key, raw);
+  } catch (_) {}
+}
+
+function fetchJsonFromUrl(url, timeoutMs, controllers) {
+  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  if (controller && controllers) controllers.push(controller);
+  var opts = { mode: 'cors' };
+  if (controller) opts.signal = controller.signal;
+  return new Promise(function (resolve, reject) {
+    var settled = false;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      if (controller) { try { controller.abort(); } catch (_) {} }
+      reject(new Error('metadata fetch timed out'));
+    }, timeoutMs);
+    fetch(url, opts).then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (json) {
+      if (settled) return;
+      settled = true; clearTimeout(timer); resolve(json);
+    }, function (err) {
+      if (settled) return;
+      settled = true; clearTimeout(timer); reject(err);
+    });
+  });
+}
+
+function fetchFirstJson(urls, timeoutMs, staggerMs) {
+  return new Promise(function (resolve) {
+    if (!urls.length) { resolve(null); return; }
+    var settled = false, remaining = urls.length, controllers = [], timers = [];
+    function finish(value) {
+      if (settled) return;
+      settled = true;
+      timers.forEach(function (t) { clearTimeout(t); });
+      controllers.forEach(function (c) { try { c.abort(); } catch (_) {} });
+      resolve(value || null);
+    }
+    urls.forEach(function (url, i) {
+      timers.push(setTimeout(function () {
+        if (settled) return;
+        fetchJsonFromUrl(url, timeoutMs, controllers).then(function (json) {
+          finish(json);
+        }).catch(function () {
+          if (settled) return;
+          remaining -= 1;
+          if (remaining === 0) finish(null);
+        });
+      }, i * staggerMs));
+    });
+  });
+}
+
+function optionalWithin(promise, timeoutMs, fallback) {
+  return new Promise(function (resolve) {
+    var settled = false;
+    var timer = setTimeout(function () { if (!settled) { settled = true; resolve(fallback); } }, timeoutMs);
+    Promise.resolve(promise).then(function (value) {
+      if (settled) return;
+      settled = true; clearTimeout(timer); resolve(value);
+    }, function () {
+      if (settled) return;
+      settled = true; clearTimeout(timer); resolve(fallback);
+    });
+  });
 }
 
 // Tier media URLs (image / animation_url, or an href pulled out of a metadata SVG) are attacker-controlled.
@@ -3496,16 +3619,15 @@ function openSafeModal(address, chainId, info) {
 
 // -- On-chain fetch --
 
-async function fetchMetadata(uri) {
-  var url = ipfsToHttp(uri);
-  if (!url) return null;
-  try {
-    var res = await fetch(url, { mode: 'cors' });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (e) {
-    return null;
-  }
+export async function fetchMetadata(uri) {
+  if (!uri) return null;
+  var cached = readMetadataCache(uri);
+  if (cached !== undefined) return cached;
+  var urls = ipfsGatewayUrls(uri);
+  var stagger = ipfsPath(uri) ? METADATA_FETCH_STAGGER_MS : 0;
+  var json = await fetchFirstJson(urls, METADATA_FETCH_TIMEOUT_MS, stagger);
+  if (json) writeMetadataCache(uri, json);
+  return json;
 }
 
 async function read(chainId, contractName, abi, functionName, args) {
@@ -10784,11 +10906,11 @@ async function fetchSwapHistory(project) {
 // project row. Returns null on any failure — never fabricates.
 async function fetchProjectIndexedStats(id, chainId) {
   try {
-    var data = await bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
+    var data = await optionalWithin(bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
       projectId: Number(id),
       chainId: Number(chainId),
       version: BENDYSTRAW_VERSION,
-    });
+    }), INDEXED_STATS_TIMEOUT_MS, null);
     var p = data && data.project;
     if (!p) return null;
     var stats = {
@@ -10798,9 +10920,9 @@ async function fetchProjectIndexedStats(id, chainId) {
       contributorsCount: Number(p.contributorsCount) || 0,
     };
     if (p.suckerGroupId) {
-      var agg = await bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_STATS_QUERY, { id: p.suckerGroupId })
+      var agg = await optionalWithin(bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_STATS_QUERY, { id: p.suckerGroupId })
         .then(function (d) { return d && d.suckerGroup; })
-        .catch(function () { return null; });
+        .catch(function () { return null; }), INDEXED_STATS_TIMEOUT_MS, null);
       if (agg) {
         stats.volume = agg.volume;
         stats.volumeUsd = agg.volumeUsd;
