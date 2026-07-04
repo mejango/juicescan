@@ -76,8 +76,9 @@ function setNetwork(mode) {
   renderDiscoverTab();
 }
 
+var ETH_SUCKS_GATEWAY_HOST = 'eth.sucks';
 var IPFS_GATEWAY = 'https://gateway.pinata.cloud/ipfs/';
-var IPFS_GATEWAYS = [
+var IPFS_PATH_GATEWAYS = [
   IPFS_GATEWAY,
   'https://dweb.link/ipfs/',
   'https://ipfs.io/ipfs/',
@@ -2930,13 +2931,33 @@ export function ipfsPath(uri) {
   if (pathMatch) return (pathMatch[1] || '').replace(/^\/+/, '').replace(/^ipfs\//i, '') + (pathMatch[2] || '');
   var subMatch = /^https?:\/\/([^/.]+)\.ipfs\.[^/]+(\/[^?#]*)?([?#].*)?$/i.exec(u);
   if (subMatch) return subMatch[1] + (subMatch[2] || '') + (subMatch[3] || '');
+  var ethSucksMatch = /^https?:\/\/([^/.]+)\.eth\.sucks(\/[^?#]*)?([?#].*)?$/i.exec(u);
+  if (ethSucksMatch) return ethSucksMatch[1] + (ethSucksMatch[2] || '') + (ethSucksMatch[3] || '');
   return '';
+}
+
+function ipfsPathHead(path) {
+  var p = (path || '').toString();
+  var m = /^([^/?#]+)(.*)$/.exec(p);
+  return m ? { cid: m[1], rest: m[2] || '' } : null;
+}
+
+function ethSucksGatewayUrl(path) {
+  var h = ipfsPathHead(path);
+  if (!h) return '';
+  // Subdomain gateways are DNS names: base32 CIDv1 works, CIDv0 (Qm...) does not.
+  if (h.cid !== h.cid.toLowerCase() || !/^[a-z0-9-]+$/.test(h.cid)) return '';
+  return 'https://' + h.cid + '.' + ETH_SUCKS_GATEWAY_HOST + (h.rest || '/');
 }
 
 export function ipfsGatewayUrls(uri) {
   var path = ipfsPath(uri);
   if (!path) return uri ? [uri] : [];
-  return IPFS_GATEWAYS.map(function (gw) { return gw + path; });
+  var urls = [];
+  var ethSucks = ethSucksGatewayUrl(path);
+  if (ethSucks) urls.push(ethSucks);
+  IPFS_PATH_GATEWAYS.forEach(function (gw) { urls.push(gw + path); });
+  return urls;
 }
 
 export function ipfsToHttp(uri) {
