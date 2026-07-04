@@ -3703,6 +3703,7 @@ input[type="checkbox"].field {
 }
 /* Back office (Safe multisig queue) */
 .backoffice-intro { margin-bottom: 12px; }
+.operator-safe-groups { display: contents; }
 .backoffice-chain { margin-bottom: 14px; }
 .backoffice-chain-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: bold; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
 .backoffice-chain-head .chain-logo { width: 15px; height: 15px; }

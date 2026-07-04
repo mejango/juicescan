@@ -5158,9 +5158,9 @@ function renderDetailHeader(project) {
     row1.appendChild(mkPair('Site: ', [a]));
   }
   header.appendChild(row1);
-  // Flag when the on-chain owner isn't the same on every chain (a per-chain ownership split).
-  if (!project.isRevnet && (project.chains || []).length > 1) {
-    fetchOwnersPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
+  // Flag when the controlling account is not the same on every chain (owner for custom projects, operator for revnets).
+  if ((project.chains || []).length > 1) {
+    fetchAuthorityPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
   }
   return header;
 }
@@ -5286,21 +5286,46 @@ function renderTokenPanel(project) {
   return card;
 }
 
-// Read JBProjects.ownerOf(projectId) on every chain and report whether the owner diverges. Custom
-// projects only (revnet authority is the operator, a different read). { rows:[{chainId,name,owner}], diverged }.
+export function authorityRowsDiverged(rows) {
+  var known = (rows || []).filter(function (r) { return r.owner; });
+  var first = known.length ? known[0].owner.toLowerCase() : null;
+  return known.some(function (r) { return r.owner.toLowerCase() !== first; });
+}
+
+function projectChains(project) {
+  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
+  return chains.map(function (c) { return { id: c.id, name: c.name || chainNameOf(c.id) }; });
+}
+
+// Read JBProjects.ownerOf(projectId) on every chain and report whether the owner diverges.
+// { rows:[{chainId,name,owner}], diverged }.
 function fetchOwnersPerChain(project) {
   var pid = BigInt(project.id);
-  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
+  var chains = projectChains(project);
   return Promise.all(chains.map(function (c) {
     return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid])
       .then(function (o) { return { chainId: c.id, name: c.name, owner: o }; })
       .catch(function () { return { chainId: c.id, name: c.name, owner: null }; });
   })).then(function (rows) {
-    var known = rows.filter(function (r) { return r.owner; });
-    var first = known.length ? known[0].owner.toLowerCase() : null;
-    var diverged = known.some(function (r) { return r.owner.toLowerCase() !== first; });
-    return { rows: rows, diverged: diverged };
+    return { rows: rows, diverged: authorityRowsDiverged(rows) };
   });
+}
+
+// Read the revnet operator on every chain. The operator is not exposed as a direct REVOwner getter, so this
+// uses the same indexed permission-holder source as revnetOperatorOf(), but per chain instead of one primary.
+function fetchOperatorsPerChain(project) {
+  var chains = projectChains(project);
+  return Promise.all(chains.map(function (c) {
+    return revnetOperatorOf(project.id, c.id)
+      .then(function (o) { return { chainId: c.id, name: c.name, owner: o }; })
+      .catch(function () { return { chainId: c.id, name: c.name, owner: null }; });
+  })).then(function (rows) {
+    return { rows: rows, diverged: authorityRowsDiverged(rows) };
+  });
+}
+
+function fetchAuthorityPerChain(project) {
+  return project && project.isRevnet ? fetchOperatorsPerChain(project) : fetchOwnersPerChain(project);
 }
 
 // Other info — per-chain project IDs + the operator/owner address. Read-only.
@@ -5352,12 +5377,12 @@ function renderOtherInfoPanel(project) {
   var opItem = el('div', 'detail-info-item');
   var opLbl = el('div', 'detail-info-label'); opLbl.textContent = projectAuthorityLabel(project); opItem.appendChild(opLbl);
   var opVal = el('div', 'detail-info-value info-operator-val'); opVal.appendChild(fullAddressNode(projectAuthorityAddress(project), true, project.chainId)); opItem.appendChild(opVal);
-  // If ownership isn't uniform across chains, replace the single value with a per-chain breakdown.
-  if (!project.isRevnet && idChains.length > 1) {
-    fetchOwnersPerChain(project).then(function (res) {
+  // If ownership/operator control isn't uniform across chains, replace the single value with a per-chain breakdown.
+  if (idChains.length > 1) {
+    fetchAuthorityPerChain(project).then(function (res) {
       if (!res.diverged || !opVal.isConnected) return;
       opVal.innerHTML = '';
-      var warn = el('div', 'detail-owner-warn'); warn.textContent = 'Owner differs by chain'; opVal.appendChild(warn);
+      var warn = el('div', 'detail-owner-warn'); warn.textContent = projectAuthorityLabel(project) + ' differs by chain'; opVal.appendChild(warn);
       res.rows.forEach(function (r) {
         var row = el('div', 'detail-owner-chainrow');
         row.appendChild(chainLogo(r.chainId, r.name));
@@ -7380,14 +7405,30 @@ function renderAccountCard(project) {
   // that instead. For custom projects, the owner IS the controlling account (read per chain via ownerOf).
   var isRev = project.isRevnet;
   var addrLabel = isRev ? 'Operator' : 'Owner';
-  Promise.all(chains.map(function (c) {
-    var ownerP = isRev ? Promise.resolve(projectAuthorityAddress(project)) : read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).catch(function () { return null; });
-    return Promise.resolve(ownerP).then(function (owner) {
+  var authorityRowsP = isRev
+    ? fetchOperatorsPerChain(project).then(function (res) {
+      var byChain = {};
+      res.rows.forEach(function (r) { byChain[r.chainId] = r.owner; });
+      return chains.map(function (c) { return { c: c, owner: byChain[c.id] || null }; });
+    })
+    : Promise.all(chains.map(function (c) {
+      return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid])
+        .then(function (owner) { return { c: c, owner: owner }; })
+        .catch(function () { return { c: c, owner: null }; });
+    }));
+  authorityRowsP.then(function (authorityRows) {
+    return Promise.all(authorityRows.map(function (row) {
+      var c = row.c, owner = row.owner;
       if (!owner) return { c: c, owner: null, type: '—', safe: null };
       return classifyOwner(c.id, owner).then(function (info) { return { c: c, owner: owner, type: info.type, safe: info.safe }; });
-    });
-  })).then(function (rows) {
+    }));
+  }).then(function (rows) {
     body.innerHTML = '';
+    if (authorityRowsDiverged(rows)) {
+      var warn = el('div', 'detail-owner-warn');
+      warn.textContent = addrLabel + ' differs by chain';
+      body.appendChild(warn);
+    }
     // Collapse chains that share the same owner/type/policy/signers into one entry (logos listed together).
     var groups = [], byKey = {};
     rows.forEach(function (r) {
@@ -7456,6 +7497,31 @@ function renderAccountCard(project) {
   return card;
 }
 
+function appendPendingSafeTxsCard(section, safe, chains, homeChainId, contextLabel) {
+  if (!safe) return null;
+  var safeCard = renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel);
+  section.appendChild(safeCard);
+  fetchSafeInfo(safe, homeChainId).then(function (info) { if (!info && safeCard.parentNode) safeCard.parentNode.removeChild(safeCard); }).catch(function () {});
+  return safeCard;
+}
+
+function renderRevnetPendingSafeTxs(project, mount) {
+  fetchOperatorsPerChain(project).then(function (res) {
+    if (!mount.isConnected) return;
+    var byOp = {}, groups = [];
+    res.rows.forEach(function (r) {
+      if (!r.owner) return;
+      var key = r.owner.toLowerCase();
+      var g = byOp[key];
+      if (!g) { g = byOp[key] = { owner: r.owner, chains: [] }; groups.push(g); }
+      g.chains.push({ id: r.chainId, name: r.name });
+    });
+    groups.forEach(function (g) {
+      appendPendingSafeTxsCard(mount, g.owner, g.chains, g.chains[0].id, 'Operator');
+    });
+  }).catch(function () {});
+}
+
 function renderBackOfficeSection(project) {
   var section = el('div', 'detail-section');
   var safe = projectAuthorityAddress(project);
@@ -7465,10 +7531,12 @@ function renderBackOfficeSection(project) {
   // The Safe queue/sign card is only meaningful when the controlling account is a Safe — an EOA controller
   // executes directly via relayr (no queue to sign). Render it optimistically, then drop it if the authority
   // isn't a Safe. Skipped entirely when the operator can't be resolved (indexer down → `safe` is null).
-  if (safe) {
-    var safeCard = renderPendingSafeTxsCard(safe, chains, project.chainId, project.isRevnet ? 'Operator' : 'Owner');
-    section.appendChild(safeCard);
-    fetchSafeInfo(safe, project.chainId).then(function (info) { if (!info && safeCard.parentNode) safeCard.parentNode.removeChild(safeCard); }).catch(function () {});
+  if (project.isRevnet) {
+    var safeMount = el('div', 'operator-safe-groups');
+    section.appendChild(safeMount);
+    renderRevnetPendingSafeTxs(project, safeMount);
+  } else if (safe) {
+    appendPendingSafeTxsCard(section, safe, chains, project.chainId, 'Owner');
   }
 
   // Powers / Permissions. Revnet: the controlling account is an OPERATOR with a fixed granted permission set
