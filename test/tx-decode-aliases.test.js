@@ -36,4 +36,13 @@ describe('decodeCallForDisplay normalizes tx field aliases (no more spurious "co
     expect(node.textContent).toContain('terminalToken (address):');
     expect(node.textContent).toContain('(USDC)');
   });
+  it('explains initializePoolFor native terminalToken while preserving the sentinel argument', () => {
+    const native = '0x000000000000000000000000000000000000EEEe';
+    const data = encodeFunctionData({ abi: INIT_POOL_ABI, functionName: 'initializePoolFor', args: [3n, 10000, 200, 172800n, native, 7922816251426433759354395033600n] });
+    const node = renderDecodedTx({ chain: 'Ethereum', chainId: 1, contract: 'JBBuybackHookRegistry', calldata: data, value: '0' });
+    expect(node.textContent).toContain('terminalToken (address):');
+    expect(node.textContent).toContain(native);
+    expect(node.textContent).toContain('ETH native token');
+    expect(node.textContent).toContain('address(0)');
+  });
 });

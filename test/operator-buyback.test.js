@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderBuybackRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, materializeChainValues } from '../src/discover.js';
 
-const ZERO = '0x0000000000000000000000000000000000000000';
+const NATIVE = '0x000000000000000000000000000000000000EEEe';
 
 describe('renderBuybackRouterCard', () => {
   it('renders the card + 3 action buttons without throwing', () => {
@@ -36,8 +36,8 @@ describe('operator buyback/router descriptors', () => {
     expect(POWER_INIT_BUYBACK_POOL.fn).toBe('initializePoolFor');
     // uint fields arrive as decimal strings from the modal parser; buildArgs casts to BigInt.
     const args = POWER_INIT_BUYBACK_POOL.buildArgs(
-      { fee: '3000', tickSpacing: '60', twapWindow: '1800', terminalToken: ZERO, sqrtPriceX96: '79228162514264337593543950336' }, 1, 5n);
-    expect(args).toEqual([5n, 3000n, 60n, 1800n, ZERO, 79228162514264337593543950336n]);
+      { fee: '3000', tickSpacing: '60', twapWindow: '1800', terminalToken: NATIVE, sqrtPriceX96: '79228162514264337593543950336' }, 1, 5n);
+    expect(args).toEqual([5n, 3000n, 60n, 1800n, NATIVE, 79228162514264337593543950336n]);
   });
   it('buyback hook / router terminal pre-fill the project’s CURRENT value, with no standard-infra fallback', () => {
     const hookField = POWER_SET_BUYBACK_HOOK.fields[0];
@@ -50,10 +50,18 @@ describe('operator buyback/router descriptors', () => {
     // buildArgs send exactly what's in the field — no `|| getAddress(standard)` fallback.
     expect(POWER_SET_BUYBACK_HOOK.buildArgs({ hook: '0x3333333333333333333333333333333333333333' }, 1, 9n)).toEqual([9n, '0x3333333333333333333333333333333333333333']);
   });
-  it('pool init defaults its pair token to the zero address (native ETH pool-currency convention)', () => {
+  it('pool init defaults its pair token to the Juicebox native-token sentinel', () => {
     const tokenField = POWER_INIT_BUYBACK_POOL.fields.find((f) => f.name === 'terminalToken');
     expect(tokenField.kind).toBe('chainAddress');
-    expect(tokenField.defaultValue).toBe(ZERO);
+    expect(tokenField.defaultValue).toBe(NATIVE);
+    expect(tokenField.normalizeNativeToZero).toBeUndefined();
+    expect(tokenField.nativeLabel).toMatch(/sent to initializePoolFor/i);
+    expect(tokenField.help).toMatch(/native-token sentinel/i);
+  });
+  it('initialize pool preserves the native-token sentinel in calldata args', () => {
+    const args = POWER_INIT_BUYBACK_POOL.buildArgs(
+      { fee: '3000', tickSpacing: '60', twapWindow: '1800', terminalToken: NATIVE, sqrtPriceX96: '79228162514264337593543950336' }, 1, 5n);
+    expect(args).toEqual([5n, 3000n, 60n, 1800n, NATIVE, 79228162514264337593543950336n]);
   });
   it('pool init resolves the pair token per chain before encoding initializePoolFor', () => {
     const baseUsdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';

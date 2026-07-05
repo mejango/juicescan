@@ -678,6 +678,15 @@ function decorateArgValue(input, value, ctx, valNode, formatted) {
   if (!ctx || (input.type || '') !== 'address' || !isAddr(String(value || ''))) return;
   if (ctx.fn !== 'initializePoolFor' || input.name !== 'terminalToken') return;
   var raw = String(value);
+  var lc = raw.toLowerCase();
+  if (lc === ZERO_ADDRESS.toLowerCase()) {
+    valNode.textContent = formatted + ' (zero address native pool key)';
+    return;
+  }
+  if (lc === NATIVE_TOKEN.toLowerCase()) {
+    valNode.textContent = formatted + ' (ETH native token; hook stores pool key as address(0))';
+    return;
+  }
   var label = knownTokenLabel(ctx.tx && ctx.tx.chainId, raw);
   if (label) { valNode.textContent = formatted + ' (' + label + ')'; return; }
   var projectId = ctxArgValue(ctx, 'projectId');

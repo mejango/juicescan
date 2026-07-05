@@ -8177,7 +8177,7 @@ function describeKnownAddress(chainId, addr, hint, opts) {
   hint._raw = raw;
   hint.className = baseClass;
   if (lc === ZERO_ADDRESS.toLowerCase()) { hint.textContent = opts.zeroLabel || 'Zero address'; return; }
-  if (lc === NATIVE_TOKEN.toLowerCase()) { hint.textContent = 'Native ETH token'; return; }
+  if (lc === NATIVE_TOKEN.toLowerCase()) { hint.textContent = opts.nativeLabel || (opts.normalizeNativeToZero ? 'Native ETH token - encoded as zero address pool token' : 'Native ETH token'); return; }
   var cname = resolveContractName(raw, chainId);
   if (cname) { hint.textContent = 'Known contract: ' + cname + ' on ' + chainNameOf(chainId); return; }
   var tok = commonTokenLabel(chainId, raw);
@@ -8293,6 +8293,7 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
         projectSymbol: opts.projectSymbol,
         normalizeNativeToZero: !!opts.normalizeNativeToZero,
         zeroLabel: opts.zeroLabel,
+        nativeLabel: opts.nativeLabel,
         unknownLabel: opts.unknownLabel,
       });
       field.appendChild(input); field.appendChild(hint); row.appendChild(field); table.appendChild(row);
@@ -8653,7 +8654,7 @@ export var POWER_INIT_BUYBACK_POOL = {
     { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
     { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10' },
     { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)' },
-    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: ZERO_ADDRESS, normalizeNativeToZero: true, zeroLabel: 'Native ETH (zero address pool token)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); }, help: 'Set the pair token per selected chain. Use the zero address for native ETH pools; USDC and project-token addresses can differ by chain.' },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token - sent to initializePoolFor; hook stores the pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); }, help: 'Set the pair token per selected chain. Use the native-token sentinel for native ETH pools; the hook stores the resulting pool key under address(0). USDC and project-token addresses can differ by chain.' },
     { name: 'sqrtPriceX96', label: 'Initial price (sqrtPriceX96)', kind: 'uint', placeholder: 'pool price as sqrtPriceX96 (issuance rate)' },
   ],
   buildArgs: function (v, cid, pid) {
@@ -8742,6 +8743,7 @@ function openPowerModal(project, action) {
           projectSymbol: project.tokenSymbol,
           normalizeNativeToZero: !!f.normalizeNativeToZero,
           zeroLabel: f.zeroLabel || 'Zero address',
+          nativeLabel: f.nativeLabel,
           unknownLabel: f.unknownLabel,
         });
         if (f.crossChainRead) {
@@ -8817,7 +8819,7 @@ function openPowerModal(project, action) {
     var scalarAddressValue = null;
     if (f.kind === 'address') {
       var ah = el('div', 'operator-edit-token-name'); content.appendChild(ah);
-      scalarAddressValue = attachAddressRecognition(inp, ah, project.chainId, { label: f.label, projectId: project.id, projectSymbol: project.tokenSymbol, normalizeNativeToZero: !!f.normalizeNativeToZero, unknownLabel: f.unknownLabel });
+      scalarAddressValue = attachAddressRecognition(inp, ah, project.chainId, { label: f.label, projectId: project.id, projectSymbol: project.tokenSymbol, normalizeNativeToZero: !!f.normalizeNativeToZero, zeroLabel: f.zeroLabel, nativeLabel: f.nativeLabel, unknownLabel: f.unknownLabel });
     }
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
     // Cross-chain consistency: read this value's CURRENT setting on every AMM-available chain the project spans and
