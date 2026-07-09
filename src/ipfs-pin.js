@@ -9,7 +9,8 @@
 // Endpoints (classic Pinata API, scoped-key friendly):
 //   POST https://api.pinata.cloud/pinning/pinFileToIPFS   (multipart, for logo / NFT images)
 //   POST https://api.pinata.cloud/pinning/pinJSONToIPFS   (json, for project + NFT metadata)
-// Both return { IpfsHash: "Qm…", PinSize, Timestamp }; we surface it as "ipfs://Qm…".
+// Classic endpoints returned { IpfsHash: "Qm…", PinSize, Timestamp }; the v3 endpoint usually returns
+// { data: { cid: "baf…" } }. We surface either as "ipfs://<cid>".
 
 import { bytesToHex } from 'viem';
 
@@ -78,6 +79,7 @@ async function readPinResponse(res) {
 // --- CID helpers ---
 
 var B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+var B32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
 // Decode a base58 (Bitcoin alphabet) string to a Uint8Array.
 function base58Decode(str) {
@@ -98,28 +100,90 @@ function base58Decode(str) {
   return new Uint8Array(bytes.reverse());
 }
 
+// Decode a CIDv1 base32 multibase string ("baf…") to bytes.
+function base32Decode(str) {
+  var s = String(str || '').trim();
+  if (!s || s[0].toLowerCase() !== 'b') throw new Error('Unsupported CIDv1 multibase: ' + s.slice(0, 8) + '…');
+  s = s.slice(1).toLowerCase().replace(/=+$/, '');
+  var out = [];
+  var bits = 0, value = 0;
+  for (var i = 0; i < s.length; i++) {
+    var idx = B32_ALPHABET.indexOf(s[i]);
+    if (idx === -1) throw new Error('Invalid base32 character: ' + s[i]);
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(out);
+}
+
+function readVarint(bytes, offset) {
+  var value = 0, shift = 0;
+  for (var i = offset; i < bytes.length; i++) {
+    var b = bytes[i];
+    value += (b & 0x7f) * Math.pow(2, shift);
+    if ((b & 0x80) === 0) return { value: value, offset: i + 1 };
+    shift += 7;
+    if (shift > 49) throw new Error('CID varint is too large');
+  }
+  throw new Error('Truncated CID varint');
+}
+
+function cidV1DigestBytes(cid) {
+  var raw = base32Decode(cid);
+  var v = readVarint(raw, 0);
+  if (v.value !== 1) throw new Error('Unsupported CID version: ' + v.value);
+  // Codec is intentionally read and discarded. The 721 hook stores only a sha2-256 multihash digest and the
+  // on-chain resolver reconstructs a CIDv0-style URL from that digest, so the codec cannot be preserved.
+  var codec = readVarint(raw, v.offset);
+  var mhCode = readVarint(raw, codec.offset);
+  var mhLen = readVarint(raw, mhCode.offset);
+  if (mhCode.value !== 0x12 || mhLen.value !== 32) {
+    throw new Error('Only sha2-256/32-byte IPFS hashes are supported; got multihash 0x' + mhCode.value.toString(16) + '/' + mhLen.value);
+  }
+  if (mhLen.offset + mhLen.value !== raw.length) throw new Error('Unexpected CIDv1 multihash length');
+  return raw.slice(mhLen.offset, mhLen.offset + mhLen.value);
+}
+
 // Strip "ipfs://" / gateway prefixes and any path, returning the bare CID.
 function bareCid(uri) {
   if (!uri) return '';
   var s = String(uri).trim();
   if (s.indexOf('ipfs://') === 0) s = s.slice('ipfs://'.length);
+  else if (/^https?:\/\//i.test(s)) {
+    try {
+      var u = new URL(s);
+      var m = u.pathname.match(/\/ipfs\/([^/?#]+)/i);
+      if (m) return m[1];
+      var sub = (u.hostname || '').split('.')[0];
+      if (/^(Qm|ba)/i.test(sub)) return sub;
+    } catch (_) {}
+  }
   var slash = s.indexOf('/');
   if (slash !== -1) s = s.slice(0, slash);
   return s;
 }
 
-// Encode a CIDv0 ("Qm…") IPFS URI into the bytes32 the 721 hook stores (JB721TierConfig.encodedIpfsUri).
-// CIDv0 = base58(0x12 0x20 <32-byte sha256 digest>); we drop the 2-byte multihash prefix and keep the
-// 32-byte digest. CIDv1 ("b…") isn't supported here (Pinata returns CIDv0 by default).
+// Encode an IPFS URI into the bytes32 the 721 hook stores (JB721TierConfig.encodedIpfsUri).
+// CIDv0 = base58(0x12 0x20 <32-byte sha256 digest>); CIDv1 = multibase + multicodec + the same multihash.
+// In both cases the hook stores only the 32-byte sha2-256 digest and reconstructs a CIDv0-style URL on-chain.
 export function encodeIpfsUriToBytes32(uri) {
   var cid = bareCid(uri);
   if (!cid) return '0x0000000000000000000000000000000000000000000000000000000000000000';
-  if (cid[0] !== 'Q') {
-    throw new Error('Only CIDv0 (Qm…) NFT image hashes are supported; got: ' + cid.slice(0, 8) + '…');
+  var digest;
+  if (cid.slice(0, 2) === 'Qm') {
+    var raw = base58Decode(cid);
+    if (raw.length !== 34 || raw[0] !== 0x12 || raw[1] !== 0x20) {
+      throw new Error('Unexpected CIDv0 multihash for: ' + cid.slice(0, 8) + '…');
+    }
+    digest = raw.slice(2);
+  } else if (cid[0] && cid[0].toLowerCase() === 'b') {
+    digest = cidV1DigestBytes(cid);
+  } else {
+    throw new Error('Only CIDv0 (Qm…) or CIDv1 base32 (baf…) IPFS hashes are supported; got: ' + cid.slice(0, 8) + '…');
   }
-  var raw = base58Decode(cid);
-  if (raw.length !== 34 || raw[0] !== 0x12 || raw[1] !== 0x20) {
-    throw new Error('Unexpected CIDv0 multihash for: ' + cid.slice(0, 8) + '…');
-  }
-  return bytesToHex(raw.slice(2)); // 32-byte sha256 digest → 0x…
+  return bytesToHex(digest); // 32-byte sha256 digest → 0x…
 }
