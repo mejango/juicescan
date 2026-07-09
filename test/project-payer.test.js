@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { componentReproPrompt } from '../src/component-base.js';
-import { buildProjectPayerDeployArgs } from '../src/discover.js';
+import { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from '../src/discover.js';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const OWNER = '0x1111111111111111111111111111111111111111';
 const BENEFICIARY = '0x2222222222222222222222222222222222222222';
+const BASE_SEPOLIA_PROJECT_PAYER_DEPLOYER = '0x7321740fd0dcf73dd3e2aa8fc060454abfce9517';
+const BASE_SEPOLIA_ERC2771_FORWARDER = '0x3ba60b60933916a7c87d0860dcee62a0ce34e3e2';
 
 describe('buildProjectPayerDeployArgs', () => {
   it('defaults safely to pay mode with zero beneficiary preserved', () => {
@@ -22,6 +24,16 @@ describe('buildProjectPayerDeployArgs', () => {
   it('rejects invalid metadata and zero owner', () => {
     expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x123', false, OWNER)).toThrow(/Metadata/);
     expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, ZERO)).toThrow(/owner/);
+  });
+
+  it('uses raw Relayr entries for permissionless payer deploys, not ERC-2771 forwarding', () => {
+    const call = buildProjectPayerDeployCall(84532, 8, ZERO, 'from x402', '0x', false, OWNER);
+    const entry = projectPayerRelayrEntry(call);
+
+    expect(entry).toMatchObject({ chain: 84532, value: '0' });
+    expect(entry.target.toLowerCase()).toBe(BASE_SEPOLIA_PROJECT_PAYER_DEPLOYER);
+    expect(entry.target.toLowerCase()).not.toBe(BASE_SEPOLIA_ERC2771_FORWARDER);
+    expect(entry.data.slice(0, 10)).toBe('0xa396f5e9');
   });
 });
 

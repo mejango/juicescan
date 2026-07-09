@@ -1870,6 +1870,22 @@ export function buildProjectPayerDeployArgs(projectId, beneficiary, memo, metada
   if (!isAddr(owner) || String(owner).toLowerCase() === ZERO_ADDRESS.toLowerCase()) throw new Error('Missing payer owner');
   return [BigInt(projectId), beneficiary, String(memo || ''), normalizeProjectPayerMetadata(metadata), !!addToBalance, owner];
 }
+export function buildProjectPayerDeployCall(chainId, projectId, beneficiary, memo, metadata, addToBalance, owner) {
+  var target = getAddress('JBProjectPayerDeployer', chainId);
+  if (!target) throw new Error('No JBProjectPayerDeployer on ' + chainNameOf(chainId));
+  var args = buildProjectPayerDeployArgs(projectId, beneficiary, memo, metadata, addToBalance, owner);
+  return {
+    chainId: Number(chainId),
+    to: target,
+    abi: deployProjectPayerAbi,
+    functionName: 'deployProjectPayer',
+    args: args,
+    data: encodeFunctionData({ abi: deployProjectPayerAbi, functionName: 'deployProjectPayer', args: args }),
+  };
+}
+export function projectPayerRelayrEntry(call) {
+  return { chain: Number(call.chainId), target: call.to, data: call.data, value: '0' };
+}
 // REVOwner.setOperatorOf — current-operator-only. Rotates the revnet's split operator (address(0)
 // relinquishes permanently). Sent as an ERC-2771 meta-tx via relayr like the other operator actions.
 var setOperatorOfAbi = [{
@@ -7619,6 +7635,39 @@ function renderProjectPayerAddresses(project) {
   return wrap;
 }
 
+async function runProjectPayerRelayrDeploys(calls, setStatus) {
+  var ok = await confirmTransactionModal({
+    via: 'relayr — one prepaid payment calls the permissionless project-payer deployer on each chain below',
+    action: 'Deploy project payer',
+    chains: calls.map(function (c) {
+      var nm = resolveContractName(c.to, c.chainId);
+      return nm
+        ? { chain: chainNameOf(c.chainId), contract: nm, address: c.to, calldata: c.data }
+        : { chain: chainNameOf(c.chainId), contract: c.to, calldata: c.data };
+    }),
+  }, { title: 'Confirm project payer deploy', confirmText: 'Confirm & send' });
+  if (!ok) { setStatus('Transaction cancelled', ''); throw new Error('Transaction cancelled'); }
+
+  setStatus('Requesting Relayr quote...', 'pending');
+  var bundle = await relayrPostBundle(calls.map(projectPayerRelayrEntry));
+  var payments = bundle.payment_info || [];
+  if (!payments.length) throw new Error('Relayr returned no payment option');
+  var wallet = getWalletClient();
+  var connectedChainId = wallet ? await wallet.getChainId().catch(function () { return null; }) : null;
+  var payment = payments.filter(function (p) { return p.chain === connectedChainId; })[0] || payments[0];
+  if (payment.chain !== connectedChainId) {
+    setStatus('Switch your wallet to ' + (CHAINS[payment.chain] && CHAINS[payment.chain].name || payment.chain) + ' to pay...', 'pending');
+    await switchChain(payment.chain);
+  }
+  setStatus('Confirm the Relayr payment...', 'pending');
+  await relayrPay(payment);
+  setStatus('Payment sent — relaying to ' + calls.length + ' chain' + (calls.length === 1 ? '' : 's') + '...', 'pending');
+  await relayrPoll(bundle.bundle_uuid, function (records) {
+    var done = records.filter(function (t) { return t.status && t.status.state === 'Success'; }).length;
+    setStatus('Relaying... ' + done + '/' + records.length + ' chains confirmed', 'pending');
+  });
+}
+
 function renderExtrasSection(project) {
   var section = el('div', 'detail-section');
   var card = el('div', 'detail-card extras-card');
@@ -7769,7 +7818,11 @@ function renderExtrasSection(project) {
 
   var status = el('div', 'operator-edit-status'); body.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
+  var deployRelayr = el('a', 'operator-cta extras-relayr-submit');
+  deployRelayr.href = '#';
+  deployRelayr.textContent = 'Use Relayr';
   var deploy = el('a', 'operator-cta operator-edit-submit'); deploy.href = '#'; deploy.textContent = 'Deploy project payer';
+  actions.appendChild(deployRelayr);
   actions.appendChild(deploy);
   body.appendChild(actions);
   var payerList = renderProjectPayerAddresses(project);
@@ -7779,10 +7832,20 @@ function renderExtrasSection(project) {
 
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
-  deploy.addEventListener('click', function (e) {
-    e.preventDefault();
+  function selectedChains() {
+    return chainChecks.filter(function (r) { return r.cb.checked && !r.cb.disabled; }).map(function (r) { return r.chain; });
+  }
+  function syncDeployActions() {
+    var selected = selectedChains();
+    deploy.textContent = selected.length > 1 ? 'Deploy project payers' : 'Deploy project payer';
+    deployRelayr.style.display = selected.length === 1 ? '' : 'none';
+  }
+  chainChecks.forEach(function (r) { r.cb.addEventListener('change', syncDeployActions); });
+  syncDeployActions();
+
+  function submitDeploy(forceRelayr) {
     if (busy) return;
-    var selected = chainChecks.filter(function (r) { return r.cb.checked && !r.cb.disabled; }).map(function (r) { return r.chain; });
+    var selected = selectedChains();
     if (!selected.length) { setStatus('Choose at least one chain.', 'error'); return; }
     var account = getAccount && getAccount();
     (async function () {
@@ -7796,22 +7859,34 @@ function renderExtrasSection(project) {
       var payerOwner = ownerPerChain.snapshot();
       var metadata = normalizeProjectPayerMetadata(metadataInput.value);
       var addToBalance = modeSelect.value === 'balance';
-      setStatus('Preparing payer deploys…', 'pending');
-      await runRelayrAcrossChains(selected, account, function (cid) {
-        var target = getAddress('JBProjectPayerDeployer', cid);
-        if (!target) throw new Error('No JBProjectPayerDeployer on ' + chainNameOf(cid));
+      setStatus('Preparing payer deploys...', 'pending');
+      var calls = selected.map(function (chain) {
+        var cid = chain.id;
         var ben = materializeChainValue(beneficiary, cid);
         var own = materializeChainValue(payerOwner, cid);
-        return {
-          to: target,
-          data: encodeFunctionData({
-            abi: deployProjectPayerAbi,
-            functionName: 'deployProjectPayer',
-            args: buildProjectPayerDeployArgs(project.id, ben, memoInput.value, metadata, addToBalance, own),
-          }),
-        };
-      }, 900000n, setStatus, { label: 'Deploy project payer', title: 'Confirm project payer deploy' });
-      setStatus('Project payer deploy submitted on ' + selected.length + ' chain' + (selected.length === 1 ? '' : 's') + '.', 'success');
+        return buildProjectPayerDeployCall(cid, project.id, ben, memoInput.value, metadata, addToBalance, own);
+      });
+      if (calls.length === 1 && !forceRelayr) {
+        await new Promise(function (resolve, reject) {
+          var call = calls[0];
+          executeTransaction({
+            chainId: call.chainId,
+            address: call.to,
+            abi: call.abi,
+            functionName: call.functionName,
+            args: call.args,
+            contractName: 'JBProjectPayerDeployer',
+            label: 'Deploy project payer',
+            confirmTitle: 'Confirm project payer deploy',
+            onStatus: function (m, k) { setStatus(m, k); },
+            onError: function (m) { reject(new Error(m)); },
+            onSuccess: function () { resolve(); },
+          });
+        });
+      } else {
+        await runProjectPayerRelayrDeploys(calls, setStatus);
+      }
+      setStatus('Project payer deploy complete on ' + selected.length + ' chain' + (selected.length === 1 ? '' : 's') + '.', 'success');
       if (payerList && payerList._refresh) payerList._refresh();
       document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
     })().catch(function (err) {
@@ -7819,9 +7894,19 @@ function renderExtrasSection(project) {
     }).finally(function () {
       busy = false;
       deploy.classList.remove('disabled');
+      deployRelayr.classList.remove('disabled');
     });
     busy = true;
     deploy.classList.add('disabled');
+    deployRelayr.classList.add('disabled');
+  }
+  deploy.addEventListener('click', function (e) {
+    e.preventDefault();
+    submitDeploy(false);
+  });
+  deployRelayr.addEventListener('click', function (e) {
+    e.preventDefault();
+    submitDeploy(true);
   });
 
   return section;
