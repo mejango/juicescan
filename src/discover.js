@@ -7666,6 +7666,7 @@ function renderExtrasSection(project) {
     projectSymbol: project.tokenSymbol,
     zeroLabel: 'Original payer receives tokens',
     unknownLabel: function (addr) { return 'Custom beneficiary ' + truncAddr(addr); },
+    ensLabel: function (name) { return name; },
   });
 
   var chains = projectChains(project);
@@ -7677,6 +7678,7 @@ function renderExtrasSection(project) {
     zeroLabel: 'Original payer receives tokens',
     defaultRaw: function () { return beneficiaryInput.value || ''; },
     unknownLabel: function (addr) { return 'Custom beneficiary ' + truncAddr(addr); },
+    ensLabel: function (name) { return name; },
   });
   beneficiaryFields.appendChild(beneficiaryPerChain.node);
   body.appendChild(beneficiaryFields);
@@ -7703,23 +7705,28 @@ function renderExtrasSection(project) {
   var ownerValueOf = attachAddressRecognition(ownerInput, ownerHint, project.chainId, {
     label: 'Address admin',
     zeroLabel: 'Zero address cannot administer the payer',
+    ensLabel: function (name) { return name; },
   });
-  var ownerExplainer = el('div', 'extras-payer-sub');
-  ownerExplainer.textContent = 'The address admin can change this payer’s settings later. It does not receive payments or control the project.';
-  body.appendChild(ownerExplainer);
   var ownerPerChain = makePerChainAddressControl(chains, ownerValueOf, {
     label: 'Address admin',
     placeholder: '0x... or name.eth',
     zeroLabel: 'Zero address cannot administer the payer',
     defaultRaw: function () { return ownerInput.value || getAccount() || ''; },
+    ensLabel: function (name) { return name; },
   });
   body.appendChild(ownerPerChain.node);
+  var ownerExplainer = el('div', 'extras-payer-sub');
+  ownerExplainer.textContent = 'The address admin can change this payer’s settings later. It does not receive payments or control the project.';
+  body.appendChild(ownerExplainer);
 
   var advanced = document.createElement('details');
   advanced.className = 'extras-more';
   var advancedSummary = document.createElement('summary');
-  advancedSummary.textContent = 'Extras';
+  advancedSummary.textContent = 'Extra options ▾';
   advanced.appendChild(advancedSummary);
+  advanced.addEventListener('toggle', function () {
+    advancedSummary.textContent = 'Extra options ' + (advanced.open ? '▴' : '▾');
+  });
   var metadataLabel = el('div', 'operator-edit-label extras-label'); metadataLabel.textContent = 'Default metadata'; advanced.appendChild(metadataLabel);
   var metadataInput = el('input', 'operator-edit-jwt extras-memo');
   metadataInput.type = 'text';
@@ -8723,7 +8730,7 @@ function describeKnownAddress(chainId, addr, hint, opts) {
   if (opts.unknownLabel) { hint.textContent = opts.unknownLabel(raw, chainId); return; }
   ensNameOf(raw).then(function (name) {
     if ((hint._raw || '').toLowerCase() !== lc) return;
-    hint.textContent = name ? ('ENS: ' + name) : '';
+    hint.textContent = name ? (opts.ensLabel ? opts.ensLabel(name, raw, chainId) : ('ENS: ' + name)) : '';
   }).catch(function () { if ((hint._raw || '').toLowerCase() === lc) hint.textContent = ''; });
 }
 function attachAddressRecognition(input, hint, chainId, opts) {
@@ -8822,6 +8829,7 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
         zeroLabel: opts.zeroLabel,
         nativeLabel: opts.nativeLabel,
         unknownLabel: opts.unknownLabel,
+        ensLabel: opts.ensLabel,
       });
       field.appendChild(input); field.appendChild(hint); row.appendChild(field); table.appendChild(row);
       rows[c.id] = { input: input, valueOf: valueOf };
