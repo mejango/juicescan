@@ -1845,6 +1845,31 @@ var setTokenMetadataAbi = [{
   type: 'function', name: 'setTokenMetadataOf', stateMutability: 'nonpayable', outputs: [],
   inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }],
 }];
+// JBProjectPayerDeployer.deployProjectPayer — permissionless clone deploy. The UI defaults the native-token
+// receive() path to pay mode with a zero beneficiary, minting project tokens to the original payer unless changed.
+var deployProjectPayerAbi = [{
+  type: 'function', name: 'deployProjectPayer', stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'defaultProjectId', type: 'uint256' },
+    { name: 'defaultBeneficiary', type: 'address' },
+    { name: 'defaultMemo', type: 'string' },
+    { name: 'defaultMetadata', type: 'bytes' },
+    { name: 'defaultAddToBalance', type: 'bool' },
+    { name: 'owner', type: 'address' },
+  ],
+  outputs: [{ name: 'projectPayer', type: 'address' }],
+}];
+function normalizeProjectPayerMetadata(metadata) {
+  var hex = String(metadata || '').trim() || '0x';
+  if (!/^0x([0-9a-fA-F]{2})*$/.test(hex)) throw new Error('Metadata must be hex bytes, e.g. 0x or 0x1234');
+  return hex;
+}
+export function buildProjectPayerDeployArgs(projectId, beneficiary, memo, metadata, addToBalance, owner) {
+  if (projectId == null || String(projectId) === '') throw new Error('Missing project ID');
+  if (!isAddr(beneficiary)) throw new Error('Missing default beneficiary');
+  if (!isAddr(owner) || String(owner).toLowerCase() === ZERO_ADDRESS.toLowerCase()) throw new Error('Missing payer owner');
+  return [BigInt(projectId), beneficiary, String(memo || ''), normalizeProjectPayerMetadata(metadata), !!addToBalance, owner];
+}
 // REVOwner.setOperatorOf — current-operator-only. Rotates the revnet's split operator (address(0)
 // relinquishes permanently). Sent as an ERC-2771 meta-tx via relayr like the other operator actions.
 var setOperatorOfAbi = [{
@@ -4167,6 +4192,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   var columns = el('div', 'project-detail-columns');
 
   var leftCol = el('div', 'project-detail-left');
+  leftCol.appendChild(renderPayRuleChangeNotice(project));
   leftCol.appendChild(renderPayCard(project, nftCart));
   // On phones, Activity becomes the first detail subtab (added below, and default) instead of a tall
   // always-on card wedged between Pay and the tabs; on wider screens it stays in the left column.
@@ -4229,7 +4255,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
         initialSubTab: initialSubTab,
       });
     };
-    tabs = ['Overview', 'Rulesets', 'Funds', 'Tokens', 'Owner'];
+    tabs = ['Overview', 'Rulesets', 'Funds', 'Tokens'];
   }
   // Shop tab: shown optimistically (assume the project can sell items) so a #shop route resolves and the
   // tab doesn't pop in late. Once the 721-hook read resolves it's either filled with real content or removed
@@ -4243,7 +4269,9 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     wrap.appendChild(card); return wrap;
   };
   tabs.push('Shop');
-  if (project.isRevnet) tabs.push(ownerTabName); // Operator sits to the right of Shop
+  builders.Extras = function () { return renderExtrasSection(project); };
+  tabs.push('Extras');
+  tabs.push(ownerTabName); // Owner/Operator stays last, after Shop and Extras.
   // Phones: Activity is the first subtab and the default (the left-column card is omitted above).
   if (activityAsTab) { builders.Activity = function () { return activityCardEl; }; tabs.unshift('Activity'); }
   var tabRow = el('div', 'project-detail-tabs');
@@ -4334,6 +4362,45 @@ function sizeSelectToText(sel, fontPx) {
   sizeSelectToText.ctx.font = 'bold ' + (fontPx || 11) + 'px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
   var w = sizeSelectToText.ctx.measureText(opt.textContent).width;
   sel.style.width = Math.ceil(w + 18) + 'px'; // text + caret gap (border-box: includes padding-right)
+}
+
+function renderPayRuleChangeNotice(project) {
+  var link = el('a', 'paybox-rules-link');
+  link.href = projectHash(project, project.isRevnet ? 'Terms' : 'Rulesets');
+  link.title = 'View upcoming ruleset changes';
+  link.style.display = 'none';
+  var label = el('span', 'paybox-rules-label'); label.textContent = 'Rules change in'; link.appendChild(label);
+  var time = el('span', 'paybox-rules-time'); link.appendChild(time);
+  link.addEventListener('click', function (e) {
+    e.preventDefault();
+    var tab = project.isRevnet ? 'Terms' : 'Rulesets';
+    if (_activeDetail && _activeDetail.showTab) _activeDetail.showTab(tab);
+    routerSetHash(projectHash(project, tab));
+    var sec = document.querySelector('.project-detail-content');
+    if (sec) sec.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  });
+
+  fetchUpcomingRuleChangeInfo(project).then(function (info) {
+    if (!info) return;
+    var target = Number(info.r && info.r.start);
+    if (!(target > Math.floor(Date.now() / 1000))) return;
+    var seenConnected = false;
+    function updateRulesLink() {
+      if (link.isConnected) seenConnected = true;
+      else if (seenConnected) { clearInterval(timer); return; }
+      var rem = target - Math.floor(Date.now() / 1000);
+      if (rem <= 0) {
+        clearInterval(timer);
+        link.style.display = 'none';
+        return;
+      }
+      time.textContent = relativeFromNow(rem);
+      link.style.display = '';
+    }
+    var timer = setInterval(updateRulesLink, 30000);
+    updateRulesLink();
+  }).catch(function () {});
+  return link;
 }
 
 // Inline pay card (revnet.app-style) for the project detail page. The project is already known, so it
@@ -5037,7 +5104,7 @@ function renderPayCard(project, cart) {
   // Countdown banner above the pay box for projects whose first ruleset hasn't started.
   // The Pay button idles ("Not started") and doPay early-returns until the start passes.
   if (startsAt > Math.floor(Date.now() / 1000)) {
-    var countdown = el('div', 'paybox-countdown');
+    var countdown = el('div', 'paybox-countdown paybox-countdown-start');
     var cdLabel = el('span', 'paybox-countdown-label');
     cdLabel.textContent = 'Starts in';
     var cdTime = el('span', 'paybox-countdown-time');
@@ -5473,7 +5540,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
       setStatus('Connected wallet isn’t a signer of the Safe (' + truncAddr(authorityAddr) + ').', 'error'); return null;
     }
-    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains });
+    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab });
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
@@ -5898,9 +5965,14 @@ async function submitTokenEdit(project, chains, operatorAddr, deployed, name, sy
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
       setStatus('Connected wallet isn’t a signer of the owner Safe (' + truncAddr(operatorAddr) + ').', 'error'); return;
     }
-    var res = await proposeSafeAcrossChains(project, operatorAddr, signer, buildCall, { title: deployed ? 'Queue token rename on Safe' : 'Queue token deploy on Safe' });
+    var res = await proposeSafeAcrossChains(project, operatorAddr, signer, buildCall, { title: deployed ? 'Queue token rename on Safe' : 'Queue token deploy on Safe', queueTab: project.isRevnet ? 'Operator' : 'Owner' });
     if (!res || res.cancelled) { setStatus('Cancelled', ''); return; }
-    setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ' — add the Safe there first)' : '') + ' — confirm + execute in Back office or the Safe app.', 'success');
+    var readyCount = (res.readyExecs && res.readyExecs.length) || 0;
+    var tabName = project.isRevnet ? 'Operator' : 'Owner';
+    var skippedNote = res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ' — add the Safe there first)' : '';
+    if (res.executedReady) setStatus('Queued and executed on ' + res.executedReady + ' chain' + (res.executedReady === 1 ? '' : 's') + skippedNote + '.', 'success');
+    else if (readyCount) setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + skippedNote + ' — ' + readyCount + ' ready to execute from the ' + tabName + ' tab.', 'success');
+    else setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + skippedNote + ' — confirm + execute in the ' + tabName + ' tab or the Safe app.', 'success');
     setTimeout(function () { modal.close(); }, 2400);
     return;
   }
@@ -6011,6 +6083,24 @@ function runRelayrBundle(entries, opts) {
   });
 }
 
+function executeReadySafeTransactions(readyExecs, opts) {
+  opts = opts || {};
+  readyExecs = readyExecs || [];
+  var entries = readyExecs.map(function (r) { return safeExecRelayrTx(r.cid, r.safe, r.tx); });
+  var preview = readyExecs.map(function (r) {
+    return {
+      cid: r.cid,
+      chain: r.chain,
+      nonce: r.tx.nonce,
+      details: labelForQueuedTx(r.tx) + ' → ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to),
+    };
+  });
+  return runRelayrBundle(entries, {
+    title: opts.title || ('Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's')),
+    preview: preview,
+  });
+}
+
 // Suggested next on-chain nonce per (safe, chain, signer), bumped each time this signer approves an on-chain tx so a
 // run of separate operator actions defaults to sequential nonces (N, N+1, N+2…) instead of all colliding at the
 // current nonce. Persisted to localStorage so it survives a page reload mid-queue (the default is still
@@ -6020,16 +6110,17 @@ function _saveOnchainNonceHint() { try { localStorage.setItem('jb-onchain-nonce-
 
 // Open a Safe-proposal modal: per chain, show the decoded call + a nonce picker, queue on each chain the
 // Safe is actually deployed on (same address), and clearly flag chains where it isn't yet. Resolves with
-// { queued, skipped:[names], cancelled }.
+// { queued, skipped:[names], cancelled, readyExecs }.
 function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
   opts = opts || {};
   return new Promise(function (resolve) {
     var chains = (opts.chains && opts.chains.length)
       ? opts.chains
       : ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]);
+    var queueTabName = opts.queueTab || (project && project.isRevnet ? 'Operator' : 'Owner');
     var wrap = el('div', 'modal-body');
     var intro = el('div', 'modal-balance');
-    intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the Operator tab). Chains without one are approved + executed on-chain right here. One “Sign & queue” does your part on every chain.';
+    intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the ' + queueTabName + ' tab). Chains without one are approved + executed on-chain right here. One “Sign & queue” does your part on every chain.';
     wrap.appendChild(intro);
     if (chains.some(function (c) { return !hasSafeService(c.id); })) {
       var coNote = el('div', 'modal-balance');
@@ -6049,7 +6140,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var modal = openModal(opts.title || 'Queue on Safe', wrap);
     // Replace the input modal rather than stacking a second one over it — the review reads as the "next page".
     if (opts.replaces && opts.replaces.close) { try { opts.replaces.close(); } catch (_) {} }
-    var done = false;
+    var done = false, mode = 'sign', lastResult = null, readyExecs = [];
     function finish(res) { if (done) return; done = true; modal.close(); resolve(res); }
 
     var rows = [];
@@ -6156,11 +6247,32 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     }
 
     function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
-    cancel.addEventListener('click', function () { finish({ queued: 0, skipped: [], cancelled: true }); });
+    cancel.addEventListener('click', function () { finish(lastResult || { queued: 0, skipped: [], cancelled: true }); });
     // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; on-chain chains get
     // approveHash, then execTransaction automatically once the threshold is met. Chains that still need more
     // signers stay pending — switch wallets and click again (already-done chains are skipped). All in one flow.
     btn.addEventListener('click', function () {
+      if (mode === 'executeReady') {
+        if (!readyExecs.length) return;
+        btn.disabled = true; cancel.disabled = true;
+        setStatus('Preparing execution…', 'pending');
+        executeReadySafeTransactions(readyExecs, { title: 'Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's') }).then(function (res) {
+          if (res && res.done) {
+            readyExecs.forEach(function (r) { if (r.rec && r.rec.st) r.rec.st.textContent = 'Executed ✓'; });
+            if (lastResult) { lastResult.executedReady = readyExecs.length; lastResult.readyExecs = []; }
+            document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+            setStatus('Executed on ' + readyExecs.length + ' chain' + (readyExecs.length === 1 ? '' : 's') + '.', 'success');
+            setTimeout(function () { finish(lastResult || { queued: 0, executedReady: readyExecs.length, skipped: [], cancelled: false }); }, 1400);
+          } else {
+            btn.disabled = false; cancel.disabled = false;
+            setStatus('Execution cancelled — queued transactions are still available in the ' + queueTabName + ' tab or Safe app.', '');
+          }
+        }).catch(function (e) {
+          btn.disabled = false; cancel.disabled = false;
+          setStatus(errMessage(e, 'Execution failed'), 'error');
+        });
+        return;
+      }
       var acct = (getAccount && getAccount()) || null;
       var live = rows.filter(function (r) { return r.deployed; });
       var skipped = rows.filter(function (r) { return !r.deployed; }).map(function (r) { return r.chain; });
@@ -6179,8 +6291,15 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
               var nonce = r.nInput ? Number(r.nInput.value) : 0;
               if (!(nonce >= 0)) throw new Error('Enter a valid nonce for ' + r.chain);
               setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
-              await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce });
-              r.done = true; r.st.textContent = 'Queued ✓ — co-sign + execute it in the Operator tab’s “Pending Multisig Transactions”.'; queued++;
+              var proposed = await proposeSafeTx({ chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce });
+              r.done = true; queued++;
+              var qtx = Object.assign({}, proposed.tx || {}, { confirmationsRequired: r.threshold });
+              if (safeUsableConfirmationCount(qtx) >= Number(r.threshold || 1)) {
+                readyExecs.push({ cid: r.cid, chain: r.chain, safe: safe, tx: qtx, rec: r });
+                r.st.textContent = 'Queued ✓ — ready to execute now.';
+              } else {
+                r.st.textContent = 'Queued ✓ — co-sign + execute it in the ' + queueTabName + ' tab’s “Pending Multisig Transactions”.';
+              }
             } else {
               await refreshOnChainStatus(r); // re-read at the chosen nonce so a co-signer's earlier approval counts
               var chosen = r.chosenNonce, current = Number(r.ctx.nonce);
@@ -6217,6 +6336,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           if (pendingExec) summary.push(pendingExec + ' awaiting nonce order');
           var didSomething = (queued + executed + approvedThisRun) > 0;
           var base = (summary.join(' · ') || 'No new actions') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.';
+          lastResult = { queued: queued, executed: executed, skipped: skipped, cancelled: false, readyExecs: readyExecs.slice() };
           if (!didSomething && !pending && !pendingExec && !staleNonce && notOwner) {
             // Nothing happened because the connected wallet signs for none of these Safes — say so loudly.
             setStatus('Connected wallet ' + acct.slice(0, 6) + '… isn’t a signer of this Safe on ' + notOwner + ' selected chain' + (notOwner > 1 ? 's' : '') + '. Switch to an owner’s wallet and try again.', 'error');
@@ -6224,9 +6344,14 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             // Chosen nonce is below the Safe's current nonce (already used) — actionable, so keep the modal open
             // with an error rather than the green-success + auto-close path.
             setStatus(base + ' ' + staleNonce + ' chain' + (staleNonce > 1 ? 's have' : ' has') + ' a stale nonce — raise it to the current value and click again.', 'error');
+          } else if (readyExecs.length) {
+            mode = 'executeReady';
+            btn.textContent = readyExecs.length > 1 ? 'Execute all' : 'Execute';
+            cancel.textContent = 'Do later';
+            setStatus(base + ' ' + readyExecs.length + ' ready to execute now' + (pending ? '; ' + pending + ' still need another signer' : '') + '.', 'success');
           } else if (!pending && !pendingExec) {
             setStatus(base, 'success');
-            setTimeout(function () { finish({ queued: queued, executed: executed, skipped: skipped, cancelled: false }); }, 2200);
+            setTimeout(function () { finish(lastResult); }, 2200);
           } else if (pending) {
             // Chains still short of threshold need a DIFFERENT signer — make clear the connected wallet is done.
             setStatus(base + (didSomething
@@ -7025,6 +7150,50 @@ function formatDateShort(sec) {
   catch (e) { return '—'; }
 }
 
+function normalizeUpcomingRuleset(res) {
+  if (!res) return null;
+  if (res.r && res.m) return res;
+  if (res[0] && Number(res[0].id) !== 0) return { r: res[0], m: res[1] };
+  return null;
+}
+
+function ruleChangeRows(curR, curM, nextR, nextM) {
+  if (!curR || !curM || !nextR || !nextM) return [];
+  try {
+    var curRows = rulesetRows(curR, curM);
+    var nextRows = rulesetRows(nextR, nextM);
+    var out = [];
+    nextRows.forEach(function (row, i) {
+      if (!curRows[i] || row[1] === 'Start time') return;
+      if (curRows[i][2] !== row[2]) out.push({ section: row[0], label: row[1], from: curRows[i][2], to: row[2] });
+    });
+    return out;
+  } catch (_) { return []; }
+}
+
+function upcomingRuleChangeInfo(project, res) {
+  var up = normalizeUpcomingRuleset(res);
+  if (!up || !project || !project.ruleset || !project.metadata) return null;
+  if (String(up.r.id) === String(project.ruleset.id)) return null;
+  var changes = ruleChangeRows(project.ruleset, project.metadata, up.r, up.m);
+  if (!changes.length) return null;
+  return { r: up.r, m: up.m, changes: changes };
+}
+
+function fetchUpcomingRuleChangeInfo(project) {
+  if (!project || !project.ruleset || !project.metadata || !project.chainId || project.id == null) return Promise.resolve(null);
+  return read(project.chainId, 'JBController', upcomingRulesetAbi, 'upcomingRulesetOf', [BigInt(project.id)])
+    .then(function (res) { return upcomingRuleChangeInfo(project, res); })
+    .catch(function () { return null; });
+}
+
+function ruleChangeTimeText(r) {
+  var start = Number(r && r.start) || 0;
+  var now = Math.floor(Date.now() / 1000);
+  if (start > now) return 'Rules change in ' + relativeFromNow(start - now) + ' (' + formatDateTime(start) + ')';
+  return 'Rules change when the queued cycle starts';
+}
+
 // Project a ruleset to a cycle offset by decaying/un-decaying weight per cycle (rules unchanged).
 function cycleRuleset(r, offset) {
   var cut = Number(r.weightCutPercent);
@@ -7111,6 +7280,7 @@ function renderRulesetsFundsSection(project) {
   rulesCard.appendChild(headRow);
 
   var tiles = el('div', 'rf-titlebar'); rulesCard.appendChild(tiles);
+  var upcomingNotice = el('div', 'rf-upcoming-notice'); rulesCard.appendChild(upcomingNotice);
   var rulesBox = el('div', 'rf-rulesbox'); rulesCard.appendChild(rulesBox);
   section.appendChild(rulesCard);
 
@@ -7160,6 +7330,7 @@ function renderRulesetsFundsSection(project) {
     if (Number(v.r.id) > 0) { meta.appendChild(boSep()); var idEl = el('span'); idEl.textContent = 'ID: ' + String(v.r.id); meta.appendChild(idEl); }
     tmain.appendChild(meta);
     tiles.appendChild(tmain);
+    renderUpcomingNotice();
 
     // Can't project earlier than the first cycle — disable the back arrow at cycle #1.
     prevBtn.disabled = Number(v.r.cycleNumber) <= 1;
@@ -7254,7 +7425,7 @@ function renderRulesetsFundsSection(project) {
 
     // Per-accounting-context funds access + payout splits.
     faKindsP.then(function (kinds) {
-      faContainer.innerHTML = '';
+    faContainer.innerHTML = '';
       if (!kinds.length) { faContainer.remove(); return; }
       kinds.forEach(function (kind) {
         var secHead = el('div', 'rf-section'); secHead.textContent = kind.symbol + ' FUNDS ACCESS'; faContainer.appendChild(secHead);
@@ -7273,6 +7444,25 @@ function renderRulesetsFundsSection(project) {
         }).catch(function () { secHead.remove(); faPayout.remove(); faAllow.remove(); psSh.remove(); psBox.remove(); foot.remove(); });
       });
     }).catch(function () { faContainer.remove(); });
+  }
+
+  function renderUpcomingNotice() {
+    upcomingNotice.innerHTML = '';
+    var info = upcomingRuleChangeInfo(project, upcoming);
+    if (offset !== 0 || !info) { upcomingNotice.style.display = 'none'; return; }
+    upcomingNotice.style.display = '';
+    var head = el('div', 'rf-upcoming-head');
+    var title = el('div', 'rf-upcoming-title'); title.textContent = 'Upcoming rule changes'; head.appendChild(title);
+    var when = el('div', 'rf-upcoming-time'); when.textContent = ruleChangeTimeText(info.r); head.appendChild(when);
+    var view = el('button', 'detail-check-btn rf-upcoming-view'); view.textContent = 'View upcoming';
+    view.addEventListener('click', function () { offset = 1; render(); });
+    head.appendChild(view);
+    upcomingNotice.appendChild(head);
+    var diff = el('div', 'rf-upcoming-diff');
+    info.changes.forEach(function (ch) {
+      diff.appendChild(rfDiffRow(ch.section + ' · ' + ch.label, ch.from, ch.to));
+    });
+    upcomingNotice.appendChild(diff);
   }
 
   prevBtn.addEventListener('click', function () { if (prevBtn.disabled) return; offset -= 1; render(); });
@@ -7337,6 +7527,291 @@ function renderFundsSection(project) {
   return section;
 }
 
+function renderProjectPayerAddresses(project) {
+  var wrap = el('div', 'extras-payers');
+  var head = el('div', 'extras-payers-head');
+  var title = el('div', 'detail-subsection-title'); title.textContent = 'Deployed payer addresses'; head.appendChild(title);
+  wrap.appendChild(head);
+  var body = el('div', 'extras-payers-body');
+  body.textContent = 'Loading payer addresses from Bendystraw...';
+  wrap.appendChild(body);
+
+  function countsText(row) {
+    var pays = Number(row.paymentsCount || 0);
+    var balances = Number(row.addToBalanceCount || 0);
+    var parts = [];
+    if (pays) parts.push(pays + ' pay');
+    if (balances) parts.push(balances + ' balance');
+    return parts.length ? parts.join(' | ') : 'No payments yet';
+  }
+
+  function facilitatedText(row) {
+    var usd = usdFromScaled(row.totalFacilitatedUsd);
+    if (usd && usd > 0) return formatUsd(usd);
+    var raw = toBigInt(row.totalFacilitated);
+    if (raw > 0n) {
+      var acct = project.acctToken || { decimals: 18, symbol: 'ETH' };
+      return formatBalance(raw, acct.decimals, acct.symbol);
+    }
+    return '$0';
+  }
+
+  function renderRows(rows) {
+    body.innerHTML = '';
+    if (!rows.length) {
+      body.textContent = 'No deployed payer addresses indexed yet.';
+      return;
+    }
+    var table = el('div', 'extras-payers-table');
+    var header = el('div', 'extras-payers-row extras-payers-row--head');
+    ['Chain', 'Address', 'Behavior', 'Facilitated'].forEach(function (label) {
+      var cell = el('div'); cell.textContent = label; header.appendChild(cell);
+    });
+    table.appendChild(header);
+
+    rows.forEach(function (row) {
+      var r = el('div', 'extras-payers-row');
+      var chain = el('div', 'extras-payers-chain');
+      chain.appendChild(chainLogo(row.chainId, chainNameOf(row.chainId)));
+      var cn = el('span'); cn.textContent = chainNameOf(row.chainId); chain.appendChild(cn);
+      r.appendChild(chain);
+
+      var addr = el('div', 'extras-payers-address');
+      addr.appendChild(addressNode(row.address));
+      var meta = el('div', 'extras-payers-sub');
+      meta.textContent = row.createdAt ? ('Created ' + timeAgo(row.createdAt)) : '';
+      addr.appendChild(meta);
+      r.appendChild(addr);
+
+      var behavior = el('div');
+      var mode = el('div', 'extras-payers-main');
+      mode.textContent = row.defaultAddToBalance ? 'Add to Balance' : 'Pay';
+      behavior.appendChild(mode);
+      var count = el('div', 'extras-payers-sub'); count.textContent = countsText(row); behavior.appendChild(count);
+      r.appendChild(behavior);
+
+      var facilitated = el('div', 'extras-payers-amount');
+      var amount = el('div', 'extras-payers-main'); amount.textContent = facilitatedText(row); facilitated.appendChild(amount);
+      var last = el('div', 'extras-payers-sub');
+      last.textContent = row.lastUsedAt ? ('Last used ' + timeAgo(row.lastUsedAt)) : 'Never used';
+      facilitated.appendChild(last);
+      r.appendChild(facilitated);
+
+      table.appendChild(r);
+    });
+    body.appendChild(table);
+  }
+
+  async function load() {
+    body.innerHTML = '';
+    body.textContent = 'Loading payer addresses from Bendystraw...';
+    try {
+      var rows = await fetchProjectPayerRows(project);
+      renderRows(rows);
+    } catch (e) {
+      body.innerHTML = '';
+      body.textContent = 'Could not load payer addresses from Bendystraw.';
+    }
+  }
+
+  wrap._refresh = load;
+  load();
+  return wrap;
+}
+
+function renderExtrasSection(project) {
+  var section = el('div', 'detail-section');
+  var card = el('div', 'detail-card extras-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Project payer address'; card.appendChild(title);
+
+  var body = el('div', 'detail-card-body extras-body');
+  var intro = el('div', 'extras-payer-copy');
+  intro.textContent = 'Pay this project by sending funds to an address. Anyone can add any number of project payer addresses.';
+  body.appendChild(intro);
+
+  var tokenLabel = project.tokenSymbol || project.tokenName || 'Token';
+
+  var modeLabel = el('div', 'operator-edit-label extras-label'); modeLabel.textContent = 'Behavior'; body.appendChild(modeLabel);
+  var modeSelect = el('select', 'operator-edit-jwt extras-select extras-behavior-select');
+  var payOpt = document.createElement('option'); payOpt.value = 'pay'; payOpt.textContent = 'Pay';
+  var balanceOpt = document.createElement('option'); balanceOpt.value = 'balance'; balanceOpt.textContent = 'Add to Balance';
+  modeSelect.appendChild(payOpt); modeSelect.appendChild(balanceOpt);
+  body.appendChild(modeSelect);
+  var modeHint = el('div', 'extras-payer-sub');
+  body.appendChild(modeHint);
+  function syncModeHint() {
+    modeHint.textContent = modeSelect.value === 'balance'
+      ? 'Adds funds to the project without minting tokens.'
+      : 'Pays the project and mints ' + tokenLabel + ' to the beneficiary.';
+  }
+  modeSelect.addEventListener('change', syncModeHint);
+  syncModeHint();
+
+  var beneficiaryLabel = el('div', 'operator-edit-label extras-label'); beneficiaryLabel.textContent = tokenLabel + ' beneficiary'; body.appendChild(beneficiaryLabel);
+  var originalRow = el('label', 'extras-checkbox-row');
+  var originalCb = document.createElement('input'); originalCb.type = 'checkbox'; originalCb.checked = true;
+  originalRow.appendChild(originalCb);
+  var originalText = el('span'); originalText.textContent = 'Original payer'; originalRow.appendChild(originalText);
+  body.appendChild(originalRow);
+  var beneficiaryFields = el('div', 'extras-conditional-fields');
+  var beneficiaryInput = el('input', 'operator-edit-jwt extras-address');
+  beneficiaryInput.type = 'text';
+  beneficiaryInput.placeholder = '0x... or name.eth';
+  beneficiaryInput.value = '';
+  beneficiaryFields.appendChild(beneficiaryInput);
+  var beneficiaryHint = el('div', 'operator-edit-token-name'); beneficiaryFields.appendChild(beneficiaryHint);
+  var beneficiaryValueOf = attachAddressRecognition(beneficiaryInput, beneficiaryHint, project.chainId, {
+    label: 'Default beneficiary',
+    projectId: project.id,
+    projectSymbol: project.tokenSymbol,
+    zeroLabel: 'Original payer receives tokens',
+    unknownLabel: function (addr) { return 'Custom beneficiary ' + truncAddr(addr); },
+  });
+
+  var chains = projectChains(project);
+  var beneficiaryPerChain = makePerChainAddressControl(chains, beneficiaryValueOf, {
+    label: 'Default beneficiary',
+    placeholder: '0x... or name.eth',
+    projectId: project.id,
+    projectSymbol: project.tokenSymbol,
+    zeroLabel: 'Original payer receives tokens',
+    defaultRaw: function () { return beneficiaryInput.value || ''; },
+    unknownLabel: function (addr) { return 'Custom beneficiary ' + truncAddr(addr); },
+  });
+  beneficiaryFields.appendChild(beneficiaryPerChain.node);
+  body.appendChild(beneficiaryFields);
+  function syncBeneficiaryFields() {
+    beneficiaryFields.style.display = originalCb.checked ? 'none' : '';
+  }
+  originalCb.addEventListener('change', syncBeneficiaryFields);
+  syncBeneficiaryFields();
+
+  var memoLabel = el('div', 'operator-edit-label extras-label'); memoLabel.textContent = 'Default memo'; body.appendChild(memoLabel);
+  var memoInput = el('input', 'operator-edit-jwt extras-memo');
+  memoInput.type = 'text';
+  memoInput.placeholder = 'optional memo attached to payments';
+  memoInput.value = '';
+  body.appendChild(memoInput);
+
+  var ownerLabel = el('div', 'operator-edit-label extras-label'); ownerLabel.textContent = 'Address admin'; body.appendChild(ownerLabel);
+  var ownerInput = el('input', 'operator-edit-jwt extras-address');
+  ownerInput.type = 'text';
+  ownerInput.placeholder = '0x... or name.eth';
+  ownerInput.value = getAccount() || '';
+  body.appendChild(ownerInput);
+  var ownerHint = el('div', 'operator-edit-token-name'); body.appendChild(ownerHint);
+  var ownerValueOf = attachAddressRecognition(ownerInput, ownerHint, project.chainId, {
+    label: 'Address admin',
+    zeroLabel: 'Zero address cannot administer the payer',
+  });
+  var ownerExplainer = el('div', 'extras-payer-sub');
+  ownerExplainer.textContent = 'The address admin can change this payer’s settings later. It does not receive payments or control the project.';
+  body.appendChild(ownerExplainer);
+  var ownerPerChain = makePerChainAddressControl(chains, ownerValueOf, {
+    label: 'Address admin',
+    placeholder: '0x... or name.eth',
+    zeroLabel: 'Zero address cannot administer the payer',
+    defaultRaw: function () { return ownerInput.value || getAccount() || ''; },
+  });
+  body.appendChild(ownerPerChain.node);
+
+  var advanced = document.createElement('details');
+  advanced.className = 'extras-more';
+  var advancedSummary = document.createElement('summary');
+  advancedSummary.textContent = 'Extras';
+  advanced.appendChild(advancedSummary);
+  var metadataLabel = el('div', 'operator-edit-label extras-label'); metadataLabel.textContent = 'Default metadata'; advanced.appendChild(metadataLabel);
+  var metadataInput = el('input', 'operator-edit-jwt extras-memo');
+  metadataInput.type = 'text';
+  metadataInput.placeholder = '0x';
+  metadataInput.value = '0x';
+  metadataInput.spellcheck = false;
+  advanced.appendChild(metadataInput);
+  var metadataHint = el('div', 'extras-payer-sub'); metadataHint.textContent = 'Hex bytes forwarded to pay/addToBalance. Leave 0x unless you need custom terminal metadata.';
+  advanced.appendChild(metadataHint);
+  body.appendChild(advanced);
+
+  var clbl = el('div', 'operator-edit-label extras-label'); clbl.textContent = 'Deploy on'; body.appendChild(clbl);
+  var chainBox = el('div', 'splits-edit-chains');
+  var chainChecks = chains.map(function (c) {
+    var deployer = getAddress('JBProjectPayerDeployer', c.id);
+    var row = el('label', 'splits-edit-chain' + (deployer ? '' : ' extras-chain-disabled'));
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!deployer;
+    cb.disabled = !deployer;
+    cb.value = String(c.id);
+    row.appendChild(cb);
+    row.appendChild(chainLogo(c.id, c.name));
+    var nm = el('span'); nm.textContent = c.name || chainNameOf(c.id); row.appendChild(nm);
+    if (!deployer) {
+      var miss = el('span', 'extras-chain-missing'); miss.textContent = 'no deployer'; row.appendChild(miss);
+    }
+    chainBox.appendChild(row);
+    return { chain: c, cb: cb, deployer: deployer };
+  });
+  body.appendChild(chainBox);
+
+  var status = el('div', 'operator-edit-status'); body.appendChild(status);
+  var actions = el('div', 'operator-edit-actions extras-actions');
+  var deploy = el('a', 'operator-cta operator-edit-submit'); deploy.href = '#'; deploy.textContent = 'Deploy project payer';
+  actions.appendChild(deploy);
+  body.appendChild(actions);
+  var payerList = renderProjectPayerAddresses(project);
+  body.appendChild(payerList);
+  card.appendChild(body);
+  section.appendChild(card);
+
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
+  var busy = false;
+  deploy.addEventListener('click', function (e) {
+    e.preventDefault();
+    if (busy) return;
+    var selected = chainChecks.filter(function (r) { return r.cb.checked && !r.cb.disabled; }).map(function (r) { return r.chain; });
+    if (!selected.length) { setStatus('Choose at least one chain.', 'error'); return; }
+    var account = getAccount && getAccount();
+    (async function () {
+      if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
+      if (!account) { setStatus('Connect a wallet to deploy payer addresses.', 'error'); return; }
+      if (!ownerInput.value.trim()) {
+        ownerInput.value = account;
+        ownerInput.dispatchEvent(new Event('input'));
+      }
+      var beneficiary = originalCb.checked ? ZERO_ADDRESS : beneficiaryPerChain.snapshot();
+      var payerOwner = ownerPerChain.snapshot();
+      var metadata = normalizeProjectPayerMetadata(metadataInput.value);
+      var addToBalance = modeSelect.value === 'balance';
+      setStatus('Preparing payer deploys…', 'pending');
+      await runRelayrAcrossChains(selected, account, function (cid) {
+        var target = getAddress('JBProjectPayerDeployer', cid);
+        if (!target) throw new Error('No JBProjectPayerDeployer on ' + chainNameOf(cid));
+        var ben = materializeChainValue(beneficiary, cid);
+        var own = materializeChainValue(payerOwner, cid);
+        return {
+          to: target,
+          data: encodeFunctionData({
+            abi: deployProjectPayerAbi,
+            functionName: 'deployProjectPayer',
+            args: buildProjectPayerDeployArgs(project.id, ben, memoInput.value, metadata, addToBalance, own),
+          }),
+        };
+      }, 900000n, setStatus, { label: 'Deploy project payer', title: 'Confirm project payer deploy' });
+      setStatus('Project payer deploy submitted on ' + selected.length + ' chain' + (selected.length === 1 ? '' : 's') + '.', 'success');
+      if (payerList && payerList._refresh) payerList._refresh();
+      document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+    })().catch(function (err) {
+      setStatus(errMessage(err, 'Project payer deploy failed'), 'error');
+    }).finally(function () {
+      busy = false;
+      deploy.classList.remove('disabled');
+    });
+    busy = true;
+    deploy.classList.add('disabled');
+  });
+
+  return section;
+}
+
 // Label a queued Safe tx by its calldata selector (the owner-only JB calls the site can propose).
 var SAFE_QUEUE_LABELS = {
   '0x58178191': 'Deploy ERC-20 token',
@@ -7376,7 +7851,7 @@ function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
   );
 }
 
-// Back office: a Safe-owned project's per-chain multisig queue. Signers confirm queued owner-only txs
+// Safe queue: a Safe-owned project's per-chain multisig queue. Signers confirm queued owner-only txs
 // here (or open them in the Safe app); proposing happens from the action modals (Deploy token, etc.).
 // The styled "|" separator used in the Owner tab rows.
 function boSep() { var s = el('span', 'bo-sep'); s.textContent = '|'; return s; }
@@ -7523,6 +7998,43 @@ function appendPendingSafeTxsCard(section, safe, chains, homeChainId, contextLab
   return safeCard;
 }
 
+function safeQueueNonce(tx) {
+  var n = Number(tx && tx.nonce);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function safeQueueExecutionPlan(txs, readyFlags) {
+  txs = txs || [];
+  readyFlags = readyFlags || [];
+  var nonces = txs.map(safeQueueNonce);
+  var finite = nonces.filter(function (n) { return n != null; });
+  var frontNonce = finite.length ? Math.min.apply(null, finite) : null;
+  var byNonce = {}, counts = {};
+  nonces.forEach(function (n, i) {
+    if (n == null) return;
+    if (!byNonce[n]) byNonce[n] = [];
+    byNonce[n].push(i);
+    counts[n] = (counts[n] || 0) + 1;
+  });
+  var directByIndex = txs.map(function (_, i) { return nonces[i] != null && nonces[i] === frontNonce; });
+  var duplicateNonceByIndex = txs.map(function (_, i) { return nonces[i] != null && counts[nonces[i]] > 1; });
+  var batchByIndex = txs.map(function () { return false; });
+  if (frontNonce != null) {
+    var expected = frontNonce;
+    Object.keys(byNonce).map(Number).sort(function (a, b) { return a - b; }).some(function (n) {
+      if (n !== expected) return true;
+      var idxs = byNonce[n] || [];
+      if (idxs.length !== 1) return true; // Same-nonce alternatives require an explicit per-row choice.
+      var idx = idxs[0];
+      if (!readyFlags[idx]) return true;
+      batchByIndex[idx] = true;
+      expected += 1;
+      return false;
+    });
+  }
+  return { frontNonce: frontNonce, directByIndex: directByIndex, batchByIndex: batchByIndex, duplicateNonceByIndex: duplicateNonceByIndex };
+}
+
 function renderRevnetPendingSafeTxs(project, mount) {
   fetchOperatorsPerChain(project).then(function (res) {
     if (!mount.isConnected) return;
@@ -7587,6 +8099,8 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
     var isSigner = acc && info.owners.some(function (o) { return o.toLowerCase() === acc.toLowerCase(); });
     var batchBar = el('div', 'backoffice-batch'); body.appendChild(batchBar);
     var ready = []; // { cid, chain, tx } across all chains
+    var readyAlternativesExcluded = 0;
+    var readyBlockedExcluded = 0;
     var chainLoads = chains.map(function (c) {
       var block = el('div', 'backoffice-chain');
       var h = el('div', 'backoffice-chain-head'); h.appendChild(chainLogo(c.id, c.name)); var t = el('span'); t.textContent = ' ' + c.name; h.appendChild(t);
@@ -7608,8 +8122,14 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           var none = el('div', 'backoffice-none'); none.textContent = 'No pending transactions.';
           list.appendChild(none); return;
         }
-        txs.forEach(function (tx, txIdx) {
+        var txStates = txs.map(function (tx) {
           var nconf = safeUsableConfirmationCount(tx), need = tx.confirmationsRequired || info.threshold;
+          return { nconf: nconf, need: need, ready: nconf >= need };
+        });
+        var execPlan = safeQueueExecutionPlan(txs, txStates.map(function (s) { return s.ready; }));
+        txs.forEach(function (tx, txIdx) {
+          var txState = txStates[txIdx];
+          var nconf = txState.nconf, need = txState.need;
           var row = el('div', 'backoffice-row');
           var main = el('div', 'backoffice-main');
           var lab = el('div', 'backoffice-label');
@@ -7619,6 +8139,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           var sub = el('div', 'backoffice-sub');
           sub.appendChild(document.createTextNode(nconf + '/' + need + ' signatures'));
           if (nconf >= need) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('ready to execute')); }
+          if (execPlan.duplicateNonceByIndex[txIdx]) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('same nonce alternative')); }
           // Surface the two things a label-only view hides: a DELEGATECALL (runs arbitrary code in the Safe's
           // context) and any ETH the tx sends. Both are WYSIWYS-critical before a signer approves.
           var isDelegate = Number(tx.operation) === 1;
@@ -7669,18 +8190,16 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           } else if (signed) {
             var done = el('span', 'backoffice-signed'); done.textContent = 'You signed'; actions.appendChild(done);
           }
-          // Enough signatures → execute straight from here (connected wallet sends it + pays gas). But a Safe runs
-          // its queue in STRICT nonce order, so only the FRONT tx (txIdx 0 = the current nonce) is executable now;
-          // a higher-nonce tx reverts until the lower one lands, and Relayr can't batch-simulate them (it quotes
-          // every bundled tx against the current nonce, so future-nonce ones fail signature/nonce validation — the
-          // reported "SimulationReverted"). So only the front tx is batch-eligible + clickable; the rest are gated.
+          // Enough signatures → execute straight from here (connected wallet sends it + pays gas). Safe nonces are
+          // strict, but same-nonce proposals are alternatives: executing either current-nonce tx consumes the nonce and
+          // replaces the rest. Higher nonces stay gated until the current nonce lands.
           if (nconf >= need) {
-            // Every ready tx joins the batch — "Execute all" bundles them via Relayr in ChainIndependent mode,
-            // which runs each chain's txs in nonce order in ONE payment. But DIRECT (non-Relayr) execution from a
-            // per-tx button can only run the current nonce, so only the front tx (txIdx 0) is individually clickable.
-            ready.push({ cid: c.id, chain: c.name, tx: tx });
+            if (execPlan.batchByIndex[txIdx]) ready.push({ cid: c.id, chain: c.name, tx: tx });
+            else if (execPlan.duplicateNonceByIndex[txIdx]) readyAlternativesExcluded += 1;
+            else readyBlockedExcluded += 1;
             var execBtn = el('button', 'detail-check-btn'); execBtn.textContent = 'Execute';
-            if (txIdx === 0) {
+            if (execPlan.directByIndex[txIdx]) {
+              if (execPlan.duplicateNonceByIndex[txIdx]) execBtn.title = 'Executes this nonce and replaces the other #' + tx.nonce + ' alternatives';
               execBtn.addEventListener('click', function () {
                 if (!(getAccount && getAccount())) { connect(); return; }
                 reviewQueuedSafeTx(c.id, c.name, tx, 'Execute').then(function (ok) {
@@ -7692,7 +8211,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
               });
             } else {
               execBtn.disabled = true;
-              execBtn.title = 'Executes after #' + txs[0].nonce + ' lands — or use "Execute all" to run them in order in one payment';
+              execBtn.title = 'Executes after #' + execPlan.frontNonce + ' lands' + (readyAlternativesExcluded ? ' — same-nonce alternatives must be chosen individually' : ' — or use "Execute all" to run unambiguous txs in order in one payment');
             }
             actions.appendChild(execBtn);
           }
@@ -7716,15 +8235,23 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       });
     });
 
-    // Offer to execute the front-of-queue txs (one per chain — `ready` is already filtered to txIdx 0) in ONE
-    // Relayr payment. Relayr runs each chain's txs in nonce order (ChainIndependent virtual nonces), so this can
-    // include multiple sequential same-chain txs — they execute in order off the one payment.
+    // Offer to execute unambiguous ready txs in ONE Relayr payment. Same-nonce alternatives are deliberately left out:
+    // only an explicit per-row Execute click can choose which tx should consume that nonce.
     Promise.all(chainLoads).then(function () {
       batchBar.innerHTML = '';
-      if (ready.length < 2) return; // a single ready tx → just use its own Execute button
+      if (ready.length < 2) {
+        if (readyAlternativesExcluded || readyBlockedExcluded) {
+          var solo = el('span', 'backoffice-batch-note');
+          solo.textContent = readyAlternativesExcluded
+            ? 'Same-nonce alternatives are not included in Execute all — choose one with its Execute button.'
+            : 'Ready higher-nonce transactions are not included in Execute all until earlier nonces clear.';
+          batchBar.appendChild(solo);
+        }
+        return; // a single ready tx → just use its own Execute button
+      }
       var nChains = Object.keys(ready.reduce(function (m, r) { m[r.cid] = 1; return m; }, {})).length;
       var note = el('span', 'backoffice-batch-note');
-      note.textContent = ready.length + ' transactions ready' + (nChains > 1 ? ' across ' + nChains + ' chains' : '') + ' — executed in nonce order in one payment. ';
+      note.textContent = ready.length + ' unambiguous transactions ready' + (nChains > 1 ? ' across ' + nChains + ' chains' : '') + ' — executed in nonce order in one payment. ' + (readyAlternativesExcluded ? 'Same-nonce alternatives are excluded; choose one individually. ' : '') + (readyBlockedExcluded ? 'Higher-nonce ready transactions wait for earlier nonces. ' : '');
       batchBar.appendChild(note);
       var allBtn = el('button', 'detail-check-btn'); allBtn.textContent = 'Execute all';
       allBtn.addEventListener('click', function () {
@@ -8068,7 +8595,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
         return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid) }) };
       };
       var shim = { owner: adminAddr, chains: selected, chainId: homeChainId, isRevnet: false };
-      var res = await runAuthorityActionAcrossChains(shim, selected, adminAddr, buildCall, { label: action.title, title: action.title, gas: action.gas }, setStatus)
+      var res = await runAuthorityActionAcrossChains(shim, selected, adminAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, queueTab: 'Admin' }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Failed'), 'error'); return null; });
       busy = false;
       if (!res) return;
@@ -10492,6 +11019,10 @@ var BENDYSTRAW_PROJECT_OPERATOR_QUERY = 'query($chainId: Int!, $projectId: Int!,
 var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!]) { '
   + 'permissionHolders(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, limit: 100) { '
   + 'items { chainId account operator permissions isRevnetOperator } } }';
+var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
+  + 'projectPayers(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
+  + 'orderBy: "totalFacilitatedUsd", orderDirection: "desc", limit: $limit, offset: $offset) { '
+  + 'items { chainId address defaultAddToBalance paymentsCount addToBalanceCount totalFacilitated totalFacilitatedUsd lastUsedAt createdAt } totalCount } }';
 // Buyback-hook AMM trades (V6 swapEvent model). Each buy/sell is a realized
 // AMM price; mints are the issuance route, not a market trade.
 var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
@@ -11060,6 +11591,25 @@ async function fetchProjectEventRows(query, path, project, maxItems) {
   } catch (e) {
     return [];
   }
+}
+
+async function fetchProjectPayerRows(project) {
+  var chainIds = projectBendystrawChainIds(project);
+  if (!chainIds.length) return [];
+  var res = await fetchBendystrawCollectionPages(BENDYSTRAW_PROJECT_PAYERS_QUERY, 'projectPayers', {
+    projectId: Number(project.id),
+    version: BENDYSTRAW_VERSION,
+    chainIds: chainIds,
+  }, 50, 250);
+  return (res.items || []).sort(function (a, b) {
+    var ausd = toBigInt(a.totalFacilitatedUsd);
+    var busd = toBigInt(b.totalFacilitatedUsd);
+    if (ausd !== busd) return ausd < busd ? 1 : -1;
+    var araw = toBigInt(a.totalFacilitated);
+    var braw = toBigInt(b.totalFacilitated);
+    if (araw !== braw) return araw < braw ? 1 : -1;
+    return Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0);
+  });
 }
 
 // Fill a box with a lazily-loaded history list. rowFn(row) -> DOM node. Handles loading/empty/error.
@@ -12300,17 +12850,43 @@ function openQueueRulesetModal(project) {
   };
   var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = true; });
 
-  function queueDefaultCurrency(acct) {
-    if (!acct || !acct.address) return 1;
-    if (acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return 1;
-    var usdc = (USDC_BY_CHAIN[project.chainId] || '').toLowerCase();
-    if (usdc && acct.address.toLowerCase() === usdc) return 2;
-    return Number(acct.currency || (BigInt(acct.address) & 0xffffffffn));
+  function fallbackQueueAcct() {
+    var p = project.acctToken;
+    if (p && isAddr(p.address)) {
+      return {
+        address: p.address,
+        decimals: Number(p.decimals) || 18,
+        symbol: p.symbol || acctTokenLabel(p.address),
+        currency: p.currency != null ? p.currency : tokenCurrencyIdForAccounting(p.address),
+      };
+    }
+    return { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH', currency: tokenCurrencyIdForAccounting(NATIVE_TOKEN) };
   }
 
-  function applyQueueAccounting(acct) {
+  function normalizeQueueAcct(acct) {
+    if (!acct || !isAddr(acct.address)) return fallbackQueueAcct();
+    var out = {
+      address: acct.address,
+      decimals: Number(acct.decimals) || 18,
+      symbol: acct.symbol || acctTokenLabel(acct.address),
+      currency: acct.currency != null ? acct.currency : tokenCurrencyIdForAccounting(acct.address),
+    };
+    return out;
+  }
+
+  function queueDefaultCurrency(acct, chainId) {
+    acct = normalizeQueueAcct(acct);
+    if (!acct || !acct.address) return 1;
+    if (acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return 1;
+    var usdc = (USDC_BY_CHAIN[chainId || project.chainId] || '').toLowerCase();
+    if (usdc && acct.address.toLowerCase() === usdc) return 2;
+    try { return Number(acct.currency != null ? acct.currency : (BigInt(acct.address) & 0xffffffffn)); } catch (_) { return 1; }
+  }
+
+  function applyQueueAccounting(acct, chainId) {
+    acct = normalizeQueueAcct(acct);
     var isNative = acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
-    var usdc = (USDC_BY_CHAIN[project.chainId] || '').toLowerCase();
+    var usdc = (USDC_BY_CHAIN[chainId || project.chainId] || '').toLowerCase();
     var isUsdc = !isNative && usdc && acct.address.toLowerCase() === usdc;
     if (isNative) state.accepts = ['eth'];
     else if (isUsdc) state.accepts = ['usdc'];
@@ -12318,21 +12894,25 @@ function openQueueRulesetModal(project) {
       state.accepts = ['custom'];
       state.customToken = { address: acct.address, symbol: acct.symbol || acctTokenLabel(acct.address), decimals: Number(acct.decimals) || 18, status: 'ok' };
     }
-    state.storePricingCurrency = queueDefaultCurrency(acct);
+    state.storePricingCurrency = queueDefaultCurrency(acct, chainId);
   }
 
   // Read the current ruleset's data hook (the 721 shop; on single-chain it IS metadata.dataHook). Default the
   // choice to "continue" so queueing re-passes the hook — the encoder's default would silently DETACH the shop.
-  read(project.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (r) {
-    var m = r ? (r[1] || r.metadata) : null;
+  function applyCurrentShopMetadata(m) {
     state.shopChecked = true; // the shop control renders once we know whether a shop exists
     if (m && m.dataHook && !/^0x0+$/.test(m.dataHook)) {
       state.currentDataHook = m.dataHook;
       state.currentUseDataHookForCashOut = !!m.useDataHookForCashOut;
       state.shopChoice = 'continue';
     }
+  }
+
+  read(project.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (r) {
+    var m = r ? (r[1] || r.metadata) : null;
+    applyCurrentShopMetadata(m);
     renderEditor();
-  }).catch(function () { state.shopChecked = true; renderEditor(); });
+  }).catch(function () { applyCurrentShopMetadata(project.metadata); renderEditor(); });
 
   function renderEditor() {
     body.innerHTML = '';
@@ -12393,13 +12973,15 @@ function openQueueRulesetModal(project) {
   // queued ruleset if a distinct one is already queued (upcoming), otherwise the current ruleset. All values
   // (params + reserved/payout splits + fund access) default to that base, keyed on its id.
   resolveAcctToken(project.chainId, pid).then(function (acct) {
-    applyQueueAccounting(acct);
+    acct = normalizeQueueAcct(acct);
+    applyQueueAccounting(acct, project.chainId);
 
     return read(project.chainId, 'JBController', upcomingRulesetAbi, 'upcomingRulesetOf', [pid]).catch(function () { return null; }).then(function (up) {
       // A genuinely-queued upcoming ruleset has an id distinct from the current one (an auto-cycle reuses the
       // same config id). When present, it's the base; otherwise base on the current ruleset.
       var baseR = project.ruleset, baseM = project.metadata;
       if (up && up[0] && Number(up[0].id) > 0 && (!project.ruleset || String(up[0].id) !== String(project.ruleset.id))) { baseR = up[0]; baseM = up[1]; }
+      if (!baseR) throw new Error('No current ruleset');
 
       var terminal = getAddress('JBMultiTerminal', project.chainId);
       var fal = getAddress('JBFundAccessLimits', project.chainId);
@@ -12411,7 +12993,7 @@ function openQueueRulesetModal(project) {
         (splitsAddr && rid) ? read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(acct.address)]).catch(function () { return []; }) : Promise.resolve([]),
         (splitsAddr && rid) ? read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]).catch(function () { return []; }) : Promise.resolve([]),
       ]).then(function (R) {
-        var stage = stageFromBaseRuleset(baseR, baseM, R[0], R[1], R[2], R[3]);
+        var stage = stageFromBaseRuleset(baseR, baseM, R[0], R[1], R[2], R[3], acct, project.chainId);
         state.stages = [stage];
         renderEditor();
         // If the project accepts more than one token, switch payouts to per-token blocks ("Payout USDC
@@ -12420,7 +13002,7 @@ function openQueueRulesetModal(project) {
           if (!kinds || !kinds.length) return;
           if (kinds.length <= 1 && state.accepts[0] !== 'custom') return;
           var lpHook = (getAddress('BannyLPSplitHook', project.chainId) || '').toLowerCase();
-          var tokCurOf = function (t) { return Number(BigInt(t) & 0xffffffffn); };
+          var tokCurOf = function (t) { try { return Number(BigInt(t) & 0xffffffffn); } catch (_) { return 0; } };
           return Promise.all(kinds.map(function (kind) {
             var tok = kind.addrForChain(project.chainId);
             if (!(splitsAddr && fal && terminal && rid && tok)) { stage.payoutByKind[kind.key] = { mode: 'none', recipients: [] }; return Promise.resolve(); }
@@ -12447,10 +13029,11 @@ function openQueueRulesetModal(project) {
   }).catch(function () { body.innerHTML = ''; body.textContent = 'Could not read the current ruleset.'; });
 
   // Build one create-flow `stage` from the base ruleset (ruleset struct `r` + decoded metadata `m`).
-  function stageFromBaseRuleset(r, m, payoutLims, surplusAllows, payoutSplits, reservedSplits) {
+  function stageFromBaseRuleset(r, m, payoutLims, surplusAllows, payoutSplits, reservedSplits, acct, chainId) {
+    acct = normalizeQueueAcct(acct);
     var s = createStage();
     s.expanded = true;
-    var defaultCurrency = queueDefaultCurrency(acct);
+    var defaultCurrency = queueDefaultCurrency(acct, chainId);
     s.baseCurrency = defaultCurrency;
     s.payoutCurrency = defaultCurrency;
     s.surplusAllowanceCurrency = defaultCurrency;
@@ -12463,7 +13046,7 @@ function openQueueRulesetModal(project) {
       s.weightCutPercent = Number(r.weightCutPercent) / 1e7;
       s.issuanceCutOn = s.weightCutPercent > 0;
       var dlKey = 'none';
-      DEADLINE_OPTIONS.forEach(function (d) { if (d.contract && (getAddress(d.contract, project.chainId) || '').toLowerCase() === (r.approvalHook || '').toLowerCase()) dlKey = d.key; });
+      DEADLINE_OPTIONS.forEach(function (d) { if (d.contract && (getAddress(d.contract, chainId || project.chainId) || '').toLowerCase() === (r.approvalHook || '').toLowerCase()) dlKey = d.key; });
       s.deadline = dlKey;
     }
     if (m) {
@@ -12483,7 +13066,7 @@ function openQueueRulesetModal(project) {
     }
     // Reserved recipients — each row's percent is its share of ISSUANCE = (split share ÷ 1e9) × reserved rate.
     var reservedRate = m ? Number(m.reservedPercent) / 100 : 0; // 0..100
-    var lpHook = (getAddress('BannyLPSplitHook', project.chainId) || '').toLowerCase();
+    var lpHook = (getAddress('BannyLPSplitHook', chainId || project.chainId) || '').toLowerCase();
     s.reservedRecipients = (reservedSplits || []).map(function (sp) {
       return recFromSplit(sp, lpHook, reservedRate > 0 ? (Number(sp.percent) / SPLITS_TOTAL) * reservedRate : 0, '');
     });
@@ -12526,11 +13109,31 @@ function openQueueRulesetModal(project) {
     base.type = 'wallet'; base.address = sp.beneficiary || ''; base.projectId = 0; return base;
   }
 
-  var busy = false, queuedToSafe = false;
+  var busy = false, queuedToSafe = false, readySafeExecs = null, safeExecDone = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault();
-    // After a successful Safe propose the button becomes "Go to Safe execution" → jump to the Back office tab.
-    if (queuedToSafe) { modal.close(); location.hash = projectHash(project, project.isRevnet ? 'Operator' : 'Owner'); return; }
+    var queueTab = project.isRevnet ? 'Operator' : 'Owner';
+    if (safeExecDone) { modal.close(); return; }
+    if (readySafeExecs && readySafeExecs.length) {
+      if (busy) return;
+      busy = true; submit.textContent = 'Executing…';
+      executeReadySafeTransactions(readySafeExecs, { title: 'Execute queued ruleset' + (readySafeExecs.length === 1 ? '' : 's') }).then(function (execRes) {
+        busy = false;
+        if (execRes && execRes.done) {
+          setStatus('Executed on ' + readySafeExecs.length + ' chain' + (readySafeExecs.length === 1 ? '' : 's') + '.', 'success');
+          readySafeExecs = null; safeExecDone = true; submit.textContent = 'Close';
+        } else {
+          submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
+          setStatus('Execution cancelled — queued transactions are still in the ' + queueTab + ' tab or Safe app.', '');
+        }
+      }).catch(function (err) {
+        busy = false; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
+        setStatus(errMessage(err, 'Execution failed'), 'error');
+      });
+      return;
+    }
+    // After a successful Safe propose the button becomes "Go to Owner/Operator tab" for later signing/execution.
+    if (queuedToSafe) { modal.close(); location.hash = projectHash(project, queueTab); return; }
     if (busy) return;
     // Removing a live shop is destructive — confirm explicitly (the silent-drop this whole feature prevents).
     if (state.shopChoice === 'remove' && state.currentDataHook && !window.confirm('Remove the shop? From the next ruleset onward your project stops minting NFTs on payment — payments mint project tokens at the ruleset weight instead. Continue?')) return;
@@ -12538,7 +13141,12 @@ function openQueueRulesetModal(project) {
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     submitQueueRuleset(project, state, selected, operatorAddr, setStatus).then(function (res) {
       busy = false;
-      if (res && res.safe && res.queued > 0) { queuedToSafe = true; submit.textContent = 'Go to Safe execution'; }
+      if (res && res.readyExecs && res.readyExecs.length) {
+        readySafeExecs = res.readyExecs;
+        submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
+      } else if (res && res.safe && res.queued > 0) {
+        queuedToSafe = true; submit.textContent = 'Go to ' + queueTab + ' tab';
+      }
     }).catch(function (err) {
       busy = false; setStatus(errMessage(err, 'Queue failed'), 'error');
     });
@@ -12591,11 +13199,20 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     }
     try { buildCall(selected[0].id); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var shim = Object.assign({}, project, { chains: selected });
-    var res = await proposeSafeAcrossChains(shim, operatorAddr, signer, buildCall, { title: 'Queue ruleset on Safe' });
+    var tabName = project.isRevnet ? 'Operator' : 'Owner';
+    var res = await proposeSafeAcrossChains(shim, operatorAddr, signer, buildCall, { title: 'Queue ruleset on Safe', queueTab: tabName });
     if (!res || res.cancelled) { setStatus('Cancelled', ''); return; }
     document.dispatchEvent(new CustomEvent('jb:safe-queued'));
-    setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ' — add the Safe there first)' : '') + ' — confirm + execute in Back office or the Safe app.', 'success');
-    return { safe: true, queued: res.queued };
+    var readyCount = (res.readyExecs && res.readyExecs.length) || 0;
+    var skippedNote = res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ' — add the Safe there first)' : '';
+    if (res.executedReady) {
+      setStatus('Queued and executed on ' + res.executedReady + ' chain' + (res.executedReady === 1 ? '' : 's') + skippedNote + '.', 'success');
+    } else if (readyCount) {
+      setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + skippedNote + ' — ' + readyCount + ' ready to execute now.', 'success');
+    } else {
+      setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + skippedNote + ' — confirm + execute in the ' + tabName + ' tab or the Safe app.', 'success');
+    }
+    return { safe: true, queued: res.queued, readyExecs: res.readyExecs || [] };
   }
 
   // EOA owner — the connected wallet must be the owner.
@@ -13579,6 +14196,7 @@ var TITLE_CONCEPT = {
   'add items for sale': 'items-for-sale', 'confirm add items': 'items-for-sale',
   'transfer ownership': 'transfer-ownership', 'transfer operator': 'transfer-operator',
   'edit project': 'edit-project', 'add accounting token': 'accounting-token',
+  'project payer address': 'project-payer',
   'edit splits': 'split-groups', 'edit reserved recipients': 'split-groups',
   'add market liquidity': 'add-liquidity', 'add liquidity': 'add-liquidity',
 };

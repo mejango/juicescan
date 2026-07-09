@@ -2,7 +2,7 @@
 // Safe (multisig) support for owner/operator-gated actions. When a project owner is a Safe, we can't
 // route through Relayr (a Safe has no private key to sign an ERC-2771 forward request). Instead we
 // PROPOSE the call to the Safe Transaction Service on each chain — it lands in the Safe's queue, and the
-// Safe's signers confirm + execute (from the Safe app, or from our Back office tab).
+// Safe's signers confirm + execute (from the Safe app, or from our Owner/Operator/Admin tabs).
 //
 // Caveats (flagged for live testing): the per-network Safe Transaction Service endpoints below may
 // require an API key and/or restrict browser CORS depending on Safe's current API policy. The base URL
@@ -176,7 +176,26 @@ export async function proposeSafeTx(opts) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
     throw new Error('Safe service ' + res.status + (detail ? ': ' + detail.slice(0, 200) : ''));
   }
-  return { safeTxHash: safeTxHash, nonce: nonce };
+  return {
+    safeTxHash: safeTxHash,
+    nonce: nonce,
+    signature: signature,
+    tx: {
+      to: fields.to,
+      value: String(fields.value),
+      data: fields.data,
+      operation: fields.operation,
+      safeTxGas: String(fields.safeTxGas),
+      baseGas: String(fields.baseGas),
+      gasPrice: String(fields.gasPrice),
+      gasToken: fields.gasToken,
+      refundReceiver: fields.refundReceiver,
+      nonce: nonce,
+      safeTxHash: safeTxHash,
+      contractTransactionHash: safeTxHash,
+      confirmations: [{ owner: cs(opts.signer), signature: signature }],
+    },
+  };
 }
 
 // List the Safe's pending (not-yet-executed) queued transactions on `chainId`.
