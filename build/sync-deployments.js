@@ -122,6 +122,10 @@ function main() {
     const files = fs
       .readdirSync(chainDir)
       .filter((file) => file.endsWith(".json"))
+      .filter((file) => {
+        const deploymentName = file.replace(/\.json$/, "");
+        return !deploymentName.endsWith("_deprecated") && !deploymentName.endsWith("__TwapOracleUpgrade");
+      })
       .sort();
 
     for (const file of files) {

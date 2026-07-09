@@ -140,6 +140,5 @@
     }
   },
   "contractName": "JBDeadline3Hours",
-  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline3Hours.sol",
-  "contractNotice": "A reusable deadline implementation with a fixed three-hour duration."
+  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBDeadline3Hours.sol"
 }

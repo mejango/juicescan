@@ -1373,6 +1373,11 @@
     },
     {
       "type": "error",
+      "name": "JBBuybackHook_PoolKeyCurrenciesMismatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "JBBuybackHook_PoolNotInitialized",
       "inputs": [
         {
