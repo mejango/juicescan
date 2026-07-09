@@ -7,7 +7,7 @@ import { encodeFunctionData, decodeFunctionData } from 'viem';
 import { build721Config, buildQueueRulesetConfigs, __test } from '../src/create-flow.js';
 import { buildNewShopQueueCall } from '../src/discover.js';
 
-const { initState } = __test;
+const { initState, storeUnit } = __test;
 const ALICE = '0x1111111111111111111111111111111111111111';
 const CTRL = '0x000000000000000000000000000000000000C001';
 const SDEPLOYER = '0x000000000000000000000000000000000000D001';
@@ -32,6 +32,17 @@ describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)
     expect(cfg.symbol).toBe('NEW');
     expect(cfg.tiersConfig.tiers.length).toBe(1);
     expect(cfg.tiersConfig.tiers[0].initialSupply).toBe(100);
+  });
+  it('USD store pricing is labelled USD and encoded as currency 2, not token-labelled USDC', () => {
+    const s = newShopState();
+    s.accepts = ['eth', 'usdc'];
+    s.storePricingCurrency = 2;
+    s.nfts[0].priceEth = '1';
+    expect(storeUnit(s)).toBe('USD');
+    const cfg = build721Config(s, 'ipfs://x', 1);
+    expect(cfg.tiersConfig.currency).toBe(2);
+    expect(cfg.tiersConfig.decimals).toBe(6);
+    expect(cfg.tiersConfig.tiers[0].price).toBe(1000000n);
   });
 });
 

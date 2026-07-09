@@ -2308,7 +2308,7 @@ function collectionExtrasSection(state, render) {
 
 // Store-item price currency (independent of the ruleset base currency).
 function storeCur(state) { return state.storePricingCurrency || 1; }
-function storeUnit(state) { return storeCur(state) === 2 ? 'USDC' : 'ETH'; }
+function storeUnit(state) { return customAccounting(state) ? customAcctSym(state) : (storeCur(state) === 2 ? 'USD' : 'ETH'); }
 function storeDecimals(state) { return customAccounting(state) ? customAcctDecimals(state) : (storeCur(state) === 2 ? 6 : 18); }
 
 export function renderNfts(state, render) {
@@ -4039,6 +4039,6 @@ export const __test = {
   assembleRuleset, splitState, fillSplits, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, uint256FromAddress, deploySalt,
-  splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
+  storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut,
 };

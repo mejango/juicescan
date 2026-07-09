@@ -283,6 +283,7 @@ var TIER721_STORE_ABI = [
   { type: 'function', name: 'tiersOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256[]' }, { type: 'bool' }, { type: 'uint256' }, { type: 'uint256' }], outputs: [TIER721_TUPLE] },
   { type: 'function', name: 'tokenUriResolverOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'address' }] },
 ];
+var TIER721_PRICING_CONTEXT_ABI = [{ type: 'function', name: 'pricingContext', stateMutability: 'view', inputs: [], outputs: [{ name: 'currency', type: 'uint256' }, { name: 'decimals', type: 'uint256' }] }];
 var TIER721_RESOLVER_ABI = [{ type: 'function', name: 'tokenUriOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'string' }] }];
 
 // bytes32 IPFS hash → "ipfs://Qm…" (CIDv0). Prepend the sha2-256/32-byte multihash prefix 0x1220, base58btc.
@@ -459,6 +460,11 @@ async function fetchProjectTiersUncached(project) {
   if (!store) return null;
   var idTarget = await client.readContract({ address: hook, abi: HOOK_METADATA_ID_TARGET_ABI, functionName: 'METADATA_ID_TARGET', args: [] }).catch(function () { return hook; });
   if (!idTarget || /^0x0+$/.test(idTarget)) idTarget = hook;
+  var pricingRaw = await client.readContract({ address: hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] }).catch(function () { return null; });
+  var pricing = pricingRaw
+    ? { currency: Number(pricingRaw.currency || pricingRaw[0] || 1), decimals: Number(pricingRaw.decimals || pricingRaw[1] || 18) }
+    : { currency: Number((project.metadata && project.metadata.baseCurrency) || 1), decimals: Number((project.metadata && Number(project.metadata.baseCurrency) === 2) ? 6 : 18) };
+  pricing.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
   var resolver = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] }).catch(function () { return null; });
   if (resolver && /^0x0+$/.test(resolver)) resolver = null;
   var raw = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }).catch(function () { return []; });
@@ -470,7 +476,7 @@ async function fetchProjectTiersUncached(project) {
       reserveBeneficiary: t.reserveBeneficiary, splitPercent: Number(t.splitPercent || 0),
       flags: t.flags || {}, allowOwnerMint: t.flags && t.flags.allowOwnerMint };
   }).filter(function (t) { return t.initial > 0; });
-  return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, tiers: tiers };
+  return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers };
 }
 
 // Resolve a tier's display { name, image, category } — prefer the on-chain tokenUriResolver (it returns
@@ -805,9 +811,9 @@ function openAddTierModal(project, shop) {
   var allChains = (project.chains && project.chains.length)
     ? project.chains
     : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
-  var baseUsd = project.metadata && Number(project.metadata.baseCurrency) === 2;
-  var priceUnit = baseUsd ? 'USDC' : 'ETH';
-  var priceDecimals = baseUsd ? 6 : 18;
+  var pricing = pricingContextOf(shop, project.chainId);
+  var priceUnit = pricing.symbol;
+  var priceDecimals = pricing.decimals;
 
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to add an item.'));
@@ -1382,8 +1388,8 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   var row = el('div', 'shop-tier-row');
   var left = el('div', 'shop-tier-pricecol');
   // Show the discounted price the buyer actually pays; strike through the original when discounted.
-  var priceEl = el('span', 'shop-tier-price'); priceEl.textContent = formatEth(tierEffectivePrice(tier.price, tier.discountPercent)); left.appendChild(priceEl);
-  if (discLabel) { var origEl = el('span', 'shop-tier-price-orig'); origEl.textContent = formatEth(tier.price); left.appendChild(origEl); }
+  var priceEl = el('span', 'shop-tier-price'); priceEl.textContent = formatShopPrice(shop, tierEffectivePrice(tier.price, tier.discountPercent), project.chainId); left.appendChild(priceEl);
+  if (discLabel) { var origEl = el('span', 'shop-tier-price-orig'); origEl.textContent = formatShopPrice(shop, tier.price, project.chainId); left.appendChild(origEl); }
   var supplyEl = el('span', 'shop-tier-supply');
   supplyEl.textContent = soldOut ? 'sold out' : (tier.initial >= 999999999 ? 'unlimited' : tier.remaining + ' left');
   left.appendChild(supplyEl);
@@ -1463,9 +1469,9 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
 
   var priceRow = el('div', 'tier-detail-price');
   var disc = tierDiscountLabel(tier);
-  var effEl = el('span', 'tier-detail-price-eff'); effEl.textContent = formatEth(tierEffectivePrice(tier.price, tier.discountPercent)); priceRow.appendChild(effEl);
+  var effEl = el('span', 'tier-detail-price-eff'); effEl.textContent = formatShopPrice(shop, tierEffectivePrice(tier.price, tier.discountPercent), project.chainId); priceRow.appendChild(effEl);
   if (disc) {
-    var origEl = el('span', 'tier-detail-price-orig'); origEl.textContent = formatEth(tier.price); priceRow.appendChild(origEl);
+    var origEl = el('span', 'tier-detail-price-orig'); origEl.textContent = formatShopPrice(shop, tier.price, project.chainId); priceRow.appendChild(origEl);
     var badge = el('span', 'tier-detail-discount'); badge.textContent = disc; priceRow.appendChild(badge);
   }
   content.appendChild(priceRow);
@@ -1648,7 +1654,7 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
 
   var foot = el('div', 'paybox-shop-foot');
   // Discounted price the buyer pays (the original is implied by the badge; keep the strip compact).
-  var price = el('span', 'paybox-shop-price'); price.textContent = formatEth(tierEffectivePrice(tier.price, tier.discountPercent)); foot.appendChild(price);
+  var price = el('span', 'paybox-shop-price'); price.textContent = formatShopPrice(shop, tierEffectivePrice(tier.price, tier.discountPercent), project.chainId); foot.appendChild(price);
   var step = el('div', 'paybox-shop-step');
   var minus = el('button', 'paybox-shop-stepbtn'); minus.textContent = '−';
   var qtyEl = el('span', 'paybox-shop-qty');
@@ -1682,7 +1688,7 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
     if (!it.isConnected) return;
     var nm = m.name || ('Tier ' + tier.id);
     cart.setImage(tier.id, m.image); cart.setName(tier.id, nm);
-    it.title = nm + ' | ' + formatEth(tier.price);
+    it.title = nm + ' | ' + formatShopPrice(shop, tier.price, project.chainId);
     if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'thumb');
   });
   return it;
@@ -2329,12 +2335,16 @@ async function readCashoutPrice(project, chainId) {
   var terminal = getAddress('JBMultiTerminal', chainId);
   if (!terminal) return null;
   try {
-    // supply and balance are independent — fetch together (one multicall round-trip) before the reclaim read.
+    // Curve inputs — fetch together (one multicall round-trip) before the reclaim read. Denominator is total
+    // supply WITH pending reserved (the contract's cash-out denominator); numerator is the native surplus (net
+    // of the payout limit) via currentSurplusOf — raw balanceOf overstated it when a payout limit exists.
+    // Native-scoped because this price floor is plotted in ETH.
     var res = await Promise.all([
-      read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]),
-      read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, NATIVE_TOKEN]),
+      read(chainId, 'JBController', totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]),
+      read(chainId, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [NATIVE_TOKEN], 18n, BigInt(Number(BigInt(NATIVE_TOKEN) & 0xffffffffn))]),
     ]);
-    var supply = res[0], bal = res[1];
+    var supply = res[0] != null ? toBigInt(res[0]) : 0n;
+    var bal = res[1] != null ? toBigInt(res[1]) : null;
     if (!supply || supply === 0n) return null;
     if (bal == null || bal === 0n) return null;
     var reclaim = await read(chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, bal]);
@@ -2762,6 +2772,27 @@ function addressLinkNode(address, chainId) {
 function formatEth(wei) {
   if (wei === null || wei === undefined) return '—';
   return formatTokenCount(wei) + ' ETH';
+}
+
+function pricingSymbol(currency, decimals, chainId) {
+  var c = Number(currency || 1);
+  if (c === 1) return 'ETH';
+  if (c === 2) return 'USD';
+  var nativeCur = Number(BigInt(NATIVE_TOKEN) & 0xffffffffn);
+  if (c === nativeCur) return 'ETH';
+  var usdc = USDC_BY_CHAIN[chainId];
+  if (usdc && c === Number(BigInt(usdc) & 0xffffffffn)) return 'USDC';
+  var known = getChainTokens(chainId || 1).filter(function (t) { return Number(BigInt(t.address) & 0xffffffffn) === c; })[0];
+  return known ? currencyLabel(known.symbol) : ('currency ' + c);
+}
+function pricingContextOf(shop, chainId) {
+  var p = (shop && shop.pricing) || {};
+  var dec = p.decimals == null ? 18 : Number(p.decimals);
+  return { currency: Number(p.currency || 1), decimals: dec, symbol: p.symbol || pricingSymbol(p.currency || 1, dec, chainId) };
+}
+function formatShopPrice(shop, amount, chainId) {
+  var p = pricingContextOf(shop, chainId);
+  return formatBalance(amount, p.decimals, p.symbol);
 }
 
 // Format a raw token amount with its own decimals + symbol (e.g. USDC at 6 decimals, ETH at 18).
@@ -4000,7 +4031,7 @@ function renderPayCard(project, cart) {
           return truncAddr(addr);
         };
         var list = ctxs.map(function (ctx) {
-          return { address: ctx.token, symbol: symbolFor(ctx.token), decimals: Number(ctx.decimals), viaRouter: false };
+          return { address: ctx.token, symbol: symbolFor(ctx.token), decimals: Number(ctx.decimals), currency: Number(ctx.currency), viaRouter: false };
         });
         var has = function (a) { return list.some(function (t) { return t.address.toLowerCase() === a.toLowerCase(); }); };
         // Swap-via-router convenience currencies the project doesn't take directly.
@@ -4013,6 +4044,7 @@ function renderPayCard(project, cart) {
         // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
         state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
         rebuildCurrency();
+        if (selectedTierIds().length) syncNftAmountForSelection();
         schedulePreview();
       }).catch(function () {});
   }
@@ -4038,10 +4070,44 @@ function renderPayCard(project, cart) {
   var previewTimer = null;
   var previewGen = 0;
 
-  function nativeToken() { return state.tokens.filter(function (t) { return t.address.toLowerCase() === NATIVE_TOKEN.toLowerCase(); })[0]; }
   // The project's directly-accepted token (the swap target a router top-up lands in).
   function acceptedToken() { return state.tokens.filter(function (t) { return !t.viaRouter; })[0]; }
   function acceptedTokenSym() { var t = acceptedToken(); return t ? (t.symbol || '').replace(/\s*\(native\)/i, '') : ''; }
+  function tokenCurrency(t) { return t && t.currency != null ? Number(t.currency) : (t && t.address ? Number(BigInt(t.address) & 0xffffffffn) : 0); }
+  function isNativePayToken(t) { return !!(t && t.address && t.address.toLowerCase() === NATIVE_TOKEN.toLowerCase()); }
+  function isUsdcPayToken(t) {
+    var usdc = USDC_BY_CHAIN[state.chainId];
+    return !!(t && t.address && usdc && t.address.toLowerCase() === usdc.toLowerCase());
+  }
+  function rescaleAmount(v, fromDecimals, toDecimals) {
+    fromDecimals = Number(fromDecimals == null ? 18 : fromDecimals);
+    toDecimals = Number(toDecimals == null ? 18 : toDecimals);
+    if (fromDecimals === toDecimals) return v;
+    return fromDecimals > toDecimals ? (v / (10n ** BigInt(fromDecimals - toDecimals))) : (v * (10n ** BigInt(toDecimals - fromDecimals)));
+  }
+  function nftPricing() { return pricingContextOf(state.shop, state.chainId); }
+  function nftPayTokenScore(t) {
+    if (!state.shop || !t) return 0;
+    var p = nftPricing();
+    var directBonus = t.viaRouter ? 1 : 2;
+    if (p.currency === 2 && isUsdcPayToken(t)) return 10 + directBonus;
+    if ((p.currency === 1 || p.currency === Number(BigInt(NATIVE_TOKEN) & 0xffffffffn)) && isNativePayToken(t)) return 10 + directBonus;
+    return tokenCurrency(t) === p.currency ? 8 + directBonus : 0;
+  }
+  function preferredNftPayToken() {
+    var best = null, bestScore = 0;
+    (state.tokens || []).forEach(function (t) { var score = nftPayTokenScore(t); if (score > bestScore) { best = t; bestScore = score; } });
+    return best;
+  }
+  function nftFloorForToken(token) {
+    var total = nftTotalWei();
+    if (!state.shop || !token || total <= 0n) return total;
+    var p = nftPricing();
+    var sameCurrency = tokenCurrency(token) === p.currency
+      || (p.currency === 2 && isUsdcPayToken(token))
+      || ((p.currency === 1 || p.currency === Number(BigInt(NATIVE_TOKEN) & 0xffffffffn)) && isNativePayToken(token));
+    return sameCurrency ? rescaleAmount(total, p.decimals, token.decimals || 18) : null;
+  }
   function formatSwapUnits(n) {
     if (!isFinite(n) || n <= 0) return '0';
     if (n >= 1) return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -4083,15 +4149,23 @@ function renderPayCard(project, cart) {
     var sel = cart.entries();
     return Object.keys(sel).map(function (id) { return { id: Number(id), qty: sel[id], name: cart.name(id) || ('Tier ' + id) }; });
   }
-  // Selecting NFTs drives the pay flow: tier prices are ETH-denominated, so force native ETH and set the
-  // amount to the NFT total (the floor the holder must pay; they can still type more to overpay → tokens).
+  function syncNftAmountForSelection() {
+    var floor = nftFloorForToken(state.token);
+    if (floor != null) {
+      amtInput.value = formatAmount(floor, (state.token && state.token.decimals) || 18);
+      state.amount = amtInput.value.trim();
+    } else {
+      amtInput.value = '';
+      state.amount = '';
+    }
+  }
+  // Selecting NFTs drives the pay flow: use the 721 hook's pricing context, not a hard-coded ETH amount.
   function onNftChange() {
     var total = nftTotalWei();
     if (total > 0n) {
-      var nat = nativeToken();
-      if (nat && state.token !== nat) { state.token = nat; rebuildCurrency(); }
-      amtInput.value = formatAmount(total, 18);
-      state.amount = amtInput.value.trim();
+      var tok = preferredNftPayToken();
+      if (tok && state.token !== tok) { state.token = tok; state.tokenTouched = false; rebuildCurrency(); }
+      syncNftAmountForSelection();
     }
     schedulePreview();
   }
@@ -4165,6 +4239,7 @@ function renderPayCard(project, cart) {
       state.token = state.tokens[0] || null;
       sizeSelectToText(chainSel);
       rebuildCurrency();
+      if (selectedTierIds().length) syncNftAmountForSelection();
       schedulePreview();
       loadAcceptedTokens(state.chainId); // refine for the newly-selected chain
     });
@@ -4200,6 +4275,7 @@ function renderPayCard(project, cart) {
         var t = state.tokens[Number(sel.value)];
         if (t) { state.token = t; state.tokenTouched = true; }
         sizeSelectToText(sel, 13);
+        if (selectedTierIds().length) syncNftAmountForSelection();
         schedulePreview();
       });
       currWrap.appendChild(sel);
@@ -4469,13 +4545,16 @@ function renderPayCard(project, cart) {
 
     var addBalance = state.mode === 'addbalance';
 
-    // Selected 721 tiers mint via the pay metadata; the amount must cover their ETH total (overpay → tokens).
+    // Selected 721 tiers mint via the pay metadata; the amount must cover their pricing-context total.
     // Add-to-balance mints nothing, so NFTs are ignored entirely on that path.
     var tierIds = addBalance ? [] : selectedTierIds();
     var metadata = '0x';
     if (tierIds.length && state.shop) {
-      var nftFloor = nftTotalWei();
-      if (amt < nftFloor) { amt = nftFloor; state.amount = formatAmount(amt, 18); }
+      var nftFloor = nftFloorForToken(state.token);
+      if (nftFloor != null && amt < nftFloor) {
+        amt = nftFloor;
+        state.amount = formatAmount(amt, state.token.decimals || 18);
+      }
       metadata = buildTierMintMetadata(state.shop.idTarget || state.shop.hook, tierIds);
     }
     if (amt === 0n) { status.textContent = 'Enter an amount'; return; }
@@ -11855,13 +11934,14 @@ function fetchYouPosition(project) {
     var baseCur = BigInt((project.metadata && project.metadata.baseCurrency) || 1);
     return Promise.all([
       readUserBalance(project, cid),
-      read(cid, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
+      // The contract's cash-out denominator: total supply plus pending reserved tokens.
+      read(cid, 'JBController', totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
       // The terminal's surplus is held in its accounting token (USDC/ETH), not necessarily native ETH.
       terminal ? resolveAcctToken(cid, pid) : Promise.resolve({ address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' }),
       // Unclaimed credits — the rest of the balance is claimed ERC-20. Drives the "Credits"/"ERC-20s" subtext.
       read(cid, 'JBTokens', creditBalanceOfAbi, 'creditBalanceOf', [acct, pid]).then(toBigInt).catch(function () { return null; }),
     ]).then(function (res) {
-      var bal = res[0], supply = res[1], acct = res[2], credit = res[3];
+      var bal = res[0], supply = res[1] != null ? toBigInt(res[1]) : null, acct = res[2], credit = res[3];
       var hasBal = bal != null && bal > 0n;
       var surplusJob = terminal
         // Actual reclaimable surplus (balance − remaining payout limit), in the accounting token's units — not
@@ -12657,7 +12737,8 @@ function buildCashOutModal(project, requestClose) {
       // Feeless casher → the terminal waives the 2.5% protocol fee (in addition to the cash-out-tax gate).
       isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updatePreview(); });
       return Promise.all([
-        read(state.chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
+        // The contract's cash-out denominator: total supply plus pending reserved tokens.
+        read(state.chainId, 'JBController', totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
         // Actual reclaimable SURPLUS (= terminal balance − remaining payout limit), in the accounting token's
         // own decimals/currency. Reading raw `balanceOf` here overstated it when a payout limit exists and could
         // push the fallback min-reclaimed floor above the real reclaim → cashOutTokensOf revert.
@@ -12669,7 +12750,7 @@ function buildCashOutModal(project, requestClose) {
         terminal ? read(state.chainId, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n),
       ]);
     }).then(function (r) {
-      state.supply = r[0]; state.surplus = r[1];
+      state.supply = r[0] != null ? toBigInt(r[0]) : null; state.surplus = r[1];
       state.cashOutTaxRate = r[2] && r[2][1] ? Number(r[2][1].cashOutTaxRate || 0) : 0;
       state.feeFreeSurplus = r[3] || 0n;
       updatePreview();
@@ -15246,4 +15327,3 @@ function splitConfigRow(recipientNode, pct) {
   var v = el('span', 'detail-ruleset-val'); v.textContent = (Math.round(pct * 100) / 100) + '%'; row.appendChild(v);
   return row;
 }
-
