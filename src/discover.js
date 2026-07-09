@@ -7654,12 +7654,14 @@ function renderExtrasSection(project) {
   var originalText = el('span'); originalText.textContent = 'Original payer'; originalRow.appendChild(originalText);
   body.appendChild(originalRow);
   var beneficiaryFields = el('div', 'extras-conditional-fields');
+  var beneficiaryShared = el('div', 'extras-shared-address');
   var beneficiaryInput = el('input', 'operator-edit-jwt extras-address');
   beneficiaryInput.type = 'text';
   beneficiaryInput.placeholder = '0x... or name.eth';
   beneficiaryInput.value = '';
-  beneficiaryFields.appendChild(beneficiaryInput);
-  var beneficiaryHint = el('div', 'operator-edit-token-name'); beneficiaryFields.appendChild(beneficiaryHint);
+  beneficiaryShared.appendChild(beneficiaryInput);
+  var beneficiaryHint = el('div', 'operator-edit-token-name'); beneficiaryShared.appendChild(beneficiaryHint);
+  beneficiaryFields.appendChild(beneficiaryShared);
   var beneficiaryValueOf = attachAddressRecognition(beneficiaryInput, beneficiaryHint, project.chainId, {
     label: 'Default beneficiary',
     projectId: project.id,
@@ -7679,6 +7681,8 @@ function renderExtrasSection(project) {
     defaultRaw: function () { return beneficiaryInput.value || ''; },
     unknownLabel: function (addr) { return 'Custom beneficiary ' + truncAddr(addr); },
     ensLabel: function (name) { return name; },
+    onOpen: function () { beneficiaryShared.style.display = 'none'; },
+    onClose: function () { beneficiaryShared.style.display = ''; },
   });
   beneficiaryFields.appendChild(beneficiaryPerChain.node);
   body.appendChild(beneficiaryFields);
@@ -7696,12 +7700,14 @@ function renderExtrasSection(project) {
   body.appendChild(memoInput);
 
   var ownerLabel = el('div', 'operator-edit-label extras-label'); ownerLabel.textContent = 'Address admin'; body.appendChild(ownerLabel);
+  var ownerShared = el('div', 'extras-shared-address');
   var ownerInput = el('input', 'operator-edit-jwt extras-address');
   ownerInput.type = 'text';
   ownerInput.placeholder = '0x... or name.eth';
   ownerInput.value = getAccount() || '';
-  body.appendChild(ownerInput);
-  var ownerHint = el('div', 'operator-edit-token-name'); body.appendChild(ownerHint);
+  ownerShared.appendChild(ownerInput);
+  var ownerHint = el('div', 'operator-edit-token-name'); ownerShared.appendChild(ownerHint);
+  body.appendChild(ownerShared);
   var ownerValueOf = attachAddressRecognition(ownerInput, ownerHint, project.chainId, {
     label: 'Address admin',
     zeroLabel: 'Zero address cannot administer the payer',
@@ -7713,6 +7719,8 @@ function renderExtrasSection(project) {
     zeroLabel: 'Zero address cannot administer the payer',
     defaultRaw: function () { return ownerInput.value || getAccount() || ''; },
     ensLabel: function (name) { return name; },
+    onOpen: function () { ownerShared.style.display = 'none'; },
+    onClose: function () { ownerShared.style.display = ''; },
   });
   body.appendChild(ownerPerChain.node);
   var ownerExplainer = el('div', 'extras-payer-sub');
@@ -8808,6 +8816,7 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
   function openRows() {
     if (open) return;
     open = true;
+    if (opts.onOpen) opts.onOpen();
     wrap.innerHTML = '';
     var table = el('div', 'operator-chain-addresses');
     chainList.forEach(function (c) {
@@ -8838,7 +8847,14 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
     wrap.appendChild(table);
     var foot = el('div', 'operator-chain-address-foot');
     var same = el('a', 'operator-cta'); same.href = '#'; same.textContent = 'Use same on all chains';
-    same.addEventListener('click', function (e) { e.preventDefault(); open = false; rows = {}; wrap.innerHTML = ''; collapsed(); });
+    same.addEventListener('click', function (e) {
+      e.preventDefault();
+      open = false;
+      rows = {};
+      wrap.innerHTML = '';
+      if (opts.onClose) opts.onClose();
+      collapsed();
+    });
     foot.appendChild(same); wrap.appendChild(foot);
   }
   function collapsed() {
