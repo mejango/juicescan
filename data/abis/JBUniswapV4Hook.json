@@ -1158,6 +1158,103 @@
     },
     {
       "type": "function",
+      "name": "hasObservationCoverage",
+      "inputs": [
+        {
+          "name": "key",
+          "type": "tuple",
+          "internalType": "struct PoolKey",
+          "components": [
+            {
+              "name": "currency0",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "currency1",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "fee",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "tickSpacing",
+              "type": "int24",
+              "internalType": "int24"
+            },
+            {
+              "name": "hooks",
+              "type": "address",
+              "internalType": "contract IHooks"
+            }
+          ]
+        },
+        {
+          "name": "secondsAgo",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "observationCoverageOf",
+      "inputs": [
+        {
+          "name": "key",
+          "type": "tuple",
+          "internalType": "struct PoolKey",
+          "components": [
+            {
+              "name": "currency0",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "currency1",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "fee",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "tickSpacing",
+              "type": "int24",
+              "internalType": "int24"
+            },
+            {
+              "name": "hooks",
+              "type": "address",
+              "internalType": "contract IHooks"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "oldestSecondsAgo",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "observations",
       "inputs": [
         {
@@ -1751,6 +1848,25 @@
         "_0": "permissions The hook permissions struct"
       }
     },
+    "hasObservationCoverage((address,address,uint24,int24,address),uint32)": {
+      "details": "Consumers should require this before trusting `observe([secondsAgo, 0])` as a manipulation-resistant TWAP.",
+      "params": {
+        "key": "The pool key.",
+        "secondsAgo": "The requested lookback window."
+      },
+      "returns": {
+        "_0": "True if the oldest retained observation is at least `secondsAgo` old."
+      }
+    },
+    "observationCoverageOf((address,address,uint24,int24,address))": {
+      "details": "Consumers can use this to quote against the longest retained best-effort window when the preferred window is not fully covered.",
+      "params": {
+        "key": "The pool key."
+      },
+      "returns": {
+        "oldestSecondsAgo": "The age of the oldest retained initialized observation, or 0 if unavailable."
+      }
+    },
     "observe((address,address,uint24,int24,address),uint32[])": {
       "details": "Implements the IGeomeanOracle interface so external contracts (e.g. buyback hooks) can query this pool's TWAP without maintaining their own oracle.",
       "params": {
@@ -1846,6 +1962,12 @@
     },
     "getHookPermissions()": {
       "notice": "Declares which Uniswap V4 lifecycle callbacks this hook uses (afterInitialize, afterSwap, beforeSwap, etc.)."
+    },
+    "hasObservationCoverage((address,address,uint24,int24,address),uint32)": {
+      "notice": "Whether the oracle has stored observations covering `secondsAgo` for `key`."
+    },
+    "observationCoverageOf((address,address,uint24,int24,address))": {
+      "notice": "The oldest retained observation age for `key`."
     },
     "observations(bytes32,uint256)": {
       "notice": "The list of observations for a given pool ID"
