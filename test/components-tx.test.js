@@ -11,7 +11,7 @@ import { buildBurnArgs, burnTokensAbi } from '../src/burn-component.js';
 import { buildDeployErc20Args, deployERC20Abi } from '../src/deploy-erc20-component.js';
 import { buildSendReservedArgs, sendReservedAbi } from '../src/reserved-component.js';
 import { buildSetPermissionsArgs, setPermissionsAbi } from '../src/permissions-component.js';
-import { buildSendPayoutsArgs, payoutCurrencyIdForSelection, payoutAmountDecimals, sendPayoutsAbi, tokenCurrencyId } from '../src/payouts-component.js';
+import { buildSendPayoutsArgs, normalizePayoutContext, payoutCurrencyIdForSelection, payoutAmountDecimals, payoutOutputFloor, sendPayoutsAbi, tokenCurrencyId } from '../src/payouts-component.js';
 import { safeExecArgs, safeExecSignatures, safeUsableConfirmationCount, SAFE_EXEC_ABI } from '../src/safe.js';
 
 const CTRL = '0x4444444444444444444444444444444444444444';
@@ -39,10 +39,11 @@ describe('pay — JBMultiTerminal.pay', () => {
     const tx = buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(parseEther('100')) });
     expect(tx.args[4]).toBe((parseEther('100') * 99n) / 100n);
     expect(tx.args[4]).toBeGreaterThan(0n);
+    expect(buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: 1n, beneficiary: BOB, memo: '', route: okRoute(1n) }).args[4]).toBe(1n);
   });
-  it('no preview → minReturned 0 (the unpriced path the user accepted)', () => {
-    const tx = buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(null) });
-    expect(tx.args[4]).toBe(0n);
+  it('refuses to build an unpriced or zero-output payment', () => {
+    expect(() => buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(null) })).toThrow(/preview/i);
+    expect(() => buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(0n) })).toThrow(/no project tokens/i);
   });
   it('ERC20 (6-dec USDC): value 0, approves the terminal for the exact amount', () => {
     const tx = buildPayArgs({ chainId: 1, projectId: 5, token: USDC, amount: parseUnits('250', 6), beneficiary: BOB, memo: '', route: okRoute(parseEther('100')) });
@@ -70,6 +71,10 @@ describe('cashout — JBMultiTerminal.cashOutTokensOf', () => {
     expect(tx.args[4]).toBe((parseEther('100') * 95n) / 100n);
     expect(tx.args[5]).toBe(BOB);
     expect(roundTrips(cashOutAbi, 'cashOutTokensOf', tx.args)).toBe(true);
+  });
+  it('refuses to build a cash out without a non-zero floor', () => {
+    expect(() => buildCashOutArgs({ chainId: 1, terminalAddr: TERMINAL, holder: BOB, projectId: 7, cashOutCount: 1n, tokenToReclaim: NATIVE_TOKEN, beneficiary: BOB, minReclaimed: 0n })).toThrow(/preview/i);
+    expect(cashOutMinReclaimed(1n)).toBe(1n);
   });
 });
 
@@ -127,7 +132,7 @@ describe('permissions — JBPermissions.setPermissionsFor', () => {
 describe('send payouts — JBMultiTerminal.sendPayoutsOf', () => {
   it('currency encodes as uint256 (H1 selector fix); args round-trip', () => {
     const cur = Number(BigInt(USDC) & 0xffffffffn);
-    const tx = buildSendPayoutsArgs({ chainId: 1, terminalAddr: TERMINAL, projectId: 5, token: USDC, amount: parseUnits('100', 6), currency: cur, minPaidOut: 0n });
+    const tx = buildSendPayoutsArgs({ chainId: 1, terminalAddr: TERMINAL, projectId: 5, token: USDC, amount: parseUnits('100', 6), currency: cur, minPaidOut: parseUnits('99', 6) });
     expect(tx.args[0]).toBe(5n);
     expect(tx.args[1]).toBe(USDC);
     expect(tx.args[2]).toBe(100000000n);
@@ -142,21 +147,29 @@ describe('send payouts — JBMultiTerminal.sendPayoutsOf', () => {
     expect(payoutCurrencyIdForSelection('custom', '12345', USDC)).toBe(12345n);
     expect(payoutCurrencyIdForSelection('custom', '-1', USDC)).toBeNull();
 
-    const tx = buildSendPayoutsArgs({ chainId: 1, terminalAddr: TERMINAL, projectId: 5, token: USDC, amount: parseUnits('100', 6), currency: 2n, minPaidOut: 0n });
+    const tx = buildSendPayoutsArgs({ chainId: 1, terminalAddr: TERMINAL, projectId: 5, token: USDC, amount: parseUnits('100', 6), currency: 2n, minPaidOut: parseUnits('99', 6) });
     expect(tx.args[3]).toBe(2n);
     expect(roundTrips(sendPayoutsAbi, 'sendPayoutsOf', tx.args)).toBe(true);
   });
-  it('parses the payout amount in the selected currency decimals, not the token transfer decimals', () => {
-    // sendPayoutsOf reads `amount` in the payout-limit currency. token mode = the token's own decimals
-    // (byte-identical to pre-audit); ETH/USD/custom = the 18-dec JB standard (_MAX_FIXED_POINT_FIDELITY).
+  it('uses accounting-token decimals for every payout-limit currency', () => {
+    // JBCurrencyAmount changes denomination, not fixed-point scale. A USD limit on USDC remains 6 decimals.
     expect(payoutAmountDecimals('token', 6)).toBe(6);
     expect(payoutAmountDecimals('token', 18)).toBe(18);
-    expect(payoutAmountDecimals('eth', 6)).toBe(18);
-    expect(payoutAmountDecimals('usd', 6)).toBe(18);
-    expect(payoutAmountDecimals('custom', 6)).toBe(18);
-    // The regression this guards: a USD payout on a 6-dec USDC token must scale by 1e18, not 1e6.
-    expect(parseUnits('100', payoutAmountDecimals('usd', 6))).toBe(parseUnits('100', 18));
+    expect(payoutAmountDecimals('eth', 6)).toBe(6);
+    expect(payoutAmountDecimals('usd', 6)).toBe(6);
+    expect(payoutAmountDecimals('custom', 6)).toBe(6);
+    expect(parseUnits('100', payoutAmountDecimals('usd', 6))).toBe(parseUnits('100', 6));
     expect(parseUnits('100', payoutAmountDecimals('token', 6))).toBe(parseUnits('100', 6));
+    expect(payoutOutputFloor(1000000n)).toBe(990000n);
+    expect(payoutOutputFloor(1n)).toBe(1n);
+    expect(payoutOutputFloor(1000000n, true)).toBe(1000000n);
+    expect(() => buildSendPayoutsArgs({ chainId: 1, terminalAddr: TERMINAL, projectId: 5, token: USDC, amount: 1n, currency: 2n, minPaidOut: 0n })).toThrow(/quote/i);
+  });
+  it('rejects malformed accounting contexts before enabling the payout form', () => {
+    const context = normalizePayoutContext({ token: USDC, decimals: 6, currency: 2 }, [{ address: USDC, symbol: 'USDC' }]);
+    expect(context).toMatchObject({ address: USDC, decimals: 6, currency: 2n, symbol: 'USDC' });
+    expect(() => normalizePayoutContext({ token: USDC, decimals: 37, currency: 2 }, [])).toThrow(/decimals/i);
+    expect(() => normalizePayoutContext({ token: USDC, decimals: 6, currency: 0 }, [])).toThrow(/currency/i);
   });
 });
 

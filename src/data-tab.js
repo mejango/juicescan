@@ -3,14 +3,16 @@
 // Visually mirrors the ACTIONS tab: section-header.transact + collapsible fn-row cards.
 
 import queries from '../data/bendystraw-queries.json';
-import { bendystrawQuery, renderBendystrawSettings } from './bendystraw-client.js';
+import { bendystrawQuery, getBendystrawNetwork, renderBendystrawSettings } from './bendystraw-client.js';
 import { FORMATTERS } from './bendystraw-format.js';
 import { getManifestChains } from './chain.js';
+import { setDiscoverNetwork } from './discover.js';
+import { isAddress } from 'viem';
 
 // DATA-tab chain picker follows the Discover network toggle (jb-network), like the rest of the app.
 // Mainnet → mainnet chains (default Ethereum); testnet → testnet chains (default Sepolia).
 function wantTestnet() {
-  try { return localStorage.getItem('jb-network') === 'testnet'; } catch (_) { return false; }
+  return getBendystrawNetwork() === 'testnet';
 }
 function defaultBendystrawChainId() { return wantTestnet() ? 11155111 : 1; }
 function inActiveNetwork(chain) { return chain && !!chain.testnet === wantTestnet(); }
@@ -28,7 +30,11 @@ export function renderDataTab() {
   container.innerHTML = '';
 
   // Compact settings strip at the top. (No Pinata field — the Create flow pins via a baked-in scoped key.)
-  container.appendChild(renderBendystrawSettings({ onNetworkChange: renderDataTab }));
+  container.appendChild(renderBendystrawSettings({ onNetworkChange: function (mode) {
+    // Keep Discover's chain list/cache in lock-step when the shared toggle is changed from this tab.
+    setDiscoverNetwork(mode);
+    renderDataTab();
+  } }));
 
   // Sections, identical structure to ACTIONS.
   for (const section of queries.sections) {
@@ -180,7 +186,7 @@ function buildContent(q) {
       raw = String(raw).trim();
       if (raw === '') {
         if (v.optional) continue;
-        continue;
+        throw new Error(v.name + ' is required');
       }
       vars[v.name] = coerce(raw, v.type);
     }
@@ -222,7 +228,7 @@ function buildContent(q) {
         const td = document.createElement('td');
         const value = item ? item[col.key] : null;
         const fmt = FORMATTERS[col.format] || FORMATTERS.text;
-        td.appendChild(fmt(value, item));
+        td.appendChild(fmt(value, item, col));
         tr.appendChild(td);
       }
       tbody.appendChild(tr);
@@ -249,7 +255,7 @@ function buildContent(q) {
       const td = document.createElement('td');
       const value = obj[col.key];
       const fmt = FORMATTERS[col.format] || FORMATTERS.text;
-      td.appendChild(fmt(value, obj));
+      td.appendChild(fmt(value, obj, col));
       tr.appendChild(td);
       tbody.appendChild(tr);
     }
@@ -273,7 +279,7 @@ function buildContent(q) {
         if (projectId == null || chainId == null) throw new Error('projectId and chainId are required');
         status.textContent = 'resolving sucker group…';
         const groupData = await bendystrawQuery(
-          'query($projectId: Float!, $chainId: Float!) { project(projectId: $projectId, chainId: $chainId) { suckerGroupId } }',
+          'query($projectId: Float!, $chainId: Float!) { project(version: 6, projectId: $projectId, chainId: $chainId) { suckerGroupId } }',
           { projectId, chainId }
         );
         const project = groupData && groupData.project;
@@ -517,17 +523,30 @@ function renderChainPills(varDef) {
   return wrapper;
 }
 
-function coerce(value, type) {
+export function coerce(value, type) {
   switch (type) {
     case 'int':
-    case 'chain':
-      return parseInt(value, 10);
+    case 'chain': {
+      const raw = String(value).trim();
+      if (!/^-?\d+$/.test(raw)) throw new Error('Expected a whole number');
+      const parsed = Number(raw);
+      if (!Number.isSafeInteger(parsed)) throw new Error('Number is outside JavaScript’s safe integer range');
+      return parsed;
+    }
     case 'chain_multi':
       // value is a comma-separated list of chain IDs from renderChainMultiPills.
-      return String(value).split(',').map(s => parseInt(s, 10)).filter(n => Number.isFinite(n));
+      return String(value).split(',').filter(Boolean).map(function (part) {
+        const raw = part.trim();
+        if (!/^\d+$/.test(raw)) throw new Error('Expected comma-separated chain IDs');
+        const parsed = Number(raw);
+        if (!Number.isSafeInteger(parsed)) throw new Error('Chain ID is outside JavaScript’s safe integer range');
+        return parsed;
+      });
     case 'bigint':
-      return value;
+      if (!/^-?\d+$/.test(String(value).trim())) throw new Error('Expected an integer');
+      return String(value).trim();
     case 'address':
+      if (!isAddress(value, { strict: false })) throw new Error('Expected a valid 0x address');
       return value.toLowerCase();
     case 'string':
     default:

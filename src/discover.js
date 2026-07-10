@@ -3,10 +3,10 @@
 // No indexer dependency — every value here is an on-chain read via component-base's
 // executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
 
-import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther } from 'viem';
+import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
 import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
-import { computePayPreview, formatTokenCount, formatAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
+import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
@@ -59,21 +59,27 @@ function getNetworkMode() {
   // indexer-backed feeds (activity/owners) populate once prod bendystraw indexes V6. Testnets via toggle.
   try { return localStorage.getItem('jb-network') === 'testnet' ? 'testnet' : 'mainnet'; } catch (_) { return 'mainnet'; }
 }
-var DISCOVER_CHAINS = getNetworkMode() === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
+var DISCOVER_NETWORK = getNetworkMode();
+var DISCOVER_CHAINS = DISCOVER_NETWORK === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
 // Reconcile the indexer host with the (hash-aware) network at module load — bendystraw-client seeds its host from
 // localStorage only, so a fresh visitor on a #sep: link would otherwise get testnet chains but mainnet feeds.
-setBendystrawNetwork(getNetworkMode());
+setBendystrawNetwork(DISCOVER_NETWORK);
 // Switch the active network: persist, swap the chain set + indexer host, drop caches + any open project
 // route, and re-render the grid from scratch.
-function setNetwork(mode) {
+export function setDiscoverNetwork(mode) {
   mode = mode === 'mainnet' ? 'mainnet' : 'testnet';
-  if (mode === getNetworkMode()) return;
+  if (mode === DISCOVER_NETWORK) {
+    setBendystrawNetwork(mode);
+    return;
+  }
+  DISCOVER_NETWORK = mode;
   try { localStorage.setItem('jb-network', mode); } catch (_) {}
   DISCOVER_CHAINS = mode === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
   setBendystrawNetwork(mode);
   _groups = null; _cache = {}; _activeDetail = null;
-  if (location.hash) { location.hash = ''; }
-  renderDiscoverTab();
+  // Only discard a project route from the other network. Top-level routes such as #data must stay put.
+  if (networkModeFromHash()) location.hash = '';
+  if (_container) renderDiscoverTab();
 }
 
 var ETH_SUCKS_GATEWAY_HOST = 'eth.sucks';
@@ -325,6 +331,7 @@ var REVO_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMu
 // JBOmnichainDeployer.tiered721HookOf(projectId, rulesetId) — for omnichain (incl. custom) projects the ruleset
 // dataHook is the deployer wrapper; the real 721 hook lives here, keyed per ruleset.
 var OMNI_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }], outputs: [{ name: 'hook', type: 'address' }, { name: 'useDataHookForCashOut', type: 'bool' }] }];
+var OMNI_EXTRA_HOOK_ABI = [{ type: 'function', name: 'extraDataHookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }], outputs: [{ name: 'config', type: 'tuple', components: [{ name: 'dataHook', type: 'address' }, { name: 'useDataHookForPay', type: 'bool' }, { name: 'useDataHookForCashOut', type: 'bool' }] }] }];
 var HOOK_STORE_ABI = [{ type: 'function', name: 'STORE', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
 var HOOK_METADATA_ID_TARGET_ABI = [{ type: 'function', name: 'METADATA_ID_TARGET', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
 var TIER721_FLAGS = { name: 'flags', type: 'tuple', components: [
@@ -376,18 +383,23 @@ function permit2MetadataId(target) {
   return out;
 }
 async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount, onStatus) {
+  amount = BigInt(amount);
+  if (amount <= 0n || amount > (1n << 160n) - 1n) throw new Error('Payment amount is outside Permit2’s uint160 range.');
   var client = clientFor(chainId);
   var wallet = getWalletClient();
   // The Permit2 signTypedData domain pins chainId, and the ERC20 approve writes on the active chain — switch the
   // wallet to the pay chain first or the signature targets the wrong chain / the approve lands elsewhere.
   var wc0 = await wallet.getChainId().catch(function () { return null; });
   if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
+  if (!wallet || !getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
   // 1. One-time ERC20→Permit2 approval (to the canonical, audited Permit2 — recognized by wallets), only when short.
   var erc20Allow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [owner, PERMIT2_ADDRESS] });
   if (BigInt(erc20Allow) < amount) {
     if (onStatus) onStatus('Approving token for Permit2 (one-time)…', 'pending');
     var maxU = (1n << 256n) - 1n;
-    var ah = await wallet.writeContract({ account: owner, chain: CHAINS[chainId], address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, maxU] });
+    var approval = await client.simulateContract({ account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, maxU] });
+    if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
+    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId] }));
     await client.waitForTransactionReceipt({ hash: ah });
   }
   // 2. Read the current Permit2 allowance to get the next nonce for (owner, token, spender=router).
@@ -396,6 +408,7 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
   var now = Math.floor(Date.now() / 1000);
   var expiration = now + 1800, sigDeadline = BigInt(now + 1800);
   // 3. Sign the exact, expiring Permit2 single-allowance (gasless) authorizing the router to pull `amount`.
+  if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
   if (onStatus) onStatus('Sign the payment authorization…', 'pending');
   var signature = await wallet.signTypedData({
     account: owner,
@@ -404,6 +417,7 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     primaryType: 'PermitSingle',
     message: { details: { token: token, amount: amount, expiration: expiration, nonce: nonce }, spender: spender, sigDeadline: sigDeadline },
   });
+  if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
   // 4. Encode JBSingleAllowance as ONE dynamic tuple (the router does abi.decode(data,(JBSingleAllowance)),
   //    which expects a leading offset word — flat params would empty-revert). Order: sigDeadline, amount,
   //    expiration, nonce, signature.
@@ -454,21 +468,21 @@ function decodeBuybackCashOutSpec(metaHex) {
   return { cashOutCountToSell: BigInt('0x' + h.slice(64, 128)), netDirect: BigInt('0x' + h.slice(128, 192)) };
 }
 
-// The project's 721 hook (revnets: REVOwner.tiered721HookOf). Null if none / empty.
+// The project's 721 hook. Returns { hook, authoritative }; null means the authoritative mapping/ruleset says
+// there is none. RPC failures reject so the UI never turns "could not read" into "no shop".
 function readShopHook(project) {
   var client = clientFor(project.chainId);
   var revo = getAddress('REVOwner', project.chainId);
-  var revoP = revo
-    ? client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
-        .then(function (h) { return (h && !/^0x0+$/.test(h)) ? h : null; }).catch(function () { return null; })
-    : Promise.resolve(null);
-  return revoP.then(function (h) {
-    if (h) return h; // revnets: REVOwner tracks the project's 721 hook directly
+  if (project.isRevnet) {
+    if (!revo) return Promise.reject(new Error('REVOwner is unavailable.'));
+    return client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
+      .then(function (h) { return (h && !/^0x0+$/.test(h)) ? { hook: h, authoritative: true } : null; });
+  }
+  return Promise.resolve().then(function () {
     // Custom projects aren't in REVOwner. Read the current ruleset: its dataHook is either the omnichain
     // deployer (omnichain — the real 721 hook is in the deployer's tiered721HookOf mapping) or, for a
     // single-chain custom project, the 721 hook itself. fetchProjectTiers then verifies via STORE().
-    var jbc = getAddress('JBController', project.chainId);
-    if (!jbc) return null;
+    return controllerAddressFor(project.chainId, project.id).then(function (jbc) {
     return client.readContract({ address: jbc, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(project.id)] }).then(function (r) {
       var rs = r ? (r[0] || r.ruleset) : null;
       var m = r ? (r[1] || r.metadata) : null;
@@ -476,10 +490,11 @@ function readShopHook(project) {
       var omni = getAddress('JBOmnichainDeployer', project.chainId);
       if (omni && rs && m.dataHook.toLowerCase() === omni.toLowerCase()) {
         return client.readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id), BigInt(rs.id)] })
-          .then(function (cfg) { var hk = cfg && (cfg.hook || cfg[0]); return (hk && !/^0x0+$/.test(hk)) ? hk : null; }).catch(function () { return null; });
+          .then(function (cfg) { var hk = cfg && (cfg.hook || cfg[0]); return (hk && !/^0x0+$/.test(hk)) ? { hook: hk, authoritative: true } : null; });
       }
-      return m.dataHook; // single-chain custom: the dataHook is the 721 hook
-    }).catch(function () { return null; });
+      return { hook: m.dataHook, authoritative: false }; // verified below via STORE()
+    });
+    });
   });
 }
 
@@ -530,21 +545,29 @@ export function buildSetDiscountConfig(tierId, pctOff) {
 }
 
 async function fetchProjectTiersUncached(project) {
-  var hook = await readShopHook(project);
-  if (!hook) return null;
+  var hookInfo = await readShopHook(project);
+  if (!hookInfo) return null;
+  var hook = hookInfo.hook;
   var client = clientFor(project.chainId);
-  var store = await client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }).catch(function () { return null; });
+  var store = hookInfo.authoritative
+    ? await client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] })
+    : await client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }).catch(function () { return null; });
   if (!store) return null;
-  var idTarget = await client.readContract({ address: hook, abi: HOOK_METADATA_ID_TARGET_ABI, functionName: 'METADATA_ID_TARGET', args: [] }).catch(function () { return hook; });
-  if (!idTarget || /^0x0+$/.test(idTarget)) idTarget = hook;
+  var idTarget = await client.readContract({ address: hook, abi: HOOK_METADATA_ID_TARGET_ABI, functionName: 'METADATA_ID_TARGET', args: [] });
+  if (!idTarget || /^0x0+$/.test(idTarget)) throw new Error('The shop metadata ID target is invalid.');
   var pricingRaw = await client.readContract({ address: hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] }).catch(function () { return null; });
-  var pricing = pricingRaw
-    ? { currency: Number(pricingRaw.currency || pricingRaw[0] || 1), decimals: Number(pricingRaw.decimals || pricingRaw[1] || 18) }
-    : { currency: Number((project.metadata && project.metadata.baseCurrency) || 1), decimals: Number((project.metadata && Number(project.metadata.baseCurrency) === 2) ? 6 : 18) };
+  // Tier prices are unusable without the hook's exact currency + decimals. Falling back from a failed read to
+  // project baseCurrency (and guessing USD=6) can display and charge a different amount, so fail closed.
+  if (!pricingRaw) return null;
+  var pricing = {
+    currency: Number(pricingRaw.currency != null ? pricingRaw.currency : pricingRaw[0]),
+    decimals: Number(pricingRaw.decimals != null ? pricingRaw.decimals : pricingRaw[1]),
+  };
+  if (!Number.isSafeInteger(pricing.currency) || pricing.currency <= 0 || !Number.isInteger(pricing.decimals) || pricing.decimals < 0 || pricing.decimals > 77) return null;
   pricing.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
-  var resolver = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] }).catch(function () { return null; });
+  var resolver = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] });
   if (resolver && /^0x0+$/.test(resolver)) resolver = null;
-  var raw = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }).catch(function () { return []; });
+  var raw = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] });
   var tiers = (raw || []).map(function (t) {
     return { id: Number(t.id), price: toBigInt(t.price), remaining: Number(t.remainingSupply), initial: Number(t.initialSupply),
       category: Number(t.category), encodedIpfsUri: t.encodedIpfsUri,
@@ -862,6 +885,23 @@ function renderShopSection(project, shop, cart) {
 // sucker group. Lets a tier split route to the SAME project on every chain it's offered on, and lets us
 // confirm the project by name. Cached. Returns { name, byChain: { chainId: projectId } } or null.
 var _splitProjCache = {};
+export var BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY =
+  'query($id: String!) { suckerGroup(id: $id) { projects(limit: 100) { items { chainId projectId } } } }';
+
+export function projectIdsByChainFromSuckerGroup(data, chainId, projectId) {
+  var byChain = {};
+  byChain[Number(chainId)] = Number(projectId);
+  var items = data && data.suckerGroup && data.suckerGroup.projects && data.suckerGroup.projects.items;
+  if (Array.isArray(items)) {
+    items.forEach(function (project) {
+      var cid = Number(project && project.chainId);
+      var pid = Number(project && project.projectId);
+      if (cid > 0 && pid > 0) byChain[cid] = pid;
+    });
+  }
+  return byChain;
+}
+
 function resolveSplitProject(projectId, chainId) {
   var key = chainId + ':' + projectId;
   if (_splitProjCache[key]) return _splitProjCache[key];
@@ -872,11 +912,10 @@ function resolveSplitProject(projectId, chainId) {
     ).catch(function () { return null; });
     var proj = res && res.project;
     if (!proj) return null;
-    var byChain = {}; byChain[Number(chainId)] = Number(projectId);
+    var byChain = projectIdsByChainFromSuckerGroup(null, chainId, projectId);
     if (proj.suckerGroupId) {
-      var g = await bendystrawQuery('query($id: String!) { suckerGroup(id: $id) { projects } }', { id: proj.suckerGroupId }).catch(function () { return null; });
-      var list = g && g.suckerGroup && g.suckerGroup.projects;
-      if (Array.isArray(list)) list.forEach(function (s) { var m = /^(\d+)-(\d+)-/.exec(String(s)); if (m) byChain[Number(m[1])] = Number(m[2]); });
+      var g = await bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY, { id: proj.suckerGroupId }).catch(function () { return null; });
+      byChain = projectIdsByChainFromSuckerGroup(g, chainId, projectId);
     }
     return { name: proj.name || proj.handle || ('Project #' + projectId), byChain: byChain };
   })();
@@ -1380,13 +1419,21 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     if (!name) { setStatus(label + 'enter a name', 'error'); return; }
     var price;
     try { price = parseAmount(form.price, form.priceDecimals); } catch (_) { setStatus(label + 'enter a valid price', 'error'); return; }
+    if (price < 0n || price > (1n << 104n) - 1n) { setStatus(label + 'price must fit uint104', 'error'); return; }
     var supplyStr = (form.supply || '').trim();
-    var supply = supplyStr === '' ? TIER_UNLIMITED_SUPPLY : parseInt(supplyStr, 10);
-    if (supplyStr !== '' && !(supply > 0)) { setStatus(label + 'enter a supply above 0, or leave empty for unlimited', 'error'); return; }
-    var category = parseInt(form.category || '0', 10) || 0;
-    var reserveFreq = parseInt(form.reserveFreq || '0', 10) || 0;
+    if (supplyStr !== '' && !/^\d+$/.test(supplyStr)) { setStatus(label + 'supply must be a whole number', 'error'); return; }
+    var supplyRaw = supplyStr === '' ? BigInt(TIER_UNLIMITED_SUPPLY) : BigInt(supplyStr);
+    if (supplyRaw <= 0n || supplyRaw > BigInt(TIER_UNLIMITED_SUPPLY)) { setStatus(label + 'supply must be between 1 and ' + TIER_UNLIMITED_SUPPLY + ', or left empty for unlimited', 'error'); return; }
+    var supply = Number(supplyRaw);
+    var category = Number(form.category || 0);
+    if (!Number.isSafeInteger(category) || category < 0 || category > 0xffffff) { setStatus(label + 'category must fit uint24', 'error'); return; }
+    var reserveRaw = String(form.reserveFreq || '0').trim() || '0';
+    if (!/^\d+$/.test(reserveRaw) || BigInt(reserveRaw) > 0xffffn) { setStatus(label + 'reserve frequency must fit uint16', 'error'); return; }
+    var reserveFreq = Number(reserveRaw);
     var reserveBenef = form.reserveBenef || '';
-    var votingUnits = parseInt(form.votingUnits || '0', 10) || 0;
+    var votingRaw = String(form.votingUnits || '0').trim() || '0';
+    if (!/^\d+$/.test(votingRaw) || BigInt(votingRaw) > 0xffffffffn) { setStatus(label + 'voting units must fit uint32', 'error'); return; }
+    var votingUnits = Number(votingRaw);
     var discountPercent = 0;
     var discountStr = (form.discountPct || '').trim();
     if (discountStr !== '') {
@@ -1464,13 +1511,7 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
   built = sortTierEntriesByCategory(built, function (b) { return { category: b.category }; });
 
   setStatus('Reading 721 hooks…', 'pending');
-  var hookMap = {};
-  for (var i = 0; i < selectedChains.length; i++) {
-    var cid = selectedChains[i].id;
-    var h = await read(cid, 'REVOwner', REVO_TIERED_HOOK_ABI, 'tiered721HookOf', [BigInt(project.id)]).catch(function () { return null; });
-    if (!h || /^0x0+$/.test(h)) throw new Error('No 721 hook on ' + (selectedChains[i].name || cid));
-    hookMap[cid] = h;
-  }
+  var hookMap = (await resolveHookMap(project, selectedChains)).hooks;
 
   function tiersFor(cid) {
     return built.map(function (b) {
@@ -1506,8 +1547,9 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   if (!hasPinata()) { setStatus('Add a Pinata JWT below to name categories.', 'error'); return null; }
 
   setStatus('Reading metadata…', 'pending');
+  var controllers = await controllerMapFor(chains, project.id);
   var pc = (chains[0] && chains[0].id) || project.chainId;
-  var curUri = await clientFor(pc).readContract({ address: getAddress('JBController', pc), abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] }).catch(function () { return null; });
+  var curUri = await clientFor(pc).readContract({ address: controllers[pc], abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] }).catch(function () { return null; });
   var meta = curUri ? (await fetchMetadata(curUri)) : null;
   meta = meta ? Object.assign({}, meta) : {};
   var cats = (meta.storeCategories && typeof meta.storeCategories === 'object') ? Object.assign({}, meta.storeCategories) : {};
@@ -1519,7 +1561,7 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   setStatus('Pinning categories…', 'pending');
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
   await runRelayrAcrossChains(chains, account, function (cid) {
-    return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
+    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
   }, 400000n, setStatus, { label: 'Add store categories', title: 'Confirm categories' });
 
   project.storeCategories = cats;
@@ -1594,12 +1636,12 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
 function readTierSupplyAcrossChains(project, tierId) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   return Promise.all(chains.map(function (ch) {
-    var cid = ch.id, revo = getAddress('REVOwner', cid);
-    if (!revo) return Promise.resolve({ chainId: cid, name: ch.name, err: true });
+    var cid = ch.id;
     var client = clientFor(cid);
-    return client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
-      .then(function (hook) {
-        if (!hook || /^0x0+$/.test(hook)) return { chainId: cid, name: ch.name, none: true };
+    return readShopHook(Object.assign({}, project, { chainId: cid }))
+      .then(function (info) {
+        if (!info || !info.hook) return { chainId: cid, name: ch.name, none: true };
+        var hook = info.hook;
         return client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }).then(function (store) {
           return client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] }).then(function (raw) {
             var t = (raw || []).filter(function (x) { return Number(x.id) === tierId; })[0];
@@ -1710,11 +1752,19 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     dInput.value = String(Number(tier.discountPercent || 0) / 2); dInput.className = 'tier-detail-op-input'; dRow.appendChild(dInput);
     var dBtn = el('button', 'create-btn'); dBtn.textContent = 'Set';
     if (fl.cantIncreaseDiscountPercent) dBtn.title = 'This tier is discount-capped — you can only lower it.';
-    dBtn.addEventListener('click', function () { submitSetTierDiscount(project, tier, Number(dInput.value), opStatus); });
+    dBtn.addEventListener('click', function () {
+      submitSetTierDiscount(project, tier, Number(dInput.value), opStatus)
+        .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely update the discount.'), 'error'); });
+    });
     dRow.appendChild(dBtn); opBox.appendChild(dRow);
     var rmBtn = el('button', 'create-btn ghost tier-detail-remove'); rmBtn.textContent = fl.cantBeRemoved ? 'Cannot be removed' : 'Remove item';
     rmBtn.disabled = !!fl.cantBeRemoved;
-    if (!fl.cantBeRemoved) rmBtn.addEventListener('click', function () { if (window.confirm('Remove item #' + tier.id + ' from the shop on every chain? Buyers can no longer mint it, and re-adding creates a NEW id (supply resets). Continue?')) submitRemoveTier(project, tier, opStatus); });
+    if (!fl.cantBeRemoved) rmBtn.addEventListener('click', function () {
+      if (window.confirm('Remove item #' + tier.id + ' from the shop on every chain? Buyers can no longer mint it, and re-adding creates a NEW id (supply resets). Continue?')) {
+        submitRemoveTier(project, tier, opStatus)
+          .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely remove the item.'), 'error'); });
+      }
+    });
     opBox.appendChild(rmBtn);
     opBox.appendChild(opStatus);
     content.appendChild(opBox);
@@ -1726,13 +1776,24 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
 function shopOpSetStatus(statusEl) {
   return function (m, kind) { statusEl.style.display = m ? '' : 'none'; statusEl.className = 'modal-status' + (kind ? ' ' + kind : ''); statusEl.textContent = m || ''; };
 }
-async function resolveHookMap(project, chains) {
-  var hookMap = {};
-  for (var i = 0; i < chains.length; i++) {
-    var h = await read(chains[i].id, 'REVOwner', REVO_TIERED_HOOK_ABI, 'tiered721HookOf', [BigInt(project.id)]).catch(function () { return null; });
-    if (h && !/^0x0+$/.test(h)) hookMap[chains[i].id] = h;
-  }
-  return hookMap;
+async function resolveHookMap(project, chains, tierId) {
+  var hookMap = {}, tierMap = {};
+  tierId = tierId == null ? null : Number(tierId);
+  await Promise.all(chains.map(async function (chain) {
+    var chainProject = Object.assign({}, project, { chainId: chain.id });
+    var info = await readShopHook(chainProject);
+    if (!info || !info.hook) throw new Error('No verified 721 hook on ' + (chain.name || chain.id) + '.');
+    var store = await clientFor(chain.id).readContract({ address: info.hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] });
+    if (!store || /^0x0+$/.test(store)) throw new Error('The 721 store could not be verified on ' + (chain.name || chain.id) + '.');
+    hookMap[chain.id] = info.hook;
+    if (tierId != null) {
+      var all = await clientFor(chain.id).readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [info.hook, [], false, 0n, 200n] });
+      var tier = (all || []).filter(function (candidate) { return Number(candidate.id) === tierId; })[0];
+      if (!tier) throw new Error('Item #' + tierId + ' is not live on ' + (chain.name || chain.id) + '.');
+      tierMap[chain.id] = tier;
+    }
+  }));
+  return { hooks: hookMap, tiers: tierMap };
 }
 function shopChainsOf(project) {
   return (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
@@ -1740,12 +1801,17 @@ function shopChainsOf(project) {
 // Operator: set a tier's discount on every chain (JB721TiersHook.setDiscountPercentsOf), via relayr.
 async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
   var setStatus = shopOpSetStatus(statusEl);
+  if (!Number.isFinite(Number(pctOff)) || Number(pctOff) < 0 || Number(pctOff) > 100) { setStatus('Discount must be between 0 and 100%.', 'error'); return; }
   var account = await ensureOperatorAccount(project, projectAuthorityAddress(project), setStatus);
   if (!account) return;
-  var avail = shopChainsOf(project), hookMap = await resolveHookMap(project, avail);
-  avail = avail.filter(function (c) { return hookMap[c.id]; });
-  if (!avail.length) { setStatus('No 721 hook found on these chains', 'error'); return; }
+  var avail = shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id), hookMap = resolved.hooks;
   var cfg = buildSetDiscountConfig(tier.id, pctOff);
+  avail.forEach(function (chain) {
+    var live = resolved.tiers[chain.id];
+    if (live.flags && live.flags.cantIncreaseDiscountPercent && Number(cfg.discountPercent) > Number(live.discountPercent || 0)) {
+      throw new Error('Item #' + tier.id + ' cannot increase its discount on ' + (chain.name || chain.id) + '.');
+    }
+  });
   await runRelayrAcrossChains(avail, account, function (cid) {
     return { to: hookMap[cid], data: encodeFunctionData({ abi: setDiscountPercentsOfAbi, functionName: 'setDiscountPercentsOf', args: [[cfg]] }) };
   }, 300000n, setStatus, { label: 'Set discount', title: 'Confirm discount' });
@@ -1757,9 +1823,10 @@ async function submitRemoveTier(project, tier, statusEl) {
   var setStatus = shopOpSetStatus(statusEl);
   var account = await ensureOperatorAccount(project, projectAuthorityAddress(project), setStatus);
   if (!account) return;
-  var avail = shopChainsOf(project), hookMap = await resolveHookMap(project, avail);
-  avail = avail.filter(function (c) { return hookMap[c.id]; });
-  if (!avail.length) { setStatus('No 721 hook found on these chains', 'error'); return; }
+  var avail = shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id), hookMap = resolved.hooks;
+  avail.forEach(function (chain) {
+    if (resolved.tiers[chain.id].flags && resolved.tiers[chain.id].flags.cantBeRemoved) throw new Error('Item #' + tier.id + ' cannot be removed on ' + (chain.name || chain.id) + '.');
+  });
   await runRelayrAcrossChains(avail, account, function (cid) {
     return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[], [BigInt(tier.id)]] }) };
   }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove' });
@@ -2073,9 +2140,11 @@ var EMPTY_PERMIT2 = { sigDeadline: 0n, amount: 0n, expiration: 0, nonce: 0, sign
 // Pure builder for REVLoans.borrowFrom. `o`: { chainId, loansAddr, revnetId, token, minBorrow (bigint),
 // collateral (bigint), beneficiary, prepaidFeePercent, holder }. minBorrow is the floor on funds received.
 export function buildBorrowArgs(o) {
+  var minBorrow = BigInt(o.minBorrow || 0);
+  if (minBorrow <= 0n) throw new Error('A non-zero loan quote is required.');
   return {
     chainId: o.chainId, address: o.loansAddr, abi: borrowFromAbi, functionName: 'borrowFrom',
-    args: [BigInt(o.revnetId), o.token, o.minBorrow || 0n, o.collateral, o.beneficiary, BigInt(o.prepaidFeePercent), o.holder],
+    args: [BigInt(o.revnetId), o.token, minBorrow, o.collateral, o.beneficiary, BigInt(o.prepaidFeePercent), o.holder],
   };
 }
 export function borrowLoanTokenForAccountContext(acct, loading) {
@@ -2095,7 +2164,9 @@ export function borrowCurrencyForAccountContext(acct) {
 export function borrowMinAmountFromPreview(borrowableAmount) {
   var amount;
   try { amount = BigInt(borrowableAmount || 0); } catch (_) { return 0n; }
-  return amount > 0n ? amount * 99n / 100n : 0n;
+  if (amount <= 0n) return 0n;
+  var floor = amount * 99n / 100n;
+  return floor > 0n ? floor : 1n;
 }
 // Pure builder for REVLoans.repayLoan (payable). `o`: { chainId, loansAddr, loanId, maxRepay (bigint),
 // collateralToReturn (bigint), beneficiary, value (bigint), allowance? (permit2 tuple) }.
@@ -2154,11 +2225,25 @@ function feeTokenEstimate(chainId, projectId, token, amount, beneficiary) {
 // JBMultiTerminal._isFeeless → JBFeelessAddresses.isFeelessFor(addr, projectId, caller). For these
 // self-beneficiary ops (cash out / use allowance / borrow) the caller IS the beneficiary, so we pass addr twice.
 var isFeelessForAbi = [{ type: 'function', name: 'isFeelessFor', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'caller', type: 'address' }], outputs: [{ type: 'bool' }] }];
-function isFeelessAddress(chainId, addr, projectId) {
+function isFeelessForCall(chainId, addr, projectId, caller) {
   var fa = getAddress('JBFeelessAddresses', chainId);
-  if (!fa || !addr || addr === ZERO_ADDRESS) return Promise.resolve(false);
-  return clientFor(chainId).readContract({ address: fa, abi: isFeelessForAbi, functionName: 'isFeelessFor', args: [addr, BigInt(projectId), addr] })
-    .then(function (b) { return !!b; }).catch(function () { return false; });
+  if (!fa || !addr || addr === ZERO_ADDRESS || !caller || caller === ZERO_ADDRESS) return Promise.resolve(null);
+  return clientFor(chainId).readContract({ address: fa, abi: isFeelessForAbi, functionName: 'isFeelessFor', args: [addr, BigInt(projectId), caller] })
+    .then(function (b) { return !!b; }).catch(function () { return null; });
+}
+function isFeelessAddress(chainId, addr, projectId) {
+  return isFeelessForCall(chainId, addr, projectId, addr);
+}
+// `useAllowanceOf` waives its protocol fee when EITHER the project owner or the funds beneficiary is feeless,
+// evaluated against the actual caller. The fee beneficiary does not participate in this decision.
+async function isAllowanceFeeless(chainId, projectId, beneficiary, caller) {
+  var owner = await read(chainId, 'JBProjects', ownerOfAbi, 'ownerOf', [BigInt(projectId)]).catch(function () { return null; });
+  if (!owner) return null;
+  var checks = await Promise.all([
+    isFeelessForCall(chainId, owner, projectId, caller),
+    isFeelessForCall(chainId, beneficiary, projectId, caller),
+  ]);
+  return checks[0] == null || checks[1] == null ? null : (checks[0] || checks[1]);
 }
 
 // A link to a project's page (the fee-beneficiary project), so the user can see where the fee goes.
@@ -2395,11 +2480,11 @@ var POOLKEY_TUPLE = [{ type: 'tuple', components: [
 // price. Works even with zero liquidity (the pool is price-initialized at deploy at the issuance rate).
 // The buyback pool's PAIR (terminal) token for a project on a chain — its Uniswap pool-currency address
 // (native ETH = 0x0, else the ERC-20 e.g. USDC), decimals, and symbol. Mirrors the accounting token.
-function lpPairFor(project, chainId) {
+function lpPairFor(project, chainId, opts) {
   return resolveAcctToken(chainId, BigInt(project.id)).then(function (a) {
     var native = a.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     return { addr: native ? ZERO_ADDRESS : a.address.toLowerCase(), decimals: a.decimals, symbol: native ? 'ETH' : a.symbol, isNative: native };
-  }).catch(function () { return { addr: ZERO_ADDRESS, decimals: 18, symbol: 'ETH', isNative: true }; });
+  }).catch(function (e) { if (opts && opts.strict) throw e; return null; });
 }
 
 // The project's ruleset data hook + ruleset id on `chainId`, cached. The controller is resolved PER-PROJECT from the
@@ -2407,7 +2492,7 @@ function lpPairFor(project, chainId) {
 // the wrong controller would misfire. Swapping the buyback hook via setHookFor changes hookOf, NOT the dataHook (a
 // revnet's stays REVOwner), so this cache stays correct across a swap.
 var _dataHookCache = {};
-function projectDataHook(project, chainId) {
+function projectDataHook(project, chainId, opts) {
   var k = project.id + ':' + chainId;
   if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
   var pid = BigInt(project.id);
@@ -2415,7 +2500,7 @@ function projectDataHook(project, chainId) {
     if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n }; return _dataHookCache[k]; }
     return clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] })
       .then(function (r) { var info = { hook: (r && r[1] && r[1].dataHook) || ZERO_ADDRESS, rulesetId: (r && r[0] && r[0].id) || 0n }; _dataHookCache[k] = info; return info; });
-  }).catch(function () { return { hook: ZERO_ADDRESS, rulesetId: 0n }; });
+  }).catch(function (e) { if (opts && opts.strict) throw e; return { hook: ZERO_ADDRESS, rulesetId: 0n }; });
 }
 
 // The project's ACTUAL buyback hook on `chainId`, or null if it has no buyback pool. Recognize the project's ruleset
@@ -2427,33 +2512,34 @@ function projectDataHook(project, chainId) {
 //   the concrete JBBuybackHook wired directly → use it.
 //   anything else (croptop CTDeployer, 721 tiers, Defifa, unknown) → no buyback pool → null.
 // readPoolState additionally null-gates on an uninitialized pool, so a mis-recognized hook can't render a phantom pool.
-function projectBuybackHook(project, chainId) {
+function projectBuybackHook(project, chainId, opts) {
   var registry = getAddress('JBBuybackHookRegistry', chainId);
   var revOwner = getAddress('REVOwner', chainId);
   var omni = getAddress('JBOmnichainDeployer', chainId);
   var concrete = getAddress('JBBuybackHook', chainId);
   var pid = BigInt(project.id);
   var lc = function (a) { return (a || '').toLowerCase(); };
+  var fallbackNull = function (e) { if (opts && opts.strict) throw e; return null; };
   // Recognize an already-unwrapped data hook → the buyback hook it implies, or null.
   function recognize(dh) {
     if (!dh || dh === ZERO_ADDRESS) return Promise.resolve(null);
     var d = lc(dh);
     if (d === lc(registry) || d === lc(revOwner)) {
       return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid])
-        .then(function (h) { return (h && h !== ZERO_ADDRESS) ? h : null; }).catch(function () { return null; });
+        .then(function (h) { return (h && h !== ZERO_ADDRESS) ? h : null; }).catch(fallbackNull);
     }
     if (concrete && d === lc(concrete)) return Promise.resolve(dh);
     return Promise.resolve(null);
   }
-  return projectDataHook(project, chainId).then(function (info) {
+  return projectDataHook(project, chainId, opts).then(function (info) {
     var dh = info && info.hook;
     if (!dh || dh === ZERO_ADDRESS) return null;
     if (omni && lc(dh) === lc(omni)) {
       return read(chainId, 'JBOmnichainDeployer', extraDataHookOfAbi, 'extraDataHookOf', [pid, info.rulesetId])
-        .then(function (cfg) { return recognize(cfg && cfg.dataHook); }).catch(function () { return null; });
+        .then(function (cfg) { return recognize(cfg && cfg.dataHook); }).catch(fallbackNull);
     }
     return recognize(dh);
-  }).catch(function () { return null; });
+  }).catch(fallbackNull);
 }
 
 // The project's router terminal on `chainId`, or null if it doesn't route through the router terminal. Symmetric to
@@ -2655,7 +2741,7 @@ function directSwapPoolFor(project, chainId) {
   if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
   return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
     var hook = r[0], pair = r[1];
-    if (!hook) return null;
+    if (!hook || !pair) return null;
     return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] })
       .then(function (key) {
         var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
@@ -2716,6 +2802,9 @@ function quoteCashOutSell(project, chainId, artCount) {
 // the user. Actions: SWAP_EXACT_IN_SINGLE (amountOutMinimum enforces slippage) → SETTLE_ALL (pay the
 // input; native from msg.value, ERC-20 pulled via the router's Permit2 allowance) → TAKE (output to user).
 function encodeV4SwapInput(pool, amountIn, minOut, recipient) {
+  amountIn = BigInt(amountIn); minOut = BigInt(minOut);
+  var max128 = (1n << 128n) - 1n;
+  if (amountIn <= 0n || amountIn > max128 || minOut <= 0n || minOut > max128) throw new Error('Swap amounts are outside Uniswap V4’s uint128 range.');
   var poolKeyParam = [pool.key.currency0, pool.key.currency1, pool.key.fee, pool.key.tickSpacing, pool.key.hooks];
   var swapParams = encodeAbiParameters(
     [{ type: 'tuple', components: [
@@ -2743,17 +2832,23 @@ function buildDirectSwapNativeTx(chainId, pool, amountIn, minOut, recipient) {
 // gasless Permit2 single-allowance for the Universal Router, then sends PERMIT2_PERMIT + V4_SWAP in one tx
 // (the swap's SETTLE pulls the USDC via that allowance). Async: may send an approval tx + request a sig.
 async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus) {
+  amountIn = BigInt(amountIn); minOut = BigInt(minOut);
+  var max128 = (1n << 128n) - 1n;
+  if (amountIn <= 0n || amountIn > max128 || minOut <= 0n || minOut > max128) throw new Error('Swap amounts are outside Uniswap V4’s uint128 range.');
   var ur = UNIVERSAL_ROUTER_BY_CHAIN[chainId];
   var client = clientFor(chainId);
   var wallet = getWalletClient();
   // Switch to the swap chain before signing — the Permit2 domain + the approve write both bind to the active chain.
   var wc0 = await wallet.getChainId().catch(function () { return null; });
   if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
+  if (!wallet || !getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
   // 1. One-time ERC20→Permit2 approval (canonical Permit2; wallets recognize it).
   var erc20Allow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [recipient, PERMIT2_ADDRESS] });
   if (BigInt(erc20Allow) < amountIn) {
     if (onStatus) onStatus('Approving for Permit2 (one-time)…', 'pending');
-    var ah = await wallet.writeContract({ account: recipient, chain: CHAINS[chainId], address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
+    var approval = await client.simulateContract({ account: recipient, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
+    if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
+    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
     await client.waitForTransactionReceipt({ hash: ah });
   }
   // 2. Sign an expiring Permit2 single-allowance authorizing the Universal Router to pull `amountIn`.
@@ -2761,6 +2856,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   var nonce = Number(p2[2]);
   var now = Math.floor(Date.now() / 1000);
   var expiration = now + 1800, sigDeadline = BigInt(now + 1800);
+  if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
   if (onStatus) onStatus('Sign the swap authorization…', 'pending');
   var signature = await wallet.signTypedData({
     account: recipient,
@@ -2768,6 +2864,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     types: LP_PERMIT2_TYPES, primaryType: 'PermitSingle',
     message: { details: { token: token, amount: amountIn, expiration: expiration, nonce: nonce }, spender: ur, sigDeadline: sigDeadline },
   });
+  if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
   // 3. PERMIT2_PERMIT input = (PermitSingle, signature); PermitSingle = (PermitDetails, spender, sigDeadline).
   var permitInput = encodeAbiParameters(
     [{ type: 'tuple', components: [
@@ -2792,13 +2889,15 @@ async function readCashoutPrice(project, chainId) {
   if (!terminal) return null;
   try {
     var acct = await resolveAcctToken(chainId, pid);
-    var dec = acct.decimals || 18;
-    var cur = acct.currency != null ? BigInt(acct.currency) : tokenCurrencyIdForAccounting(acct.address);
+    var dec = Number(acct.decimals);
+    var cur = BigInt(acct.currency);
+    var controller = await read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]);
+    if (!controller || /^0x0+$/.test(controller)) return null;
     // Curve inputs — fetch together (one multicall round-trip) before the reclaim read. Denominator is total
     // supply WITH pending reserved (the contract's cash-out denominator); numerator is the reclaim token's
     // surplus (net of payout limits) via currentSurplusOf. Raw balanceOf overstated it when a payout limit exists.
     var res = await Promise.all([
-      read(chainId, 'JBController', totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]),
+      clientFor(chainId).readContract({ address: controller, abi: totalSupplyWithReservedAbi, functionName: 'totalTokenSupplyWithReservedTokensOf', args: [pid] }),
       read(chainId, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(dec), cur]),
     ]);
     var supply = res[0] != null ? toBigInt(res[0]) : 0n;
@@ -2806,7 +2905,9 @@ async function readCashoutPrice(project, chainId) {
     if (!supply || supply === 0n) return null;
     if (bal == null || bal === 0n) return null;
     var reclaim = await read(chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, bal]);
-    return reclaim ? Number(reclaim) / Math.pow(10, dec) : null;
+    if (!reclaim) return null;
+    var price = Number(formatAmount(reclaim, dec));
+    return isFinite(price) ? price : null;
   } catch (e) { return null; }
 }
 var RULESET_OUTPUTS = [
@@ -2857,6 +2958,24 @@ var surplusAllowancesAbi = [{
   outputs: [{ name: 'surplusAllowances', type: 'tuple[]', components: [
     { name: 'amount', type: 'uint256' }, { name: 'currency', type: 'uint256' },
   ]}],
+}];
+var usedPayoutLimitAbi = [{
+  type: 'function', name: 'usedPayoutLimitOf', stateMutability: 'view',
+  inputs: [
+    { name: 'terminal', type: 'address' }, { name: 'projectId', type: 'uint256' },
+    { name: 'token', type: 'address' }, { name: 'rulesetCycleNumber', type: 'uint256' },
+    { name: 'currency', type: 'uint256' },
+  ],
+  outputs: [{ type: 'uint256' }],
+}];
+var usedSurplusAllowanceAbi = [{
+  type: 'function', name: 'usedSurplusAllowanceOf', stateMutability: 'view',
+  inputs: [
+    { name: 'terminal', type: 'address' }, { name: 'projectId', type: 'uint256' },
+    { name: 'token', type: 'address' }, { name: 'rulesetId', type: 'uint256' },
+    { name: 'currency', type: 'uint256' },
+  ],
+  outputs: [{ type: 'uint256' }],
 }];
 // BannyLPSplitHook (JBUniswapV4LPSplitHook) — receives reserved project tokens, accumulates them, then
 // anyone can deploy/seed a Uniswap V4 LP position and route its fees back to the project. Reads + the
@@ -3009,6 +3128,22 @@ var allOfAbi = [{
     { name: 'metadata', type: 'uint256' },
   ]}],
 }];
+async function readAllRulesets(chainId, projectId) {
+  var out = [], startingId = 0n, seen = {};
+  while (true) {
+    var page = await read(chainId, 'JBRulesets', allOfAbi, 'allOf', [BigInt(projectId), startingId, 100n]);
+    if (!page || !page.length) break;
+    for (var i = 0; i < page.length; i++) {
+      var id = String(page[i].id);
+      if (!seen[id]) { seen[id] = true; out.push(page[i]); }
+    }
+    var next = toBigInt(page[page.length - 1].basedOnId || 0);
+    if (page.length < 100 || next === 0n) break;
+    if (out.length >= 1000 || seen[String(next)]) throw new Error('Ruleset history is too large or cyclic to verify safely.');
+    startingId = next;
+  }
+  return out;
+}
 var totalBorrowedAbi = [{
   type: 'function', name: 'totalBorrowedFrom', stateMutability: 'view',
   inputs: [{ name: 'revnetId', type: 'uint256' }, { name: 'token', type: 'address' }],
@@ -3381,25 +3516,44 @@ function formatShopPrice(shop, amount, chainId) {
 // Precision rules come from the shared formatAdaptive; '—' (null/non-finite) stays symbol-less.
 function formatBalance(amount, decimals, symbol) {
   if (amount === null || amount === undefined) return '—';
-  var s = formatAdaptive(Number(amount) / Math.pow(10, (decimals == null ? 18 : decimals)));
+  var s = formatRawAdaptive(amount, decimals == null ? 18 : decimals);
   return s === '—' ? s : s + (symbol ? ' ' + symbol : '');
 }
 
-// The project's primary accounting token (what its balance is denominated in). Reads the
-// terminal's accounting contexts; defaults to native ETH when none are recorded.
-function resolveAcctToken(chainId, pid) {
-  var fallback = { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH', currency: tokenCurrencyIdForAccounting(NATIVE_TOKEN) };
-  if (!getAddress('JBMultiTerminal', chainId)) return Promise.resolve(fallback);
+function accountingContextMeta(chainId, ctx) {
+  if (!ctx || !isAddr(ctx.token)) throw new Error('The accounting context returned an invalid token address.');
+  var address = ctx.token;
+  var decimals = Number(ctx.decimals);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error('The accounting context returned invalid token decimals.');
+  var currency = ctx.currency != null ? BigInt(ctx.currency) : tokenCurrencyIdForAccounting(address);
+  if (currency <= 0n || currency > 0xffffffffn) throw new Error('The accounting context returned an invalid currency.');
+  if (address.toLowerCase() === NATIVE_TOKEN.toLowerCase()) {
+    if (decimals !== 18) throw new Error('The native-token accounting context must use 18 decimals.');
+    return { address: address, decimals: decimals, symbol: 'ETH', currency: currency };
+  }
+  var chainTokens = getChainTokens(chainId);
+  var known = chainTokens.filter(function (candidate) { return candidate.address.toLowerCase() === address.toLowerCase(); })[0];
+  var usdc = USDC_BY_CHAIN[chainId];
+  var symbol = known ? tokenSymbolClean(known.symbol) : ((usdc && address.toLowerCase() === usdc.toLowerCase()) ? 'USDC' : truncAddr(address));
+  return { address: address, decimals: decimals, symbol: symbol, currency: currency };
+}
+
+// Every token context the terminal accepts. Transaction forms that let the user choose a source must use
+// this list; silently selecting ctxs[0] can quote and submit a different currency than the user intended.
+function resolveAcctTokens(chainId, pid) {
+  if (!getAddress('JBMultiTerminal', chainId)) return Promise.reject(new Error('No terminal on this chain.'));
   return read(chainId, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [pid]).then(function (ctxs) {
-    if (!ctxs || !ctxs.length) return fallback;
-    var primary = ctxs[0];
-    var currency = primary.currency != null ? BigInt(primary.currency) : tokenCurrencyIdForAccounting(primary.token);
-    if (primary.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return { address: primary.token, decimals: Number(primary.decimals), symbol: 'ETH', currency: currency };
-    var chainTokens = getChainTokens(chainId); var usdc = USDC_BY_CHAIN[chainId];
-    var t = chainTokens.filter(function (x) { return x.address.toLowerCase() === primary.token.toLowerCase(); })[0];
-    var sym = t ? t.symbol : ((usdc && primary.token.toLowerCase() === usdc.toLowerCase()) ? 'USDC' : truncAddr(primary.token));
-    return { address: primary.token, decimals: Number(primary.decimals), symbol: sym, currency: currency };
-  }).catch(function () { return fallback; });
+    if (!ctxs || !ctxs.length) throw new Error('No accounting contexts are configured for this project.');
+    return ctxs.map(function (ctx) { return accountingContextMeta(chainId, ctx); });
+  });
+}
+
+// The project's primary accounting token (what its balance is denominated in).
+function resolveAcctToken(chainId, pid) {
+  return resolveAcctTokens(chainId, pid).then(function (contexts) {
+    if (!contexts[0]) throw new Error('Could not resolve an accounting context.');
+    return contexts[0];
+  });
 }
 
 // Shorter display names than the manifest's (Arbitrum One → Arbitrum, OP Mainnet → Optimism).
@@ -3411,7 +3565,12 @@ function chainNameOf(cid) {
 // The unit a project's issuance/weight is denominated in — its ruleset baseCurrency (USD or ETH), NOT
 // its accounting token. "625 ART / USD" means 625 tokens per dollar paid.
 function baseUnitLabel(project) {
-  return (project && project.metadata && Number(project.metadata.baseCurrency) === 2) ? 'USD' : 'ETH';
+  var currency = Number(project && project.metadata && project.metadata.baseCurrency || 1);
+  if (currency === 1) return 'ETH';
+  if (currency === 2) return 'USD';
+  var acct = project && project.acctToken;
+  if (acct && acct.currency != null && Number(acct.currency) === currency) return acct.symbol || ('currency ' + currency);
+  return pricingSymbol(currency, 18, project && project.chainId);
 }
 
 // USD value of a chosen amount of dollars (USDC is $1; ETH needs the live feed).
@@ -3435,50 +3594,89 @@ function fetchEthUsd(chainId) {
 }
 
 // One chain's balances across EVERY accounting token the terminal accepts (a project can hold
-// both ETH and USDC). Falls back to the primary accounting token if no contexts are recorded.
+// both ETH and USDC). Missing context data stays unavailable; it is never guessed as native ETH.
 function readChainBalances(chainId, pid) {
   var term = getAddress('JBMultiTerminal', chainId);
-  if (!term) return Promise.resolve({ chainId: chainId, tokens: [] });
+  if (!term) return Promise.resolve({ chainId: chainId, tokens: [], verified: false });
   return clientFor(chainId).readContract({ address: term, abi: TERMINAL_CONTEXTS_ABI, functionName: 'accountingContextsOf', args: [pid] }).then(function (ctxs) {
-    if (!ctxs || !ctxs.length) {
-      return resolveAcctToken(chainId, pid).then(function (acct) {
-        return read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, acct.address])
-          .then(function (bal) { return { chainId: chainId, tokens: [{ token: acct.address, balance: bal, decimals: acct.decimals, symbol: acct.symbol }] }; })
-          .catch(function () { return { chainId: chainId, tokens: [] }; });
-      });
-    }
+    if (!ctxs || !ctxs.length) return { chainId: chainId, tokens: [], verified: true };
     return Promise.all(ctxs.map(function (ctx) {
       return read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, ctx.token])
         .then(function (bal) { return { token: ctx.token, balance: bal, decimals: Number(ctx.decimals), symbol: acctTokenLabel(ctx.token) }; })
         .catch(function () { return { token: ctx.token, balance: null, decimals: Number(ctx.decimals), symbol: acctTokenLabel(ctx.token) }; });
-    })).then(function (toks) { return { chainId: chainId, tokens: toks }; });
-  }).catch(function () { return { chainId: chainId, tokens: [] }; });
+    })).then(function (toks) { return { chainId: chainId, tokens: toks, verified: true }; });
+  }).catch(function () { return { chainId: chainId, tokens: [], verified: false }; });
 }
 
-// Cross-chain balance breakdown across ALL accounting tokens + a single USD total. ETH converts via the
-// live feed; USDC (and other non-ETH accounting tokens) are taken at $1. One row per (chain, token). Cached.
+export function accountingTokenUsdValue(balance, decimals, token, chainId, ethUsd) {
+  if (balance == null) return null;
+  var amount;
+  try { amount = Number(formatAmount(BigInt(balance), decimals == null ? 18 : Number(decimals))); } catch (_) { return null; }
+  if (!isFinite(amount)) return null;
+  var address = String(token || '').toLowerCase();
+  if (address === NATIVE_TOKEN.toLowerCase()) return ethUsd == null ? null : amount * ethUsd;
+  var usdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase();
+  if (usdc && address === usdc) return amount;
+  return null; // A custom accounting token has no trustworthy USD price merely because it is an ERC-20.
+}
+
+function accountingTokenContextKey(token, chainId) {
+  var address = String(token || '').toLowerCase();
+  if (address === NATIVE_TOKEN.toLowerCase()) return 'native';
+  var usdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase();
+  if (usdc && address === usdc) return 'usdc';
+  return address || 'unknown';
+}
+
+// Cross-chain balance breakdown across ALL accounting tokens + a USD total only when every non-zero token is
+// actually priced. ETH converts through the protocol feed; canonical USDC is $1; custom tokens stay unpriced.
 function fetchBalanceBreakdown(project) {
   if (project._balBreakdown) return Promise.resolve(project._balBreakdown);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
   var pid = BigInt(project.id);
   return Promise.all(chains.map(function (c) { return readChainBalances(c.id, pid); })).then(function (results) {
-    var isEthTok = function (t) { return t.symbol === 'ETH' || (t.token || '').toLowerCase() === NATIVE_TOKEN.toLowerCase(); };
-    var needEth = results.some(function (cr) { return cr.tokens.some(function (t) { return isEthTok(t) && t.balance && Number(t.balance) > 0; }); });
+    var hasContextFailure = results.some(function (result) { return !result.verified; });
+    var isEthTok = function (t) { return (t.token || '').toLowerCase() === NATIVE_TOKEN.toLowerCase(); };
+    var needEth = results.some(function (cr) { return cr.tokens.some(function (t) { return isEthTok(t) && t.balance != null && BigInt(t.balance) > 0n; }); });
     return (needEth ? fetchEthUsd(project.chainId) : Promise.resolve(1)).then(function (ethUsd) {
-      var rows = [], total = 0;
+      var rows = [], total = 0, hasUnpricedBalance = false, hasUnreadable = hasContextFailure, contextKeys = {}, chainVerified = {};
       results.forEach(function (cr) {
+        chainVerified[cr.chainId] = !!cr.verified;
         cr.tokens.forEach(function (t) {
           var dec = t.decimals == null ? 18 : t.decimals;
-          var amt = Number(t.balance || 0) / Math.pow(10, dec);
-          var isEth = isEthTok(t);
-          var usd = isEth ? (ethUsd ? amt * ethUsd : null) : amt; // non-ETH accounting tokens are USD-pegged (USDC)
-          if (usd) total += usd;
-          rows.push({ chainId: cr.chainId, name: chainNameOf(cr.chainId), balance: t.balance, decimals: dec, symbol: t.symbol, usd: usd, hasBalance: !!(t.balance && Number(t.balance) > 0) });
+          var raw = t.balance != null ? BigInt(t.balance) : null;
+          var hasBalance = raw != null && raw > 0n;
+          var usd = accountingTokenUsdValue(raw, dec, t.token, cr.chainId, ethUsd);
+          var contextKey = accountingTokenContextKey(t.token, cr.chainId) + '@' + dec;
+          contextKeys[contextKey] = true;
+          if (t.balance == null) hasUnreadable = true;
+          if (hasBalance && usd == null) hasUnpricedBalance = true;
+          if (usd != null) total += usd;
+          rows.push({ chainId: cr.chainId, name: chainNameOf(cr.chainId), token: t.token, balance: t.balance, decimals: dec, symbol: t.symbol, usd: usd, contextKey: contextKey, hasBalance: hasBalance });
         });
       });
       rows.sort(function (a, b) { return (b.usd || 0) - (a.usd || 0); });
-      var bd = { rows: rows, totalUsd: total, priced: !needEth || ethUsd != null };
-      project._balBreakdown = bd;
+      var active = rows.filter(function (r) { return r.hasBalance; });
+      var totalRows = active.length ? active : rows;
+      var activeKeys = {}; totalRows.forEach(function (r) { activeKeys[r.contextKey] = true; });
+      var singleTokenTotal = null;
+      if (!hasUnreadable && Object.keys(activeKeys).length === 1 && totalRows.length) {
+        singleTokenTotal = {
+          amount: totalRows.reduce(function (sum, r) { return sum + BigInt(r.balance || 0); }, 0n),
+          decimals: totalRows[0].decimals,
+          symbol: totalRows[0].symbol,
+        };
+      }
+      var bd = {
+        rows: rows,
+        totalUsd: total,
+        priced: !hasContextFailure && !hasUnreadable && !hasUnpricedBalance && (!needEth || ethUsd != null),
+        singleTokenTotal: singleTokenTotal,
+        contextHomogeneous: !hasContextFailure && Object.keys(contextKeys).length <= 1,
+        chainVerified: chainVerified,
+      };
+      // Cache only a complete read. A transient RPC failure must be retryable on the next render/open.
+      if (!hasContextFailure && !hasUnreadable) project._balBreakdown = bd;
       return bd;
     });
   });
@@ -3495,7 +3693,8 @@ function mountUsdBalance(project, opts) {
   if (opts.suffix) wrap.appendChild(document.createTextNode(opts.suffix));
 
   fetchBalanceBreakdown(project).then(function (bd) {
-    fig.textContent = bd.priced ? formatUsd(bd.totalUsd) : (formatBalance(project.balance, (project.acctToken || {}).decimals, (project.acctToken || {}).symbol || 'ETH'));
+    fig.textContent = bd.priced ? formatUsd(bd.totalUsd)
+      : (bd.singleTokenTotal ? formatBalance(bd.singleTokenTotal.amount, bd.singleTokenTotal.decimals, bd.singleTokenTotal.symbol) : '—');
     if (!bd.rows.length) return;
 
     var pop = el('div', 'usd-balance-pop');
@@ -3508,17 +3707,8 @@ function mountUsdBalance(project, opts) {
     });
     // When every chain holds the same token, total in that token (the breakdown is "actual tokens",
     // so a single-currency project reads cleaner as "3 USDC" than "$3.00"). Mixed tokens → USD.
-    var syms = {};
-    bd.rows.forEach(function (r) { syms[r.symbol + '@' + r.decimals] = r; });
-    var symKeys = Object.keys(syms);
-    var totalText;
-    if (symKeys.length === 1) {
-      var one = syms[symKeys[0]];
-      var sumRaw = bd.rows.reduce(function (a, r) { return a + Number(r.balance || 0); }, 0);
-      totalText = formatBalance(sumRaw, one.decimals, one.symbol);
-    } else {
-      totalText = bd.priced ? formatUsd(bd.totalUsd) : '—';
-    }
+    var totalText = bd.priced ? formatUsd(bd.totalUsd)
+      : (bd.singleTokenTotal ? formatBalance(bd.singleTokenTotal.amount, bd.singleTokenTotal.decimals, bd.singleTokenTotal.symbol) : '—');
     var totalRow = el('div', 'usd-balance-pop-row usd-balance-pop-total');
     var tName = el('span', 'usd-balance-pop-chain'); tName.textContent = 'All chains';
     var tVal = el('span', 'usd-balance-pop-amt'); tVal.textContent = totalText;
@@ -3528,7 +3718,7 @@ function mountUsdBalance(project, opts) {
     wrap.classList.add('usd-balance--has-pop');
     wrap.appendChild(pop);
   }).catch(function () {
-    fig.textContent = formatBalance(project.balance, (project.acctToken || {}).decimals, (project.acctToken || {}).symbol || 'ETH');
+    fig.textContent = '—';
   });
 
   return wrap;
@@ -3568,11 +3758,13 @@ function formatCompactTokenAmount(raw) {
 }
 
 function formatOwnerPortion(balance, total) {
-  if (!total || total <= 0n || balance == null) return '0%';
-  var b = Number(balance);
-  var t = Number(total);
-  if (!isFinite(b) || !isFinite(t) || t <= 0) return '0%';
-  var pct = b / t * 100;
+  // A percentage without a complete cross-chain supply denominator is worse than no percentage. RPC failures
+  // therefore render as unknown instead of silently treating the indexed balances (or one chain) as 100%.
+  if (total == null || balance == null) return '—';
+  var b = toBigInt(balance), t = toBigInt(total);
+  if (t <= 0n) return b <= 0n ? '0%' : '—';
+  if (b <= 0n) return '0%';
+  var pct = Number(b * 100000000n / t) / 1000000;
   if (pct >= 10) return pct.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') + '%';
   if (pct >= 1) return pct.toFixed(3).replace(/0+$/, '').replace(/\.$/, '') + '%';
   if (pct >= 0.01) return pct.toFixed(4).replace(/0+$/, '').replace(/\.$/, '') + '%';
@@ -3881,6 +4073,26 @@ async function read(chainId, contractName, abi, functionName, args) {
   return clientFor(chainId).readContract({ address: address, abi: abi, functionName: functionName, args: args });
 }
 
+async function controllerAddressFor(chainId, projectId) {
+  var controller = await read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [BigInt(projectId)]);
+  if (!controller || !isAddr(controller) || /^0x0+$/.test(controller)) throw new Error('This project has no verified controller on ' + chainNameOf(chainId) + '.');
+  return controller;
+}
+
+async function controllerRead(chainId, projectId, abi, functionName, args) {
+  var controller = await controllerAddressFor(chainId, projectId);
+  return clientFor(chainId).readContract({ address: controller, abi: abi, functionName: functionName, args: args });
+}
+
+async function controllerMapFor(chains, projectId) {
+  var entries = await Promise.all((chains || []).map(async function (chain) {
+    return [chain.id, await controllerAddressFor(chain.id, projectId)];
+  }));
+  var map = {};
+  entries.forEach(function (entry) { map[entry[0]] = entry[1]; });
+  return map;
+}
+
 // Fetch the full project record from chain (+ IPFS metadata). Never throws — missing
 // pieces come back null so a single failed read can't blank the whole card.
 async function fetchProject(id, chainId) {
@@ -3919,7 +4131,7 @@ async function fetchProject(id, chainId) {
   jobs.push(fetchProjectIndexedStats(id, chainId)
     .then(function (s) { if (s) project.indexedStats = s; }));
 
-  jobs.push(read(chainId, 'JBController', uriOfAbi, 'uriOf', [pid])
+  jobs.push(controllerRead(chainId, pid, uriOfAbi, 'uriOf', [pid])
     .then(async function (uri) {
       if (!uri) return;
       var meta = await fetchMetadata(uri);
@@ -3950,7 +4162,7 @@ async function fetchProject(id, chainId) {
     }).catch(function () {}));
 
   // Stages = the project's queued rulesets (revnet stage timeline).
-  jobs.push(read(chainId, 'JBRulesets', allOfAbi, 'allOf', [pid, 0n, 8n])
+  jobs.push(readAllRulesets(chainId, pid)
     .then(function (rs) { project.stages = rs; }).catch(function () {}));
 
   // Loan exposure (RevLoans). Reverts for non-loan-source projects — caught.
@@ -3977,7 +4189,7 @@ async function fetchProject(id, chainId) {
   jobs.push(read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid])
     .then(function (s) { project.totalSupply = s; }).catch(function () {}));
 
-  jobs.push(read(chainId, 'JBController', pendingReservedAbi, 'pendingReservedTokenBalanceOf', [pid])
+  jobs.push(controllerRead(chainId, pid, pendingReservedAbi, 'pendingReservedTokenBalanceOf', [pid])
     .then(function (s) { project.pendingReserved = s; }).catch(function () {}));
 
   var terminalAddr = getAddress('JBMultiTerminal', chainId);
@@ -3986,10 +4198,10 @@ async function fetchProject(id, chainId) {
       project.acctToken = acct;
       return read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminalAddr, pid, acct.address])
         .then(function (s) { project.balance = s; }).catch(function () {});
-    }));
+    }).catch(function () {}));
   }
 
-  jobs.push(read(chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid])
+  jobs.push(controllerRead(chainId, pid, currentRulesetAbi, 'currentRulesetOf', [pid])
     .then(async function (result) {
       project.ruleset = result[0];
       project.metadata = result[1];
@@ -3997,7 +4209,7 @@ async function fetchProject(id, chainId) {
       // to the upcoming/queued ruleset so the pay card's issuance and the start countdown are correct.
       if (!project.ruleset || Number(project.ruleset.start || 0) === 0) {
         try {
-          var up = await read(chainId, 'JBController', upcomingRulesetAbi, 'upcomingRulesetOf', [pid]);
+          var up = await controllerRead(chainId, pid, upcomingRulesetAbi, 'upcomingRulesetOf', [pid]);
           if (up && up[0] && Number(up[0].start || 0) > 0) { project.ruleset = up[0]; project.metadata = up[1]; }
         } catch (e) { /* keep current */ }
       }
@@ -4117,7 +4329,7 @@ function renderGrid() {
   });
   netSel.value = getNetworkMode();
   netSel.title = 'Switch between mainnet and testnet deployments';
-  netSel.addEventListener('change', function () { setNetwork(netSel.value); });
+  netSel.addEventListener('change', function () { setDiscoverNetwork(netSel.value); });
   topRow.appendChild(netSel);
   setTimeout(function () { fitSelectWidth(netSel); }, 0);
   var rightCtrls = el('div', 'discover-top-ctrls');
@@ -4636,10 +4848,13 @@ function renderPayCard(project, cart) {
   // native ETH + USDC that aren't accepted directly are added as swap-via-router options.
   function loadAcceptedTokens(chainId) {
     var term = getAddress('JBMultiTerminal', chainId);
-    if (!term) return;
+    state.contextsReady = false;
+    state.contextsError = false;
+    if (!term) { state.contextsError = true; return; }
     clientFor(chainId).readContract({ address: term, abi: TERMINAL_CONTEXTS_ABI, functionName: 'accountingContextsOf', args: [BigInt(project.id)] })
       .then(function (ctxs) {
-        if (!ctxs || !ctxs.length) return; // no contexts recorded — keep the sync default
+        if (state.chainId !== chainId) return;
+        if (!ctxs || !ctxs.length) { state.contextsError = true; renderTerminalNotice(); return; }
         var chainTokens = getChainTokens(chainId);
         var usdc = USDC_BY_CHAIN[chainId];
         var symbolFor = function (addr) {
@@ -4656,7 +4871,8 @@ function renderPayCard(project, cart) {
         if (!has(NATIVE_TOKEN)) list.push({ address: NATIVE_TOKEN, symbol: chainTokens[0].symbol, decimals: 18, viaRouter: true });
         if (usdc && !has(usdc)) list.push({ address: usdc, symbol: 'USDC', decimals: 6, viaRouter: true });
         _tokenCache[chainId] = list;
-        if (state.chainId !== chainId) return;
+        state.contextsReady = true;
+        state.contextsError = false;
         state.tokens = list;
         // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
         // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
@@ -4665,7 +4881,7 @@ function renderPayCard(project, cart) {
         renderTerminalNotice();
         if (selectedTierIds().length) syncNftAmountForSelection();
         schedulePreview();
-      }).catch(function () {});
+      }).catch(function () { if (state.chainId === chainId) { state.contextsError = true; renderTerminalNotice(); } });
   }
 
   var state = {
@@ -4684,6 +4900,8 @@ function renderPayCard(project, cart) {
     conversion: null, // { sym, units } router-swap landed amount for add-to-balance
     terminalSurface: null,
     terminalSurfaceChain: null,
+    contextsReady: false,
+    contextsError: false,
   };
   state.token = state.tokens[0] || null;
   loadAcceptedTokens(state.chainId); // refine direct-vs-router from the project's accounting contexts
@@ -4727,7 +4945,7 @@ function renderPayCard(project, cart) {
     var sameCurrency = tokenCurrency(token) === p.currency
       || (p.currency === 2 && isUsdcPayToken(token))
       || ((p.currency === 1 || p.currency === Number(BigInt(NATIVE_TOKEN) & 0xffffffffn)) && isNativePayToken(token));
-    return sameCurrency ? rescaleAmount(total, p.decimals, token.decimals || 18) : null;
+    return sameCurrency ? rescaleAmount(total, p.decimals, token.decimals == null ? 18 : token.decimals) : null;
   }
   function formatSwapUnits(n) {
     if (!isFinite(n) || n <= 0) return '0';
@@ -4742,14 +4960,14 @@ function renderPayCard(project, cart) {
   function loadAcceptedRate(chainId, acc) {
     var key = chainId + ':' + acc.address.toLowerCase();
     if (_rateCache[key]) return Promise.resolve(_rateCache[key]);
-    var unit = 10n ** BigInt(acc.decimals || 18);
+    var unit = 10n ** BigInt(acc.decimals == null ? 18 : acc.decimals);
     return computePayPreview({ chainId: chainId, projectId: project.id, token: acc.address, amount: unit, beneficiary: getAccount() || undefined })
       .then(function (r) {
         if (r && !r.unavailable && r.received != null) {
           var per = (r.received || 0n) + (r.reserved || 0n);
           // Both legs (router input + this reference) pass through the same issuance/buyback curve, so the
           // ratio recovers the landed accepted-token amount on either route — keep the route to compare.
-          if (per > 0n) { _rateCache[key] = { per: per, unit: unit, decimals: acc.decimals || 18, routing: r.routing }; return _rateCache[key]; }
+          if (per > 0n) { _rateCache[key] = { per: per, unit: unit, decimals: acc.decimals == null ? 18 : acc.decimals, routing: r.routing }; return _rateCache[key]; }
         }
         return null;
       }).catch(function () { return null; });
@@ -4773,7 +4991,7 @@ function renderPayCard(project, cart) {
   function syncNftAmountForSelection() {
     var floor = nftFloorForToken(state.token);
     if (floor != null) {
-      amtInput.value = formatAmount(floor, (state.token && state.token.decimals) || 18);
+      amtInput.value = formatAmount(floor, state.token && state.token.decimals != null ? state.token.decimals : 18);
       state.amount = amtInput.value.trim();
     } else {
       amtInput.value = '';
@@ -4855,6 +5073,7 @@ function renderPayCard(project, cart) {
     });
     chainSel.addEventListener('change', function () {
       state.chainId = Number(chainSel.value);
+      state.contextsReady = false; state.contextsError = false;
       state.tokenTouched = false; // a new chain re-defaults to that chain's accounting token
       state.tokens = tokensForChain(state.chainId);
       state.token = state.tokens[0] || null;
@@ -4954,6 +5173,12 @@ function renderPayCard(project, cart) {
   function renderTerminalNotice() {
     terminalNotice.innerHTML = '';
     terminalNotice.style.display = 'none';
+    if (state.contextsError) {
+      terminalNotice.style.display = '';
+      terminalNotice.className = 'paybox-contract-warning blocked';
+      terminalNotice.textContent = 'Could not verify this project’s accepted tokens. Payments are disabled until the accounting contexts can be read.';
+      return;
+    }
     var surface = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
     if (!surface) return;
     var target = state.token && state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
@@ -5036,7 +5261,7 @@ function renderPayCard(project, cart) {
       var dLabel = el('div', 'paybox-yg-label'); dLabel.textContent = 'You get at least'; feedback.appendChild(dLabel);
       var dRow = el('div', 'paybox-yg-row');
       var dVal = el('div', 'paybox-yg-val');
-      dVal.textContent = formatTokenCount(ds.out * BigInt(10000 - (state.slippageBps || 0)) / 10000n) + ' ' + sym;
+      dVal.textContent = formatTokenCount(quotedOutputFloor(ds.out, 10000 - (state.slippageBps || 0))) + ' ' + sym;
       dRow.appendChild(dVal);
       var dTag = el('span', 'paybox-route-tag paybox-route-direct'); dTag.textContent = 'SWAP';
       dTag.title = 'Bought straight from the Uniswap pool, bypassing pay — so the reserved % / splits take nothing';
@@ -5146,7 +5371,7 @@ function renderPayCard(project, cart) {
   function loadPreview() {
     if (!state.amount || !state.token) return;
     var amt;
-    try { amt = parseAmount(state.amount, state.token.decimals || 18); } catch (_) { return; }
+    try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { return; }
     if (amt === 0n) { state.preview = null; renderFeedback(); return; }
 
     state.phase = 'previewing';
@@ -5173,7 +5398,7 @@ function renderPayCard(project, cart) {
       var acc = acceptedToken();
       if (state.mode === 'addbalance' && state.token.viaRouter && acc && p && !p.unavailable && p.received != null) {
         var accSym = (acc.symbol || '').replace(/\s*\(native\)/i, '');
-        var accUnit = Number(10n ** BigInt(acc.decimals || 18));
+        var accUnit = Number(10n ** BigInt(acc.decimals == null ? 18 : acc.decimals));
         if (p.routing === 'amm' && p.amm && p.amm.quotedAmountToSwapWith != null) {
           // AMM route: the buyback's swap input IS the accepted-token amount that landed from the router swap.
           state.conversion = { sym: accSym, amount: formatSwapUnits(Number(p.amm.quotedAmountToSwapWith) / accUnit) };
@@ -5202,9 +5427,10 @@ function renderPayCard(project, cart) {
     status.textContent = '';
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (startsAt > Math.floor(Date.now() / 1000)) { return; }
+    if (!state.contextsReady) { status.textContent = state.contextsError ? 'Could not verify the project’s accepted tokens.' : 'Accepted tokens are still loading…'; return; }
     if (!state.amount || !state.token) { status.textContent = 'Enter an amount'; return; }
     var amt;
-    try { amt = parseAmount(state.amount, state.token.decimals || 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
+    try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
 
     var addBalance = state.mode === 'addbalance';
 
@@ -5216,14 +5442,24 @@ function renderPayCard(project, cart) {
       var nftFloor = nftFloorForToken(state.token);
       if (nftFloor != null && amt < nftFloor) {
         amt = nftFloor;
-        state.amount = formatAmount(amt, state.token.decimals || 18);
+        state.amount = formatAmount(amt, state.token.decimals == null ? 18 : state.token.decimals);
+        amtInput.value = state.amount;
+        schedulePreview();
+        status.textContent = 'Amount adjusted to cover the selected NFTs. Review the refreshed quote, then click Pay again.';
+        return;
       }
       metadata = buildTierMintMetadata(state.shop.idTarget || state.shop.hook, tierIds);
     }
     if (amt === 0n) { status.textContent = 'Enter an amount'; return; }
 
     var beneficiary = getAccount();
-    if (!beneficiary) { connect().then(function () { doPay(); }).catch(function () {}); return; }
+    if (!beneficiary) {
+      connect().then(function () {
+        schedulePreview();
+        status.textContent = 'Wallet connected. Review the quote for this beneficiary, then click Pay again.';
+      }).catch(function () {});
+      return;
+    }
 
     var willDirectSwap = !!(state.directSwap && !addBalance && !tierIds.length);
     // USDC and other swap currencies route through the router (JBRouterTerminalRegistry); direct tokens go to the terminal.
@@ -5232,21 +5468,60 @@ function renderPayCard(project, cart) {
 
     var isNative = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     var viaRouter = !!state.token.viaRouter; // swap currency → authorize via a gasless Permit2 signature, not a router approve
+    if (addBalance && viaRouter) {
+      status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no on-chain minimum-output field for this action.';
+      return;
+    }
+    if (!addBalance && (state.phase !== 'ready' || !state.preview || state.preview.unavailable || state.preview.received == null || state.preview.received <= 0n)) {
+      status.textContent = 'A non-zero live quote is required before paying. Wait for the preview, or use Add to balance for a contribution that mints no tokens.';
+      schedulePreview();
+      return;
+    }
+    // Freeze the exact form state before any balance/terminal reads. A slow response from the old chain or token
+    // must not combine an amount parsed in one token's decimals with another token/route.
+    var reviewedChainId = state.chainId;
+    var reviewedToken = state.token;
+    var reviewedMode = state.mode;
+    var reviewedMemo = state.memo || '';
+    var reviewedPreview = state.preview;
+    var reviewedDirectSwap = state.directSwap;
+    var reviewedSlippage = state.slippageBps || 0;
+    var reviewedTierKey = tierIds.join(',');
+    var reviewedConversion = state.conversion;
+    var reviewedNfts = tierIds.length ? nftSelectionList() : [];
+    function payInputsUnchanged() {
+      var current;
+      try { current = parseAmount(state.amount, reviewedToken.decimals == null ? 18 : reviewedToken.decimals); } catch (_) { current = -1n; }
+      return state.chainId === reviewedChainId && state.mode === reviewedMode && (state.memo || '') === reviewedMemo
+        && state.token && state.token.address.toLowerCase() === reviewedToken.address.toLowerCase()
+        && !!state.token.viaRouter === !!reviewedToken.viaRouter && current === amt
+        && selectedTierIds().join(',') === reviewedTierKey && (state.slippageBps || 0) === reviewedSlippage
+        && (addBalance || (state.preview === reviewedPreview && state.directSwap === reviewedDirectSwap))
+        && state.contextsReady && getAccount() && getAccount().toLowerCase() === beneficiary.toLowerCase();
+    }
+    function requirePayInputs() {
+      if (payInputsUnchanged()) return true;
+      status.className = 'paybox-status error';
+      status.textContent = 'Payment inputs, chain, quote, or connected account changed while the preflight was loading. Review and click again.';
+      return false;
+    }
 
     function checkBalanceThenProceed() {
       // Pre-flight: block amounts the wallet can't cover before sending the user to confirm / their wallet.
-      var preSym = (state.token.symbol || '').replace(/\s*\(native\)/i, '');
-      var preChain = (chains.find(function (c) { return c.id === state.chainId; }) || {}).name || ('Chain ' + state.chainId);
+      var preSym = (reviewedToken.symbol || '').replace(/\s*\(native\)/i, '');
+      var preChain = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
       status.className = 'paybox-status pending'; status.textContent = 'Checking your balance…';
-      readWalletTokenBalance(state.chainId, state.token.address, beneficiary).then(function (walletBal) {
+      readWalletTokenBalance(reviewedChainId, reviewedToken.address, beneficiary).then(function (walletBal) {
+        if (!requirePayInputs()) return;
+        if (walletBal == null) throw new Error('Could not verify your wallet balance on this chain.');
         if (walletBal != null && amt > walletBal) {
           status.className = 'paybox-status error';
-          status.textContent = 'Not enough ' + preSym + ' — you have ' + formatBalance(walletBal, state.token.decimals || 18, preSym) + ' on ' + preChain + '.';
+          status.textContent = 'Not enough ' + preSym + ' — you have ' + formatBalance(walletBal, reviewedToken.decimals == null ? 18 : reviewedToken.decimals, preSym) + ' on ' + preChain + '.';
           return;
         }
         status.className = 'paybox-status'; status.textContent = '';
         proceed();
-      }).catch(function () { status.className = 'paybox-status'; status.textContent = ''; proceed(); }); // balance read failed → don't block
+      }).catch(function (error) { status.className = 'paybox-status error'; status.textContent = errMessage(error, 'Could not verify your wallet balance. Try again.'); });
     }
 
     if (willDirectSwap) {
@@ -5255,116 +5530,119 @@ function renderPayCard(project, cart) {
     }
 
     status.className = 'paybox-status pending'; status.textContent = 'Checking project terminal…';
-    readProjectPaymentSurface(project, state.chainId).then(function (surface) {
+    readProjectPaymentSurface(project, reviewedChainId).then(function (surface) {
+      if (!requirePayInputs()) return;
       state.terminalSurface = surface;
-      state.terminalSurfaceChain = state.chainId;
+      state.terminalSurfaceChain = reviewedChainId;
       renderTerminalNotice();
       if (!paySurfaceAllows(surface, terminal)) {
         status.className = 'paybox-status error';
-        status.textContent = paySurfaceBlockedMessage(surface, terminal, state.chainId);
+        status.textContent = paySurfaceBlockedMessage(surface, terminal, reviewedChainId);
         return;
       }
       checkBalanceThenProceed();
     }).catch(function () {
       status.className = 'paybox-status error';
       status.textContent = 'Could not verify this project’s payment terminal. Review the project contracts before paying.';
-      loadPaymentSurface(state.chainId);
+      loadPaymentSurface(reviewedChainId);
     });
     return;
 
     function proceed() {
+    if (!requirePayInputs()) return;
     // Direct AMM swap: bypass `pay` (which skims the reserved % even on its swap route) and swap the pool
     // directly via Uniswap's Universal Router, so the user keeps 100% of the output. Only for plain native
     // buys with no NFTs; the buyback hook still routes the swap at the best of AMM vs issuance. The swap's
     // amountOutMinimum makes an adverse move revert (not lose funds).
-    if (state.directSwap && !addBalance && !tierIds.length) {
-      var ds = state.directSwap;
-      var dsMinOut = ds.out * BigInt(10000 - (state.slippageBps || 0)) / 10000n;
-      var dChain = (chains.find(function (c) { return c.id === state.chainId; }) || {}).name || ('Chain ' + state.chainId);
-      var dSymClean = (state.token.symbol || (isNative ? 'ETH' : 'token')).replace(/\s*\(native\)/i, '');
-      var dHuman = state.amount + ' ' + dSymClean;
+    if (reviewedDirectSwap && !addBalance && !tierIds.length) {
+      var ds = reviewedDirectSwap;
+      var dsMinOut = quotedOutputFloor(ds.out, 10000 - reviewedSlippage);
+      var dChain = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
+      var dSymClean = (reviewedToken.symbol || (isNative ? 'ETH' : 'token')).replace(/\s*\(native\)/i, '');
+      var dHuman = formatAmount(amt, reviewedToken.decimals == null ? 18 : reviewedToken.decimals) + ' ' + dSymClean;
       openPayConfirm({
         chain: dChain,
-        chainId: state.chainId,
+        chainId: reviewedChainId,
         contract: 'Uniswap Universal Router',
-        address: UNIVERSAL_ROUTER_BY_CHAIN[state.chainId],
+        address: UNIVERSAL_ROUTER_BY_CHAIN[reviewedChainId],
         'function': 'execute',
         abi: abiSignature(urExecuteAbi, 'execute'),
         value: isNative ? (amt.toString() + ' wei (' + dHuman + ')') : '0',
-        erc20Approval: isNative ? null : { token: state.token.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: UNIVERSAL_ROUTER_BY_CHAIN[state.chainId] },
+        erc20Approval: isNative ? null : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: UNIVERSAL_ROUTER_BY_CHAIN[reviewedChainId] },
         args: {
           action: 'Direct AMM swap — bypasses pay so splits/reserved take nothing',
           buy: sym,
           amountIn: amt.toString() + ' (' + dHuman + ')',
-          minReturnedTokens: dsMinOut.toString() + ' (' + formatTokenCount(dsMinOut) + ' ' + sym + ', ' + (state.slippageBps / 100) + '% max slippage)',
+          minReturnedTokens: dsMinOut.toString() + ' (' + formatTokenCount(dsMinOut) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% max slippage)',
           beneficiary: beneficiary,
           note: 'Swaps the buyback pool directly via the Universal Router; the hook fills at the best of AMM vs issuance.',
         },
       }, function send() {
-        if (isNative) { sendPay(buildDirectSwapNativeTx(state.chainId, ds.pool, amt, dsMinOut, beneficiary)); return; }
+        if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) { status.className = 'paybox-status error'; status.textContent = 'Connected account changed. Review the payment again.'; return; }
+        if (isNative) { sendPay(buildDirectSwapNativeTx(reviewedChainId, ds.pool, amt, dsMinOut, beneficiary), { addBalance: false }); return; }
         // ERC-20 (USDC) input → Permit2 approval/signature, then PERMIT2_PERMIT + V4_SWAP in one tx.
         var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
-        buildDirectSwapErc20Tx(state.chainId, ds.pool, state.token.address, amt, dsMinOut, beneficiary, statusCb)
-          .then(function (tx) { sendPay(tx); })
+        buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb)
+          .then(function (tx) { sendPay(tx, { addBalance: false }); })
           .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Swap authorization failed'); });
       });
       return;
     }
 
-    // Require back what the user was quoted (issuance exact; AMM minus chosen slippage). Only when the
-    // preview matches the current amount; otherwise leave unprotected rather than risk a stale floor.
-    var minTokens = (!addBalance && state.phase === 'ready') ? payMinTokens(state.preview, state.slippageBps) : 0n;
+    // A normal pay never proceeds without a live non-zero quote (guarded above). Issuance is exact; AMM
+    // routes use the user's slippage setting. Add-to-balance has no returned-token floor by design.
+    var minTokens = addBalance ? 0n : payMinTokens(reviewedPreview, reviewedSlippage);
 
     // pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) — metadata at index 6.
     // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
     var fnName = addBalance ? 'addToBalanceOf' : 'pay';
     var fnAbi = addBalance ? addToBalanceAbi : payAbi;
     var args = addBalance
-      ? [BigInt(project.id), state.token.address, amt, false, state.memo || '', metadata]
-      : [BigInt(project.id), state.token.address, amt, beneficiary, minTokens, state.memo || '', metadata];
+      ? [BigInt(project.id), reviewedToken.address, amt, false, reviewedMemo, metadata]
+      : [BigInt(project.id), reviewedToken.address, amt, beneficiary, minTokens, reviewedMemo, metadata];
     var metaIdx = addBalance ? 5 : 6;
     var txParams = {
-      chainId: state.chainId,
+      chainId: reviewedChainId,
       address: terminal,
       abi: fnAbi,
       functionName: fnName,
       args: args,
       value: isNative ? amt : 0n,
       // Direct ERC20 pays approve the terminal inline; swap-via-router pays authorize through Permit2 (below).
-      tokenAddr: (isNative || viaRouter) ? null : state.token.address,
+      tokenAddr: (isNative || viaRouter) ? null : reviewedToken.address,
       spenderAddr: (isNative || viaRouter) ? null : terminal,
       approvalAmount: (isNative || viaRouter) ? null : amt,
     };
 
     // Confirm the exact data before signing.
-    var chainName = (chains.find(function (c) { return c.id === state.chainId; }) || {}).name || ('Chain ' + state.chainId);
-    var symClean = (state.token.symbol || '').replace(/\s*\(native\)/i, '');
-    var human = state.amount + ' ' + symClean;
+    var chainName = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
+    var symClean = (reviewedToken.symbol || '').replace(/\s*\(native\)/i, '');
+    var human = formatAmount(amt, reviewedToken.decimals == null ? 18 : reviewedToken.decimals) + ' ' + symClean;
     // Human-readable summary of the NFTs this pay will mint (the raw `metadata` hex below is unreadable),
     // surfaced near the top of the args so the NFT purchase is clearly visible in the confirm preview.
     // selectedTierIds() repeats each id by qty, so tierIds.length is the total NFT count.
-    var confirmArgs = { projectId: project.id, token: state.token.address };
+    var confirmArgs = { projectId: project.id, token: reviewedToken.address };
     if (tierIds.length) {
-      confirmArgs.mints = nftSelectionList().map(function (s) { return s.name + ' ×' + s.qty; }).join(', ')
+      confirmArgs.mints = reviewedNfts.map(function (s) { return s.name + ' ×' + s.qty; }).join(', ')
         + ' — ' + tierIds.length + ' NFT' + (tierIds.length > 1 ? 's' : '') + ' minted by the 721 hook';
     }
     confirmArgs.amount = amt.toString() + ' (' + human + ')';
     if (addBalance) {
       confirmArgs.shouldReturnHeldFees = false;
-      if (viaRouter && state.conversion) confirmArgs.landsOnChain = '≈ ' + state.conversion.amount + ' ' + state.conversion.sym + ' after swap';
+      if (viaRouter && reviewedConversion) confirmArgs.landsOnChain = '≈ ' + reviewedConversion.amount + ' ' + reviewedConversion.sym + ' after swap';
     } else {
       confirmArgs.beneficiary = beneficiary;
       confirmArgs.minReturnedTokens = minTokens.toString() + (minTokens > 0n
         ? ' (' + formatTokenCount(minTokens) + ' ' + sym
-          + (state.preview && state.preview.routing === 'amm' ? ', ' + (state.slippageBps / 100) + '% max slippage' : '')
+          + (reviewedPreview && reviewedPreview.routing === 'amm' ? ', ' + (reviewedSlippage / 100) + '% max slippage' : '')
           + ')'
         : '');
     }
-    confirmArgs.memo = state.memo || '';
+    confirmArgs.memo = reviewedMemo;
     confirmArgs.metadata = (viaRouter && !isNative) ? 'Permit2 single-allowance signature (added when you sign)' : metadata;
     openPayConfirm({
       chain: chainName,
-      chainId: state.chainId,
+      chainId: reviewedChainId,
       contract: viaRouter ? 'JBRouterTerminalRegistry' : 'JBMultiTerminal',
       address: terminal,
       'function': fnName,
@@ -5372,21 +5650,22 @@ function renderPayCard(project, cart) {
       value: isNative ? (amt.toString() + ' wei (' + human + ')') : '0',
       erc20Approval: isNative ? null
         : (viaRouter
-          ? { token: state.token.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: terminal }
-          : { token: state.token.address, spender: terminal, amount: amt.toString() }),
+          ? { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: terminal }
+          : { token: reviewedToken.address, spender: terminal, amount: amt.toString() }),
       args: confirmArgs,
     }, function send() {
+      if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) { status.className = 'paybox-status error'; status.textContent = 'Connected account changed. Review the payment again.'; return; }
       // Native ETH (even via the router) is paid with msg.value — no Permit2. Only ERC20 swap currencies
       // authorize through Permit2; reading allowance on the native pseudo-address returns "0x".
-      if (!viaRouter || isNative) { sendPay(txParams, { clearCartOnSuccess: tierIds.length > 0 }); return; }
+      if (!viaRouter || isNative) { sendPay(txParams, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0 }); return; }
       // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then send.
       var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
-      buildRouterPermit2Metadata(state.chainId, state.token.address, beneficiary, terminal, amt, statusCb)
+      buildRouterPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb)
         .then(function (meta) {
           var p = Object.assign({}, txParams);
           p.args = args.slice();
           p.args[metaIdx] = meta;
-          sendPay(p, { clearCartOnSuccess: tierIds.length > 0 });
+          sendPay(p, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0 });
         })
         .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Permit2 authorization failed'); });
     });
@@ -5417,7 +5696,7 @@ function renderPayCard(project, cart) {
 
   function sendPay(txParams, opts) {
     opts = opts || {};
-    var add = state.mode === 'addbalance';
+    var add = !!opts.addBalance;
     var processing = add ? 'Adding to balance' : 'Payment processing';
     var confirmed = add ? 'Added to balance' : 'Payment confirmed';
     executeTransaction(Object.assign({}, txParams, {
@@ -5477,8 +5756,7 @@ function renderPayCard(project, cart) {
 // floor for both routes.
 function payMinTokens(p, slippageBps) {
   if (!p || p.received == null) return 0n;
-  if (p.routing === 'amm') return p.received * BigInt(10000 - (slippageBps || 0)) / 10000n;
-  return p.received;
+  return quotedOutputFloor(p.received, p.routing === 'amm' ? 10000 - (slippageBps || 0) : 10000);
 }
 
 // Compact rich header: symbol + name + chains, a balance/supply stat line, and an owner/operator/site line.
@@ -6027,7 +6305,9 @@ function openEditProjectModal(project) {
   var loadedMeta = null;
   (function () {
     var pc = (chains[0] && chains[0].id) || project.chainId;
-    clientFor(pc).readContract({ address: getAddress('JBController', pc), abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] })
+    controllerAddressFor(pc, project.id).then(function (controller) {
+      return clientFor(pc).readContract({ address: controller, abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] });
+    })
       .then(function (uri) { return uri ? fetchMetadata(uri) : null; })
       .then(function (m) {
         if (!m) return; loadedMeta = m;
@@ -6163,7 +6443,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     await switchChain(payment.chain);
   }
   setStatus('Confirm the relayr payment…', 'pending');
-  await relayrPay(payment);
+  await relayrPay(payment, account);
   setStatus('Payment sent — relaying to ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
   await relayrPoll(bundle.bundle_uuid, function (records) {
     var done = records.filter(function (t) { return t.status && t.status.state === 'Success'; }).length;
@@ -6178,11 +6458,12 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
 
   // Start from the live metadata so every field we don't edit (tags, payDisclosure, version, …) is preserved.
   var primaryChain = (chains[0] && chains[0].id) || project.chainId;
+  var controllers = await controllerMapFor(chains, project.id);
   var meta = form.preloadedMeta;
   if (!meta) {
     setStatus('Reading current metadata…', 'pending');
     var curUri = await clientFor(primaryChain).readContract({
-      address: getAddress('JBController', primaryChain), abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)],
+      address: controllers[primaryChain], abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)],
     }).catch(function () { return null; });
     meta = curUri ? (await fetchMetadata(curUri)) : null;
   }
@@ -6209,7 +6490,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
 
   await runRelayrAcrossChains(chains, account, function (cid) {
-    return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
+    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
   }, 400000n, setStatus, { label: 'Edit project details', title: 'Confirm edit' });
 
   setStatus('Project updated across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '', 'success');
@@ -6282,13 +6563,15 @@ function openEditTokenModal(project) {
 async function submitTokenEdit(project, chains, operatorAddr, deployed, name, symbol, setStatus, modal) {
   name = (name || '').trim(); symbol = (symbol || '').trim();
   if (!name || !symbol) { setStatus('Enter a token name and symbol', 'error'); return; }
+  setStatus('Verifying project controllers…', 'pending');
+  var controllers = await controllerMapFor(chains, project.id);
 
   // The deterministic salt makes the ERC-20 deploy to the same address on every chain.
   var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [BigInt(project.id), symbol]));
   var buildCall = function (cid) {
     return deployed
-      ? { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setTokenMetadataAbi, functionName: 'setTokenMetadataOf', args: [BigInt(project.id), name, symbol] }) }
-      : { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: deployErc20Abi, functionName: 'deployERC20For', args: [BigInt(project.id), name, symbol, salt] }) };
+      ? { to: controllers[cid], data: encodeFunctionData({ abi: setTokenMetadataAbi, functionName: 'setTokenMetadataOf', args: [BigInt(project.id), name, symbol] }) }
+      : { to: controllers[cid], data: encodeFunctionData({ abi: deployErc20Abi, functionName: 'deployERC20For', args: [BigInt(project.id), name, symbol, salt] }) };
   };
 
   // If the owner is a Safe, Relayr can't sign for it — propose the call to each chain's Safe queue instead.
@@ -7190,7 +7473,6 @@ function renderActivityRow(row, project) {
 
 function activityRowFromEvent(event, project) {
   var sym = project.tokenSymbol || 'tokens';
-  var acct = project.acctToken || { decimals: 18, symbol: 'ETH' }; // amounts are in the accounting token
   var chainId = Number(event.chainId);
   if (event.payEvent) {
     var pay = event.payEvent;
@@ -7203,8 +7485,7 @@ function activityRowFromEvent(event, project) {
       timestamp: Number(pay.timestamp || event.timestamp),
       account: pay.beneficiary || event.from || pay.from,
       from: pay.from || event.from,
-      // Show the raw token paid (ETH or USDC), inferred from amount vs USD since the event omits the token.
-      baseAmount: inferActivityAmount(pay.amount, pay.amountUsd, acct),
+      baseAmount: indexedActivityAmount(pay.amountUsd),
       tokenAmount: minted > 0n ? formatCompactTokenAmount(minted) : '',
       action: minted > 0n ? 'got' : 'paid into ' + sym,
       memo: pay.memo || '',
@@ -7241,7 +7522,7 @@ function activityRowFromEvent(event, project) {
       timestamp: Number(cash.timestamp || event.timestamp),
       account: cash.beneficiary || cash.holder || cash.from || event.from,
       from: cash.from || event.from,
-      baseAmount: inferActivityAmount(cash.reclaimAmount, cash.reclaimAmountUsd, acct),
+      baseAmount: indexedActivityAmount(cash.reclaimAmountUsd),
       tokenAmount: formatCompactTokenAmount(toBigInt(cash.cashOutCount)),
       action: 'cashed out',
       memo: '',
@@ -7269,7 +7550,9 @@ function activityRowFromEvent(event, project) {
       type: 'payout', direction: 'out', chainId: chainId,
       txHash: po.txHash || event.txHash, timestamp: Number(po.timestamp || event.timestamp),
       account: po.caller || po.from || event.from, from: po.from || event.from,
-      baseAmount: formatActivityAmount(po.amountPaidOut || po.amount, acct.symbol, acct.decimals),
+      // The event does not identify its source token. Bendystraw's indexed USD value is the only exact
+      // common denomination, so never label the raw amount with the project's primary accounting token.
+      baseAmount: indexedActivityAmount(po.amountPaidOutUsd),
       tokenAmount: '', action: 'paid out', memo: '',
     };
   }
@@ -7300,7 +7583,7 @@ function activityRowFromEvent(event, project) {
       type: 'borrow', direction: 'out', chainId: chainId,
       txHash: bo.txHash || event.txHash, timestamp: Number(bo.timestamp || event.timestamp),
       account: bo.beneficiary || bo.from || event.from, from: bo.from || event.from,
-      baseAmount: formatActivityAmount(bo.borrowAmount, acct.symbol, acct.decimals),
+      baseAmount: formatSourceTokenAmount(bo.borrowAmount, bo.token, chainId, project),
       tokenAmount: '', action: 'borrowed against ' + formatCompactTokenAmount(toBigInt(bo.collateral)) + ' ' + sym, memo: '',
     };
   }
@@ -7310,7 +7593,9 @@ function activityRowFromEvent(event, project) {
       type: 'repay', direction: 'in', chainId: chainId,
       txHash: rp.txHash || event.txHash, timestamp: Number(rp.timestamp || event.timestamp),
       account: rp.from || event.from, from: rp.from || event.from,
-      baseAmount: formatActivityAmount(rp.repayBorrowAmount, acct.symbol, acct.decimals),
+      // RepayLoan does not index the loan's source token. Showing an unlabeled amount is safer than
+      // attributing it to the project's first accounting context.
+      baseAmount: '',
       tokenAmount: '', action: 'repaid loan', memo: '',
     };
   }
@@ -7320,7 +7605,7 @@ function activityRowFromEvent(event, project) {
       type: 'liquidate', direction: 'out', chainId: chainId,
       txHash: lq.txHash || event.txHash, timestamp: Number(lq.timestamp || event.timestamp),
       account: lq.from || event.from, from: lq.from || event.from,
-      baseAmount: formatActivityAmount(lq.borrowAmount, acct.symbol, acct.decimals),
+      baseAmount: '',
       tokenAmount: '', action: 'loan liquidated', memo: '',
     };
   }
@@ -7330,7 +7615,7 @@ function activityRowFromEvent(event, project) {
       type: 'mint_nft', direction: 'in', chainId: chainId,
       txHash: nft.txHash || event.txHash, timestamp: Number(nft.timestamp || event.timestamp),
       account: nft.beneficiary || nft.from || event.from, from: nft.from || event.from,
-      baseAmount: formatActivityAmount(nft.totalAmountPaid, acct.symbol, acct.decimals),
+      baseAmount: '',
       tokenAmount: '', action: 'minted NFT (tier ' + nft.tierId + ')', memo: '',
     };
   }
@@ -7360,7 +7645,7 @@ function activityRowFromEvent(event, project) {
       type: 'add_to_balance', direction: 'in', chainId: chainId,
       txHash: atb.txHash || event.txHash, timestamp: Number(atb.timestamp || event.timestamp),
       account: atb.from || event.from, from: atb.from || event.from,
-      baseAmount: formatActivityAmount(atb.amount, acct.symbol, acct.decimals),
+      baseAmount: '',
       tokenAmount: '', action: 'added to balance', memo: atb.memo || '',
     };
   }
@@ -7517,7 +7802,7 @@ function upcomingRuleChangeInfo(project, res) {
 
 function fetchUpcomingRuleChangeInfo(project) {
   if (!project || !project.ruleset || !project.metadata || !project.chainId || project.id == null) return Promise.resolve(null);
-  return read(project.chainId, 'JBController', upcomingRulesetAbi, 'upcomingRulesetOf', [BigInt(project.id)])
+  return controllerRead(project.chainId, project.id, upcomingRulesetAbi, 'upcomingRulesetOf', [BigInt(project.id)])
     .then(function (res) { return upcomingRuleChangeInfo(project, res); })
     .catch(function () { return null; });
 }
@@ -7568,7 +7853,9 @@ function renderRulesetsFundsSection(project) {
   function loadReservedSplits(rid) {
     var key = 'res:' + rid;
     if (faCache[key]) return faCache[key];
-    faCache[key] = faSplits ? read(faHome, 'JBSplits', splitsOfAbi, 'splitsOf', [faPid, BigInt(rid), RESERVED_TOKEN_SPLIT_GROUP]).catch(function () { return []; }) : Promise.resolve([]);
+    faCache[key] = faSplits
+      ? read(faHome, 'JBSplits', splitsOfAbi, 'splitsOf', [faPid, BigInt(rid), RESERVED_TOKEN_SPLIT_GROUP])
+      : Promise.reject(new Error('Splits contract unavailable.'));
     return faCache[key];
   }
   // Per-accounting-context funds access (payout limit + surplus allowance) + that token's payout splits.
@@ -7578,18 +7865,22 @@ function renderRulesetsFundsSection(project) {
     if (faCache[key]) return faCache[key];
     if (!(faLimits && faTerminal) || !tok) { faCache[key] = Promise.resolve(null); return faCache[key]; }
     var payoutGroup = BigInt(tok); // payout split group = uint256(uint160(token))
-    var fmt = function (v) { return formatBalance(v, kind.decimals, kind.symbol); };
+    var acct = { address: tok, decimals: kind.decimals, symbol: kind.symbol, currency: tokenCurrencyIdForAccounting(tok) };
+    function formatLimits(values) {
+      if (!values || !values.length) return 'None';
+      return values.map(function (limit) {
+        var meta = currencyMeta(limit.currency, acct);
+        return toBigInt(limit.amount) >= (2n ** 200n) ? ('Unlimited ' + meta.symbol) : formatCurrencyAmount(limit.amount, meta);
+      }).join(' + ');
+    }
     faCache[key] = Promise.all([
-      read(faHome, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [faPid, BigInt(rid), faTerminal, tok]).catch(function () { return []; }),
-      read(faHome, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [faPid, BigInt(rid), faTerminal, tok]).catch(function () { return []; }),
-      faSplits ? read(faHome, 'JBSplits', splitsOfAbi, 'splitsOf', [faPid, BigInt(rid), payoutGroup]).catch(function () { return []; }) : Promise.resolve([]),
+      read(faHome, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [faPid, BigInt(rid), faTerminal, tok]),
+      read(faHome, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [faPid, BigInt(rid), faTerminal, tok]),
+      faSplits ? read(faHome, 'JBSplits', splitsOfAbi, 'splitsOf', [faPid, BigInt(rid), payoutGroup]) : Promise.reject(new Error('Splits contract unavailable.')),
     ]).then(function (r) {
-      var BIG = 2n ** 200n, pc = 0n, ac = 0n;
-      (r[0] || []).forEach(function (l) { if (kind.matchCur(l.currency, faHome)) pc += l.amount; });
-      (r[1] || []).forEach(function (l) { if (kind.matchCur(l.currency, faHome)) ac += l.amount; });
       return {
-        payout: pc >= BIG ? 'Unlimited' : (pc === 0n ? 'None' : fmt(pc)),
-        allowance: ac >= BIG ? 'Unlimited' : (ac === 0n ? 'None' : fmt(ac)),
+        payout: formatLimits(r[0]),
+        allowance: formatLimits(r[1]),
         payoutSplits: r[2] || [],
         payoutGroupId: payoutGroup,
       };
@@ -7733,9 +8024,11 @@ function renderRulesetsFundsSection(project) {
     renderGroup(rightCol, 'TOKEN');
     var rs = splitsSection(rightCol, 'RESERVED TOKEN SPLITS'); var rsBox = rs.box;
     var rsReserved = null;
-    splitEditLink(rightCol, function () {
-      openEditSplitsModal(project, { groupId: RESERVED_TOKEN_SPLIT_GROUP, title: 'Edit reserved recipients', prefill: rsReserved || undefined, gateText: 'to edit reserved recipients.', note: 'Editing reserved token recipients for this ruleset cycle.' });
-    });
+    if (offset === 0) {
+      splitEditLink(rightCol, function () {
+        openEditSplitsModal(project, { groupId: RESERVED_TOKEN_SPLIT_GROUP, title: 'Edit reserved recipients', prefill: rsReserved || undefined, gateText: 'to edit reserved recipients.', note: 'Editing reserved token recipients for this ruleset cycle.' });
+      });
+    }
     renderGroup(rightCol, 'EXTENSION');
     // Any section rulesetRows adds in future that we didn't place explicitly → left column.
     groups.forEach(function (g) { if (!placed[g.name]) renderGroup(leftCol, g.name); });
@@ -7756,7 +8049,7 @@ function renderRulesetsFundsSection(project) {
     }
 
     // Reserved-token splits (single, token-agnostic).
-    loadReservedSplits(v.r.id).then(function (splits) { rsReserved = splits; fillSplits(rsBox, splits); }).catch(function () { rsBox.innerHTML = ''; });
+    loadReservedSplits(v.r.id).then(function (splits) { rsReserved = splits; fillSplits(rsBox, splits); }).catch(function () { rsBox.innerHTML = ''; rsBox.textContent = 'Could not verify reserved-token splits.'; });
 
     // Per-accounting-context funds access + payout splits.
     faKindsP.then(function (kinds) {
@@ -7769,14 +8062,19 @@ function renderRulesetsFundsSection(project) {
         var psSh = el('div', 'rf-section'); psSh.textContent = kind.symbol + ' PAYOUT SPLITS'; faContainer.appendChild(psSh);
         var psBox = el('div'); psBox.appendChild(kvRow('Recipients', '…')); faContainer.appendChild(psBox);
         var foot = el('div', 'detail-about-foot'); foot.style.marginTop = '6px';
-        var editA = el('a', 'operator-cta'); editA.href = '#'; editA.textContent = 'Edit'; foot.appendChild(editA); faContainer.appendChild(foot);
+        var editA = el('a', 'operator-cta'); editA.href = '#'; editA.textContent = 'Edit'; foot.appendChild(editA);
+        if (offset === 0) faContainer.appendChild(foot);
         loadFundsAccessForKind(v.r.id, kind).then(function (fa) {
           if (!fa) { secHead.remove(); faPayout.remove(); faAllow.remove(); psSh.remove(); psBox.remove(); foot.remove(); return; }
           faPayout.querySelector('.detail-ruleset-val').textContent = fa.payout;
           faAllow.querySelector('.detail-ruleset-val').textContent = fa.allowance;
           fillSplits(psBox, fa.payoutSplits);
-          editA.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project, { groupId: fa.payoutGroupId, title: 'Edit ' + kind.symbol + ' payout splits', prefill: fa.payoutSplits, gateText: 'to edit payout splits.', note: 'Editing ' + kind.symbol + ' payout recipients for this ruleset cycle.' }); });
-        }).catch(function () { secHead.remove(); faPayout.remove(); faAllow.remove(); psSh.remove(); psBox.remove(); foot.remove(); });
+          if (offset === 0) editA.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project, { groupId: fa.payoutGroupId, groupIdForChain: function (cid) { var token = kind.addrForChain(cid); return token ? BigInt(token) : null; }, title: 'Edit ' + kind.symbol + ' payout splits', prefill: fa.payoutSplits, gateText: 'to edit payout splits.', note: 'Editing ' + kind.symbol + ' payout recipients for this ruleset cycle.' }); });
+        }).catch(function () {
+          faPayout.querySelector('.detail-ruleset-val').textContent = '—';
+          faAllow.querySelector('.detail-ruleset-val').textContent = '—';
+          psBox.innerHTML = ''; psBox.textContent = 'Could not verify payout splits.'; foot.remove();
+        });
       });
     }).catch(function () { faContainer.remove(); });
   }
@@ -7805,7 +8103,7 @@ function renderRulesetsFundsSection(project) {
 
   function ensureUpcoming(cb) {
     if (upcoming !== null) { cb(); return; }
-    read(project.chainId, 'JBController', upcomingRulesetAbi, 'upcomingRulesetOf', [BigInt(project.id)])
+    controllerRead(project.chainId, project.id, upcomingRulesetAbi, 'upcomingRulesetOf', [BigInt(project.id)])
       .then(function (res) {
         // res = [ruleset, metadata]; treat a zero-id as "no distinct upcoming".
         if (res && res[0] && Number(res[0].id) !== 0) upcoming = { r: res[0], m: res[1] };
@@ -7828,7 +8126,7 @@ function renderRulesetsFundsSection(project) {
     chainRs[project.chainId] = cur;
     Promise.all(pchains.map(function (c) {
       if (chainRs[c.id]) return Promise.resolve();
-      return read(c.id, 'JBController', currentRulesetAbi, 'currentRulesetOf', [BigInt(project.id)])
+      return controllerRead(c.id, project.id, currentRulesetAbi, 'currentRulesetOf', [BigInt(project.id)])
         .then(function (res) { if (res && res[0]) chainRs[c.id] = { r: res[0], m: res[1] }; }).catch(function () {});
     })).then(function () {
       var sigs = pchains.map(function (c) { return chainRs[c.id] ? rulesetSignature(chainRs[c.id].r, chainRs[c.id].m) : null; }).filter(Boolean);
@@ -7883,12 +8181,9 @@ function renderProjectPayerAddresses(project) {
   function facilitatedText(row) {
     var usd = usdFromScaled(row.totalFacilitatedUsd);
     if (usd && usd > 0) return formatUsd(usd);
-    var raw = toBigInt(row.totalFacilitated);
-    if (raw > 0n) {
-      var acct = project.acctToken || { decimals: 18, symbol: 'ETH' };
-      return formatBalance(raw, acct.decimals, acct.symbol);
-    }
-    return '$0';
+    // Bendystraw's raw aggregate adds payment-token base units. Project payers can forward several tokens
+    // with different decimals, so only the indexed USD aggregate has an honest common denomination.
+    return toBigInt(row.totalFacilitated) > 0n ? 'Unpriced' : '$0';
   }
 
   function renderRows(rows) {
@@ -9845,8 +10140,13 @@ function openPowerModal(project, action) {
       var values;
       try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
       catch (err) { setStatus(err.message || String(err), 'error'); busy = false; return; }
+      var liveControllers = null;
+      if (action.contract === 'JBController') {
+        try { liveControllers = await controllerMapFor(selected, pid); }
+        catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); busy = false; return; }
+      }
       var buildCall = function (cid) {
-        var to = getAddress(action.contract, cid);
+        var to = liveControllers ? liveControllers[cid] : getAddress(action.contract, cid);
         if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
         return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid, pid) }) };
       };
@@ -10072,22 +10372,39 @@ function rfNewRow(label, newVal) {
   return row;
 }
 
-// Unit + decimals for a JB currency id (1=ETH, 2=USD as 18-dec; token-keyed → the accounting token).
+// Unit for a JB currency id. Every JBCurrencyAmount uses the accounting token's decimals; currency only
+// changes the denomination/conversion.
 function currencyMeta(cur, acct) {
   cur = Number(cur);
+  // JBCurrencyAmount.amount always uses the accounting token's fixed-point decimals, even when its unit is
+  // another currency (for example a USD limit on a 6-decimal USDC context).
+  var decimals = acct && acct.decimals != null ? Number(acct.decimals) : 18;
   var isNativeAcct = !!(acct && acct.address && acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase());
-  if (cur === 1) return { decimals: 18, symbol: 'ETH', tokenKeyed: isNativeAcct };
-  if (cur === 2) return { decimals: 18, symbol: 'USD', tokenKeyed: false };
+  if (cur === 1) return { decimals: decimals, symbol: 'ETH', tokenKeyed: isNativeAcct };
+  if (cur === 2) return { decimals: decimals, symbol: 'USD', tokenKeyed: false };
   var acctCur = 0;
   if (acct) {
     try { acctCur = acct.currency != null ? Number(acct.currency) : Number(BigInt(acct.address) & 0xffffffffn); } catch (_) { acctCur = 0; }
   }
-  if (cur === acctCur) return { decimals: acct.decimals, symbol: acct.symbol, tokenKeyed: true };
-  return { decimals: 18, symbol: 'currency ' + cur, tokenKeyed: false };
+  if (cur === acctCur) return { decimals: decimals, symbol: acct.symbol, tokenKeyed: true };
+  return { decimals: decimals, symbol: 'currency ' + cur, tokenKeyed: false };
 }
 
 function formatCurrencyAmount(amount, meta) {
   return formatAmount(amount, meta.decimals) + ' ' + meta.symbol;
+}
+
+export function remainingAccessAmount(limit, used) {
+  limit = toBigInt(limit); used = toBigInt(used);
+  return limit > used ? limit - used : 0n;
+}
+
+export function quotedOutputFloor(quoted, bps) {
+  quoted = toBigInt(quoted);
+  bps = bps == null ? 9900n : BigInt(bps);
+  if (quoted <= 0n) return 0n;
+  var floor = quoted * bps / 10000n;
+  return floor > 0n ? floor : 1n;
 }
 
 // Distribute payouts: send the project's funds to its recipients (splits, then owner) on one chain.
@@ -10095,11 +10412,11 @@ function formatCurrencyAmount(amount, meta) {
 function buildPayoutsModal(project, acctKind) {
   var wrap = el('div', 'modal-body');
   var pid = BigInt(project.id);
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, balance: null, currency: null, meta: null };
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, balance: null, limits: [], selected: null, currency: null, meta: null, maxAmount: null };
   // When a funds block opened this for a specific accounting context, resolve that token per chain;
   // otherwise fall back to the project's primary accounting token.
   function resolveAcct(cid) {
-    if (acctKind) { var a = acctKind.addrForChain(cid); return Promise.resolve(a ? { address: a, decimals: acctKind.decimals, symbol: acctKind.symbol } : null); }
+    if (acctKind) return resolveFundsKindAcct(cid, pid, acctKind);
     return resolveAcctToken(cid, pid);
   }
 
@@ -10110,6 +10427,11 @@ function buildPayoutsModal(project, acctKind) {
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
   chainRow.appendChild(chainSel); wrap.appendChild(chainRow);
+
+  var currencyRow = el('div', 'ops-chainrow');
+  var currencyLabel = el('span', 'modal-label'); currencyLabel.textContent = 'Payout limit'; currencyRow.appendChild(currencyLabel);
+  var currencySel = document.createElement('select'); currencySel.className = 'ops-chain-select'; currencySel.disabled = true; currencyRow.appendChild(currencySel);
+  wrap.appendChild(currencyRow);
 
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field');
@@ -10131,65 +10453,129 @@ function buildPayoutsModal(project, acctKind) {
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
     var line = el('div', 'ops-preview-line ops-preview-fee');
-    line.textContent = 'Up to 2.5% protocol fee (≤ ' + formatCurrencyAmount(amount / 40n, state.meta) + ') on payouts to non-feeless recipients';
+    line.textContent = state.meta.tokenKeyed
+      ? 'Up to 2.5% protocol fee (≤ ' + formatBalance(amount / 40n, state.acct.decimals, state.acct.symbol) + ') on payouts to non-feeless recipients'
+      : 'The terminal-token output and fee are converted at the protocol’s live on-chain price.';
     preview.appendChild(line);
     var to = el('div', 'ops-preview-line ops-preview-feetok');
     to.appendChild(document.createTextNode('↳ paid into '));
     to.appendChild(feeProjectLink(state.chainId, FEE_BENEFICIARY_PROJECT_ID));
     to.appendChild(document.createTextNode('; feeless recipients (JB projects, registered addresses) pay none'));
     preview.appendChild(to);
+    var floor = el('div', 'ops-preview-line ops-preview-feetok');
+    floor.textContent = 'Before confirmation, the full request is simulated and protected by a live token-output floor.';
+    preview.appendChild(floor);
   }
   amt.addEventListener('input', updatePayoutPreview);
 
   maxBtn.addEventListener('click', function () {
-    if (state.balance == null || !state.meta || !state.meta.tokenKeyed) return; // balance is token units — only a valid max in the token's own currency
-    amt.value = formatAmount(state.balance, state.acct.decimals);
+    if (state.maxAmount == null || !state.meta) return;
+    amt.value = formatAmount(state.maxAmount, state.meta.decimals);
     updatePayoutPreview();
   });
 
+  function readPayoutAccess(cid, acct) {
+    var term = getAddress('JBMultiTerminal', cid);
+    var fal = getAddress('JBFundAccessLimits', cid);
+    if (!term || !fal) return Promise.reject(new Error('Payout contracts are unavailable on this chain.'));
+    return Promise.all([
+      read(cid, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, acct.address]),
+      controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid]),
+    ]).then(function (head) {
+      var ruleset = head[1] && head[1][0];
+      if (!ruleset || toBigInt(ruleset.id) === 0n) throw new Error('No current ruleset.');
+      return read(cid, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, toBigInt(ruleset.id), term, acct.address]).then(function (limits) {
+        return Promise.all((limits || []).map(function (limit) {
+          return read(cid, 'JBTerminalStore', usedPayoutLimitAbi, 'usedPayoutLimitOf', [term, pid, acct.address, toBigInt(ruleset.cycleNumber), toBigInt(limit.currency)])
+            .then(function (used) { return { currency: Number(limit.currency), amount: toBigInt(limit.amount), used: toBigInt(used), remaining: remainingAccessAmount(limit.amount, used) }; });
+        })).then(function (rows) { return { term: term, balance: toBigInt(head[0]), ruleset: ruleset, limits: rows }; });
+      });
+    });
+  }
+
+  function selectPayoutLimit(currency) {
+    state.selected = state.limits.filter(function (limit) { return String(limit.currency) === String(currency); })[0] || state.limits[0] || null;
+    if (!state.selected || !state.acct) {
+      state.currency = null; state.meta = null; state.maxAmount = null; unit.textContent = '—'; maxBtn.style.display = 'none';
+      bal.textContent = 'No payout limit is configured for this token in the current ruleset.';
+      return;
+    }
+    state.currency = state.selected.currency;
+    state.meta = currencyMeta(state.currency, state.acct);
+    state.maxAmount = state.meta.tokenKeyed && state.balance != null && state.balance < state.selected.remaining ? state.balance : state.selected.remaining;
+    currencySel.value = String(state.currency);
+    unit.textContent = state.meta.symbol;
+    maxBtn.style.display = state.maxAmount > 0n ? '' : 'none';
+    bal.textContent = 'Remaining payout limit on ' + chainNameOf(state.chainId) + ': ' + formatCurrencyAmount(state.selected.remaining, state.meta)
+      + ' · terminal balance: ' + formatBalance(state.balance, state.acct.decimals, state.acct.symbol);
+    updatePayoutPreview();
+  }
+  currencySel.addEventListener('change', function () { selectPayoutLimit(currencySel.value); });
+
+  var loadSeq = 0;
   function onChainChange() {
+    var seq = ++loadSeq;
     bal.textContent = 'Available: …'; unit.textContent = '…';
+    state.acct = null; state.selected = null; state.meta = null; state.limits = []; state.maxAmount = null;
+    currencySel.innerHTML = ''; currencySel.disabled = true;
     resolveAcct(state.chainId).then(function (acct) {
+      if (seq !== loadSeq) return null;
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
-      var term = getAddress('JBMultiTerminal', state.chainId);
-      return Promise.all([
-        term ? read(state.chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, acct.address]).catch(function () { return null; }) : Promise.resolve(null),
-        (getAddress('JBFundAccessLimits', state.chainId) && term && project.ruleset) ? read(state.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, BigInt(project.ruleset.id), term, acct.address]).catch(function () { return []; }) : Promise.resolve([]),
-      ]).then(function (r) {
-        state.balance = r[0] != null ? BigInt(r[0]) : 0n;
-        var isNative = acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
-        var acctCur = isNative ? 1 : Number(BigInt(acct.address) & 0xffffffffn);
-        var lims = r[1] || [];
-        state.currency = lims.length ? Number(lims[0].currency) : acctCur;
-        state.meta = currencyMeta(state.currency, acct);
-        unit.textContent = state.meta.symbol;
-        maxBtn.style.display = state.meta.tokenKeyed ? '' : 'none';
-        bal.textContent = state.balance > 0n
-          ? ('Available on ' + chainNameOf(state.chainId) + ': ' + formatBalance(state.balance, acct.decimals, acct.symbol))
-          : ('Nothing to pay out on ' + chainNameOf(state.chainId) + ' yet.');
-        updatePayoutPreview();
+      return readPayoutAccess(state.chainId, acct).then(function (access) {
+        if (seq !== loadSeq) return;
+        state.balance = access.balance; state.limits = access.limits;
+        currencySel.innerHTML = '';
+        state.limits.forEach(function (limit) {
+          var meta = currencyMeta(limit.currency, acct);
+          var opt = document.createElement('option'); opt.value = String(limit.currency);
+          opt.textContent = formatCurrencyAmount(limit.remaining, meta) + ' remaining'; currencySel.appendChild(opt);
+        });
+        currencySel.disabled = state.limits.length < 2;
+        selectPayoutLimit(state.currency);
       });
-    }).catch(function () { bal.textContent = 'Could not read the terminal.'; });
+    }).catch(function (error) { if (seq === loadSeq) bal.textContent = errMessage(error, 'Could not read the current payout limit.'); });
   }
   onChainChange();
 
   btn.addEventListener('click', function () {
     if (!(getAccount && getAccount())) { connect(); return; }
-    if (!state.acct || !state.meta) { status.textContent = 'Loading…'; return; }
+    if (!state.acct || !state.meta || !state.selected) { status.textContent = 'No available payout limit.'; return; }
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (amount === 0n) { status.textContent = 'Enter an amount'; return; }
-    if (state.meta.tokenKeyed && state.balance != null && amount > state.balance) { status.textContent = 'Amount exceeds available'; return; }
+    if (amount > state.selected.remaining) { status.textContent = 'Amount exceeds the remaining payout limit'; return; }
+    if (state.meta.tokenKeyed && state.balance != null && amount > state.balance) { status.textContent = 'Amount exceeds the terminal balance'; return; }
     var term = getAddress('JBMultiTerminal', state.chainId);
     if (!term) { status.textContent = 'No terminal on this chain'; return; }
-    btn.disabled = true;
-    executeTransaction({
-      chainId: state.chainId, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', contractName: 'JBMultiTerminal',
-      args: [pid, state.acct.address, amount, BigInt(state.currency), 0n], label: 'Distribute payouts',
-      onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
-      onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-      onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Payouts distributed on ' + chainNameOf(state.chainId) + '.'; btn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
-    });
+    var cid = state.chainId, currency = state.currency, acct = state.acct, meta = state.meta, account = getAccount();
+    function payoutInputsUnchanged() {
+      var current;
+      try { current = parseAmount(amt.value, meta.decimals); } catch (_) { current = -1n; }
+      return state.chainId === cid && state.currency === currency && current === amount
+        && state.acct && state.acct.address.toLowerCase() === acct.address.toLowerCase()
+        && getAccount() && getAccount().toLowerCase() === account.toLowerCase();
+    }
+    btn.disabled = true; status.classList.add('pending'); status.textContent = 'Refreshing limit and simulating the payout…';
+    readPayoutAccess(cid, acct).then(function (access) {
+      var live = access.limits.filter(function (limit) { return limit.currency === currency; })[0];
+      if (!live || amount > live.remaining) throw new Error('The remaining payout limit changed. Review the new amount and try again.');
+      if (currencyMeta(currency, acct).tokenKeyed && amount > access.balance) throw new Error('The terminal balance changed and no longer covers this payout.');
+      return clientFor(cid).simulateContract({ account: account, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', args: [pid, acct.address, amount, BigInt(currency), 0n] });
+    }).then(function (sim) {
+      if (!payoutInputsUnchanged()) throw new Error('Payout inputs, chain, or connected account changed while the live limit was loading. Review and try again.');
+      var quoted = toBigInt(sim.result);
+      if (quoted <= 0n) throw new Error('This request would pay out 0 tokens.');
+      var minOut = meta.tokenKeyed ? quoted : quotedOutputFloor(quoted);
+      status.classList.remove('pending'); status.textContent = '';
+      executeTransaction({
+        chainId: cid, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', contractName: 'JBMultiTerminal',
+        args: [pid, acct.address, amount, BigInt(currency), minOut], label: 'Distribute payouts',
+        confirmNote: 'Live simulation quotes ' + formatBalance(quoted, acct.decimals, acct.symbol) + '. The transaction reverts below ' + formatBalance(minOut, acct.decimals, acct.symbol) + ' instead of silently paying out less.',
+        onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
+        onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
+        onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Payouts distributed on ' + chainNameOf(cid) + '.'; btn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); onChainChange(); },
+      });
+    }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not safely quote this payout.'); btn.disabled = false; onChainChange(); });
   });
   return wrap;
 }
@@ -10201,9 +10587,9 @@ function buildUseAllowanceModal(project, acctKind) {
   var pid = BigInt(project.id);
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, usable: null, currency: null, meta: null };
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, surplus: null, allowances: [], selected: null, usable: null, currency: null, meta: null };
   function resolveAcct(cid) {
-    if (acctKind) { var a = acctKind.addrForChain(cid); return Promise.resolve(a ? { address: a, decimals: acctKind.decimals, symbol: acctKind.symbol } : null); }
+    if (acctKind) return resolveFundsKindAcct(cid, pid, acctKind);
     return resolveAcctToken(cid, pid);
   }
 
@@ -10214,6 +10600,11 @@ function buildUseAllowanceModal(project, acctKind) {
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
   chainRow.appendChild(chainSel); wrap.appendChild(chainRow);
+
+  var currencyRow = el('div', 'ops-chainrow');
+  var currencyLabel = el('span', 'modal-label'); currencyLabel.textContent = 'Surplus allowance'; currencyRow.appendChild(currencyLabel);
+  var currencySel = document.createElement('select'); currencySel.className = 'ops-chain-select'; currencySel.disabled = true; currencyRow.appendChild(currencySel);
+  wrap.appendChild(currencyRow);
 
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field');
@@ -10233,111 +10624,186 @@ function buildUseAllowanceModal(project, acctKind) {
     if (!state.acct || !state.meta) return;
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
-    var fee = state.feeless ? 0n : amount / 40n; // 2.5% — waived when the beneficiary is a feeless address
-    var net = amount - fee;
+    if (state.feeless == null) {
+      var pendingFee = el('div', 'ops-preview-line ops-preview-feetok');
+      pendingFee.textContent = 'Fee status could not yet be verified. The exact withdrawal will be simulated before confirmation.';
+      preview.appendChild(pendingFee);
+      return;
+    }
     var recv = el('div', 'ops-preview-line ops-preview-recv');
-    recv.textContent = 'Beneficiary receives ~ ' + formatCurrencyAmount(net, state.meta);
+    recv.textContent = state.meta.tokenKeyed
+      ? 'Beneficiary receives ~ ' + formatBalance(state.feeless ? amount : amount - amount / 40n, state.acct.decimals, state.acct.symbol)
+      : 'The beneficiary’s terminal-token output is converted at the protocol’s live on-chain price.';
     preview.appendChild(recv);
     if (state.feeless) {
       var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'No protocol fee — this address is feeless for the project.'; preview.appendChild(fl);
     } else if (state.meta.tokenKeyed) {
-      renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: fee, beneficiary: getAccount && getAccount() });
+      renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: amount / 40n, beneficiary: getAccount && getAccount() });
     } else {
       var cv = el('div', 'ops-preview-line ops-preview-feetok');
       cv.textContent = 'Protocol fee is converted by the terminal at the on-chain price.';
       preview.appendChild(cv);
     }
+    var floor = el('div', 'ops-preview-line ops-preview-feetok');
+    floor.textContent = 'Before confirmation, the withdrawal is simulated and protected by a 1% token-output floor.';
+    preview.appendChild(floor);
   }
   amt.addEventListener('input', updateAllowancePreview);
 
   maxBtn.addEventListener('click', function () {
-    if (state.usable == null || !state.meta || !state.meta.tokenKeyed) return;
-    amt.value = formatAmount(state.usable, state.acct.decimals);
+    if (state.usable == null || !state.meta) return;
+    amt.value = formatAmount(state.usable, state.meta.decimals);
     updateAllowancePreview();
   });
 
+  function readAllowanceAccess(cid, acct) {
+    var term = getAddress('JBMultiTerminal', cid);
+    var fal = getAddress('JBFundAccessLimits', cid);
+    if (!term || !fal) return Promise.reject(new Error('Allowance contracts are unavailable on this chain.'));
+    var acctCurrency = acct.currency != null ? BigInt(acct.currency) : tokenCurrencyIdForAccounting(acct.address);
+    return controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (current) {
+      var ruleset = current && current[0];
+      if (!ruleset || toBigInt(ruleset.id) === 0n) throw new Error('No current ruleset.');
+      return Promise.all([
+        read(cid, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, toBigInt(ruleset.id), term, acct.address]),
+        read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [term], [acct.address], BigInt(acct.decimals), acctCurrency]),
+      ]).then(function (r) {
+        return Promise.all((r[0] || []).map(function (allowance) {
+          return read(cid, 'JBTerminalStore', usedSurplusAllowanceAbi, 'usedSurplusAllowanceOf', [term, pid, acct.address, toBigInt(ruleset.id), toBigInt(allowance.currency)])
+            .then(function (used) { return { currency: Number(allowance.currency), amount: toBigInt(allowance.amount), used: toBigInt(used), remaining: remainingAccessAmount(allowance.amount, used) }; });
+        })).then(function (rows) { return { term: term, ruleset: ruleset, surplus: toBigInt(r[1]), allowances: rows }; });
+      });
+    });
+  }
+
+  function selectAllowance(currency) {
+    state.selected = state.allowances.filter(function (allowance) { return String(allowance.currency) === String(currency); })[0] || state.allowances[0] || null;
+    if (!state.selected || !state.acct) {
+      state.currency = null; state.meta = null; state.usable = null; unit.textContent = '—'; maxBtn.style.display = 'none';
+      bal.textContent = 'No surplus allowance is configured for this token in the current ruleset.';
+      return;
+    }
+    state.currency = state.selected.currency;
+    state.meta = currencyMeta(state.currency, state.acct);
+    state.usable = state.meta.tokenKeyed && state.surplus < state.selected.remaining ? state.surplus : state.selected.remaining;
+    currencySel.value = String(state.currency);
+    unit.textContent = state.meta.symbol;
+    maxBtn.style.display = state.usable > 0n ? '' : 'none';
+    bal.textContent = 'Remaining allowance on ' + chainNameOf(state.chainId) + ': ' + formatCurrencyAmount(state.selected.remaining, state.meta)
+      + ' · current ' + state.acct.symbol + ' surplus: ' + formatBalance(state.surplus, state.acct.decimals, state.acct.symbol);
+    updateAllowancePreview();
+  }
+  currencySel.addEventListener('change', function () { selectAllowance(currencySel.value); });
+
+  var loadSeq = 0;
   function onChainChange() {
+    var seq = ++loadSeq;
     bal.textContent = 'Usable: …'; unit.textContent = '…';
+    state.acct = null; state.selected = null; state.meta = null; state.allowances = []; state.usable = null; state.feeless = null;
+    currencySel.innerHTML = ''; currencySel.disabled = true;
     resolveAcct(state.chainId).then(function (acct) {
+      if (seq !== loadSeq) return null;
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
-      isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updateAllowancePreview(); });
-      var term = getAddress('JBMultiTerminal', state.chainId);
-      var fal = getAddress('JBFundAccessLimits', state.chainId);
-      var acctCur = acct.currency != null ? Number(acct.currency) : Number(BigInt(acct.address) & 0xffffffffn);
-      return Promise.all([
-        term ? read(state.chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, acct.address]).catch(function () { return null; }) : Promise.resolve(null),
-        (fal && term && project.ruleset) ? read(state.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, BigInt(project.ruleset.id), term, acct.address]).catch(function () { return []; }) : Promise.resolve([]),
-        (fal && term && project.ruleset) ? read(state.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, BigInt(project.ruleset.id), term, acct.address]).catch(function () { return []; }) : Promise.resolve([]),
-      ]).then(function (r) {
-        var balance = r[0] != null ? BigInt(r[0]) : 0n;
-        var allowances = r[2] || [];
-        state.currency = allowances.length ? Number(allowances[0].currency) : ((r[1] && r[1].length) ? Number(r[1][0].currency) : acctCur);
-        state.meta = currencyMeta(state.currency, acct);
-        var sameCurrency = function (c) { return Number(c) === Number(state.currency); };
-        var payoutCap = 0n; (r[1] || []).forEach(function (l) { if (sameCurrency(l.currency)) payoutCap += BigInt(l.amount); });
-        var allowCap = 0n; allowances.forEach(function (l) { if (sameCurrency(l.currency)) allowCap += BigInt(l.amount); });
-        var unlimitedPayout = state.meta.tokenKeyed && payoutCap >= (2n ** 200n);
-        var surplus = state.meta.tokenKeyed ? (unlimitedPayout ? 0n : (balance > payoutCap ? balance - payoutCap : 0n)) : null;
-        var allowUnlimited = allowCap >= (2n ** 200n);
-        // Usable = surplus capped by the allowance (the terminal enforces both).
-        state.usable = state.meta.tokenKeyed ? (allowUnlimited ? surplus : (surplus < allowCap ? surplus : allowCap)) : (allowUnlimited ? null : allowCap);
-        unit.textContent = state.meta.symbol;
-        maxBtn.style.display = state.meta.tokenKeyed ? '' : 'none';
-        bal.textContent = state.meta.tokenKeyed ? (state.usable > 0n
-          ? ('Usable on ' + chainNameOf(state.chainId) + ': ' + formatBalance(state.usable, acct.decimals, acct.symbol))
-          : ('No usable surplus allowance on ' + chainNameOf(state.chainId) + ' right now.'))
-          : (allowUnlimited
-            ? ('Allowance on ' + chainNameOf(state.chainId) + ': unlimited ' + state.meta.symbol)
-            : (allowCap > 0n ? ('Allowance on ' + chainNameOf(state.chainId) + ': ' + formatCurrencyAmount(allowCap, state.meta)) : ('No usable surplus allowance on ' + chainNameOf(state.chainId) + ' right now.')));
-        updateAllowancePreview();
+      var allowanceCaller = getAccount && getAccount();
+      var allowanceChain = state.chainId;
+      isAllowanceFeeless(allowanceChain, pid, allowanceCaller, allowanceCaller).then(function (f) {
+        var current = getAccount && getAccount();
+        if (seq === loadSeq && state.chainId === allowanceChain && current && allowanceCaller && current.toLowerCase() === allowanceCaller.toLowerCase()) {
+          state.feeless = f; updateAllowancePreview();
+        }
       });
-    }).catch(function () { bal.textContent = 'Could not read the terminal.'; });
+      return readAllowanceAccess(state.chainId, acct).then(function (access) {
+        if (seq !== loadSeq) return;
+        state.surplus = access.surplus; state.allowances = access.allowances;
+        currencySel.innerHTML = '';
+        state.allowances.forEach(function (allowance) {
+          var meta = currencyMeta(allowance.currency, acct);
+          var opt = document.createElement('option'); opt.value = String(allowance.currency);
+          opt.textContent = formatCurrencyAmount(allowance.remaining, meta) + ' remaining'; currencySel.appendChild(opt);
+        });
+        currencySel.disabled = state.allowances.length < 2;
+        selectAllowance(state.currency);
+      });
+    }).catch(function (error) { if (seq === loadSeq) bal.textContent = errMessage(error, 'Could not read the current surplus allowance.'); });
   }
   onChainChange();
 
   btn.addEventListener('click', function () {
     var acc = getAccount && getAccount();
     if (!acc) { connect(); return; }
-    if (!state.acct || !state.meta) { status.textContent = 'Loading…'; return; }
+    if (!state.acct || !state.meta || !state.selected) { status.textContent = 'No available surplus allowance.'; return; }
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (amount === 0n) { status.textContent = 'Enter an amount'; return; }
-    if (state.usable != null && amount > state.usable) { status.textContent = 'Amount exceeds usable allowance'; return; }
+    if (amount > state.selected.remaining) { status.textContent = 'Amount exceeds the remaining allowance'; return; }
+    if (state.meta.tokenKeyed && amount > state.surplus) { status.textContent = 'Amount exceeds the current surplus'; return; }
     var term = getAddress('JBMultiTerminal', state.chainId);
     if (!term) { status.textContent = 'No terminal on this chain'; return; }
-    btn.disabled = true;
-    executeTransaction({
-      chainId: state.chainId, address: term, abi: useAllowanceAbi, functionName: 'useAllowanceOf', contractName: 'JBMultiTerminal',
-      args: [pid, state.acct.address, amount, BigInt(state.currency), 0n, acc, acc, ''], label: 'Use surplus allowance',
-      onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
-      onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-      onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Surplus used on ' + chainNameOf(state.chainId) + '.'; btn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
-    });
+    var cid = state.chainId, currency = state.currency, acct = state.acct, meta = state.meta, account = acc;
+    function allowanceInputsUnchanged() {
+      var current;
+      try { current = parseAmount(amt.value, meta.decimals); } catch (_) { current = -1n; }
+      return state.chainId === cid && state.currency === currency && current === amount
+        && state.acct && state.acct.address.toLowerCase() === acct.address.toLowerCase()
+        && getAccount() && getAccount().toLowerCase() === account.toLowerCase();
+    }
+    btn.disabled = true; status.classList.add('pending'); status.textContent = 'Refreshing allowance and simulating the withdrawal…';
+    readAllowanceAccess(cid, acct).then(function (access) {
+      var live = access.allowances.filter(function (allowance) { return allowance.currency === currency; })[0];
+      if (!live || amount > live.remaining) throw new Error('The remaining surplus allowance changed. Review the new amount and try again.');
+      if (currencyMeta(currency, acct).tokenKeyed && amount > access.surplus) throw new Error('The current surplus changed and no longer covers this withdrawal.');
+      return clientFor(cid).simulateContract({ account: acc, address: term, abi: useAllowanceAbi, functionName: 'useAllowanceOf', args: [pid, acct.address, amount, BigInt(currency), 0n, acc, acc, ''] });
+    }).then(function (sim) {
+      if (!allowanceInputsUnchanged()) throw new Error('Allowance inputs, chain, or connected account changed while the live allowance was loading. Review and try again.');
+      var quoted = toBigInt(sim.result);
+      if (quoted <= 0n) throw new Error('This request would return 0 tokens to the beneficiary.');
+      var minOut = quotedOutputFloor(quoted);
+      status.classList.remove('pending'); status.textContent = '';
+      executeTransaction({
+        chainId: cid, address: term, abi: useAllowanceAbi, functionName: 'useAllowanceOf', contractName: 'JBMultiTerminal',
+        args: [pid, acct.address, amount, BigInt(currency), minOut, acc, acc, ''], label: 'Use surplus allowance',
+        confirmNote: 'Live simulation quotes ' + formatBalance(quoted, acct.decimals, acct.symbol) + ' net to you. The transaction reverts below ' + formatBalance(minOut, acct.decimals, acct.symbol) + '.',
+        onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
+        onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
+        onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Surplus used on ' + chainNameOf(cid) + '.'; btn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); onChainChange(); },
+      });
+    }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not safely quote this withdrawal.'); btn.disabled = false; onChainChange(); });
   });
   return wrap;
 }
 
 // A funds "kind" descriptor — one per accounting context the project's terminal accepts. Resolves the
 // right token ADDRESS per chain (native = same everywhere; USDC differs per chain; custom = fixed).
-function nativeFundsKind(dec) { return { key: 'native', symbol: 'ETH', decimals: dec || 18, addrForChain: function () { return NATIVE_TOKEN; }, matchCur: function (c) { c = Number(c); return c === 1 || c === 61166; } }; }
-function usdcFundsKind(dec) { return { key: 'usdc', symbol: 'USDC', decimals: dec || 6, addrForChain: function (cid) { return USDC_BY_CHAIN[cid] || null; }, matchCur: function (c, cid) { var u = USDC_BY_CHAIN[cid]; return !!u && Number(c) === Number(BigInt(u) & 0xffffffffn); } }; }
-function customFundsKind(addr, dec) { var curr = Number(BigInt(addr) & 0xffffffffn); return { key: addr.toLowerCase(), symbol: acctTokenLabel(addr), decimals: dec || 18, addrForChain: function () { return addr; }, matchCur: function (c) { return Number(c) === curr; } }; }
+function nativeFundsKind(dec) { return { key: 'native', symbol: 'ETH', decimals: dec == null ? 18 : dec, addrForChain: function () { return NATIVE_TOKEN; }, matchCur: function (c) { c = Number(c); return c === 1 || c === 61166; } }; }
+function usdcFundsKind(dec) { return { key: 'usdc', symbol: 'USDC', decimals: dec == null ? 6 : dec, addrForChain: function (cid) { return USDC_BY_CHAIN[cid] || null; }, matchCur: function (c, cid) { var u = USDC_BY_CHAIN[cid]; return !!u && Number(c) === Number(BigInt(u) & 0xffffffffn); } }; }
+function customFundsKind(addr, dec) { var curr = Number(BigInt(addr) & 0xffffffffn); return { key: addr.toLowerCase(), symbol: acctTokenLabel(addr), decimals: dec == null ? 18 : Number(dec), addrForChain: function () { return addr; }, matchCur: function (c) { return Number(c) === curr; } }; }
+
+function resolveFundsKindAcct(chainId, pid, kind) {
+  var address = kind && kind.addrForChain(chainId);
+  if (!address) return Promise.resolve(null);
+  return resolveAcctTokens(chainId, pid).then(function (contexts) {
+    var acct = contexts.filter(function (context) { return context.address.toLowerCase() === address.toLowerCase(); })[0] || null;
+    if (acct && acct.decimals !== Number(kind.decimals)) throw new Error('The accounting token decimals differ on ' + chainNameOf(chainId) + '.');
+    return acct;
+  });
+}
 
 // All accounting contexts a project accepts (read from the home chain), classified into funds kinds.
 function acctKindsForFunds(project) {
   var pid = BigInt(project.id);
   var home = project.chainId;
-  if (!getAddress('JBMultiTerminal', home)) return Promise.resolve([nativeFundsKind(18)]);
+  if (!getAddress('JBMultiTerminal', home)) return Promise.reject(new Error('No terminal on this chain.'));
   return read(home, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [pid]).then(function (ctxs) {
-    if (!ctxs || !ctxs.length) return [nativeFundsKind(18)];
+    if (!ctxs || !ctxs.length) throw new Error('No accounting contexts are configured for this project.');
     var usdcHome = (USDC_BY_CHAIN[home] || '').toLowerCase();
     return ctxs.map(function (c) {
-      var lc = c.token.toLowerCase(); var dec = Number(c.decimals);
+      var verified = accountingContextMeta(home, c);
+      var lc = verified.address.toLowerCase(); var dec = verified.decimals;
       if (lc === NATIVE_TOKEN.toLowerCase()) return nativeFundsKind(dec);
       if (usdcHome && lc === usdcHome) return usdcFundsKind(dec);
-      return customFundsKind(c.token, dec);
+      return customFundsKind(verified.address, dec);
     });
-  }).catch(function () { return [nativeFundsKind(18)]; });
+  });
 }
 
 // Total balance for an accounting kind across all the project's chains (for the at-a-glance tab label).
@@ -10346,9 +10812,54 @@ function totalBalanceForKind(project, kind) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
   return Promise.all(chains.map(function (c) {
     var term = getAddress('JBMultiTerminal', c.id); var tok = kind.addrForChain(c.id);
-    if (!term || !tok) return Promise.resolve(0n);
-    return read(c.id, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, tok]).then(function (b) { return b != null ? BigInt(b) : 0n; }).catch(function () { return 0n; });
-  })).then(function (bs) { return bs.reduce(function (s, v) { return s + v; }, 0n); });
+    if (!term || !tok) return Promise.resolve(null);
+    return read(c.id, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, tok])
+      .then(function (b) { return b != null ? BigInt(b) : null; }).catch(function () { return null; });
+  })).then(function (bs) {
+    if (bs.some(function (v) { return v == null; })) return null;
+    return bs.reduce(function (s, v) { return s + v; }, 0n);
+  });
+}
+
+// Live, cycle-aware fund access for one accounting token on one chain. Configured limits alone are not
+// "available": payout usage is tracked by ruleset cycle and surplus-allowance usage by ruleset ID.
+async function readFundsAccessSnapshot(project, kind, chainId) {
+  var pid = BigInt(project.id);
+  var term = getAddress('JBMultiTerminal', chainId);
+  var fal = getAddress('JBFundAccessLimits', chainId);
+  var token = kind.addrForChain(chainId);
+  if (!term || !fal || !token) throw new Error('Fund access contracts are unavailable on this chain.');
+  var contexts = await resolveAcctTokens(chainId, pid);
+  var acct = contexts.filter(function (context) { return context.address.toLowerCase() === token.toLowerCase(); })[0];
+  if (!acct || acct.decimals !== Number(kind.decimals)) throw new Error('The accounting context differs on ' + chainNameOf(chainId) + '.');
+  var head = await Promise.all([
+    read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, token]),
+    controllerRead(chainId, pid, currentRulesetAbi, 'currentRulesetOf', [pid]),
+  ]);
+  var ruleset = head[1] && head[1][0];
+  if (!ruleset || toBigInt(ruleset.id) === 0n) throw new Error('No current ruleset.');
+  var raw = await Promise.all([
+    read(chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, toBigInt(ruleset.id), term, token]),
+    read(chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, toBigInt(ruleset.id), term, token]),
+    read(chainId, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [term], [token], BigInt(acct.decimals), toBigInt(acct.currency)]),
+  ]);
+  var payouts = await Promise.all((raw[0] || []).map(async function (limit) {
+    var used = await read(chainId, 'JBTerminalStore', usedPayoutLimitAbi, 'usedPayoutLimitOf', [term, pid, token, toBigInt(ruleset.cycleNumber), toBigInt(limit.currency)]);
+    return { currency: Number(limit.currency), amount: toBigInt(limit.amount), used: toBigInt(used), remaining: remainingAccessAmount(limit.amount, used) };
+  }));
+  var allowances = await Promise.all((raw[1] || []).map(async function (allowance) {
+    var used = await read(chainId, 'JBTerminalStore', usedSurplusAllowanceAbi, 'usedSurplusAllowanceOf', [term, pid, token, toBigInt(ruleset.id), toBigInt(allowance.currency)]);
+    return { currency: Number(allowance.currency), amount: toBigInt(allowance.amount), used: toBigInt(used), remaining: remainingAccessAmount(allowance.amount, used) };
+  }));
+  return { chainId: chainId, term: term, token: token, acct: acct, ruleset: ruleset, balance: toBigInt(head[0]), surplus: toBigInt(raw[2]), payouts: payouts, allowances: allowances };
+}
+
+function formatAccessRows(rows, acct) {
+  if (!rows || !rows.length) return '0 ' + acct.symbol;
+  return rows.map(function (row) {
+    if (row.remaining >= (2n ** 200n)) return 'Unlimited ' + currencyMeta(row.currency, acct).symbol;
+    return formatCurrencyAmount(row.remaining, currencyMeta(row.currency, acct));
+  }).join(' + ');
 }
 
 // Funds card: one block per accounting context (balance per chain, payouts available, surplus, payouts +
@@ -10360,7 +10871,7 @@ function renderFundsCard(project) {
 
   acctKindsForFunds(project).then(function (kinds) {
     holder.innerHTML = '';
-    if (!kinds.length) kinds = [nativeFundsKind(18)];
+    if (!kinds.length) { holder.textContent = 'No verified accounting contexts are configured for this project.'; return; }
     if (kinds.length === 1) { holder.appendChild(buildFundsTokenBlock(project, kinds[0], false)); return; }
     // Total balance — the same USD total shown on the project's header card (all tokens, all chains).
     var totLbl = el('div', 'rf-funds-label'); totLbl.textContent = 'Total balance'; holder.appendChild(totLbl);
@@ -10398,8 +10909,6 @@ function buildFundsTokenBlock(project, kind, showHead) {
   var pid = BigInt(project.id);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: 'This chain' }];
   var home = project.chainId;
-  var terminal = getAddress('JBMultiTerminal', home);
-  var limits = getAddress('JBFundAccessLimits', home);
   var splitsAddr = getAddress('JBSplits', home);
   var homeToken = kind.addrForChain(home);
   var fmt = function (v) { return v == null ? '—' : formatBalance(v, kind.decimals, kind.symbol); };
@@ -10417,7 +10926,7 @@ function buildFundsTokenBlock(project, kind, showHead) {
   var balTotal = el('div', 'rf-funds-big'); balTotal.textContent = '…'; wrap.appendChild(balTotal);
   var chainTable = el('div', 'funds-chain-table'); wrap.appendChild(chainTable);
   var cHead = el('div', 'funds-chain-row funds-chain-head');
-  ['Chain', 'Balance', 'Payouts available', 'Surplus'].forEach(function (h) { var s = el('span'); s.textContent = h; cHead.appendChild(s); });
+  ['Chain', 'Balance', 'Payout limit remaining', 'Surplus'].forEach(function (h) { var s = el('span'); s.textContent = h; cHead.appendChild(s); });
   chainTable.appendChild(cHead);
 
   var bottomGrid = el('div', 'funds-bottom-grid'); bottomGrid.style.marginTop = '14px'; wrap.appendChild(bottomGrid);
@@ -10425,7 +10934,7 @@ function buildFundsTokenBlock(project, kind, showHead) {
   var surCol = el('div', 'rf-funds-col'); bottomGrid.appendChild(surCol);
 
   var limitLbl = el('div', 'rf-funds-label');
-  limitLbl.appendChild(rulesetLink('Current')); limitLbl.appendChild(document.createTextNode(' payout limit:'));
+  limitLbl.appendChild(rulesetLink('Current')); limitLbl.appendChild(document.createTextNode(' payout limit remaining on ' + chainNameOf(home) + ':'));
   payCol.appendChild(limitLbl);
   var limitVal = el('div', 'rf-funds-mid'); limitVal.textContent = '…'; payCol.appendChild(limitVal);
   var payHead = el('div', 'rf-funds-label'); payHead.style.marginTop = '18px'; payHead.textContent = 'Payouts'; payCol.appendChild(payHead);
@@ -10435,60 +10944,60 @@ function buildFundsTokenBlock(project, kind, showHead) {
   payCol.appendChild(distBtn);
 
   var saHead = el('div', 'rf-funds-label');
-  saHead.appendChild(rulesetLink('Current')); saHead.appendChild(document.createTextNode(' surplus allowance:'));
+  saHead.appendChild(rulesetLink('Current')); saHead.appendChild(document.createTextNode(' surplus allowance remaining on ' + chainNameOf(home) + ':'));
   surCol.appendChild(saHead);
   var saV = el('div', 'rf-funds-mid'); saV.textContent = '…'; surCol.appendChild(saV);
   var useBtn = el('button', 'detail-check-btn'); useBtn.style.marginTop = '12px'; useBtn.textContent = 'Use surplus allowance';
   useBtn.addEventListener('click', function () { openModal('Use surplus allowance', buildUseAllowanceModal(project, kind)); });
   surCol.appendChild(useBtn);
 
-  // Per-chain balances + the home-chain payout limit / surplus allowance (config is synced across chains).
-  Promise.all([
-    Promise.all(chains.map(function (c) {
-      var term = getAddress('JBMultiTerminal', c.id); var tok = kind.addrForChain(c.id);
-      if (!term || !tok) return Promise.resolve({ c: c, bal: null });
-      return read(c.id, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, tok]).then(function (b) { return { c: c, bal: b }; }).catch(function () { return { c: c, bal: null }; });
-    })),
-    (limits && terminal && homeToken && project.ruleset) ? read(home, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, BigInt(project.ruleset.id), terminal, homeToken]).catch(function () { return []; }) : Promise.resolve([]),
-    (limits && terminal && homeToken && project.ruleset) ? read(home, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, BigInt(project.ruleset.id), terminal, homeToken]).catch(function () { return []; }) : Promise.resolve([]),
-  ]).then(function (R) {
-    var rows = R[0];
-    var payoutCap = 0n; (R[1] || []).forEach(function (l) { if (kind.matchCur(l.currency, home)) payoutCap += l.amount; });
-    var allowCap = 0n; (R[2] || []).forEach(function (l) { if (kind.matchCur(l.currency, home)) allowCap += l.amount; });
-    var unlimited = payoutCap >= (2n ** 200n);
-    var total = 0n;
+  // Per-chain live state. A single failed chain suppresses the aggregate total instead of making it look smaller.
+  var snapshotsP = Promise.all(chains.map(function (c) {
+    return readFundsAccessSnapshot(project, kind, c.id)
+      .then(function (snapshot) { return { c: c, snapshot: snapshot }; })
+      .catch(function () { return { c: c, snapshot: null }; });
+  }));
+  snapshotsP.then(function (rows) {
+    var complete = rows.every(function (x) { return !!x.snapshot; });
+    var total = complete ? rows.reduce(function (sum, x) { return sum + x.snapshot.balance; }, 0n) : null;
     rows.forEach(function (x) {
-      var bal = x.bal != null ? BigInt(x.bal) : 0n;
-      if (x.bal != null) total += bal;
-      var avail = unlimited ? bal : (bal > payoutCap ? payoutCap : bal);
-      var surplus = unlimited ? 0n : (bal > payoutCap ? bal - payoutCap : 0n);
+      var snapshot = x.snapshot;
       var row = el('div', 'funds-chain-row');
       var nm = el('span', 'funds-chain-name'); nm.appendChild(chainLogo(x.c.id, x.c.name));
       var t = el('span'); t.textContent = ' ' + x.c.name; nm.appendChild(t); row.appendChild(nm);
-      var b = el('span'); b.textContent = fmt(x.bal); row.appendChild(b);
-      var a = el('span'); a.textContent = x.bal == null ? '—' : fmt(avail); row.appendChild(a);
-      var s = el('span'); s.textContent = x.bal == null ? '—' : fmt(surplus); row.appendChild(s);
+      var b = el('span'); b.textContent = snapshot ? fmt(snapshot.balance) : '—'; row.appendChild(b);
+      var a = el('span'); a.textContent = snapshot ? formatAccessRows(snapshot.payouts, snapshot.acct) : '—'; row.appendChild(a);
+      var s = el('span'); s.textContent = snapshot ? fmt(snapshot.surplus) : '—'; row.appendChild(s);
       chainTable.appendChild(row);
     });
     balTotal.textContent = fmt(total);
-    limitVal.textContent = unlimited ? 'Unlimited' : fmt(payoutCap);
-    saV.textContent = allowCap >= (2n ** 200n) ? 'Unlimited' : fmt(allowCap);
+    var homeRow = rows.filter(function (x) { return x.c.id === home; })[0];
+    limitVal.textContent = homeRow && homeRow.snapshot ? formatAccessRows(homeRow.snapshot.payouts, homeRow.snapshot.acct) : '—';
+    saV.textContent = homeRow && homeRow.snapshot ? formatAccessRows(homeRow.snapshot.allowances, homeRow.snapshot.acct) : '—';
   });
 
   // Payouts table (home chain): percent | recipient | amount distributable now. Splits keyed by the home
-  // accounting token; leftover → owner.
-  Promise.all([
-    (terminal && homeToken) ? read(home, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [terminal, pid, homeToken]).catch(function () { return null; }) : Promise.resolve(null),
-    (limits && terminal && homeToken && project.ruleset) ? read(home, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, BigInt(project.ruleset.id), terminal, homeToken]).catch(function () { return []; }) : Promise.resolve([]),
-    (splitsAddr && homeToken && project.ruleset) ? read(home, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, BigInt(project.ruleset.id), BigInt(homeToken)]).catch(function () { return []; }) : Promise.resolve([]),
-  ]).then(function (res) {
-    var homeBal = res[0] != null ? BigInt(res[0]) : 0n;
-    var cap = 0n; (res[1] || []).forEach(function (l) { if (kind.matchCur(l.currency, home)) cap += l.amount; });
-    var unlimited = cap >= (2n ** 200n);
-    var distributable = unlimited ? homeBal : (homeBal > cap ? cap : homeBal);
-    var splits = res[2] || [];
-
+  // accounting token; leftover → owner. Cross-currency limits need a live price conversion, so the exact
+  // recipient amounts stay in the transaction modal where the terminal call is simulated.
+  snapshotsP.then(function (rows) {
+    var homeRow = rows.filter(function (x) { return x.c.id === home; })[0];
+    if (!homeRow || !homeRow.snapshot || !splitsAddr || !homeToken) throw new Error('Home-chain fund access is unavailable.');
+    var snapshot = homeRow.snapshot;
+    return read(home, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, toBigInt(snapshot.ruleset.id), BigInt(homeToken)])
+      .then(function (splits) { return { snapshot: snapshot, splits: splits || [] }; });
+  }).then(function (res) {
+    var snapshot = res.snapshot;
+    var direct = snapshot.payouts.filter(function (limit) { return currencyMeta(limit.currency, snapshot.acct).tokenKeyed; })[0] || null;
     payBox.innerHTML = '';
+    if (!direct) {
+      payBox.textContent = snapshot.payouts.length
+        ? 'Recipient amounts require live currency conversion. Open Distribute payouts for an exact simulated quote.'
+        : 'No payout limit is configured for this token in the current ruleset.';
+      return;
+    }
+    var distributable = snapshot.balance < direct.remaining ? snapshot.balance : direct.remaining;
+    var splits = res.splits;
+
     var table = el('div', 'payouts-table');
     var head = el('div', 'payouts-row payouts-head');
     ['Percent', 'Recipient', 'Available'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
@@ -10648,9 +11157,8 @@ async function loadStageAutoIssuanceTotals(project, stages) {
       stageCache[chainId] = Promise.resolve(stages);
       return stageCache[chainId];
     }
-    stageCache[chainId] = read(chainId, 'JBRulesets', allOfAbi, 'allOf', [pid, 0n, 8n])
-      .then(function (rs) { return (rs || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); }); })
-      .catch(function () { return []; });
+    stageCache[chainId] = readAllRulesets(chainId, pid)
+      .then(function (rs) { return (rs || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); }); });
     return stageCache[chainId];
   }
   var rows = await loadAutoIssuanceRows(project, chains, stagesForChain);
@@ -10724,7 +11232,7 @@ function renderPriceChart(project, stages) {
     return c;
   }
   // Pair denominator follows baseCurrency: token/ETH normally, token/USD for USD-based rulesets (e.g. ART).
-  var baseLabel = (project.metadata && Number(project.metadata.baseCurrency) === 2) ? 'USD' : 'ETH';
+  var baseLabel = baseUnitLabel(project);
   var pairUnit = sym + '/' + baseLabel;
   function setChipVal(c, numStr, tail) {
     c._val.textContent = '';
@@ -10781,11 +11289,14 @@ function renderPriceChart(project, stages) {
     readLpPositions(project, project.chainId).catch(function () { return null; }),
   ]).then(function (res) {
     var p = res[0], f = res[1], history = res[2] || [];
-    var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0 };
+    var swaps = res[3] || { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
     var lp = res[4];
     // The pool's pair (terminal) token — ETH or USDC — labels every pool/liquidity/volume value below.
-    var pairSym = (lp && lp.pair && lp.pair.symbol) || 'ETH';
-    var pairScale = Math.pow(10, (lp && lp.pair && lp.pair.decimals) || 18);
+    // Swap history carries the pair metadata from the exact current pool, so a failed LP-position read cannot
+    // relabel USDC volume/liquidity as ETH.
+    var pair = swaps.pair || (lp && lp.pair) || null;
+    var pairSym = pair ? pair.symbol : 'terminal tokens';
+    var pairScale = pair ? Math.pow(10, Number(pair.decimals)) : null;
     // Plot realized AMM trade prices as a time series; extend it to the live pool price.
     if (swaps.series && swaps.series.length) {
       ammHistory = swaps.series.slice();
@@ -10822,7 +11333,7 @@ function renderPriceChart(project, stages) {
 
     // Fill the chip value subtexts (no ETH/REV unit — the chart axis carries it). AMM is one line:
     // "<price> on <x REV> + <y ETH> liq".
-    var liq = (lp && (lp.totalRev > 0n || lp.totalEth > 0n))
+    var liq = (lp && pairScale && (lp.totalRev > 0n || lp.totalEth > 0n))
       ? formatCompactTokenAmount(lp.totalRev) + ' ' + sym + ' + ' + formatPrice(Number(lp.totalEth) / pairScale) + ' ' + pairSym
       : '';
     if (amm) setChipVal(ammChip, formatPrice(amm), liq ? 'on ' + liq + ' liq' : '');
@@ -11121,18 +11632,36 @@ function formatActivityAmount(raw, symbol, decimals) {
   return formatBalance(value, (decimals == null ? 18 : decimals), symbol || 'ETH');
 }
 
-// bendystraw pay/cash-out events carry the raw `amount` (in the paid token) + its USD value, but NOT which
-// token. Infer it so we can show the real token amount ("0.005 ETH" / "20 USDC"): a 6-dec stablecoin's face
-// value ≈ its USD value, whereas ETH's 18-dec face value is ~1000×+ off. Falls back to the project's
-// accounting token when unpriced.
-function inferActivityAmount(amount, scaledUsd, acct) {
-  var amt = toBigInt(amount);
-  if (amt === 0n) return '0 ' + ((acct && acct.symbol) || 'ETH');
-  var target = Number(usdFromScaled(scaledUsd));
-  if (!(target > 0)) return formatActivityAmount(amount, acct && acct.symbol, acct && acct.decimals);
-  var asStable = Number(amt) / 1e6; // value if the token were a 6-dec ~$1 stablecoin
-  if (asStable >= target / 10 && asStable <= target * 10) return formatBalance(amt, 6, 'USDC');
-  return formatBalance(amt, 18, 'ETH'); // 18-dec native otherwise
+// Resolve a source-token amount only when its token identity and decimals are authoritative. Loan rows and
+// borrow events carry this address; other historical events often do not, and must not borrow the project's
+// primary-token label (which can be a different accounting context).
+export function sourceTokenMeta(project, chainId, token) {
+  if (!token) return null;
+  var address = String(token).toLowerCase();
+  if (address === NATIVE_TOKEN.toLowerCase()) return { address: token, decimals: 18, symbol: 'ETH' };
+  var usdc = USDC_BY_CHAIN[Number(chainId)];
+  if (usdc && address === usdc.toLowerCase()) return { address: token, decimals: 6, symbol: 'USDC' };
+  var known = getChainTokens(Number(chainId)).filter(function (candidate) {
+    return candidate.address && candidate.address.toLowerCase() === address;
+  })[0];
+  if (known) return { address: token, decimals: Number(known.decimals), symbol: tokenSymbolClean(known.symbol) };
+  var primary = project && project.acctToken;
+  if (primary && primary.address && primary.address.toLowerCase() === address && primary.decimals != null) {
+    return { address: token, decimals: Number(primary.decimals), symbol: primary.symbol || acctTokenLabel(token) };
+  }
+  return null;
+}
+
+function formatSourceTokenAmount(raw, token, chainId, project) {
+  var meta = sourceTokenMeta(project, chainId, token);
+  return meta ? formatActivityAmount(raw, meta.symbol, meta.decimals) : '';
+}
+
+// Pay/cash-out rows do not index their token or decimals. USD is the only denomination the source records
+// explicitly, so use it when present and leave the field blank otherwise instead of guessing ETH vs USDC.
+export function indexedActivityAmount(scaledUsd) {
+  var usd = Number(usdFromScaled(scaledUsd));
+  return usd > 0 ? formatUsd(usd) : '';
 }
 
 function renderExplorerTxLink(chainId, txHash, label) {
@@ -11195,10 +11724,10 @@ function renderAutoIssuance(project, stages) {
       stageCache[chainId] = Promise.resolve(stages);
       return stageCache[chainId];
     }
-    stageCache[chainId] = read(chainId, 'JBRulesets', allOfAbi, 'allOf', [pid, 0n, 8n])
+    stageCache[chainId] = readAllRulesets(chainId, pid)
       .then(function (rs) {
         return (rs || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
-      }).catch(function () { return []; });
+      });
     return stageCache[chainId];
   }
 
@@ -11495,10 +12024,10 @@ var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId timestamp txHash from 
   + 'payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount from txHash timestamp } '
   + 'cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd holder beneficiary from txHash timestamp } '
   + 'mintTokensEvent { beneficiary beneficiaryTokenCount caller from txHash timestamp } '
-  + 'sendPayoutsEvent { amount amountPaidOut fee caller from txHash timestamp } '
+  + 'sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd fee caller from txHash timestamp } '
   + 'sendReservedTokensToSplitsEvent { tokenCount from txHash timestamp } '
   + 'autoIssueEvent { beneficiary count stageId from txHash timestamp } '
-  + 'borrowLoanEvent { borrowAmount collateral beneficiary from txHash timestamp } '
+  + 'borrowLoanEvent { borrowAmount collateral beneficiary token from txHash timestamp } '
   + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn from txHash timestamp } '
   + 'liquidateLoanEvent { borrowAmount collateral from txHash timestamp } '
   + 'mintNftEvent { tierId tokenId beneficiary totalAmountPaid from txHash timestamp } '
@@ -11529,7 +12058,7 @@ var BENDYSTRAW_RESERVED_DIST_QUERY = 'query($projectId: Int!, $version: Int!, $c
 var BENDYSTRAW_LOANS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'loans(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
   + 'orderBy: "createdAt", orderDirection: "desc", limit: $limit, offset: $offset) { '
-  + 'items { id borrowAmount collateral beneficiary owner createdAt chainId prepaidFeePercent prepaidDuration sourceFeeAmount } totalCount } }';
+  + 'items { id borrowAmount collateral beneficiary owner createdAt chainId prepaidFeePercent prepaidDuration sourceFeeAmount token } totalCount } }';
 
 // REVLoans liquidation horizon (LOAN_LIQUIDATION_DURATION = 3650 days). After this the collateral is lost.
 var LOAN_LIQUIDATION_SECONDS = 3650 * 86400;
@@ -11899,6 +12428,10 @@ async function resolveBendystrawSuckerGroupId(project, chainIds) {
 async function fetchPriceFloorHistory(project, stages) {
   var chainIds = projectBendystrawChainIds(project);
   if (!chainIds.length) return [];
+  // suckerGroupMoment.balance is a raw sum. It cannot produce a price when contexts mix precisions or
+  // denominations (for example ETH + USDC), so suppress that history rather than plot fabricated points.
+  var breakdown = await fetchBalanceBreakdown(project).catch(function () { return null; });
+  if (!breakdown || !breakdown.contextHomogeneous) return [];
   var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
   if (!groupId) return [];
 
@@ -11907,8 +12440,9 @@ async function fetchPriceFloorHistory(project, stages) {
     : 0;
   var projectStart = stages && stages.length ? Number(stages[0].start) : 0;
 
-  var pair = await lpPairFor(project, project.chainId).catch(function () { return { decimals: 18 }; });
-  var pairDecimals = Number(pair && pair.decimals != null ? pair.decimals : 18);
+  var pair = await lpPairFor(project, project.chainId);
+  if (!pair) return [];
+  var pairDecimals = Number(pair.decimals);
   var res = await Promise.all([
     fetchBendystrawCollectionPages(BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
       suckerGroupId: groupId,
@@ -11940,24 +12474,29 @@ async function fetchPriceFloorHistory(project, stages) {
 // Realized price = terminal-token units / project-token units.
 // Returns the empty shape if the model isn't indexed yet — never fabricates.
 async function fetchSwapHistory(project) {
-  var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0 };
-  var chainIds = projectBendystrawChainIds(project);
-  if (!chainIds.length) return empty;
-  var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
+  var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
+  var chainId = Number(project.chainId);
+  if (!chainId) return empty;
+  var groupId = await resolveBendystrawSuckerGroupId(project, [chainId]);
   if (!groupId) return empty;
 
-  var pair = await lpPairFor(project, project.chainId).catch(function () { return { decimals: 18 }; });
+  // A sucker group can trade on several chains and can retain events from superseded pools. Decimals and
+  // prices are only comparable inside one exact pool, so chart the page's current chain/current pool only.
+  var pool = await readPoolState(project, chainId);
+  if (!pool || !pool.poolId) return empty;
+  var pair = pool.pair;
   var pairScale = Math.pow(10, Number(pair && pair.decimals != null ? pair.decimals : 18));
   var res = await fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', {
     suckerGroupId: groupId,
     version: BENDYSTRAW_VERSION,
-    chainIds: chainIds,
+    chainIds: [chainId],
   }, PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS);
 
   var items = res.items || [];
   var series = [];
   var buyVolume = 0, sellVolume = 0, count = 0;
   items.forEach(function (sw) {
+    if (Number(sw.chainId) !== chainId || String(sw.poolId || '').toLowerCase() !== String(pool.poolId).toLowerCase()) return;
     if (sw.direction === 'mint') return; // mint is the issuance route, not a market trade
     var terminalUnits = Number(toBigInt(sw.terminalTokenAmount)) / pairScale;
     if (sw.direction === 'buy') buyVolume += terminalUnits;
@@ -11970,7 +12509,7 @@ async function fetchSwapHistory(project) {
     }
   });
   series.sort(function (a, b) { return a.timestamp - b.timestamp; });
-  return { series: series, buyVolume: buyVolume, sellVolume: sellVolume, count: count };
+  return { series: series, buyVolume: buyVolume, sellVolume: sellVolume, count: count, pair: pair };
 }
 
 // Indexed project stats (volume / payments / contributors) from Bendystraw. Prefers the
@@ -12037,9 +12576,7 @@ async function fetchProjectPayerRows(project) {
     var ausd = toBigInt(a.totalFacilitatedUsd);
     var busd = toBigInt(b.totalFacilitatedUsd);
     if (ausd !== busd) return ausd < busd ? 1 : -1;
-    var araw = toBigInt(a.totalFacilitated);
-    var braw = toBigInt(b.totalFacilitated);
-    if (araw !== braw) return araw < braw ? 1 : -1;
+    // Raw totals can mix token units and are not a valid tie-breaker.
     return Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0);
   });
 }
@@ -12076,12 +12613,16 @@ function cashOutTaxAt(timestamp, snapshots, fallback) {
 
 function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDecimals) {
   if (!balance || !tokenSupply || balance === 0n || tokenSupply === 0n) return 0;
-  var r = Number(cashOutTax || 0) / 10000;
-  var o = Number(balance);
-  var s = Number(tokenSupply);
-  var x = Number(ONE_TOKEN);
-  var y = ((o * x) / s) * (1 - r + (r * x) / s);
-  var value = y / Math.pow(10, balanceDecimals == null ? 18 : Number(balanceDecimals));
+  var o = toBigInt(balance), s = toBigInt(tokenSupply), x = ONE_TOKEN;
+  if (o <= 0n || s <= 0n) return 0;
+  var tax = toBigInt(cashOutTax || 0);
+  if (tax < 0n) tax = 0n;
+  if (tax > 10000n) tax = 10000n;
+  // Exact integer form of balance × share × ((1-tax) + tax×share), where share = 1 token / supply.
+  var factor = (10000n - tax) * s + tax * x;
+  var y = o * x * factor / (s * s * 10000n);
+  var value;
+  try { value = Number(formatAmount(y, balanceDecimals == null ? 18 : Number(balanceDecimals))); } catch (_) { return 0; }
   return isFinite(value) && value > 0 ? value : 0;
 }
 
@@ -12100,11 +12641,11 @@ async function fetchProjectActivity(project) {
   if (groupId) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
       suckerGroupId: groupId, version: BENDYSTRAW_VERSION, chainIds: chainIds,
-    }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS).catch(function () { return { items: [] }; }));
+    }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS));
   }
   queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
     projectId: Number(project.id), version: BENDYSTRAW_VERSION, chainIds: chainIds,
-  }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS).catch(function () { return { items: [] }; }));
+  }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS));
 
   var results = await Promise.all(queries);
   var seen = {}, merged = [];
@@ -12123,7 +12664,7 @@ async function fetchProjectActivity(project) {
 
   // Ruleset queueing isn't indexed by bendystraw (no queueRulesets ActivityEvent type), so synthesize it
   // from chain state: JBRulesets.allOf returns each configured ruleset, whose `id` IS the queue timestamp.
-  var rsRows = await fetchRulesetQueueRows(project).catch(function () { return []; });
+  var rsRows = await fetchRulesetQueueRows(project);
   return bendyRows.concat(rsRows);
 }
 
@@ -12173,7 +12714,7 @@ async function fetchRulesetQueueRows(project) {
   } catch (_) {}
   var rows = [];
   await Promise.all(chainIds.map(async function (cid) {
-    var rs = await read(cid, 'JBRulesets', allOfAbi, 'allOf', [pid, 0n, 8n]).catch(function () { return null; });
+    var rs = await readAllRulesets(cid, pid);
     if (!rs || !rs.length) return;
     var queued = rs.filter(function (r) { return Number(r.basedOnId) !== 0 && Number(r.id) > 0; });
     if (!queued.length) return;
@@ -12214,68 +12755,127 @@ async function fetchRulesetQueueRows(project) {
 // root + executed bitmap. So we read it all from chain in one consistent pass.) Per sucker: enumerate the
 // outbound InsertToOutboxTree leaves, then derive per-leaf status from the source outbox (sent?) and the
 // destination inbox (delivered? claimed?). Claimable rows carry a locally-verified merkle proof.
+var BRIDGE_LEAF_CACHE = {};
 async function fetchBridgeTransactions(project) {
-  var pid = project.id;
+  var pid = BigInt(project.id);
   var chains = (project.chains || []).map(function (c) { return c.id; });
   var rows = [];
   await Promise.all(chains.map(async function (C) {
-    var pairs = await readSuckerPairsOf(pid, C);
-    // The terminal (backing) token the suckers bridge for this project — USDC for a USDC project, native
-    // ETH for an ETH project. The outbox/inbox trees are keyed per token, so the whole scan must use it.
-    var acct = await resolveAcctToken(C, pid);
-    var TOKEN = acct.address;
+    var sourceContexts = await resolveAcctTokens(C, pid);
+    var pairs = await readAllSuckerPairsOf(pid, C);
     await Promise.all(pairs.map(async function (p) {
       var srcSucker = p.local, R = p.remoteChainId, peerSucker = p.remote;
-      var infra = await classifySuckerInfra(C, srcSucker).catch(function () { return 'native'; }); // CCIP vs native bridge → which tracker to link
-      // The DESTINATION inbox/claim is keyed by the destination chain's LOCAL token (e.g. Base USDC), which
-      // differs from the source token (Ethereum USDC). Resolve it for the inbox/executed/claim reads on R.
-      var remoteAcct = await resolveAcctToken(R, pid).catch(function () { return { address: TOKEN }; });
-      var RTOKEN = remoteAcct.address;
-      var logClient = lpLogsClient(C) || clientFor(C);
-      var latest; try { latest = await logClient.getBlockNumber(); } catch (_) { return; }
-      var W = 45000n, windows = [];
-      // 5 windows (~225k blocks) covers recent movements on every chain without the slowest tail — the table
-      // is "Recent movement", and pending/claimable leaves are recent. Fewer getLogs = faster first paint.
-      for (var n = 0; n < 5 && latest - BigInt(n) * W > 0n; n++) { var hi = latest - BigInt(n) * W, lo = hi > W ? hi - W + 1n : 0n; windows.push({ lo: lo, hi: hi }); if (lo === 0n) break; }
-      var batches = await Promise.all(windows.map(function (w) {
-        return logClient.getLogs({ address: srcSucker, event: INSERT_TO_OUTBOX_EVENT, args: { token: TOKEN }, fromBlock: w.lo, toBlock: w.hi }).catch(function () { return []; });
-      }));
-      var byIndex = {}, blockOf = {};
-      batches.forEach(function (b) { b.forEach(function (l) { var i = Number(l.args.index); if (byIndex[i] === undefined) { byIndex[i] = l.args; blockOf[i] = l.blockNumber; } }); });
-      var idxs = Object.keys(byIndex).map(Number);
-      if (!idxs.length) return;
-      var count = Math.max.apply(null, idxs) + 1;
-      var leafHashes = [], complete = true;
-      for (var i = 0; i < count; i++) { if (!byIndex[i]) { complete = false; break; } leafHashes.push(byIndex[i].hashed); }
+      var infra = await classifySuckerInfra(C, srcSucker); // verified CCIP/native, or unknown → generic tracking
+      var remoteContexts = await resolveAcctTokens(R, pid);
+      await Promise.all(sourceContexts.map(async function (acct) {
+        var TOKEN = acct.address;
+        var ob = await clientFor(C).readContract({ address: srcSucker, abi: suckerClaimAbi, functionName: 'outboxOf', args: [TOKEN] });
+        var count = Number(ob && ob.tree && ob.tree.count);
+        var sentCount = Number(ob && ob.numberOfClaimsSent);
+        if (!Number.isSafeInteger(count) || count < 0 || !Number.isSafeInteger(sentCount) || sentCount < 0 || sentCount > count) throw new Error('The bridge outbox returned invalid counters.');
+        if (count === 0) return;
+        // The destination inbox is keyed by the sucker's exact token mapping—not by whichever accounting context
+        // happens to be first on that chain.
+        var mapping = await clientFor(C).readContract({ address: srcSucker, abi: suckerTokenMappingAbi, functionName: 'remoteTokenFor', args: [TOKEN] });
+        var mapped = mapping && (mapping.addr || mapping[3]);
+        var RTOKEN = mapped && !/^0x0+$/.test(mapped) ? ('0x' + String(mapped).slice(-40)) : null;
+        // A mapping can be disabled after its cumulative tree has entries. Recover only an unambiguous same-asset
+        // destination context; otherwise claiming against a guessed token would be unsafe.
+        if (!RTOKEN) {
+          var sourceKey = accountingTokenContextKey(TOKEN, C);
+          var candidates = remoteContexts.filter(function (context) {
+            return context.decimals === acct.decimals && accountingTokenContextKey(context.address, R) === sourceKey;
+          });
+          if (candidates.length !== 1) throw new Error('A historical bridge token mapping could not be recovered safely.');
+          RTOKEN = candidates[0].address;
+        }
+        var remoteAcct = remoteContexts.filter(function (context) { return context.address.toLowerCase() === RTOKEN.toLowerCase(); })[0];
+        if (!remoteAcct || remoteAcct.decimals !== acct.decimals) throw new Error('The bridge token mapping does not match a verified destination accounting context.');
 
-      // sent-so-far on the source, delivered root on the destination
-      var sentCount = 0;
-      try { var ob = await clientFor(C).readContract({ address: srcSucker, abi: suckerClaimAbi, functionName: 'outboxOf', args: [TOKEN] }); sentCount = Number(ob.numberOfClaimsSent); } catch (_) {}
-      var inboxRoot = SUCKER_BYTES32_ZERO;
-      try { var ib = await clientFor(R).readContract({ address: peerSucker, abi: suckerClaimAbi, functionName: 'inboxOf', args: [RTOKEN] }); inboxRoot = (ib && ib.root) || SUCKER_BYTES32_ZERO; } catch (_) {}
-      var deliveredCount = 0;
-      if (!/^0x0+$/.test(inboxRoot)) Object.keys(byIndex).forEach(function (k) { if ((byIndex[k].root || '').toLowerCase() === inboxRoot.toLowerCase()) deliveredCount = Number(k) + 1; });
+        // The outbox tree is cumulative. Read its exact size first, then scan backwards until every leaf needed to
+        // reconstruct proofs is present. A fixed recent-window cap can strand older claimable movements in the UI.
+        var fallbackLogClient = clientFor(C);
+        var logClient = lpLogsClient(C) || fallbackLogClient;
+        var latest;
+        try { latest = await logClient.getBlockNumber(); }
+        catch (_) { if (logClient === fallbackLogClient) throw _; latest = await fallbackLogClient.getBlockNumber(); }
+        var getBridgeLogs = function (window) {
+          var request = { address: srcSucker, event: INSERT_TO_OUTBOX_EVENT, args: { token: TOKEN }, fromBlock: window.lo, toBlock: window.hi };
+          return logClient.getLogs(request).catch(function (error) {
+            if (logClient === fallbackLogClient) throw error;
+            return fallbackLogClient.getLogs(request);
+          });
+        };
+        var W = 45000n, cursor = latest;
+        var cacheKey = C + ':' + srcSucker.toLowerCase() + ':' + TOKEN.toLowerCase();
+        var cachedLeaves = BRIDGE_LEAF_CACHE[cacheKey];
+        var byIndex = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.byIndex) : {};
+        var blockOf = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.blockOf) : {};
+        while (Object.keys(byIndex).length < count && cursor >= 0n) {
+          var windows = [];
+          for (var n = 0; n < 4 && cursor >= 0n; n++) {
+            var hi = cursor, lo = hi >= W ? hi - W + 1n : 0n;
+            windows.push({ lo: lo, hi: hi });
+            cursor = lo === 0n ? -1n : lo - 1n;
+          }
+          var batches = await Promise.all(windows.map(getBridgeLogs));
+          batches.forEach(function (batch) { batch.forEach(function (log) {
+            var index = Number(log.args.index);
+            if (Number.isSafeInteger(index) && index >= 0 && index < count && byIndex[index] === undefined) {
+              byIndex[index] = log.args; blockOf[index] = log.blockNumber;
+            }
+          }); });
+        }
+        if (Object.keys(byIndex).length !== count) throw new Error('The RPC could not return the complete bridge outbox history.');
+        var leafHashes = [];
+        for (var i = 0; i < count; i++) {
+          if (!byIndex[i]) throw new Error('The bridge outbox history has a missing leaf.');
+          leafHashes.push(byIndex[i].hashed);
+        }
+        var latestProof = suckerLeafProof(leafHashes, count - 1);
+        if (suckerBranchRoot(leafHashes[count - 1], latestProof, count - 1).toLowerCase() !== String(byIndex[count - 1].root).toLowerCase()) {
+          throw new Error('The reconstructed bridge outbox does not match its latest emitted root.');
+        }
 
-      // block timestamps for "Initiated"
-      var ts = {};
-      await Promise.all(Object.keys(blockOf).map(async function (k) { try { var blk = await logClient.getBlock({ blockNumber: blockOf[k] }); ts[k] = Number(blk.timestamp); } catch (_) { ts[k] = 0; } }));
-
-      for (var k = 0; k < count; k++) {
-        var a = byIndex[k]; if (!a) continue;
-        var executed = false;
-        try { var ex = await clientFor(R).readContract({ address: peerSucker, abi: suckerClaimAbi, functionName: 'executedLeafHashOf', args: [RTOKEN, BigInt(k)] }); executed = ex && !/^0x0+$/.test(ex); } catch (_) {}
-        var status, proof = null, canExecute = false;
-        if (executed) status = 'claimed';
-        else if (complete && k < deliveredCount && suckerBranchRoot(a.hashed, (proof = suckerLeafProof(leafHashes.slice(0, deliveredCount), k)), k).toLowerCase() === inboxRoot.toLowerCase()) status = 'claimable';
-        else { status = 'pending'; proof = null; canExecute = (k >= sentCount); }
-        rows.push({
-          createdAt: ts[k] || 0, chainId: C, peerChainId: R, beneficiary: '0x' + String(a.beneficiary).slice(-40),
-          projectTokenCount: a.projectTokenCount, terminalTokenAmount: a.terminalTokenAmount, status: status,
-          index: k, sourceSucker: srcSucker, peerSucker: peerSucker, metadata: a.metadata, beneficiary32: a.beneficiary,
-          proof: proof, canExecute: canExecute,
-          token: TOKEN, remoteToken: RTOKEN, tokenDecimals: acct.decimals, tokenSymbol: acct.symbol, infra: infra,
+        var ib = await clientFor(R).readContract({ address: peerSucker, abi: suckerClaimAbi, functionName: 'inboxOf', args: [RTOKEN] });
+        var inboxRoot = (ib && ib.root) || SUCKER_BYTES32_ZERO;
+        var deliveredCount = 0;
+        if (!/^0x0+$/.test(inboxRoot)) Object.keys(byIndex).forEach(function (key) {
+          if ((byIndex[key].root || '').toLowerCase() === inboxRoot.toLowerCase()) deliveredCount = Number(key) + 1;
         });
-      }
+
+        var ts = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.ts || {}) : {};
+        var timestamps = await Promise.all(Object.keys(blockOf).filter(function (key) { return ts[key] == null; }).map(async function (key) {
+          var block;
+          try { block = await logClient.getBlock({ blockNumber: blockOf[key] }); }
+          catch (error) { if (logClient === fallbackLogClient) throw error; block = await fallbackLogClient.getBlock({ blockNumber: blockOf[key] }); }
+          return [key, Number(block.timestamp)];
+        }));
+        timestamps.forEach(function (entry) { ts[entry[0]] = entry[1]; });
+        BRIDGE_LEAF_CACHE[cacheKey] = { count: count, byIndex: byIndex, blockOf: blockOf, ts: ts };
+        var executedRows = await Promise.all(Array.from({ length: count }, async function (_, index) {
+          var hash = await clientFor(R).readContract({ address: peerSucker, abi: suckerClaimAbi, functionName: 'executedLeafHashOf', args: [RTOKEN, BigInt(index)] });
+          return !!(hash && !/^0x0+$/.test(hash));
+        }));
+
+        for (var k = 0; k < count; k++) {
+          var a = byIndex[k];
+          var status, proof = null, canExecute = false;
+          if (executedRows[k]) status = 'claimed';
+          else if (k < deliveredCount) {
+            proof = suckerLeafProof(leafHashes.slice(0, deliveredCount), k);
+            if (suckerBranchRoot(a.hashed, proof, k).toLowerCase() !== inboxRoot.toLowerCase()) throw new Error('The locally reconstructed bridge proof does not match the destination inbox.');
+            status = 'claimable';
+          } else { status = 'pending'; canExecute = (k >= sentCount); }
+          rows.push({
+            createdAt: ts[k], chainId: C, peerChainId: R, beneficiary: '0x' + String(a.beneficiary).slice(-40),
+            projectTokenCount: a.projectTokenCount, terminalTokenAmount: a.terminalTokenAmount, status: status,
+            index: k, sourceSucker: srcSucker, peerSucker: peerSucker, metadata: a.metadata, beneficiary32: a.beneficiary,
+            proof: proof, canExecute: canExecute,
+            token: TOKEN, remoteToken: RTOKEN, tokenDecimals: acct.decimals, tokenSymbol: acct.symbol, infra: infra,
+          });
+        }
+      }));
     }));
   }));
   rows.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
@@ -12334,41 +12934,10 @@ function aggregateParticipants(items) {
 async function readTotalSupplyAcrossChains(project, chainIds) {
   var pid = BigInt(project.id);
   var supplies = await Promise.all(chainIds.map(function (chainId) {
-    return read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return 0n; });
+    return read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; });
   }));
-  return supplies.reduce(function (sum, value) { return sum + (value || 0n); }, 0n);
-}
-
-// Pay events carry amount + amountUsd but not the token, so we infer the paid token (USDC 6-dec vs ETH
-// 18-dec) and sum per beneficiary → literal per-token "Paid" totals (e.g. "20 USDC, 0.01 ETH").
-var BENDYSTRAW_PAY_BY_GROUP_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { payEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { items { beneficiary amount amountUsd } totalCount } }';
-var BENDYSTRAW_PAY_BY_PROJECT_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { payEvents(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { items { beneficiary amount amountUsd } totalCount } }';
-async function fetchPaidByToken(project) {
-  var chainIds = projectChainIds(project);
-  if (!chainIds.length) return {};
-  var groupId = await resolveBendystrawSuckerGroupId(project, chainIds).catch(function () { return null; });
-  var res = null;
-  if (groupId) res = await fetchBendystrawCollectionPages(BENDYSTRAW_PAY_BY_GROUP_QUERY, 'payEvents', { suckerGroupId: groupId, chainIds: chainIds, version: BENDYSTRAW_VERSION }, 100, 1000).catch(function () { return null; });
-  if (!res || !res.items.length) res = await fetchBendystrawCollectionPages(BENDYSTRAW_PAY_BY_PROJECT_QUERY, 'payEvents', { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION }, 100, 1000).catch(function () { return { items: [] }; });
-  var byAddr = {};
-  (res.items || []).forEach(function (p) {
-    var addr = (p.beneficiary || '').toLowerCase(); if (!addr) return;
-    var amt = toBigInt(p.amount); if (amt === 0n) return;
-    var usd = Number(usdFromScaled(p.amountUsd));
-    // 6-dec stablecoin if its face value is within ~10× of the USD value; else 18-dec native (ETH).
-    var asStable = Number(amt) / 1e6;
-    var bucket = (usd > 0) ? ((asStable >= usd / 10 && asStable <= usd * 10) ? { dec: 6, sym: 'USDC' } : { dec: 18, sym: 'ETH' })
-      : (Number(amt) >= 1e12 ? { dec: 18, sym: 'ETH' } : { dec: 6, sym: 'USDC' });
-    var key = bucket.sym + '@' + bucket.dec;
-    if (!byAddr[addr]) byAddr[addr] = {};
-    if (!byAddr[addr][key]) byAddr[addr][key] = { sum: 0n, dec: bucket.dec, sym: bucket.sym };
-    byAddr[addr][key].sum += amt;
-  });
-  var out = {};
-  Object.keys(byAddr).forEach(function (addr) {
-    out[addr] = Object.keys(byAddr[addr]).map(function (k) { var b = byAddr[addr][k]; return formatBalance(b.sum, b.dec, b.sym); }).join(', ');
-  });
-  return out;
+  if (supplies.some(function (value) { return value == null; })) return null;
+  return supplies.reduce(function (sum, value) { return sum + toBigInt(value); }, 0n);
 }
 
 // Count of unique owners (holders, deduped across chains) — matches the Owners tab. Null on failure.
@@ -12420,11 +12989,10 @@ async function fetchOwnersDistribution(project) {
   var participants = aggregateParticipants(result.items);
   var totalBalance = participants.reduce(function (sum, row) { return sum + row.balance; }, 0n);
   var totalSupply = await readTotalSupplyAcrossChains(project, chainIds);
-  if (!totalSupply && project.totalSupply != null) totalSupply = project.totalSupply;
   return {
     participants: participants,
     totalCount: result.totalCount,
-    totalSupply: totalSupply || totalBalance,
+    totalSupply: totalSupply,
     totalBalance: totalBalance,
     truncated: result.totalCount > result.items.length,
   };
@@ -12439,8 +13007,7 @@ function renderOwnersAll(project) {
   var body = el('div', 'owners-load');
   body.appendChild(skelOwnersDistribution());
   wrap.appendChild(body);
-  Promise.all([fetchOwnersDistribution(project), fetchPaidByToken(project).catch(function () { return {}; })]).then(function (r) {
-    var data = r[0], paidByToken = r[1] || {};
+  fetchOwnersDistribution(project).then(function (data) {
     if (!body.isConnected) return;
     body.innerHTML = '';
     if (!data.participants.length || data.totalBalance === 0n) {
@@ -12452,7 +13019,12 @@ function renderOwnersAll(project) {
     }
     body.className = 'owners-distribution';
     body.appendChild(renderOwnersPieChart(data.participants, data.totalBalance, data.totalSupply, sym));
-    body.appendChild(renderOwnersTable(data.participants, data.totalSupply || data.totalBalance, sym, project, paidByToken));
+    body.appendChild(renderOwnersTable(data.participants, data.totalSupply, sym));
+    if (data.totalSupply == null) {
+      var supplyNote = el('div', 'owners-footnote');
+      supplyNote.textContent = 'Supply shares are unavailable because the live supply could not be verified on every chain.';
+      body.appendChild(supplyNote);
+    }
     if (data.truncated) {
       var note = el('div', 'owners-footnote');
       note.textContent = 'Showing the first ' + data.participants.length + ' indexed owners by balance.';
@@ -12626,7 +13198,7 @@ function renderOwnersPieChart(participants, totalBalance, totalSupply, sym) {
     svg.appendChild(ring);
   } else {
     drawable.forEach(function (row) {
-      var slice = Number(row.balance) / Number(totalBalance);
+      var slice = Number(row.balance * 1000000000000n / totalBalance) / 1000000000000;
       if (!isFinite(slice) || slice <= 0) return;
       var next = angle + slice * Math.PI * 2;
       var path = document.createElementNS(svgNS, 'path');
@@ -12836,7 +13408,7 @@ function buildAccountSearch(items, onChange, opts) {
   return { el: wrap };
 }
 
-function renderOwnersTable(participants, totalSupply, sym, project, paidByToken) {
+function renderOwnersTable(participants, totalSupply, sym) {
   var outer = el('div', 'owners-table-outer');
   // Account search (chips filter the table) — only worth showing once the list is long enough to scan. The
   // AMM/Market row isn't a searchable account.
@@ -12895,13 +13467,10 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
     tr.appendChild(chains);
 
     var paid = el('span', 'owners-paid');
-    // Prefer the literal per-token amounts paid (e.g. "20 USDC, 0.01 ETH"), derived from this account's pay
-    // events; fall back to the USD total (volumeUsd), then the raw token.
-    var lit = paidByToken && paidByToken[(row.address || '').toLowerCase()];
+    // Pay events do not carry their source token. volumeUsd is the only indexed denomination that can be
+    // shown exactly; do not infer ETH/USDC from raw magnitude or relabel it with the primary context.
     var paidUsd = Number(usdFromScaled(row.volumeUsd));
-    if (lit) paid.textContent = lit;
-    else if (paidUsd > 0) paid.textContent = formatUsd(paidUsd);
-    else { var accTok = project.acctToken || { decimals: 18, symbol: 'ETH' }; paid.textContent = formatBalance(row.volume, accTok.decimals, accTok.symbol); }
+    paid.textContent = paidUsd > 0 ? formatUsd(paidUsd) : '—';
     tr.appendChild(paid);
     return tr;
   }
@@ -12920,13 +13489,19 @@ function renderOwnersTable(participants, totalSupply, sym, project, paidByToken)
   return outer;
 }
 
+function formatLoanSourceAmount(project, loan, raw) {
+  var meta = sourceTokenMeta(project, Number(loan.chainId) || project.chainId, loan.token);
+  if (meta) return formatBalance(toBigInt(raw), meta.decimals, meta.symbol);
+  var token = loan.token ? ' · ' + truncAddr(loan.token) : '';
+  return toBigInt(raw).toLocaleString('en-US') + ' raw units' + token;
+}
+
 // Loans table (Owners-style). Columns: Address, Collateral, Borrowed, Opened, Prepaid, Prepaid until,
 // Outstanding fee (source fee accruing past the prepaid window), Expires. When opts.mine, an extra Repay
 // column with a button per loan (opts.onRepay(loan)).
 function renderLoansTable(project, loans, opts) {
   opts = opts || {};
   var sym = project.tokenSymbol || 'tokens';
-  var baseLbl = baseUnitLabel(project);
   var now = Math.floor(Date.now() / 1000);
   var cols = ['Address', 'Collateral', 'Borrowed', 'Opened', 'Prepaid', 'Prepaid until', 'Outstanding fee', 'Due by'];
   if (opts.mine) cols.push('');
@@ -12941,7 +13516,7 @@ function renderLoansTable(project, loans, opts) {
     var addr = el('span', 'owners-account'); addr.appendChild(addressNode(loan.owner || loan.beneficiary)); tr.appendChild(addr);
 
     var coll = el('span'); coll.textContent = formatCompactTokenAmount(toBigInt(loan.collateral)) + ' ' + sym; tr.appendChild(coll);
-    var bor = el('span'); bor.textContent = formatBalance(toBigInt(loan.borrowAmount), 18, baseLbl); tr.appendChild(bor);
+    var bor = el('span'); bor.textContent = formatLoanSourceAmount(project, loan, loan.borrowAmount); tr.appendChild(bor);
     var opened = el('span', 'loans-muted'); opened.textContent = timeAgo(Number(loan.createdAt)); tr.appendChild(opened);
 
     var prepaidPct = Number(loan.prepaidFeePercent || 0) / 10;
@@ -12950,7 +13525,7 @@ function renderLoansTable(project, loans, opts) {
     var puCell = el('span', 'loans-muted'); puCell.textContent = until > now ? formatDateShort(until) : 'passed'; tr.appendChild(puCell);
 
     var outFee = loanOutstandingFee(loan, now);
-    var of = el('span'); of.textContent = outFee == null ? 'expired' : (outFee === 0n ? '—' : '+ ' + formatBalance(outFee, 18, baseLbl)); if (outFee && outFee > 0n) of.className = 'loans-fee'; tr.appendChild(of);
+    var of = el('span'); of.textContent = outFee == null ? 'expired' : (outFee === 0n ? '—' : '+ ' + formatLoanSourceAmount(project, loan, outFee)); if (outFee && outFee > 0n) of.className = 'loans-fee'; tr.appendChild(of);
 
     var exp = Number(loan.createdAt || 0) + LOAN_LIQUIDATION_SECONDS;
     var expCell = el('span', 'loans-muted'); expCell.textContent = formatDateShort(exp); tr.appendChild(expCell);
@@ -12973,7 +13548,7 @@ function fetchPendingReservedPerChain(project) {
   var pid = BigInt(project.id);
   var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
   return Promise.all(chains.map(function (chain) {
-    return read(chain.id, 'JBController', pendingReservedAbi, 'pendingReservedTokenBalanceOf', [pid])
+    return controllerRead(chain.id, pid, pendingReservedAbi, 'pendingReservedTokenBalanceOf', [pid])
       .then(function (v) { return { id: chain.id, name: chain.name, pending: v }; })
       .catch(function () { return { id: chain.id, name: chain.name, pending: null }; });
   }));
@@ -13275,33 +13850,38 @@ function openQueueRulesetModal(project) {
     details: { name: project.name || '', ticker: project.tokenSymbol || '' },
     stages: [],
     afterMode: 'cycle',
-    shopChoice: null,                    // queue-time 721-shop choice: 'continue' | 'remove' (set once a shop is found)
-    currentDataHook: '',                 // the project's current 721 hook (= single-chain metadata.dataHook)
+    shopChoice: null,                    // queue-time 721-shop choice: continue | remove | new
+    currentDataHook: '',                 // the ruleset data hook to preserve (not necessarily the 721 hook)
+    currentShopHook: '',                 // verified 721 hook, if one exists
+    currentUseDataHookForPay: false,
     currentUseDataHookForCashOut: false, // preserve item-redemption on "continue"
-    isOmnichain: omnichain,              // omnichain queues carry the shop forward automatically (no metadata.dataHook)
+    currentDataHookByChain: {},
+    currentUseDataHookForPayByChain: {},
+    currentUseDataHookForCashOutByChain: {},
+    queueBaseByChain: {},
+    controllerByChain: {},
+    isOmnichain: false,                  // true only when the live data-hook wrapper is JBOmnichainDeployer
+    canAddShop: false,
+    canRemoveShop: false,
+    unsupportedMultiCurrencyAccess: false, // the concise editor cannot preserve >1 limit currency per token
+    unsupportedQueueReason: '',
+    queueSourceLoading: true,
+    queueSourceVerified: false,
+    queueSourceError: null,
   };
   var chainSelected = {}; allChains.forEach(function (c) { chainSelected[c.id] = true; });
 
-  function fallbackQueueAcct() {
-    var p = project.acctToken;
-    if (p && isAddr(p.address)) {
-      return {
-        address: p.address,
-        decimals: Number(p.decimals) || 18,
-        symbol: p.symbol || acctTokenLabel(p.address),
-        currency: p.currency != null ? p.currency : tokenCurrencyIdForAccounting(p.address),
-      };
-    }
-    return { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH', currency: tokenCurrencyIdForAccounting(NATIVE_TOKEN) };
-  }
-
   function normalizeQueueAcct(acct) {
-    if (!acct || !isAddr(acct.address)) return fallbackQueueAcct();
+    if (!acct || !isAddr(acct.address)) throw new Error('The accounting token could not be verified.');
+    var decimals = Number(acct.decimals);
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error('The accounting token decimals are invalid.');
+    var currency = acct.currency != null ? acct.currency : tokenCurrencyIdForAccounting(acct.address);
+    if (currency == null) throw new Error('The accounting token currency could not be verified.');
     var out = {
       address: acct.address,
-      decimals: Number(acct.decimals) || 18,
+      decimals: decimals,
       symbol: acct.symbol || acctTokenLabel(acct.address),
-      currency: acct.currency != null ? acct.currency : tokenCurrencyIdForAccounting(acct.address),
+      currency: currency,
     };
     return out;
   }
@@ -13324,42 +13904,209 @@ function openQueueRulesetModal(project) {
     else if (isUsdc) state.accepts = ['usdc'];
     else {
       state.accepts = ['custom'];
-      state.customToken = { address: acct.address, symbol: acct.symbol || acctTokenLabel(acct.address), decimals: Number(acct.decimals) || 18, status: 'ok' };
+      state.customToken = { address: acct.address, symbol: acct.symbol || acctTokenLabel(acct.address), decimals: acct.decimals, status: 'ok' };
     }
     state.storePricingCurrency = queueDefaultCurrency(acct, chainId);
   }
 
-  // Read the current ruleset's data hook (the 721 shop; on single-chain it IS metadata.dataHook). Default the
-  // choice to "continue" so queueing re-passes the hook — the encoder's default would silently DETACH the shop.
-  function applyCurrentShopMetadata(m) {
-    state.shopChecked = true; // the shop control renders once we know whether a shop exists
-    if (m && m.dataHook && !/^0x0+$/.test(m.dataHook)) {
-      state.currentDataHook = m.dataHook;
-      state.currentUseDataHookForCashOut = !!m.useDataHookForCashOut;
+  // Resolve the data hook and the 721 hook as two different identities. REVOwner and JBOmnichainDeployer are
+  // composition wrappers; treating either wrapper itself as a shop would offer destructive "replace/remove" UI.
+  async function applyCurrentShopMetadata(m, ruleset) {
+    if (!m) throw new Error('Ruleset metadata is unavailable.');
+    var dataHook = m.dataHook && !/^0x0+$/.test(m.dataHook) ? m.dataHook : '';
+    state.currentDataHook = dataHook;
+    state.currentUseDataHookForPay = !!m.useDataHookForPay;
+    state.currentUseDataHookForCashOut = !!m.useDataHookForCashOut;
+    state.currentShopHook = '';
+    state.isOmnichain = false;
+    state.canAddShop = false;
+    state.canRemoveShop = false;
+    state.shopChoice = dataHook ? 'continue' : null; // always preserve a non-shop hook too
+
+    if (project.isRevnet) {
+      var revo = getAddress('REVOwner', project.chainId);
+      if (!revo || !dataHook || dataHook.toLowerCase() !== revo.toLowerCase()) throw new Error('The revnet REVOwner data hook could not be verified.');
+      var revShop = await read(project.chainId, 'REVOwner', REVO_TIERED_HOOK_ABI, 'tiered721HookOf', [pid]);
+      state.currentShopHook = revShop && !/^0x0+$/.test(revShop) ? revShop : '';
+      // A revnet's 721 hook is owned/composed by REVOwner and cannot be replaced by the generic queue deployers.
+      state.shopChecked = false;
+      return;
+    }
+
+    state.shopChecked = true;
+    if (!dataHook) {
+      state.canAddShop = true;
+      return;
+    }
+    var omniDeployer = getAddress('JBOmnichainDeployer', project.chainId);
+    if (omniDeployer && dataHook.toLowerCase() === omniDeployer.toLowerCase()) {
+      state.isOmnichain = true;
+      var wrapperState = await Promise.all([
+        clientFor(project.chainId).readContract({ address: omniDeployer, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [pid, toBigInt(ruleset.id)] }),
+        clientFor(project.chainId).readContract({ address: omniDeployer, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [pid, toBigInt(ruleset.id)] }),
+      ]);
+      var cfg = wrapperState[0];
+      var omniShop = cfg && (cfg.hook || cfg[0]);
+      state.currentShopHook = omniShop && !/^0x0+$/.test(omniShop) ? omniShop : '';
+      if (!state.currentShopHook) throw new Error('The omnichain wrapper’s current 721 hook could not be verified.');
+      var extra = wrapperState[1];
+      var extraHook = extra && (extra.dataHook || extra[0]);
+      state.currentDataHook = extraHook && !/^0x0+$/.test(extraHook) ? extraHook : '';
+      state.currentUseDataHookForPay = !!(extra && (extra.useDataHookForPay != null ? extra.useDataHookForPay : extra[1]));
+      state.currentUseDataHookForCashOut = !!(extra && (extra.useDataHookForCashOut != null ? extra.useDataHookForCashOut : extra[2]));
       state.shopChoice = 'continue';
+      state.canAddShop = true; // the wrapper composes/carries its extra hook
+      return;
+    }
+
+    // A direct single-chain data hook is a shop only if it exposes the 721 STORE surface. Otherwise preserve it
+    // as an opaque custom hook and do not offer a new shop that would silently replace it.
+    var store = await clientFor(project.chainId).readContract({ address: dataHook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }).catch(function () { return null; });
+    if (store && !/^0x0+$/.test(store)) {
+      state.currentShopHook = dataHook;
+      state.canRemoveShop = true;
+      state.canAddShop = true;
     }
   }
 
-  read(project.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (r) {
-    var m = r ? (r[1] || r.metadata) : null;
-    applyCurrentShopMetadata(m);
-    renderEditor();
-  }).catch(function () { applyCurrentShopMetadata(project.metadata); renderEditor(); });
+  async function loadQueueDataHooksAcrossChains() {
+    var rows = await Promise.all(allChains.map(async function (chain) {
+      var controller = await controllerAddressFor(chain.id, pid);
+      var live = await Promise.all([
+        clientFor(chain.id).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }),
+        clientFor(chain.id).readContract({ address: controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [pid] }),
+      ]);
+      var current = live[0], upcoming = live[1];
+      if (!current || !current[0] || toBigInt(current[0].id) === 0n || !current[1]) throw new Error('No current ruleset on ' + (chain.name || chain.id) + '.');
+      var ruleset = current[0], metadata = current[1];
+      if (upcoming && upcoming[0] && toBigInt(upcoming[0].id) > 0n && String(upcoming[0].id) !== String(current[0].id)) {
+        ruleset = upcoming[0]; metadata = upcoming[1];
+      }
+      if (!metadata) throw new Error('No ruleset metadata on ' + (chain.name || chain.id) + '.');
+      var hook = metadata.dataHook && !/^0x0+$/.test(metadata.dataHook) ? metadata.dataHook : '';
+      var preservedHook = hook;
+      var preservedUsePay = !!metadata.useDataHookForPay;
+      var preservedUseCashOut = !!metadata.useDataHookForCashOut;
+      if (project.isRevnet) {
+        var expectedRevo = getAddress('REVOwner', chain.id);
+        if (!expectedRevo || !hook || hook.toLowerCase() !== expectedRevo.toLowerCase()) throw new Error('REVOwner is not the verified data hook on ' + (chain.name || chain.id) + '.');
+      } else {
+        var wrapper = getAddress('JBOmnichainDeployer', chain.id);
+        var usesWrapper = !!(wrapper && hook && hook.toLowerCase() === wrapper.toLowerCase());
+        if (usesWrapper !== state.isOmnichain) throw new Error('The project does not use the same data-hook composition route on every chain.');
+        if (usesWrapper) {
+          var canonicalController = getAddress('JBController', chain.id);
+          if (!canonicalController || controller.toLowerCase() !== canonicalController.toLowerCase()) throw new Error('The omnichain wrapper is not connected to this project’s current controller on ' + (chain.name || chain.id) + '.');
+          var extra = await clientFor(chain.id).readContract({ address: wrapper, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [pid, toBigInt(ruleset.id)] });
+          var extraHook = extra && (extra.dataHook || extra[0]);
+          preservedHook = extraHook && !/^0x0+$/.test(extraHook) ? extraHook : '';
+          preservedUsePay = !!(extra && (extra.useDataHookForPay != null ? extra.useDataHookForPay : extra[1]));
+          preservedUseCashOut = !!(extra && (extra.useDataHookForCashOut != null ? extra.useDataHookForCashOut : extra[2]));
+        }
+      }
+      return { chainId: chain.id, controller: controller, ruleset: ruleset, metadata: metadata, hook: hook, preservedHook: preservedHook, preservedUsePay: preservedUsePay, preservedUseCashOut: preservedUseCashOut };
+    }));
+    var anyHook = false;
+    rows.forEach(function (row) {
+      state.queueBaseByChain[row.chainId] = row;
+      state.controllerByChain[row.chainId] = row.controller;
+      state.currentDataHookByChain[row.chainId] = row.preservedHook;
+      state.currentUseDataHookForPayByChain[row.chainId] = row.preservedUsePay;
+      state.currentUseDataHookForCashOutByChain[row.chainId] = row.preservedUseCashOut;
+      if (row.preservedHook) anyHook = true;
+    });
+    var configFingerprints = rows.map(function (row) {
+      var r = row.ruleset;
+      return [r.duration, r.weight, r.weightCutPercent, r.approvalHook, r.metadata].map(String).join('|');
+    });
+    if (configFingerprints.some(function (fingerprint) { return fingerprint !== configFingerprints[0]; })) {
+      state.unsupportedMultiCurrencyAccess = true;
+      if (!state.unsupportedQueueReason) state.unsupportedQueueReason = 'The base ruleset configuration differs across chains, so a home-chain prefill cannot preserve every chain exactly.';
+    }
+    if (anyHook && !state.shopChoice) state.shopChoice = 'continue';
+    // A direct multi-chain project can safely preserve each chain's hook, but this concise editor cannot prove
+    // that replacing/removing independently deployed hooks has identical semantics on every chain.
+    if (allChains.length > 1 && !state.isOmnichain && !project.isRevnet && anyHook) {
+      state.canAddShop = false; state.canRemoveShop = false;
+    }
+  }
+
+  function queueLimitFingerprint(rows, token) {
+    var tokenCurrency = tokenCurrencyIdForAccounting(token);
+    return (rows || []).map(function (row) {
+      var currency = toBigInt(row.currency);
+      return { amount: String(row.amount), currency: currency === tokenCurrency ? 'token' : String(currency) };
+    }).sort(function (a, b) { return a.currency.localeCompare(b.currency); });
+  }
+  function queueSplitFingerprint(rows) {
+    return (rows || []).map(function (sp) {
+      return [sp.percent, sp.projectId, String(sp.beneficiary || '').toLowerCase(), !!sp.preferAddToBalance,
+        sp.lockedUntil, String(sp.hook || '').toLowerCase()].map(String).join('|');
+    });
+  }
+  async function verifyQueueConfigurationAcrossChains(kinds) {
+    var snapshots = await Promise.all(allChains.map(async function (chain) {
+      var base = state.queueBaseByChain[chain.id];
+      var term = getAddress('JBMultiTerminal', chain.id);
+      var fal = getAddress('JBFundAccessLimits', chain.id);
+      var splits = getAddress('JBSplits', chain.id);
+      if (!base || !term || !fal || !splits) throw new Error('Queue source contracts are unavailable on ' + (chain.name || chain.id) + '.');
+      var contexts = await resolveAcctTokens(chain.id, pid);
+      var expected = kinds.map(function (kind) {
+        return { address: kind.addrForChain(chain.id), decimals: Number(kind.decimals) };
+      });
+      if (contexts.length !== expected.length || expected.some(function (wanted) {
+        return !wanted.address || !contexts.some(function (ctx) {
+          return ctx.address.toLowerCase() === wanted.address.toLowerCase() && Number(ctx.decimals) === wanted.decimals
+            && toBigInt(ctx.currency) === tokenCurrencyIdForAccounting(ctx.address);
+        });
+      })) throw new Error('Accounting contexts differ across chains.');
+
+      var byToken = await Promise.all(kinds.map(async function (kind) {
+        var token = kind.addrForChain(chain.id);
+        var values = await Promise.all([
+          read(chain.id, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, toBigInt(base.ruleset.id), term, token]),
+          read(chain.id, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, toBigInt(base.ruleset.id), term, token]),
+          read(chain.id, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, toBigInt(base.ruleset.id), BigInt(token)]),
+        ]);
+        return { key: kind.key, payouts: queueLimitFingerprint(values[0], token), allowances: queueLimitFingerprint(values[1], token), splits: queueSplitFingerprint(values[2]) };
+      }));
+      var reserved = await read(chain.id, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, toBigInt(base.ruleset.id), RESERVED_TOKEN_SPLIT_GROUP]);
+      return JSON.stringify({ byToken: byToken, reserved: queueSplitFingerprint(reserved) });
+    }));
+    if (snapshots.some(function (fingerprint) { return fingerprint !== snapshots[0]; })) {
+      state.unsupportedMultiCurrencyAccess = true;
+      if (!state.unsupportedQueueReason) state.unsupportedQueueReason = 'Accounting contexts, fund access, or splits differ across chains, so this home-chain editor cannot preserve all of them exactly.';
+    }
+  }
 
   function renderEditor() {
     body.innerHTML = '';
+    if (state.queueSourceLoading) {
+      var sourceLoading = el('div', 'operator-edit-across'); sourceLoading.style.marginBottom = '18px';
+      sourceLoading.textContent = 'Verifying the live ruleset, fund access, splits, and shop hook…'; body.appendChild(sourceLoading);
+    } else if (state.queueSourceError) {
+      var sourceError = el('div', 'operator-edit-across'); sourceError.style.marginBottom = '18px';
+      sourceError.textContent = state.queueSourceError; body.appendChild(sourceError);
+    }
+    if (state.unsupportedMultiCurrencyAccess) {
+      var accessWarning = el('div', 'operator-edit-across');
+      accessWarning.style.marginBottom = '18px';
+      accessWarning.textContent = state.unsupportedQueueReason || 'This ruleset contains fund-access or split semantics this editor cannot preserve exactly, so queueing is disabled here. Use the advanced Queue Ruleset contract form instead.';
+      body.appendChild(accessWarning);
+    }
     body.appendChild(renderStages(state, renderEditor, { noHead: true }));
 
     // 721 shop choice. Shows once the current-hook read resolves. With a live shop: keep (single-chain
     // re-passes the hook so it isn't dropped) / remove (single-chain only — no omnichain detach path) / new.
     // With NO shop: a checkbox to add one. "new"/add deploys a fresh collection via the one-call deployer.
-    if (state.shopChecked) {
+    if (state.shopChecked && !project.isRevnet) {
       var shopH = el('div', 'operator-edit-label'); shopH.style.marginTop = '18px'; shopH.textContent = 'Shop (NFT items)'; body.appendChild(shopH);
-      if (state.currentDataHook) {
+      if (state.currentShopHook) {
         var shopBox = el('div', 'queue-shop-choice');
         var shopOpts = [['continue', 'Keep the current shop', 'Same items for purchase remain during the new rulesets.']];
-        if (!state.isOmnichain) shopOpts.push(['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.']);
-        shopOpts.push(['new', 'Start a new shop', 'Make a new shop with the new rulesets, replacing the current one entirely.']);
+        if (state.canRemoveShop) shopOpts.push(['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.']);
+        if (state.canAddShop) shopOpts.push(['new', 'Start a new shop', 'Make a new shop with the new rulesets, replacing the current one entirely.']);
         shopOpts.forEach(function (o) {
           var row = el('label', 'queue-shop-opt');
           var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0];
@@ -13370,15 +14117,19 @@ function openQueueRulesetModal(project) {
           row.appendChild(rb); row.appendChild(txt); shopBox.appendChild(row);
         });
         body.appendChild(shopBox);
-      } else {
+      } else if (state.canAddShop) {
         // No current shop — let the operator add one with this ruleset (deploys a fresh 721 collection).
         var addRow = el('label', 'queue-shop-opt');
         var addCb = document.createElement('input'); addCb.type = 'checkbox'; addCb.checked = state.shopChoice === 'new';
-        addCb.addEventListener('change', function () { state.shopChoice = addCb.checked ? 'new' : null; if (addCb.checked) ensureNewShopState(state, allChains); renderEditor(); });
+        addCb.addEventListener('change', function () { state.shopChoice = addCb.checked ? 'new' : (state.currentDataHook ? 'continue' : null); if (addCb.checked) ensureNewShopState(state, allChains); renderEditor(); });
         var addTxt = el('div', 'queue-shop-opt-txt');
         var addNm = el('div', 'queue-shop-opt-name'); addNm.textContent = 'Sell NFT items'; addTxt.appendChild(addNm);
         var addSub = el('div', 'queue-shop-opt-sub'); addSub.textContent = 'This project has no shop yet — add one and start selling NFT items with this ruleset.'; addTxt.appendChild(addSub);
         addRow.appendChild(addCb); addRow.appendChild(addTxt); body.appendChild(addRow);
+      } else {
+        var opaqueHook = el('div', 'operator-edit-across');
+        opaqueHook.textContent = 'This project uses a non-shop data hook. It will be preserved; adding a shop here is disabled because it would replace that hook.';
+        body.appendChild(opaqueHook);
       }
       // Starting/adding a shop → the full collection + items form (reused verbatim from the create flow).
       if (state.shopChoice === 'new') {
@@ -13397,7 +14148,9 @@ function openQueueRulesetModal(project) {
         chainBox.appendChild(r2);
       });
       body.appendChild(chainBox);
-      var memoNote = el('div', 'rf-funds-sub'); memoNote.style.marginTop = '8px'; memoNote.textContent = 'Queues the same ruleset(s) on each selected chain via the omnichain deployer (one prepaid relayr payment).'; body.appendChild(memoNote);
+      var memoNote = el('div', 'rf-funds-sub'); memoNote.style.marginTop = '8px'; memoNote.textContent = state.isOmnichain
+        ? 'Queues the same ruleset(s) through the verified omnichain data-hook wrapper on each selected chain (one prepaid relayr payment).'
+        : 'Queues the same ruleset(s) directly through each chain’s controller (one prepaid relayr payment).'; body.appendChild(memoNote);
     }
   }
 
@@ -13408,57 +14161,102 @@ function openQueueRulesetModal(project) {
     acct = normalizeQueueAcct(acct);
     applyQueueAccounting(acct, project.chainId);
 
-    return read(project.chainId, 'JBController', upcomingRulesetAbi, 'upcomingRulesetOf', [pid]).catch(function () { return null; }).then(function (up) {
+    return Promise.all([
+      controllerRead(project.chainId, pid, currentRulesetAbi, 'currentRulesetOf', [pid]),
+      controllerRead(project.chainId, pid, upcomingRulesetAbi, 'upcomingRulesetOf', [pid]),
+    ]).then(async function (liveRulesets) {
+      var current = liveRulesets[0];
+      var up = liveRulesets[1];
+      if (!current || !current[0] || toBigInt(current[0].id) === 0n || !current[1]) throw new Error('No live current ruleset could be verified.');
       // A genuinely-queued upcoming ruleset has an id distinct from the current one (an auto-cycle reuses the
       // same config id). When present, it's the base; otherwise base on the current ruleset.
-      var baseR = project.ruleset, baseM = project.metadata;
-      if (up && up[0] && Number(up[0].id) > 0 && (!project.ruleset || String(up[0].id) !== String(project.ruleset.id))) { baseR = up[0]; baseM = up[1]; }
+      var baseR = current[0], baseM = current[1];
+      if (up && up[0] && Number(up[0].id) > 0 && String(up[0].id) !== String(current[0].id)) { baseR = up[0]; baseM = up[1]; }
       if (!baseR) throw new Error('No current ruleset');
+      await applyCurrentShopMetadata(baseM, baseR);
+      await loadQueueDataHooksAcrossChains();
 
       var terminal = getAddress('JBMultiTerminal', project.chainId);
       var fal = getAddress('JBFundAccessLimits', project.chainId);
       var splitsAddr = getAddress('JBSplits', project.chainId);
       var rid = baseR ? BigInt(baseR.id) : 0n;
+      if (!terminal || !fal || !splitsAddr || !rid) throw new Error('The fund-access contracts are unavailable.');
       return Promise.all([
-        (fal && terminal && rid) ? read(project.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, acct.address]).catch(function () { return []; }) : Promise.resolve([]),
-        (fal && terminal && rid) ? read(project.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, rid, terminal, acct.address]).catch(function () { return []; }) : Promise.resolve([]),
-        (splitsAddr && rid) ? read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(acct.address)]).catch(function () { return []; }) : Promise.resolve([]),
-        (splitsAddr && rid) ? read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]).catch(function () { return []; }) : Promise.resolve([]),
+        read(project.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, acct.address]),
+        read(project.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, rid, terminal, acct.address]),
+        read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(acct.address)]),
+        read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]),
       ]).then(function (R) {
+        function markUnsupported(reason) {
+          state.unsupportedMultiCurrencyAccess = true;
+          if (!state.unsupportedQueueReason) state.unsupportedQueueReason = reason;
+        }
+        function splitSemanticsArePreservable(splits) {
+          return (splits || []).every(function (sp) { return !sp.preferAddToBalance; });
+        }
+        function finitePayoutHasNoOwnerRemainder(limit, splits) {
+          if (!limit || toBigInt(limit.amount) === 0n || toBigInt(limit.amount) >= (2n ** 200n)) return true;
+          return (splits || []).reduce(function (sum, sp) { return sum + Number(sp.percent || 0); }, 0) === SPLITS_TOTAL;
+        }
+        if ((R[0] || []).length > 1 || (R[1] || []).length > 1) markUnsupported('This ruleset uses multiple limit currencies for one accounting token, which the concise editor cannot preserve.');
+        if (!splitSemanticsArePreservable((R[2] || []).concat(R[3] || []))) markUnsupported('At least one current split prefers add-to-balance, which the concise editor cannot preserve.');
+        if (!finitePayoutHasNoOwnerRemainder((R[0] || [])[0], R[2])) markUnsupported('A finite payout limit leaves an implicit owner remainder, which the concise editor cannot reconstruct without changing its split semantics.');
         var stage = stageFromBaseRuleset(baseR, baseM, R[0], R[1], R[2], R[3], acct, project.chainId);
+        if (Number(stage.durationSeconds || 0) <= 0 && (R[2] || []).concat(R[3] || []).some(function (sp) { return Number(sp.lockedUntil || 0) > 0; })) {
+          markUnsupported('This flexible ruleset contains locked splits, which the concise editor would clear.');
+        }
         state.stages = [stage];
         renderEditor();
         // If the project accepts more than one token, switch payouts to per-token blocks ("Payout USDC
         // funds" / "Payout ETH funds"), prefilling each token's payout limit + splits from the base ruleset.
-        acctKindsForFunds(project).then(function (kinds) {
-          if (!kinds || !kinds.length) return;
+        return acctKindsForFunds(project).then(async function (kinds) {
+          if (!kinds || !kinds.length) throw new Error('No accounting contexts could be verified.');
+          await verifyQueueConfigurationAcrossChains(kinds);
           if (kinds.length <= 1 && state.accepts[0] !== 'custom') return;
           var lpHook = (getAddress('BannyLPSplitHook', project.chainId) || '').toLowerCase();
-          var tokCurOf = function (t) { try { return Number(BigInt(t) & 0xffffffffn); } catch (_) { return 0; } };
           return Promise.all(kinds.map(function (kind) {
             var tok = kind.addrForChain(project.chainId);
-            if (!(splitsAddr && fal && terminal && rid && tok)) { stage.payoutByKind[kind.key] = { mode: 'none', recipients: [] }; return Promise.resolve(); }
+            if (!tok) throw new Error('An accounting token is not configured on the home chain.');
             return Promise.all([
-              read(project.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, tok]).catch(function () { return []; }),
-              read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(tok)]).catch(function () { return []; }),
+              read(project.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, tok]),
+              read(project.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, rid, terminal, tok]),
+              read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(tok)]),
             ]).then(function (rr) {
-              var lim = (rr[0] || [])[0], splits = rr[1] || [], pk;
+              if ((rr[0] || []).length > 1 || (rr[1] || []).length > 1) markUnsupported('This ruleset uses multiple limit currencies for one accounting token, which the concise editor cannot preserve.');
+              var lim = (rr[0] || [])[0], allowances = rr[1] || [], splits = rr[2] || [], pk;
+              var tokenCurrency = Number(tokenCurrencyIdForAccounting(tok));
+              if (lim && Number(lim.currency) !== tokenCurrency) markUnsupported('A payout limit is denominated in a non-token currency, which the multi-token editor cannot preserve.');
+              if (!splitSemanticsArePreservable(splits)) markUnsupported('At least one current payout split prefers add-to-balance, which the concise editor cannot preserve.');
+              if (!finitePayoutHasNoOwnerRemainder(lim, splits)) markUnsupported('A finite payout limit leaves an implicit owner remainder, which the concise editor cannot reconstruct without changing its split semantics.');
               if (!lim || BigInt(lim.amount) === 0n) pk = { mode: 'none', recipients: [] };
               else if (BigInt(lim.amount) >= (2n ** 200n)) pk = { mode: 'unlimited', recipients: splits.map(function (sp) { return recFromSplit(sp, lpHook, (Number(sp.percent) / SPLITS_TOTAL) * 100, ''); }) };
               else {
                 var total = BigInt(lim.amount);
-                var dec = (Number(lim.currency) === tokCurOf(tok)) ? kind.decimals : 18; // limit may be token-denominated or ETH/USD (18)
+                var dec = kind.decimals;
                 var recs = splits.map(function (sp) { return recFromSplit(sp, lpHook, 0, formatAmount(total * BigInt(sp.percent) / BigInt(SPLITS_TOTAL), dec)); });
                 if (!recs.length) recs = [{ type: 'wallet', address: '', projectId: 0, percent: 0, amountEth: '' }];
                 pk = { mode: 'limited', recipients: recs };
               }
+              var allowance = allowances[0];
+              var allowanceOn = !!(allowance && toBigInt(allowance.amount) > 0n);
+              var allowanceUnlimited = allowanceOn && toBigInt(allowance.amount) >= (2n ** 200n);
+              if (allowanceOn && !allowanceUnlimited) markUnsupported('A finite surplus allowance cannot be preserved by the multi-token editor.');
+              var expectedAllowanceOn = !!stage.surplusAllowanceOn && pk.mode !== 'unlimited';
+              if (allowanceOn !== expectedAllowanceOn) markUnsupported('Surplus allowances differ by accounting token, which the multi-token editor cannot preserve.');
               stage.payoutByKind[kind.key] = pk;
             });
-          })).then(function () { state.payoutKinds = kinds; renderEditor(); });
-        }).catch(function () {});
+          })).then(function () { state.payoutKinds = kinds; });
+        }).then(function () {
+          state.queueSourceLoading = false; state.queueSourceVerified = true; state.queueSourceError = null;
+          renderEditor();
+        });
       });
     });
-  }).catch(function () { body.innerHTML = ''; body.textContent = 'Could not read the current ruleset.'; });
+  }).catch(function () {
+    state.queueSourceLoading = false; state.queueSourceVerified = false;
+    state.queueSourceError = 'Could not verify the complete live ruleset, fund-access, splits, and shop configuration. Queueing is disabled; nothing can be sent.';
+    renderEditor();
+  });
 
   // Build one create-flow `stage` from the base ruleset (ruleset struct `r` + decoded metadata `m`).
   function stageFromBaseRuleset(r, m, payoutLims, surplusAllows, payoutSplits, reservedSplits, acct, chainId) {
@@ -13536,7 +14334,11 @@ function openQueueRulesetModal(project) {
   // One on-chain split → a create-flow recipient (wallet / project / market-funding LP hook).
   function recFromSplit(sp, lpHook, pct, amountEth) {
     var base = { percent: pct || 0, amountEth: amountEth || '', lockedUntil: Number(sp.lockedUntil) || 0 };
-    if (sp.hook && lpHook && String(sp.hook).toLowerCase() === lpHook) { base.type = 'lphook'; base.address = ''; base.projectId = 0; return base; }
+    // Preserve every hook address exactly. Treat even the known LP hook as a custom hook here because the generic
+    // create-flow LP preset rewrites its beneficiary from the connected wallet, which would mutate an existing split.
+    if (sp.hook && !/^0x0+$/.test(String(sp.hook))) {
+      base.type = 'customhook'; base.hookAddress = sp.hook; base.address = sp.beneficiary || ''; base.projectId = Number(sp.projectId) || 0; return base;
+    }
     if (Number(sp.projectId) > 0) { base.type = 'project'; base.projectId = Number(sp.projectId); base.address = sp.beneficiary || ''; return base; }
     base.type = 'wallet'; base.address = sp.beneficiary || ''; base.projectId = 0; return base;
   }
@@ -13567,8 +14369,16 @@ function openQueueRulesetModal(project) {
     // After a successful Safe propose the button becomes "Go to Owner/Operator tab" for later signing/execution.
     if (queuedToSafe) { modal.close(); location.hash = projectHash(project, queueTab); return; }
     if (busy) return;
+    if (state.queueSourceLoading || !state.queueSourceVerified || state.queueSourceError) {
+      setStatus('Nothing was sent. The live ruleset, fund access, splits, and shop hook must all be verified before queueing.', 'error');
+      return;
+    }
+    if (state.unsupportedMultiCurrencyAccess) {
+      setStatus('Nothing was sent. ' + (state.unsupportedQueueReason || 'This editor cannot preserve the current fund-access and split configuration exactly.') + ' Use the advanced Queue Ruleset contract form.', 'error');
+      return;
+    }
     // Removing a live shop is destructive — confirm explicitly (the silent-drop this whole feature prevents).
-    if (state.shopChoice === 'remove' && state.currentDataHook && !window.confirm('Remove the shop? From the next ruleset onward your project stops minting NFTs on payment — payments mint project tokens at the ruleset weight instead. Continue?')) return;
+    if (state.shopChoice === 'remove' && state.currentShopHook && !window.confirm('Remove the shop? From the next ruleset onward your project stops minting NFTs on payment — payments mint project tokens at the ruleset weight instead. Continue?')) return;
     busy = true;
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     submitQueueRuleset(project, state, selected, operatorAddr, setStatus).then(function (res) {
@@ -13588,8 +14398,14 @@ function openQueueRulesetModal(project) {
 async function submitQueueRuleset(project, state, selected, operatorAddr, setStatus) {
   var pid = BigInt(project.id);
   var memo = '';
+  if (state.queueSourceLoading || !state.queueSourceVerified || state.queueSourceError || state.unsupportedMultiCurrencyAccess) {
+    throw new Error('The live source configuration is not fully verified or cannot be preserved by this editor.');
+  }
+  if (state.shopChoice === 'new' && (project.isRevnet || !state.canAddShop)) throw new Error('A new shop cannot be safely composed with this project’s current data hook.');
+  if (state.shopChoice === 'remove' && !state.canRemoveShop) throw new Error('This shop cannot be safely removed through the queue editor.');
   if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
   var multi = selected.length > 1;
+  var usesOmnichainWrapper = !!state.isOmnichain;
   // Share one first-ruleset start across chains (now + 20 min) so cycles align; single chain starts at 0
   // (next cycle / per the approval hook). Configs are built PER CHAIN — the accounting/fund-access token
   // (USDC) and approval-hook addresses differ per chain.
@@ -13602,21 +14418,23 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   var projUri = project.metadataUri || project.uri || '';
   if (newShop) { setStatus('Pinning new shop items…', 'pending'); await pinShopItemsMetadata(state); }
 
-  // One per-chain call, routed identically for EOA and Safe. continue/remove: omnichain → JBOmnichainDeployer,
-  // single → JBController. NEW: omnichain → JBOmnichainDeployer (explicit deploy721 overload), single →
-  // JB721TiersHookProjectDeployer. buildNewShopQueueCall picks the deployer + arg-order (unit-tested).
+  // Route through JBOmnichainDeployer only when the LIVE ruleset already uses it as its data-hook wrapper.
+  // Multi-chain revnets use REVOwner, so they must queue directly through each JBController; routing them through
+  // the generic omnichain wrapper would replace REVOwner and break revnet pay/cash-out/fee semantics.
   var buildCall = function (cid) {
+    var liveController = state.controllerByChain && state.controllerByChain[cid];
+    if (!liveController) throw new Error('The project controller is not verified on ' + chainNameOf(cid) + '.');
     var cfgs = buildQueueRulesetConfigs(state, cid, immediateStart);
     if (newShop) {
       var nc = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
         useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
-        controller: getAddress('JBController', cid), projectDeployer: getAddress('JB721TiersHookProjectDeployer', cid),
-        omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: multi, memo: memo });
+        controller: liveController, projectDeployer: getAddress('JB721TiersHookProjectDeployer', cid),
+        omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: usesOmnichainWrapper, memo: memo });
       return { to: nc.to, data: encodeFunctionData({ abi: nc.abi, functionName: nc.functionName, args: nc.args }) };
     }
-    return multi
+    return usesOmnichainWrapper
       ? { to: getAddress('JBOmnichainDeployer', cid), data: encodeFunctionData({ abi: omnichainQueueAbi, functionName: 'queueRulesetsOf', args: [pid, cfgs, memo] }) }
-      : { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, cfgs, memo] }) };
+      : { to: liveController, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, cfgs, memo] }) };
   };
 
   // Safe-owned project → Relayr can't sign for the Safe; propose the call to each selected chain's Safe queue.
@@ -13652,20 +14470,22 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   if (!account) return;
 
   if (!multi) {
-    // Single chain → JBController.queueRulesetsOf directly, or JB721TiersHookProjectDeployer for a new shop.
+    // One selected chain still uses the wrapper when the live ruleset does; otherwise queue on JBController.
     var cid0 = selected[0].id;
+    var liveController0 = state.controllerByChain && state.controllerByChain[cid0];
+    if (!liveController0) { setStatus('The project controller is not verified on this chain', 'error'); return; }
     var configs;
     try { configs = buildQueueRulesetConfigs(state, cid0, 0); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var exec;
     if (newShop) {
       var dep = getAddress('JB721TiersHookProjectDeployer', cid0);
-      if (!dep) { setStatus('No 721 deployer on this chain', 'error'); return; }
-      var nc1 = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid0), cfgs: configs, controller: getAddress('JBController', cid0), projectDeployer: dep, salt: newShopSalt, isOmnichain: false });
-      exec = { address: nc1.to, abi: nc1.abi, functionName: nc1.functionName, args: nc1.args, contractName: 'JB721TiersHookProjectDeployer', label: 'Start a new shop' };
+      if (!usesOmnichainWrapper && !dep) { setStatus('No 721 deployer on this chain', 'error'); return; }
+      var nc1 = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid0), cfgs: configs, controller: liveController0, projectDeployer: dep, omnichainDeployer: getAddress('JBOmnichainDeployer', cid0), salt: newShopSalt, isOmnichain: usesOmnichainWrapper });
+      exec = { address: nc1.to, abi: nc1.abi, functionName: nc1.functionName, args: nc1.args, contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JB721TiersHookProjectDeployer', label: 'Start a new shop' };
     } else {
-      var ctrl = getAddress('JBController', cid0);
-      if (!ctrl) { setStatus('No controller on this chain', 'error'); return; }
-      exec = { address: ctrl, abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, configs, memo], contractName: 'JBController', label: 'Queue ruleset' };
+      var target = usesOmnichainWrapper ? getAddress('JBOmnichainDeployer', cid0) : liveController0;
+      if (!target) { setStatus('No compatible ruleset queue contract on this chain', 'error'); return; }
+      exec = { address: target, abi: usesOmnichainWrapper ? omnichainQueueAbi : queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, configs, memo], contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JBController', label: 'Queue ruleset' };
     }
     await new Promise(function (resolve, reject) {
       executeTransaction({
@@ -13678,7 +14498,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     return;
   }
 
-  // EOA omnichain → JBOmnichainDeployer.queueRulesetsOf on every selected chain, one relayr payment.
+  // Multiple selected chains → one Relayr bundle, with each entry targeting its verified wrapper/controller.
   await runRelayrAcrossChains(selected, account, buildCall, 1500000n, setStatus, { label: 'Queue ruleset', title: 'Confirm queue ruleset' });
   setStatus('Ruleset queued on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.', 'success');
   document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
@@ -13689,7 +14509,25 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
 function openEditSplitsModal(project, opts) {
   opts = opts || {};
   var groupId = opts.groupId != null ? opts.groupId : RESERVED_TOKEN_SPLIT_GROUP;
+  var groupIdForChain = opts.groupIdForChain || function () { return groupId; };
   var modalTitle = opts.title || 'Edit splits';
+  // Never construct a replacement editor from cached/partial page data. Resolve the current home-chain ruleset,
+  // group ID, limit, and splits first, then reopen with that verified snapshot as the optimistic-concurrency base.
+  if (!opts._verifiedPrefill) {
+    var loadingBody = el('div', 'modal-body'); loadingBody.textContent = 'Verifying the current splits…';
+    var loadingModal = openModal(modalTitle, loadingBody);
+    var homeGroup = groupIdForChain(project.chainId);
+    if (homeGroup == null) { loadingBody.textContent = 'Could not resolve this split group on the home chain.'; return; }
+    controllerRead(project.chainId, project.id, currentRulesetAbi, 'currentRulesetOf', [BigInt(project.id)]).then(function (current) {
+      if (!current || !current[0] || !current[0].id || !current[1]) throw new Error('No current ruleset.');
+      return read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), toBigInt(current[0].id), toBigInt(homeGroup)]).then(function (liveSplits) {
+        var verifiedLimit = String(groupId) === String(RESERVED_TOKEN_SPLIT_GROUP) ? Number(current[1].reservedPercent) / 100 : 100;
+        loadingModal.close();
+        openEditSplitsModal(project, Object.assign({}, opts, { _verifiedPrefill: true, prefill: liveSplits || [], verifiedLimitPct: verifiedLimit }));
+      });
+    }).catch(function () { loadingBody.textContent = 'Could not verify the current ruleset and splits. Nothing can be changed from this editor.'; });
+    return;
+  }
   var prefill = opts.prefill || project.reservedSplits || [];
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
@@ -13725,7 +14563,7 @@ function openEditSplitsModal(project, opts) {
   //  - reserved group → the ruleset's reserved rate (reservedPercent, basis points /100 = % of issuance);
   //  - any other group (payouts) → 100% (the full distributable amount).
   // Each split's stored group share = its issuance% ÷ limit (so issuance% = groupShare × limit). See submit.
-  var limitPct = splitLimitPctFor(project, groupId);
+  var limitPct = Number(opts.verifiedLimitPct != null ? opts.verifiedLimitPct : splitLimitPctFor(project, groupId));
   var rowOpts = {
     allowLpHook: !!lpHookAddr,
     lpHookAddr: lpHookAddr,
@@ -13787,24 +14625,30 @@ function openEditSplitsModal(project, opts) {
   var modal = openModal(modalTitle, content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
+  function setBusy(on) {
+    busy = on;
+    Array.prototype.forEach.call(content.querySelectorAll('input, select, button'), function (control) { control.disabled = on; });
+    submit.setAttribute('aria-disabled', on ? 'true' : 'false');
+  }
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     if (busy) return;
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
-    submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal, groupId).catch(function (err) {
-      busy = false; setStatus(errMessage(err, 'Edit failed'), 'error');
-    });
-    busy = true;
+    setBusy(true);
+    submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, prefill, limitPct)
+      .then(function (sent) { if (sent !== true && content.isConnected) setBusy(false); })
+      .catch(function (err) { if (content.isConnected) setBusy(false); setStatus(errMessage(err, 'Edit failed'), 'error'); });
   });
 }
 
-async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, setStatus, modal, groupId) {
+async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, expectedPrefill, expectedLimitPct) {
   var splitGroupId = groupId != null ? groupId : RESERVED_TOKEN_SPLIT_GROUP;
+  groupIdForChain = groupIdForChain || function () { return splitGroupId; };
   if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
   // Percentages are entered as % OF ISSUANCE and must sum to the split limit (reserved rate for the
   // reserved group, else 100%). The on-chain JBSplit.percent is a share of SPLITS_TOTAL (1e9) of the
   // group total, so groupShare = issuance% ÷ limit. Clamp the running total so rounding can't exceed 1e9.
-  var limitPct = splitLimitPctFor(project, splitGroupId);
+  var limitPct = Number(expectedLimitPct != null ? expectedLimitPct : splitLimitPctFor(project, splitGroupId));
   var splits = [];
   var sumPct = 0;
   var accShare = 0; // accumulated group share (out of 1e9)
@@ -13837,14 +14681,33 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
   var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
   if (!account) return;
 
-  // Each chain can have a different current ruleset id — read them up front.
-  setStatus('Reading current rulesets…', 'pending');
-  var ridMap = {};
+  // Each chain can have a different current ruleset ID and token-keyed payout group. Re-read the exact source
+  // split set before replacing it: a stale/failed prefill must never turn into an accidental clear.
+  setStatus('Verifying current rulesets and splits…', 'pending');
+  function splitFingerprint(values) {
+    return JSON.stringify((values || []).map(function (sp) {
+      return [sp.percent, sp.projectId, String(sp.beneficiary || '').toLowerCase(), !!sp.preferAddToBalance,
+        sp.lockedUntil, String(sp.hook || '').toLowerCase()].map(String).join('|');
+    }));
+  }
+  var expectedFingerprint = splitFingerprint(expectedPrefill || []);
+  var ridMap = {}, groupMap = {}, controllerMap = {};
   for (var j = 0; j < selectedChains.length; j++) {
     var cid = selectedChains[j].id;
-    var rs = await read(cid, 'JBController', currentRulesetAbi, 'currentRulesetOf', [BigInt(project.id)]).catch(function () { return null; });
-    if (!rs || !rs[0] || !rs[0].id) throw new Error('No current ruleset on ' + (selectedChains[j].name || cid));
+    var localGroup = groupIdForChain(cid);
+    if (localGroup == null) throw new Error('Could not resolve the split group on ' + (selectedChains[j].name || cid) + '.');
+    var liveController = await controllerAddressFor(cid, project.id);
+    var rs = await clientFor(cid).readContract({ address: liveController, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(project.id)] });
+    if (!rs || !rs[0] || !rs[0].id || !rs[1]) throw new Error('No current ruleset on ' + (selectedChains[j].name || cid));
+    if (String(splitGroupId) === String(RESERVED_TOKEN_SPLIT_GROUP)) {
+      var liveLimitPct = Number(rs[1].reservedPercent) / 100;
+      if (Math.abs(liveLimitPct - limitPct) > 0.000001) throw new Error('The reserved split limit changed while this editor was open. Close it, review the new ruleset, and try again.');
+    }
+    var liveSplits = await read(cid, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), toBigInt(rs[0].id), toBigInt(localGroup)]);
+    if (splitFingerprint(liveSplits) !== expectedFingerprint) throw new Error('The current splits on ' + (selectedChains[j].name || cid) + ' differ from the verified prefill. Nothing was sent; reopen the editor before replacing them.');
     ridMap[cid] = rs[0].id;
+    groupMap[cid] = toBigInt(localGroup);
+    controllerMap[cid] = liveController;
   }
   function splitsForChain(cid) {
     return splits.map(function (sp) {
@@ -13856,12 +14719,13 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
   }
 
   await runRelayrAcrossChains(selectedChains, account, function (cid) {
-    var groups = [{ groupId: splitGroupId, splits: splitsForChain(cid) }];
-    return { to: getAddress('JBController', cid), data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [BigInt(project.id), BigInt(ridMap[cid]), groups] }) };
+    var groups = [{ groupId: groupMap[cid], splits: splitsForChain(cid) }];
+    return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [BigInt(project.id), BigInt(ridMap[cid]), groups] }) };
   }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits' });
 
   setStatus('Splits updated on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '', 'success');
   setTimeout(function () { modal.close(); }, 1400);
+  return true;
 }
 
 // Append one chain block: an unboxed [chain name … Distribute] row sitting atop a bordered table of
@@ -13925,15 +14789,15 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
         .catch(function (err) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = errMessage(err, 'Could not connect wallet'); });
       return;
     }
-    var ctrl = getAddress('JBController', pc.id);
-    if (!ctrl) { status.className = 'modal-status splits-status error'; status.textContent = 'No controller on ' + pc.name + '.'; return; }
     btn.disabled = true; btn.textContent = 'Distributing…';
+    controllerAddressFor(pc.id, project.id).then(function (ctrl) {
     executeTransaction({
       chainId: pc.id, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf', args: [BigInt(project.id)],
       onStatus: function (m, kind) { status.className = 'modal-status splits-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m || ''; },
       onSuccess: function () { btn.textContent = 'Distributed'; status.className = 'modal-status splits-status success'; status.textContent = 'Pending splits distributed on ' + pc.name + '.'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
       onError: function (m) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = m; },
     });
+    }).catch(function (error) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = errMessage(error, 'Could not verify the project controller.'); });
   });
   foot.appendChild(status); foot.appendChild(btn); // status left of button → button stays flush-right
   return foot;
@@ -13954,45 +14818,60 @@ function renderAcrossChainsBody(project) {
   body.appendChild(status);
   fetchOps(project).then(function (rows) {
     status.remove();
-    var totSupply = 0n;
-    rows.forEach(function (r) { if (r.supply != null) totSupply += r.supply; });
+    var supplyComplete = rows.every(function (r) { return r.supply != null; });
+    var totSupply = supplyComplete ? rows.reduce(function (sum, r) { return sum + toBigInt(r.supply); }, 0n) : null;
+    var balancesComplete = rows.every(function (r) { return r.tokensVerified; });
     // Per-token totals across chains — drive each chain's "% of that token's total" and the Total row.
     var totByTok = {};
-    rows.forEach(function (r) { (r.tokens || []).forEach(function (t) { if (t.balance != null && BigInt(t.balance) > 0n) { var k = t.symbol + '@' + t.decimals; if (!totByTok[k]) totByTok[k] = { sum: 0n, decimals: t.decimals, symbol: t.symbol }; totByTok[k].sum += BigInt(t.balance); } }); });
+    var knownByTok = {};
+    rows.forEach(function (r) { (r.tokens || []).forEach(function (t) {
+      var k = accountingTokenContextKey(t.token, r.id) + '@' + t.decimals;
+      if (t.balance != null && !knownByTok[k]) knownByTok[k] = { sum: 0n, decimals: t.decimals, symbol: t.symbol };
+      if (t.balance != null && BigInt(t.balance) > 0n) {
+        if (!totByTok[k]) totByTok[k] = { sum: 0n, decimals: t.decimals, symbol: t.symbol };
+        totByTok[k].sum += BigInt(t.balance);
+      }
+    }); });
     var table = el('div', 'detail-ops-table');
     table.appendChild(opsRow('Chain', supplyHdr, 'Balance', 'Unit value', true, false));
     // Balance shows every accounting token the chain holds with its share of that token's cross-chain total
     // ("20 USDC (100%)" then "0.005 ETH (50%)").
-    var balCell = function (tokens, acct) {
+    var balCell = function (tokens, acct, chainId) {
       var nz = (tokens || []).filter(function (t) { return t.balance != null && BigInt(t.balance) > 0n; });
-      if (!nz.length) return '0 ' + ((acct && acct.symbol) || 'ETH');
+      if (!nz.length) {
+        var readable = (tokens || []).filter(function (t) { return t.balance != null; });
+        if (!readable.length) return '—';
+        if (readable.length === 1) return formatBalance(0n, readable[0].decimals, readable[0].symbol);
+        return { lines: readable.map(function (t) { return formatBalance(0n, t.decimals, t.symbol); }) };
+      }
       // Single token: value with the share-% as a muted sub-line — matches the Supply column's {main, sub}.
       if (nz.length === 1) {
-        var t = nz[0]; var k = t.symbol + '@' + t.decimals; var tot = totByTok[k] ? totByTok[k].sum : 0n; var pct = pctOf(BigInt(t.balance), tot);
+        var t = nz[0]; var k = accountingTokenContextKey(t.token, chainId) + '@' + t.decimals; var tot = balancesComplete && totByTok[k] ? totByTok[k].sum : 0n; var pct = balancesComplete ? pctOf(BigInt(t.balance), tot) : null;
         var val = formatBalance(t.balance, t.decimals, t.symbol);
         return pct ? { main: val, sub: pct } : val;
       }
       // % as a muted sub-line under each token's value — same style + position as the Supply column.
-      var lineFor = function (t) { var k = t.symbol + '@' + t.decimals; var tot = totByTok[k] ? totByTok[k].sum : 0n; var pct = pctOf(BigInt(t.balance), tot); var val = formatBalance(t.balance, t.decimals, t.symbol); return pct ? { main: val, sub: pct } : val; };
+      var lineFor = function (t) { var k = accountingTokenContextKey(t.token, chainId) + '@' + t.decimals; var tot = balancesComplete && totByTok[k] ? totByTok[k].sum : 0n; var pct = balancesComplete ? pctOf(BigInt(t.balance), tot) : null; var val = formatBalance(t.balance, t.decimals, t.symbol); return pct ? { main: val, sub: pct } : val; };
       return { lines: nz.map(lineFor) };
     };
     rows.forEach(function (r) {
-      var acct = r.acct || { decimals: 18, symbol: 'ETH' };
+      var acct = r.acct;
       table.appendChild(opsRow(
         r.name,
-        r.supply == null ? '—' : { main: formatTokens(r.supply), sub: pctOf(r.supply, totSupply) },
-        (r.tokens && r.tokens.length) ? balCell(r.tokens, acct) : (r.balance == null ? '—' : formatBalance(r.balance, acct.decimals, acct.symbol)),
-        r.unitValue == null ? '—' : formatBalance(r.unitValue, acct.decimals, acct.symbol),
+        r.supply == null ? '—' : { main: formatTokens(r.supply), sub: supplyComplete ? pctOf(r.supply, totSupply) : null },
+        (r.tokens && r.tokens.length) ? balCell(r.tokens, acct, r.id) : (r.balance == null || !acct ? '—' : formatBalance(r.balance, acct.decimals, acct.symbol)),
+        r.unitValue == null || !acct ? '—' : formatBalance(r.unitValue, acct.decimals, acct.symbol),
         false, false, r.id));
     });
-    var totAcct = project.acctToken || { decimals: 18, symbol: 'ETH' };
     var totKeys = Object.keys(totByTok);
-    // No chain holds a positive balance (new / drained / fully-paid-out project) → show a real zero, not a
-    // reference to an undeclared var (which threw ReferenceError and blanked the whole table via the catch).
-    var totBalCell = !totKeys.length ? formatBalance(0n, totAcct.decimals, totAcct.symbol)
-      : (totKeys.length === 1 ? formatBalance(totByTok[totKeys[0]].sum, totByTok[totKeys[0]].decimals, totByTok[totKeys[0]].symbol)
-        : { lines: totKeys.map(function (k) { return formatBalance(totByTok[k].sum, totByTok[k].decimals, totByTok[k].symbol); }) });
-    table.appendChild(opsRow('Total', formatTokens(totSupply), totBalCell, '', false, true));
+    // With no positive balances, show zero only in accounting contexts actually read from chain. If every
+    // context read failed, the total is unavailable—not an invented 0 ETH.
+    var displayTotals = totKeys.length ? totByTok : knownByTok;
+    var displayKeys = Object.keys(displayTotals);
+    var totBalCell = !balancesComplete || !displayKeys.length ? '—'
+      : (displayKeys.length === 1 ? formatBalance(displayTotals[displayKeys[0]].sum, displayTotals[displayKeys[0]].decimals, displayTotals[displayKeys[0]].symbol)
+        : { lines: displayKeys.map(function (k) { return formatBalance(displayTotals[k].sum, displayTotals[k].decimals, displayTotals[k].symbol); }) });
+    table.appendChild(opsRow('Total', supplyComplete ? formatTokens(totSupply) : '—', totBalCell, '', false, true));
     body.appendChild(table);
   }).catch(function () {
     status.textContent = 'Could not read cross-chain state.';
@@ -14049,6 +14928,10 @@ function renderBridgesSubsection(project) {
       row.appendChild(type);
       table.appendChild(row);
     });
+  }).catch(function () {
+    if (!section.isConnected) return;
+    table.innerHTML = '';
+    var error = el('div', 'detail-card-body'); error.textContent = 'Could not verify the project’s bridge routes.'; table.appendChild(error);
   });
   return section;
 }
@@ -14111,32 +14994,31 @@ function fetchYouPosition(project) {
     if (!acct) return Promise.resolve({ id: cid, name: chain.name, balance: null, cashout: null, maxLoan: null });
     var terminal = getAddress('JBMultiTerminal', cid);
     var revLoans = getAddress('REVLoans', cid);
-    var baseCur = BigInt((project.metadata && project.metadata.baseCurrency) || 1);
     return Promise.all([
       readUserBalance(project, cid),
       // The contract's cash-out denominator: total supply plus pending reserved tokens.
-      read(cid, 'JBController', totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
+      controllerRead(cid, pid, totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
       // The terminal's surplus is held in its accounting token (USDC/ETH), not necessarily native ETH.
-      terminal ? resolveAcctToken(cid, pid) : Promise.resolve({ address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' }),
+      terminal ? resolveAcctToken(cid, pid).catch(function () { return null; }) : Promise.resolve(null),
       // Unclaimed credits — the rest of the balance is claimed ERC-20. Drives the "Credits"/"ERC-20s" subtext.
       read(cid, 'JBTokens', creditBalanceOfAbi, 'creditBalanceOf', [acct, pid]).then(toBigInt).catch(function () { return null; }),
     ]).then(function (res) {
       var bal = res[0], supply = res[1] != null ? toBigInt(res[1]) : null, acct = res[2], credit = res[3];
       var hasBal = bal != null && bal > 0n;
-      var surplusJob = terminal
+      var surplusJob = terminal && acct
         // Actual reclaimable surplus (balance − remaining payout limit), in the accounting token's units — not
         // raw balanceOf, which overstated the cash-out value when a payout limit exists.
-        ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals || 18), BigInt(Number(BigInt(acct.address) & 0xffffffffn))]).catch(function () { return null; })
+        ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals == null ? 18 : acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; })
         : Promise.resolve(null);
       return surplusJob.then(function (surplus) {
         // Cash-out value: what `bal` tokens reclaim now, in the accounting token.
         var cashJob = (hasBal && supply && supply >= bal && surplus != null)
           ? read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, bal, supply, surplus]).catch(function () { return null; })
           : Promise.resolve(hasBal ? null : 0n);
-        // Max loan: borrowable against `bal` collateral, denominated in the base currency. Returns 0 while
+        // Max loan in the selected source accounting token's exact decimals/currency. Returns 0 while
         // the cash-out delay is active.
-        var loanJob = (hasBal && revLoans)
-          ? read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, bal, 18n, baseCur]).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; })
+        var loanJob = (hasBal && revLoans && acct)
+          ? read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, bal, BigInt(acct.decimals == null ? 18 : acct.decimals), borrowCurrencyForAccountContext(acct)]).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; })
           : Promise.resolve(revLoans ? (hasBal ? null : 0n) : null);
         return Promise.all([cashJob, loanJob]).then(function (out) {
           return { id: cid, name: chain.name, balance: bal, credit: credit, cashout: out[0], maxLoan: out[1], acct: acct };
@@ -14172,9 +15054,9 @@ function buildClaimModal(project, creditRows) {
     btn.addEventListener('click', function () {
       var holder = getAccount && getAccount();
       if (!holder) { connect(); return; }
-      var ctrl = getAddress('JBController', r.id);
-      if (!ctrl) { status.textContent = 'No controller on this chain'; return; }
       btn.disabled = true;
+      status.textContent = 'Verifying controller…';
+      controllerAddressFor(r.id, pid).then(function (ctrl) {
       executeTransaction(Object.assign(buildClaimTokensArgs({ chainId: r.id, controllerAddr: ctrl, holder: holder, projectId: pid, tokenCount: r.credit, beneficiary: holder }), {
         label: 'Claim credits',
         onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
@@ -14185,6 +15067,7 @@ function buildClaimModal(project, creditRows) {
           document.dispatchEvent(new CustomEvent('jb:bridge-updated')); // reloads the You card with fresh credit/ERC-20 split
         },
       }));
+      }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not verify the project controller.'); btn.disabled = false; });
     });
     rowEl.appendChild(btn);
     rowEl.appendChild(status);
@@ -14252,9 +15135,8 @@ function renderYouCard(project, opts) {
       // reverts) AND loans (borrowableAmountFrom returns 0). The cash-out *value* still computes (pure
       // bonding-curve calc), so we show it but mark it locked; loans can't compute, so they read "Locked".
       var locked = delay != null && delay > 0n && Number(delay) > Math.floor(Date.now() / 1000);
-      var baseLbl = baseUnitLabel(project);
       function fmtCash(r, v) { var a = r.acct || { decimals: 18, symbol: 'ETH' }; return formatBalance(v, a.decimals, a.symbol); }
-      function fmtLoan(v) { return formatBalance(v, 18, baseLbl); } // borrowable is base-currency-denominated, 18-dec
+      function fmtLoan(r, v) { var a = r.acct || { decimals: 18, symbol: 'ETH' }; return formatBalance(v, a.decimals, a.symbol); }
       function cashCell(r) {
         if (r.cashout == null) return '—';
         return locked ? { main: fmtCash(r, r.cashout), sub: 'locked' } : fmtCash(r, r.cashout);
@@ -14263,9 +15145,9 @@ function renderYouCard(project, opts) {
       // bonding-curve reclaim — i.e. ≈ the cash-out value. Show that as the would-be loan, marked locked.
       function loanCell(r) {
         if (r.maxLoan == null) return '—'; // no REVLoans on this chain
-        if (r.maxLoan > 0n) return fmtLoan(r.maxLoan); // unlocked: the real borrowable
+        if (r.maxLoan > 0n) return fmtLoan(r, r.maxLoan); // unlocked: the real borrowable
         if (locked && r.cashout != null && r.cashout > 0n) return { main: fmtCash(r, r.cashout), sub: 'locked' };
-        return locked ? 'Locked' : fmtLoan(0n);
+        return locked ? 'Locked' : fmtLoan(r, 0n);
       }
       // LP positions column: the connected wallet's V4 positions on this chain (current + old buyback pools), filled
       // async (the getLogs scan is slower than the balance reads). Clickable → the remove-liquidity modal.
@@ -14282,15 +15164,22 @@ function renderYouCard(project, opts) {
           span.style.cursor = 'pointer'; span.style.textDecoration = 'underline'; span.style.textDecorationStyle = 'dotted';
           span.title = 'Manage / remove your LP positions';
           span.onclick = function () { openRemoveLiquidityModal(project, cid, function () { fillLpCell(span, cid); }); };
-        }).catch(function () { span.textContent = '—'; });
+        }).catch(function () {
+          span.innerHTML = '';
+          span.textContent = 'Unavailable';
+          span.title = 'Could not verify the complete LP-position history on this chain.';
+        });
       }
       function lpCell(r) { var span = el('span', 'lp-cell'); fillLpCell(span, r.id); return span; }
       status.remove();
+      var balanceComplete = rows.every(function (r) { return r.balance != null; });
       var held = rows.filter(function (r) { return r.balance && r.balance > 0n; });
       if (!held.length) {
         claimRows = []; claimBtn.style.display = 'none';
         var none = el('div', 'detail-card-body you-empty');
-        none.textContent = 'You don’t hold any ' + sym + ' yet. Pay the project to get some.';
+        none.textContent = balanceComplete
+          ? ('You don’t hold any ' + sym + ' yet. Pay the project to get some.')
+          : 'Could not verify your token balance on every project chain. Try again shortly.';
         body.appendChild(none);
         return;
       }
@@ -14308,7 +15197,7 @@ function renderYouCard(project, opts) {
       }
       var table = el('div', 'detail-ops-table');
       table.appendChild(opsRow('Chain', 'Balance', 'Cash out', noLoans ? undefined : 'Max loan', true, false, undefined, 'LP'));
-      var totBal = 0n, totCash = 0n, totLoan = 0n, anyLoan = false, anyCredit = false, anyErc20 = false;
+      var totBal = 0n, totCash = 0n, totLoan = 0n, anyCredit = false, anyErc20 = false;
       held.forEach(function (r) {
         table.appendChild(opsRow(
           r.name,
@@ -14320,22 +15209,37 @@ function renderYouCard(project, opts) {
         if (r.credit != null && r.credit > 0n) anyCredit = true;
         if (r.credit != null && r.balance != null && r.balance > r.credit) anyErc20 = true;
         if (r.cashout != null) totCash += r.cashout;
-        if (r.maxLoan != null && r.maxLoan > 0n) { totLoan += r.maxLoan; anyLoan = true; }
+        if (r.maxLoan != null && r.maxLoan > 0n) totLoan += r.maxLoan;
       });
       // Reveal "Claim credits" when an ERC-20 exists and the wallet holds unclaimed credits somewhere.
       claimRows = held.filter(function (r) { return r.credit != null && r.credit > 0n; });
       claimBtn.style.display = (project.tokenAddress && claimRows.length) ? '' : 'none';
       var totBalSub = subFor(anyCredit, anyErc20);
-      var totBalCell = totBalSub ? { main: formatTokenCount(totBal) + ' ' + sym, sub: totBalSub } : (formatTokenCount(totBal) + ' ' + sym);
-      // Per-chain cash-out values are each in that chain's accounting token; summing across chains is only
-      // meaningful when they all hold the SAME token. Mixed tokens (e.g. ETH + USDC) → no honest Total.
-      var mixedAcct = held.some(function (r) { return r.acct && held[0].acct && (r.acct.symbol !== held[0].acct.symbol || r.acct.decimals !== held[0].acct.decimals); });
-      var totCashCell = mixedAcct ? '—' : (locked ? { main: fmtCash(held[0], totCash), sub: 'locked' } : fmtCash(held[0], totCash));
+      var totBalCell = !balanceComplete ? '—'
+        : (totBalSub ? { main: formatTokenCount(totBal) + ' ' + sym, sub: totBalSub } : (formatTokenCount(totBal) + ' ' + sym));
+      // A cross-chain monetary total is valid only when EVERY held chain produced the value and every value
+      // uses the same verified accounting token. Never label a partial/unknown total with the first row's token.
+      function completeHomogeneous(field) {
+        var first = rows[0] && rows[0].acct;
+        if (!balanceComplete || !first || rows.some(function (r) { return r[field] == null || !r.acct; })) return false;
+        var firstKey = accountingTokenContextKey(first.address, rows[0].id) + '@' + Number(first.decimals);
+        return rows.every(function (r) {
+          return accountingTokenContextKey(r.acct.address, r.id) + '@' + Number(r.acct.decimals) === firstKey;
+        });
+      }
+      var cashComplete = completeHomogeneous('cashout');
+      var loanComplete = completeHomogeneous('maxLoan');
+      var totCashCell = !cashComplete ? '—' : (locked ? { main: fmtCash(held[0], totCash), sub: 'locked' } : fmtCash(held[0], totCash));
       // Locked total loan ≈ total cash-out value (same bonding-curve reclaim, in the accounting token).
-      var totLoanCell = anyLoan ? fmtLoan(totLoan) : (mixedAcct ? '—' : (locked && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (locked ? 'Locked' : '—')));
+      var totLoanCell = locked
+        ? (cashComplete && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (cashComplete ? 'Locked' : '—'))
+        : (loanComplete ? fmtLoan(held[0], totLoan) : '—');
       // A Total row is redundant when there's only one chain row.
       if (held.length > 1) table.appendChild(opsRow('Total', totBalCell, totCashCell, noLoans ? undefined : totLoanCell, false, true, undefined, ''));
       body.appendChild(table);
+      if (!balanceComplete) {
+        var incomplete = el('div', 'you-footnote'); incomplete.textContent = 'Some chain balances could not be verified, so cross-chain totals are hidden.'; body.appendChild(incomplete);
+      }
       if (locked) {
         var note = el('div', 'you-footnote');
         note.textContent = noLoans
@@ -14463,6 +15367,7 @@ function bridgeEtaHint(tx) {
   var L1 = { 1: 1, 11155111: 1 };
   var srcL1 = !!L1[Number(tx.chainId)], dstL1 = !!L1[Number(tx.peerChainId)];
   if (tx.infra === 'CCIP') return '20–30 min';
+  if (tx.infra !== 'native') return null;
   if (!srcL1 && dstL1) return '7 days (challenge period)';
   return 'a few min';
 }
@@ -14565,7 +15470,7 @@ function renderBridgeTransactionsTable(rows, project) {
         var eta = bridgeEtaHint(tx);
         var link = document.createElement('a'); link.className = 'bridge-action-stat bridge-track-link'; link.target = '_blank'; link.rel = 'noopener noreferrer';
         link.textContent = 'Bridging… ↗';
-        link.title = tx.infra === 'CCIP' ? 'Track this message on the CCIP explorer' : 'Track on the chain explorer';
+        link.title = tx.infra === 'CCIP' ? 'Track this message on the CCIP explorer' : 'Track on the source chain explorer';
         if (tx.infra === 'CCIP') { link.href = 'https://ccip.chain.link/address/' + tx.sourceSucker; }
         else { var be = CHAINS[tx.chainId] && CHAINS[tx.chainId].blockExplorers && CHAINS[tx.chainId].blockExplorers.default; link.href = (be ? be.url.replace(/\/$/, '') : '') + '/address/' + tx.sourceSucker; }
         action.appendChild(link);
@@ -14820,14 +15725,14 @@ function renderBalanceTables(balTable, project, sym, opts) {
   var ph = title('Project balances'); ph.style.marginTop = '14px'; balTable.appendChild(ph);
   var tt = makeTable('1.4fr auto'); balTable.appendChild(tt);
   acctKindsForFunds(project).then(function (kinds) {
-    if (!kinds || !kinds.length) kinds = [{ symbol: sym, decimals: 18 }];
+    if (!kinds || !kinds.length) { tt.textContent = 'No verified accounting contexts.'; return; }
     tt._cols = '1.4fr ' + kinds.map(function () { return '1fr'; }).join(' ');
     addRow(tt, [th('Chain')].concat(kinds.map(function (k) { return th(k.symbol, true); })), true);
     var cells = {}; // chainId → [cell per kind]
     chs.forEach(function (c) { var cs = kinds.map(function () { return numCell(null); }); cells[c.id] = cs; addRow(tt, [chainCell(c.id, c.name)].concat(cs)); });
     return fetchBalanceBreakdown(project).then(function (bd) {
-      var byChainSym = {}; (bd.rows || []).forEach(function (r) { byChainSym[r.chainId + '|' + r.symbol] = formatAmount(r.balance, r.decimals); });
-      chs.forEach(function (c) { kinds.forEach(function (k, i) { var v = cells[c.id][i]; if (v) { var key = c.id + '|' + k.symbol; v.textContent = byChainSym[key] != null ? byChainSym[key] : '0'; } }); });
+      var byChainSym = {}; (bd.rows || []).forEach(function (r) { byChainSym[r.chainId + '|' + r.symbol] = r.balance == null ? '—' : formatAmount(r.balance, r.decimals); });
+      chs.forEach(function (c) { kinds.forEach(function (k, i) { var v = cells[c.id][i]; if (v) { var key = c.id + '|' + k.symbol; v.textContent = byChainSym[key] != null ? byChainSym[key] : (bd.chainVerified && bd.chainVerified[c.id] ? '0' : '—'); } }); });
     });
   }).catch(function () { tt.textContent = 'Could not read balances.'; });
 }
@@ -14866,7 +15771,7 @@ function buildCashOutModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
   var pid = BigInt(project.id);
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, supply: null, surplus: null, reclaim: null, net: null, cashOutTaxRate: null, locked: false, exact: true, kinds: null, reclaimKey: null, slippageBps: 100, lastF: null };
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, supply: null, surplus: null, reclaim: null, net: null, cashOutTaxRate: null, feeless: null, contextAccount: null, locked: false, exact: true, kinds: null, reclaimKey: null, slippageBps: 100, lastF: null };
 
   // Your BREADFRUIT balance on each chain (so you can see where you can cash out from).
   var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
@@ -14923,75 +15828,121 @@ function buildCashOutModal(project, requestClose) {
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Cash out';
   foot.appendChild(btn); wrap.appendChild(foot);
 
+  var cashBalanceSeq = 0;
   function refreshBalance() {
     // The selected chain's balance backs the percent/Max buttons + the "available" line; the per-chain
     // table renders separately.
+    var cid = state.chainId;
+    var seq = ++cashBalanceSeq;
+    state.balance = null;
     availLine.textContent = '';
-    readUserBalance(project, state.chainId).then(function (b) {
+    readUserBalance(project, cid).then(function (b) {
+      if (seq !== cashBalanceSeq || state.chainId !== cid) return;
       state.balance = b;
       if (!(getAccount && getAccount())) { availLine.textContent = 'Connect a wallet to cash out.'; return; }
-      availLine.textContent = 'Your ' + sym + ' available on ' + chainNameOf(state.chainId) + ': ' + (b == null ? '—' : (formatTokens(b) + ' ' + sym));
+      availLine.textContent = 'Your ' + sym + ' available on ' + chainNameOf(cid) + ': ' + (b == null ? '—' : (formatTokens(b) + ' ' + sym));
     });
   }
   // The reclaim token for the current chain — the picked accounting kind if any, else the primary token.
   function acctForChain(chainId) {
     if (state.kinds && state.reclaimKey) {
       var k = state.kinds.filter(function (x) { return x.key === state.reclaimKey; })[0];
-      var a = k && k.addrForChain(chainId);
-      if (a) return Promise.resolve({ address: a, decimals: k.decimals, symbol: k.symbol });
+      if (k) return resolveFundsKindAcct(chainId, pid, k).then(function (acct) {
+        if (!acct) throw new Error('This reclaim token is not configured on ' + chainNameOf(chainId) + '.');
+        return acct;
+      });
     }
-    return getAddress('JBMultiTerminal', chainId) ? resolveAcctToken(chainId, pid) : Promise.resolve({ address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' });
+    return getAddress('JBMultiTerminal', chainId) ? resolveAcctToken(chainId, pid) : Promise.reject(new Error('No terminal on this chain.'));
   }
+  var cashContextSeq = 0;
+  var cashAggregateSeq = 0;
   function onChainChange() {
+    var cid = state.chainId;
+    var contextAccount = getAccount && getAccount();
+    var contextSeq = ++cashContextSeq;
+    ++cashAggregateSeq; // invalidate any cross-chain breakdown for the previous chain/reclaim selection
     refreshBalance();
-    state.supply = null; state.surplus = null; state.acct = null; state.cashOutTaxRate = null;
+    state.supply = null; state.surplus = null; state.acct = null; state.cashOutTaxRate = null; state.feeless = null; state.contextAccount = null;
     // Supersede any in-flight preview/quote and drop the AMM route on a chain/reclaim switch. updatePreview's
     // early-return (supply == null) fires before its own seq-bump + route-reset, so without this an in-flight
     // chain-A quote (seq still current) could re-install a stale amm route with the wrong-chain hook + no
     // on-terminal floor, submittable during the async RPC gap. Bump the seq here so those guards fire.
     state.cashOutRoute = { via: 'treasury' }; state.net = null; ++previewSeq; if (btn) btn.disabled = true;
     updatePreview();
-    var terminal = getAddress('JBMultiTerminal', state.chainId);
-    var acctP = acctForChain(state.chainId);
+    if (!contextAccount) {
+      preview.textContent = 'Connect a wallet to verify your exact hook-aware cash-out amount.';
+      return;
+    }
+    var terminal = getAddress('JBMultiTerminal', cid);
+    var acctP = acctForChain(cid);
     acctP.then(function (acct) {
+      if (contextSeq !== cashContextSeq || state.chainId !== cid) return null;
       state.acct = acct;
-      // Feeless casher → the terminal waives the 2.5% protocol fee (in addition to the cash-out-tax gate).
-      isFeelessAddress(state.chainId, getAccount && getAccount(), pid).then(function (f) { state.feeless = f; updatePreview(); });
       return Promise.all([
         // The contract's cash-out denominator: total supply plus pending reserved tokens.
-        read(state.chainId, 'JBController', totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
+        controllerRead(cid, pid, totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
         // Actual reclaimable SURPLUS (= terminal balance − remaining payout limit), in the accounting token's
         // own decimals/currency. Reading raw `balanceOf` here overstated it when a payout limit exists and could
         // push the fallback min-reclaimed floor above the real reclaim → cashOutTokensOf revert.
-        terminal ? read(state.chainId, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), BigInt(Number(BigInt(acct.address) & 0xffffffffn))]).catch(function () { return null; }) : Promise.resolve(null),
+        terminal ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; }) : Promise.resolve(null),
         // The 2.5% protocol fee on cash-out only applies when the ruleset's cash-out tax rate is non-zero.
-        read(state.chainId, 'JBController', currentRulesetAbi, 'currentRulesetOf', [pid]).catch(function () { return null; }),
+        controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid]).catch(function () { return null; }),
         // Fee-free surplus for this token: on a ZERO-tax project, the fee applies ONLY to this portion (the rest of
         // the reclaim is fee-free). Zero on the common path (no inter-project payout received) → no fee, as before.
-        terminal ? read(state.chainId, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n),
+        terminal ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return null; }) : Promise.resolve(null),
+        // Feeless status is beneficiary-specific and changes the terminal's final payout. It must be part of the
+        // same verified context as supply/surplus rather than racing in after the button has enabled.
+        isFeelessAddress(cid, contextAccount, pid),
       ]);
     }).then(function (r) {
+      if (!r || contextSeq !== cashContextSeq || state.chainId !== cid) return;
+      var currentAccount = getAccount && getAccount();
+      if (!currentAccount || currentAccount.toLowerCase() !== contextAccount.toLowerCase()) throw new Error('Connected account changed.');
+      if (r[0] == null || r[1] == null || !r[2] || !r[2][1] || r[3] == null || r[4] == null) {
+        throw new Error('The live cash-out inputs could not be verified.');
+      }
       state.supply = r[0] != null ? toBigInt(r[0]) : null; state.surplus = r[1];
-      state.cashOutTaxRate = r[2] && r[2][1] ? Number(r[2][1].cashOutTaxRate || 0) : 0;
-      state.feeFreeSurplus = r[3] || 0n;
+      state.cashOutTaxRate = Number(r[2][1].cashOutTaxRate || 0);
+      state.feeFreeSurplus = r[3];
+      state.feeless = r[4]; state.contextAccount = contextAccount;
       updatePreview();
       loadCashAggregates(state.acct);
+    }).catch(function () {
+      if (contextSeq !== cashContextSeq || state.chainId !== cid) return;
+      state.acct = null; state.supply = null; state.surplus = null; state.net = null; state.feeless = null; state.contextAccount = null;
+      btn.disabled = true;
+      preview.textContent = 'Could not verify the accounting context on this chain.';
     });
   }
-  // Aggregate the bonding-curve inputs across every chain (omnichain gossip): total supply (with reserved)
-  // = the curve's denominator, and total surplus (all tokens, valued in the reclaim token's currency) = the
-  // numerator. Summing per-chain mirrors how the sucker data hook prices an omnichain cash-out.
+  // Aggregate the breakdown inputs across every chain: total supply (with reserved) and the selected reclaim
+  // token's surplus. Any missing chain read suppresses the aggregate instead of presenting a partial total.
   function loadCashAggregates(acct) {
+    var seq = ++cashAggregateSeq;
+    var reclaimKey = state.reclaimKey;
     state.aggSupply = null; state.aggSurplus = null;
     if (!acct) return;
     var chs = (project.chains && project.chains.length) ? project.chains : [{ id: state.chainId, name: chainNameOf(state.chainId) }];
-    var cur = Number(BigInt(acct.address) & 0xffffffffn);
+    function accountingForChain(chainId) {
+      var kind = state.kinds && state.reclaimKey && state.kinds.filter(function (candidate) { return candidate.key === state.reclaimKey; })[0];
+      if (kind) {
+        return resolveFundsKindAcct(chainId, pid, kind);
+      }
+      return resolveAcctToken(chainId, pid).catch(function () { return null; });
+    }
     Promise.all([
-      Promise.all(chs.map(function (c) { return read(c.id, 'JBController', totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return 0n; }); })),
+      Promise.all(chs.map(function (c) { return controllerRead(c.id, pid, totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }); })),
       // Surplus of the RECLAIM token specifically (tokens=[acct], in its own currency) — that's what you can
       // actually reclaim of this token (settlement caps at the token's local surplus), and needs no price feed.
-      Promise.all(chs.map(function (c) { return getAddress('JBMultiTerminal', c.id) ? read(c.id, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), BigInt(cur)]).catch(function () { return 0n; }) : Promise.resolve(0n); })),
+      Promise.all(chs.map(function (c) {
+        return accountingForChain(c.id).then(function (chainAcct) {
+          return getAddress('JBMultiTerminal', c.id) && chainAcct
+            ? read(c.id, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [chainAcct.address], BigInt(chainAcct.decimals), borrowCurrencyForAccountContext(chainAcct)]).catch(function () { return null; })
+            : null;
+        });
+      })),
     ]).then(function (r) {
+      if (seq !== cashAggregateSeq || state.reclaimKey !== reclaimKey || state.acct !== acct) return;
+      if (r[0].some(function (v) { return v == null; }) || r[1].some(function (v) { return v == null; })) return;
       state.aggSupply = (r[0] || []).reduce(function (s, v) { return s + toBigInt(v); }, 0n);
       state.aggSurplus = (r[1] || []).reduce(function (s, v) { return s + toBigInt(v); }, 0n);
       state.aggChains = chs.length;
@@ -15004,7 +15955,14 @@ function buildCashOutModal(project, requestClose) {
     if (!count || count === 0n || state.supply == null || state.surplus == null || state.surplus === 0n) { preview.innerHTML = ''; state.reclaim = null; state.net = null; return; }
     var terminal = getAddress('JBMultiTerminal', state.chainId);
     if (!terminal) { preview.innerHTML = ''; return; }
-    var a = state.acct || { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' };
+    var a = state.acct;
+    if (!a) { preview.innerHTML = ''; state.reclaim = null; state.net = null; btn.disabled = true; return; }
+    var currentAccount = getAccount && getAccount();
+    if (!state.contextAccount || !currentAccount || currentAccount.toLowerCase() !== state.contextAccount.toLowerCase() || state.feeless == null) {
+      preview.textContent = 'Connected account or fee status changed. Refreshing is required before anything can be sent.';
+      state.reclaim = null; state.net = null; btn.disabled = true; return;
+    }
+    var quoteAccount = state.contextAccount;
     var seq = ++previewSeq;
     // Reset the route to the safe default the instant the amount changes — the AMM route is re-offered only after
     // the new preview + pool quote resolve. Prevents a stale `amm` route (old minReturned) from being submitted with
@@ -15024,11 +15982,13 @@ function buildCashOutModal(project, requestClose) {
       read(state.chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, count, state.supply, state.surplus]).catch(function () { return null; }),
     ]).then(function (r) {
       if (seq !== previewSeq) return;
+      var liveAccount = getAccount && getAccount();
+      if (!liveAccount || liveAccount.toLowerCase() !== quoteAccount.toLowerCase()) { onChainChange(); return; }
       var preCut = r[0];
       var fullGross = r[1] != null ? toBigInt(r[1]) : null;
       // The hook-aware preview reverts while a revnet's cash-out delay is active (and the real cash-out
       // would too). Surface that as a lock + countdown instead of a broken estimate.
-      if (!preCut) {
+      if (!preCut || fullGross == null) {
         return readCashOutDelay(Object.assign({}, project, { chainId: state.chainId })).then(function (delay) {
           if (seq !== previewSeq) return;
           var now = Math.floor(Date.now() / 1000);
@@ -15041,15 +16001,11 @@ function buildCashOutModal(project, requestClose) {
             btn.disabled = true;
             return;
           }
-          // Not delay-locked — fall back to the raw curve reclaim (no hook). Approximate the revnet fee as
-          // 2.5% so the floor isn't set above the payout, and widen the slippage on submit (state.exact=false).
-          state.locked = false; btn.disabled = false;
-          if (fullGross == null) { preview.innerHTML = ''; state.net = null; return; }
-          var approxAfterHook = project.isRevnet ? fullGross - fullGross / 40n : fullGross;
-          var taxR = state.cashOutTaxRate || 0;
-          var pFee = cashOutProtocolFee(approxAfterHook, taxR, state.feeless, state.feeFreeSurplus);
-          state.exact = false; state.reclaim = approxAfterHook; state.net = approxAfterHook - pFee;
-          renderCashPreview(seq, { net: state.net, revFee: project.isRevnet ? fullGross - approxAfterHook : 0n, protocolFee: pFee, approx: true });
+          // The hook may override supply, surplus, token count, tax, and routing. A raw bonding-curve estimate is
+          // not a safe substitute: it can show the wrong payout and produce a misleading transaction floor.
+          state.locked = false; state.exact = null; state.reclaim = null; state.net = null; state.outcome = null;
+          preview.textContent = 'Could not verify the exact hook-aware cash-out amount. Nothing can be sent until the preview succeeds.';
+          btn.disabled = true;
         });
       }
       state.locked = false; state.exact = true; btn.disabled = false;
@@ -15064,7 +16020,6 @@ function buildCashOutModal(project, requestClose) {
       for (var i = 0; i < specs.length; i++) {
         if (specs[i] && !specs[i].noop && (specs[i].hook || '').toLowerCase() === dataHook) revFee += toBigInt(specs[i].amount);
       }
-      if (revFee === 0n && fullGross != null && fullGross > afterHook) revFee = fullGross - afterHook; // fallback
       // The terminal then takes the 2.5% protocol fee (`amount / 40`) on the post-hook reclaim, and checks
       // minTokensReclaimed against THIS net. Mirror it exactly so the floor isn't set above the payout.
       var protocolFee = cashOutProtocolFee(afterHook, taxRate, state.feeless, state.feeFreeSurplus);
@@ -15076,7 +16031,12 @@ function buildCashOutModal(project, requestClose) {
       // Probe the two pool routes: a direct sell (bypass the terminal) and the buyback-routed cash-out. Offer
       // whichever nets more than the treasury reclaim. Async; leaves the treasury route on failure.
       maybeOfferCashOutRoutes(seq, specs, net, count);
-    }).catch(function () { if (seq === previewSeq) { preview.innerHTML = ''; state.reclaim = null; state.net = null; btn.disabled = false; } });
+    }).catch(function () {
+      if (seq === previewSeq) {
+        preview.textContent = 'Could not verify the exact hook-aware cash-out amount. Nothing can be sent until the preview succeeds.';
+        state.exact = null; state.reclaim = null; state.net = null; state.outcome = null; btn.disabled = true;
+      }
+    });
   }
 
   // Offer the more lucrative pool route above the treasury reclaim:
@@ -15088,7 +16048,7 @@ function buildCashOutModal(project, requestClose) {
   //     via a minReturned. Works when part of the balance is unclaimed credits (a direct sell can't touch those).
   // The buyback spec (hook == projectBuybackHook) from the treasury-path preview carries the fee-net sell count.
   function maybeOfferCashOutRoutes(seq, specs, treasuryNet, count) {
-    var acct = getAccount && getAccount();
+    var acct = state.contextAccount;
     Promise.all([directSellPoolFor(project, state.chainId), projectBuybackHook(project, state.chainId)]).then(function (r) {
       if (seq !== previewSeq) return;
       var pool = r[0], hookAddr = r[1];
@@ -15104,6 +16064,8 @@ function buildCashOutModal(project, requestClose) {
       var erc20P = (pool && acct) ? clientFor(state.chainId).readContract({ address: pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n);
       Promise.all([qDirect, qBuyback, erc20P]).then(function (q) {
         if (seq !== previewSeq) return;
+        var liveAccount = getAccount && getAccount();
+        if (!acct || !liveAccount || liveAccount.toLowerCase() !== acct.toLowerCase()) { onChainChange(); return; }
         var directOut = q[0], buybackOut = q[1], erc20Bal = q[2] || 0n;
         // Route 3 — direct pool sell (preferred when the user holds enough claimed ERC-20 to cover the cash-out).
         if (pool && directOut != null && directOut > treasuryNet && erc20Bal >= count) {
@@ -15114,7 +16076,7 @@ function buildCashOutModal(project, requestClose) {
         // Route 2 — buyback via terminal (credits fallback). The hook routes AMM only when the floor exceeds its
         // net direct reclaim, so a pool that doesn't clearly beat the treasury stays on the treasury path.
         if (dec && hookAddr && buybackOut != null && buybackOut > treasuryNet) {
-          var minReturned = buybackOut * BigInt(10000 - (state.slippageBps || 100)) / 10000n;
+          var minReturned = quotedOutputFloor(buybackOut, 10000 - (state.slippageBps || 100));
           if (minReturned > dec.netDirect) {
             state.cashOutRoute = { via: 'amm', hook: hookAddr, minReturned: minReturned, ammOut: buybackOut, cashOutCountToSell: dec.cashOutCountToSell, netDirect: dec.netDirect, treasuryNet: treasuryNet };
             renderCashPreview(seq, { net: buybackOut, revFee: 0n, protocolFee: 0n, route: 'amm', treasuryNet: treasuryNet });
@@ -15129,7 +16091,13 @@ function buildCashOutModal(project, requestClose) {
   // their behalf, minting its token in return).
   function renderCashPreview(seq, f) {
     if (seq !== previewSeq) return;
-    var a = state.acct || { decimals: 18, symbol: 'ETH' };
+    var a = state.acct;
+    if (!a) return;
+    var liveAccount = getAccount && getAccount();
+    if (!state.contextAccount || !liveAccount || liveAccount.toLowerCase() !== state.contextAccount.toLowerCase()) {
+      preview.textContent = 'Connected account changed. Refresh the cash-out quote before continuing.';
+      state.net = null; btn.disabled = true; return;
+    }
     // Snapshot the outcome for the success panel (fee-token amounts fill in as their previews resolve).
     state.outcome = { net: f.net, sym: a.symbol, decimals: a.decimals, revToken: null, protoToken: null };
     state.lastF = f; // keep the last render so a slippage change can re-render the floor without a re-quote
@@ -15159,7 +16127,7 @@ function buildCashOutModal(project, requestClose) {
     // below it (protection, not an expected loss). Reads state.slippageBps so the slippage control updates it live.
     if (poolRoute && f.net != null) {
       var slip = state.slippageBps || 100;
-      var floor = f.net * BigInt(10000 - slip) / 10000n;
+      var floor = quotedOutputFloor(f.net, 10000 - slip);
       var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
       floorLine.textContent = 'Reverts below ' + formatBalance(floor, a.decimals, a.symbol) + ' floor (' + (slip / 100) + '% max slippage)';
       preview.appendChild(floorLine);
@@ -15253,6 +16221,7 @@ function buildCashOutModal(project, requestClose) {
   }
   amt.addEventListener('input', updatePreview);
   onChainChange();
+  onWalletChange(function () { if (wrap.isConnected) onChainChange(); });
   loadBalanceTable();
   // Multi-token projects: offer a reclaim-token picker (default to the primary), then re-resolve.
   acctKindsForFunds(project).then(function (kinds) {
@@ -15263,22 +16232,49 @@ function buildCashOutModal(project, requestClose) {
       state.reclaimKey = kinds[0].key; reclaimSel.value = state.reclaimKey;
       reclaimWrap.style.display = 'inline-flex';
       onChainChange();
-    }
+    } else if (state.acct) loadCashAggregates(state.acct);
   }).catch(function () {});
 
   btn.addEventListener('click', function () {
     var acct = getAccount && getAccount();
-    if (!acct) { connect(); return; }
+    if (!acct) { connect().then(onChainChange).catch(function () {}); return; }
+    if (!state.contextAccount || state.contextAccount.toLowerCase() !== acct.toLowerCase()) {
+      onChainChange(); status.textContent = 'Refreshing the cash-out quote for the connected account…'; return;
+    }
     var count; try { count = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (count === 0n) { status.textContent = 'Enter an amount'; return; }
+    if (state.balance == null) { status.textContent = 'Your balance is still loading or could not be verified.'; return; }
+    if (count > state.balance) { status.textContent = 'Amount exceeds your balance on this chain.'; return; }
     if (state.locked) { status.textContent = 'Cash outs are not unlocked yet'; return; }
     // The preview must have resolved (net + accounting token) before submit — a chain/reclaim switch or first
     // load nulls these until it does. Blocks a stale route / wrong reclaim token / missing floor mid-gap.
     if (state.net == null || !state.acct) { status.textContent = 'Preview still loading…'; return; }
-    var terminal = getAddress('JBMultiTerminal', state.chainId);
+    if (state.net <= 0n) { status.textContent = 'This cash out currently returns 0 tokens. Nothing was sent.'; return; }
+    var cid = state.chainId;
+    var terminal = getAddress('JBMultiTerminal', cid);
     if (!terminal) { status.textContent = 'No terminal on this chain'; return; }
-    var reclaimToken = state.acct.address || NATIVE_TOKEN; // cash out in the accounting token
+    var reviewedAcct = state.acct;
+    var reclaimToken = reviewedAcct.address; // cash out in the verified accounting token
     var route = state.cashOutRoute || { via: 'treasury' };
+    var reviewedNet = state.net;
+    var reviewedOutcome = state.outcome ? Object.assign({}, state.outcome) : { sym: reviewedAcct.symbol, decimals: reviewedAcct.decimals };
+    var reviewedSlippage = state.slippageBps || 100;
+    var reviewedReclaimKey = state.reclaimKey;
+    function cashInputsUnchanged() {
+      var current;
+      try { current = parseAmount(amt.value, 18); } catch (_) { current = -1n; }
+      return state.chainId === cid && current === count && state.reclaimKey === reviewedReclaimKey
+        && state.acct && state.acct.address.toLowerCase() === reclaimToken.toLowerCase()
+        && state.net === reviewedNet && (state.slippageBps || 100) === reviewedSlippage
+        && getAccount() && getAccount().toLowerCase() === acct.toLowerCase();
+    }
+    function requireCashInputs() {
+      if (cashInputsUnchanged()) return true;
+      status.classList.remove('pending');
+      status.textContent = 'Cash-out inputs, chain, or connected account changed while the quote was loading. Review and try again.';
+      btn.disabled = false;
+      return false;
+    }
     btn.disabled = true; status.textContent = '';
 
     // A TERMINAL cash-out: treasury reclaim, or the buyback route via a minReturned metadata. For the buyback
@@ -15288,8 +16284,8 @@ function buildCashOutModal(project, requestClose) {
     // treasury path. `r` may differ from the outer route (the direct-sell fallback passes a forced treasury r).
     function submitTerminalCashOut(r) {
       var routeP = (r.via === 'amm' && r.hook && r.cashOutCountToSell)
-        ? quoteCashOutSell(project, state.chainId, r.cashOutCountToSell).then(function (fresh) {
-            var freshMin = fresh != null ? fresh * BigInt(10000 - (state.slippageBps || 100)) / 10000n : 0n;
+        ? quoteCashOutSell(project, cid, r.cashOutCountToSell).then(function (fresh) {
+            var freshMin = fresh != null ? quotedOutputFloor(fresh, 10000 - reviewedSlippage) : 0n;
             if (fresh != null && fresh > (r.treasuryNet || 0n) && freshMin > (r.netDirect || 0n)) {
               return { metadata: buildCashOutAmmMetadata(r.hook, freshMin), minReclaimed: 0n, net: fresh };
             }
@@ -15297,22 +16293,21 @@ function buildCashOutModal(project, requestClose) {
           }).catch(function () { return null; })
         : Promise.resolve(null);
       routeP.then(function (amm) {
+        if (!requireCashInputs()) return;
         var metadata, minReclaimed, outNet, ammRoute = !!amm;
         if (amm) {
           metadata = amm.metadata; minReclaimed = amm.minReclaimed; outNet = amm.net;
         } else {
           if (r.via === 'amm') status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
           metadata = '0x';
-          // Floor under the previewed NET payout (bonding curve → REVOwner 2.5% fee → 2.5% protocol fee, all in
-          // state.net). 1% buffer when exact; 5% on a fallback estimate.
-          var bps = state.exact === false ? 9500n : 9900n;
-          minReclaimed = state.net != null ? state.net * bps / 10000n : 0n;
-          outNet = state.net;
+          // Floor under the exact previewed NET payout (bonding curve → data hook → protocol fee).
+          minReclaimed = quotedOutputFloor(reviewedNet, 9900n);
+          outNet = reviewedNet;
         }
-        var outcome = state.outcome ? Object.assign({}, state.outcome) : { sym: (state.acct && state.acct.symbol) || 'ETH', decimals: (state.acct && state.acct.decimals) || 18 };
+        var outcome = Object.assign({}, reviewedOutcome);
         outcome.net = outNet; outcome.approxAmount = ammRoute; outcome.sold = false;
         executeTransaction({
-          chainId: state.chainId, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
+          chainId: cid, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
           args: [acct, pid, count, reclaimToken, minReclaimed, acct, metadata],
           onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
           onSuccess: function (m, meta) { renderCashSuccess(count, outcome, meta); },
@@ -15329,20 +16324,22 @@ function buildCashOutModal(project, requestClose) {
       // Permit2, so if the balance dropped below `count` since the preview (e.g. a sell in another tab) the swap
       // would approve+sign+revert. Fall back to the terminal cash-out (credits-safe) when either check fails.
       Promise.all([
-        quoteDirectSwap(state.chainId, route.pool, route.count),
-        clientFor(state.chainId).readContract({ address: route.pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }),
+        quoteDirectSwap(cid, route.pool, route.count),
+        clientFor(cid).readContract({ address: route.pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }),
       ]).then(function (rr) {
+        if (!requireCashInputs()) return;
         var fresh = rr[0], bal = rr[1];
         if (fresh == null || fresh <= (route.treasuryNet || 0n) || bal < route.count) {
           status.textContent = 'Pool no longer beats the treasury — cashing out via the treasury.';
           submitTerminalCashOut({ via: 'treasury' });
           return;
         }
-        var minOut = fresh * BigInt(10000 - (state.slippageBps || 100)) / 10000n; // slippage floor = swap amountOutMinimum
+        var minOut = quotedOutputFloor(fresh, 10000 - reviewedSlippage); // slippage floor = swap amountOutMinimum
         var statusCb = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
-        var outcome = { net: fresh, sym: (state.acct && state.acct.symbol) || 'USDC', decimals: (state.acct && state.acct.decimals) || 18, approxAmount: true, sold: true };
-        buildDirectSwapErc20Tx(state.chainId, route.pool, route.pool.projectToken, route.count, minOut, acct, statusCb)
+        var outcome = { net: fresh, sym: reviewedAcct.symbol, decimals: reviewedAcct.decimals, approxAmount: true, sold: true };
+        buildDirectSwapErc20Tx(cid, route.pool, route.pool.projectToken, route.count, minOut, acct, statusCb)
           .then(function (tx) {
+            if (!requireCashInputs()) return;
             executeTransaction(Object.assign({}, tx, {
               onStatus: statusCb,
               onSuccess: function (m, meta) { renderCashSuccess(route.count, outcome, meta); },
@@ -15373,7 +16370,7 @@ function buildCashOutModal(project, requestClose) {
     done.appendChild(recvLbl);
     var recv = el('div', 'cashout-success-amount');
     // AMM route shows the pre-swap quote (actual fill is ≥ the minReturned floor), so mark it approximate.
-    recv.textContent = (o.approxAmount ? '~ ' : '') + formatBalance(o.net, o.decimals || 18, o.sym || 'ETH');
+    recv.textContent = (o.approxAmount ? '~ ' : '') + formatBalance(o.net, o.decimals == null ? 18 : o.decimals, o.sym || 'ETH');
     done.appendChild(recv);
 
     // Bonus tokens minted from the two fees.
@@ -15450,11 +16447,12 @@ function renderLoanFeeSvg(p) {
 function buildLoanModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, prepaidFee: LOAN_MIN_PREPAID, acct: null, acctLoading: true, loanOut: null };
-  // Loans are denominated in the base currency (USD/ETH) and disbursed in the accounting token (USDC/ETH).
-  var baseLbl = baseUnitLabel(project);
-  var baseCur = BigInt((project.metadata && project.metadata.baseCurrency) || 1);
-  function fmtBorrow(v) { return formatBalance(v, 18, baseLbl); }
+  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, prepaidFee: LOAN_MIN_PREPAID, accts: [], acct: null, acctLoading: true, feeless: null, loanOut: null };
+  // A loan is denominated in REVLoan.sourceToken's accounting context, not the ruleset base currency.
+  function fmtBorrow(v) {
+    var acct = state.acct;
+    return acct ? formatBalance(v, acct.decimals, acct.symbol) : '—';
+  }
 
   // Your balance + project balances per chain, boxed at the top (like the cash-out modal).
   var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
@@ -15468,6 +16466,16 @@ function buildLoanModal(project, requestClose) {
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
   chainRow.appendChild(chainSel);
   wrap.appendChild(chainRow);
+
+  var sourceRow = el('div', 'ops-chainrow');
+  var sourceLabel = el('span', 'modal-label'); sourceLabel.textContent = 'Borrow token'; sourceRow.appendChild(sourceLabel);
+  var sourceSel = document.createElement('select'); sourceSel.className = 'ops-chain-select'; sourceSel.disabled = true; sourceRow.appendChild(sourceSel);
+  wrap.appendChild(sourceRow);
+  sourceSel.addEventListener('change', function () {
+    state.acct = state.accts.filter(function (candidate) { return candidate.address.toLowerCase() === sourceSel.value.toLowerCase(); })[0] || null;
+    state.borrowable = null;
+    updatePreview(); updateFeeViz(); updateSummary();
+  });
 
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field');
@@ -15554,10 +16562,13 @@ function buildLoanModal(project, requestClose) {
   function feeTokRow() { var r = el('div', 'loan-summary-feetok'); summary.appendChild(r); return r; }
   function updateSummary() {
     summary.innerHTML = '';
+    state.loanOut = null;
     var seq = ++feeTokSeq;
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
     var p = state.prepaidFee;
-    if (state.borrowable && state.borrowable > 0n) {
+    if (state.borrowable && state.borrowable > 0n && state.feeless == null) {
+      summary.appendChild(summaryRow('Fee-adjusted amount', 'Waiting for verified protocol fee status'));
+    } else if (state.borrowable && state.borrowable > 0n) {
       var gross = state.borrowable;
       // Opening a loan disburses via the terminal (2.5% protocol fee → JB #1), then deducts the 1% REV fee
       // (→ the $REV revnet) and the chosen prepaid source fee. The borrower receives what's left now.
@@ -15566,7 +16577,7 @@ function buildLoanModal(project, requestClose) {
       var sourceFee = gross * BigInt(p) / BigInt(LOAN_MAX_FEE);                   // prepaid source fee (now)
       var net = gross - protocolFee - revFee - sourceFee;
       // Snapshot for the success panel (token amounts fill in as their previews resolve).
-      state.loanOut = { net: net, sym: baseLbl, collateral: collateral, protoTok: null, revTok: null, src: null };
+      state.loanOut = { net: net, sym: state.acct && state.acct.symbol, decimals: state.acct && state.acct.decimals, collateral: collateral, protoTok: null, revTok: null, src: null };
 
       summary.appendChild(summaryRow('You borrow', '~ ' + fmtBorrow(gross)));
       summary.appendChild(summaryRow('2.5% protocol fee', '~ ' + fmtBorrow(protocolFee)));
@@ -15582,7 +16593,7 @@ function buildLoanModal(project, requestClose) {
       // protocol fee → JB #1, REV fee → the $REV revnet, source fee → THIS revnet (its own token).
       // Native-ETH only — base == disbursed token there; for USDC the base→token conversion isn't 1:1.
       var acct = state.acct;
-      var isNative = !state.acctLoading && acct && (acct.address || NATIVE_TOKEN) === NATIVE_TOKEN;
+      var isNative = !state.acctLoading && acct && String(acct.address || NATIVE_TOKEN).toLowerCase() === NATIVE_TOKEN.toLowerCase();
       if (isNative) {
         var who = (getAccount && getAccount()) || undefined;
         var cid = state.chainId;
@@ -15647,33 +16658,64 @@ function buildLoanModal(project, requestClose) {
   foot.appendChild(btn); wrap.appendChild(foot);
 
   var pid = BigInt(project.id);
+  var loanBalanceSeq = 0;
   function refreshBalance() {
-    readUserBalance(project, state.chainId).then(function (b) { state.balance = b; });
-    isFeelessAddress(state.chainId, getAccount && getAccount(), Number(pid)).then(function (f) { state.feeless = f; updateSummary(); });
+    var cid = state.chainId;
+    var seq = ++loanBalanceSeq;
+    var loans = getAddress('REVLoans', cid);
+    state.balance = null; state.feeless = null; updateSummary();
+    readUserBalance(project, cid).then(function (b) { if (seq === loanBalanceSeq && state.chainId === cid) state.balance = b; });
+    // REVLoans is both caller and beneficiary of the terminal allowance; the connected borrower is only the
+    // fee-token beneficiary and does not decide whether the protocol fee is waived.
+    isAllowanceFeeless(cid, pid, loans, loans).then(function (f) {
+      if (seq === loanBalanceSeq && state.chainId === cid) { state.feeless = f; updateSummary(); }
+    });
   }
   var acctSeq = 0;
-  function refreshAccountingToken() {
+  function refreshAccountingTokens() {
     var seq = ++acctSeq;
+    var cid = state.chainId;
+    var previous = state.acct;
+    state.accts = [];
     state.acct = null;
     state.acctLoading = true;
+    state.borrowable = null;
+    sourceSel.innerHTML = '';
+    var loadingOpt = document.createElement('option'); loadingOpt.textContent = 'Loading…'; sourceSel.appendChild(loadingOpt);
+    sourceSel.disabled = true;
     updateSummary();
-    function done(a) {
-      if (seq !== acctSeq) return;
-      state.acct = a;
+    function done(contexts) {
+      if (seq !== acctSeq || state.chainId !== cid) return;
+      state.accts = contexts || [];
+      state.acct = state.accts.filter(function (candidate) {
+        return previous && candidate.address.toLowerCase() === previous.address.toLowerCase();
+      })[0] || state.accts.filter(function (candidate) {
+        return previous && candidate.symbol === previous.symbol;
+      })[0] || state.accts[0] || null;
       state.acctLoading = false;
-      updateSummary();
+      sourceSel.innerHTML = '';
+      state.accts.forEach(function (candidate) {
+        var opt = document.createElement('option'); opt.value = candidate.address;
+        opt.textContent = candidate.symbol + ' (' + candidate.decimals + ' decimals)';
+        sourceSel.appendChild(opt);
+      });
+      if (state.acct) sourceSel.value = state.acct.address;
+      sourceSel.disabled = state.accts.length < 2;
+      updatePreview(); updateFeeViz(); updateSummary();
     }
-    if (!getAddress('JBMultiTerminal', state.chainId)) { done({ address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH', currency: tokenCurrencyIdForAccounting(NATIVE_TOKEN) }); return; }
-    resolveAcctToken(state.chainId, pid).then(done).catch(function () { done(null); });
+    resolveAcctTokens(cid, pid).then(done).catch(function () { done([]); });
   }
   var previewSeq = 0;
   function updatePreview() {
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
     if (!collateral || collateral === 0n) { preview.textContent = ''; state.borrowable = null; updateSummary(); return; }
+    if (state.acctLoading || !state.acct) { preview.textContent = 'Loading borrow token…'; state.borrowable = null; updateSummary(); return; }
     var loans = getAddress('REVLoans', state.chainId);
     if (!loans) { preview.textContent = ''; return; }
+    var currency = borrowCurrencyForAccountContext(state.acct);
+    if (currency == null) { preview.textContent = 'Could not resolve this token’s accounting currency.'; state.borrowable = null; return; }
     var seq = ++previewSeq; preview.textContent = 'Calculating…';
-    read(state.chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, 18n, baseCur])
+    read(state.chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, BigInt(state.acct.decimals), currency])
       .then(function (r) {
         if (seq !== previewSeq) return;
         var b = Array.isArray(r) ? r[0] : r;
@@ -15688,16 +16730,21 @@ function buildLoanModal(project, requestClose) {
   }
   amt.addEventListener('input', updatePreview);
   function onChainChange() {
-    refreshBalance(); updatePreview();
-    refreshAccountingToken();
+    ++previewSeq;
+    preview.textContent = '';
+    refreshBalance();
+    refreshAccountingTokens();
   }
   onChainChange();
+  onWalletChange(function () { if (wrap.isConnected) onChainChange(); });
 
   btn.addEventListener('click', function () {
     var acct = getAccount && getAccount();
-    if (!acct) { connect(); return; }
+    if (!acct) { connect().then(onChainChange).catch(function () {}); return; }
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (collateral === 0n) { status.textContent = 'Enter an amount'; return; }
+    if (state.balance == null) { status.textContent = 'Your collateral balance is still loading or could not be verified.'; return; }
+    if (collateral > state.balance) { status.textContent = 'Collateral exceeds your balance on this chain.'; return; }
     if (state.borrowable === 0n) { status.textContent = 'Nothing borrowable yet — loans are locked until this revnet’s cash-out delay passes.'; return; }
     var chainId = state.chainId;
     var prepaidFee = state.prepaidFee;
@@ -15705,36 +16752,54 @@ function buildLoanModal(project, requestClose) {
     if (!loanToken) { status.textContent = state.acctLoading ? 'Accounting token still loading...' : 'Could not resolve the loan token for this chain.'; return; }
     var loanCurrency = borrowCurrencyForAccountContext(state.acct);
     if (loanCurrency == null) { status.textContent = 'Could not resolve the loan currency for this chain.'; return; }
-    var loanDecimals = BigInt((state.acct && state.acct.decimals != null) ? state.acct.decimals : 18);
+    var resolvedLoanDecimals = state.acct && Number(state.acct.decimals);
+    if (!Number.isInteger(resolvedLoanDecimals) || resolvedLoanDecimals < 0 || resolvedLoanDecimals > 36) { status.textContent = 'Could not verify the loan token decimals.'; return; }
+    var loanDecimals = BigInt(resolvedLoanDecimals);
     var loans = getAddress('REVLoans', chainId);
     var perms = getAddress('JBPermissions', chainId);
     if (!loans || !perms) { status.textContent = 'Loans not available on this chain'; return; }
     btn.disabled = true; status.textContent = '';
     var onStatus = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
     var fail = function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; };
+    var sourceAddress = state.acct.address;
+    function loanInputsUnchanged() {
+      var current;
+      try { current = parseAmount(amt.value, 18); } catch (_) { current = -1n; }
+      return state.chainId === chainId && current === collateral && state.prepaidFee === prepaidFee
+        && state.acct && state.acct.address.toLowerCase() === sourceAddress.toLowerCase()
+        && getAccount() && getAccount().toLowerCase() === acct.toLowerCase();
+    }
+    function requireLoanInputs() {
+      if (loanInputsUnchanged()) return true;
+      fail('Loan inputs, chain, source token, or connected account changed while the live quote was loading. Review and try again.');
+      return false;
+    }
 
     // token = resolved accounting token. REVLoans compares minBorrowAmount against the gross borrow in this
     // source token's own accounting context, so read that context freshly at submit time and floor at 99%.
-    function doBorrow(approved, minBorrow) {
+    function doBorrow(approved, minBorrow, reviewedOutcome) {
+      if (!requireLoanInputs()) return;
       executeTransaction(Object.assign(buildBorrowArgs({
         chainId: chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
         collateral: collateral, beneficiary: acct, prepaidFeePercent: prepaidFee, holder: acct,
       }), {
         confirmTitle: approved ? 'Open loan — step 2 of 2' : 'Open loan',
         confirmText: 'Open loan',
-        confirmNote: approved ? 'Approval done. This second transaction opens the loan — it burns your ' + sym + ' collateral and sends you the funds.' : undefined,
+        confirmNote: (approved ? 'Approval done. ' : '') + 'This opens the loan and burns your ' + sym + ' collateral. The live gross quote is ' + fmtBorrow(state.borrowable) + '; its submitted 1% floor guarantees a protocol payout of at least ' + fmtBorrow(reviewedOutcome.guaranteedNet) + ' after all possible loan fees (before any non-standard token transfer behavior). Failed optional fee payments can only increase it.',
         onStatus: onStatus, onError: fail,
-        onSuccess: function (m, meta) { refreshBalance(); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); renderLoanSuccess(collateral, state.loanOut, meta); },
+        onSuccess: function (m, meta) { refreshBalance(); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); renderLoanSuccess(collateral, reviewedOutcome, meta); },
       }));
     }
-    function continueWithFloor(minBorrow) {
+    function continueWithFloor(minBorrow, reviewedOutcome) {
+      if (!requireLoanInputs()) return;
       // Opening a loan burns the collateral via the controller, so REVLoans needs BURN_TOKENS on the holder.
       // Grant it once (if missing) before borrowing — otherwise borrowFrom reverts. Make the two-step nature
       // explicit so the approval tx isn't mistaken for the loan itself.
       onStatus('Checking approval…', 'pending');
       read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [loans, acct, pid, BigInt(JB_PERMISSION_BURN_TOKENS), true, false])
         .then(function (has) {
-          if (has) { doBorrow(false, minBorrow); return; }
+          if (!requireLoanInputs()) return;
+          if (has) { doBorrow(false, minBorrow, reviewedOutcome); return; }
           status.classList.remove('pending');
           status.textContent = 'First-time loan: this needs 2 transactions — a one-off approval, then the loan.';
           executeTransaction({
@@ -15745,18 +16810,30 @@ function buildLoanModal(project, requestClose) {
             confirmNote: 'This is NOT the loan yet. First-time loans need a one-off approval letting the loan contract burn your ' + sym + ' collateral. After you sign this, a second transaction will open the loan and send you the funds.',
             onStatus: function (m, kind) { onStatus(m === 'Awaiting wallet confirmation...' ? 'Step 1 of 2 — approve the loan contract…' : m, kind); },
             onError: fail,
-            onSuccess: function () { onStatus('Approved — now confirm step 2 to open the loan…', 'pending'); doBorrow(true, minBorrow); },
+            onSuccess: function () { onStatus('Approved — now confirm step 2 to open the loan…', 'pending'); doBorrow(true, minBorrow, reviewedOutcome); },
           });
-        }).catch(function () { doBorrow(false, minBorrow); }); // if the permission read fails, attempt the borrow (it will revert clearly if truly unauthorized)
+        }).catch(function () { fail('Could not verify whether the loan contract is approved. Nothing was sent.'); });
     }
 
-    onStatus('Checking current loan amount…', 'pending');
-    read(chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, loanDecimals, loanCurrency])
-      .then(function (r) {
+    onStatus('Checking current loan amount and fees…', 'pending');
+    Promise.all([
+      read(chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, loanDecimals, loanCurrency]),
+      isAllowanceFeeless(chainId, pid, loans, loans),
+    ]).then(function (live) {
+        if (!requireLoanInputs()) return;
+        var r = live[0];
         var sourceBorrowable = toBigInt(Array.isArray(r) ? r[0] : r);
         if (sourceBorrowable === 0n) { fail('Nothing borrowable yet — loans are locked until this revnet’s cash-out delay passes.'); return; }
-        continueWithFloor(borrowMinAmountFromPreview(sourceBorrowable));
-      }).catch(function () { fail('Could not read the current loan amount for this token.'); });
+        if (live[1] == null) { fail('Could not verify the protocol fee status for this loan. Nothing was sent.'); return; }
+        state.borrowable = sourceBorrowable; state.feeless = live[1]; updateSummary();
+        var reviewedOutcome = state.loanOut ? Object.assign({}, state.loanOut) : null;
+        if (!reviewedOutcome || reviewedOutcome.net == null) { fail('Could not calculate the fee-adjusted loan amount. Nothing was sent.'); return; }
+        var minBorrow = borrowMinAmountFromPreview(sourceBorrowable);
+        reviewedOutcome.guaranteedNet = minBorrow - minBorrow / 40n
+          - minBorrow * BigInt(LOAN_REV_FEE_PERCENT) / BigInt(LOAN_MAX_FEE)
+          - minBorrow * BigInt(prepaidFee) / BigInt(LOAN_MAX_FEE);
+        continueWithFloor(minBorrow, reviewedOutcome);
+      }).catch(function () { fail('Could not read the current loan amount and fee status for this token.'); });
   });
 
   // Replace the form with a summary of what landed: the funds received, the loan NFT, the fee-minted
@@ -15769,9 +16846,9 @@ function buildLoanModal(project, requestClose) {
     sub.textContent = (collateral > 0n ? formatTokens(collateral) : 'Your') + ' ' + sym + ' is now collateral — repay anytime to reclaim it.';
     done.appendChild(sub);
 
-    var recvLbl = el('div', 'cashout-success-reclbl'); recvLbl.textContent = 'You received'; done.appendChild(recvLbl);
+    var recvLbl = el('div', 'cashout-success-reclbl'); recvLbl.textContent = 'Minimum protocol payout'; done.appendChild(recvLbl);
     var recv = el('div', 'cashout-success-amount');
-    recv.textContent = o.net != null ? fmtBorrow(o.net) : 'your loan';
+    recv.textContent = o.guaranteedNet != null ? fmtBorrow(o.guaranteedNet) : 'your loan';
     done.appendChild(recv);
 
     var extras = [];
@@ -15802,7 +16879,6 @@ function buildLoanModal(project, requestClose) {
 // arg `maxRepayBorrowAmount` is ignored for native, so a small buffer over the fee covers per-second drift.
 function buildRepayModal(project, loanRow, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
-  var baseLbl = baseUnitLabel(project);
   var pid = BigInt(project.id);
   var chainId = Number(loanRow.chainId) || project.chainId;
   var loanId = BigInt(loanRow.id);
@@ -15813,18 +16889,26 @@ function buildRepayModal(project, loanRow, requestClose) {
   var btn = el('button', 'modal-submit'); btn.textContent = 'Repay loan'; btn.disabled = true;
   foot.appendChild(btn); wrap.appendChild(foot);
 
-  var st = { principal: null, fee: 0n, collateral: null, sourceToken: NATIVE_TOKEN };
-  function fmt(v) { return formatBalance(v, 18, baseLbl); }
+  var st = { principal: null, fee: 0n, collateral: null, sourceToken: NATIVE_TOKEN, sourceMeta: null, loan: null };
+  function fmt(v) {
+    return st.sourceMeta
+      ? formatBalance(v, st.sourceMeta.decimals, st.sourceMeta.symbol)
+      : toBigInt(v).toLocaleString('en-US') + ' raw units';
+  }
 
   var loans = getAddress('REVLoans', chainId);
   Promise.all([
     loans ? clientFor(chainId).readContract({ address: loans, abi: loanOfAbi, functionName: 'loanOf', args: [loanId] }).catch(function () { return null; }) : Promise.resolve(null),
+    resolveAcctTokens(chainId, pid).catch(function () { return []; }),
   ]).then(function (r) {
     var loan = r[0];
     if (!loan) { info.textContent = 'Could not read this loan.'; return; }
+    st.loan = loan;
     st.principal = toBigInt(loan.amount); st.collateral = toBigInt(loan.collateral); st.sourceToken = loan.sourceToken;
+    st.sourceMeta = (r[1] || []).filter(function (candidate) { return candidate.address.toLowerCase() === String(st.sourceToken).toLowerCase(); })[0]
+      || sourceTokenMeta(project, chainId, st.sourceToken);
     return clientFor(chainId).readContract({ address: loans, abi: determineSourceFeeAbi, functionName: 'determineSourceFeeAmount', args: [loan, loan.amount] })
-      .then(function (f) { st.fee = toBigInt(f); }).catch(function () { st.fee = loanOutstandingFee(loanRow, Math.floor(Date.now() / 1000)) || 0n; });
+      .then(function (f) { st.fee = toBigInt(f); });
   }).then(function () {
     if (st.principal == null) return;
     var total = st.principal + st.fee;
@@ -15838,26 +16922,45 @@ function buildRepayModal(project, loanRow, requestClose) {
     s.appendChild(row('Reclaim collateral', formatTokens(st.collateral) + ' ' + sym));
     info.appendChild(s);
     btn.disabled = false;
-  });
+  }).catch(function () { info.textContent = 'Could not verify the exact current loan and repayment fee. Nothing can be sent.'; btn.disabled = true; });
 
   btn.addEventListener('click', function () {
     if (st.done) { if (requestClose) requestClose(); return; }
     var acct = getAccount && getAccount();
     if (!acct) { connect(); return; }
     if (st.principal == null) return;
-    if ((st.sourceToken || NATIVE_TOKEN) !== NATIVE_TOKEN) { status.textContent = 'Repaying ERC-20 loans isn’t supported here yet — repay from the protocol UI.'; return; }
-    // Buffer the fee 2% for per-second drift; excess native is refunded by REVLoans.
-    var value = st.principal + st.fee + st.fee / 50n;
-    btn.disabled = true; status.textContent = '';
-    executeTransaction(Object.assign(buildRepayArgs({
-      chainId: chainId, loansAddr: loans, loanId: loanId, maxRepay: value, collateralToReturn: st.collateral, beneficiary: acct, value: value,
-    }), {
-      confirmTitle: 'Repay loan #' + String(loanId),
-      confirmText: 'Repay loan',
-      confirmNote: 'Repays the principal + outstanding fee and returns your ' + formatTokens(st.collateral) + ' ' + sym + ' collateral. Any overpayment from fee drift is refunded.',
-      onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
-      onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-      onSuccess: function () {
+    btn.disabled = true; status.textContent = 'Refreshing the current fee…'; status.classList.add('pending');
+    // Reread the loan itself as well as its fee immediately before review. A partial repayment replaces the
+    // loan ID, so using the modal's opening snapshot could otherwise quote stale principal/collateral.
+    clientFor(chainId).readContract({ address: loans, abi: loanOfAbi, functionName: 'loanOf', args: [loanId] }).then(function (liveLoan) {
+      if (!liveLoan || toBigInt(liveLoan.createdAt) === 0n || toBigInt(liveLoan.amount) === 0n) throw new Error('This loan is no longer open. Refresh the project and select its current loan.');
+      return clientFor(chainId).readContract({ address: loans, abi: determineSourceFeeAbi, functionName: 'determineSourceFeeAmount', args: [liveLoan, liveLoan.amount] })
+        .then(function (fee) { return { loan: liveLoan, fee: toBigInt(fee) }; });
+    }).then(function (fresh) {
+      if (!getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) throw new Error('Connected account changed while the repayment was loading. Review and try again.');
+      st.loan = fresh.loan;
+      st.principal = toBigInt(st.loan.amount);
+      st.collateral = toBigInt(st.loan.collateral);
+      st.sourceToken = st.loan.sourceToken;
+      st.fee = fresh.fee;
+      var prepaid = st.principal * BigInt(Number(st.loan.prepaidFeePercent || 0)) / BigInt(LOAN_MAX_FEE);
+      var ramp = Math.max(1, LOAN_LIQUIDATION_SECONDS - Number(st.loan.prepaidDuration || 0));
+      var driftGuard = ((st.principal - prepaid) * 120n / BigInt(ramp)) + 1n;
+      var maxRepay = st.principal + st.fee + driftGuard;
+      var nativeSource = String(st.sourceToken).toLowerCase() === NATIVE_TOKEN.toLowerCase();
+      status.classList.remove('pending'); status.textContent = '';
+      executeTransaction(Object.assign(buildRepayArgs({
+        chainId: chainId, loansAddr: loans, loanId: loanId, maxRepay: maxRepay, collateralToReturn: st.collateral, beneficiary: acct, value: nativeSource ? maxRepay : 0n,
+      }), {
+        tokenAddr: nativeSource ? null : st.sourceToken,
+        spenderAddr: nativeSource ? null : loans,
+        approvalAmount: nativeSource ? null : maxRepay,
+        confirmTitle: 'Repay loan #' + String(loanId),
+        confirmText: 'Repay loan',
+        confirmNote: 'Repays the principal + current fee in ' + (st.sourceMeta ? st.sourceMeta.symbol : 'the loan source token') + ' and returns your ' + formatTokens(st.collateral) + ' ' + sym + ' collateral. The small fee-drift guard is refunded if unused.',
+        onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
+        onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
+        onSuccess: function () {
         status.classList.remove('pending');
         document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
         info.innerHTML = '';
@@ -15867,8 +16970,9 @@ function buildRepayModal(project, loanRow, requestClose) {
         info.appendChild(ok);
         status.textContent = '';
         st.done = true; btn.textContent = 'Done'; btn.disabled = false;
-      },
-    }));
+        },
+      }));
+    }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not refresh the current loan and repayment fee.'); btn.disabled = false; });
   });
   return wrap;
 }
@@ -15887,13 +16991,22 @@ var suckerBridgeAbi = [
     { name: 'minTokensReclaimed', type: 'uint256' }, { name: 'token', type: 'address' }, { name: 'metadata', type: 'bytes32' }], outputs: [] },
   { type: 'function', name: 'toRemote', stateMutability: 'payable', inputs: [{ name: 'token', type: 'address' }], outputs: [] },
 ];
+var suckerTokenMappingAbi = [
+  { type: 'function', name: 'projectId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'remoteTokenFor', stateMutability: 'view', inputs: [{ name: 'token', type: 'address' }], outputs: [{ name: 'remoteToken', type: 'tuple', components: [
+    { name: 'enabled', type: 'bool' }, { name: 'emergencyHatch', type: 'bool' }, { name: 'minGas', type: 'uint32' }, { name: 'addr', type: 'bytes32' },
+  ] }] },
+];
 // Pure builder for JBSucker.prepare (queue a cross-chain move). `o`: { chainId, sucker, projectTokenCount
 // (bigint), beneficiary32 (bytes32), minReclaimed (bigint), termToken (the accounting token bridged),
 // metadata (bytes32), approvalToken, approvalAmount }.
 export function buildSuckerPrepareArgs(o) {
+  if (o.minReclaimed == null) throw new Error('A reviewed bridge backing floor is required.');
+  var minReclaimed = BigInt(o.minReclaimed);
+  if (minReclaimed < 0n) throw new Error('The bridge backing floor cannot be negative.');
   return {
     chainId: o.chainId, address: o.sucker, abi: suckerBridgeAbi, functionName: 'prepare', contractName: 'JBSucker',
-    args: [o.projectTokenCount, o.beneficiary32, o.minReclaimed || 0n, o.termToken, o.metadata],
+    args: [o.projectTokenCount, o.beneficiary32, minReclaimed, o.termToken, o.metadata],
     tokenAddr: o.approvalToken, spenderAddr: o.sucker, approvalAmount: o.approvalAmount,
   };
 }
@@ -15908,26 +17021,50 @@ var erc20BalanceOfAbi = [{ type: 'function', name: 'balanceOf', stateMutability:
 
 function moveChainName(cid) { return SHORT_CHAIN_NAME[Number(cid)] || (CHAINS[cid] && CHAINS[cid].name) || ('chain ' + cid); }
 
-// Active sucker pairs for a project on `chainId`: [{ local, remoteChainId }]. Empty on failure.
+// Active sucker pairs for a project on `chainId`: [{ local, remoteChainId }]. RPC failures propagate so
+// callers can distinguish "no routes" from "could not verify routes".
 function readSuckerPairsOf(projectId, chainId) {
   var reg = getAddress('JBSuckerRegistry', chainId);
   if (!reg) return Promise.resolve([]);
   return clientFor(chainId).readContract({ address: reg, abi: suckerRegistryBridgeAbi, functionName: 'suckerPairsOf', args: [BigInt(projectId)] })
-    .then(function (pairs) { return (pairs || []).map(function (p) { return { local: p.local, remoteChainId: Number(p.remoteChainId), remote: '0x' + String(p.remote).slice(-40) }; }); })
-    .catch(function () { return []; });
+    .then(function (pairs) { return (pairs || []).map(function (p) { return { local: p.local, remoteChainId: Number(p.remoteChainId), remote: '0x' + String(p.remote).slice(-40) }; }); });
+}
+
+var allSuckersOfAbi = [{ type: 'function', name: 'allSuckersOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address[]' }] }];
+var suckerPeerIdentityAbi = [
+  { type: 'function', name: 'peerChainId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'peer', stateMutability: 'view', inputs: [], outputs: [{ type: 'bytes32' }] },
+];
+
+// Movement history must include deprecated suckers too: their leaves remain claimable after a route is replaced.
+// `suckerPairsOf` intentionally returns active routes only, so using it here can strand old pending claims in the UI.
+async function readAllSuckerPairsOf(projectId, chainId) {
+  var registry = getAddress('JBSuckerRegistry', chainId);
+  if (!registry) throw new Error('Sucker registry unavailable on ' + moveChainName(chainId) + '.');
+  var suckers = await clientFor(chainId).readContract({ address: registry, abi: allSuckersOfAbi, functionName: 'allSuckersOf', args: [BigInt(projectId)] });
+  return Promise.all((suckers || []).map(async function (local) {
+    var identity = await Promise.all([
+      clientFor(chainId).readContract({ address: local, abi: suckerPeerIdentityAbi, functionName: 'peerChainId', args: [] }),
+      clientFor(chainId).readContract({ address: local, abi: suckerPeerIdentityAbi, functionName: 'peer', args: [] }),
+    ]);
+    return { local: local, remoteChainId: Number(identity[0]), remote: '0x' + String(identity[1]).slice(-40) };
+  }));
 }
 
 // CCIP suckers expose CCIP_ROUTER(); native-bridge suckers (OP/Base/Arb) don't (they have OPMESSENGER/
 // ARBINBOX). Probe it to label a sucker's bridge infra.
 var ccipRouterAbi = [{ type: 'function', name: 'CCIP_ROUTER', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
 
-// Distinct bridge routes for a project with the infra each uses: [{ a, b, infra: 'CCIP'|'native' }].
+// Distinct bridge routes for a project with the infra each uses:
+// [{ a, b, infra: 'CCIP'|'native'|'unknown' }].
 // Routes are symmetric, so dedup by the sorted chain pair. Reads the actual deployed suckers (not inferred).
-// A sucker routes through CCIP when it exposes a non-zero CCIP_ROUTER; otherwise it's a native bridge.
+// A sucker routes through CCIP when it exposes a non-zero CCIP_ROUTER. A successful zero-address response
+// identifies a native bridge. A failed probe stays unknown: treating an RPC failure as native can select the
+// wrong fee regime and can make a CCIP sucker try LINK-fee mode.
 function classifySuckerInfra(chainId, local) {
   return clientFor(chainId).readContract({ address: local, abi: ccipRouterAbi, functionName: 'CCIP_ROUTER', args: [] })
     .then(function (r) { return (r && String(r).toLowerCase() !== ZERO_ADDRESS) ? 'CCIP' : 'native'; })
-    .catch(function () { return 'native'; });
+    .catch(function () { return 'unknown'; });
 }
 
 function fetchProjectSuckerInfra(project) {
@@ -15936,8 +17073,7 @@ function fetchProjectSuckerInfra(project) {
   // (the native+CCIP cohort wires both on each L1↔L2 pair for redundancy), so a pair is NOT a unique bridge.
   return Promise.all(chains.map(function (C) {
     return readSuckerPairsOf(project.id, C)
-      .then(function (pairs) { return pairs.map(function (p) { return { a: C, b: p.remoteChainId, local: p.local }; }); })
-      .catch(function () { return []; });
+      .then(function (pairs) { return pairs.map(function (p) { return { a: C, b: p.remoteChainId, local: p.local }; }); });
   })).then(function (lists) {
     var all = [];
     lists.forEach(function (l) { all = all.concat(l); });
@@ -15958,7 +17094,7 @@ function fetchProjectSuckerInfra(project) {
     });
     routes.sort(function (a, b) { return (a._lo - b._lo) || (a._hi - b._hi) || a.infra.localeCompare(b.infra); });
     return routes;
-  }).catch(function () { return []; });
+  });
 }
 
 // Currency symbol for a peer accounting context (currency = uint32(uint160(token))). 61166 = native ETH.
@@ -16008,7 +17144,7 @@ function fetchCrossChainKnowledge(project) {
     .then(function (d) { var m = {}; ((d && d.accountingSyncEvents && d.accountingSyncEvents.items) || []).forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); return m; })
     .catch(function () { return {}; });
   return Promise.all([sentByKeyP, Promise.all(chains.map(function (C) {
-    return readSuckerPairsOf(project.id, C).then(function (p) { return { chain: C, pairs: p || [] }; }).catch(function () { return { chain: C, pairs: [] }; });
+    return readSuckerPairsOf(project.id, C).then(function (p) { return { chain: C, pairs: p || [] }; });
   }))]).then(function (res2) {
     var sentByKey = res2[0]; var lists = res2[1];
     var pairsByChain = {};
@@ -16017,8 +17153,8 @@ function fetchCrossChainKnowledge(project) {
       var A = x.chain;
       var reg = getAddress('JBSuckerRegistry', A);
       var acctJob = reg
-        ? clientFor(A).readContract({ address: reg, abi: suckerRegistryAccountsAbi, functionName: 'peerChainAccountsOf', args: [BigInt(project.id), BigInt(A)] }).catch(function () { return []; })
-        : Promise.resolve([]);
+        ? clientFor(A).readContract({ address: reg, abi: suckerRegistryAccountsAbi, functionName: 'peerChainAccountsOf', args: [BigInt(project.id), BigInt(A)] })
+        : Promise.reject(new Error('Sucker registry unavailable.'));
       return acctJob.then(function (accts) {
         // Index the registry's aggregated records by source chain.
         var byChain = {};
@@ -16026,7 +17162,12 @@ function fetchCrossChainKnowledge(project) {
           var cid = Number(a.chainId);
           var balances = (a.contexts || []).map(function (c) {
             var tokenAddr = '0x' + String(c.token).slice(-40);
-            return { balance: toBigInt(c.balance), decimals: Number(c.decimals), symbol: acctTokenSymbol(tokenAddr, Number(c.decimals)) };
+            var decimals = Number(c.decimals);
+            return {
+              token: tokenAddr,
+              contextKey: accountingTokenContextKey(tokenAddr, A) + '@' + decimals,
+              balance: toBigInt(c.balance), decimals: decimals, symbol: acctTokenSymbol(tokenAddr, decimals),
+            };
           });
           byChain[cid] = { supply: toBigInt(a.totalSupply), balances: balances, snapshot: unpackTs(a.timestamp) };
         });
@@ -16035,12 +17176,14 @@ function fetchCrossChainKnowledge(project) {
           var rec = byChain[B] || { supply: 0n, balances: [], snapshot: 0 };
           var bPairs = pairsByChain[B] || [];
           var syncSucker = (bPairs.filter(function (q) { return q.remoteChainId === A; })[0] || {}).local || null;
-          return { peerChainId: B, peerName: moveChainName(B), supply: rec.supply, balances: rec.balances, snapshot: rec.snapshot, syncSucker: syncSucker, sentSyncAt: sentByKey[A + '|' + B] || 0 };
+          var viewSucker = (x.pairs.filter(function (q) { return q.remoteChainId === B; })[0] || {}).local || null;
+          return { peerChainId: B, peerName: moveChainName(B), supply: rec.supply, balances: rec.balances, snapshot: rec.snapshot,
+            syncSucker: syncSucker, viewSucker: viewSucker, sentSyncAt: sentByKey[A + '|' + B] || 0 };
         });
         return { chainId: A, name: moveChainName(A), peers: peers };
       });
     }));
-  }).catch(function () { return []; });
+  });
 }
 
 // "Sync from {peer}" — runs syncAccountingData on the PEER's sucker so the peer re-pushes its accounting to
@@ -16070,7 +17213,8 @@ async function findSyncValue(chainId, sucker, account) {
   if (!account) return null;
   var data;
   try { data = encodeFunctionData({ abi: suckerSyncAbi, functionName: 'syncAccountingData', args: [] }); } catch (_) { return null; }
-  var infra = await classifySuckerInfra(chainId, sucker).catch(function () { return 'native'; });
+  var infra = await classifySuckerInfra(chainId, sucker);
+  if (infra === 'unknown') return null;
   var ladder = infra === 'CCIP'
     ? [1000000000000000n, 5000000000000000n, 20000000000000000n, 50000000000000000n, 200000000000000000n, 500000000000000000n]
     : [0n, 1000000000000000n, 10000000000000000n, 50000000000000000n];
@@ -16133,6 +17277,49 @@ function gossipStaleness(snapSupply, actualSupply, snapBal, actualBal) {
   return { level: 'danger', label: 'Stale' };
 }
 
+var GOSSIP_U128_MAX = (1n << 128n) - 1n;
+function gossipContextBalances(rows, chainId) {
+  var out = {};
+  (rows || []).forEach(function (row) {
+    if (row.balance == null) return;
+    var decimals = Number(row.decimals);
+    var key = row.contextKey || (accountingTokenContextKey(row.token, chainId) + '@' + decimals);
+    var amount = toBigInt(row.balance);
+    if (amount > GOSSIP_U128_MAX) amount = GOSSIP_U128_MAX; // snapshots cap each source context to uint128
+    var sum = (out[key] || 0n) + amount;
+    out[key] = sum > GOSSIP_U128_MAX ? GOSSIP_U128_MAX : sum; // receiver folding saturates too
+  });
+  return out;
+}
+
+// Compare like-for-like snapshot values. Snapshot `balance` is the terminal's raw recorded balance per accounting
+// context; `fetchOps.balance` is reclaimable surplus for one context. Comparing those (and summing mixed decimals)
+// mislabeled healthy snapshots as stale. If any live source value is unreadable, report unknown instead of zero.
+export function gossipAccountingStaleness(peer, actual) {
+  if (!actual || actual.gossipSupply == null || !actual.gossipVerified) return { level: 'unknown', label: 'Unverified' };
+  var snap = gossipContextBalances(peer.balances, peer._viewChainId);
+  var live = peer._mappedLiveTokens
+    ? gossipContextBalances(peer._mappedLiveTokens, peer._viewChainId)
+    : gossipContextBalances(actual.gossipTokens, actual.id);
+  var customKeys = function (map) {
+    return Object.keys(map).filter(function (key) { return key.indexOf('native@') !== 0 && key.indexOf('usdc@') !== 0; }).sort();
+  };
+  // Differing custom-token addresses may be a legitimate sucker mapping (source token B → local token A). Until
+  // that mapping is read, calling the row stale could make users pay for a needless sync.
+  if (JSON.stringify(customKeys(snap)) !== JSON.stringify(customKeys(live)) && !peer._mappingVerified) {
+    return { level: 'unknown', label: 'Unverified' };
+  }
+  var keys = {};
+  Object.keys(snap).forEach(function (key) { keys[key] = true; });
+  Object.keys(live).forEach(function (key) { keys[key] = true; });
+  var worst = gossipStaleness(peer.supply, toBigInt(actual.gossipSupply), 0n, 0n);
+  Object.keys(keys).forEach(function (key) {
+    var next = gossipStaleness(0n, 0n, snap[key] || 0n, live[key] || 0n);
+    if (next.level === 'danger' || (next.level === 'slight' && worst.level === 'synced')) worst = next;
+  });
+  return worst;
+}
+
 // "Gossip" — its own table (between the settlement table and Bridges): per chain, what it knows about each
 // peer's accounting, a freshness status vs the peer's ACTUAL current values, and a Sync button.
 function renderGossipSection(project) {
@@ -16145,12 +17332,46 @@ function renderGossipSection(project) {
   var section = ownersCard('Gossip', wrap);
   var sym = project.tokenSymbol || 'tokens';
   function fill() {
-    Promise.all([fetchCrossChainKnowledge(project), fetchOps(project)]).then(function (out) {
+    Promise.all([fetchCrossChainKnowledge(project), fetchOps(project)]).then(async function (out) {
       if (!section.isConnected) return;
       var data = out[0], ops = out[1];
       if (!data.some(function (d) { return d.peers.length; })) { section.remove(); return; }
       var actual = {};
       ops.forEach(function (o) { actual[o.id] = o; });
+      // Incoming custom-token contexts are localized through the viewing sucker's token mapping. Canonical native
+      // and USDC keys normalize without reads; differing custom addresses require this mapping before freshness can
+      // be compared. Failed mapping reads leave the row Unverified instead of inventing drift.
+      var mappingJobs = [];
+      data.forEach(function (d) { d.peers.forEach(function (p) {
+        p._viewChainId = d.chainId;
+        var source = actual[p.peerChainId];
+        var view = actual[d.chainId];
+        if (!source || !source.gossipTokens) { p._mappingVerified = false; return; }
+        var snapshotCustom = gossipContextBalances(p.balances, d.chainId);
+        var sourceCustom = gossipContextBalances(source.gossipTokens, p.peerChainId);
+        var customKeys = function (map) { return Object.keys(map).filter(function (key) { return key.indexOf('native@') !== 0 && key.indexOf('usdc@') !== 0; }).sort(); };
+        if (JSON.stringify(customKeys(snapshotCustom)) === JSON.stringify(customKeys(sourceCustom))) {
+          p._mappingVerified = true; return;
+        }
+        if (!p.viewSucker || !view || !view.gossipTokens || !view.gossipTokens.length) { p._mappingVerified = false; return; }
+        mappingJobs.push(Promise.all(view.gossipTokens.map(function (local) {
+          return clientFor(d.chainId).readContract({ address: p.viewSucker, abi: suckerTokenMappingAbi, functionName: 'remoteTokenFor', args: [local.token] })
+            .then(function (mapping) { return { local: local.token, remote: mapping && (mapping.addr || mapping[3]) }; });
+        })).then(function (mappings) {
+          var remoteToLocal = {};
+          mappings.forEach(function (mapping) {
+            if (!mapping.remote || /^0x0+$/.test(mapping.remote)) return;
+            remoteToLocal[('0x' + String(mapping.remote).slice(-40)).toLowerCase()] = mapping.local;
+          });
+          p._mappedLiveTokens = source.gossipTokens.map(function (token) {
+            var mapped = remoteToLocal[String(token.token).toLowerCase()];
+            return mapped ? Object.assign({}, token, { token: mapped, contextKey: null }) : token;
+          });
+          p._mappingVerified = true;
+        }).catch(function () { p._mappingVerified = false; }));
+      }); });
+      await Promise.all(mappingJobs);
+      if (!section.isConnected) return;
       // Which chains each chain already knows (with a real snapshot). A sync from B re-gossips everything B
       // knows (minus the receiver), so one sync can also cover those — we surface that so the user doesn't
       // pay for redundant syncs.
@@ -16175,18 +17396,18 @@ function renderGossipSection(project) {
         // Sync contribute coverage. A peer that itself covers others keeps its Sync (avoids mutual-hide).
         var extrasByPeer = {}, coveredByOther = {};
         d.peers.forEach(function (p) {
+          p._viewChainId = d.chainId; // registry records are keyed in the viewing chain's local token namespace
           var ex = (knownByChain[p.peerChainId] || []).filter(function (cid) { return cid !== d.chainId && cid !== p.peerChainId; });
           extrasByPeer[p.peerChainId] = ex;
-          var snapBal0 = p.balances.reduce(function (s, b) { return s + b.balance; }, 0n);
           var a0 = actual[p.peerChainId] || {};
-          var st0 = gossipStaleness(p.supply, a0.supply != null ? toBigInt(a0.supply) : 0n, snapBal0, a0.balance != null ? toBigInt(a0.balance) : 0n);
-          if (p.syncSucker && st0.level !== 'synced') ex.forEach(function (cid) { coveredByOther[cid] = true; });
+          var st0 = gossipAccountingStaleness(p, a0);
+          if (p.syncSucker && st0.level !== 'synced' && st0.level !== 'unknown') ex.forEach(function (cid) { coveredByOther[cid] = true; });
         });
 
         d.peers.forEach(function (p) {
-          var snapBal = p.balances.reduce(function (s, b) { return s + b.balance; }, 0n);
+          p._viewChainId = d.chainId;
           var a = actual[p.peerChainId] || {};
-          var st = gossipStaleness(p.supply, a.supply != null ? toBigInt(a.supply) : 0n, snapBal, a.balance != null ? toBigInt(a.balance) : 0n);
+          var st = gossipAccountingStaleness(p, a);
           var balStr = p.balances.length ? p.balances.map(function (b) { return formatBalance(b.balance, b.decimals, b.symbol); }).join(' | ') : '0';
 
           // In-flight sync: a push was sent and the fresher snapshot hasn't landed yet.
@@ -16225,7 +17446,7 @@ function renderGossipSection(project) {
             var extras = extrasByPeer[p.peerChainId] || [];
             var redundant = coveredByOther[p.peerChainId] && extras.length === 0;
             // Sync button only when there's drift to reconcile (or a push is mid-flight), and it isn't redundant.
-            if (p.syncSucker && (pending || (st.level !== 'synced' && !redundant))) {
+            if (p.syncSucker && (pending || (st.level !== 'synced' && st.level !== 'unknown' && !redundant))) {
               var syncWrap = el('span', 'gossip-sync-wrap');
               var btn = el('button', 'xchain-sync'); btn.textContent = pending ? 'Sent' : 'Sync'; btn.disabled = pending;
               btn.title = pending ? 'Sync in flight — arrives in a few minutes' : ('Run syncAccountingData on ' + p.peerName + ' so it re-pushes its accounting here');
@@ -16245,7 +17466,7 @@ function renderGossipSection(project) {
           // Lazy ON-CHAIN in-flight check (universal, reload-proof) — only for stale rows (an in-sync row
           // can't have a pending sync) and only when not already shown pending. Runs AFTER render, off the
           // critical path, so it never delays the table; patches the row to "Syncing…" if a push is bridging.
-          if (!localPending && p.syncSucker && st.level !== 'synced') {
+          if (!localPending && p.syncSucker && st.level !== 'synced' && st.level !== 'unknown') {
             readLatestSyncSent(p.peerChainId, p.syncSucker).then(function (sent) {
               if (!row.isConnected) return;
               if (sent && sent > (p.snapshot || 0) && (Math.floor(Date.now() / 1000) - sent) < 3600) paint(true);
@@ -16255,7 +17476,7 @@ function renderGossipSection(project) {
         block.appendChild(table);
         box.appendChild(block);
       });
-    }).catch(function () { if (section.isConnected) section.remove(); });
+    }).catch(function () { if (section.isConnected) { box.innerHTML = ''; box.textContent = 'Could not verify cross-chain gossip state.'; } });
   }
   box.appendChild(skelOpsTable(['Chain', 'Knows'], 3));
   fill();
@@ -16268,28 +17489,29 @@ function renderGossipSection(project) {
 // keyed by chain: native-bridge suckers share the SAME address on both chains, so a flat map would collide.
 function fetchProjectSuckerMap(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
-  return Promise.all(chains.map(function (C) { return readSuckerPairsOf(project.id, C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
+  return Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(project.id, C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
     .then(function (lists) {
       var map = {};
       lists.forEach(function (x) { var m = map[x.C] = map[x.C] || {}; x.pairs.forEach(function (p) { if (p.local) m[p.local.toLowerCase()] = p.remoteChainId; }); });
       return map;
-    }).catch(function () { return {}; });
+    });
 }
 
 // The connected wallet's CLAIMED ERC-20 balance — the only kind a sucker can bridge — plus the token
-// address. { token: address|null, balance: bigint }. token=null when no ERC-20 is deployed on this chain.
+// address. `verified` distinguishes a confirmed missing ERC-20 from an RPC/deployment read failure; those must
+// never share a UI state because only the former can safely tell a user to claim tokens first.
 function readBridgeableBalance(project, chainId) {
   var acct = getAccount && getAccount();
   var tokens = getAddress('JBTokens', chainId);
-  if (!acct || !tokens) return Promise.resolve({ token: null, balance: 0n });
+  if (!acct || !tokens) return Promise.resolve({ verified: false, token: null, balance: null });
   var client = clientFor(chainId);
   return client.readContract({ address: tokens, abi: tokenOfAbi, functionName: 'tokenOf', args: [BigInt(project.id)] })
     .then(function (erc20) {
-      if (!erc20 || erc20 === ZERO_ADDRESS) return { token: null, balance: 0n };
+      if (!erc20 || erc20 === ZERO_ADDRESS) return { verified: true, token: null, balance: 0n };
       return client.readContract({ address: erc20, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] })
-        .then(function (b) { return { token: erc20, balance: BigInt(b) }; });
+        .then(function (b) { return { verified: true, token: erc20, balance: BigInt(b) }; });
     })
-    .catch(function () { return { token: null, balance: 0n }; });
+    .catch(function () { return { verified: false, token: null, balance: null }; });
 }
 
 // claim(JBClaim{token, JBLeaf{index,beneficiary,projectTokenCount,terminalTokenAmount,metadata}, bytes32[32] proof})
@@ -16393,10 +17615,13 @@ function suckerBranchRoot(leaf, proof, index) {
 //   (JBCCIPLib refunds msg.value − fees), so the smallest working tier is safe. Returns bigint, or null when
 //   a CCIP fee couldn't be determined (so callers surface an error instead of prompting a reverting tx).
 async function findToRemoteValue(chainId, sucker, token, account) {
-  var fee = 0n;
-  try { fee = BigInt(await clientFor(chainId).readContract({ address: getAddress('JBSuckerRegistry', chainId), abi: suckerRegistryBridgeAbi, functionName: 'toRemoteFee', args: [] })); } catch (_) {}
-  var infra = await classifySuckerInfra(chainId, sucker).catch(function () { return 'native'; });
-  if (infra !== 'CCIP') return fee; // native bridge: fee only
+  var registry = getAddress('JBSuckerRegistry', chainId);
+  if (!registry) return null;
+  var fee;
+  try { fee = BigInt(await clientFor(chainId).readContract({ address: registry, abi: suckerRegistryBridgeAbi, functionName: 'toRemoteFee', args: [] })); } catch (_) { return null; }
+  var infra = await classifySuckerInfra(chainId, sucker);
+  if (infra === 'unknown') return null;
+  if (infra === 'native') return fee; // native bridge: fee only
   if (!account) return null; // need a caller to simulate against
   var data;
   try { data = encodeFunctionData({ abi: suckerBridgeAbi, functionName: 'toRemote', args: [token] }); } catch (_) { return null; }
@@ -16421,7 +17646,7 @@ function buildMoveModal(project) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
   var chains = project.chains || [];
-  var state = { from: chains[0] && chains[0].id, to: chains[1] && chains[1].id, balance: 0n, token: null, pairs: null, sucker: null, kinds: null, backingKey: null };
+  var state = { from: chains[0] && chains[0].id, to: chains[1] && chains[1].id, balance: null, balanceVerified: false, token: null, pairs: null, sucker: null, kinds: null, backingKey: null };
 
   // Per-chain balances at the top (card) — your tokens + the project's accounting balances.
   var moveBalTable = el('div', 'cashout-bal-table'); wrap.appendChild(moveBalTable);
@@ -16448,7 +17673,7 @@ function buildMoveModal(project) {
   bridgeSel.addEventListener('change', function () {
     var m = state._matches && state._matches[Number(bridgeSel.value)];
     if (m) state.sucker = m.local;
-    updateBridgeNote();
+    updateBridgeNote(); updateMoveBtn();
   });
   wrap.appendChild(bridgeRow);
 
@@ -16481,14 +17706,22 @@ function buildMoveModal(project) {
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Move ' + sym;
   foot.appendChild(btn); wrap.appendChild(foot);
 
+  var moveBalanceSeq = 0;
+  var movePairsSeq = 0;
+  var moveBackingSeq = 0;
   function onFromChange() { refreshBalance(); loadPairs(); loadBacking(); }
   function refreshBalance() {
+    var from = state.from;
+    var seq = ++moveBalanceSeq;
+    state.balance = null; state.balanceVerified = false; state.token = null;
     bal.textContent = 'Your balance: …';
-    readBridgeableBalance(project, state.from).then(function (r) {
-      state.balance = r.balance; state.token = r.token;
+    readBridgeableBalance(project, from).then(function (r) {
+      if (seq !== moveBalanceSeq || state.from !== from) return;
+      state.balance = r.balance; state.balanceVerified = !!r.verified; state.token = r.token;
       if (!(getAccount && getAccount())) { bal.textContent = 'Connect a wallet to see your balance.'; updateMoveBtn(); return; }
-      if (!r.token) { bal.textContent = 'No ERC-20 ' + sym + ' on ' + moveChainName(state.from) + ' — claim your tokens there first to bridge.'; updateMoveBtn(); return; }
-      bal.textContent = 'Your ' + sym + ' available on ' + moveChainName(state.from) + ': ' + formatTokens(r.balance) + ' ' + sym;
+      if (!r.verified) { bal.textContent = 'Could not verify your bridgeable balance on ' + moveChainName(from) + '. Try again shortly.'; updateMoveBtn(); return; }
+      if (!r.token) { bal.textContent = 'No ERC-20 ' + sym + ' on ' + moveChainName(from) + ' — claim your tokens there first to bridge.'; updateMoveBtn(); return; }
+      bal.textContent = 'Your ' + sym + ' available on ' + moveChainName(from) + ': ' + formatTokens(r.balance) + ' ' + sym;
       updateMoveBtn();
     });
   }
@@ -16498,6 +17731,10 @@ function buildMoveModal(project) {
   function moveBlockReason() {
     if (!(getAccount && getAccount())) return ''; // allow click → connect()
     if (state.from === state.to) return 'Pick two different chains to bridge between.';
+    if (state.pairs == null) return 'Finding a verified bridge route…';
+    if (!state.sucker) return 'No verified bridge route connects these chains.';
+    if (!state.backing) return 'Loading the verified backing token…';
+    if (!state.balanceVerified) return 'Could not verify your bridgeable balance. Try again shortly.';
     if (!state.token) return 'No ERC-20 ' + sym + ' on ' + moveChainName(state.from) + ' yet — claim your ' + sym + ' to an ERC-20 there first, then bridge.';
     if (state.balance != null && state.balance === 0n) return 'You have no ' + sym + ' to bridge on ' + moveChainName(state.from) + '.';
     return '';
@@ -16507,32 +17744,42 @@ function buildMoveModal(project) {
     btn.disabled = !!why;
     btn.title = why || '';
     if (why) { status.classList.remove('pending'); status.textContent = why; }
-    else if (status.textContent === btn.title || /no ERC-20|to bridge on|Pick two different/i.test(status.textContent)) status.textContent = '';
+    else if (status.textContent === btn.title || /no ERC-20|to bridge on|Pick two different|Finding a verified|No verified bridge|Loading the verified backing|Could not verify your bridgeable/i.test(status.textContent)) status.textContent = '';
   }
   // The proportional backing that bridges with the tokens: terminalBalance × amount / totalSupply (suckers
   // move the full proportional share, no cash-out tax). Read on the FROM chain.
   function loadBacking() {
-    state.fromSupply = null; state.fromBacking = null; state.backing = null; updateBacking();
+    var from = state.from;
+    var backingKey = state.backingKey;
+    var seq = ++moveBackingSeq;
+    state.fromSupply = null; state.fromBacking = null; state.backing = null; updateBacking(); updateMoveBtn();
     var pid = BigInt(project.id);
     // The chosen backing token (multi-token picker), else the project's primary accounting token.
-    var chosen = null;
-    if (state.kinds && state.backingKey) { var k = state.kinds.filter(function (x) { return x.key === state.backingKey; })[0]; if (k) { var a = k.addrForChain(state.from); if (a) chosen = { address: a, decimals: k.decimals, symbol: k.symbol }; } }
-    var acctP = chosen ? Promise.resolve(chosen) : resolveAcctToken(state.from, pid);
+    var selectedKind = null;
+    if (state.kinds && backingKey) selectedKind = state.kinds.filter(function (x) { return x.key === backingKey; })[0];
+    var acctP = selectedKind
+      ? resolveFundsKindAcct(from, pid, selectedKind).then(function (acct) { if (!acct) throw new Error('This backing token is not configured on the source chain.'); return acct; })
+      : resolveAcctToken(from, pid);
     acctP.then(function (acct) {
+      if (seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return null;
       state.backing = acct;
-      var term = getAddress('JBMultiTerminal', state.from);
-      var cur = Number(BigInt(acct.address) & 0xffffffffn);
+      updateMoveBtn();
+      var term = getAddress('JBMultiTerminal', from);
       return Promise.all([
-        read(state.from, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
+        read(from, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
         // What bridges = the sucker's cash-out of the moved tokens, which draws from this token's SURPLUS
         // (balance − payout limit) at 0% tax — not the full balance. A token with unlimited payouts has 0.
-        term ? read(state.from, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), BigInt(cur)]).catch(function () { return null; }) : Promise.resolve(null),
+        term ? read(from, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; }) : Promise.resolve(null),
       ]);
     }).then(function (res) {
+      if (!res || seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return;
       state.fromSupply = res[0] != null ? BigInt(res[0]) : null;
       state.fromBacking = res[1] != null ? BigInt(res[1]) : null;
       updateBacking();
-    }).catch(function () {});
+    }).catch(function () {
+      if (seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return;
+      state.backing = null; state.fromSupply = null; state.fromBacking = null; updateBacking(); updateMoveBtn();
+    });
   }
   function updateBacking() {
     updateMoveNote(); // reflect the chosen backing token in the "proportional share" note
@@ -16561,8 +17808,11 @@ function buildMoveModal(project) {
     if (m._infra === 'CCIP') {
       txt = 'CCIP delivers in minutes by relaying through Chainlink’s cross-chain network — faster, but it depends on Chainlink.';
       href = 'https://docs.chain.link/ccip'; linkLabel = 'About Chainlink CCIP ↗';
-    } else {
+    } else if (m._infra === 'native') {
       txt = 'Native bridges route through the chain’s own canonical bridge — slower, but their security comes from the chain itself, not a third party.';
+      href = 'https://docs.juicebox.money/v4/learn/glossary/sucker/'; linkLabel = 'About suckers ↗';
+    } else {
+      txt = 'The bridge type could not be verified. Fee-sensitive actions stay unavailable until this route can be read again.';
       href = 'https://docs.juicebox.money/v4/learn/glossary/sucker/'; linkLabel = 'About suckers ↗';
     }
     bridgeNote.appendChild(document.createTextNode(txt + ' '));
@@ -16571,8 +17821,19 @@ function buildMoveModal(project) {
     bridgeNote.style.display = '';
   }
   function loadPairs() {
+    var from = state.from;
+    var seq = ++movePairsSeq;
     state.pairs = null; resolveRoute();
-    readSuckerPairsOf(project.id, state.from).then(function (pairs) { state.pairs = pairs; resolveRoute(); });
+    readSuckerPairsOf(project.id, from).then(function (pairs) {
+      if (seq !== movePairsSeq || state.from !== from) return;
+      state.pairs = pairs; resolveRoute();
+    }).catch(function () {
+      if (seq !== movePairsSeq || state.from !== from) return;
+      state.pairs = []; state.sucker = null; state._matches = null;
+      bridgeRow.style.display = 'none'; bridgeNote.style.display = 'none';
+      route.textContent = 'Could not verify bridge routes on ' + moveChainName(from) + '. Try again shortly.';
+      updateMoveBtn();
+    });
   }
   function resolveRoute() {
     state.sucker = null; state._matches = null; bridgeRow.style.display = 'none'; bridgeNote.style.display = 'none';
@@ -16584,19 +17845,21 @@ function buildMoveModal(project) {
     if (matches.length === 1) {
       state.sucker = matches[0].local;
       route.textContent = 'Bridges via sucker ' + truncAddr(matches[0].local) + '.';
+      updateMoveBtn();
       return;
     }
     // Two suckers connect this pair (a native bridge and a CCIP bridge) — classify each and let the user pick.
     route.textContent = 'Two bridges connect these chains — pick one:';
-    var to = state.to; // guard against the user switching chains mid-classification
+    var from = state.from, to = state.to; // guard against chain switches mid-classification
     Promise.all(matches.map(function (m) {
       return m._infra ? Promise.resolve(m._infra) : classifySuckerInfra(state.from, m.local).then(function (i) { m._infra = i; return i; });
     })).then(function (infras) {
-      if (state.to !== to) return;
+      if (state.from !== from || state.to !== to) return;
       bridgeSel.innerHTML = '';
       matches.forEach(function (m, i) {
         var o = document.createElement('option'); o.value = String(i);
-        o.textContent = (infras[i] === 'CCIP' ? 'CCIP' : 'Native') + ' bridge | ' + truncAddr(m.local);
+        var infraLabel = infras[i] === 'CCIP' ? 'CCIP' : (infras[i] === 'native' ? 'Native' : 'Unverified');
+        o.textContent = infraLabel + ' bridge | ' + truncAddr(m.local);
         bridgeSel.appendChild(o);
       });
       // Default to the native (canonical) bridge when one exists — it's zero-cost (only the registry fee),
@@ -16607,11 +17870,12 @@ function buildMoveModal(project) {
       state._matches = matches;
       state.sucker = matches[def].local;
       bridgeRow.style.display = '';
-      updateBridgeNote();
+      updateBridgeNote(); updateMoveBtn();
     });
   }
 
   onFromChange();
+  onWalletChange(function () { if (wrap.isConnected) refreshBalance(); });
   renderBalanceTables(moveBalTable, project, sym);
   // Multi-token projects: offer a backing-token picker (default to the primary), then recompute backing.
   acctKindsForFunds(project).then(function (kinds) {
@@ -16627,8 +17891,9 @@ function buildMoveModal(project) {
 
   btn.addEventListener('click', function () {
     var acct = getAccount && getAccount();
-    if (!acct) { connect(); return; }
+    if (!acct) { connect().then(refreshBalance).catch(function () {}); return; }
     if (state.from === state.to) { status.textContent = 'Pick two different chains.'; return; }
+    if (!state.balanceVerified) { status.textContent = 'Could not verify your bridgeable balance. Try again shortly.'; return; }
     if (!state.token) { status.textContent = 'No ERC-20 ' + sym + ' to bridge on ' + moveChainName(state.from) + '.'; return; }
     if (!state.sucker) { status.textContent = 'No bridge route between these chains.'; return; }
     var amount; try { amount = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
@@ -16638,7 +17903,7 @@ function buildMoveModal(project) {
     // beneficiary is the recipient on the remote chain — the caller, left-padded to bytes32.
     var beneficiary32 = '0x' + acct.slice(2).toLowerCase().padStart(64, '0');
     var metadata = '0x' + '0'.repeat(64);
-    var sucker = state.sucker, token = state.token, from = state.from, to = state.to;
+    var sucker = state.sucker, token = state.token, from = state.from, to = state.to, backingKey = state.backingKey;
     btn.disabled = true; status.textContent = '';
     var onStatus = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
     var fail = function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; };
@@ -16647,20 +17912,66 @@ function buildMoveModal(project) {
     // project's accounting token — USDC for a USDC project, NATIVE_TOKEN only for an ETH project. The sucker
     // keys its token mapping/outbox tree by this address, so passing the wrong token reverts or bridges the
     // wrong tree. Use the resolved backing token (loadBacking), re-resolving if it hasn't populated yet.
-    var termP = (state.backing && state.backing.address)
-      ? Promise.resolve(state.backing.address)
-      : resolveAcctToken(from, BigInt(project.id)).then(function (a) { return a && a.address; });
+    if (!state.backing || !state.backing.address) { fail('The backing token is still loading or could not be verified.'); return; }
+    var termP = Promise.resolve(state.backing.address);
     termP.then(function (termToken) {
       if (!termToken) { fail('Could not resolve the backing token to bridge.'); return; }
-      // Step 1: approve the sucker for the ERC-20, then prepare (cash out to terminal funds + insert outbox
-      // leaf). minTokensReclaimed=0: the remote chain re-mints the same projectTokenCount regardless; the
-      // local cash-out is internal sucker plumbing.
-      executeTransaction(Object.assign(buildSuckerPrepareArgs({
-        chainId: from, sucker: sucker, projectTokenCount: amount, beneficiary32: beneficiary32, minReclaimed: 0n,
-        termToken: termToken, metadata: metadata, approvalToken: token, approvalAmount: amount,
-      }), {
-        onStatus: onStatus, onError: fail,
-        onSuccess: function () {
+      onStatus('Verifying the bridge token and previewing backing…', 'pending');
+      var terminal = getAddress('JBMultiTerminal', from);
+      if (!terminal) { fail('No terminal on the source chain.'); return; }
+      var remoteBackingP;
+      var selectedKind = state.kinds && state.backingKey
+        ? state.kinds.filter(function (kind) { return kind.key === state.backingKey; })[0]
+        : null;
+      if (selectedKind) {
+        remoteBackingP = resolveFundsKindAcct(to, BigInt(project.id), selectedKind).catch(function () { return null; });
+      } else {
+        remoteBackingP = resolveAcctToken(to, BigInt(project.id)).catch(function () { return null; });
+      }
+      return Promise.all([
+        clientFor(from).readContract({ address: sucker, abi: suckerTokenMappingAbi, functionName: 'projectId', args: [] }),
+        clientFor(from).readContract({ address: sucker, abi: suckerTokenMappingAbi, functionName: 'remoteTokenFor', args: [termToken] }),
+        clientFor(from).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [sucker, BigInt(project.id), amount, termToken, sucker, '0x'] }),
+        isFeelessAddress(from, sucker, BigInt(project.id)),
+        read(from, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [BigInt(project.id), termToken]).then(toBigInt),
+        classifySuckerInfra(from, sucker),
+        remoteBackingP,
+      ]).then(function (checks) {
+        if (toBigInt(checks[0]) !== BigInt(project.id)) throw new Error('The selected bridge belongs to a different project.');
+        var mapping = checks[1];
+        if (!mapping || !mapping.enabled || !mapping.addr || /^0x0+$/.test(mapping.addr)) throw new Error('This backing token is not mapped on the selected bridge.');
+        if (checks[5] === 'unknown') throw new Error('The selected bridge type could not be verified. Try again when the source RPC is available.');
+        if (checks[3] == null) throw new Error('The bridge fee status could not be verified. Nothing was sent.');
+        var remoteBacking = checks[6];
+        if (!remoteBacking || !remoteBacking.address) throw new Error('The matching backing token is not configured on the destination chain.');
+        var mappedRemote = '0x' + String(mapping.addr).slice(-40).toLowerCase();
+        if (mappedRemote !== String(remoteBacking.address).toLowerCase()) {
+          throw new Error('The selected bridge maps this backing token to a different destination token.');
+        }
+        var cashPreview = checks[2];
+        var gross = toBigInt(cashPreview && (cashPreview.reclaimAmount != null ? cashPreview.reclaimAmount : cashPreview[1]));
+        var taxRate = Number(cashPreview && (cashPreview.cashOutTaxRate != null ? cashPreview.cashOutTaxRate : cashPreview[2]) || 0);
+        var net = gross - cashOutProtocolFee(gross, taxRate, !!checks[3], checks[4]);
+        var minReclaimed = quotedOutputFloor(net, 9900);
+        if (state.from !== from || state.to !== to || state.sucker !== sucker || state.token !== token || state.backingKey !== backingKey
+          || !state.backing || state.backing.address.toLowerCase() !== termToken.toLowerCase()
+          || amt.value.trim() === '' || parseAmount(amt.value, 18) !== amount
+          || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) {
+          throw new Error('Movement inputs or the connected account changed while the backing preview was loading. Review and try again.');
+        }
+        // Step 1: approve the sucker for the ERC-20, then prepare (cash out to terminal funds + insert outbox
+        // leaf). A positive backing preview gets a 99% on-chain floor. Zero backing can still move the same project
+        // token count to the remote chain, but the confirmation calls that out explicitly instead of hiding min=0.
+        executeTransaction(Object.assign(buildSuckerPrepareArgs({
+          chainId: from, sucker: sucker, projectTokenCount: amount, beneficiary32: beneficiary32, minReclaimed: minReclaimed,
+          termToken: termToken, metadata: metadata, approvalToken: token, approvalAmount: amount,
+        }), {
+          confirmTitle: 'Prepare movement — step 1 of 2',
+          confirmNote: net > 0n
+            ? 'The live bridge cash-out preview is ' + formatBalance(net, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + '; this reverts below the 99% floor.'
+            : 'This source chain currently contributes zero backing. The same project-token count will still be minted remotely, but no backing tokens will move with it.',
+          onStatus: onStatus, onError: fail,
+          onSuccess: function () {
           // Step 2: ship the outbox root to the remote chain. Discover the exact msg.value the bridge needs
           // by simulating toRemote at increasing values (handles native-bridge fee-only AND CCIP messaging).
           onStatus('Prepared — finding bridge fee…', 'pending');
@@ -16685,9 +17996,10 @@ function buildMoveModal(project) {
               },
             }));
           });
-        },
-      }));
-    });
+          },
+        }));
+      });
+    }).catch(function (error) { fail(errMessage(error, 'Could not safely preview this movement.')); });
   });
   return wrap;
 }
@@ -16885,12 +18197,13 @@ function lpGetAmountsForLiquidity(sp, sa, sb, L) {
 function lpAlignDown(tick, s) { var r = tick % s; if (r !== 0 && tick < 0) r += s; return tick - r; }
 function lpAlignUp(tick, s) { return lpAlignDown(tick + s - 1, s); }
 // Read the buyback pool key + current sqrtPriceX96. Null if no pool.
-async function readPoolState(project, chainId) {
-  var hook = await projectBuybackHook(project, chainId);
+async function readPoolState(project, chainId, opts) {
+  var hook = await projectBuybackHook(project, chainId, opts);
   var pm = POOL_MANAGER_BY_CHAIN[chainId];
   if (!hook || !pm) return null;
   try {
-    var pair = await lpPairFor(project, chainId);
+    var pair = await lpPairFor(project, chainId, opts);
+    if (!pair) return null;
     var client = clientFor(chainId);
     var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
     if (!key) return null;
@@ -16901,8 +18214,8 @@ async function readPoolState(project, chainId) {
     var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
     var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n);
     if (sqrtP === 0n) return null;
-    return { key: key, sqrtP: sqrtP, pair: pair };
-  } catch (e) { return null; }
+    return { key: key, sqrtP: sqrtP, pair: pair, poolId: poolId };
+  } catch (e) { if (opts && opts.strict) throw e; return null; }
 }
 
 // Send one tx from the connected wallet and wait for its receipt. Returns the hash.
@@ -16910,36 +18223,209 @@ async function lpSendTx(chainId, p) {
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet');
   var acct = getAccount();
-  var hash = await wallet.writeContract({ account: acct, chain: CHAINS[chainId], address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
-  await clientFor(chainId).waitForTransactionReceipt({ hash: hash });
+  var expected = p.account || acct;
+  if (!acct || !expected || acct.toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+  var walletChain = await wallet.getChainId();
+  if (walletChain !== chainId) { await switchChain(chainId); wallet = getWalletClient(); }
+  acct = getAccount();
+  if (!wallet || !acct || acct.toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+  var client = clientFor(chainId);
+  var simulation = await client.simulateContract({ account: acct, address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
+  if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+  var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId] }));
+  await client.waitForTransactionReceipt({ hash: hash });
   return hash;
 }
 
 var lpPositionViewAbi = [
   { type: 'function', name: 'nextTokenId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'positionInfo', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
+  { type: 'function', name: 'getPoolAndPositionInfo', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [
+    { name: 'poolKey', type: 'tuple', components: [
+      { name: 'currency0', type: 'address' }, { name: 'currency1', type: 'address' },
+      { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'hooks', type: 'address' },
+    ] },
+    { name: 'info', type: 'uint256' },
+  ] },
   { type: 'function', name: 'getPositionLiquidity', stateMutability: 'view', inputs: [{ name: 'tokenId', type: 'uint256' }], outputs: [{ name: 'liquidity', type: 'uint128' }] },
   { type: 'function', name: 'ownerOf', stateMutability: 'view', inputs: [{ name: 'id', type: 'uint256' }], outputs: [{ name: 'owner', type: 'address' }] },
 ];
 function lpSignExtend24(v) { return (v & 0x800000n) ? v - 0x1000000n : v; }
-// PoolManager.ModifyLiquidity — salt == bytes32(tokenId), so this maps a pool to its position tokenIds.
-var LP_MODIFY_LIQUIDITY_EVENT = {
-  type: 'event', name: 'ModifyLiquidity', inputs: [
-    { name: 'id', type: 'bytes32', indexed: true }, { name: 'sender', type: 'address', indexed: true },
-    { name: 'tickLower', type: 'int24', indexed: false }, { name: 'tickUpper', type: 'int24', indexed: false },
-    { name: 'liquidityDelta', type: 'int256', indexed: false }, { name: 'salt', type: 'bytes32', indexed: false },
-  ],
-};
+// Pool history has to be complete: a recent-block cap silently drops old positions, especially on fast L2s.
+// `Initialize` is the authoritative lower bound for one pool, and both events index the pool id in topic1.
+var LP_INITIALIZE_TOPIC = toEventSelector('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)').toLowerCase();
+var LP_MODIFY_LIQUIDITY_TOPIC = toEventSelector('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)').toLowerCase();
+var LP_LOG_WINDOW = 45000n;
+var LP_LOG_BATCH_WINDOWS = 8;
+var LP_LOG_REORG_OVERLAP = 128n;
+var _lpPoolHistoryCache = {};
+
+function lpBlockHex(n) { return '0x' + BigInt(n).toString(16); }
+function lpIndexedAddress(topic) { return String(topic || '').slice(-40).toLowerCase(); }
+
+// Raw eth_getLogs lets the first topic be an OR while retaining the indexed pool-id filter. viem's `events`
+// helper drops event args for multi-event filters, which would download every PoolManager pool on the chain.
+async function lpPoolLogsRange(primary, fallback, pm, poolId, fromBlock, toBlock, onlyInitialize) {
+  var topics = [onlyInitialize ? LP_INITIALIZE_TOPIC : [LP_INITIALIZE_TOPIC, LP_MODIFY_LIQUIDITY_TOPIC], poolId];
+  var params = [{ address: pm, topics: topics, fromBlock: lpBlockHex(fromBlock), toBlock: lpBlockHex(toBlock) }];
+  try {
+    return await primary.request({ method: 'eth_getLogs', params: params });
+  } catch (firstError) {
+    if (!fallback || fallback === primary) throw firstError;
+    return fallback.request({ method: 'eth_getLogs', params: params });
+  }
+}
+
+async function lpLatestLogBlock(primary, fallback) {
+  try { return await primary.getBlockNumber(); }
+  catch (firstError) {
+    if (!fallback || fallback === primary) throw firstError;
+    return fallback.getBlockNumber();
+  }
+}
+
+export function lpCollectPoolLogs(logs, posm, state) {
+  (logs || []).forEach(function (log) {
+    var topic0 = String(log.topics && log.topics[0] || '').toLowerCase();
+    if (topic0 === LP_INITIALIZE_TOPIC) {
+      var block = typeof log.blockNumber === 'bigint' ? log.blockNumber : BigInt(log.blockNumber);
+      if (state.initializeBlock == null || block < state.initializeBlock) state.initializeBlock = block;
+      return;
+    }
+    if (topic0 !== LP_MODIFY_LIQUIDITY_TOPIC) return;
+    // PoolManager positions created outside the configured PositionManager can use an arbitrary salt. Treating that
+    // salt as an NFT id can attribute an unrelated position to this pool, so require the indexed sender to be posm.
+    if (lpIndexedAddress(log.topics && log.topics[2]) !== String(posm).slice(2).toLowerCase()) return;
+    var data = String(log.data || '');
+    if (!/^0x[0-9a-fA-F]{256}$/.test(data)) throw new Error('Malformed ModifyLiquidity log while reading LP positions');
+    var tokenId = BigInt('0x' + data.slice(194, 258)); // fourth non-indexed word: bytes32 salt == tokenId
+    var block = typeof log.blockNumber === 'bigint' ? log.blockNumber : BigInt(log.blockNumber);
+    var known = state.tokenIds[tokenId.toString()];
+    if (tokenId > 0n && (!known || block < known.block)) state.tokenIds[tokenId.toString()] = { id: tokenId, block: block };
+  });
+}
+
+async function lpScanKnownPoolRange(primary, fallback, pm, poolId, posm, fromBlock, toBlock, state) {
+  if (fromBlock > toBlock) return;
+  // Scan every bounded window even when an RPC accepts a wider request. Some gateways silently truncate large log
+  // results instead of rejecting, which would make a successful-looking response incomplete.
+  var cursor = fromBlock;
+  while (cursor <= toBlock) {
+    var ranges = [];
+    for (var n = 0; n < LP_LOG_BATCH_WINDOWS && cursor <= toBlock; n++) {
+      var hi = cursor + LP_LOG_WINDOW - 1n;
+      if (hi > toBlock) hi = toBlock;
+      ranges.push({ lo: cursor, hi: hi });
+      cursor = hi + 1n;
+    }
+    var batches = await Promise.all(ranges.map(function (range) {
+      return lpPoolLogsRange(primary, fallback, pm, poolId, range.lo, range.hi, false);
+    }));
+    batches.forEach(function (logs) { lpCollectPoolLogs(logs, posm, state); });
+  }
+}
+
+// Return every PositionManager NFT id ever used in this pool. The scan stops only at the pool's Initialize event;
+// provider failures reject instead of becoming an empty position list. A short overlap keeps the session cache safe
+// across shallow reorgs while avoiding a full rescan every time the Owners/You views refresh.
+async function lpPoolPositionTokenIds(chainId, pm, posm, poolId) {
+  var fallback = clientFor(chainId);
+  var primary = lpLogsClient(chainId) || fallback;
+  var latest = await lpLatestLogBlock(primary, fallback);
+  var cacheKey = chainId + ':' + String(pm).toLowerCase() + ':' + String(posm).toLowerCase() + ':' + String(poolId).toLowerCase();
+  var cached = _lpPoolHistoryCache[cacheKey];
+  if (cached && latest < cached.throughBlock) cached = null;
+  var state = { initializeBlock: cached && cached.initializeBlock, tokenIds: {} };
+  if (cached && latest >= cached.initializeBlock) {
+    var overlapStart = cached.throughBlock > LP_LOG_REORG_OVERLAP
+      ? cached.throughBlock - LP_LOG_REORG_OVERLAP + 1n
+      : cached.initializeBlock;
+    if (overlapStart < cached.initializeBlock) overlapStart = cached.initializeBlock;
+    // Drop ids first seen inside the overlap, then rebuild that tail from canonical logs. Older ids remain even if
+    // they were modified in the tail because their mint event is already final enough for this session cache.
+    (cached.entries || []).forEach(function (entry) {
+      if (entry.block < overlapStart) state.tokenIds[entry.id.toString()] = { id: entry.id, block: entry.block };
+    });
+    await lpScanKnownPoolRange(primary, fallback, pm, poolId, posm, overlapStart, latest, state);
+  } else {
+    // A one-shot Initialize lookup is much cheaper when the RPC supports wide indexed ranges.
+    try {
+      var initializeLogs = await lpPoolLogsRange(primary, fallback, pm, poolId, 0n, latest, true);
+      lpCollectPoolLogs(initializeLogs, posm, state);
+    } catch (_) {}
+    if (state.initializeBlock != null) {
+      await lpScanKnownPoolRange(primary, fallback, pm, poolId, posm, state.initializeBlock, latest, state);
+    } else {
+      // Range-limited RPC: walk backwards in bounded batches until the authoritative Initialize event is found.
+      var cursor = latest;
+      while (true) {
+        var ranges = [];
+        for (var n = 0; n < LP_LOG_BATCH_WINDOWS; n++) {
+          var lo = cursor >= LP_LOG_WINDOW ? cursor - LP_LOG_WINDOW + 1n : 0n;
+          ranges.push({ lo: lo, hi: cursor });
+          if (lo === 0n) break;
+          cursor = lo - 1n;
+        }
+        var batches = await Promise.all(ranges.map(function (range) {
+          return lpPoolLogsRange(primary, fallback, pm, poolId, range.lo, range.hi, false);
+        }));
+        batches.forEach(function (logs) { lpCollectPoolLogs(logs, posm, state); });
+        if (state.initializeBlock != null) break;
+        if (ranges[ranges.length - 1].lo === 0n) throw new Error('Could not verify the complete LP history: pool initialization log not found');
+        cursor = ranges[ranges.length - 1].lo - 1n;
+      }
+    }
+  }
+  if (state.initializeBlock == null) throw new Error('Could not verify the complete LP history');
+  var entries = Object.keys(state.tokenIds).map(function (key) { return state.tokenIds[key]; });
+  var tokenIds = entries.map(function (entry) { return entry.id; });
+  tokenIds.sort(function (a, b) { return a < b ? -1 : (a > b ? 1 : 0); });
+  _lpPoolHistoryCache[cacheKey] = { initializeBlock: state.initializeBlock, throughBlock: latest, entries: entries };
+  return tokenIds;
+}
+
+async function lpReadPositionDetails(client, posm, tokenIds, expectedPoolId) {
+  var details = await Promise.all(tokenIds.map(function (tokenId) {
+    var ownerRead = client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'ownerOf', args: [tokenId] })
+      .then(function (owner) { return { owner: owner }; })
+      .catch(function (error) { return { error: error }; });
+    return Promise.all([
+      client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'positionInfo', args: [tokenId] }).then(function (x) { return BigInt(x); }),
+      ownerRead,
+      client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'getPositionLiquidity', args: [tokenId] }).then(function (x) { return BigInt(x); }),
+    ]).then(function (result) {
+      var info = result[0], ownerResult = result[1], liquidity = result[2];
+      // ownerOf legitimately reverts after an NFT is burned. Any owner failure for a live position is incomplete data.
+      if (ownerResult.error && info !== 0n && liquidity !== 0n) throw ownerResult.error;
+      return { tokenId: tokenId, info: info, owner: ownerResult.owner || null, liquidity: liquidity };
+    });
+  }));
+  if (!expectedPoolId) return details;
+  await Promise.all(details.map(function (detail) {
+    if (!detail.owner || detail.info === 0n || detail.liquidity === 0n) return null;
+    return client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'getPoolAndPositionInfo', args: [detail.tokenId] })
+      .then(function (result) {
+        var key = result && (result.poolKey || result[0]);
+        var info = BigInt(result && (result.info != null ? result.info : result[1]));
+        if (!key || info !== detail.info) throw new Error('PositionManager returned inconsistent LP position data');
+        var actualPoolId = keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]));
+        if (actualPoolId.toLowerCase() !== String(expectedPoolId).toLowerCase()) {
+          throw new Error('PositionManager token does not belong to the expected pool');
+        }
+      });
+  }));
+  return details;
+}
 
 // Enumerate this pool's V4 LP positions (provider, range, liquidity → pair-token amounts). Finds the pool's
 // position tokenIds from the PoolManager's ModifyLiquidity logs (salt = tokenId), then reads each position.
-// Aggregates by owner; totals are exact reserves. Null on failure.
+// Aggregates by owner; totals are exact reserves. Null means no initialized pool; incomplete reads reject.
 async function readLpPositions(project, chainId) {
   try {
     var posm = POSITION_MANAGER_BY_CHAIN[chainId];
     var pm = POOL_MANAGER_BY_CHAIN[chainId];
     if (!posm || !pm) return null;
-    var st = await readPoolState(project, chainId);
+    var st = await readPoolState(project, chainId, { strict: true });
     if (!st || !st.key) return null;
     var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
     // The pair (terminal) token may be currency0 or currency1; everything below is in pair/token terms
@@ -16953,32 +18439,9 @@ async function readLpPositions(project, chainId) {
     var client = clientFor(chainId);
     var empty = { owners: [], totalEth: 0n, totalRev: 0n, poolPrice: poolPrice, count: 0, positions: [], pair: pair, pairIsC0: pairIsC0 };
 
-    var seen = {}, tokenIds = [];
-    function collect(lg) { lg.forEach(function (l) { if (!l.args || l.args.salt == null) return; var tid = BigInt(l.args.salt); if (tid > 0n && !seen[tid.toString()]) { seen[tid.toString()] = true; tokenIds.push(tid); } }); }
-    // Scan the PoolManager's ModifyLiquidity logs for this poolId via a getLogs-capable RPC, in recent
-    // ~45k-block windows (public RPCs cap the range; V6 testnet history is short so a few windows cover it).
-    var logClient = lpLogsClient(chainId) || client;
-    var latest = await logClient.getBlockNumber();
-    var W = 45000n, windows = [];
-    for (var n = 0; n < 8 && latest - BigInt(n) * W > 0n; n++) {
-      var hiB = latest - BigInt(n) * W;
-      var loB = hiB > W ? hiB - W + 1n : 0n;
-      windows.push({ lo: loB, hi: hiB });
-      if (loB === 0n) break;
-    }
-    var batches = await Promise.all(windows.map(function (w) {
-      return logClient.getLogs({ address: pm, event: LP_MODIFY_LIQUIDITY_EVENT, args: { id: poolId }, fromBlock: w.lo, toBlock: w.hi }).catch(function () { return []; });
-    }));
-    batches.forEach(collect);
+    var tokenIds = await lpPoolPositionTokenIds(chainId, pm, posm, poolId);
     if (!tokenIds.length) return empty;
-
-    var det = await Promise.all(tokenIds.map(function (tid) {
-      return Promise.all([
-        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'positionInfo', args: [tid] }).then(function (x) { return BigInt(x); }).catch(function () { return 0n; }),
-        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'ownerOf', args: [tid] }).catch(function () { return null; }),
-        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'getPositionLiquidity', args: [tid] }).then(function (x) { return BigInt(x); }).catch(function () { return 0n; }),
-      ]).then(function (r) { return { info: r[0], owner: r[1], liquidity: r[2] }; });
-    }));
+    var det = await lpReadPositionDetails(client, posm, tokenIds, poolId);
 
     var totalEth = 0n, totalRev = 0n, byOwner = {}, positions = [];
     var pairScale = Math.pow(10, pairDec);
@@ -16999,7 +18462,7 @@ async function readLpPositions(project, chainId) {
     });
     var owners = Object.keys(byOwner).map(function (k) { return byOwner[k]; }).sort(function (a, b) { return b.valueEth - a.valueEth; });
     return { owners: owners, totalEth: totalEth, totalRev: totalRev, poolPrice: poolPrice, sqrtP: sqrtP, count: owners.length, positions: positions, pair: pair, pairIsC0: pairIsC0 };
-  } catch (e) { return null; }
+  } catch (e) { throw e; }
 }
 
 // V4 liquidity-depth histogram: how much active liquidity sits in each price band. Bars are colored by
@@ -17011,7 +18474,7 @@ function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
   var sqrtP = lp.sqrtP;
   // pair (terminal) token per project token, accounting for currency ordering + decimals (ETH pools: factor 1, pair=c0).
   var pairIsC0 = lp.pairIsC0 !== false;
-  var pairDec = (lp.pair && lp.pair.decimals) || 18;
+  var pairDec = lp.pair && lp.pair.decimals != null ? lp.pair.decimals : 18;
   var pairSym = (lp.pair && lp.pair.symbol) || 'ETH';
   var decFactor = Math.pow(10, 18 - pairDec);
   var priceAtTick = function (t) { return (pairIsC0 ? 1 / Math.pow(1.0001, t) : Math.pow(1.0001, t)) * decFactor; };
@@ -17189,7 +18652,7 @@ function renderLpTable(lp, sym, chainId) {
   var wrap = el('div', 'owners-table-wrap lp-pos-table-wrap');
   var table = el('div', 'owners-table lp-pos-table');
   var pairSym = (lp.pair && lp.pair.symbol) || 'ETH';
-  var pairScale = Math.pow(10, (lp.pair && lp.pair.decimals) || 18);
+  var pairScale = Math.pow(10, lp.pair && lp.pair.decimals != null ? lp.pair.decimals : 18);
   var head = el('div', 'owners-row owners-head');
   ['Account', pairSym, sym, 'Share'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
   table.appendChild(head);
@@ -17222,7 +18685,7 @@ function renderLpTable(lp, sym, chainId) {
 // Horizontal bar of the pool's pair (ETH/USDC) vs token split (by pair-value). Null if nothing to show.
 function renderLpCompositionBar(lp, sym) {
   var pairSym = (lp.pair && lp.pair.symbol) || 'ETH';
-  var pairScale = Math.pow(10, (lp.pair && lp.pair.decimals) || 18);
+  var pairScale = Math.pow(10, lp.pair && lp.pair.decimals != null ? lp.pair.decimals : 18);
   var ethF = Number(lp.totalEth) / pairScale;
   var revVal = (Number(lp.totalRev) / 1e18) * lp.poolPrice;
   var total = ethF + revVal;
@@ -17256,7 +18719,7 @@ async function prepareAddLiquidity(opts) {
   var posm = POSITION_MANAGER_BY_CHAIN[chainId];
   if (!posm) throw new Error('No position manager on this chain');
 
-  var st = await readPoolState(project, chainId);
+  var st = await readPoolState(project, chainId, { strict: true });
   if (!st || !st.key) throw new Error('Pool not initialized on this chain');
   var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
   var c0 = (key.currency0 || '').toLowerCase();
@@ -17338,6 +18801,7 @@ async function prepareAddLiquidity(opts) {
 async function runAddLiquidityTxs(chainId, prep, onStatus) {
   var acct = getAccount();
   if (!acct) throw new Error('Connect a wallet');
+  if (!prep.acct || acct.toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   var key = prep.key, posm = prep.posm;
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet');
@@ -17355,7 +18819,7 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     var erc20Allow = await clientFor(chainId).readContract({ address: side.currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] });
     if (BigInt(erc20Allow) < side.max) {
       onStatus('Approving token for Permit2…', 'pending');
-      await lpSendTx(chainId, { address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max] });
+      await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max] });
     }
     // 2. Permit2 → PositionManager allowance. Reuse if still valid; else sign one (gasless) and fold it
     //    into the mint multicall — no separate on-chain approval tx.
@@ -17368,6 +18832,7 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
         spender: posm,
         sigDeadline: BigInt(now + 1800),
       };
+      if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
       var signature = await wallet.signTypedData({
         account: acct,
         domain: { name: 'Permit2', chainId: chainId, verifyingContract: PERMIT2_ADDRESS },
@@ -17380,11 +18845,12 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
   }
 
   onStatus('Adding liquidity…', 'pending');
+  if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
-    return lpSendTx(chainId, { address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value });
+    return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value });
   }
-  return lpSendTx(chainId, { address: posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline], value: prep.value });
+  return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline], value: prep.value });
 }
 
 // Build the "exact transaction" preview payload (mirrors the Pay confirm), for openTxConfirm.
@@ -17421,13 +18887,13 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
 // --- Remove liquidity: find the connected user's V4 positions (across the CURRENT + OLD buyback pools) and burn them ---
 
 // Scan ONE buyback pool (identified by its hook) for every LP position, keeping tokenId + owner + pool key so a
-// specific owner's position can be removed. Mirrors readLpPositions' internals. Returns [] on failure.
+// specific owner's position can be removed. Mirrors readLpPositions' internals. Rejects if history is incomplete.
 async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
   try {
     var posm = POSITION_MANAGER_BY_CHAIN[chainId], pm = POOL_MANAGER_BY_CHAIN[chainId];
     if (!posm || !pm || !hookAddr || hookAddr === ZERO_ADDRESS) return [];
     var client = clientFor(chainId);
-    var pair = await lpPairFor(project, chainId);
+    var pair = await lpPairFor(project, chainId, { strict: true });
     var key = await client.readContract({ address: hookAddr, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
     if (!key || !key.currency0) return [];
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase(), c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
@@ -17440,21 +18906,9 @@ async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
     var pairIsC0 = (c0 === pair.addr);
     var sp = Number(sqrtP) / Math.pow(2, 96), rawP = sp * sp;
     var poolPrice = (pairIsC0 ? (rawP > 0 ? 1 / rawP : 0) : rawP) * Math.pow(10, 18 - pair.decimals);
-    var logClient = lpLogsClient(chainId) || client;
-    var latest = await logClient.getBlockNumber();
-    var W = 45000n, windows = [];
-    for (var n = 0; n < 8 && latest - BigInt(n) * W > 0n; n++) { var hi = latest - BigInt(n) * W; var lo = hi > W ? hi - W + 1n : 0n; windows.push({ lo: lo, hi: hi }); if (lo === 0n) break; }
-    var seen = {}, tokenIds = [];
-    (await Promise.all(windows.map(function (w) { return logClient.getLogs({ address: pm, event: LP_MODIFY_LIQUIDITY_EVENT, args: { id: poolId }, fromBlock: w.lo, toBlock: w.hi }).catch(function () { return []; }); })))
-      .forEach(function (lg) { lg.forEach(function (l) { if (!l.args || l.args.salt == null) return; var t = BigInt(l.args.salt); if (t > 0n && !seen[t.toString()]) { seen[t.toString()] = true; tokenIds.push(t); } }); });
+    var tokenIds = await lpPoolPositionTokenIds(chainId, pm, posm, poolId);
     if (!tokenIds.length) return [];
-    var det = await Promise.all(tokenIds.map(function (tid) {
-      return Promise.all([
-        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'positionInfo', args: [tid] }).then(function (x) { return BigInt(x); }).catch(function () { return 0n; }),
-        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'ownerOf', args: [tid] }).catch(function () { return null; }),
-        client.readContract({ address: posm, abi: lpPositionViewAbi, functionName: 'getPositionLiquidity', args: [tid] }).then(function (x) { return BigInt(x); }).catch(function () { return 0n; }),
-      ]).then(function (r) { return { tokenId: tid, info: r[0], owner: r[1], liquidity: r[2] }; });
-    }));
+    var det = await lpReadPositionDetails(client, posm, tokenIds, poolId);
     var out = [];
     det.forEach(function (p) {
       if (!p.owner || p.liquidity <= 0n || p.info === 0n) return;
@@ -17467,15 +18921,15 @@ async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
         pairIsC0: pairIsC0, poolPrice: poolPrice, pair: pair });
     });
     return out;
-  } catch (e) { return []; }
+  } catch (e) { throw e; }
 }
 
 // The connected account's LP positions for a project on a chain, across the CURRENT buyback pool AND the OLD/default
-// hook pool (so stranded positions from a prior hook are included). Empty array if none / on failure.
+// hook pool (so stranded positions from a prior hook are included). Empty array only when there are genuinely none.
 async function readUserLpPositions(project, chainId, account) {
   if (!account) return [];
   var lc = function (a) { return (a || '').toLowerCase(); };
-  var newHook = await projectBuybackHook(project, chainId).catch(function () { return null; });
+  var newHook = await projectBuybackHook(project, chainId, { strict: true });
   var oldHook = getAddress('JBBuybackHook', chainId);
   var tasks = [];
   if (newHook) tasks.push(lpScanPoolPositions(project, chainId, newHook, true));
@@ -17485,14 +18939,54 @@ async function readUserLpPositions(project, chainId, account) {
 }
 
 // Encode a full-exit remove: BURN_POSITION(tokenId) + TAKE_PAIR(c0, c1, user). No Permit2/approval needed — the NFT
-// owner burns their own position. amount0Min/amount1Min = 0 (full exit; you receive whatever the position holds).
+// owner burns their own position. Each positive side has a 95% floor from the freshly displayed position amounts;
+// a large adverse price/composition move therefore reverts instead of returning materially less than reviewed.
 function prepareRemoveLiquidity(chainId, pos, acct) {
   var posm = POSITION_MANAGER_BY_CHAIN[chainId];
   if (!posm) throw new Error('No position manager on this chain');
-  var burnParams = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }], [BigInt(pos.tokenId), 0n, 0n, '0x']);
+  var pairMin = quotedOutputFloor(pos.pairAmt, 9500);
+  var tokenMin = quotedOutputFloor(pos.tokAmt, 9500);
+  var amount0Min = pos.pairIsC0 ? pairMin : tokenMin;
+  var amount1Min = pos.pairIsC0 ? tokenMin : pairMin;
+  var burnParams = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }], [BigInt(pos.tokenId), amount0Min, amount1Min, '0x']);
   var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [pos.key.currency0, pos.key.currency1, acct]);
   var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x0311', [burnParams, takeParams]]); // BURN_POSITION(0x03), TAKE_PAIR(0x11)
-  return { posm: posm, unlockData: unlockData, deadline: BigInt(Math.floor(Date.now() / 1000) + 1200), value: 0n };
+  return { posm: posm, unlockData: unlockData, deadline: BigInt(Math.floor(Date.now() / 1000) + 1200), value: 0n, pairMin: pairMin, tokenMin: tokenMin };
+}
+
+// Re-read ownership, liquidity, ticks, and pool price immediately before presenting the exact removal transaction.
+// The position table can remain open while the market moves or the NFT transfers; stale values must not become the
+// user's expected/minimum-return preview.
+async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
+  var currentAccount = getAccount && getAccount();
+  if (!currentAccount || currentAccount.toLowerCase() !== expectedAccount.toLowerCase()) {
+    throw new Error('Connected account changed. Reload your LP positions.');
+  }
+  var posm = POSITION_MANAGER_BY_CHAIN[chainId], pm = POOL_MANAGER_BY_CHAIN[chainId];
+  if (!posm || !pm) throw new Error('Liquidity contracts are unavailable on this chain');
+  var client = clientFor(chainId);
+  var stateSlot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [pos.poolId, 6n]));
+  var reads = await Promise.all([
+    lpReadPositionDetails(client, posm, [BigInt(pos.tokenId)], pos.poolId),
+    client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] }),
+  ]);
+  var detail = reads[0][0];
+  if (!detail.owner || detail.owner.toLowerCase() !== expectedAccount.toLowerCase()) throw new Error('This wallet no longer owns the position');
+  if (detail.info === 0n || detail.liquidity <= 0n) throw new Error('This position no longer has liquidity');
+  var sqrtP = BigInt(reads[1]) & ((1n << 160n) - 1n);
+  if (sqrtP === 0n) throw new Error('Could not verify the current pool price');
+  var tickUpper = Number(lpSignExtend24((detail.info >> 32n) & 0xffffffn));
+  var tickLower = Number(lpSignExtend24((detail.info >> 8n) & 0xffffffn));
+  var amounts = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(tickLower), lpSqrtAtTick(tickUpper), detail.liquidity);
+  return Object.assign({}, pos, {
+    owner: detail.owner,
+    info: detail.info,
+    liquidity: detail.liquidity,
+    tickLower: tickLower,
+    tickUpper: tickUpper,
+    pairAmt: pos.pairIsC0 ? amounts.amount0 : amounts.amount1,
+    tokAmt: pos.pairIsC0 ? amounts.amount1 : amounts.amount0,
+  });
 }
 
 // Modal: the connected wallet's LP positions on a chain (current + old pools), each with a Remove (burn) action.
@@ -17515,27 +19009,42 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
       var head = el('div', 'lp-remove-head'); head.textContent = 'Position #' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' · current pool' : ' · old pool'); info.appendChild(head);
       var pairH = formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol), tokH = formatTokens(pos.tokAmt) + ' ' + sym;
       var amts = el('div', 'modal-balance'); amts.textContent = tokH + ' + ' + pairH + '  ·  oracle ' + truncAddr(pos.oracleHook); info.appendChild(amts);
+      var rmStatus = el('div', 'modal-status'); rmStatus.style.display = 'none'; info.appendChild(rmStatus);
       row.appendChild(info);
       var rm = el('button', 'detail-check-btn'); rm.textContent = 'Remove';
       rm.addEventListener('click', function () {
-        var prep = prepareRemoveLiquidity(chainId, pos, acct);
-        openTxConfirm({
-          chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
-          'function': 'modifyLiquidities', value: '0',
-          position: { actions: 'BURN_POSITION, TAKE_PAIR (0x0311)', tokenId: pos.tokenId.toString(), returns: tokH + ' + ' + pairH, recipient: acct },
-          args: { unlockData: prep.unlockData, deadline: 'set at signing (~20 min)' },
-        }, function (ctx) {
-          ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Removing liquidity…', 'pending');
-          lpSendTx(chainId, { address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n }).then(function (hash) {
-            ctx.modal.close();
-            var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Removed | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
-            row.innerHTML = ''; row.appendChild(ok);
-            if (onDone) onDone();
-          }).catch(function (e) {
-            ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-            var msg = errMessage(e, 'Remove failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
-          });
-        }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove', closeOnConfirm: false });
+        if (rm.disabled) return;
+        rm.disabled = true; rm.textContent = 'Refreshing…'; rmStatus.textContent = ''; rmStatus.className = 'modal-status'; rmStatus.style.display = 'none';
+        refreshLpPositionForRemoval(chainId, pos, acct).then(function (fresh) {
+          pos = fresh;
+          pairH = formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol);
+          tokH = formatTokens(pos.tokAmt) + ' ' + sym;
+          amts.textContent = tokH + ' + ' + pairH + '  ·  oracle ' + truncAddr(pos.oracleHook);
+          var prep = prepareRemoveLiquidity(chainId, pos, acct);
+          rm.disabled = false; rm.textContent = 'Remove';
+          openTxConfirm({
+            chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
+            'function': 'modifyLiquidities', value: '0',
+            position: { actions: 'BURN_POSITION, TAKE_PAIR (0x0311)', tokenId: pos.tokenId.toString(), expectedReturns: tokH + ' + ' + pairH,
+              minimumReturns: formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol), recipient: acct },
+            args: { unlockData: prep.unlockData, deadline: 'set at signing (~20 min)' },
+          }, function (ctx) {
+            ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Removing liquidity…', 'pending');
+            lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n }).then(function (hash) {
+              ctx.modal.close();
+              var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Removed | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
+              row.innerHTML = ''; row.appendChild(ok);
+              if (onDone) onDone();
+            }).catch(function (e) {
+              ctx.confirm.disabled = false; ctx.cancel.disabled = false;
+              var msg = errMessage(e, 'Remove failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
+            });
+          }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove', closeOnConfirm: false });
+        }).catch(function (e) {
+          rm.disabled = false; rm.textContent = 'Remove'; rmStatus.className = 'modal-status error'; rmStatus.style.display = '';
+          var msg = errMessage(e, 'Could not refresh this position');
+          rmStatus.textContent = msg.length > 160 ? msg.slice(0, 160) + '…' : msg;
+        });
       });
       row.appendChild(rm);
       list.appendChild(row);
@@ -17554,9 +19063,9 @@ function buildAddLiquidityModal(project) {
   var weight = project.ruleset ? Number(project.ruleset.weight) : 0;
   var ceiling = weight > 0 ? 1e18 / weight : 0;
   // ethBal holds the PAIR-token balance (native ETH or USDC); pair is the resolved accounting/pair token.
-  var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null, pair: { addr: ZERO_ADDRESS, decimals: 18, symbol: 'ETH', isNative: true } };
-  function pairSym() { return state.pair.symbol; }
-  function pairDec() { return state.pair.decimals; }
+  var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null, pair: null };
+  function pairSym() { return state.pair ? state.pair.symbol : 'accounting token'; }
+  function pairDec() { return state.pair ? state.pair.decimals : 18; }
 
   var intro = el('div', 'modal-balance');
   intro.textContent = 'Seed the buyback pool so payers can route through the AMM. Liquidity is added at the current pool price.';
@@ -17652,6 +19161,7 @@ function buildAddLiquidityModal(project) {
     tokAmt.value = formatAmount(state.revBal, 18); state.driver = 'tok'; autofill();
   });
   ethMax.addEventListener('click', function () {
+    if (!state.pair) { status.textContent = 'Accounting token is still loading.'; return; }
     if (state.ethBal == null) { connect(); return; }
     // Keep ~0.001 ETH for gas only when the pair IS native ETH; an ERC-20 pair (USDC) can go to the brim.
     var buf = state.pair.isNative ? 1000000000000000n : 0n;
@@ -17720,31 +19230,53 @@ function buildAddLiquidityModal(project) {
   function onRangeChange() { drawGraph(); applySides(); autofill(); }
 
   // Resolve the pair (accounting) token for the selected chain, then refresh labels, balances, and price.
+  var pairSeq = 0;
+  var lpBalanceSeq = 0;
+  var lpPriceSeq = 0;
   function refreshPair() {
-    lpPairFor(project, state.chainId).then(function (p) {
+    var cid = state.chainId, seq = ++pairSeq;
+    ++lpBalanceSeq; ++lpPriceSeq;
+    state.pair = null; state.revBal = null; state.ethBal = null;
+    state.poolP = 0; state.floor = 0;
+    btn.disabled = true; balLine.textContent = 'Loading the verified accounting token…'; priceLine.textContent = '';
+    lpPairFor(project, cid).then(function (p) {
+      if (seq !== pairSeq || state.chainId !== cid) return;
+      if (!p) throw new Error('Could not resolve the project’s accounting token.');
       state.pair = p; applyPairLabels();
+      btn.disabled = true; status.textContent = '';
       refreshBalances(); refreshPrice();
+    }).catch(function () {
+      if (seq !== pairSeq || state.chainId !== cid) return;
+      state.pair = null; btn.disabled = true;
+      balLine.textContent = 'Could not verify the project’s accounting token on this chain.';
     });
   }
 
   function refreshBalances() {
+    if (!state.pair) return;
+    var cid = state.chainId, pair = state.pair, seq = ++lpBalanceSeq;
     var acct = getAccount && getAccount();
     if (!acct) { balLine.textContent = ''; state.revBal = null; state.ethBal = null; return; }
     balLine.textContent = 'Your ' + pairSym() + ': …';
-    var pairTokenAddr = state.pair.isNative ? NATIVE_TOKEN : state.pair.addr;
-    Promise.all([readUserBalance(project, state.chainId), readWalletTokenBalance(state.chainId, pairTokenAddr, acct)]).then(function (r) {
+    var pairTokenAddr = pair.isNative ? NATIVE_TOKEN : pair.addr;
+    Promise.all([readUserBalance(project, cid), readWalletTokenBalance(cid, pairTokenAddr, acct)]).then(function (r) {
+      if (seq !== lpBalanceSeq || state.chainId !== cid || state.pair !== pair || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) return;
       state.revBal = r[0]; state.ethBal = r[1];
-      balLine.textContent = 'Your ' + pairSym() + ': ' + (r[1] != null ? formatBalance(r[1], pairDec(), pairSym()) : '—');
+      balLine.textContent = 'Your ' + pair.symbol + ': ' + (r[1] != null ? formatBalance(r[1], pair.decimals, pair.symbol) : '—');
     });
   }
 
   function refreshPrice() {
+    if (!state.pair) return;
+    var cid = state.chainId, pair = state.pair, seq = ++lpPriceSeq;
     priceLine.textContent = 'Pool price: …';
-    Promise.all([readAmmPrice(project, state.chainId), readCashoutPrice(project, state.chainId)]).then(function (res) {
+    Promise.all([readAmmPrice(project, cid), readCashoutPrice(project, cid)]).then(function (res) {
+      if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;
       var amm = res[0], floor = res[1];
       state.poolP = (amm && amm > 0) ? amm : 0;
       state.floor = (floor && floor > 0) ? floor : 0;
-      priceLine.textContent = amm ? ('Pool price: ~' + formatPrice(amm) + ' ' + pairSym() + ' / ' + sym) : 'Pool not initialized on this chain.';
+      btn.disabled = !amm;
+      priceLine.textContent = amm ? ('Pool price: ~' + formatPrice(amm) + ' ' + pair.symbol + ' / ' + sym) : 'Pool not initialized on this chain.';
       var poolP = state.poolP > 0 ? state.poolP : (ceiling > 0 ? ceiling / 10 : 0);
       var maxDefault = ceiling > 0 ? ceiling : poolP;
       // Meaningful AMM range = [cash-out floor, issuance ceiling]: below the cash-out price, redeeming beats selling.
@@ -17765,6 +19297,10 @@ function buildAddLiquidityModal(project) {
           ? 'Cash-out price (' + formatPrice(state.floor) + ') is ABOVE the issuance ceiling — the pool is priced below its cash-out floor, so [floor, ceiling] would invert. Range defaults to a band below the ceiling; re-price the pool (a swap) to seed normally.'
           : 'No cash-out floor yet — Max defaults to the issuance ceiling and Min to a band below the current price. Adjust either bound; at the current price the deposit is single-sided (widen or move the price to add both).');
       onRangeChange();
+    }).catch(function () {
+      if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;
+      state.poolP = 0; state.floor = 0; btn.disabled = true;
+      priceLine.textContent = 'Could not verify the current pool price.';
     });
   }
 
@@ -17772,28 +19308,36 @@ function buildAddLiquidityModal(project) {
 
   btn.addEventListener('click', function () {
     if (!(getAccount && getAccount())) { connect(); return; }
+    if (!state.pair) { status.className = 'modal-status error'; status.textContent = 'Could not verify the project’s accounting token.'; return; }
+    var cid = state.chainId;
+    var inputSnapshot = [minInput.value, maxInput.value, tokAmt.value, ethAmt.value].join('|');
     var pairAmount, tokenAmount;
     try { pairAmount = ethAmt.value ? parseAmount(ethAmt.value, pairDec()) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + pairSym() + ' amount'; return; }
     try { tokenAmount = tokAmt.value ? parseAmount(tokAmt.value, 18) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + sym + ' amount'; return; }
     if (pairAmount <= 0n && tokenAmount <= 0n) { status.className = 'modal-status error'; status.textContent = 'Enter an amount'; return; }
+    if (state.revBal == null || state.ethBal == null) { status.className = 'modal-status error'; status.textContent = 'Wallet balances are still loading or could not be verified.'; return; }
+    if (tokenAmount > state.revBal) { status.className = 'modal-status error'; status.textContent = sym + ' amount exceeds your balance.'; return; }
+    if (pairAmount > state.ethBal) { status.className = 'modal-status error'; status.textContent = pairSym() + ' amount exceeds your balance.'; return; }
     var r = currentRange();
     if (!(r.pa > 0) || !(r.pb > r.pa)) { status.className = 'modal-status error'; status.textContent = 'Set a valid price range'; return; }
     btn.disabled = true;
     status.className = 'modal-status'; status.textContent = 'Preparing…';
-    var lpOpts = { project: project, chainId: state.chainId, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb };
+    var lpOpts = { project: project, chainId: cid, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb };
     prepareAddLiquidity(lpOpts).then(function (prep) {
+      if (state.chainId !== cid || inputSnapshot !== [minInput.value, maxInput.value, tokAmt.value, ethAmt.value].join('|')
+        || !state.pair || state.pair.addr !== prep.pair.addr || !getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Liquidity inputs or the connected account changed while the transaction was being prepared. Review and try again.');
       btn.disabled = false;
       status.textContent = '';
-      var chainName = (lpChains.filter(function (c) { return c.id === state.chainId; })[0] || {}).name || ('Chain ' + state.chainId);
+      var chainName = (lpChains.filter(function (c) { return c.id === cid; })[0] || {}).name || ('Chain ' + cid);
       // Show the exact transaction before signing — same confirm modal as the Pay flow.
-      openTxConfirm(buildAddLiquidityPayload(state.chainId, chainName, sym, prep), function (ctx) {
+      openTxConfirm(buildAddLiquidityPayload(cid, chainName, sym, prep), function (ctx) {
         ctx.confirm.disabled = true; ctx.cancel.disabled = true;
-        runAddLiquidityTxs(state.chainId, prep, function (m, kind) { ctx.showStatus(m, kind); }).then(function (hash) {
+        runAddLiquidityTxs(cid, prep, function (m, kind) { ctx.showStatus(m, kind); }).then(function (hash) {
           ctx.modal.close();
           status.className = 'modal-status success';
           status.innerHTML = '';
           status.appendChild(document.createTextNode('Liquidity added | TX: '));
-          status.appendChild(renderExplorerTxLink(state.chainId, hash, truncAddr(hash)));
+          status.appendChild(renderExplorerTxLink(cid, hash, truncAddr(hash)));
           refreshBalances(); refreshPrice();
         }).catch(function (e) {
           ctx.confirm.disabled = false; ctx.cancel.disabled = false;
@@ -17858,6 +19402,37 @@ function pctOf(part, total) {
   return pct.toFixed(dec) + '%';
 }
 
+var peerChainAdjustedAccountsAbi = [{
+  type: 'function', name: 'peerChainAdjustedAccountsOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [
+    { name: 'supply', type: 'uint256' },
+    { name: 'contexts', type: 'tuple[]', components: [
+      { name: 'token', type: 'bytes32' }, { name: 'decimals', type: 'uint8' },
+      { name: 'surplus', type: 'uint128' }, { name: 'balance', type: 'uint128' },
+    ] },
+  ],
+}];
+
+function readGossipAdjustment(chainId, pid, current) {
+  var metadata = current && (current[1] || current.metadata);
+  var hook = metadata && metadata.dataHook;
+  if (!hook || /^0x0+$/.test(hook)) return Promise.resolve({ verified: true, supply: 0n, tokens: [] });
+  return clientFor(chainId).readContract({ address: hook, abi: peerChainAdjustedAccountsAbi, functionName: 'peerChainAdjustedAccountsOf', args: [pid] })
+    .then(function (result) {
+      var contexts = result && (result.contexts || result[1]) || [];
+      var tokens = contexts.map(function (ctx) {
+        var token = '0x' + String(ctx.token).slice(-40);
+        var decimals = Number(ctx.decimals);
+        if (!isAddr(token) || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error('Invalid adjusted accounting context.');
+        return { token: token, balance: toBigInt(ctx.balance), decimals: decimals, symbol: acctTokenSymbol(token, decimals) };
+      });
+      return { verified: true, supply: toBigInt(result && (result.supply != null ? result.supply : result[0]) || 0), tokens: tokens };
+    })
+    // The sucker intentionally treats a non-supporting/reverting data hook as no adjustment. A malformed successful
+    // return or an RPC failure cannot be distinguished here, so stay conservative instead of claiming exact sync.
+    .catch(function () { return { verified: false, supply: 0n, tokens: [] }; });
+}
+
 function fetchOps(project) {
   var pid = BigInt(project.id);
   var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
@@ -17865,30 +19440,57 @@ function fetchOps(project) {
     var cid = chain.id;
     var terminal = getAddress('JBMultiTerminal', cid);
     return Promise.all([
-      read(cid, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
-      // Undistributed reserved tokens count toward the effective supply (the cash-out denominator and the
-      // sucker's gossiped total both include them) — add them so Composition matches reality.
-      read(cid, 'JBController', pendingReservedAbi, 'pendingReservedTokenBalanceOf', [pid]).catch(function () { return 0n; }),
-      // Balance is held in the chain's accounting token (USDC/ETH), not necessarily native ETH.
-      terminal ? resolveAcctToken(cid, pid) : Promise.resolve({ address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH' }),
+      read(cid, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).catch(function () { return null; }),
+      read(cid, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]).then(function (list) { return { verified: true, list: list || [] }; }).catch(function () { return { verified: false, list: [] }; }),
+      terminal ? resolveAcctToken(cid, pid).catch(function () { return null; }) : Promise.resolve(null),
     ]).then(function (res) {
-      var supply = res[0] != null ? (toBigInt(res[0]) + toBigInt(res[1] || 0n)) : null, acct = res[2];
-      var balP = terminal
+      var controller = res[0], surface = res[1], acct = res[2];
+      var controllerReads = controller && !/^0x0+$/.test(controller)
+        ? Promise.all([
+          clientFor(cid).readContract({ address: controller, abi: totalSupplyWithReservedAbi, functionName: 'totalTokenSupplyWithReservedTokensOf', args: [pid] }).catch(function () { return null; }),
+          clientFor(cid).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }).catch(function () { return null; }),
+        ])
+        : Promise.resolve([null, null]);
+      return controllerReads.then(function (controllerResult) {
+      var supply = controllerResult[0] != null ? toBigInt(controllerResult[0]) : null;
+      var current = controllerResult[1];
+      var balP = terminal && acct
         // Actual reclaimable surplus (net of payout limit), not raw balanceOf — overstated the unit value.
-        ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals || 18), BigInt(Number(BigInt(acct.address) & 0xffffffffn))]).catch(function () { return null; })
+        ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; })
         : Promise.resolve(null);
       // All accounting tokens this chain holds (a project can settle in ETH + USDC).
-      var toksP = terminal ? readChainBalances(cid, pid).then(function (cr) { return cr.tokens; }).catch(function () { return []; }) : Promise.resolve([]);
-      return Promise.all([balP, toksP]).then(function (arr) {
-        var balance = arr[0], tokens = arr[1];
+      var toksP = terminal ? readChainBalances(cid, pid).catch(function () { return { tokens: [], verified: false }; }) : Promise.resolve({ tokens: [], verified: false });
+      var adjustmentP = current ? readGossipAdjustment(cid, pid, current) : Promise.resolve({ verified: false, supply: 0n, tokens: [] });
+      return Promise.all([balP, toksP, adjustmentP]).then(function (arr) {
+        var balance = arr[0], chainBalances = arr[1], adjustment = arr[2];
+        var tokens = chainBalances.tokens || [];
+        var listed = surface.list || [];
+        var standardOnly = !!terminal && listed.every(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });
+        var standardListed = !!terminal && listed.some(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });
+        var baseGossipTokens = standardListed ? tokens : [];
+        var gossipTokens = baseGossipTokens.concat(adjustment.tokens || []);
+        var tokenReadsVerified = baseGossipTokens.every(function (token) { return token.balance != null; });
+        var gossipVerified = supply != null && surface.verified && standardOnly
+          && (!standardListed || (chainBalances.verified && tokenReadsVerified)) && adjustment.verified;
+        var gossipSupply = supply;
+        if (gossipSupply != null && adjustment.verified) {
+          var maxUint = (1n << 256n) - 1n;
+          // SuckerLib drops both parts of a hook adjustment when its supply would overflow the controller supply.
+          if (adjustment.supply <= maxUint - gossipSupply) gossipSupply += adjustment.supply;
+          else gossipTokens = baseGossipTokens;
+        }
+        var base = { id: cid, name: chain.name, supply: supply, balance: balance, tokens: tokens, unitValue: null, acct: acct,
+          tokensVerified: !!chainBalances.verified && tokenReadsVerified,
+          gossipSupply: gossipSupply, gossipTokens: gossipTokens, gossipVerified: gossipVerified };
         // Unit value = reclaim for 1 token at current supply + surplus; only meaningful once there's at
         // least a token of supply. No currency conversion → no price-feed revert.
         if (supply && supply >= ONE_TOKEN && balance != null) {
           return read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, balance])
-            .then(function (uv) { return { id: cid, name: chain.name, supply: supply, balance: balance, tokens: tokens, unitValue: uv, acct: acct }; })
-            .catch(function () { return { id: cid, name: chain.name, supply: supply, balance: balance, tokens: tokens, unitValue: null, acct: acct }; });
+            .then(function (uv) { base.unitValue = uv; return base; })
+            .catch(function () { return base; });
         }
-        return { id: cid, name: chain.name, supply: supply, balance: balance, tokens: tokens, unitValue: null, acct: acct };
+        return base;
+      });
       });
     });
   }));

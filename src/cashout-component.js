@@ -7,7 +7,7 @@ import {
   createBeneficiaryInput, createWalletButton, discoverChains, selectChain,
   firstChainForNetwork, executeTransaction, executeRead, renderError, getAddress,
   getAccount, getChainTokens, parseAmount, formatAmount, parseHashDefaults,
-  getBeneficiaryAddress,
+  getBeneficiaryAddress, createPublicClientForChain, truncAddr,
 } from './component-base.js';
 
 export var cashOutAbi = [{
@@ -25,19 +25,25 @@ export var cashOutAbi = [{
 }];
 
 // 95% floor on the previewed reclaim (covers the 2.5% protocol fee + ~2.5% slippage) so a burn can't
-// reclaim ~0 silently (surplus drained / MEV). 0 when the reclaim is unknown (preview failed / delay active).
+// reclaim ~0 silently (surplus drained / MEV).
 export function cashOutMinReclaimed(reclaimAmount) {
-  try { return (reclaimAmount != null && BigInt(reclaimAmount) > 0n) ? (BigInt(reclaimAmount) * 95n) / 100n : 0n; } catch (_) { return 0n; }
+  try {
+    var quoted = BigInt(reclaimAmount || 0);
+    if (quoted <= 0n) return 0n;
+    var floor = quoted * 95n / 100n;
+    return floor > 0n ? floor : 1n;
+  } catch (_) { return 0n; }
 }
 // Pure builder for JBMultiTerminal.cashOutTokensOf. `o`: { chainId, terminalAddr, holder, projectId,
 // cashOutCount (bigint), tokenToReclaim, beneficiary, minReclaimed (bigint) }.
 export function buildCashOutArgs(o) {
+  if (o.minReclaimed == null || BigInt(o.minReclaimed) <= 0n) throw new Error('A non-zero cash-out preview is required.');
   return {
     chainId: o.chainId,
     address: o.terminalAddr,
     abi: cashOutAbi,
     functionName: 'cashOutTokensOf',
-    args: [o.holder, BigInt(o.projectId), o.cashOutCount, o.tokenToReclaim, o.minReclaimed || 0n, o.beneficiary, '0x'],
+    args: [o.holder, BigInt(o.projectId), o.cashOutCount, o.tokenToReclaim, BigInt(o.minReclaimed), o.beneficiary, '0x'],
   };
 }
 
@@ -49,6 +55,7 @@ var totalBalanceOfAbi = [{
   ],
   outputs: [{ name: '', type: 'uint256' }],
 }];
+var accountingContextsAbi = [{ type: 'function', name: 'accountingContextsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: 'contexts', type: 'tuple[]', components: [{ name: 'token', type: 'address' }, { name: 'decimals', type: 'uint256' }, { name: 'currency', type: 'uint256' }] }] }];
 
 export function renderCashOutComponent() {
   var defaults = parseHashDefaults('cashout');
@@ -72,9 +79,13 @@ export function renderCashOutComponent() {
     error: null,
     txStatus: null,
     _defaultChain: defaults.chain ? Number(defaults.chain) : null,
+    _defaultToken: defaults.token || null,
+    contextsVerified: false,
+    contextsLoading: false,
   };
 
   var discoveryGeneration = 0;
+  var tokenGeneration = 0;
 
   var comp = createComponentWrapper('CASH OUT', 'cashout', state, function() {
     var params = {};
@@ -89,11 +100,45 @@ export function renderCashOutComponent() {
   var wrapper = comp.wrapper;
   var body = comp.body;
 
+  function tokenByAddress(tokens, address) {
+    var wanted = String(address || '').toLowerCase();
+    return (tokens || []).filter(function (token) { return token.address && token.address.toLowerCase() === wanted; })[0] || null;
+  }
+
+  function loadReclaimTokens(chainId) {
+    var term = getAddress('JBMultiTerminal', chainId);
+    var client = createPublicClientForChain(chainId);
+    var wanted = state._defaultToken || (state.selectedToken && state.selectedToken.address);
+    state.contextsVerified = false; state.contextsLoading = true;
+    state.tokens = []; state.selectedToken = null;
+    if (!term || !client || !state.projectId) {
+      state.contextsLoading = false; state.error = 'Could not verify this project’s reclaim tokens.'; updateUI(); return;
+    }
+    var gen = ++tokenGeneration;
+    updateUI();
+    client.readContract({ address: term, abi: accountingContextsAbi, functionName: 'accountingContextsOf', args: [BigInt(state.projectId)] }).then(function (contexts) {
+      if (gen !== tokenGeneration || state.selectedChain !== chainId) return;
+      var catalog = getChainTokens(chainId);
+      var tokens = (contexts || []).map(function (context) {
+        var known = tokenByAddress(catalog, context.token);
+        return { address: context.token, decimals: Number(context.decimals), currency: BigInt(context.currency), symbol: known ? known.symbol : truncAddr(context.token) };
+      });
+      if (!tokens.length) throw new Error('No accounting contexts');
+      state.tokens = tokens; state.selectedToken = tokenByAddress(tokens, wanted) || tokens[0];
+      state._defaultToken = null; state.contextsVerified = true; state.contextsLoading = false; state.error = null; updateUI();
+    }).catch(function () {
+      if (gen !== tokenGeneration || state.selectedChain !== chainId) return;
+      state.tokens = []; state.selectedToken = null;
+      state.contextsVerified = false; state.contextsLoading = false;
+      state.error = 'Could not verify this project’s reclaim tokens.'; updateUI();
+    });
+  }
+
   function updateUI() {
     body.innerHTML = '';
     body.appendChild(createProjectAndChainInput(state, scheduleDiscovery, function(cid) {
       if (cid === null) cid = firstChainForNetwork(state);
-      if (cid) selectChain(state, cid);
+      if (cid) { selectChain(state, cid); loadReclaimTokens(cid); }
       state.balance = null;
       state.txStatus = null;
       updateUI();
@@ -142,6 +187,8 @@ export function renderCashOutComponent() {
         }
       });
       tokenSection.appendChild(tokenSelect);
+    } else if (state.contextsLoading) {
+      var loadingTokens = el('div', 'type-hint'); loadingTokens.textContent = 'Loading verified accounting contexts…'; tokenSection.appendChild(loadingTokens);
     }
     body.appendChild(tokenSection);
 
@@ -175,6 +222,10 @@ export function renderCashOutComponent() {
     state.liveChains = [];
     state.selectedChain = null;
     state.balance = null;
+    state.tokens = [];
+    state.selectedToken = null;
+    state.contextsVerified = false;
+    state.contextsLoading = false;
     state.error = null;
     state.txStatus = null;
 
@@ -188,12 +239,14 @@ export function renderCashOutComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
+      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
       state.phase = 'ready';
       updateUI();
       loadBalance();
+      loadReclaimTokens(preferred);
     });
   }
 
@@ -248,6 +301,7 @@ export function renderCashOutComponent() {
     if (!state.selectedChain || !state.projectId) {
       state.error = 'Select a project and chain'; updateUI(); return;
     }
+    if (!state.contextsVerified) { state.error = state.contextsLoading ? 'Reclaim tokens are still loading.' : 'Could not verify this project’s reclaim tokens.'; updateUI(); return; }
     if (!state.amount) { state.error = 'Enter a token count'; updateUI(); return; }
     if (!state.selectedToken) { state.error = 'Select a token to reclaim'; updateUI(); return; }
 
@@ -255,6 +309,8 @@ export function renderCashOutComponent() {
     try { cashOutCount = parseAmount(state.amount, 18); } catch (_) {
       state.error = 'Invalid token count'; updateUI(); return;
     }
+    if (cashOutCount <= 0n) { state.error = 'Enter a token count'; updateUI(); return; }
+    if (state.balance != null && cashOutCount > BigInt(state.balance)) { state.error = 'Amount exceeds your project token balance'; updateUI(); return; }
 
     var holder = getAccount();
     if (!holder) { state.error = 'Connect wallet first'; updateUI(); return; }
@@ -267,22 +323,38 @@ export function renderCashOutComponent() {
 
     var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
     if (!terminalAddr) { state.error = 'No terminal address for this chain'; updateUI(); return; }
+    var chainId = state.selectedChain;
+    var reclaimToken = state.selectedToken.address;
+    var amountText = state.amount;
 
     // Slippage floor: 95% of the previewed reclaim (covers the 2.5% protocol fee + ~2.5% tolerance). Reverts
     // a burn that would reclaim near-zero (surplus drained / MEV) instead of letting it silently succeed.
     var minReclaimed = 0n;
     try {
       var preview = await executeRead({
-        chainId: state.selectedChain, address: terminalAddr, abi: previewCashOutAbi, functionName: 'previewCashOutFrom',
-        args: [holder, BigInt(state.projectId), cashOutCount, state.selectedToken.address, beneficiary, '0x'],
+        chainId: chainId, address: terminalAddr, abi: previewCashOutAbi, functionName: 'previewCashOutFrom',
+        args: [holder, BigInt(state.projectId), cashOutCount, reclaimToken, beneficiary, '0x'],
       });
       var reclaim = preview && (preview.reclaimAmount != null ? preview.reclaimAmount : preview[1]);
       minReclaimed = cashOutMinReclaimed(reclaim);
-    } catch (_) {} // cash-out delay active or read failed → fall back to no floor (tx still reviewable)
+    } catch (error) {
+      state.error = (error && (error.shortMessage || error.message)) || 'Could not preview this cash out.';
+      updateUI(); return;
+    }
+    if (minReclaimed === 0n) {
+      state.error = 'This cash out currently returns 0 tokens. Nothing was sent.';
+      updateUI(); return;
+    }
+    if (state.selectedChain !== chainId || state.amount !== amountText || !state.selectedToken
+      || state.selectedToken.address.toLowerCase() !== reclaimToken.toLowerCase()
+      || String(getBeneficiaryAddress(state) || '').toLowerCase() !== beneficiary.toLowerCase()) {
+      state.error = 'Cash-out inputs changed while the preview was loading. Review the refreshed form and try again.';
+      updateUI(); return;
+    }
 
     executeTransaction(Object.assign(buildCashOutArgs({
-      chainId: state.selectedChain, terminalAddr: terminalAddr, holder: holder, projectId: state.projectId,
-      cashOutCount: cashOutCount, tokenToReclaim: state.selectedToken.address, beneficiary: beneficiary, minReclaimed: minReclaimed,
+      chainId: chainId, terminalAddr: terminalAddr, holder: holder, projectId: state.projectId,
+      cashOutCount: cashOutCount, tokenToReclaim: reclaimToken, beneficiary: beneficiary, minReclaimed: minReclaimed,
     }), {
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },

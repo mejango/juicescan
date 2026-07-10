@@ -181,6 +181,7 @@ export function renderQueueRulesetComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
+      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;

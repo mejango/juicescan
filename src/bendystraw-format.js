@@ -99,23 +99,53 @@ export function timestamp(value) {
   return span;
 }
 
-// Format a wei amount given a known decimals + currency code (1 = ETH-like, 2 = USDC-like).
-// Bendystraw returns chain-native amounts in this shape.
+// Raw integer fallback for indexed amounts whose event/table does not carry a token or decimals.
+// Showing base units is less pretty than guessing ETH/USDC, but it is honest and reversible.
+export function rawAmount(value) {
+  const span = document.createElement('span');
+  if (value == null || value === '') { span.textContent = '—'; return span; }
+  try {
+    span.textContent = BigInt(String(value).split('.')[0]).toLocaleString() + ' raw';
+    span.title = 'Raw base units; this Bendystraw row does not identify a denomination.';
+  } catch (_) {
+    span.textContent = String(value);
+  }
+  span.className = 'data-cell-raw-amount';
+  return span;
+}
+
+// Format an amount only when its precision is actually present in the row/column metadata. Currency 1 is
+// ETH and currency 2 is USD; USDC accounting currencies are address-derived IDs, never the number 2.
 export function amount(value, row, opts) {
   const span = document.createElement('span');
   if (value == null || value === '') { span.textContent = '—'; return span; }
-  const decimals = (opts && opts.decimals) || (row && row.decimals) || 18;
-  const currency = (opts && opts.currency) || (row && row.currency) || 1;
-  const symbol = currency === 2 ? 'USDC' : 'ETH';
-  const precision = currency === 2 ? 2 : 4;
+  const decimals = opts && opts.decimals != null ? Number(opts.decimals)
+    : (row && row.decimals != null ? Number(row.decimals) : null);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 77) return rawAmount(value);
+  const currency = opts && opts.currency != null ? Number(opts.currency)
+    : (row && row.currency != null ? Number(row.currency) : null);
+  const symbol = (opts && opts.symbol)
+    || (opts && opts.symbolKey && row && row[opts.symbolKey])
+    || (currency === 1 ? 'ETH' : (currency === 2 ? 'USD' : ''));
+  const precision = opts && opts.precision != null ? Number(opts.precision) : (symbol === 'USD' ? 2 : 4);
   try {
     const raw = BigInt(String(value).split('.')[0]);
     const divisor = BigInt(10) ** BigInt(decimals);
-    const whole = raw / divisor;
-    const frac = raw % divisor;
-    // Build fractional with full precision then trim
-    const fracStr = (frac.toString().padStart(decimals, '0')).slice(0, precision);
-    span.textContent = whole.toString() + (precision > 0 ? '.' + fracStr : '') + ' ' + symbol;
+    const negative = raw < 0n;
+    const absolute = negative ? -raw : raw;
+    const whole = absolute / divisor;
+    const frac = absolute % divisor;
+    const shownPrecision = Math.max(0, Math.min(precision, decimals));
+    // Build fractional with full precision then trim. A non-zero value below the displayed precision is
+    // explicitly marked as such instead of being rendered as zero (and zero-decimal contexts never gain a dot).
+    const fracStr = shownPrecision ? (frac.toString().padStart(decimals, '0')).slice(0, shownPrecision) : '';
+    const belowPrecision = whole === 0n && frac > 0n && shownPrecision > 0 && /^0+$/.test(fracStr);
+    if (belowPrecision) {
+      span.textContent = (negative ? '>-0.' : '<0.') + '0'.repeat(shownPrecision - 1) + '1' + (symbol ? ' ' + symbol : '');
+    } else {
+      span.textContent = (negative ? '-' : '') + whole.toString() + (shownPrecision > 0 ? '.' + fracStr : '') + (symbol ? ' ' + symbol : '');
+    }
+    span.title = BigInt(String(value).split('.')[0]).toLocaleString() + ' raw base units';
   } catch (e) {
     span.textContent = String(value);
   }
@@ -181,9 +211,11 @@ export function chainName(value) {
 
 export function uri(value) {
   if (!value) { const s = document.createElement('span'); s.textContent = '—'; return s; }
-  const a = document.createElement('a');
   let href = String(value);
   if (href.startsWith('ipfs://')) href = 'https://ipfs.io/ipfs/' + href.slice('ipfs://'.length);
+  // Indexed metadata is user-controlled. Only real web URLs become clickable; render every other scheme inert.
+  if (!/^https?:\/\//i.test(href)) return text(shorten(value, 12, 12));
+  const a = document.createElement('a');
   a.href = href;
   a.target = '_blank';
   a.rel = 'noopener';
@@ -217,10 +249,16 @@ export function svg(value) {
   if (!value) { const s = document.createElement('span'); s.textContent = '—'; return s; }
   const wrap = document.createElement('div');
   wrap.className = 'data-cell-svg';
-  // Sanitize: only render if it starts with <svg
+  // Never inject indexed SVG into the live document: scripts, event handlers, foreignObject, and external
+  // resource attributes are all active through innerHTML. An <img> renders the pixels in an isolated image
+  // context instead.
   const trimmed = String(value).trim();
   if (trimmed.toLowerCase().startsWith('<svg')) {
-    wrap.innerHTML = trimmed;
+    const img = document.createElement('img');
+    img.alt = 'Indexed SVG preview';
+    img.loading = 'lazy';
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(trimmed);
+    wrap.appendChild(img);
   } else {
     wrap.textContent = shorten(value, 20, 8);
   }
@@ -239,5 +277,5 @@ export function permissionList(value) {
 // Generic dispatch — used by data-tab when rendering a column.
 export const FORMATTERS = {
   text, number, address, txHash, timestamp, amount, volumeUsd,
-  bigint, bool, chainName, uri, json, svg, permissionList,
+  rawAmount, bigint, bool, chainName, uri, json, svg, permissionList,
 };

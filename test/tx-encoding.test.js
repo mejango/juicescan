@@ -7,7 +7,7 @@ import { __test } from '../src/create-flow.js';
 
 const {
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
-  assembleRuleset, splitState, fillSplits, customCurrencyId, customAcctDecimals, customAccounting,
+  assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, customCurrencyId, customAcctDecimals, customAccounting,
   applyAccountingDefaults, uint256FromAddress, deploySalt, priceUnits, fundAccessAmountDecimals, fundAccessUnits,
 } = __test;
 
@@ -81,6 +81,12 @@ describe('fillSplits — group always sums to a single SPLITS_TOTAL', () => {
     const b = fillSplits([1, 1, 1]).reduce((s, x) => s + x, 0);
     expect(a).toBe(b);
     expect(a).toBeGreaterThan(0);
+  });
+  it('derives limited-payout shares exactly above Number.MAX_SAFE_INTEGER', () => {
+    const shares = splitSharesFromAmounts([1000000000000000000000000000001n, 2000000000000000000000000000002n]);
+    expect(shares.reduce((s, x) => s + x, 0)).toBe(1_000_000_000);
+    expect(shares[1]).toBeGreaterThan(shares[0]);
+    expect(splitSharesFromAmounts([])).toEqual([]);
   });
 });
 
@@ -157,16 +163,21 @@ describe('ruleset currency/decimals — the money-pricing path', () => {
     expect(lim.amount).toBe(priceUnits('1.5', 6)); // 1500000 — NOT 1.5e18
     expect(lim.currency).toBe(cur32(SIXDEC));
   });
-  it('single-token fund access uses token decimals only when the limit currency is token-keyed', () => {
+  it('single-token fund access always uses the accounting token decimals', () => {
     const s = baseState({ accepts: ['usdc'] });
     const acct = acctTokenFor(s, 1);
     expect(acct.token.toLowerCase()).toBe(USDC.toLowerCase());
     expect(fundAccessAmountDecimals(cur32(USDC), acct)).toBe(6);
-    expect(fundAccessAmountDecimals(2, acct)).toBe(18);
+    expect(fundAccessAmountDecimals(2, acct)).toBe(6);
+    expect(fundAccessAmountDecimals(2, { decimals: 0 })).toBe(0);
+    expect(() => fundAccessAmountDecimals(2, null)).toThrow(/verified accounting-token/i);
+    expect(() => fundAccessAmountDecimals(2, { decimals: 37 })).toThrow(/0–36/);
     expect(fundAccessUnits('1.5', cur32(USDC), acct)).toBe(parseUnits('1.5', 6));
-    expect(fundAccessUnits('1.5', 2, acct)).toBe(parseUnits('1.5', 18));
+    expect(fundAccessUnits('1.5', 2, acct)).toBe(parseUnits('1.5', 6));
+    expect(() => priceUnits('not-a-number', 6)).toThrow();
+    expect(() => priceUnits('-1', 6)).toThrow(/negative/i);
   });
-  it('single-token USDC payout limits round-trip token-keyed and USD currencies at different scales', () => {
+  it('single-token USDC payout limits keep the 6-decimal scale across currencies', () => {
     const s = baseState({ accepts: ['usdc'] });
     const st = s.stages[0];
     st.tokenMode = 'none';
@@ -183,9 +194,9 @@ describe('ruleset currency/decimals — the money-pricing path', () => {
     rs = assembleRuleset(s, st, 0, 1, true, false, 0);
     lim = (rs.fundAccessLimitGroups || []).flatMap((g) => g.payoutLimits || [])[0];
     expect(lim.currency).toBe(2);
-    expect(lim.amount).toBe(parseUnits('1.5', 18));
+    expect(lim.amount).toBe(parseUnits('1.5', 6));
   });
-  it('single-token USDC surplus allowances use the allowance currency decimals', () => {
+  it('single-token USDC surplus allowances use the accounting-context decimals', () => {
     const s = baseState({ accepts: ['usdc'] });
     const st = s.stages[0];
     st.tokenMode = 'none';

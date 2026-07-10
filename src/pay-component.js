@@ -25,17 +25,27 @@ export var payAbi = [{
   ],
   outputs: [],
 }];
+var accountingContextsAbi = [{
+  type: 'function', name: 'accountingContextsOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }],
+  outputs: [{ name: 'contexts', type: 'tuple[]', components: [
+    { name: 'token', type: 'address' }, { name: 'decimals', type: 'uint256' }, { name: 'currency', type: 'uint256' },
+  ]}],
+}];
 
 // Pure builder for the JBMultiTerminal.pay transaction — returns the executeTransaction config (no callbacks).
 // `o`: { chainId, projectId, token, amount (bigint), beneficiary, memo, route } where route carries the
 // resolved terminal/router address and a `preview.received` (raw, BigInt-able) token estimate.
-// minReturnedTokens is a 1% slippage floor off the previewed output — derived from route.preview.received
-// (the raw value; state.preview only holds the formatted string), 0 only when no priced preview exists.
+// minReturnedTokens is a 1% slippage floor off the previewed output. A missing/zero quote is rejected:
+// encoding an unprotected payment is never a valid fallback for this component.
 export function buildPayArgs(o) {
   var isNative = String(o.token).toLowerCase() === NATIVE_TOKEN.toLowerCase();
-  var minReturned = 0n;
   var pv = o.route && o.route.preview;
-  try { if (pv && !pv.unavailable && pv.received != null) minReturned = BigInt(pv.received) * 99n / 100n; } catch (_) {}
+  if (!pv || pv.unavailable || pv.received == null) throw new Error('A live pay preview is required.');
+  var quoted = BigInt(pv.received);
+  if (quoted <= 0n) throw new Error('The pay preview returned no project tokens.');
+  var minReturned = quoted * 99n / 100n;
+  if (minReturned === 0n) minReturned = 1n;
   return {
     chainId: o.chainId,
     address: o.route.address,
@@ -106,13 +116,10 @@ function resolveBestPayRoute(opts) {
     for (var i = 0; i < resolved.length; i++) {
       if (!best || payRouteIsBetter(resolved[i], best)) best = resolved[i];
     }
-    if (best && best.preview && !best.preview.unavailable && best.preview.received != null) return best;
-
-    // Keep the old behavior available when previews fail: direct terminal if present, otherwise router.
-    for (var j = 0; j < routes.length; j++) {
-      if (!routes[j].viaRouter) return Object.assign({}, routes[j], { preview: null });
-    }
-    return Object.assign({}, routes[0], { preview: null });
+    if (best && best.preview && !best.preview.unavailable && best.preview.received != null && BigInt(best.preview.received) > 0n) return best;
+    // Never turn an unavailable/zero quote into a minReturnedTokens=0 payment. The Components pay form is
+    // explicitly an exchange for project tokens; users who intend a donation can use Add to balance in Discover.
+    return null;
   });
 }
 
@@ -127,7 +134,7 @@ export function renderPayComponent() {
     tokens: getChainTokens(defaults.chain ? Number(defaults.chain) : 1),
     selectedToken: getChainTokens(defaults.chain ? Number(defaults.chain) : 1)[0] || null,
     amount: defaults.amount || '',
-    decimals: defaults.decimals ? Number(defaults.decimals) : 18,
+    decimals: defaults.decimals != null && defaults.decimals !== '' ? Number(defaults.decimals) : 18,
     beneficiary: defaults.beneficiary ? 'custom' : 'self',
     customBeneficiary: defaults.beneficiary || '',
     memo: defaults.memo || '',
@@ -141,8 +148,36 @@ export function renderPayComponent() {
   };
 
   var discoveryGeneration = 0;
+  var tokenGeneration = 0;
   var previewGeneration = 0;
   var previewTimer = null;
+
+  // Include the terminal's actual accounting contexts, not only the website's curated token catalog. This
+  // keeps custom accepted tokens usable while retaining catalog tokens that may be routed into the project.
+  function loadProjectTokens(chainId) {
+    var term = getAddress('JBMultiTerminal', chainId);
+    if (!term || !state.projectId) return;
+    var gen = ++tokenGeneration;
+    var client = createPublicClientForChain(chainId);
+    client.readContract({ address: term, abi: accountingContextsAbi, functionName: 'accountingContextsOf', args: [BigInt(state.projectId)] }).then(function (contexts) {
+      if (gen !== tokenGeneration || state.selectedChain !== chainId || !contexts || !contexts.length) return;
+      var catalog = getChainTokens(chainId);
+      var tokens = contexts.map(function (context) {
+        var known = catalog.filter(function (token) { return token.address.toLowerCase() === context.token.toLowerCase(); })[0];
+        return { address: context.token, decimals: Number(context.decimals), symbol: known ? known.symbol : truncAddr(context.token) };
+      });
+      catalog.forEach(function (token) {
+        if (!tokens.some(function (candidate) { return candidate.address.toLowerCase() === token.address.toLowerCase(); })) tokens.push(token);
+      });
+      var wanted = state._defaultToken || (state.selectedToken && state.selectedToken.address);
+      state.tokens = tokens;
+      state.selectedToken = tokens.filter(function (token) { return wanted && token.address.toLowerCase() === wanted.toLowerCase(); })[0] || tokens[0] || null;
+      state.decimals = state.selectedToken ? state.selectedToken.decimals : 18;
+      state._defaultToken = null;
+      state.preview = null;
+      updateUI(); schedulePreview();
+    }).catch(function () {});
+  }
 
   var comp = createComponentWrapper('PAY', 'pay', state, function() {
     var params = {};
@@ -172,6 +207,7 @@ export function renderPayComponent() {
         state.tokens = getChainTokens(cid);
         state.selectedToken = state.tokens[0] || null;
         state.decimals = state.selectedToken ? state.selectedToken.decimals : 18;
+        loadProjectTokens(cid);
       }
       state.preview = null;
       state.txStatus = null;
@@ -405,6 +441,10 @@ export function renderPayComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
+      if (!live.length) {
+        state.selectedChain = null; state.tokens = []; state.selectedToken = null;
+        state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return;
+      }
 
       var preferredChain = (state._defaultChain && live.indexOf(state._defaultChain) !== -1)
         ? state._defaultChain : firstChainForNetwork(state) || live[0];
@@ -423,9 +463,9 @@ export function renderPayComponent() {
       state.selectedToken = preferredToken || state.tokens[0] || null;
       state.decimals = state.selectedToken ? state.selectedToken.decimals : 18;
       state._defaultChain = null;
-      state._defaultToken = null;
       state.phase = 'ready';
       updateUI();
+      loadProjectTokens(preferredChain);
     });
   }
 

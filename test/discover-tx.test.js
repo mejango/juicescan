@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, tokenCurrencyIdForAccounting } from '../src/discover.js';
+import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, gossipAccountingStaleness, indexedActivityAmount, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -14,6 +14,7 @@ const ZERO = '0x0000000000000000000000000000000000000000';
 const UINT112_MAX = (1n << 112n) - 1n;
 const BEN32 = '0x000000000000000000000000' + '2222222222222222222222222222222222222222'; // bytes32-padded BOB
 const META32 = '0x' + '00'.repeat(32);
+const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const roundTrips = (abi, fn, args) => decodeFunctionData({ abi, data: encodeFunctionData({ abi, functionName: fn, args }) }).args.length === args.length;
 const defaultRulesetMetadata = {
   reservedPercent: 0,
@@ -36,6 +37,26 @@ const defaultRulesetMetadata = {
   dataHook: ZERO,
   metadata: 0,
 };
+
+describe('cross-chain gossip freshness', () => {
+  it('compares each accounting context instead of summing incompatible raw units', () => {
+    const peer = { _viewChainId: 1, supply: 10n, balances: [
+      { token: NATIVE_TOKEN, decimals: 18, balance: 100n },
+      { token: USDC, decimals: 6, balance: 50n },
+    ] };
+    const actual = { id: 1, gossipSupply: 10n, gossipVerified: true, gossipTokens: [
+      { token: NATIVE_TOKEN, decimals: 18, balance: 50n },
+      { token: USDC, decimals: 6, balance: 100n },
+    ] };
+    // Both sides sum to 150 raw units, but each real asset is 50% stale.
+    expect(gossipAccountingStaleness(peer, actual)).toEqual({ level: 'danger', label: 'Stale' });
+  });
+
+  it('never treats an unreadable live source as zero', () => {
+    expect(gossipAccountingStaleness({ supply: 0n, balances: [] }, { gossipVerified: false }))
+      .toEqual({ level: 'unknown', label: 'Unverified' });
+  });
+});
 function minimalRuleset(overrides = {}) {
   const { metadata, ...rest } = overrides;
   return {
@@ -65,19 +86,21 @@ describe('loan — REVLoans.borrowFrom', () => {
     expect(borrowCurrencyForAccountContext({ address: usdc, currency: 12345 })).toBe(12345n);
     expect(borrowCurrencyForAccountContext({ address: usdc })).toBe(BigInt(usdc) & 0xffffffffn);
     expect(borrowMinAmountFromPreview(1000000n)).toBe(990000n);
+    expect(borrowMinAmountFromPreview(1n)).toBe(1n);
     expect(borrowMinAmountFromPreview(0n)).toBe(0n);
     expect(borrowMinAmountFromPreview('bad')).toBe(0n);
   });
   it('arg order matches the ABI + round-trips', () => {
-    const tx = buildBorrowArgs({ chainId: 1, loansAddr: LOANS, revnetId: 3, token: NATIVE_TOKEN, minBorrow: 0n, collateral: parseEther('5'), beneficiary: BOB, prepaidFeePercent: 25, holder: BOB });
+    const tx = buildBorrowArgs({ chainId: 1, loansAddr: LOANS, revnetId: 3, token: NATIVE_TOKEN, minBorrow: 1n, collateral: parseEther('5'), beneficiary: BOB, prepaidFeePercent: 25, holder: BOB });
     expect(tx.args[0]).toBe(3n);
     expect(tx.args[1]).toBe(NATIVE_TOKEN);
-    expect(tx.args[2]).toBe(0n);
+    expect(tx.args[2]).toBe(1n);
     expect(tx.args[3]).toBe(parseEther('5'));
     expect(tx.args[4]).toBe(BOB);
     expect(tx.args[5]).toBe(25n);
     expect(tx.args[6]).toBe(BOB);
     expect(roundTrips(tx.abi, 'borrowFrom', tx.args)).toBe(true);
+    expect(() => buildBorrowArgs({ chainId: 1, loansAddr: LOANS, revnetId: 3, token: NATIVE_TOKEN, minBorrow: 0n, collateral: 1n, beneficiary: BOB, prepaidFeePercent: 25, holder: BOB })).toThrow(/quote/i);
   });
   it('honors a minBorrow floor when supplied (ready for the audit L-4 slippage wiring)', () => {
     const tx = buildBorrowArgs({ chainId: 1, loansAddr: LOANS, revnetId: 3, token: NATIVE_TOKEN, minBorrow: parseEther('99'), collateral: parseEther('5'), beneficiary: BOB, prepaidFeePercent: 0, holder: BOB });
@@ -96,6 +119,41 @@ describe('loan — REVLoans.repayLoan (payable)', () => {
     expect(tx.args[3]).toBe(BOB);
     expect(tx.args[4].amount).toBe(0n); // EMPTY_PERMIT2 (no permit signature)
     expect(roundTrips(tx.abi, 'repayLoan', tx.args)).toBe(true);
+  });
+  it('ERC-20 repayment sends no native value and preserves the source-token max', () => {
+    const max = 12500000n;
+    const tx = buildRepayArgs({ chainId: 1, loansAddr: LOANS, loanId: 7, maxRepay: max, collateralToReturn: parseEther('1'), beneficiary: BOB, value: 0n });
+    expect(tx.value).toBe(0n);
+    expect(tx.args[1]).toBe(max);
+    expect(sourceTokenMeta({}, 1, '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48')).toMatchObject({ decimals: 6, symbol: 'USDC' });
+  });
+});
+
+describe('source-of-truth data guards', () => {
+  it('maps the nested sucker-group projectPage relation by chain', () => {
+    const data = { suckerGroup: { projects: { items: [
+      { chainId: 1, projectId: 7 }, { chainId: 10, projectId: 9 },
+    ] } } };
+    expect(projectIdsByChainFromSuckerGroup(data, 10, 99)).toEqual({ 1: 7, 10: 9 });
+    expect(projectIdsByChainFromSuckerGroup(null, 10, 99)).toEqual({ 10: 99 });
+    expect(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY).toMatch(/projects\(limit: 100\).*items/s);
+  });
+
+  it('prices only authoritative ETH/canonical-USDC balances', () => {
+    const usdc = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+    const custom = '0x1111111111111111111111111111111111111111';
+    expect(accountingTokenUsdValue(2500000n, 6, usdc, 1, 3000)).toBe(2.5);
+    expect(accountingTokenUsdValue(10n ** 18n, 18, NATIVE_TOKEN, 1, 3000)).toBe(3000);
+    expect(accountingTokenUsdValue(10n ** 18n, 18, custom, 1, 3000)).toBeNull();
+  });
+
+  it('never guesses an activity token and saturates remaining access', () => {
+    expect(indexedActivityAmount(10n ** 18n)).toBe('$1.00');
+    expect(indexedActivityAmount(0n)).toBe('');
+    expect(remainingAccessAmount(100n, 40n)).toBe(60n);
+    expect(remainingAccessAmount(100n, 140n)).toBe(0n);
+    expect(quotedOutputFloor(100n)).toBe(99n);
+    expect(quotedOutputFloor(1n)).toBe(1n);
   });
 });
 

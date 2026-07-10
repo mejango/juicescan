@@ -2,7 +2,7 @@
 // These render DOM <span>s (jsdom), so we assert textContent. Guards the money-display path (USD scaling,
 // big-int grouping) and the small-but-easy-to-break bool/empty cases.
 import { describe, it, expect } from 'vitest';
-import { scaledUsdToNumber, volumeUsd, bigint, bool } from '../src/bendystraw-format.js';
+import { scaledUsdToNumber, volumeUsd, bigint, bool, amount, rawAmount, uri, svg } from '../src/bendystraw-format.js';
 
 describe('volumeUsd — 18-dec-scaled USD → compact $ string', () => {
   it('converts 18-dec-scaled USD to a number without floating-point bigint loss', () => {
@@ -44,5 +44,31 @@ describe('bool — yes / no / —', () => {
     expect(bool(true).textContent).toBe('yes');
     expect(bool(false).textContent).toBe('no');
     expect(bool(null).textContent).toBe('—');
+  });
+});
+
+describe('indexed amount provenance', () => {
+  it('does not invent ETH or 18 decimals when the row has no denomination', () => {
+    expect(amount('1000000000000000000', {}).textContent).toContain('raw');
+    expect(amount('1000000000000000000', {}).textContent).not.toContain('ETH');
+    expect(rawAmount('1234567').textContent).toContain((1234567).toLocaleString());
+  });
+  it('recognizes currency 2 as USD, not USDC, and formats signed values', () => {
+    expect(amount('1250000', { decimals: 6, currency: 2 }).textContent).toBe('1.25 USD');
+    expect(amount('-1250000', { decimals: 6, currency: 2 }).textContent).toBe('-1.25 USD');
+  });
+});
+
+describe('indexed link and SVG safety', () => {
+  it('renders non-web URI schemes as inert text', () => {
+    const node = uri('javascript:alert(1)');
+    expect(node.tagName).toBe('SPAN');
+    expect(node.closest('a')).toBeNull();
+  });
+  it('renders indexed SVG in an isolated image rather than injecting active nodes', () => {
+    const node = svg('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect onload="alert(2)"/></svg>');
+    expect(node.querySelector('img')).not.toBeNull();
+    expect(node.querySelector('script')).toBeNull();
+    expect(node.querySelector('rect')).toBeNull();
   });
 });

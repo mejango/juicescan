@@ -46,8 +46,8 @@ describe('pctOffToDiscountPercent — operator % off (0-100) → on-chain discou
   it('20% → 40', () => { expect(pctOffToDiscountPercent(20)).toBe(40); });
   it('50% → 100', () => { expect(pctOffToDiscountPercent(50)).toBe(100); });
   it('100% → 200', () => { expect(pctOffToDiscountPercent(100)).toBe(200); });
-  it('clamps above 100', () => { expect(pctOffToDiscountPercent(150)).toBe(200); });
-  it('clamps negative', () => { expect(pctOffToDiscountPercent(-5)).toBe(0); });
+  it('rejects above 100', () => { expect(() => pctOffToDiscountPercent(150)).toThrow(/between 0 and 100/i); });
+  it('rejects negative', () => { expect(() => pctOffToDiscountPercent(-5)).toThrow(/between 0 and 100/i); });
 });
 
 describe('buildSetDiscountConfig — the setDiscountPercentsOf entry + round-trip to effective price', () => {

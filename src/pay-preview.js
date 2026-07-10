@@ -32,9 +32,33 @@ export function formatAdaptive(n) {
   return n.toPrecision(2);
 }
 
+// BigInt-safe companion for raw fixed-point amounts. Large supplies/balances must not pass through Number
+// (which loses integer precision and eventually becomes Infinity). Values below one remain safely representable
+// as Number for the existing adaptive small-value display; values at/above one are rounded with integer math.
+export function formatRawAdaptive(raw, decimals) {
+  if (raw === null || raw === undefined) return '—';
+  var value;
+  try { value = BigInt(raw); } catch (_) { return '—'; }
+  decimals = Number(decimals);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 77) return '—';
+  if (value === 0n) return '0';
+  var negative = value < 0n;
+  var abs = negative ? -value : value;
+  var scale = 10n ** BigInt(decimals);
+  if (abs < scale) return formatAdaptive(Number(formatUnits(value, decimals)));
+  var sign = negative ? '-' : '';
+  var remainder = abs % scale;
+  if (remainder === 0n || decimals === 0) return sign + (abs / scale).toLocaleString('en-US');
+  // Match formatAdaptive's two-decimal display for values >= 1, using exact half-up rounding.
+  var hundredths = (abs * 100n + scale / 2n) / scale;
+  var whole = hundredths / 100n;
+  var fraction = String(hundredths % 100n).padStart(2, '0');
+  return sign + whole.toLocaleString('en-US') + '.' + fraction;
+}
+
 export function formatTokenCount(raw) {
   if (raw === null || raw === undefined) return '—';
-  return formatAdaptive(Number(formatUnits(raw, 18)));
+  return formatRawAdaptive(raw, 18);
 }
 
 // Truncate a bytes32 pool id (or any hex) for compact display.

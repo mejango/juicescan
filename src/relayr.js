@@ -12,7 +12,7 @@
 //
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
 
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, isAddress } from 'viem';
 import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain } from './component-base.js';
 import { CHAINS } from './chain.js';
 
@@ -57,6 +57,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   } catch (e) {
     throw new Error('Switch your wallet to ' + (CHAINS[chainId] && CHAINS[chainId].name || chainId) + ' to sign its request (' + ((e && e.message) || e) + ')');
   }
+  if (!getAccount() || getAccount().toLowerCase() !== from.toLowerCase()) throw new Error('Connected account changed. Review the cross-chain request again.');
 
   var domTuple = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'eip712Domain', args: [] });
   var domainName = domTuple[1], domainVersion = domTuple[2];
@@ -75,6 +76,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
     primaryType: 'ForwardRequest',
     message: { from: from, to: to, value: val, gas: gas, nonce: nonce, deadline: deadline, data: data },
   });
+  if (!getAccount() || getAccount().toLowerCase() !== from.toLowerCase()) throw new Error('Connected account changed. Review the cross-chain request again.');
 
   var requestData = { from: from, to: to, value: val, gas: gas, deadline: deadline, data: data, signature: signature };
   var execData = encodeFunctionData({ abi: FORWARDER_ABI, functionName: 'execute', args: [requestData] });
@@ -107,16 +109,35 @@ export async function relayrPostBundle(transactions) {
 
 // Send the single prepaid payment that funds execution on every chain. Caller ensures the wallet is on
 // payment.chain. Returns the payment tx hash.
-export async function relayrPay(payment) {
+export async function relayrPay(payment, expectedAccount) {
+  var chainId = Number(payment && payment.chain);
+  if (!Number.isSafeInteger(chainId) || !CHAINS[chainId]) throw new Error('Relayr returned an unsupported payment chain.');
+  if (!payment || !isAddress(payment.target, { strict: false })) throw new Error('Relayr returned an invalid payment target.');
+  var amount; try { amount = BigInt(payment.amount); } catch (_) { throw new Error('Relayr returned an invalid payment amount.'); }
+  if (amount < 0n) throw new Error('Relayr returned an invalid payment amount.');
+  var calldata = payment.calldata || '0x';
+  if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(calldata)) throw new Error('Relayr returned invalid payment calldata.');
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
-  return wallet.sendTransaction({
-    account: getAccount(),
-    chain: CHAINS[payment.chain],
+  var account = getAccount();
+  if (!account) throw new Error('Connect a wallet first');
+  if (expectedAccount && account.toLowerCase() !== expectedAccount.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
+  var active = await wallet.getChainId().catch(function () { return null; });
+  if (active !== chainId) { await switchChain(chainId); wallet = getWalletClient(); }
+  if (!wallet || !getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
+  var pub = createPublicClientForChain(chainId);
+  await pub.estimateGas({ account: account, to: payment.target, value: amount, data: calldata });
+  if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
+  var hash = await wallet.sendTransaction({
+    account: account,
+    chain: CHAINS[chainId],
     to: payment.target,
-    value: BigInt(payment.amount),
-    data: payment.calldata,
+    value: amount,
+    data: calldata,
   });
+  var receipt = await pub.waitForTransactionReceipt({ hash: hash });
+  if (receipt && receipt.status && receipt.status !== 'success') throw new Error('Relayr payment reverted on-chain.');
+  return hash;
 }
 
 // Poll GET /v1/bundle/{uuid} every `intervalMs` until every transaction reports state "Success".
@@ -147,3 +168,7 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
 }
 
 // Pull the destination tx hash off a polled transaction record, whatever its state shape.
+export function relayrDestinationHash(record) {
+  var data = record && record.status && record.status.data;
+  return (data && (data.hash || (data.transaction && data.transaction.hash))) || null;
+}

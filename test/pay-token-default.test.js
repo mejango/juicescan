@@ -4,6 +4,7 @@
 // the USER explicitly picked one — the native-ETH sync default must never shadow it.
 import { describe, it, expect } from 'vitest';
 import { chooseRefinedPayToken } from '../src/discover.js';
+import { getChainTokens } from '../src/chain.js';
 
 const NATIVE = '0x000000000000000000000000000000000000eeee';
 const usdc = { address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', symbol: 'USDC', decimals: 6, viaRouter: false };
@@ -46,5 +47,15 @@ describe('chooseRefinedPayToken — pay-token desync guard', () => {
   it('empty / null list → null', () => {
     expect(chooseRefinedPayToken([], ethDirect, false)).toBe(null);
     expect(chooseRefinedPayToken(null, ethDirect, true)).toBe(null);
+  });
+});
+
+describe('canonical testnet USDC catalog', () => {
+  it('includes 6-decimal USDC on every supported testnet used by create/pay/payout forms', () => {
+    [11155111, 11155420, 84532, 421614].forEach((chainId) => {
+      const token = getChainTokens(chainId).find((candidate) => candidate.symbol === 'USDC');
+      expect(token, `missing USDC on ${chainId}`).toBeTruthy();
+      expect(token.decimals).toBe(6);
+    });
   });
 });

@@ -230,7 +230,10 @@ export function discoverChains(projectId, callback) {
     for (var r = 0; r < results.length; r++) {
       if (results[r].exists) live.push(results[r].chainId);
     }
-    callback(live.length > 0 ? live : chainIds);
+    // An unknown project and a total RPC failure are both unsafe reasons to guess. Returning every chain made
+    // invalid IDs look deployed and let transaction forms target arbitrary project IDs. Callers must keep the
+    // action disabled when this list is empty.
+    callback(live);
   });
 }
 
@@ -1002,19 +1005,26 @@ export function executeTransaction(opts) {
       return switchChain(opts.chainId);
     }
   }).then(function() {
+    var current = getAccount();
+    if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
       return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus);
     }
   }).then(function() {
-    cbs.onStatus('Awaiting wallet confirmation...', 'pending');
-    return wallet.writeContract({
+    var current = getAccount();
+    if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+    cbs.onStatus('Simulating the confirmed transaction...', 'pending');
+    var pub = createPublicClientForChain(opts.chainId);
+    return pub.simulateContract({
       account: account,
-      chain: CHAINS[opts.chainId],
       address: opts.address,
       abi: opts.abi,
       functionName: opts.functionName,
       args: opts.args,
       value: opts.value || 0n,
+    }).then(function(simulation) {
+      cbs.onStatus('Awaiting wallet confirmation...', 'pending');
+      return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId] }));
     });
   }).then(function(hash) {
     // Submitted to the mempool — now waiting to be included onchain. Keep a live pending state up
@@ -1055,15 +1065,18 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
     args: [owner, spender],
   }).then(function(allowance) {
     if (BigInt(allowance) >= BigInt(amount)) return;
+    if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     onStatus('Approving token spend...', 'pending');
     var wallet = getWalletClient();
-    return wallet.writeContract({
+    return pub.simulateContract({
       account: owner,
-      chain: CHAINS[chainId],
       address: tokenAddr,
       abi: erc20ApproveAbi,
       functionName: 'approve',
       args: [spender, amount],
+    }).then(function(simulation) {
+      if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+      return wallet.writeContract(Object.assign({}, simulation.request, { account: owner, chain: CHAINS[chainId] }));
     }).then(function(hash) {
       return pub.waitForTransactionReceipt({ hash: hash });
     });
@@ -1162,6 +1175,17 @@ export var COMPONENT_SPECS = {
   'split-groups': { file: 'discover.js (openEditSplitsModal / submitSplitsEdit)', fn: 'JBController.setSplitGroupsOf(uint256 projectId, uint256 rulesetId, JBSplitGroup[] splitGroups)', desc: "Replaces a ruleset's split groups (reserved-token recipients or payout recipients) for the current cycle, per chain. Gotchas: the call REPLACES the whole group — omitted recipients are dropped; split percents are 1e9-scaled (SPLITS_TOTAL_PERCENT = 1,000,000,000); the reserved group id differs from a payout group id (keyed by currency/token); the JBSplit tuple field order is load-bearing (wrong order changes the selector and reverts); a split can target another project, an address, or a split hook; locked splits can't be removed before lockedUntil." },
   'add-liquidity': { file: 'discover.js (buildAddLiquidityModal / lpMint)', fn: 'Uniswap V4 PositionManager.modifyLiquidities(bytes unlockData, uint256 deadline)', desc: "Seeds the project's Uniswap V4 buyback pool so payers can route through the AMM, minting a concentrated-liquidity position over a price range. The pool/pair/hook are resolved per-project via JBDirectory → controllerOf → currentRulesetOf → ruleset dataHook (unwrapping REVOwner/registry/JBOmnichainDeployer wrappers), NOT the defaulting hookOf/terminalOf getters (which return a default even for non-users). Gotchas: this is a Uniswap V4 PositionManager.modifyLiquidities call, NOT a Juicebox terminal — the actions are abi-encoded (MINT_POSITION, CLOSE c0, CLOSE c1, +SWEEP for native refund); the pair token is native ETH or the project's accounting token (USDC 6-dec) — the pair amount uses pairDec, the project token is always 18-dec, and both are mapped onto pool currency0/currency1 by address ordering. The range (entered in pair-per-token) is converted to ticks and SNAPPED to the pool's tickSpacing (200 for the 1% fee tier), so a too-tight range collapses to one tickSpacing width. Crucially, single-sided liquidity is out-of-range by definition: if the current pool price sits at/above your Max the position is all-pair, at/below your Min it's all-project-token, and getLiquidity==0 at the current tick means the buyback hook won't route swaps through it — active depth needs a TWO-SIDED position STRADDLING the current price (Max above spot, Min below). Adding liquidity NEVER moves the price (the price is set once at pool initialize); to seed the other side you must move the price with a swap or widen the range. Range defaults span the cash-out floor to the issuance ceiling (1e18/weight); when there's no floor yet, or the cash-out price sits above the ceiling (inverted/anomalous), Min falls back to a mirror/10x band below the pool price. The Permit2 → PositionManager allowance is folded into the multicall (gasless signature) to save a tx; native pairs go via msg.value with a SWEEP refund, ERC-20 pairs pull the exact amount via Permit2. A companion Remove flow (openRemoveLiquidityModal) scans your positions across the current AND old buyback pools and full-exits with BURN_POSITION + TAKE_PAIR (0x0311), amount mins 0, no approval needed. Only chains with a V4 position+pool manager support it." },
 };
+
+// Keep the user-facing audit prompts aligned with the hardened transaction paths. These concise overrides
+// supersede older long-form notes above that documented now-removed unsafe fallbacks.
+COMPONENT_SPECS.pay.desc = "Pays through the best live-previewed recognized terminal and mints project tokens to the beneficiary. The form requires a non-zero preview at submit time and sets minReturnedTokens to 99% of that quote; it never submits an unpriced min=0 payment. Amount uses the payment token's decimals, returned project tokens use 18 decimals, native payments set msg.value, and ERC-20 payments approve the exact resolved terminal.";
+COMPONENT_SPECS.cashout.desc = "Burns 18-decimal project tokens to reclaim a selected on-chain accounting token. The component loads only the terminal's real accounting contexts, requires previewCashOutFrom to return a non-zero reclaim, and sets minTokensReclaimed to 95% of that quote (at least one raw unit); preview failure or a zero return blocks the transaction. The project-page AMM path instead carries its hard floor in buyback-hook metadata, where terminal min=0 is required by that route.";
+COMPONENT_SPECS.payouts.desc = "Calls sendPayoutsOf(projectId, token, amount, currency, minTokensPaidOut) using a token from the project's actual accounting contexts. Every JBCurrencyAmount uses that accounting token's decimals even when denominated in ETH, USD, or another currency. Before signing, the form reads the live ruleset, configured limit and already-used amount, rejects requests above the remaining limit, simulates terminal-token output, and sets a non-zero 99% floor so the contract's silent cap cannot make the transaction pay less than reviewed.";
+COMPONENT_SPECS.launch.desc = "Launches a project and its initial rulesets/terminals. Fund-access payout limits and surplus allowances are fixed-point values using the associated accounting token context's decimals for every currency (for example both token-keyed and USD limits on USDC use 6 decimals); currency changes denomination, not scale. Empty fund-access groups mean no payout access, and unlimited limits use uint224.max.";
+COMPONENT_SPECS['queue-ruleset'].desc = "Queues future rulesets with exact ABI tuple ordering. Fund-access amounts are raw uint224 fixed-point values and must use the associated terminal token context's decimals regardless of whether their currency id is token-keyed, ETH, USD, or custom. Limits are sorted by currency, empty groups mean no payout access, split percentages use 1e9, and ruleset percentage fields use their documented 10,000/1e9 scales.";
+COMPONENT_SPECS.loan.desc = "Opens or repays a REVLoans position using REVLoan.sourceToken. The modal lists every accepted accounting context, quotes borrowableAmountFrom in the chosen token's real decimals/currency, and sets minBorrowAmount to 99% of a fresh submit-time quote. Repayment rereads the on-chain loan and current source fee, supports native and ERC-20 sources (direct ERC-20 allowance), adds a bounded two-minute fee-drift guard, and relies on REVLoans to refund unused native or token funds.";
+COMPONENT_SPECS.move.desc = "Moves a project's claimed ERC-20 tokens through a verified JBSucker route. Before prepare(), the modal verifies the sucker's project id, bridge infrastructure, source-to-destination backing-token mapping, destination accounting context, and a live terminal cash-out preview. Positive backing uses a 99% minTokensReclaimed floor; an exact zero-backing preview is allowed only with an explicit warning because the identical project-token count is still minted remotely. The ERC-20 approval and exact prepare call are simulated before signing. toRemote() is a separate batched action; its registry and transport payment is discovered by simulating the selected verified native or CCIP sucker, and an unverified route blocks instead of being guessed as native.";
+COMPONENT_SPECS['add-liquidity'].desc = "Adds or removes a Uniswap V4 concentrated-liquidity position in the project's live buyback pool. The pool, hook, pair token, accounting-token decimals, address ordering, tick spacing, current price, and position state are read on the selected chain; missing pair/context data blocks the action. Adds encode the exact MINT_POSITION/CLOSE/SWEEP plan and use Permit2 or native msg.value as appropriate. Full removals encode BURN_POSITION with TAKE_PAIR and set each positive token minimum to 95% of the displayed position amount, while a genuinely zero side remains zero. Both paths switch to the reviewed chain, simulate the exact call, recheck the connected account, and submit the simulation request.";
 var LINK_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 
 // An LLM prompt: the code file + contract + an English account of the component's extent and gotchas, plus
@@ -1177,7 +1201,7 @@ export function componentReproPrompt(title, prefix, fileHint) {
     + (file ? ' — read src/' + file + '. Transactions are built in-browser; the README maps every action to its contract function.' : '.') + '\n'
     + 'V6 contracts (Juicebox version 6): https://github.com/Bananapus/version-6.\n'
     + 'Build it COMPLETELY — handle the loading, empty, error, multi-chain, and permission-preflight states, not just the happy path. Before trusting this summary, READ the builder function named above and its round-trip/encoding test in the reference repo: the builder is the source of truth for arg order, decimals, currency ids, and any hardcoded value. Cross-check every arg against the on-chain ABI in the V6 contracts repo and match the tuple order, integer widths, and 4-byte selector EXACTLY (a uint32-vs-uint256 swap or a reordered tuple changes the selector and reverts every tx).\n'
-    + 'SAFELY: match token decimals and the currency id per the gotchas (they often differ from 18 / from the standard ETH=1/USD=2 id); validate every address; and treat any multi-step preflight as a labeled step (ERC-20 approval, a one-off setPermissionsFor grant, or claiming credits into the ERC-20 before the action). Note which calls are permissionless vs permission-gated and do not add or drop access control. For slippage: the reference often ships a 0 or fixed-percent floor that falls back to 0 when no priced preview exists — a faithful-but-safer rebuild should EXPOSE a real user-set floor and call out where the reference ships 0 rather than silently copying the unprotected default.\n'
+    + 'SAFELY: match token decimals and the currency id per the gotchas (they often differ from 18 / from the standard ETH=1/USD=2 id); validate every address; and treat any multi-step preflight as a labeled step (ERC-20 approval, a one-off setPermissionsFor grant, or claiming credits into the ERC-20 before the action). Note which calls are permissionless vs permission-gated and do not add or drop access control. Preserve every live-quote minimum and fail-closed preflight from the reference. A zero minimum is valid only where the documented contract route carries its real floor elsewhere or the verified expected output is exactly zero; never turn a failed preview into an unprotected write.\n'
     + 'If you might miss a gotcha, surface it.\n'
     + 'Live reference: ' + location.href;
 }

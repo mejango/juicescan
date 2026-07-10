@@ -11,7 +11,7 @@
 // Project metadata (name/logo/description/links) is pinned to IPFS via Pinata (src/ipfs-pin.js); the
 // JWT lives in localStorage only.
 
-import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, createPublicClient, http } from 'viem';
+import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, createPublicClient, decodeEventLog, http } from 'viem';
 import { mainnet } from 'viem/chains';
 import { normalize as ensNormalize } from 'viem/ens';
 import {
@@ -24,7 +24,7 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
+import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 
@@ -678,18 +678,14 @@ function tokenCurrencyIdFromAddress(token) {
   try { return token ? Number(BigInt(token) & 0xffffffffn) : 0; } catch (_) { return 0; }
 }
 
-// JBFundAccessLimits amount decimals depend on the LIMIT currency, not blindly on the terminal token.
-// Token-keyed currencies use the accounting token's own decimals; ETH/USD/custom price-feed currencies use
-// the JB fixed-point standard (18). This keeps imported/queued USDC-token limits at 6 decimals while leaving
-// USD limits at 18.
+// Every JBFundAccessLimits amount uses the associated accounting token context's decimals. `currency` changes
+// the denomination and may trigger a price conversion, but it never changes the fixed-point scale. Thus both
+// token-keyed and USD limits on a USDC context are 6-decimal values.
 export function fundAccessAmountDecimals(currency, acct) {
-  var cur; try { cur = Number(currency || 0); } catch (_) { cur = 0; }
-  var acctCur = 0;
-  if (acct) {
-    try { if (acct.currency != null) acctCur = Number(acct.currency); } catch (_) { acctCur = 0; }
-    if (!acctCur) acctCur = tokenCurrencyIdFromAddress(acct.token || acct.address);
-  }
-  return cur && acctCur && cur === acctCur ? (Number(acct && acct.decimals) || 18) : 18;
+  if (!acct || acct.decimals == null || acct.decimals === '') throw new Error('A verified accounting-token decimal value (0–36) is required.');
+  var decimals = Number(acct && acct.decimals);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error('A verified accounting-token decimal value (0–36) is required.');
+  return decimals;
 }
 
 function fundAccessUnits(value, currency, acct) {
@@ -755,6 +751,9 @@ function lookupCustomToken(state, render) {
     var first = results.filter(function (r) { return r.ok; })[0];
     if (!first) { ct.status = 'error'; ct.error = 'No ERC-20 found at this address on any selected chain.'; ct.symbol = ''; ct.decimals = null; ct.chains = null; render(); return; }
     ct.name = first.name || ''; ct.symbol = first.symbol || ''; ct.decimals = Number(first.decimals); ct.chains = results;
+    if (!Number.isInteger(ct.decimals) || ct.decimals < 0 || ct.decimals > 36) {
+      ct.status = 'error'; ct.error = 'This token reports ' + ct.decimals + ' decimals; Juicebox accounting contexts support 0–36.'; render(); return;
+    }
     // Every selected chain must have the same token (same symbol + decimals) at this address.
     var bad = results.filter(function (r) { return !r.ok || r.symbol !== first.symbol || Number(r.decimals) !== Number(first.decimals); });
     if (bad.length) {
@@ -1458,7 +1457,7 @@ function revStageEditor(stage, idx, state, render) {
   w.appendChild(s1);
 
   // 2. Cash outs (always on for a revnet — the only exit besides loans)
-  var acctSym = (state.accepts[0] || 'eth') === 'usdc' ? 'USDC' : 'ETH';
+  var acctSym = surplusTokenLabel(state);
   var s2 = el('div', 'create-rev-sec');
   var h2 = el('div', 'create-rev-h'); h2.textContent = '$' + tk + ' cash outs'; s2.appendChild(h2);
   var d2 = el('div', 'create-hint'); d2.textContent = 'The only way to access the ' + acctSym + ' used to issue $' + tk + ' is by cashing out or taking a loan. A tax makes cashing out and loans more expensive, rewarding $' + tk + ' holders who stick around.'; s2.appendChild(d2);
@@ -3020,7 +3019,7 @@ function reviewSummary(state) {
     c.appendChild(row('Flavor', 'Revnet'));
     c.appendChild(row('Name', state.details.name || '—'));
     c.appendChild(row('Token', '$' + tickerLabel(state)));
-    c.appendChild(row('Accounting token', (state.accepts[0] || 'eth') === 'usdc' ? 'USDC' : 'ETH'));
+    c.appendChild(row('Accounting token', surplusTokenLabel(state)));
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
     c.appendChild(row('Operator', /^0x/.test(opRaw) ? shortAddr(opRaw) : 'Project owner'));
     c.appendChild(row('Stages', String(state.stages.length)));
@@ -3029,7 +3028,7 @@ function reviewSummary(state) {
     return c;
   }
   c.appendChild(row('Name', state.details.name || '—'));
-  c.appendChild(row('Accounting token', state.accepts.map(function (a) { return a.toUpperCase(); }).join(' + ') + (state.swapRouter ? ' (+ any via router)' : '')));
+  c.appendChild(row('Accounting token', surplusTokenLabel(state) + (state.swapRouter ? ' (+ any via router)' : '')));
   c.appendChild(row('Launch', state.stages[0] && state.stages[0].schedule
     ? new Date(Number(state.stages[0].schedule) * 1000).toLocaleString() : 'Immediately'));
   c.appendChild(row('Rulesets', String(state.stages.length)));
@@ -3154,8 +3153,25 @@ function deploy(state, render) {
       .catch(function (e) { state.statusLines.push({ text: 'Connect failed: ' + (e && e.message || e), err: true }); render(); });
     return;
   }
+  var accepts = state.accepts || [];
+  var validAccounting = accepts.length > 0 && accepts.every(function (token, index) {
+    return ['eth', 'usdc', 'custom'].indexOf(token) !== -1 && accepts.indexOf(token) === index;
+  }) && !(accepts.indexOf('custom') !== -1 && accepts.length !== 1);
+  if (!validAccounting || (customAccounting(state) && !customReady(state))) {
+    state.statusLines.push({ text: 'Choose and verify the accounting token(s) before deploying.', err: true }); render(); return;
+  }
+  if (accepts.indexOf('usdc') !== -1 && (state.chainIds || []).some(function (cid) { return !USDC_BY_CHAIN[cid]; })) {
+    state.statusLines.push({ text: 'USDC is not configured on every selected chain.', err: true }); render(); return;
+  }
+  if (!state.tos || !(state.chainIds || []).length || !state.details.name) {
+    state.statusLines.push({ text: 'Complete the required deploy fields and risk confirmation before launching.', err: true }); render(); return;
+  }
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
+  var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
+  if (state.projectType === 'revnet' ? !isAddr(operatorRaw) : !isAddr(ownerRaw)) {
+    state.statusLines.push({ text: state.projectType === 'revnet' ? 'Set a valid revnet operator before deploying.' : 'Set a valid project owner before launching.', err: true }); render(); return;
+  }
   var owner = isAddr(ownerRaw) ? ownerRaw : signer;
   state.deploying = true; render();
   // Set the status pusher BEFORE runDeploy — with no Pinata JWT, runDeploy calls push() synchronously
@@ -3266,6 +3282,7 @@ async function runDeploy(state, owner) {
     } catch (e) {
       throw new Error('Couldn’t simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
     }
+    if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the launch transaction again.');
     push('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
     var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, skipConfirm: true, onStatus: function (m) { push(m); } });
     push('Reading the new project…');
@@ -3302,12 +3319,12 @@ async function runDeploy(state, owner) {
   var cur = await wallet.getChainId();
   if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
   push('Pay once on ' + chainName(pay.chain) + ' (~' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
-  var payHash = await relayrPay(pay);
+  var payHash = await relayrPay(pay, signer);
   push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
   // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
   // index to the chains we deployed, and render a friendly per-chain checklist (see renderDeploy).
   state.deployChains = plans.map(function (p) { return p.chainId; });
-  await relayrPoll(quote.bundle_uuid, function (txList) {
+  var finalRelayrTxs = await relayrPoll(quote.bundle_uuid, function (txList) {
     state.deployProgress = (txList || []).map(function (t, i) {
       return { chainId: state.deployChains[i], status: relayrChainStatus(t) };
     });
@@ -3315,7 +3332,7 @@ async function runDeploy(state, owner) {
   });
   state.deployProgress = null;
   push('Reading the new project…');
-  await captureDeployed(state, plans[0].chainId, null);
+  await captureDeployed(state, plans[0].chainId, relayrDestinationHash(finalRelayrTxs[0]));
 }
 
 // Gas for the inner launch call (the forwarder forwards this much). Estimate the direct call + buffer;
@@ -3331,13 +3348,13 @@ function estimateLaunchGas(plan, account) {
 // JBProjects.creationFee() — the exact msg.value launchProjectFor requires (per chain).
 function creationFeeOf(chainId) {
   var projects = getAddress('JBProjects', chainId);
-  if (!projects) return Promise.resolve(0n);
+  if (!projects) return Promise.reject(new Error('No JBProjects deployment on ' + chainName(chainId) + '.'));
   var pub = createPublicClientForChain(chainId);
   return pub.readContract({
     address: projects,
     abi: [{ type: 'function', name: 'creationFee', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }],
     functionName: 'creationFee',
-  }).catch(function () { return 0n; });
+  });
 }
 
 function execTx(opts) {
@@ -3349,26 +3366,32 @@ function execTx(opts) {
   });
 }
 
-// After a successful deploy, capture the new project's id (JBProjects.count) + route + tx hash for the
-// success panel's "Go to project" link. Best-effort — the panel still shows a generic success if it fails.
+// After a successful deploy, decode this transaction's JBProjects.Create event for the exact project id.
+// Reading the global count here is race-prone: another project could be created before the receipt is processed.
 function captureDeployed(state, chainId, txHash) {
-  return projectCountOf(chainId).then(function (pid) {
-    state.deployed = { chainId: chainId, projectId: pid, txHash: txHash || null, route: projectRouteFor(chainId, pid) };
-  }).catch(function () { state.deployed = { chainId: chainId, txHash: txHash || null }; });
+  if (!txHash) { state.deployed = { chainId: chainId, txHash: null }; return Promise.resolve(); }
+  var projects = getAddress('JBProjects', chainId);
+  var createEvent = [{ type: 'event', name: 'Create', inputs: [
+    { name: 'projectId', type: 'uint256', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'caller', type: 'address', indexed: false },
+  ] }];
+  return createPublicClientForChain(chainId).getTransactionReceipt({ hash: txHash }).then(function (receipt) {
+    var pid = null;
+    (receipt.logs || []).some(function (log) {
+      if (projects && log.address.toLowerCase() !== projects.toLowerCase()) return false;
+      try {
+        var decoded = decodeEventLog({ abi: createEvent, data: log.data, topics: log.topics });
+        if (decoded.eventName === 'Create') { pid = decoded.args.projectId; return true; }
+      } catch (_) {}
+      return false;
+    });
+    if (pid == null) throw new Error('Create event not found');
+    state.deployed = { chainId: chainId, projectId: pid, txHash: txHash, route: projectRouteFor(chainId, pid) };
+  }).catch(function () { state.deployed = { chainId: chainId, txHash: txHash }; });
 }
 
 // Chain-id → discover route slug (must match discover.js CHAIN_SLUGS exactly) for the "Go to project" link.
 var CREATE_CHAIN_SLUGS = { 1: 'eth', 11155111: 'sep', 42161: 'arb', 421614: 'arbsep', 8453: 'base', 84532: 'basesep', 10: 'op', 11155420: 'opsep' };
 function projectRouteFor(chainId, projectId) { var s = CREATE_CHAIN_SLUGS[chainId]; return (s && projectId) ? ('#' + s + ':' + projectId) : null; }
-// JBProjects.count() = the id of the most recently created project (ids increment) — the one we just deployed.
-function projectCountOf(chainId) {
-  var projects = getAddress('JBProjects', chainId);
-  if (!projects) return Promise.resolve(null);
-  return createPublicClientForChain(chainId).readContract({
-    address: projects, abi: [{ type: 'function', name: 'count', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }], functionName: 'count',
-  }).then(function (n) { return Number(n); }).catch(function () { return null; });
-}
-
 // Deterministic salt — same on every chain (so omnichain sucker addresses match). No Math.random.
 export function deploySalt(state, owner) {
   return keccak256(stringToHex((state.details.name || 'project') + ':' + String(owner).toLowerCase()));
@@ -3653,14 +3676,29 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   // empty-tiers carry-forward (metadata.dataHook is the extra/buyback slot), so we leave the metadata alone.
   if (state.shopChoice && !state.isOmnichain) {
     if (state.shopChoice === 'continue') {
-      rs.dataHook = state.currentDataHook || '';
-      rs.useDataHookForPay = true;
-      rs.useDataHookForCashOut = !!state.currentUseDataHookForCashOut;
+      rs.dataHook = (state.currentDataHookByChain && state.currentDataHookByChain[chainId]) || state.currentDataHook || '';
+      rs.useDataHookForPay = state.currentUseDataHookForPayByChain && state.currentUseDataHookForPayByChain[chainId] != null
+        ? !!state.currentUseDataHookForPayByChain[chainId]
+        : (state.currentUseDataHookForPay == null ? true : !!state.currentUseDataHookForPay);
+      rs.useDataHookForCashOut = state.currentUseDataHookForCashOutByChain && state.currentUseDataHookForCashOutByChain[chainId] != null
+        ? !!state.currentUseDataHookForCashOutByChain[chainId]
+        : !!state.currentUseDataHookForCashOut;
     } else if (state.shopChoice === 'remove') {
       rs.dataHook = '';
       rs.useDataHookForPay = false;
       rs.useDataHookForCashOut = false;
     }
+  } else if (state.shopChoice && state.isOmnichain && state.shopChoice !== 'remove') {
+    // JBOmnichainDeployer replaces `metadata.dataHook` with itself and stores the input hook as its separate
+    // extra hook. Re-pass that EXTRA hook (not the wrapper address) so queueing/carrying a 721 shop does not
+    // silently detach an existing buyback or other composed data hook.
+    rs.dataHook = (state.currentDataHookByChain && state.currentDataHookByChain[chainId]) || state.currentDataHook || '';
+    rs.useDataHookForPay = state.currentUseDataHookForPayByChain && state.currentUseDataHookForPayByChain[chainId] != null
+      ? !!state.currentUseDataHookForPayByChain[chainId]
+      : !!state.currentUseDataHookForPay;
+    rs.useDataHookForCashOut = state.currentUseDataHookForCashOutByChain && state.currentUseDataHookForCashOutByChain[chainId] != null
+      ? !!state.currentUseDataHookForCashOutByChain[chainId]
+      : !!state.currentUseDataHookForCashOut;
   }
 
   if (deadlineOn === false) {
@@ -3690,7 +3728,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     // Per-token recipient address (per-chain override → default), keyed by token + recipient index.
     var benefK = function (x, kind, idx) { return chainAddr(state, chainId, 'pk:' + kind.key + ':' + idx, pickResolved(x.address, x)); };
     var pidK = function (x, kind, idx) { return projAt(x, 'pkpid:' + kind.key + ':' + idx); };
-    var puK = function (v, d) { try { return parseUnits(String(v || '0'), d); } catch (_) { return 0n; } };
+    var puK = function (v, d) { return priceUnits(v, d); };
     pkAll.forEach(function (kind) {
       var pk = (stage.payoutByKind || {})[kind.key] || { mode: 'none', recipients: [] };
       var token = kind.addrForChain(chainId); if (!token) return;
@@ -3706,11 +3744,15 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
           return splitState(x, raw, benefK(x, kind, idx), chainId, pidK(x, kind, idx), lockOk);
         });
       } else if (pk.mode === 'limited') {
-        var totalAmt = (pk.recipients || []).reduce(function (s, x) { return s + puK(x.amountEth, kind.decimals); }, 0n);
+        var limitedRows = (pk.recipients || []).map(function (x, idx) {
+          return { x: x, idx: idx, amount: puK(x.amountEth, kind.decimals) };
+        }).filter(function (row) { return row.amount > 0n; });
+        var totalAmt = limitedRows.reduce(function (s, row) { return s + row.amount; }, 0n);
         if (totalAmt > 0n) payoutLimits.push({ amount: totalAmt, currency: cur });
-        var totalNum = (pk.recipients || []).reduce(function (s, x) { return s + (Number(x.amountEth) || 0); }, 0) || 1;
-        var lshares = fillSplits((pk.recipients || []).map(function (x) { return Math.round(((Number(x.amountEth) || 0) / totalNum) * SPLITS_TOTAL); }));
-        splits = (pk.recipients || []).map(function (x, idx) { return splitState(x, lshares[idx], benefK(x, kind, idx), chainId, pidK(x, kind, idx), lockOk); });
+        var lshares = splitSharesFromAmounts(limitedRows.map(function (row) { return row.amount; }));
+        splits = limitedRows.map(function (row, shareIdx) {
+          return splitState(row.x, lshares[shareIdx], benefK(row.x, kind, row.idx), chainId, pidK(row.x, kind, row.idx), lockOk);
+        });
       }
       if (stage.surplusAllowanceOn && pk.mode !== 'unlimited') surplusAllowances.push({ amount: UINT224_MAX, currency: cur });
       if (splits.length) rs.splitGroups.push({ groupId: uint256FromAddress(token), splits: splits });
@@ -3731,11 +3773,17 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
           return splitState(x, raw, payoutBenef(x, idx), chainId, payoutPid(x, idx), lockOk);
         });
       } else {
-        var total = stage.payoutRecipients.reduce(function (s, x, idx) { return s + (Number(amtAt(x, idx)) || 0); }, 0) || 1;
-        var lshares1 = fillSplits(stage.payoutRecipients.map(function (x, idx) { return Math.round(((Number(amtAt(x, idx)) || 0) / total) * SPLITS_TOTAL); }));
-        payoutSplits = stage.payoutRecipients.map(function (x, idx) { return splitState(x, lshares1[idx], payoutBenef(x, idx), chainId, payoutPid(x, idx), lockOk); });
+        var splitAcct = acctTokenFor(state, chainId);
+        var splitCurrency = stage.payoutCurrency || 1;
+        var limitedRows1 = stage.payoutRecipients.map(function (x, idx) {
+          return { x: x, idx: idx, amount: fundAccessUnits(amtAt(x, idx), splitCurrency, splitAcct) };
+        }).filter(function (row) { return row.amount > 0n; });
+        var lshares1 = splitSharesFromAmounts(limitedRows1.map(function (row) { return row.amount; }));
+        payoutSplits = limitedRows1.map(function (row, shareIdx) {
+          return splitState(row.x, lshares1[shareIdx], payoutBenef(row.x, row.idx), chainId, payoutPid(row.x, row.idx), lockOk);
+        });
       }
-      rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
+      if (payoutSplits.length) rs.splitGroups.push({ groupId: uint256FromAddress(acctTokenFor(state, chainId).token), splits: payoutSplits });
     }
     var acct = acctTokenFor(state, chainId);
     var payoutLimits1 = [];
@@ -3786,6 +3834,22 @@ function fillSplits(rawShares) {
     rawShares[maxI] = Math.max(0, rawShares[maxI] + delta);
   }
   return rawShares;
+}
+
+// Convert fixed-point payout amounts into exact 1e9 split shares without passing through JavaScript Number.
+// Amounts may be much larger than Number.MAX_SAFE_INTEGER and may carry token-specific precision. Flooring each
+// ratio and assigning the few remaining atoms through fillSplits preserves the exact relative order and sum.
+function splitSharesFromAmounts(amounts) {
+  if (!amounts.length) return [];
+  var total = amounts.reduce(function (sum, amount) {
+    amount = BigInt(amount);
+    if (amount < 0n) throw new Error('Payout amounts cannot be negative.');
+    return sum + amount;
+  }, 0n);
+  if (total === 0n) return amounts.map(function () { return 0; });
+  return fillSplits(amounts.map(function (amount) {
+    return Number(BigInt(amount) * BigInt(SPLITS_TOTAL) / total);
+  }));
 }
 
 function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOverride, allowLock) {
@@ -4077,7 +4141,12 @@ function recipBoxWith(recip, hint) {
 }
 
 function safeParseEther(v) { try { return v ? parseEther(String(v)) : 0n; } catch (_) { return 0n; } }
-function priceUnits(v, decimals) { try { return v ? parseUnits(String(v), decimals) : 0n; } catch (_) { return 0n; } }
+function priceUnits(v, decimals) {
+  if (v == null || String(v).trim() === '') return 0n;
+  var parsed = parseUnits(String(v).trim(), decimals);
+  if (parsed < 0n) throw new Error('Amounts cannot be negative.');
+  return parsed;
+}
 function ipfsHttp(uri) {
   if (!uri) return '';
   if (uri.indexOf('ipfs://') === 0) return 'https://ipfs.io/ipfs/' + uri.slice(7);
@@ -4097,7 +4166,7 @@ function localTimezoneLabel() {
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
-  assembleRuleset, splitState, fillSplits, build721Config, customCurrencyId, customAcctDecimals,
+  assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,

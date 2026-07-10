@@ -9,12 +9,28 @@ import { isAddress } from 'viem';
 let inputIdCounter = 0;
 function nextId() { return 'input-' + (++inputIdCounter); }
 
-// Convert a decimal string (e.g. "1.5") to a fixed-point BigInt with given decimals
-function toFixedPoint(value, decimals) {
-  var parts = value.split('.');
-  var whole = parts[0] || '0';
-  var frac = (parts[1] || '').slice(0, decimals).padEnd(decimals, '0');
-  return BigInt(whole) * (10n ** BigInt(decimals)) + BigInt(frac);
+// Convert a human decimal string (e.g. "1" or "1.5") to fixed-point base units. Never truncate extra
+// fractional digits: silently changing a transaction amount is worse than asking the user to correct it.
+export function toFixedPoint(value, decimals) {
+  var raw = String(value).trim();
+  var match = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(raw);
+  if (!match || (!match[2] && !match[3])) throw new Error('invalid decimal');
+  var fracRaw = match[3] || '';
+  if (fracRaw.length > decimals) throw new Error('too many decimal places');
+  var whole = BigInt(match[2] || '0');
+  var frac = BigInt(fracRaw.padEnd(decimals, '0') || '0');
+  var out = whole * (10n ** BigInt(decimals)) + frac;
+  return match[1] === '-' ? -out : out;
+}
+
+function integerBounds(type) {
+  var match = /^(u?int)(\d*)$/.exec(type || '');
+  if (!match) return null;
+  var bits = match[2] ? Number(match[2]) : 256;
+  if (!bits || bits > 256 || bits % 8 !== 0) return null;
+  return match[1] === 'uint'
+    ? { min: 0n, max: (1n << BigInt(bits)) - 1n }
+    : { min: -(1n << BigInt(bits - 1)), max: (1n << BigInt(bits - 1)) - 1n };
 }
 
 // Backgrounds alternate by nesting depth for visual differentiation
@@ -23,8 +39,8 @@ const DEPTH_BG = ['var(--depth-bg-0)', 'var(--depth-bg-1)'];
 // --- Dispatcher ---
 
 export function renderInput(param, context, depth) {
+  if (/\[[0-9]*\]$/.test(param.type)) return renderArrayInput(param, context, depth);
   if (param.type === 'tuple') return renderTupleInput(param, context, depth);
-  if (param.type.endsWith('[]')) return renderArrayInput(param, context, depth);
   if (param.type.startsWith('uint') || param.type.startsWith('int')) return renderUintInput(param, context);
   if (param.type === 'address') return renderAddressInput(param, context);
   if (param.type === 'bool') return renderBoolInput(param);
@@ -86,8 +102,10 @@ export function renderUintInput(param, context) {
     decInput.className = 'field decimal-input';
     decInput.value = '18';
     decInput.addEventListener('input', function() {
-      var d = parseInt(decInput.value);
-      decimals = (isNaN(d) || d < 0 || d > 77) ? 18 : d;
+      var raw = decInput.value.trim();
+      var d = /^\d+$/.test(raw) ? Number(raw) : NaN;
+      if (!Number.isInteger(d) || d < 0 || d > 77) { updateHint(); return; }
+      decimals = d;
       // Update pill selection
       decPills.querySelectorAll('.decimal-pill').forEach(function(p) {
         p.classList.toggle('selected', parseInt(p.textContent) === decimals);
@@ -137,7 +155,7 @@ export function renderUintInput(param, context) {
     function updateHint() {
       try {
         var v = input.value.trim();
-        if (v && v.includes('.')) {
+        if (v) {
           var raw = toFixedPoint(v, decimals);
           hint.textContent = '→ ' + raw.toString() + ' raw';
         } else {
@@ -166,25 +184,34 @@ export function renderUintInput(param, context) {
     group.appendChild(pctHint);
   }
 
-  group.getValue = function() {
+  function parsedValue() {
     var v = input.value.trim();
     if (!v) return 0n;
-    if (v.includes('.') && isFixedPoint) {
-      return toFixedPoint(v, decimals);
-    }
+    if (isFixedPoint) return toFixedPoint(v, decimals);
     return BigInt(v);
-  };
+  }
+
+  group.getValue = parsedValue;
 
   group.validate = function() {
     var v = input.value.trim();
-    if (!v) return null;
+    if (!v) return param.name + ': value required (enter 0 explicitly)';
+    if (isFixedPoint) {
+      var decRaw = decInput.value.trim();
+      if (!/^\d+$/.test(decRaw) || Number(decRaw) < 0 || Number(decRaw) > 77) {
+        return param.name + ': decimals must be a whole number from 0 to 77';
+      }
+    }
+    var parsed;
     try {
-      if (v.includes('.') && isFixedPoint) toFixedPoint(v, decimals);
-      else BigInt(v);
+      parsed = parsedValue();
     } catch (_) {
       return param.name + ': must be a valid number';
     }
-    if (Number(v) < 0) return param.name + ': must be non-negative';
+    var bounds = integerBounds(param.type);
+    if (bounds && (parsed < bounds.min || parsed > bounds.max)) {
+      return param.name + ': outside the range of ' + param.type;
+    }
     return null;
   };
 
@@ -309,6 +336,11 @@ export function renderBytesInput(param) {
     var v = input.value.trim();
     if (v && !v.startsWith('0x')) return param.name + ': must start with 0x';
     if (v && !/^0x[0-9a-fA-F]*$/.test(v)) return param.name + ': invalid hex';
+    if (v && (v.length - 2) % 2 !== 0) return param.name + ': hex must contain whole bytes';
+    var fixed = /^bytes(\d+)$/.exec(param.type);
+    if (fixed && v && v.length !== 2 + Number(fixed[1]) * 2) {
+      return param.name + ': must contain exactly ' + fixed[1] + ' bytes';
+    }
     return null;
   };
   return group;
@@ -376,12 +408,14 @@ export function renderArrayInput(param, context, depth) {
   container.appendChild(itemsDiv);
   var items = [];
 
-  var elementType = param.type.replace(/\[\]$/, '');
+  var arrayMatch = /^(.*)\[([0-9]*)\]$/.exec(param.type);
+  var elementType = arrayMatch ? arrayMatch[1] : param.type;
+  var fixedLength = arrayMatch && arrayMatch[2] !== '' ? Number(arrayMatch[2]) : null;
   var elementParam = {
     type: elementType,
     name: '',
     components: param.components,
-    internalType: param.internalType ? param.internalType.replace(/\[\]$/, '') : undefined,
+    internalType: param.internalType ? param.internalType.replace(/\[[0-9]*\]$/, '') : undefined,
   };
 
   function addItem() {
@@ -398,7 +432,11 @@ export function renderArrayInput(param, context, depth) {
     itemsDiv.appendChild(wrapper);
   }
 
-  addItem(); // start with one entry
+  if (fixedLength != null) {
+    for (var fi = 0; fi < fixedLength; fi++) addItem();
+  } else {
+    addItem(); // dynamic arrays start with one entry; remove it to encode []
+  }
 
   var controls = document.createElement('div');
   controls.className = 'array-controls';
@@ -419,7 +457,7 @@ export function renderArrayInput(param, context, depth) {
   });
   controls.appendChild(addBtn);
   controls.appendChild(removeBtn);
-  container.appendChild(controls);
+  if (fixedLength == null) container.appendChild(controls);
 
   container.getValue = function() {
     return items.map(function(i) { return i.getValue(); });

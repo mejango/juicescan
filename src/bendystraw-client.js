@@ -18,6 +18,10 @@ export function setBendystrawNetwork(mode) {
   _host = mode === 'mainnet' ? HOST_MAINNET : HOST_TESTNET;
 }
 
+export function getBendystrawNetwork() {
+  return _host === HOST_MAINNET ? 'mainnet' : 'testnet';
+}
+
 function endpoint() {
   return API_KEY ? `${_host}/${API_KEY}/graphql` : `${_host}/graphql`;
 }
@@ -70,7 +74,7 @@ export function renderBendystrawSettings(opts) {
     const mode = netSel.value === 'mainnet' ? 'mainnet' : 'testnet';
     try { localStorage.setItem('jb-network', mode); } catch (_) {}
     setBendystrawNetwork(mode);
-    if (opts.onNetworkChange) opts.onNetworkChange();
+    if (opts.onNetworkChange) opts.onNetworkChange(mode);
   });
   row.appendChild(netSel);
 

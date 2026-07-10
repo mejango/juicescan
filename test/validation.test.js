@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { __test } from '../src/create-flow.js';
 
-const { initState, recipientIssue, splitTotalIssue, customAccounting, applyAccountingDefaults, currentPayoutKinds } = __test;
+const { initState, recipientIssue, splitTotalIssue, customAccounting, applyAccountingDefaults, currentPayoutKinds, surplusTokenLabel } = __test;
 const BOB = '0x2222222222222222222222222222222222222222';
 const DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
 
@@ -114,5 +114,19 @@ describe('custom-token accounting is exclusive and forces all currencies to itse
     expect(kinds).toHaveLength(1);
     expect(kinds[0].decimals).toBe(18);
     expect(kinds[0].symbol).toBe('DAI');
+  });
+  it('labels transaction reviews with the actual custom token', () => {
+    const s = custom();
+    s.accepts = ['custom'];
+    s.customToken = { address: DAI, symbol: 'DAI', decimals: 18, status: 'ok' };
+    expect(surplusTokenLabel(s)).toBe('DAI');
+  });
+});
+
+describe('multi-token review labels', () => {
+  it('shows both ETH and USDC instead of implying the first token is the only one', () => {
+    const s = custom();
+    s.accepts = ['eth', 'usdc'];
+    expect(surplusTokenLabel(s)).toBe('ETH and USDC');
   });
 });

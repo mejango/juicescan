@@ -3102,6 +3102,7 @@ input[type="checkbox"].field {
 .xchain-status-label--synced { color: var(--c-green); }
 .xchain-status-label--slight { color: var(--c-orange); }
 .xchain-status-label--danger { color: var(--c-pink); font-weight: bold; }
+.xchain-status-label--unknown { color: var(--c-muted); }
 .xchain-sync {
   font-family: inherit;
   font-size: 11px;

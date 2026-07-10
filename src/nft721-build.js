@@ -1,19 +1,29 @@
-import { addrOrZero, ZERO_ADDRESS as ZERO } from './component-base.js';
+import { addrOrZero, isAddr, ZERO_ADDRESS as ZERO } from './component-base.js';
 
 export var TIER_UNLIMITED_SUPPLY = 999999999;
 
 export function tierDiscountPercentFromPct(value) {
-  var pct = parseFloat(value);
-  if (!(pct > 0)) return 0;
-  return Math.min(200, Math.round(pct / 100 * 200));
+  if (value == null || String(value).trim() === '') return 0;
+  var pct = Number(value);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new Error('Discount must be between 0 and 100%.');
+  return Math.round(pct * 2);
 }
 
 export function clampTierInitialSupply(value, unlimited) {
   if (unlimited) return TIER_UNLIMITED_SUPPLY;
-  var n = Math.floor(Number(value) || 0);
-  if (n < 0) return 0;
-  if (n > TIER_UNLIMITED_SUPPLY) return TIER_UNLIMITED_SUPPLY;
-  return n;
+  var raw = String(value == null ? '' : value).trim();
+  if (!/^\d+$/.test(raw)) throw new Error('Tier supply must be a whole number.');
+  var n = BigInt(raw);
+  if (n <= 0n || n > BigInt(TIER_UNLIMITED_SUPPLY)) throw new Error('Tier supply must be between 1 and ' + TIER_UNLIMITED_SUPPLY + '.');
+  return Number(n);
+}
+
+function uintNumber(value, bits, label) {
+  var raw = typeof value === 'number' ? (Number.isSafeInteger(value) ? String(value) : '') : String(value == null ? 0 : value).trim();
+  if (!/^\d+$/.test(raw)) throw new Error(label + ' must be a whole number.');
+  var n = BigInt(raw), max = (1n << BigInt(bits)) - 1n;
+  if (n > max) throw new Error(label + ' exceeds uint' + bits + '.');
+  return Number(n);
 }
 
 export function sortTierEntriesByCategory(entries, pickTier) {
@@ -29,19 +39,27 @@ export function sortTierEntriesByCategory(entries, pickTier) {
 
 export function build721TierConfig(o) {
   o = o || {};
-  var reserveFrequency = Number(o.reserveFrequency || 0);
+  var price; try { price = BigInt(o.price || 0); } catch (_) { throw new Error('Tier price must be an integer in base units.'); }
+  if (price < 0n || price > (1n << 104n) - 1n) throw new Error('Tier price exceeds uint104.');
+  var reserveFrequency = uintNumber(o.reserveFrequency || 0, 16, 'Reserve frequency');
+  if (reserveFrequency > 0 && !isAddr(o.reserveBeneficiary)) throw new Error('A reserved tier needs a valid reserve beneficiary.');
   var reserveBeneficiary = reserveFrequency > 0 ? addrOrZero(o.reserveBeneficiary) : ZERO;
-  var votingUnits = Number(o.votingUnits || 0);
+  var votingUnits = uintNumber(o.votingUnits || 0, 32, 'Voting units');
+  var category = uintNumber(o.category || 0, 24, 'Category');
+  var discountPercent = uintNumber(o.discountPercent || 0, 8, 'Discount percent');
+  if (discountPercent > 200) throw new Error('Discount percent exceeds the protocol maximum of 200.');
+  var splitPercent = uintNumber(o.splitPercent || 0, 32, 'Split percent');
+  if (splitPercent > 1000000000) throw new Error('Split percent exceeds 100%.');
   var flags = o.flags || {};
   return {
-    price: BigInt(o.price || 0),
+    price: price,
     initialSupply: clampTierInitialSupply(o.initialSupply, !!o.unlimited),
     votingUnits: votingUnits,
     reserveFrequency: reserveFrequency,
     reserveBeneficiary: reserveBeneficiary,
     encodedIpfsUri: o.encodedIpfsUri || ('0x' + '0'.repeat(64)),
-    category: Number(o.category) || 0,
-    discountPercent: Number(o.discountPercent || 0),
+    category: category,
+    discountPercent: discountPercent,
     flags: {
       allowOwnerMint: !!flags.allowOwnerMint,
       useReserveBeneficiaryAsDefault: flags.useReserveBeneficiaryAsDefault != null
@@ -53,7 +71,7 @@ export function build721TierConfig(o) {
       cantIncreaseDiscountPercent: !!flags.cantIncreaseDiscountPercent,
       cantBuyWithCredits: !!flags.cantBuyWithCredits,
     },
-    splitPercent: Number(o.splitPercent || 0),
+    splitPercent: splitPercent,
     splits: o.splits || [],
   };
 }

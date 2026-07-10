@@ -122,10 +122,13 @@ async function signSafeTx(chainId, safe, fields, signer) {
     if (e && e.code === 4001) throw e;
     throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to sign.');
   }
-  return wallet.signTypedData({
+  if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
+  var signature = await wallet.signTypedData({
     account: signer, domain: { chainId: Number(chainId), verifyingContract: safe },
     types: SAFE_TX_TYPES, primaryType: 'SafeTx', message: safeTxMessage(fields),
   });
+  if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
+  return signature;
 }
 
 // The Safe's current queue nonce (next nonce to use). Reads the service; falls back to on-chain `nonce()`.
@@ -318,10 +321,18 @@ async function feeOverrides(chainId) {
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an on-chain revert surfaces as
 // an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
 async function sendAndConfirm(wallet, chainId, params, label) {
+  var account = getAccount();
+  if (!account) throw new Error('Connect a wallet first');
+  var active = await wallet.getChainId().catch(function () { return null; });
+  if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
+  if (!wallet || !getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+  var pub = createPublicClientForChain(chainId);
+  var simulation = await pub.simulateContract(Object.assign({ account: account }, params));
+  if (label === 'execTransaction' && simulation.result !== true) throw new Error('Safe simulation reported that the queued transaction would fail. Nothing was sent.');
+  if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var fees = await feeOverrides(chainId);
-  var hash = await wallet.writeContract(Object.assign({ account: getAccount(), chain: CHAINS[chainId] }, params, fees));
+  var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[chainId] }, fees));
   try {
-    var pub = createPublicClientForChain(chainId);
     var rcpt = await pub.waitForTransactionReceipt({ hash: hash });
     if (rcpt && rcpt.status && rcpt.status !== 'success') throw new Error((label || 'Transaction') + ' reverted on-chain (tx ' + hash + ').');
   } catch (e) {

@@ -1,7 +1,7 @@
 // Stage E — queueing a ruleset must let the user keep / remove the 721 shop, and must NOT silently drop a
 // live shop. On single-chain the 721 hook IS metadata.dataHook; the encoder's default (dataHook=0) detaches
 // it, so "continue" has to re-pass the hook. On omnichain the shop rides the deploy721 empty-tiers
-// carry-forward, so the queue branch must leave metadata.dataHook alone. The branch is gated on
+// carry-forward, while metadata.dataHook carries the wrapper's EXTRA hook and must also be preserved. The branch is gated on
 // state.shopChoice so the LAUNCH path (which never sets it) is untouched — that non-regression is the
 // load-bearing guard, since assembleRuleset is shared by launch + queue.
 import { describe, it, expect } from 'vitest';
@@ -38,10 +38,22 @@ describe('queue-ruleset 721-shop choice → ruleset data-hook metadata', () => {
     expect(rs.useDataHookForPay).toBe(false);
     expect(rs.useDataHookForCashOut).toBe(false);
   });
-  it('omnichain continue does NOT touch metadata.dataHook (shop rides the carry-forward)', () => {
-    const rs = rsFor(queueState({ shopChoice: 'continue', currentDataHook: HOOK, isOmnichain: true }));
-    expect(rs.dataHook).not.toBe(HOOK);
-    expect(rs.useDataHookForPay).toBeFalsy();
+  it('omnichain continue re-passes the wrapper extra hook while the shop rides the carry-forward', () => {
+    const rs = rsFor(queueState({ shopChoice: 'continue', currentDataHook: HOOK, currentUseDataHookForPay: true, isOmnichain: true }));
+    expect(rs.dataHook).toBe(HOOK);
+    expect(rs.useDataHookForPay).toBe(true);
+  });
+  it('uses the exact chain-specific hook and flags when queueing directly across chains', () => {
+    const chainHook = '0x000000000000000000000000000000000000BbBB';
+    const rs = rsFor(queueState({
+      shopChoice: 'continue', currentDataHook: HOOK, isOmnichain: false,
+      currentDataHookByChain: { 1: chainHook },
+      currentUseDataHookForPayByChain: { 1: false },
+      currentUseDataHookForCashOutByChain: { 1: true },
+    }));
+    expect(rs.dataHook).toBe(chainHook);
+    expect(rs.useDataHookForPay).toBe(false);
+    expect(rs.useDataHookForCashOut).toBe(true);
   });
   it('LAUNCH non-regression: no shopChoice → the queue branch never runs, data hook untouched', () => {
     const rs = rsFor(queueState({})); // shopChoice undefined (the launch path)
