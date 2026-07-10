@@ -699,6 +699,12 @@ function makeNftCart() {
     image: function (id) { return imgs[id]; },
     subscribe: function (fn) { subs.push(fn); },
     onName: function (fn) { nameSubs.push(fn); },
+    clear: function () {
+      Object.keys(sel).forEach(function (id) {
+        delete sel[id];
+        subs.forEach(function (f) { try { f(Number(id)); } catch (_) {} });
+      });
+    },
   };
 }
 
@@ -5149,11 +5155,16 @@ function renderPayCard(project, cart) {
     }, function send() {
       // Native ETH (even via the router) is paid with msg.value — no Permit2. Only ERC20 swap currencies
       // authorize through Permit2; reading allowance on the native pseudo-address returns "0x".
-      if (!viaRouter || isNative) { sendPay(txParams); return; }
+      if (!viaRouter || isNative) { sendPay(txParams, { clearCartOnSuccess: tierIds.length > 0 }); return; }
       // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then send.
       var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
       buildRouterPermit2Metadata(state.chainId, state.token.address, beneficiary, terminal, amt, statusCb)
-        .then(function (meta) { var p = Object.assign({}, txParams); p.args = args.slice(); p.args[metaIdx] = meta; sendPay(p); })
+        .then(function (meta) {
+          var p = Object.assign({}, txParams);
+          p.args = args.slice();
+          p.args[metaIdx] = meta;
+          sendPay(p, { clearCartOnSuccess: tierIds.length > 0 });
+        })
         .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Permit2 authorization failed'); });
     });
     } // proceed()
@@ -5171,7 +5182,18 @@ function renderPayCard(project, cart) {
     }
   }
 
-  function sendPay(txParams) {
+  function clearPurchasedNfts() {
+    amtInput.value = '';
+    state.amount = '';
+    state.preview = null;
+    state.directSwap = null;
+    state.phase = 'idle';
+    if (cart && cart.clear) cart.clear();
+    renderFeedback();
+  }
+
+  function sendPay(txParams, opts) {
+    opts = opts || {};
     var add = state.mode === 'addbalance';
     var processing = add ? 'Adding to balance' : 'Payment processing';
     var confirmed = add ? 'Added to balance' : 'Payment confirmed';
@@ -5184,6 +5206,7 @@ function renderPayCard(project, cart) {
       },
       onSuccess: function (m, meta) {
         setPayStatus('paybox-status success', confirmed, meta);
+        if (opts.clearCartOnSuccess) clearPurchasedNfts();
         status.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true }));
       },
       onError: function (m) { status.className = 'paybox-status error'; status.textContent = m; },
