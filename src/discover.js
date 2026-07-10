@@ -213,6 +213,20 @@ export function chooseRefinedPayToken(list, currentToken, tokenTouched) {
   return keep || list[0] || null;
 }
 
+function isZeroishAddress(address) {
+  return !address || String(address).toLowerCase() === ZERO_ADDRESS.toLowerCase() || /^0x0+$/.test(String(address));
+}
+
+export function recognizeProjectContract(address, chainId) {
+  if (isZeroishAddress(address)) return { address: address || ZERO_ADDRESS, known: true, name: null };
+  var name = resolveContractName(address, chainId);
+  return { address: address, known: !!name, name: name || null };
+}
+
+function sameAddr(a, b) {
+  return !!(a && b && String(a).toLowerCase() === String(b).toLowerCase());
+}
+
 // Canonical Circle testnet USDC (6 decimals), lowercased to avoid viem checksum validation. Offered as
 // a pay currency on revnets (which have the router); previewPayFor reads "unavailable" where no pool.
 var USDC_BY_CHAIN = {
@@ -297,6 +311,7 @@ var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', state
 var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 var terminalOfAbi = [{ type: 'function', name: 'terminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 var isTerminalOfAbi = [{ type: 'function', name: 'isTerminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminal', type: 'address' }], outputs: [{ type: 'bool' }] }];
+var terminalsOfAbi = [{ type: 'function', name: 'terminalsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address[]' }] }];
 var controllerOfAbi = [{ type: 'function', name: 'controllerOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
 // JBOmnichainDeployer stores a project's real ("extra") data hook here — it inserts itself as the ruleset dataHook.
 var extraDataHookOfAbi = [{ type: 'function', name: 'extraDataHookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }], outputs: [{ type: 'tuple', components: [{ name: 'dataHook', type: 'address' }, { name: 'useDataHookForPay', type: 'bool' }, { name: 'useDataHookForCashOut', type: 'bool' }] }] }];
@@ -2460,6 +2475,143 @@ function projectRouterTerminal(project, chainId) {
   }).catch(function () { return null; });
 }
 
+function projectChainList(project) {
+  return (project.chains && project.chains.length)
+    ? project.chains
+    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
+}
+
+function addUnknownProjectContract(out, chainId, chainName, role, address, note) {
+  if (isZeroishAddress(address)) return;
+  var rec = recognizeProjectContract(address, chainId);
+  if (rec.known) return;
+  out.push({ chainId: chainId, chain: chainName || chainNameOf(chainId), role: role, address: address, note: note || '' });
+}
+
+function readProjectPaymentSurface(project, chainId) {
+  var pid = BigInt(project.id);
+  return read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]).then(function (terminals) {
+    terminals = (terminals || []).filter(Boolean);
+    var direct = getAddress('JBMultiTerminal', chainId);
+    var router = routerTerminalFor(chainId);
+    var directRouter = getAddress('JBRouterTerminal', chainId);
+    return {
+      chainId: chainId,
+      terminals: terminals,
+      hasDirect: terminals.some(function (t) { return sameAddr(t, direct); }),
+      hasRouter: terminals.some(function (t) { return sameAddr(t, router) || sameAddr(t, directRouter); }),
+      unknown: terminals.filter(function (t) { return !recognizeProjectContract(t, chainId).known; }),
+    };
+  });
+}
+
+function inspectBuybackHookBehindDataHook(out, chainId, chainName, projectId, dataHook, role) {
+  if (isZeroishAddress(dataHook)) return Promise.resolve();
+  var registry = getAddress('JBBuybackHookRegistry', chainId);
+  var revOwner = getAddress('REVOwner', chainId);
+  if (!sameAddr(dataHook, registry) && !sameAddr(dataHook, revOwner)) return Promise.resolve();
+  return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [projectId]).then(function (hook) {
+    addUnknownProjectContract(out, chainId, chainName, role || 'Buyback hook', hook, 'Buyback swap behavior is delegated to this hook.');
+  }).catch(function () {});
+}
+
+function paySurfaceAllows(surface, terminal) {
+  if (!surface || !terminal) return false;
+  return (surface.terminals || []).some(function (t) { return sameAddr(t, terminal); });
+}
+
+function paySurfaceBlockedMessage(surface, terminal, chainId) {
+  var name = resolveContractName(terminal, chainId) || truncAddr(terminal);
+  return 'This project does not list ' + name + ' as a payment terminal on ' + chainNameOf(chainId) + '. Review the project contracts before paying.';
+}
+
+function inspectProjectContractsOnChain(project, chain) {
+  var chainId = chain.id;
+  var chainName = chain.name || chainNameOf(chainId);
+  var pid = BigInt(project.id);
+  var unknown = [];
+  return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
+    addUnknownProjectContract(unknown, chainId, chainName, 'Controller', controller, 'Rulesets and token actions are governed by this contract.');
+    var rulesetP = isZeroishAddress(controller)
+      ? Promise.resolve(null)
+      : clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }).catch(function () { return null; });
+    var terminalsP = readProjectPaymentSurface(project, chainId).then(function (surface) {
+      (surface.terminals || []).forEach(function (terminal) {
+        addUnknownProjectContract(unknown, chainId, chainName, 'Payment terminal', terminal, 'Payments, payouts, cash-outs, and balances depend on terminal behavior.');
+      });
+    }).catch(function () {});
+    return Promise.all([rulesetP, terminalsP]).then(function (r) {
+      var cur = r[0];
+      var rs = cur && (cur[0] || cur.ruleset);
+      var m = cur && (cur[1] || cur.metadata);
+      var approvalHook = rs && rs.approvalHook;
+      var dataHook = m && m.dataHook;
+      addUnknownProjectContract(unknown, chainId, chainName, 'Rule-change hook', approvalHook, 'This hook can affect when queued rulesets take effect.');
+      addUnknownProjectContract(unknown, chainId, chainName, 'Data hook', dataHook, 'Payments and cash-outs can run custom hook logic.');
+      var hookP = inspectBuybackHookBehindDataHook(unknown, chainId, chainName, pid, dataHook, 'Buyback hook');
+      var omni = getAddress('JBOmnichainDeployer', chainId);
+      if (omni && sameAddr(dataHook, omni) && rs && rs.id != null) {
+        return read(chainId, 'JBOmnichainDeployer', extraDataHookOfAbi, 'extraDataHookOf', [pid, BigInt(rs.id)])
+          .then(function (cfg) {
+            var extra = cfg && (cfg.dataHook || cfg[0]);
+            addUnknownProjectContract(unknown, chainId, chainName, 'Extra data hook', extra, 'The omnichain deployer delegates project hook behavior here.');
+            return inspectBuybackHookBehindDataHook(unknown, chainId, chainName, pid, extra, 'Extra buyback hook')
+              .then(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
+          })
+          .catch(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
+      }
+      return hookP.then(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
+    });
+  }).catch(function () {
+    return { chainId: chainId, chain: chainName, unknown: [] };
+  });
+}
+
+function inspectProjectContracts(project) {
+  return Promise.all(projectChainList(project).map(function (chain) {
+    return inspectProjectContractsOnChain(project, chain);
+  })).then(function (rows) {
+    var unknown = [];
+    rows.forEach(function (r) { unknown = unknown.concat(r.unknown || []); });
+    return { chains: rows, unknown: unknown };
+  });
+}
+
+function renderProjectContractWarnings(project) {
+  var host = el('div', 'project-contract-audit');
+  host.style.display = 'none';
+  inspectProjectContracts(project).then(function (audit) {
+    if (!host.isConnected) return;
+    var unknown = (audit && audit.unknown) || [];
+    if (!unknown.length) { host.remove(); return; }
+    host.style.display = '';
+    host.innerHTML = '';
+    var card = el('div', 'project-contract-warning');
+    var title = el('div', 'project-contract-warning-title'); title.textContent = 'Unknown project contracts'; card.appendChild(title);
+    var desc = el('div', 'project-contract-warning-copy');
+    desc.textContent = 'This project points at contracts outside this app’s known Juicebox deployment registry. Interface reads can still succeed, but the UI does not know what those contracts do.';
+    card.appendChild(desc);
+    var list = el('div', 'project-contract-warning-list');
+    unknown.forEach(function (u) {
+      var row = el('div', 'project-contract-warning-row');
+      var left = el('span', 'project-contract-warning-left');
+      left.appendChild(chainLogo(u.chainId, u.chain));
+      var label = el('span'); label.textContent = ' ' + u.chain + ' · ' + u.role; left.appendChild(label);
+      row.appendChild(left);
+      var right = el('span', 'project-contract-warning-right');
+      right.appendChild(addressLinkNode(u.address, u.chainId));
+      if (u.note) {
+        var note = el('span', 'project-contract-warning-note'); note.textContent = u.note; right.appendChild(note);
+      }
+      row.appendChild(right);
+      list.appendChild(row);
+    });
+    card.appendChild(list);
+    host.appendChild(card);
+  }).catch(function () { if (host.isConnected) host.remove(); });
+  return host;
+}
+
 // Current AMM price as PAIR-token per project token (ETH/token for ETH pools, USDC/token for USDC pools).
 async function readAmmPrice(project, chainId) {
   var hook = await projectBuybackHook(project, chainId);
@@ -4215,6 +4367,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
 
   var headerEl = renderDetailHeader(project);
   wrap.appendChild(headerEl);
+  wrap.appendChild(renderProjectContractWarnings(project));
 
   // Auto-refresh balance/supply (+ owners via the rebuilt header) and the activity feed when a tx
   // confirms in this view — a bubbling 'jb:project-updated' event is dispatched by the
@@ -4509,6 +4662,7 @@ function renderPayCard(project, cart) {
         // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
         state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
         rebuildCurrency();
+        renderTerminalNotice();
         if (selectedTierIds().length) syncNftAmountForSelection();
         schedulePreview();
       }).catch(function () {});
@@ -4528,6 +4682,8 @@ function renderPayCard(project, cart) {
     shop: null,       // { hook, tiers, ... } once the strip loads
     mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
     conversion: null, // { sym, units } router-swap landed amount for add-to-balance
+    terminalSurface: null,
+    terminalSurfaceChain: null,
   };
   state.token = state.tokens[0] || null;
   loadAcceptedTokens(state.chainId); // refine direct-vs-router from the project's accounting contexts
@@ -4704,6 +4860,7 @@ function renderPayCard(project, cart) {
       state.token = state.tokens[0] || null;
       sizeSelectToText(chainSel);
       rebuildCurrency();
+      loadPaymentSurface(state.chainId);
       if (selectedTierIds().length) syncNftAmountForSelection();
       schedulePreview();
       loadAcceptedTokens(state.chainId); // refine for the newly-selected chain
@@ -4740,6 +4897,7 @@ function renderPayCard(project, cart) {
         var t = state.tokens[Number(sel.value)];
         if (t) { state.token = t; state.tokenTouched = true; }
         sizeSelectToText(sel, 13);
+        renderTerminalNotice();
         if (selectedTierIds().length) syncNftAmountForSelection();
         schedulePreview();
       });
@@ -4789,6 +4947,46 @@ function renderPayCard(project, cart) {
 
   var status = el('div', 'paybox-status');
   card.appendChild(status);
+
+  var terminalNotice = el('div', 'paybox-contract-warning');
+  card.appendChild(terminalNotice);
+
+  function renderTerminalNotice() {
+    terminalNotice.innerHTML = '';
+    terminalNotice.style.display = 'none';
+    var surface = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
+    if (!surface) return;
+    var target = state.token && state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
+    if (target && !paySurfaceAllows(surface, target)) {
+      terminalNotice.style.display = '';
+      terminalNotice.className = 'paybox-contract-warning blocked';
+      terminalNotice.textContent = paySurfaceBlockedMessage(surface, target, state.chainId);
+      return;
+    }
+    if (surface.unknown && surface.unknown.length) {
+      terminalNotice.style.display = '';
+      terminalNotice.className = 'paybox-contract-warning';
+      terminalNotice.textContent = 'This project also lists unknown payment terminal'
+        + (surface.unknown.length > 1 ? 's' : '') + ': '
+        + surface.unknown.map(truncAddr).join(', ')
+        + '. This form only sends to a recognized Juicebox terminal.';
+    }
+  }
+
+  function loadPaymentSurface(chainId) {
+    readProjectPaymentSurface(project, chainId).then(function (surface) {
+      if (!card.isConnected || state.chainId !== chainId) return;
+      state.terminalSurface = surface;
+      state.terminalSurfaceChain = chainId;
+      renderTerminalNotice();
+    }).catch(function () {
+      if (!card.isConnected || state.chainId !== chainId) return;
+      state.terminalSurface = null;
+      state.terminalSurfaceChain = null;
+      renderTerminalNotice();
+    });
+  }
+  loadPaymentSurface(state.chainId);
 
   // The selected NFTs, listed under "You get" with a small preview thumbnail (juicy-vision "+ Original").
   function nftBlock() {
@@ -5027,26 +5225,51 @@ function renderPayCard(project, cart) {
     var beneficiary = getAccount();
     if (!beneficiary) { connect().then(function () { doPay(); }).catch(function () {}); return; }
 
+    var willDirectSwap = !!(state.directSwap && !addBalance && !tierIds.length);
     // USDC and other swap currencies route through the router (JBRouterTerminalRegistry); direct tokens go to the terminal.
     var terminal = state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
-    if (!terminal) { status.textContent = 'No router terminal on this chain'; return; }
+    if (!willDirectSwap && !terminal) { status.textContent = 'No router terminal on this chain'; return; }
 
     var isNative = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     var viaRouter = !!state.token.viaRouter; // swap currency → authorize via a gasless Permit2 signature, not a router approve
 
-    // Pre-flight: block amounts the wallet can't cover before sending the user to confirm / their wallet.
-    var preSym = (state.token.symbol || '').replace(/\s*\(native\)/i, '');
-    var preChain = (chains.find(function (c) { return c.id === state.chainId; }) || {}).name || ('Chain ' + state.chainId);
-    status.className = 'paybox-status pending'; status.textContent = 'Checking your balance…';
-    readWalletTokenBalance(state.chainId, state.token.address, beneficiary).then(function (walletBal) {
-      if (walletBal != null && amt > walletBal) {
+    function checkBalanceThenProceed() {
+      // Pre-flight: block amounts the wallet can't cover before sending the user to confirm / their wallet.
+      var preSym = (state.token.symbol || '').replace(/\s*\(native\)/i, '');
+      var preChain = (chains.find(function (c) { return c.id === state.chainId; }) || {}).name || ('Chain ' + state.chainId);
+      status.className = 'paybox-status pending'; status.textContent = 'Checking your balance…';
+      readWalletTokenBalance(state.chainId, state.token.address, beneficiary).then(function (walletBal) {
+        if (walletBal != null && amt > walletBal) {
+          status.className = 'paybox-status error';
+          status.textContent = 'Not enough ' + preSym + ' — you have ' + formatBalance(walletBal, state.token.decimals || 18, preSym) + ' on ' + preChain + '.';
+          return;
+        }
+        status.className = 'paybox-status'; status.textContent = '';
+        proceed();
+      }).catch(function () { status.className = 'paybox-status'; status.textContent = ''; proceed(); }); // balance read failed → don't block
+    }
+
+    if (willDirectSwap) {
+      checkBalanceThenProceed();
+      return;
+    }
+
+    status.className = 'paybox-status pending'; status.textContent = 'Checking project terminal…';
+    readProjectPaymentSurface(project, state.chainId).then(function (surface) {
+      state.terminalSurface = surface;
+      state.terminalSurfaceChain = state.chainId;
+      renderTerminalNotice();
+      if (!paySurfaceAllows(surface, terminal)) {
         status.className = 'paybox-status error';
-        status.textContent = 'Not enough ' + preSym + ' — you have ' + formatBalance(walletBal, state.token.decimals || 18, preSym) + ' on ' + preChain + '.';
+        status.textContent = paySurfaceBlockedMessage(surface, terminal, state.chainId);
         return;
       }
-      status.className = 'paybox-status'; status.textContent = '';
-      proceed();
-    }).catch(function () { status.className = 'paybox-status'; status.textContent = ''; proceed(); }); // balance read failed → don't block
+      checkBalanceThenProceed();
+    }).catch(function () {
+      status.className = 'paybox-status error';
+      status.textContent = 'Could not verify this project’s payment terminal. Review the project contracts before paying.';
+      loadPaymentSurface(state.chainId);
+    });
     return;
 
     function proceed() {

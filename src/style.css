@@ -2491,6 +2491,82 @@ input[type="checkbox"].field {
   margin-bottom: 16px;
 }
 
+.project-contract-audit {
+  margin: -4px 0 18px;
+}
+
+.project-contract-warning {
+  border: 1px solid var(--c-orange);
+  background: rgba(184, 96, 46, 0.08);
+  color: var(--c-orange);
+  padding: 10px 12px;
+}
+
+.project-contract-warning-title {
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.project-contract-warning-copy {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--c-orange);
+  margin-bottom: 8px;
+}
+
+.project-contract-warning-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.project-contract-warning-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.project-contract-warning-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 190px;
+  color: var(--text);
+  font-weight: bold;
+}
+
+.project-contract-warning-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+}
+
+.project-contract-warning-note {
+  color: var(--muted-2);
+}
+
+@media (max-width: 600px) {
+  .project-contract-warning-row {
+    flex-direction: column;
+    gap: 3px;
+  }
+  .project-contract-warning-left {
+    min-width: 0;
+  }
+  .project-contract-warning-right {
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
 .detail-head-top {
   display: flex;
   align-items: center;
@@ -4882,6 +4958,22 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .paybox-status:empty { margin-top: 0; } /* keep the pay card's bottom padding equal to the top when idle */
 .paybox-status.success { color: var(--c-teal); }
 .paybox-status.error { color: var(--c-pink); }
+.paybox-contract-warning {
+  display: block;
+  margin: 8px 0 0;
+  padding: 7px 9px;
+  border: 1px solid var(--c-orange);
+  color: var(--c-orange);
+  background: rgba(184, 96, 46, 0.08);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.paybox-contract-warning.blocked {
+  border-color: var(--c-pink);
+  color: var(--c-pink);
+  background: var(--c-pink-light);
+  font-weight: bold;
+}
 
 /* Routing tag — shared by the project-page card and the Actions Pay component */
 .pay-routing-tag {
