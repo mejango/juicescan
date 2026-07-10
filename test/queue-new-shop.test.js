@@ -44,6 +44,18 @@ describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)
     expect(cfg.tiersConfig.decimals).toBe(6);
     expect(cfg.tiersConfig.tiers[0].price).toBe(1000000n);
   });
+
+  it('sorts tiers by category before deployer encoding', () => {
+    const s = newShopState();
+    s.nfts = [
+      { priceEth: '0.1', limited: true, supply: '10', category: 7 },
+      { priceEth: '0.2', limited: true, supply: '20', category: 0 },
+      { priceEth: '0.3', limited: true, supply: '30', category: 3 },
+    ];
+    const cfg = build721Config(s, 'ipfs://x', 1);
+    expect(cfg.tiersConfig.tiers.map((t) => t.category)).toEqual([0, 3, 7]);
+    expect(cfg.tiersConfig.tiers.map((t) => t.initialSupply)).toEqual([20, 30, 10]);
+  });
 });
 
 describe('buildNewShopQueueCall — routes "new shop" to the right deployer + encodes cleanly', () => {

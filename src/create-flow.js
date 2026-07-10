@@ -17,6 +17,7 @@ import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
   createPublicClientForChain, getWalletClient, switchChain, truncAddr, ZERO_ADDRESS as ZERO, errMessage, isAddr, addrOrZero, promptFoot,
+  resolveContractName, getChainTokens,
 } from './component-base.js';
 import {
   launchProjectAbi, buildRulesetConfigs, createDefaultRuleset,
@@ -24,6 +25,8 @@ import {
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
+import { DEADLINE_OPTIONS } from './deadline-options.js';
+import { build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -69,14 +72,6 @@ export var DURATION_PRESETS = [
   { label: '7 days', seconds: 604800 }, { label: '14 days', seconds: 1209600 },
   { label: '28 days', seconds: 2419200 }, { label: '30 days', seconds: 2592000 },
   { label: '90 days', seconds: 7776000 }, { label: '365 days', seconds: 31536000 },
-];
-
-var DEADLINE_OPTIONS = [
-  { key: '3hours', label: '3-hour deadline', short: '3h', contract: 'JBDeadline3Hours' },
-  { key: '1day', label: '1-day deadline', short: '1 day', contract: 'JBDeadline1Day', def: true },
-  { key: '3days', label: '3-day deadline', short: '3 days', contract: 'JBDeadline3Days' },
-  { key: '7days', label: '7-day deadline', short: '7 days', contract: 'JBDeadline7Days' },
-  { key: 'none', label: 'No deadline', short: '', contract: null },
 ];
 
 var TAG_OPTIONS = ['AI', 'Art', 'Brand', 'Business', 'Charity', 'Climate', 'Collectibles', 'Community',
@@ -679,6 +674,43 @@ function customAcctSym(state) { return customAccounting(state) ? ((state.customT
 function customAcctDecimals(state) { var d = state.customToken && state.customToken.decimals; return (d != null && !isNaN(Number(d))) ? Number(d) : 18; }
 function customReady(state) { return customAccounting(state) && isAddr(state.customToken && state.customToken.address) && state.customToken.status === 'ok'; }
 
+function tokenCurrencyIdFromAddress(token) {
+  try { return token ? Number(BigInt(token) & 0xffffffffn) : 0; } catch (_) { return 0; }
+}
+
+// JBFundAccessLimits amount decimals depend on the LIMIT currency, not blindly on the terminal token.
+// Token-keyed currencies use the accounting token's own decimals; ETH/USD/custom price-feed currencies use
+// the JB fixed-point standard (18). This keeps imported/queued USDC-token limits at 6 decimals while leaving
+// USD limits at 18.
+export function fundAccessAmountDecimals(currency, acct) {
+  var cur; try { cur = Number(currency || 0); } catch (_) { cur = 0; }
+  var acctCur = 0;
+  if (acct) {
+    try { if (acct.currency != null) acctCur = Number(acct.currency); } catch (_) { acctCur = 0; }
+    if (!acctCur) acctCur = tokenCurrencyIdFromAddress(acct.token || acct.address);
+  }
+  return cur && acctCur && cur === acctCur ? (Number(acct && acct.decimals) || 18) : 18;
+}
+
+function fundAccessUnits(value, currency, acct) {
+  return priceUnits(value, fundAccessAmountDecimals(currency, acct));
+}
+
+function fundAccessCurrencyLabel(currency, state) {
+  var cur; try { cur = Number(currency || 1); } catch (_) { cur = 1; }
+  if (cur === 1) return 'ETH';
+  if (cur === 2) return 'USD';
+  var chainId = (state && state.chainIds && state.chainIds[0]) || 1;
+  var acct = state ? acctTokenFor(state, chainId) : null;
+  if (acct && cur === Number(acct.currency || 0)) {
+    if (state && customAcctSym(state)) return customAcctSym(state);
+    if (acct.token && acct.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()) return 'ETH';
+    if ((state.accepts || [])[0] === 'usdc') return 'USDC';
+    return 'TOKEN';
+  }
+  return 'currency ' + cur;
+}
+
 // Point every ruleset/shop currency at the right base id. A custom ERC-20 → its own currency id. Otherwise,
 // USD(2) whenever USDC is accepted (alone OR alongside ETH) so BOTH ETH and USDC resolve via the default
 // ETH/USD + USDC/USD feeds — a base of ETH(1) has no USDC→ETH feed and every USDC payment would revert.
@@ -838,7 +870,7 @@ function ownerSection(state, render) {
   var box = el('div', '');
   if (!perChainOpen(state, 'owner')) {
     var ownerInput = textInput(d.owner, '0x… or name.eth', function (v) { d.owner = v.trim(); });
-    var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; });
+    var ownerHint = attachEns(ownerInput, function (name, addr) { d.ownerResolvedFor = addr ? name : null; d.ownerResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
     box.appendChild(recipBoxWith(ownerInput, ownerHint));
   }
   box.appendChild(perChainAddrControl(state, render, 'owner', d.ownerResolved || d.owner || ''));
@@ -854,7 +886,7 @@ function operatorSection(state, render) {
   var box = el('div', '');
   if (!perChainOpen(state, 'op')) {
     var opInput = textInput(state.revOperator, '0x… or name.eth', function (v) { state.revOperator = v.trim(); });
-    var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; });
+    var opHint = attachEns(opInput, function (name, addr) { state.revOperatorResolvedFor = addr ? name : null; state.revOperatorResolved = addr || null; }, { chainId: (state.chainIds || [])[0] });
     box.appendChild(recipBoxWith(opInput, opHint));
   }
   box.appendChild(perChainAddrControl(state, render, 'op', state.revOperatorResolved || state.revOperator || ''));
@@ -1241,7 +1273,7 @@ export function renderStages(state, render, opts) {
     // Inline address — only when custom and not in per-chain mode (per-chain rows render full-width below).
     if (cur === 'custom' && !perChainOpen(state, 'approval')) {
       var ai = textInput(state.approvalAddress || '', '0x… or name.eth', function (v) { state.approvalAddress = v.trim(); });
-      var ah = attachEns(ai, function (name, addr) { state.approvalAddressResolved = addr || null; state.approvalAddressResolvedFor = addr ? name : null; });
+      var ah = attachEns(ai, function (name, addr) { state.approvalAddressResolved = addr || null; state.approvalAddressResolvedFor = addr ? name : null; }, { chainId: (state.chainIds || [])[0] });
       var ab = recipBoxWith(ai, ah); ab.classList.add('create-approval-addr'); dRow.appendChild(ab);
     }
     dField.appendChild(dRow);
@@ -1513,7 +1545,7 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
   if (!(state && perChainOpen(state, key))) {
     var recip = el('input', 'field create-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or name.eth';
     recip.value = ai.address || '';
-    var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; });
+    var ensHint = attachEns(recip, function (name, addr) { ai.resolvedFor = addr ? name : null; ai.resolvedAddress = addr || null; }, { chainId: (state.chainIds || [])[0] });
     recip.addEventListener('input', function () { ai.address = recip.value.trim(); });
     toField.appendChild(recipBoxWith(recip, ensHint));
   }
@@ -1553,7 +1585,7 @@ function stageSummaryRaw(stage, idx, state) {
 
   // Issuance — weight, reserved split, issuance cut.
   if (stage.tokenMode === 'custom') {
-    parts.push('issues ' + (stage.weight || '0') + ' tokens / ' + (stage.baseCurrency === 2 ? 'USD' : 'ETH'));
+    parts.push('issues ' + (stage.weight || '0') + ' tokens / ' + fundAccessCurrencyLabel(stage.baseCurrency, state));
     var reservedPct = (stage.reservedRecipients || []).reduce(function (s, x) { return s + (Number(x.percent) || 0); }, 0);
     if (reservedPct > 0) {
       var rLine = round2(reservedPct) + '% reserved';
@@ -1579,7 +1611,7 @@ function stageSummaryRaw(stage, idx, state) {
       parts.push('remainder → owner');
     }
   } else if (stage.payoutMode === 'limited') {
-    var pc = stage.payoutCurrency === 2 ? 'USD' : 'ETH';
+    var pc = fundAccessCurrencyLabel(stage.payoutCurrency, state);
     var named = (stage.payoutRecipients || []).filter(function (r) { return Number(r.amountEth) > 0; });
     if (named.length) named.forEach(function (r) { parts.push('pays ' + r.amountEth + ' ' + pc + ' → ' + recipLabel(r)); });
     else parts.push('payouts set, no recipients yet');
@@ -1588,7 +1620,7 @@ function stageSummaryRaw(stage, idx, state) {
   // Surplus allowance.
   if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
     if (stage.surplusAllowanceUnlimited) parts.push('owner can withdraw all surplus');
-    else if (Number(stage.surplusAllowanceAmount) > 0) parts.push('owner can withdraw ' + stage.surplusAllowanceAmount + ' ' + (stage.surplusAllowanceCurrency === 2 ? 'USD' : 'ETH') + ' of surplus');
+    else if (Number(stage.surplusAllowanceAmount) > 0) parts.push('owner can withdraw ' + stage.surplusAllowanceAmount + ' ' + fundAccessCurrencyLabel(stage.surplusAllowanceCurrency, state) + ' of surplus');
     else parts.push('surplus allowance on');
   }
 
@@ -1963,7 +1995,7 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     if (!pcOpen) {
       var benef = el('input', 'field create-split-recip'); benef.type = 'text'; benef.placeholder = '0x… or name.eth'; benef.value = rec.address || '';
       benef.addEventListener('input', function () { rec.address = benef.value.trim(); });
-      sub(recipBoxWith(benef, attachEns(benef, function () {})));
+      sub(recipBoxWith(benef, attachEns(benef, function () {}, { chainId: opts.state && (opts.state.chainIds || [])[0] })));
     }
     if (opts.state && opts.perChainKey) col.appendChild(perChainAddrControl(opts.state, render, opts.perChainKey, pickResolved(rec.address, rec)));
   }
@@ -2003,7 +2035,7 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     if (!(opts.state && opts.perChainKey && perChainOpen(opts.state, opts.perChainKey))) {
       var addrInput = el('input', 'field create-split-recip'); addrInput.type = 'text'; addrInput.placeholder = '0x… or name.eth'; addrInput.value = rec.address || '';
       addrInput.addEventListener('input', function () { rec.address = addrInput.value.trim(); });
-      sub(recipBoxWith(addrInput, attachEns(addrInput, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; })));
+      sub(recipBoxWith(addrInput, attachEns(addrInput, function (name, addr) { rec.resolvedFor = addr ? name : null; rec.resolvedAddress = addr || null; }, { chainId: opts.state && (opts.state.chainIds || [])[0] })));
     }
     if (opts.state && opts.perChainKey) col.appendChild(perChainAddrControl(opts.state, render, opts.perChainKey, pickResolved(rec.address, rec)));
   }
@@ -2487,7 +2519,7 @@ function itemEditor(state, nft, idx, render) {
       rRow.appendChild(fInp); rRow.appendChild(document.createTextNode(' sold to '));
       var bInp = el('input', 'field'); bInp.type = 'text'; bInp.placeholder = '0x… or name.eth'; bInp.value = nft.reserveBeneficiary || ''; bInp.style.flex = '1';
       bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); });
-      var bHint = attachEns(bInp, function () { render(); }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
+      var bHint = attachEns(bInp, function () { render(); }, { chainId: (state.chainIds || [])[0] }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
       rRow.appendChild(recipBoxWith(bInp, bHint)); a.appendChild(rRow);
       // Reserving requires a beneficiary, or the deploy reverts (JB721TiersHookStore_MissingReserveBeneficiary).
       if (Number(nft.reserveFrequency) > 0 && !isAddr(resolvedStr(nft.reserveBeneficiary))) {
@@ -2914,7 +2946,7 @@ function pcAddrField(state, chainId, key, defStr) {
   var input = el('input', 'field'); input.type = 'text'; input.placeholder = '0x… or name.eth';
   input.value = pcAddrGet(state, chainId, key, defStr || '');
   input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
-  return recipBoxWith(input, attachEns(input, function () {}));
+  return recipBoxWith(input, attachEns(input, function () {}, { chainId: chainId }));
 }
 // Per-chain numeric field (project ID) — stored in the same `addr[key]` store as a raw string, no ENS.
 function pcNumField(state, chainId, key, defStr) {
@@ -3709,12 +3741,19 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     var payoutLimits1 = [];
     if (stage.payoutMode !== 'none') {
       if (stage.payoutMode === 'unlimited') payoutLimits1.push({ amount: UINT224_MAX, currency: acct.currency });
-      else payoutLimits1.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + safeParseEther(amtAt(x, idx)); }, 0n), currency: stage.payoutCurrency || 1 });
+      else {
+        var payoutCurrency = stage.payoutCurrency || 1;
+        payoutLimits1.push({ amount: stage.payoutRecipients.reduce(function (s, x, idx) { return s + fundAccessUnits(amtAt(x, idx), payoutCurrency, acct); }, 0n), currency: payoutCurrency });
+      }
     }
     var surplusAllowances1 = [];
     if (stage.surplusAllowanceOn && stage.payoutMode !== 'unlimited') {
       if (stage.surplusAllowanceUnlimited) surplusAllowances1.push({ amount: UINT224_MAX, currency: acct.currency });
-      else { var saAmt = safeParseEther(stage.surplusAllowanceAmount); if (saAmt > 0n) surplusAllowances1.push({ amount: saAmt, currency: stage.surplusAllowanceCurrency || 1 }); }
+      else {
+        var saCurrency = stage.surplusAllowanceCurrency || 1;
+        var saAmt = fundAccessUnits(stage.surplusAllowanceAmount, saCurrency, acct);
+        if (saAmt > 0n) surplusAllowances1.push({ amount: saAmt, currency: saCurrency });
+      }
     }
     if (payoutLimits1.length || surplusAllowances1.length) {
       rs.fundAccessLimitGroups.push({ terminal: getAddress('JBMultiTerminal', chainId), token: acct.token, payoutLimits: payoutLimits1, surplusAllowances: surplusAllowances1 });
@@ -3786,7 +3825,7 @@ export function build721Config(state, projectUri, chainId) {
   var symbol = collectionSymbolOf(state);
   var col = state.collection || {};
   var priceDecimals = storeDecimals(state);
-  var tiers = state.nfts
+  var tierEntries = state.nfts
     .map(function (nft, idx) { return { nft: nft, idx: idx }; })
     .filter(function (e) { return chainId == null || chainItemIncluded(state, chainId, e.idx); })
     .map(function (e) {
@@ -3799,12 +3838,12 @@ export function build721Config(state, projectUri, chainId) {
     var rb = freq > 0 ? chainAddr(state, chainId, 'rb:' + e.idx, resolvedStr(nft.reserveBeneficiary)) : '';
     var reserveBenef = addrOrZero(rb);
     var votes = nft.votingOn ? (Number(nft.votingUnits) || 0) : 0;
-    var discountPercent = nft.discountOn ? Math.min(200, Math.round((parseFloat(nft.discountPct) || 0) / 100 * 200)) : 0;
+    var discountPercent = nft.discountOn ? tierDiscountPercentFromPct(nft.discountPct) : 0;
     var sp = itemSplits(nft, state, chainId, e.idx);
-    return {
+    var tier = build721TierConfig({
       price: priceUnits(nft.priceEth, priceDecimals),
-      // Clamp to [0, 999999999] — the store caps initialSupply at _ONE_BILLION-1; a larger value reverts (uint32 overflow / InvalidQuantity).
-      initialSupply: limited ? Math.max(0, Math.min(999999999, Math.floor(Number(chainSupply) || 0))) : 999999999,
+      initialSupply: chainSupply,
+      unlimited: !limited,
       votingUnits: votes,
       reserveFrequency: freq,
       reserveBeneficiary: reserveBenef,
@@ -3822,8 +3861,11 @@ export function build721Config(state, projectUri, chainId) {
       },
       splitPercent: sp.splitPercent,
       splits: sp.splits,
-    };
+    });
+    return { tier: tier, order: e.idx };
   });
+  var tiers = sortTierEntriesByCategory(tierEntries, function (e) { return e.tier; })
+    .map(function (e) { return e.tier; });
   return {
     name: name, symbol: symbol, baseUri: 'ipfs://', tokenUriResolver: ZERO, contractUri: projectUri || '',
     tiersConfig: { tiers: tiers, currency: storeCur(state), decimals: priceDecimals },
@@ -3970,9 +4012,26 @@ function resolvedStr(str) {
   if (isEnsName(str)) { var c = _ensCache[str.toLowerCase()]; return c || ''; }
   return str;
 }
-// Attach ENS resolution to an address input: returns a small hint element that shows the resolved address
-// (or a "resolving…/not found" state) under the field, and stores the result on `rec` via store(name,addr).
-function attachEns(input, store) {
+function createKnownAddressLabel(chainId, addr) {
+  if (!chainId || !isAddr(addr)) return '';
+  var lc = String(addr || '').toLowerCase();
+  if (lc === ZERO.toLowerCase()) return 'Zero address';
+  if (lc === NATIVE_TOKEN.toLowerCase()) return 'Native ETH token';
+  var cname = resolveContractName(addr, chainId);
+  if (cname) return 'Known contract: ' + cname + ' on ' + chainName(chainId);
+  var toks = [];
+  try { toks = getChainTokens(Number(chainId)) || []; } catch (_) {}
+  for (var i = 0; i < toks.length; i++) {
+    if (toks[i].address && toks[i].address.toLowerCase() === lc) {
+      return 'Known token: ' + String(toks[i].symbol || '').replace(/\s*\(native\)/i, '') + ' on ' + chainName(chainId);
+    }
+  }
+  return '';
+}
+// Attach ENS resolution to an address input: returns a small hint element that shows the resolved address,
+// known local contracts/tokens, or a "resolving…/not found" state, and stores ENS results via store(name,addr).
+function attachEns(input, store, opts) {
+  opts = opts || {};
   var hint = el('div', 'create-resolve-hint'); hint.style.display = 'none';
   var token = 0, timer = null;
   function go() {
@@ -3980,6 +4039,8 @@ function attachEns(input, store) {
     if (!isEnsName(v)) {
       store(v, null);
       if (isAddr(v)) {
+        var known = createKnownAddressLabel(opts.chainId, v);
+        if (known) { hint.style.display = ''; hint.className = 'create-resolve-hint ok'; hint.textContent = known; return; }
         // Valid address → reverse-resolve and show its ENS name underneath (only if one exists).
         hint.style.display = ''; hint.className = 'create-resolve-hint'; hint.textContent = 'Looking up ENS…';
         var myR = ++token;
@@ -4038,7 +4099,7 @@ export const __test = {
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
-  createPayoutKinds, safeParseEther, priceUnits, uint256FromAddress, deploySalt,
-  storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
+  createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
+  deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut,
 };

@@ -2,9 +2,15 @@
 // These render DOM <span>s (jsdom), so we assert textContent. Guards the money-display path (USD scaling,
 // big-int grouping) and the small-but-easy-to-break bool/empty cases.
 import { describe, it, expect } from 'vitest';
-import { volumeUsd, bigint, bool } from '../src/bendystraw-format.js';
+import { scaledUsdToNumber, volumeUsd, bigint, bool } from '../src/bendystraw-format.js';
 
 describe('volumeUsd — 18-dec-scaled USD → compact $ string', () => {
+  it('converts 18-dec-scaled USD to a number without floating-point bigint loss', () => {
+    expect(scaledUsdToNumber('2500000000000000000000000')).toBe(2500000);
+    expect(scaledUsdToNumber('500000000000000000')).toBe(0.5);
+    expect(scaledUsdToNumber('0')).toBe(0);
+    expect(scaledUsdToNumber('')).toBeNull();
+  });
   it('renders — for empty/zero', () => {
     expect(volumeUsd('0').textContent).toBe('—');
     expect(volumeUsd(null).textContent).toBe('—');

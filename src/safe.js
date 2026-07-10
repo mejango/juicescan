@@ -2,7 +2,7 @@
 // Safe (multisig) support for owner/operator-gated actions. When a project owner is a Safe, we can't
 // route through Relayr (a Safe has no private key to sign an ERC-2771 forward request). Instead we
 // PROPOSE the call to the Safe Transaction Service on each chain — it lands in the Safe's queue, and the
-// Safe's signers confirm + execute (from the Safe app, or from our Back office tab).
+// Safe's signers confirm + execute (from the Safe app, or from our Owner/Operator/Admin tabs).
 //
 // Caveats (flagged for live testing): the per-network Safe Transaction Service endpoints below may
 // require an API key and/or restrict browser CORS depending on Safe's current API policy. The base URL
@@ -176,7 +176,26 @@ export async function proposeSafeTx(opts) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
     throw new Error('Safe service ' + res.status + (detail ? ': ' + detail.slice(0, 200) : ''));
   }
-  return { safeTxHash: safeTxHash, nonce: nonce };
+  return {
+    safeTxHash: safeTxHash,
+    nonce: nonce,
+    signature: signature,
+    tx: {
+      to: fields.to,
+      value: String(fields.value),
+      data: fields.data,
+      operation: fields.operation,
+      safeTxGas: String(fields.safeTxGas),
+      baseGas: String(fields.baseGas),
+      gasPrice: String(fields.gasPrice),
+      gasToken: fields.gasToken,
+      refundReceiver: fields.refundReceiver,
+      nonce: nonce,
+      safeTxHash: safeTxHash,
+      contractTransactionHash: safeTxHash,
+      confirmations: [{ owner: cs(opts.signer), signature: signature }],
+    },
+  };
 }
 
 // List the Safe's pending (not-yet-executed) queued transactions on `chainId`.
@@ -255,8 +274,61 @@ export function safeExecArgs(tx, signatures) {
 function sigBytesFor(c) {
   var s = (c.signature || '').replace(/^0x/, '');
   if (s) return s;
+  if (!c.owner) return null;
   var owner = (c.owner || '').replace(/^0x/, '').toLowerCase().padStart(64, '0');
   return owner + '0'.repeat(64) + '01';
+}
+function sortedUsableConfirmations(tx) {
+  return (tx.confirmations || []).slice()
+    .filter(function (c) { return c && c.owner && !!sigBytesFor(c); })
+    .sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
+}
+export function safeUsableConfirmationCount(tx) {
+  return sortedUsableConfirmations(tx).length;
+}
+export function safeExecSignatures(tx) {
+  return '0x' + sortedUsableConfirmations(tx).map(sigBytesFor).join('');
+}
+
+// A base-fee-buffered EIP-1559 fee cap. Some wallets under-estimate maxFeePerGas on L2s (e.g. set 0.02 gwei when
+// the base fee just ticked to 0.0200056 gwei) and the RPC then rejects with "max fee per gas less than block base
+// fee". Cap at 2× base + a small tip so a tick-up between estimate and submit can't reject the tx. Returns {} for
+// non-EIP-1559 chains (let the wallet decide) or if the read fails.
+async function feeOverrides(chainId) {
+  try {
+    var pub = createPublicClientForChain(chainId);
+    var block = await pub.getBlock();
+    var base = (block && block.baseFeePerGas != null) ? BigInt(block.baseFeePerGas) : 0n;
+    // A too-low priority tip (we shipped 0.002 gwei) reads as "underpriced": some wallet submission RPCs reject it
+    // with an opaque -32603 "internal error" / "HTTP client error" rather than a clear message. Base/Arb Sepolia
+    // base fees are ~0.005–0.02 gwei, so 0.05 gwei is a healthy, still-negligible tip.
+    var tip = 50000000n; // 0.05 gwei priority
+    // maxFeePerGas is a CAP (you only pay base + tip), and testnet gas is free — so over-cap generously. Our RPC's
+    // base-fee reading can lag or differ from the wallet's SUBMISSION RPC, so floor at 1 gwei (~200× the ~0.005 gwei
+    // Base Sepolia base fee): clears any transient spike or cross-RPC disagreement at zero real cost. NOTE: this only
+    // covers fee-caused rejects — a genuinely broken/flaky wallet RPC still fails; the fix there is switching the
+    // wallet's Base Sepolia RPC (e.g. to https://sepolia.base.org).
+    var maxFee = base * 3n + tip;
+    var floor = 1000000000n; // 1 gwei
+    if (maxFee < floor) maxFee = floor;
+    return { maxFeePerGas: maxFee, maxPriorityFeePerGas: tip };
+  } catch (_) { return { maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 50000000n }; }
+}
+
+// Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an on-chain revert surfaces as
+// an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
+async function sendAndConfirm(wallet, chainId, params, label) {
+  var fees = await feeOverrides(chainId);
+  var hash = await wallet.writeContract(Object.assign({ account: getAccount(), chain: CHAINS[chainId] }, params, fees));
+  try {
+    var pub = createPublicClientForChain(chainId);
+    var rcpt = await pub.waitForTransactionReceipt({ hash: hash });
+    if (rcpt && rcpt.status && rcpt.status !== 'success') throw new Error((label || 'Transaction') + ' reverted on-chain (tx ' + hash + ').');
+  } catch (e) {
+    if (e && /reverted on-chain/.test(e.message || '')) throw e; // genuine revert → propagate
+    // receipt read failed (RPC hiccup) — return the hash anyway; the caller re-reads state to confirm.
+  }
+  return hash;
 }
 
 export async function executeSafeTx(chainId, safe, tx) {
@@ -267,26 +339,17 @@ export async function executeSafeTx(chainId, safe, tx) {
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to execute.'); }
   // Safe requires signatures concatenated in ascending owner-address order.
-  var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
+  var confs = sortedUsableConfirmations(tx);
   if (!confs.length) throw new Error('No confirmations to execute with.');
   var signatures = '0x' + confs.map(sigBytesFor).join('');
-  return wallet.writeContract({
-    account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: safeExecArgs(tx, signatures),
-  });
-}
-
-// The signatures bytes for a ready tx (owner sigs concatenated, ASC by owner address).
-function execSignatures(tx) {
-  var confs = (tx.confirmations || []).slice().sort(function (a, b) { return a.owner.toLowerCase() < b.owner.toLowerCase() ? -1 : 1; });
-  return '0x' + confs.map(sigBytesFor).join('');
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: safeExecArgs(tx, signatures) }, 'execTransaction');
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.
 export function safeExecRelayrTx(chainId, safe, tx) {
   var data = encodeFunctionData({
     abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-    args: safeExecArgs(tx, execSignatures(tx)),
+    args: safeExecArgs(tx, safeExecSignatures(tx)),
   });
   return { chain: Number(chainId), target: cs(safe), data: data, value: '0' };
 }
@@ -307,6 +370,52 @@ var SAFE_ONCHAIN_ABI = [
 
 // True when Safe's hosted Transaction Service covers this chain. False → use the on-chain approveHash path.
 export function hasSafeService(chainId) { return !!txBase(chainId); }
+
+// Deploy the SAME-address Safe on a chain the Safe app doesn't list, by replaying its original creation. The Safe
+// address is CREATE2(factory, keccak(initializer)+saltNonce, singleton), so re-running createProxyWithNonce with the
+// exact factory/singleton/initializer/saltNonce the Safe was first deployed with reproduces the identical address on
+// any chain where that same factory+singleton exist (the canonical Safe deploys are on essentially every chain).
+var PROXY_FACTORY_ABI = [{ type: 'function', name: 'createProxyWithNonce', stateMutability: 'nonpayable', inputs: [{ name: '_singleton', type: 'address' }, { name: 'initializer', type: 'bytes' }, { name: 'saltNonce', type: 'uint256' }], outputs: [{ type: 'address' }] }];
+
+// Read the Safe's original creation params from the tx-service of ANY chain where it already exists (params are
+// chain-independent). Public endpoint (no key required); the address MUST be checksummed or it 422s.
+export async function fetchSafeCreation(safe) {
+  var candidates = [11155111, 1, 42161, 8453, 10]; // chains with a hosted tx-service
+  for (var i = 0; i < candidates.length; i++) {
+    var base = txBase(candidates[i]); if (!base) continue;
+    try {
+      var res = await fetch(base + '/api/v1/safes/' + cs(safe) + '/creation/', { headers: headers(false) });
+      if (!res.ok) continue;
+      var j = await res.json();
+      if (j && j.factoryAddress && j.masterCopy && j.setupData) {
+        return { factory: cs(j.factoryAddress), singleton: cs(j.masterCopy), initializer: j.setupData, saltNonce: BigInt(j.saltNonce || 0) };
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Deploy the same-address Safe on `chainId` from a fetched creation record, then verify it actually landed at the
+// expected address (a differing factory/singleton on the target chain would produce a different address).
+export async function deploySafeSameAddress(chainId, creation, expectedSafe) {
+  var wallet = getWalletClient();
+  if (!wallet) throw new Error('Connect a wallet first');
+  try {
+    var active = await wallet.getChainId();
+    if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
+  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to deploy.'); }
+  var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce');
+  // Verify the Safe landed at the expected address — but RETRY, because a flaky RPC (Base/OP Sepolia especially) can
+  // return empty code for a just-deployed contract and produce a false "did not land". Only fail after several misses.
+  var pub = createPublicClientForChain(chainId), code = null;
+  for (var attempt = 0; attempt < 6; attempt++) {
+    code = await pub.getBytecode({ address: cs(expectedSafe) }).catch(function () { return null; });
+    if (code && code !== '0x') break;
+    await new Promise(function (r) { setTimeout(r, 1500); });
+  }
+  if (!code || code === '0x') throw new Error('Deployed, but the Safe isn’t readable at ' + expectedSafe + ' yet — the RPC may be lagging. Reload to check; if it stays missing, the factory/singleton on this chain differ from the original.');
+  return hash;
+}
 
 // The SafeTx hash for a {to, data, value, nonce} call — what signers approve and what execTransaction must match.
 export function safeTxHashForCall(chainId, safe, call) {
@@ -346,7 +455,7 @@ export async function approveSafeHashOnChain(chainId, safe, hash) {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + ((CHAINS[chainId] && CHAINS[chainId].name) || chainId) + ' to approve.'); }
-  return wallet.writeContract({ account: getAccount(), chain: CHAINS[chainId], address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] });
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash');
 }
 
 export { SAFE_PREFIX };
