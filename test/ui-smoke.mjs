@@ -43,12 +43,9 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     check('create flow shows 5 steps (Flavor/Basics/Rulesets/Shop/Deploy)',
       steps.length === 5 && steps.includes('Flavor') && steps.includes('Basics') && steps.includes('Deploy'), JSON.stringify(steps));
 
-    // 2b. The paste action consumes the same plain JSON stored in/exported by a .jb file.
-    await Q(page, '() => { [...document.querySelectorAll(".create-head button")].find(b=>/paste JSON/i.test(b.textContent)).click(); return 1; }');
-    await page.waitForTimeout(250);
-    const pasteImported = await Q(page, '() => { const ta=document.querySelector(".create-json-import-input"); const draft=JSON.parse(localStorage.getItem("jb-create-draft")); draft.details.name="Imported .jb"; ta.value=JSON.stringify(draft); ta.dispatchEvent(new Event("input",{bubbles:true})); [...document.querySelectorAll(".create-json-import-actions button")].find(b=>/Use this JSON/i.test(b.textContent)).click(); return JSON.parse(localStorage.getItem("jb-create-draft")).details.name; }');
-    await page.waitForTimeout(250);
-    check('create flow pastes the existing .jb JSON format', pasteImported === 'Imported .jb', pasteImported);
+    // 2b. One import action owns the .jb input path; there is no competing paste-JSON affordance.
+    const ioActions = await Q(page, '() => [...document.querySelectorAll(".create-head button")].map(b=>b.textContent.trim().toLowerCase())');
+    check('create flow exposes one .jb import action without paste JSON', ioActions.includes('import') && !ioActions.includes('paste json'), JSON.stringify(ioActions));
 
     // 3. Accounting offers ETH / USDC / Custom; custom is exclusive.
     const pills = await Q(page, '() => [...document.querySelectorAll(".create-pill")].map(p=>p.textContent.trim())');

@@ -641,8 +641,7 @@ export function openCreateFlow() {
 
   function render() {
     sheet.innerHTML = '';
-    sheet.appendChild(renderHeader(state, close, onImport, onExport, function () { state._pasteOpen = !state._pasteOpen; render(); }));
-    if (state._pasteOpen) sheet.appendChild(renderJsonImportPanel(state, applyImportedText, render));
+    sheet.appendChild(renderHeader(state, close, onImport, onExport));
     sheet.appendChild(renderStepper(state, render));
     var body = el('div', 'create-step');
     body.appendChild(renderStep(state, render));
@@ -659,7 +658,7 @@ export function openCreateFlow() {
   return { close: close };
 }
 
-function renderHeader(state, close, onImport, onExport, onPaste) {
+function renderHeader(state, close, onImport, onExport) {
   var head = el('div', 'create-head');
   var title = el('div', 'create-title');
   title.textContent = 'Create a project';
@@ -667,10 +666,6 @@ function renderHeader(state, close, onImport, onExport, onPaste) {
 
   // .jb import/export — save the in-progress draft to a file, or load one (e.g. to share for review).
   var actions = el('div', 'create-head-actions');
-  var paste = el('button', 'create-io-btn'); paste.textContent = 'paste JSON';
-  paste.title = 'Paste the JSON contents of a Juicebox project draft (.jb)';
-  paste.disabled = !!state.deploying;
-  paste.addEventListener('click', function () { if (!state.deploying && onPaste) onPaste(); });
   var imp = el('button', 'create-io-btn'); imp.textContent = 'import';
   imp.title = 'Load a saved or shared project draft (.jb)';
   imp.disabled = !!state.deploying;
@@ -680,7 +675,7 @@ function renderHeader(state, close, onImport, onExport, onPaste) {
   var exp = el('button', 'create-io-btn'); exp.textContent = 'export';
   exp.title = 'Download this draft as a .jb file to save or share for review';
   exp.addEventListener('click', function () { if (onExport) onExport(); });
-  actions.appendChild(paste); actions.appendChild(imp); actions.appendChild(exp); actions.appendChild(fileIn);
+  actions.appendChild(imp); actions.appendChild(exp); actions.appendChild(fileIn);
   head.appendChild(actions);
 
   var x = el('button', 'create-close');
@@ -689,32 +684,6 @@ function renderHeader(state, close, onImport, onExport, onPaste) {
   x.addEventListener('click', function () { if (!state.deploying) close(); });
   head.appendChild(x);
   return head;
-}
-
-function renderJsonImportPanel(state, onImportText, render) {
-  var panel = el('div', 'create-json-import');
-  var label = el('label', 'create-json-import-label'); label.textContent = '.jb JSON'; panel.appendChild(label);
-  var hint = el('div', 'create-hint');
-  hint.textContent = 'Paste the JSON contents of an exported .jb file. It prepopulates an editable draft; transaction calldata and unrelated JSON are rejected.';
-  panel.appendChild(hint);
-  var input = el('textarea', 'create-json-import-input');
-  input.rows = 8; input.placeholder = '{\n  "projectType": "custom",\n  "details": { ... },\n  ...\n}';
-  input.spellcheck = false; input.value = state._pasteJsonText || '';
-  input.addEventListener('input', function () { state._pasteJsonText = input.value; });
-  panel.appendChild(input);
-  var status = el('div', 'create-json-import-status'); panel.appendChild(status);
-  var actions = el('div', 'create-json-import-actions');
-  var cancel = el('button', 'create-btn ghost small'); cancel.type = 'button'; cancel.textContent = 'Cancel';
-  cancel.addEventListener('click', function () { state._pasteOpen = false; delete state._pasteJsonText; render(); });
-  var load = el('button', 'create-btn primary small'); load.type = 'button'; load.textContent = 'Use this JSON';
-  load.addEventListener('click', function () {
-    status.textContent = '';
-    try { onImportText(input.value); }
-    catch (e) { status.textContent = (e && e.message) || 'Could not import this create JSON.'; }
-  });
-  actions.appendChild(cancel); actions.appendChild(load); panel.appendChild(actions);
-  setTimeout(function () { if (input.isConnected) input.focus(); }, 0);
-  return panel;
 }
 
 function renderStepper(state, render) {
