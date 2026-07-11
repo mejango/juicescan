@@ -6,7 +6,7 @@ import { contracts, meta, natspec, categories, commonActions, getFunctions, getA
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders } from './component-base.js';
+import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab } from './discover.js';
 import { renderDataTab } from './data-tab.js';
@@ -94,9 +94,10 @@ function initTabs() {
 
   var connectBtn = document.getElementById('connect-btn');
   if (connectBtn) {
+    var connecting = false;
     var updateConnect = function() {
       var acc = getAccount();
-      connectBtn.textContent = acc ? truncAddr(acc) : 'Connect wallet';
+      connectBtn.textContent = acc ? truncAddr(acc) : (connecting ? 'Connecting...' : 'Connect wallet');
       connectBtn.classList.toggle('connected', !!acc);
       connectBtn.title = acc || 'Connect a wallet';
     };
@@ -107,14 +108,65 @@ function initTabs() {
     var walletMenu = null;
     function closeWalletMenu() { if (walletMenu) { walletMenu.remove(); walletMenu = null; document.removeEventListener('click', onDocClick, true); } }
     function onDocClick(e) { if (walletMenu && e.target !== connectBtn && !walletMenu.contains(e.target)) closeWalletMenu(); }
+    function positionWalletMenu() {
+      var r = connectBtn.getBoundingClientRect();
+      walletMenu.style.top = (r.bottom + 6) + 'px';
+      walletMenu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+    }
+    function currentDappUrl() {
+      return encodeURIComponent(location.href.replace(/^https?:\/\//, ''));
+    }
+    function mobileWalletLinks() {
+      var full = location.href;
+      var dapp = currentDappUrl();
+      return [
+        { name: 'Open in MetaMask', href: 'https://metamask.app.link/dapp/' + dapp },
+        { name: 'Open in Coinbase Wallet', href: 'https://go.cb-w.com/dapp?cb_url=' + encodeURIComponent(full) },
+        { name: 'Open in Trust Wallet', href: 'https://link.trustwallet.com/open_url?coin_id=60&url=' + encodeURIComponent(full) },
+      ];
+    }
+    function openWalletNotice(message, kind) {
+      closeWalletMenu();
+      walletMenu = document.createElement('div');
+      walletMenu.className = 'wallet-menu';
+      positionWalletMenu();
+      var note = document.createElement('div');
+      note.className = 'wallet-menu-note' + (kind ? ' ' + kind : '');
+      note.textContent = message;
+      walletMenu.appendChild(note);
+      if (!getProviders().length) {
+        mobileWalletLinks().forEach(function (l) {
+          var a = document.createElement('a');
+          a.className = 'wallet-menu-item wallet-menu-link';
+          a.href = l.href;
+          a.textContent = l.name;
+          walletMenu.appendChild(a);
+        });
+      }
+      document.body.appendChild(walletMenu);
+      setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
+    }
+    function connectToProvider(provider) {
+      closeWalletMenu();
+      connecting = true;
+      connectBtn.disabled = true;
+      updateConnect();
+      connect(provider).then(function () {
+        closeWalletMenu();
+      }).catch(function (err) {
+        openWalletNotice(errMessage(err, 'Could not connect wallet.'), 'wallet-menu-error');
+      }).finally(function () {
+        connecting = false;
+        connectBtn.disabled = false;
+        updateConnect();
+      });
+    }
     function openWalletMenu() {
       closeWalletMenu();
       var acc = getAccount();
       walletMenu = document.createElement('div');
       walletMenu.className = 'wallet-menu';
-      var r = connectBtn.getBoundingClientRect();
-      walletMenu.style.top = (r.bottom + 6) + 'px';
-      walletMenu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+      positionWalletMenu();
       var copy = document.createElement('button'); copy.className = 'wallet-menu-item'; copy.textContent = 'Copy address';
       copy.addEventListener('click', function () { try { navigator.clipboard.writeText(acc); } catch (_) {} closeWalletMenu(); });
       var disc = document.createElement('button'); disc.className = 'wallet-menu-item wallet-menu-danger'; disc.textContent = 'Disconnect';
@@ -127,19 +179,27 @@ function initTabs() {
     function openWalletPicker() {
       closeWalletMenu();
       var providers = getProviders();
-      if (providers.length <= 1) { connect(providers[0]).catch(function () {}); return; }
+      if (!providers.length) {
+        openWalletNotice('Looking for wallet...', '');
+        refreshProviders(500).then(function (fresh) {
+          if (getAccount() || !walletMenu) return;
+          if (fresh.length === 1) { connectToProvider(fresh[0]); return; }
+          if (fresh.length > 1) { openWalletPicker(); return; }
+          openWalletNotice('No wallet detected in this browser. Open this site in a wallet app browser, or install a browser wallet.', 'wallet-menu-error');
+        });
+        return;
+      }
+      if (providers.length === 1) { connectToProvider(providers[0]); return; }
       walletMenu = document.createElement('div');
       walletMenu.className = 'wallet-menu';
-      var r = connectBtn.getBoundingClientRect();
-      walletMenu.style.top = (r.bottom + 6) + 'px';
-      walletMenu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+      positionWalletMenu();
       providers.forEach(function (p) {
         var item = document.createElement('button'); item.className = 'wallet-menu-item wallet-pick';
         if (p.info && p.info.icon) {
           var img = document.createElement('img'); img.className = 'wallet-pick-icon'; img.src = p.info.icon; img.alt = ''; item.appendChild(img);
         }
         var nm = document.createElement('span'); nm.textContent = (p.info && p.info.name) || 'Wallet'; item.appendChild(nm);
-        item.addEventListener('click', function () { closeWalletMenu(); connect(p).catch(function () {}); });
+        item.addEventListener('click', function () { connectToProvider(p); });
         walletMenu.appendChild(item);
       });
       document.body.appendChild(walletMenu);

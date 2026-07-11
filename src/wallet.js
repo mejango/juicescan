@@ -24,13 +24,60 @@ if (typeof window !== 'undefined') {
   try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
 }
 
+function requestProviderAnnouncements() {
+  if (typeof window === 'undefined') return;
+  try { window.dispatchEvent(new Event('eip6963:requestProvider')); } catch (_) {}
+}
+
+function walletNameForProvider(provider) {
+  if (!provider) return 'Browser wallet';
+  if (provider.isMetaMask) return 'MetaMask';
+  if (provider.isCoinbaseWallet) return 'Coinbase Wallet';
+  if (provider.isRabby) return 'Rabby';
+  if (provider.isTrust) return 'Trust Wallet';
+  if (provider.isBraveWallet) return 'Brave Wallet';
+  return 'Browser wallet';
+}
+
+function walletRdnsForProvider(provider) {
+  if (!provider) return 'injected';
+  if (provider.isMetaMask) return 'io.metamask';
+  if (provider.isCoinbaseWallet) return 'com.coinbase.wallet';
+  if (provider.isRabby) return 'io.rabby';
+  if (provider.isTrust) return 'com.trustwallet.app';
+  if (provider.isBraveWallet) return 'com.brave.wallet';
+  return 'injected';
+}
+
+function legacyProviders() {
+  if (typeof window === 'undefined' || !window.ethereum) return [];
+  var list = Array.isArray(window.ethereum.providers) && window.ethereum.providers.length
+    ? window.ethereum.providers
+    : [window.ethereum];
+  var seen = [];
+  return list.filter(function (p) {
+    if (!p || seen.indexOf(p) !== -1) return false;
+    seen.push(p);
+    return true;
+  }).map(function (provider, i) {
+    return {
+      info: { uuid: 'injected-' + i, name: walletNameForProvider(provider), rdns: walletRdnsForProvider(provider), icon: '' },
+      provider: provider,
+    };
+  });
+}
+
 // All detected wallets (EIP-6963), or a single generic entry for a legacy-only injected provider.
 export function getProviders() {
   if (_providers.length) return _providers.slice();
-  if (typeof window !== 'undefined' && window.ethereum) {
-    return [{ info: { uuid: 'injected', name: 'Browser wallet', rdns: 'injected', icon: '' }, provider: window.ethereum }];
-  }
-  return [];
+  return legacyProviders();
+}
+
+export function refreshProviders(waitMs) {
+  requestProviderAnnouncements();
+  return new Promise(function (resolve) {
+    setTimeout(function () { resolve(getProviders()); }, waitMs == null ? 350 : waitMs);
+  });
 }
 
 function setupClients(chain) {
@@ -85,13 +132,17 @@ export async function connect(chosen) {
   const chain = CHAINS[getCurrentChainId()] || CHAINS[11155111];
   setupClients(chain);
 
-  // Re-request the `eth_accounts` permission so the wallet shows its account picker rather than silently
-  // reusing the last grant. Only abort on an explicit user rejection (4001); other errors mean the wallet
-  // doesn't implement it → fall through to eth_requestAccounts.
-  try {
-    await activeProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
-  } catch (e) {
-    if (e && e.code === 4001) throw e;
+  // Desktop injected wallets can re-prompt account selection through wallet_requestPermissions. On mobile
+  // wallet browsers this method is inconsistently implemented and can fail before the real connect prompt,
+  // so mobile goes straight to eth_requestAccounts.
+  var mobile = typeof navigator !== 'undefined'
+    && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+  if (!mobile) {
+    try {
+      await activeProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });
+    } catch (e) {
+      if (e && e.code === 4001) throw e;
+    }
   }
 
   const accounts = await activeProvider.request({ method: 'eth_requestAccounts' });

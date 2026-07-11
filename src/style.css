@@ -5052,7 +5052,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 
 /* Connected-wallet dropdown (Copy address / Disconnect). Fixed to the viewport, anchored under the button. */
 .wallet-menu {
-  position: fixed; z-index: 1000; min-width: 150px;
+  position: fixed; z-index: 1000; min-width: 150px; max-width: min(320px, calc(100vw - 16px));
   background: var(--c-black); border: 1px solid var(--c-black-light);
   box-shadow: 0 6px 24px rgba(44,32,24,0.25); padding: 4px;
 }
@@ -5062,6 +5062,17 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 }
 .wallet-menu-item:hover { background: var(--c-black-light); }
 .wallet-menu-danger { color: var(--c-pink); }
+.wallet-menu-link { text-decoration: none; }
+.wallet-menu-note {
+  padding: 8px 10px;
+  color: var(--bg);
+  font-size: 11px;
+  line-height: 1.35;
+}
+.wallet-menu-note.wallet-menu-error {
+  color: var(--c-pink-light);
+  font-weight: bold;
+}
 .wallet-pick { display: flex; align-items: center; gap: 8px; }
 .wallet-pick-icon { width: 18px; height: 18px; border-radius: 4px; flex: none; }
 
