@@ -334,6 +334,7 @@ var OMNI_TIERED_HOOK_ABI = [{ type: 'function', name: 'tiered721HookOf', stateMu
 var OMNI_EXTRA_HOOK_ABI = [{ type: 'function', name: 'extraDataHookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }], outputs: [{ name: 'config', type: 'tuple', components: [{ name: 'dataHook', type: 'address' }, { name: 'useDataHookForPay', type: 'bool' }, { name: 'useDataHookForCashOut', type: 'bool' }] }] }];
 var HOOK_STORE_ABI = [{ type: 'function', name: 'STORE', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
 var HOOK_METADATA_ID_TARGET_ABI = [{ type: 'function', name: 'METADATA_ID_TARGET', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
+var HOOK_PROJECT_ID_ABI = [{ type: 'function', name: 'projectId', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }];
 var TIER721_FLAGS = { name: 'flags', type: 'tuple', components: [
   { name: 'allowOwnerMint', type: 'bool' }, { name: 'transfersPausable', type: 'bool' }, { name: 'cantBeRemoved', type: 'bool' },
   { name: 'cantIncreaseDiscountPercent', type: 'bool' }, { name: 'cantBuyWithCredits', type: 'bool' }] };
@@ -349,8 +350,12 @@ var TIER721_STORE_ABI = [
 var TIER721_PRICING_CONTEXT_ABI = [{ type: 'function', name: 'pricingContext', stateMutability: 'view', inputs: [], outputs: [{ name: 'currency', type: 'uint256' }, { name: 'decimals', type: 'uint256' }] }];
 var TIER721_RESOLVER_ABI = [{ type: 'function', name: 'tokenUriOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'string' }] }];
 
-// bytes32 IPFS hash → "ipfs://Qm…" (CIDv0). Prepend the sha2-256/32-byte multihash prefix 0x1220, base58btc.
+// bytes32 IPFS hash → both codec candidates which have historically been stored by the app:
+//   - DAG-PB/CIDv0 (`Qm…`), which is the 721 hook's canonical reconstruction.
+//   - raw/CIDv1 (`bafkrei…`), which old Pinata v3 uploads actually returned before the app discarded the codec.
+// Trying both lets existing affected tiers recover their JSON while new uploads use the canonical DAG-PB form.
 var B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+var B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 function base58Encode(bytes) {
   var digits = [0];
   for (var i = 0; i < bytes.length; i++) {
@@ -363,15 +368,30 @@ function base58Encode(bytes) {
   for (var k = digits.length - 1; k >= 0; k--) out += B58[digits[k]];
   return out;
 }
-function decodeEncodedIpfs(b32) {
+function base32Encode(bytes) {
+  var out = '', bits = 0, value = 0;
+  for (var i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+    if (bits > 0) value &= (1 << bits) - 1; else value = 0;
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+}
+export function encodedIpfsCandidates(b32) {
   if (!b32 || /^0x0+$/.test(b32)) return null;
   var hex = b32.slice(2);
   if (hex.length === 66) hex = hex.slice(2); // drop a leading version byte if present
-  var bytes = [0x12, 0x20];
-  for (var i = 0; i < 64; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
-  return 'ipfs://' + base58Encode(bytes);
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return null;
+  var digest = [];
+  for (var i = 0; i < 64; i += 2) digest.push(parseInt(hex.substr(i, 2), 16));
+  var multihash = [0x12, 0x20].concat(digest);
+  return [
+    'ipfs://' + base58Encode(multihash),
+    'ipfs://b' + base32Encode([0x01, 0x55].concat(multihash)),
+  ];
 }
-
 // Permit2 swap-pay metadata: replaces the scary ERC20 "approve the router" tx with a one-time ERC20→Permit2
 // approval + a GASLESS Permit2 signature. The router's `_acceptFundsFor` reads a JBSingleAllowance from the
 // pay metadata (keyed to the router via getId("permit2", router)), calls PERMIT2.permit with it, then pulls
@@ -597,6 +617,7 @@ function resolveTierMedia(shop, tier, chainId) {
   var pick = function (j) {
     return {
       name: j.productName || j.name,
+      description: j.productDescription || j.description || '',
       image: resolveImage(j.image || j.imageUri),
       animationUrl: (j.animation_url || j.animationUrl) ? ipfsToHttp(j.animation_url || j.animationUrl) : '',
       mediaType: j.mediaType || '',
@@ -604,9 +625,14 @@ function resolveTierMedia(shop, tier, chainId) {
     };
   };
   var fromIpfs = function () {
-    var ipfs = decodeEncodedIpfs(tier.encodedIpfsUri);
-    if (!ipfs) return {};
-    return fetchMetadata(ipfs).then(function (j) { return j ? pick(j) : {}; }).catch(function () { return {}; });
+    var candidates = encodedIpfsCandidates(tier.encodedIpfsUri);
+    if (!candidates || !candidates.length) return {};
+    var urls = [], seen = {};
+    candidates.forEach(function (uri) {
+      ipfsGatewayUrls(uri).forEach(function (url) { if (!seen[url]) { seen[url] = true; urls.push(url); } });
+    });
+    return fetchFirstJson(urls, METADATA_FETCH_TIMEOUT_MS, METADATA_FETCH_STAGGER_MS)
+      .then(function (j) { return j ? pick(j) : {}; }).catch(function () { return {}; });
   };
   if (shop.resolver) {
     return clientFor(chainId).readContract({ address: shop.resolver, abi: TIER721_RESOLVER_ABI, functionName: 'tokenUriOf', args: [shop.hook, BigInt(tier.id) * 1000000000n] })
@@ -646,6 +672,18 @@ function tierMediaBadge(label, alt, url) {
   node.title = alt || '';
   return node;
 }
+function setMediaSource(node, url, onExhausted) {
+  var safe = safeMediaUrl(url);
+  if (!safe) return;
+  var candidates = ipfsPath(safe) ? ipfsGatewayUrls(safe) : [safe];
+  var i = 0;
+  function next() {
+    if (i >= candidates.length) { if (onExhausted) onExhausted(); return; }
+    node.src = candidates[i++];
+  }
+  node.addEventListener('error', next);
+  next();
+}
 // Render a tier's media (any file type) into `container`. mode 'full' (card) or 'thumb' (small preview).
 function renderTierMediaInto(container, m, alt, mode) {
   container.innerHTML = '';
@@ -653,18 +691,18 @@ function renderTierMediaInto(container, m, alt, mode) {
   if (!kind) return false;
   var media = m.animationUrl || m.image;
   if (kind === 'image') {
-    var img = document.createElement('img'); img.loading = 'lazy'; img.src = safeMediaUrl(m.image || media); img.alt = alt || ''; container.appendChild(img); return true;
+    var img = document.createElement('img'); img.loading = 'lazy'; setMediaSource(img, m.image || media); img.alt = alt || ''; container.appendChild(img); return true;
   }
   if (kind === 'video') {
-    var v = document.createElement('video'); v.src = safeMediaUrl(media); v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
+    var v = document.createElement('video'); setMediaSource(v, media); v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
     if (mode === 'full') { v.controls = true; v.autoplay = true; } else { v.autoplay = true; }
     container.appendChild(v); return true;
   }
   if (kind === 'audio') {
     if (mode === 'thumb') { container.appendChild(tierMediaBadge('AUDIO', alt, media)); return true; }
     var wrapA = el('div', 'tier-media-audio');
-    if (m.image) { var ai = document.createElement('img'); ai.loading = 'lazy'; ai.src = safeMediaUrl(m.image); ai.alt = alt || ''; wrapA.appendChild(ai); }
-    var au = document.createElement('audio'); au.src = safeMediaUrl(media); au.controls = true; wrapA.appendChild(au);
+    if (m.image) { var ai = document.createElement('img'); ai.loading = 'lazy'; setMediaSource(ai, m.image); ai.alt = alt || ''; wrapA.appendChild(ai); }
+    var au = document.createElement('audio'); setMediaSource(au, media); au.controls = true; wrapA.appendChild(au);
     container.appendChild(wrapA); return true;
   }
   if (kind === 'pdf') {
@@ -885,6 +923,7 @@ function renderShopSection(project, shop, cart) {
 // sucker group. Lets a tier split route to the SAME project on every chain it's offered on, and lets us
 // confirm the project by name. Cached. Returns { name, byChain: { chainId: projectId } } or null.
 var _splitProjCache = {};
+var _splitProjOnchainCache = {};
 export var BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY =
   'query($id: String!) { suckerGroup(id: $id) { projects(limit: 100) { items { chainId projectId } } } }';
 
@@ -902,22 +941,50 @@ export function projectIdsByChainFromSuckerGroup(data, chainId, projectId) {
   return byChain;
 }
 
+function onchainSplitProjectInfo(projectId, chainId) {
+  var key = chainId + ':' + projectId;
+  if (_splitProjOnchainCache[key]) return _splitProjOnchainCache[key];
+  _splitProjOnchainCache[key] = (async function () {
+    var controller = await controllerAddressFor(chainId, projectId);
+    var uri = await clientFor(chainId).readContract({
+      address: controller,
+      abi: uriOfAbi,
+      functionName: 'uriOf',
+      args: [BigInt(projectId)],
+    });
+    var meta = uri ? await fetchMetadata(uri).catch(function () { return null; }) : null;
+    return { name: meta && (meta.name || meta.handle) || null };
+  })();
+  return _splitProjOnchainCache[key];
+}
+
 function resolveSplitProject(projectId, chainId) {
   var key = chainId + ':' + projectId;
   if (_splitProjCache[key]) return _splitProjCache[key];
   var p = (async function () {
-    var res = await bendystrawQuery(
+    var indexed = bendystrawQuery(
       'query($projectId: Float!, $chainId: Float!, $version: Float!) { project(projectId: $projectId, chainId: $chainId, version: $version) { name handle suckerGroupId } }',
       { projectId: Number(projectId), chainId: Number(chainId), version: BENDYSTRAW_VERSION }
     ).catch(function () { return null; });
+    var current = onchainSplitProjectInfo(projectId, chainId).catch(function () { return null; });
+    var pair = await Promise.all([indexed, current]);
+    var res = pair[0];
     var proj = res && res.project;
-    if (!proj) return null;
+    // Project metadata is mutable and its current on-chain URI is the source of truth. Bendystraw is still
+    // used below for sucker-group membership, but a missing/stale indexed name must not degrade the route label.
+    var onchain = pair[1];
+    if (!proj) {
+      // Split routing is an on-chain feature and must not disappear just because the indexer is unavailable.
+      // The on-chain lookup above also verifies that the target project has a controller.
+      if (!onchain) return null;
+      return { name: onchain.name || ('Project #' + projectId), byChain: projectIdsByChainFromSuckerGroup(null, chainId, projectId) };
+    }
     var byChain = projectIdsByChainFromSuckerGroup(null, chainId, projectId);
     if (proj.suckerGroupId) {
       var g = await bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY, { id: proj.suckerGroupId }).catch(function () { return null; });
       byChain = projectIdsByChainFromSuckerGroup(g, chainId, projectId);
     }
-    return { name: proj.name || proj.handle || ('Project #' + projectId), byChain: byChain };
+    return { name: (onchain && onchain.name) || proj.name || proj.handle || ('Project #' + projectId), byChain: byChain };
   })();
   _splitProjCache[key] = p;
   return p;
@@ -1481,6 +1548,8 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     }
     if (form.imageFile && form.imageFile.size > MAX_MEDIA_BYTES) { setStatus(label + 'media is over the ' + MAX_MEDIA_MB + ' MB max', 'error'); return; }
     var tierMeta = { name: name };
+    if (form.description) tierMeta.description = form.description;
+    if (category > 0 && project.storeCategories && project.storeCategories[category]) tierMeta.categoryName = project.storeCategories[category];
     if (form.imageFile) {
       setStatus(label + 'pinning media…', 'pending');
       var mediaUri = await pinFile(form.imageFile, name);
@@ -1581,6 +1650,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
 
   var info = el('div', 'shop-tier-info');
   var nameEl = el('div', 'shop-tier-name'); nameEl.textContent = 'Tier ' + tier.id; info.appendChild(nameEl);
+  var descEl = el('div', 'shop-tier-description'); descEl.style.display = 'none'; info.appendChild(descEl);
   var row = el('div', 'shop-tier-row');
   var left = el('div', 'shop-tier-pricecol');
   // Show the discounted price the buyer actually pays; strike through the original when discounted.
@@ -1620,6 +1690,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
     var nm = m.name || ('Tier ' + tier.id);
     if (cart) { cart.setImage(tier.id, m.image); if (m.name) cart.setName(tier.id, nm); }
     if (m.name) nameEl.textContent = m.name;
+    if (m.description) { descEl.textContent = htmlToText(m.description); descEl.style.display = ''; }
     if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'full');
     if (m.category && onCat) onCat(tier.category, m.category);
   });
@@ -1658,8 +1729,10 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   var content = el('div', 'tier-detail');
   var art = el('div', 'tier-detail-art'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; art.appendChild(ph); content.appendChild(art);
   var nameEl = el('div', 'tier-detail-name'); nameEl.textContent = 'Tier ' + tier.id; content.appendChild(nameEl);
+  var descEl = el('div', 'tier-detail-description'); descEl.style.display = 'none'; content.appendChild(descEl);
   resolveTierMedia(shop, tier, project.chainId).then(function (m) {
     if (m.name) nameEl.textContent = m.name;
+    if (m.description) { descEl.textContent = htmlToText(m.description); descEl.style.display = ''; }
     if (m.image || m.animationUrl) renderTierMediaInto(art, m, m.name || ('Tier ' + tier.id), 'full');
   }).catch(function () {});
 
@@ -2567,11 +2640,81 @@ function projectChainList(project) {
     : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
 }
 
+var addressRegistryDeployerOfAbi = [{ type: 'function', name: 'deployerOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'address' }] }];
+var _instanceProvenanceCache = {};
+var INSTANCE_DEPLOYER_FAMILIES = [
+  { deployment: 'JB721TiersHookDeployer', family: 'JB721TiersHook' },
+  { deployment: 'JBUniswapV4LPSplitHookDeployer', family: 'JBUniswapV4LPSplitHook' },
+  { deployment: 'DefifaDeployer', family: 'DefifaHook' },
+];
+
+export function knownInstanceFamilyForDeployer(deployer, chainId) {
+  for (var i = 0; i < INSTANCE_DEPLOYER_FAMILIES.length; i++) {
+    var expected = getAddress(INSTANCE_DEPLOYER_FAMILIES[i].deployment, chainId);
+    if (expected && sameAddr(deployer, expected)) return INSTANCE_DEPLOYER_FAMILIES[i];
+  }
+  return null;
+}
+
+// JBAddressRegistry proves which CREATE/CREATE2 deployer produced an instance. It is provenance rather than a
+// general trust oracle, so only type-specific deployers whose output family the app understands are classified.
+export function registeredInstanceProvenance(address, chainId) {
+  if (isZeroishAddress(address)) return Promise.resolve(null);
+  var key = chainId + ':' + String(address).toLowerCase();
+  if (_instanceProvenanceCache[key]) return _instanceProvenanceCache[key];
+  _instanceProvenanceCache[key] = read(chainId, 'JBAddressRegistry', addressRegistryDeployerOfAbi, 'deployerOf', [address])
+    .then(function (deployer) {
+      if (isZeroishAddress(deployer)) return null;
+      var known = knownInstanceFamilyForDeployer(deployer, chainId);
+      return { address: address, deployer: deployer, known: !!known,
+        deployerName: (known && known.deployment) || resolveContractName(deployer, chainId) || null,
+        family: (known && known.family) || null };
+    }).catch(function () { return null; });
+  return _instanceProvenanceCache[key];
+}
+
 function addUnknownProjectContract(out, chainId, chainName, role, address, note) {
-  if (isZeroishAddress(address)) return;
+  if (isZeroishAddress(address)) return Promise.resolve(null);
   var rec = recognizeProjectContract(address, chainId);
-  if (rec.known) return;
-  out.push({ chainId: chainId, chain: chainName || chainNameOf(chainId), role: role, address: address, note: note || '' });
+  if (rec.known) return Promise.resolve({ known: true, family: rec.name, address: address });
+  return registeredInstanceProvenance(address, chainId).then(function (provenance) {
+    if (provenance && provenance.known) return provenance;
+    var provenanceNote = provenance && provenance.deployer
+      ? ' Address Registry deployer: ' + (provenance.deployerName || truncAddr(provenance.deployer)) + '.'
+      : '';
+    out.push({ chainId: chainId, chain: chainName || chainNameOf(chainId), role: role, address: address,
+      note: (note || '') + provenanceNote });
+    return provenance;
+  });
+}
+
+export function matchesKnown721HookClone(identity, chainId, projectId) {
+  if (!identity) return false;
+  var knownStore = getAddress('JB721TiersHookStore', chainId);
+  var knownTarget = getAddress('JB721TiersHook', chainId);
+  return !!knownStore && !!knownTarget
+    && sameAddr(identity.store, knownStore)
+    && sameAddr(identity.metadataIdTarget, knownTarget)
+    && BigInt(identity.projectId) === BigInt(projectId);
+}
+
+// JB721TiersHookDeployer creates and registers minimal-proxy hooks, so their addresses cannot appear in the static
+// deployment registry. Verify the clone's immutable implementation target, shared store, and bound project ID before
+// deciding it is custom. This is the same identity fetchProjectTiers relies on to trust a single-chain custom shop.
+function isKnown721HookClone(address, chainId, projectId) {
+  if (isZeroishAddress(address)) return Promise.resolve(false);
+  if (recognizeProjectContract(address, chainId).known) return Promise.resolve(true);
+  return registeredInstanceProvenance(address, chainId).then(function (provenance) {
+    if (!provenance || provenance.family !== 'JB721TiersHook') return false;
+    var client = clientFor(chainId);
+    return Promise.all([
+    client.readContract({ address: address, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }),
+    client.readContract({ address: address, abi: HOOK_METADATA_ID_TARGET_ABI, functionName: 'METADATA_ID_TARGET', args: [] }),
+    client.readContract({ address: address, abi: HOOK_PROJECT_ID_ABI, functionName: 'projectId', args: [] }),
+    ]).then(function (r) {
+      return matchesKnown721HookClone({ store: r[0], metadataIdTarget: r[1], projectId: r[2] }, chainId, projectId);
+    }).catch(function () { return false; });
+  });
 }
 
 function readProjectPaymentSurface(project, chainId) {
@@ -2597,7 +2740,7 @@ function inspectBuybackHookBehindDataHook(out, chainId, chainName, projectId, da
   var revOwner = getAddress('REVOwner', chainId);
   if (!sameAddr(dataHook, registry) && !sameAddr(dataHook, revOwner)) return Promise.resolve();
   return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [projectId]).then(function (hook) {
-    addUnknownProjectContract(out, chainId, chainName, role || 'Buyback hook', hook, 'Buyback swap behavior is delegated to this hook.');
+    return addUnknownProjectContract(out, chainId, chainName, role || 'Buyback hook', hook, 'Buyback swap behavior is delegated to this hook.');
   }).catch(function () {});
 }
 
@@ -2617,36 +2760,41 @@ function inspectProjectContractsOnChain(project, chain) {
   var pid = BigInt(project.id);
   var unknown = [];
   return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
-    addUnknownProjectContract(unknown, chainId, chainName, 'Controller', controller, 'Rulesets and token actions are governed by this contract.');
+    var controllerAuditP = addUnknownProjectContract(unknown, chainId, chainName, 'Controller', controller, 'Rulesets and token actions are governed by this contract.');
     var rulesetP = isZeroishAddress(controller)
       ? Promise.resolve(null)
       : clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }).catch(function () { return null; });
     var terminalsP = readProjectPaymentSurface(project, chainId).then(function (surface) {
-      (surface.terminals || []).forEach(function (terminal) {
-        addUnknownProjectContract(unknown, chainId, chainName, 'Payment terminal', terminal, 'Payments, payouts, cash-outs, and balances depend on terminal behavior.');
-      });
+      return Promise.all((surface.terminals || []).map(function (terminal) {
+        return addUnknownProjectContract(unknown, chainId, chainName, 'Payment terminal', terminal, 'Payments, payouts, cash-outs, and balances depend on terminal behavior.');
+      }));
     }).catch(function () {});
-    return Promise.all([rulesetP, terminalsP]).then(function (r) {
+    return Promise.all([rulesetP, terminalsP, controllerAuditP]).then(function (r) {
       var cur = r[0];
       var rs = cur && (cur[0] || cur.ruleset);
       var m = cur && (cur[1] || cur.metadata);
       var approvalHook = rs && rs.approvalHook;
       var dataHook = m && m.dataHook;
-      addUnknownProjectContract(unknown, chainId, chainName, 'Rule-change hook', approvalHook, 'This hook can affect when queued rulesets take effect.');
-      addUnknownProjectContract(unknown, chainId, chainName, 'Data hook', dataHook, 'Payments and cash-outs can run custom hook logic.');
+      var approvalHookP = addUnknownProjectContract(unknown, chainId, chainName, 'Rule-change hook', approvalHook, 'This hook can affect when queued rulesets take effect.');
       var hookP = inspectBuybackHookBehindDataHook(unknown, chainId, chainName, pid, dataHook, 'Buyback hook');
+      var dataHookP = isKnown721HookClone(dataHook, chainId, pid).then(function (knownClone) {
+        if (!knownClone) return addUnknownProjectContract(unknown, chainId, chainName, 'Data hook', dataHook, 'Payments and cash-outs can run custom hook logic.');
+      });
+      var baseHookAuditP = Promise.all([hookP, dataHookP, approvalHookP]);
       var omni = getAddress('JBOmnichainDeployer', chainId);
       if (omni && sameAddr(dataHook, omni) && rs && rs.id != null) {
-        return read(chainId, 'JBOmnichainDeployer', extraDataHookOfAbi, 'extraDataHookOf', [pid, BigInt(rs.id)])
+        return baseHookAuditP.then(function () {
+          return read(chainId, 'JBOmnichainDeployer', extraDataHookOfAbi, 'extraDataHookOf', [pid, BigInt(rs.id)]);
+        })
           .then(function (cfg) {
             var extra = cfg && (cfg.dataHook || cfg[0]);
-            addUnknownProjectContract(unknown, chainId, chainName, 'Extra data hook', extra, 'The omnichain deployer delegates project hook behavior here.');
-            return inspectBuybackHookBehindDataHook(unknown, chainId, chainName, pid, extra, 'Extra buyback hook')
+            return addUnknownProjectContract(unknown, chainId, chainName, 'Extra data hook', extra, 'The omnichain deployer delegates project hook behavior here.')
+              .then(function () { return inspectBuybackHookBehindDataHook(unknown, chainId, chainName, pid, extra, 'Extra buyback hook'); })
               .then(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
           })
           .catch(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
       }
-      return hookP.then(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
+      return baseHookAuditP.then(function () { return { chainId: chainId, chain: chainName, unknown: unknown }; });
     });
   }).catch(function () {
     return { chainId: chainId, chain: chainName, unknown: [] };
@@ -2675,7 +2823,7 @@ function renderProjectContractWarnings(project) {
     var card = el('div', 'project-contract-warning');
     var title = el('div', 'project-contract-warning-title'); title.textContent = 'Unknown project contracts'; card.appendChild(title);
     var desc = el('div', 'project-contract-warning-copy');
-    desc.textContent = 'This project points at contracts outside this app’s known Juicebox deployment registry. Interface reads can still succeed, but the UI does not know what those contracts do.';
+    desc.textContent = 'This project points at contracts that are neither canonical deployments nor JBAddressRegistry instances from a deployer this app understands. Interface reads can still succeed, but the UI does not know what those contracts do.';
     card.appendChild(desc);
     var list = el('div', 'project-contract-warning-list');
     unknown.forEach(function (u) {
@@ -3292,9 +3440,11 @@ export function ipfsGatewayUrls(uri) {
   var path = ipfsPath(uri);
   if (!path) return uri ? [uri] : [];
   var urls = [];
+  // Path gateways are the dependable baseline for both raw file CIDs and DAG-PB roots. eth.sucks is retained as
+  // a final fallback, but putting it first left images with no retry path when that gateway returned 502.
+  IPFS_PATH_GATEWAYS.forEach(function (gw) { urls.push(gw + path); });
   var ethSucks = ethSucksGatewayUrl(path);
   if (ethSucks) urls.push(ethSucks);
-  IPFS_PATH_GATEWAYS.forEach(function (gw) { urls.push(gw + path); });
   return urls;
 }
 
@@ -3887,15 +4037,56 @@ function projectOwnerRecipientLabel(project) {
 //   otherwise              → the project owner / REVOwner
 // The hook check MUST come before the owner fallback: a hook-routed split has beneficiary == 0 by design,
 // so without this the row mislabels the LP split hook as the project owner. Returns a fresh node.
-function splitAccountNode(sp, project, chainId) {
+function splitAccountNode(sp, project, chainId, opts) {
+  opts = opts || {};
   var node = el('span', 'splits-acct-inner');
-  if (Number(sp.projectId) > 0) { node.textContent = 'Project #' + sp.projectId; return node; }
+  if (Number(sp.projectId) > 0) {
+    node.classList.add('split-project-recipient');
+    var pid = Number(sp.projectId);
+    var link = document.createElement('a'); link.className = 'split-project-link';
+    link.href = '#' + slugForChain(chainId) + ':' + pid + '/overview';
+    link.textContent = 'Project #' + pid;
+    node.appendChild(link);
+    // Use the current controller URI directly for the visible label. Cross-chain resolution also talks to the
+    // indexer and can take longer; it remains part of the edit/validation path, not the dashboard's critical path.
+    onchainSplitProjectInfo(pid, chainId).then(function (info) {
+      if (info && info.name && link.isConnected) link.textContent = info.name + ' · #' + pid;
+    }).catch(function () {});
+
+    var route = el('span', 'split-project-route');
+    if (opts.kind === 'payout') route.textContent = sp.preferAddToBalance ? 'add to balance · no tokens minted' : 'pay project';
+    else route.textContent = 'reserved-token project recipient';
+    node.appendChild(route);
+
+    if (!sp.preferAddToBalance) {
+      var beneficiary = el('span', 'split-project-beneficiary');
+      if (sp.beneficiary && !isZeroishAddress(sp.beneficiary)) {
+        beneficiary.appendChild(document.createTextNode(opts.kind === 'payout' ? 'destination tokens → ' : 'fallback tokens → '));
+        beneficiary.appendChild(addressNode(sp.beneficiary, chainId));
+      } else if (opts.kind === 'payout') {
+        beneficiary.classList.add('warn');
+        beneficiary.textContent = 'destination tokens → distribution caller';
+        beneficiary.title = 'No beneficiary is set. The account which triggers payout distribution receives any tokens minted by the destination project.';
+      } else {
+        beneficiary.classList.add('warn');
+        beneficiary.textContent = 'fallback tokens → distribution caller';
+      }
+      node.appendChild(beneficiary);
+    }
+    return node;
+  }
   if (sp.beneficiary && sp.beneficiary !== ZERO_ADDRESS) { node.appendChild(addressNode(sp.beneficiary, chainId)); return node; }
   if (sp.hook && sp.hook !== ZERO_ADDRESS) {
     var label = el('span', 'split-hook-label'); label.textContent = 'Split hook'; label.title = 'Reserved tokens are forwarded to a split hook';
     node.appendChild(label);
     node.appendChild(document.createTextNode(' '));
     node.appendChild(addressNode(sp.hook, chainId));
+    registeredInstanceProvenance(sp.hook, chainId).then(function (provenance) {
+      if (!provenance || !provenance.known || !label.isConnected) return;
+      label.textContent = provenance.family;
+      label.title = 'Registered in JBAddressRegistry as deployed by ' + provenance.deployerName;
+      label.classList.add('known');
+    }).catch(function () {});
     return node;
   }
   node.textContent = projectOwnerRecipientLabel(project);
@@ -4502,10 +4693,9 @@ function renderLogo(project, className) {
   if (project.logoUri) {
     var img = document.createElement('img');
     img.className = className + ' discover-logo-img';
-    img.src = project.logoUri;
     img.alt = project.name;
     img.loading = 'lazy';
-    img.addEventListener('error', function () {
+    setMediaSource(img, project.logoUri, function () {
       var fallback = renderLetterLogo(project, className);
       if (img.parentNode) img.parentNode.replaceChild(fallback, img);
     });
@@ -4813,6 +5003,15 @@ function renderPayRuleChangeNotice(project) {
     updateRulesLink();
   }).catch(function () {});
   return link;
+}
+
+// A verified zero fungible-token quote is still executable when the same payment mints selected 721 tiers.
+// The terminal's minReturnedTokens is legitimately zero in that case; the NFT hook enforces the requested tier
+// prices and availability from the pay metadata. Plain zero-issuance contributions remain an Add to balance action.
+export function payPreviewCanSubmit(phase, preview, selectedTierCount) {
+  if (phase !== 'ready' || !preview || preview.unavailable || preview.received == null) return false;
+  var received = BigInt(preview.received);
+  return received > 0n || (received === 0n && Number(selectedTierCount) > 0);
 }
 
 // Inline pay card (revnet.app-style) for the project detail page. The project is already known, so it
@@ -5472,8 +5671,10 @@ function renderPayCard(project, cart) {
       status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no on-chain minimum-output field for this action.';
       return;
     }
-    if (!addBalance && (state.phase !== 'ready' || !state.preview || state.preview.unavailable || state.preview.received == null || state.preview.received <= 0n)) {
-      status.textContent = 'A non-zero live quote is required before paying. Wait for the preview, or use Add to balance for a contribution that mints no tokens.';
+    if (!addBalance && !payPreviewCanSubmit(state.phase, state.preview, tierIds.length)) {
+      status.textContent = tierIds.length
+        ? 'A verified live quote is required before buying these items. Wait for the preview and try again.'
+        : 'A non-zero live quote is required before paying. Wait for the preview, or use Add to balance for a contribution that mints no tokens.';
       schedulePreview();
       return;
     }
@@ -5861,8 +6062,8 @@ function renderAboutCard(project) {
   var body = el('div', 'detail-card-body');
 
   if (project.logoUri) {
-    var logo = document.createElement('img'); logo.className = 'detail-about-logo'; logo.src = project.logoUri; logo.alt = project.name || '';
-    logo.addEventListener('error', function () { logo.style.display = 'none'; });
+    var logo = document.createElement('img'); logo.className = 'detail-about-logo'; logo.alt = project.name || '';
+    setMediaSource(logo, project.logoUri, function () { logo.style.display = 'none'; });
     body.appendChild(logo);
   }
   if (project.tagline) {
@@ -6260,7 +6461,7 @@ function openEditProjectModal(project) {
   var logoLbl = el('div', 'operator-edit-label'); logoLbl.style.marginTop = '10px'; logoLbl.textContent = 'Logo'; content.appendChild(logoLbl);
   var logoRow = el('div', 'operator-edit-logo');
   var logoPrev = document.createElement('img'); logoPrev.className = 'operator-edit-logo-prev';
-  if (project.logoUri) logoPrev.src = project.logoUri; else logoPrev.style.visibility = 'hidden';
+  if (project.logoUri) setMediaSource(logoPrev, project.logoUri); else logoPrev.style.visibility = 'hidden';
   logoRow.appendChild(logoPrev);
   var logoFile = document.createElement('input'); logoFile.type = 'file'; logoFile.accept = 'image/*'; logoFile.className = 'operator-edit-logo-file';
   logoFile.addEventListener('change', function () {
@@ -6503,7 +6704,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   var liveDesc = document.querySelector('.detail-about-desc');
   if (liveDesc) { liveDesc.innerHTML = ''; renderRichTextInto(liveDesc, meta.description); }
   var liveName = document.querySelector('.detail-name'); if (liveName && meta.name) liveName.textContent = meta.name;
-  var liveLogo = document.querySelector('img.detail-logo'); if (liveLogo && project.logoUri) liveLogo.src = project.logoUri;
+  var liveLogo = document.querySelector('img.detail-logo'); if (liveLogo && project.logoUri) setMediaSource(liveLogo, project.logoUri);
   setTimeout(function () { modal.close(); }, 1400);
 }
 
@@ -8033,12 +8234,12 @@ function renderRulesetsFundsSection(project) {
     // Any section rulesetRows adds in future that we didn't place explicitly → left column.
     groups.forEach(function (g) { if (!placed[g.name]) renderGroup(leftCol, g.name); });
 
-    function fillSplits(box, splits) {
+    function fillSplits(box, splits, kind) {
       box.innerHTML = '';
       var sum = 0;
       (splits || []).forEach(function (sp) {
         var pct = Number(sp.percent) / 1e9 * 100; sum += pct;
-        box.appendChild(splitConfigRow(splitAccountNode(sp, project, project.chainId), pct));
+        box.appendChild(splitConfigRow(splitAccountNode(sp, project, project.chainId, { kind: kind }), pct));
       });
       var leftover = 100 - sum;
       if (!splits || !splits.length || leftover > 0.0001) {
@@ -8049,7 +8250,7 @@ function renderRulesetsFundsSection(project) {
     }
 
     // Reserved-token splits (single, token-agnostic).
-    loadReservedSplits(v.r.id).then(function (splits) { rsReserved = splits; fillSplits(rsBox, splits); }).catch(function () { rsBox.innerHTML = ''; rsBox.textContent = 'Could not verify reserved-token splits.'; });
+    loadReservedSplits(v.r.id).then(function (splits) { rsReserved = splits; fillSplits(rsBox, splits, 'reserved'); }).catch(function () { rsBox.innerHTML = ''; rsBox.textContent = 'Could not verify reserved-token splits.'; });
 
     // Per-accounting-context funds access + payout splits.
     faKindsP.then(function (kinds) {
@@ -8068,7 +8269,7 @@ function renderRulesetsFundsSection(project) {
           if (!fa) { secHead.remove(); faPayout.remove(); faAllow.remove(); psSh.remove(); psBox.remove(); foot.remove(); return; }
           faPayout.querySelector('.detail-ruleset-val').textContent = fa.payout;
           faAllow.querySelector('.detail-ruleset-val').textContent = fa.allowance;
-          fillSplits(psBox, fa.payoutSplits);
+          fillSplits(psBox, fa.payoutSplits, 'payout');
           if (offset === 0) editA.addEventListener('click', function (e) { e.preventDefault(); openEditSplitsModal(project, { groupId: fa.payoutGroupId, groupIdForChain: function (cid) { var token = kind.addrForChain(cid); return token ? BigInt(token) : null; }, title: 'Edit ' + kind.symbol + ' payout splits', prefill: fa.payoutSplits, gateText: 'to edit payout splits.', note: 'Editing ' + kind.symbol + ' payout recipients for this ruleset cycle.' }); });
         }).catch(function () {
           faPayout.querySelector('.detail-ruleset-val').textContent = '—';
@@ -11013,7 +11214,7 @@ function buildFundsTokenBlock(project, kind, showHead) {
     splits.forEach(function (sp) {
       var pct = Number(sp.percent) / 1e9 * 100; sumPct += pct;
       var amt = distributable * BigInt(sp.percent) / 1000000000n; sumAmt += amt;
-      addRow(pct, splitAccountNode(sp, project, home), amt);
+      addRow(pct, splitAccountNode(sp, project, home, { kind: 'payout' }), amt);
     });
     var leftoverPct = 100 - sumPct;
     if (splits.length === 0 || leftoverPct > 0.0001) {
@@ -13690,11 +13891,18 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
   row.appendChild(lead); row.appendChild(pct); row.appendChild(sign); row.appendChild(toEl); row.appendChild(recipBox); row.appendChild(rm);
   var wrap = el('div', 'splits-edit-item'); wrap.appendChild(row);
+  var routeRow = el('div', 'splits-edit-benef'); routeRow.style.display = 'none';
+  var routeSel = el('select', 'field create-input');
+  [['pay', 'Pay project · mint its tokens'], ['balance', 'Add to project balance · mint none']].forEach(function (o) {
+    var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; routeSel.appendChild(op);
+  });
+  routeRow.appendChild(routeSel);
   var benefRow = el('div', 'splits-edit-benef'); benefRow.style.display = 'none';
   var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… token beneficiary for that project';
   benefRow.appendChild(benef);
   var benefHint = el('div', 'splits-edit-hint'); benefRow.appendChild(benefHint);
-  recipBox.appendChild(benefRow); // under the recipient field, in its column
+  recipBox.appendChild(routeRow); // under the recipient field, in its column
+  recipBox.appendChild(benefRow);
   var ensAddr = null; // resolved address for the current ENS input
   function isEnsName(v) { return v.indexOf('.') !== -1 && !isAddr(v) && !/^[0-9]+$/.test(v); }
   function recipientValueOf() {
@@ -13727,7 +13935,9 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   benefRow.appendChild(benefPerChain.node);
   function refresh() {
     var v = (recip.value || '').trim();
-    benefRow.style.display = /^[0-9]+$/.test(v) ? '' : 'none';
+    var isProject = /^[0-9]+$/.test(v);
+    routeRow.style.display = isProject && opts.allowProjectBalanceMode ? '' : 'none';
+    benefRow.style.display = isProject && !(opts.allowProjectBalanceMode && routeSel.value === 'balance') ? '' : 'none';
     recipPerChain.node.style.display = (/^[0-9]+$/.test(v) || rec.lpHook) ? 'none' : '';
     if (isEnsName(v)) {
       ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = 'Resolving ' + v + '…'; ensAddr = null;
@@ -13766,7 +13976,8 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
       var v = (recip.value || '').trim();
       if (isAddr(v) || isEnsName(v)) return { projectId: 0n, beneficiary: recipPerChain.snapshot() };
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
-        return { projectId: BigInt(v), beneficiary: benefPerChain.snapshot() };
+        var addToBalance = !!opts.allowProjectBalanceMode && routeSel.value === 'balance';
+        return { projectId: BigInt(v), beneficiary: addToBalance ? ZERO_ADDRESS : benefPerChain.snapshot(), preferAddToBalance: addToBalance };
       }
       throw new Error('Enter a 0x address, ENS name, or a project ID');
     },
@@ -13781,6 +13992,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     if (opts.onChange) opts.onChange();
   }
   recip.addEventListener('input', refresh);
+  routeSel.addEventListener('change', refresh);
   if (lpChip) lpChip.addEventListener('click', function () { setLp(!rec.lpHook); });
   if (opts.onChange) pct.addEventListener('input', opts.onChange);
   rm.addEventListener('click', function (e) { e.preventDefault(); var i = rows.indexOf(rec); if (i >= 0) rows.splice(i, 1); wrap.remove(); if (opts.onChange) opts.onChange(); });
@@ -13790,7 +14002,10 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     var pf = opts.prefill;
     var isLp = lpChip && pf.orig && pf.orig.hook && opts.lpHookAddr && pf.orig.hook.toLowerCase() === opts.lpHookAddr.toLowerCase();
     if (isLp) { setLp(true); }
-    else if (Number(pf.projectId) > 0) { recip.value = String(pf.projectId); benef.value = pf.beneficiary || ''; }
+    else if (Number(pf.projectId) > 0) {
+      recip.value = String(pf.projectId); benef.value = pf.beneficiary || '';
+      routeSel.value = pf.orig && pf.orig.preferAddToBalance ? 'balance' : 'pay';
+    }
     else if (pf.beneficiary && pf.beneficiary !== ZERO_ADDRESS) recip.value = pf.beneficiary;
     if (pf.pct != null) pct.value = pf.pct;
     if (!isLp) refresh();
@@ -14337,7 +14552,8 @@ function openQueueRulesetModal(project) {
 
   // One on-chain split → a create-flow recipient (wallet / project / market-funding LP hook).
   function recFromSplit(sp, lpHook, pct, amountEth) {
-    var base = { percent: pct || 0, amountEth: amountEth || '', lockedUntil: Number(sp.lockedUntil) || 0 };
+    var base = { percent: pct || 0, amountEth: amountEth || '', lockedUntil: Number(sp.lockedUntil) || 0,
+      preferAddToBalance: !!sp.preferAddToBalance };
     // Preserve every hook address exactly. Treat even the known LP hook as a custom hook here because the generic
     // create-flow LP preset rewrites its beneficiary from the connected wallet, which would mutate an existing split.
     if (sp.hook && !/^0x0+$/.test(String(sp.hook))) {
@@ -14570,6 +14786,7 @@ function openEditSplitsModal(project, opts) {
   var limitPct = Number(opts.verifiedLimitPct != null ? opts.verifiedLimitPct : splitLimitPctFor(project, groupId));
   var rowOpts = {
     allowLpHook: !!lpHookAddr,
+    allowProjectBalanceMode: String(groupId) !== String(RESERVED_TOKEN_SPLIT_GROUP),
     lpHookAddr: lpHookAddr,
     lpHookAddrForChain: function (cid) { return getAddress('BannyLPSplitHook', cid) || ZERO_ADDRESS; },
     ownerAddr: project.owner,
@@ -14672,7 +14889,9 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
       percent: share,
       projectId: parsed.projectId,
       beneficiary: parsed.beneficiary,
-      preferAddToBalance: orig ? !!orig.preferAddToBalance : false,
+      preferAddToBalance: parsed.preferAddToBalance != null
+        ? !!parsed.preferAddToBalance
+        : (orig ? !!orig.preferAddToBalance : false),
       lockedUntil: orig && orig.lockedUntil ? Number(orig.lockedUntil) : 0,
       // hookAddr() returns the LP split hook when the row's "fund market" chip is on, else preserves any
       // existing hook. The fund-market hook is resolved per selected chain.
@@ -14754,7 +14973,7 @@ function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, p
     var ofLimit = frac * 100;                     // share of the limit
     var row = el('div', 'splits-row');
     var acct = el('span', 'splits-acct');
-    acct.appendChild(splitAccountNode(sp, project, pc.id));
+    acct.appendChild(splitAccountNode(sp, project, pc.id, { kind: 'reserved' }));
     row.appendChild(acct);
     var pct = el('span', 'splits-pct');
     var strong = el('strong'); strong.textContent = effective.toFixed(effective % 1 === 0 ? 0 : 2) + '%'; pct.appendChild(strong);

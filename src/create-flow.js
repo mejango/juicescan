@@ -1784,7 +1784,7 @@ function payoutRow(stage, rec, idx, mode, render, state) {
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
-  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'p:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, pidKey: 'ppid:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx });
+  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'p:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, pidKey: 'ppid:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, isPayout: true });
   var plk = splitLockRow(stage, rec, render); if (plk) wrap.appendChild(plk);
   return wrap;
 }
@@ -1819,7 +1819,7 @@ function payoutKindRow(pk, kind, rec, idx, render, state, stage) {
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
-  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'pk:' + kind.key + ':' + idx, pidKey: 'pkpid:' + kind.key + ':' + idx });
+  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'pk:' + kind.key + ':' + idx, pidKey: 'pkpid:' + kind.key + ':' + idx, isPayout: true });
   var klk = splitLockRow(stage, rec, render); if (klk) wrap.appendChild(klk);
   return wrap;
 }
@@ -2001,8 +2001,28 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
 
   if (rec.type === 'project') {
     head.appendChild(projectIdCol()); col.appendChild(head); // ID + its per-chain control sit right of the dropdown
-    var benefLabel = el('div', 'create-split-sublabel'); benefLabel.textContent = 'with token beneficiary'; col.appendChild(benefLabel);
-    beneficiaryField();
+    if (opts.isPayout) {
+      var routeLabel = el('div', 'create-split-sublabel'); routeLabel.textContent = 'route as'; col.appendChild(routeLabel);
+      var route = el('select', 'field create-input create-split-subsel');
+      [['pay', 'Pay project · mint its tokens'], ['balance', 'Add to project balance · mint none']].forEach(function (o) {
+        var op = el('option'); op.value = o[0]; op.textContent = o[1];
+        if ((rec.preferAddToBalance ? 'balance' : 'pay') === o[0]) op.selected = true;
+        route.appendChild(op);
+      });
+      route.addEventListener('change', function () { rec.preferAddToBalance = route.value === 'balance'; render(); });
+      sub(route);
+    }
+    if (!opts.isPayout || !rec.preferAddToBalance) {
+      var benefLabel = el('div', 'create-split-sublabel');
+      benefLabel.textContent = opts.isPayout ? 'destination-token beneficiary' : 'fallback token beneficiary';
+      col.appendChild(benefLabel);
+      beneficiaryField();
+    }
+    if (opts.isReserved) {
+      var projectRouteHint = el('div', 'create-split-lphint');
+      projectRouteHint.textContent = 'Reserved tokens pay this project only when the source token is an ERC-20 and the destination has a terminal for it; credits or an unavailable/reverting route go to the fallback beneficiary.';
+      col.appendChild(projectRouteHint);
+    }
   } else if (rec.type === 'lphook' || rec.type === 'customhook') {
     // A custom split hook (address) that can also carry a project id + beneficiary, all per-chain settable.
     var customHookFields = function () {
@@ -2060,7 +2080,7 @@ function reservedSplitRow(t, rec, idx, render, onTotal, state, stageIdx) {
   rm.addEventListener('click', function () { var i = t.reservedRecipients.indexOf(rec); if (i >= 0) t.reservedRecipients.splice(i, 1); render(); });
   row.appendChild(rm);
   wrap.appendChild(row);
-  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'r:' + stageIdx + ':' + idx, pidKey: 'rpid:' + stageIdx + ':' + idx, allowFundMarket: true });
+  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'r:' + stageIdx + ':' + idx, pidKey: 'rpid:' + stageIdx + ':' + idx, allowFundMarket: true, isReserved: true });
   var rlk = splitLockRow(t, rec, render); if (rlk) wrap.appendChild(rlk);
   return wrap;
 }
@@ -2864,11 +2884,18 @@ function splitTotalIssue(state) {
 // of the first that has no valid destination (so funds/tokens would be sent to 0x0), or null if all are fine.
 function recipientIssue(state) {
   var stages = state.stages || [];
-  function badSplit(recips, kindLabel) {
+  function badSplit(recips, kindLabel, isPayout) {
     for (var i = 0; i < (recips || []).length; i++) {
       var r = recips[i];
       if (!((Number(r.percent) || 0) > 0 || (Number(r.amountEth) || 0) > 0)) continue; // empty row — ignore
-      if (r.type === 'project') { if (!(Number(r.projectId) > 0)) return 'a ' + kindLabel + ' to a project is missing its project ID.'; }
+      if (r.type === 'project') {
+        if (!(Number(r.projectId) > 0)) return 'a ' + kindLabel + ' to a project is missing its project ID.';
+        // A pay-to-project split mints the destination project's tokens. Leaving beneficiary empty hands those
+        // tokens to whichever account eventually triggers distribution. Add-to-balance intentionally mints none.
+        if ((!isPayout || !r.preferAddToBalance) && !isAddr(resolvedStr(pickResolved(r.address, r)))) {
+          return 'a ' + kindLabel + ' to a project is missing the address that receives destination/fallback tokens.';
+        }
+      }
       else if (r.type === 'lphook') { /* fund-market hook needs no address */ }
       else if (r.type === 'customhook') { if (!isAddr(r.hookAddress)) return 'a ' + kindLabel + ' uses a custom hook with no valid hook address.'; }
       else if (!isAddr(resolvedStr(pickResolved(r.address, r)))) return 'a ' + kindLabel + ' has no valid recipient address.';
@@ -2879,9 +2906,9 @@ function recipientIssue(state) {
     var st = stages[si];
     var pre = stages.length > 1 ? ('on stage ' + (si + 1) + ', ') : '';
     var kinds = currentPayoutKinds(state);
-    var checks = [badSplit(st.reservedRecipients, 'reserved-token split')];
-    if (kinds && st.payoutByKind) kinds.forEach(function (k) { var pk = st.payoutByKind[k.key]; checks.push(pk && badSplit(pk.recipients, 'payout split')); });
-    else checks.push(badSplit(st.payoutRecipients, 'payout split'));
+    var checks = [badSplit(st.reservedRecipients, 'reserved-token split', false)];
+    if (kinds && st.payoutByKind) kinds.forEach(function (k) { var pk = st.payoutByKind[k.key]; checks.push(pk && badSplit(pk.recipients, 'payout split', true)); });
+    else checks.push(badSplit(st.payoutRecipients, 'payout split', true));
     for (var c = 0; c < checks.length; c++) if (checks[c]) return pre + checks[c];
     for (var a = 0; a < (st.autoIssuances || []).length; a++) {
       var ai = st.autoIssuances[a];
@@ -3197,9 +3224,12 @@ async function runDeploy(state, owner) {
   if (hasPinata()) {
     push('Pinning project metadata…');
     try {
-      projectUri = await pinJson(buildMetadata(state.details), state.details.name || 'project');
+      projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
       push('Metadata pinned: ' + projectUri, 'ok');
-    } catch (e) { push('Metadata pin failed (' + (e && e.message || e) + ') — launching without it.', 'err'); }
+    } catch (e) {
+      push('Metadata pin failed (' + (e && e.message || e) + ') — nothing was sent.', 'err');
+      throw e;
+    }
   } else {
     push('No Pinata JWT — launching without metadata; you can edit the project later.');
   }
@@ -3211,11 +3241,16 @@ async function runDeploy(state, owner) {
       push('Pinning item “' + (it.name || ('#' + (n + 1))) + '” metadata…');
       var meta = { name: it.name || ('Item #' + (n + 1)) };
       if (it.description) meta.description = it.description;
+      var categoryName = storeCategoryName(state, it.category);
+      if (categoryName) meta.categoryName = categoryName;
       if (it.imageUri) { if ((it.mediaType || '').indexOf('image') === 0) meta.image = it.imageUri; else meta.animation_url = it.imageUri; meta.mediaType = it.mediaType; }
       try {
         it.metaUri = await pinJson(meta, (it.name || 'item') + '-item');
         it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri);
-      } catch (e) { push('Item metadata pin failed (' + (e && e.message || e) + ').', 'err'); }
+      } catch (e) {
+        push('Item metadata pin failed (' + (e && e.message || e) + ') — nothing was sent.', 'err');
+        throw e;
+      }
     }
   }
 
@@ -3875,7 +3910,7 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   // Custom split hook → user-supplied hook contract (carries the projectId + beneficiary above to the hook).
   var hook = (rec.type === 'customhook' && isAddr(rec.hookAddress)) ? rec.hookAddress : ZERO;
   return {
-    preferAddToBalance: false,
+    preferAddToBalance: rec.type === 'project' && !!rec.preferAddToBalance,
     percent: rawPercent,
     projectId: pid,
     beneficiary: addrOrZero(addr),
@@ -3951,8 +3986,11 @@ export async function pinShopItemsMetadata(state) {
     if (it.encodedIpfsUri) continue; // already pinned this submit
     var meta = { name: it.name || ('Item #' + (n + 1)) };
     if (it.description) meta.description = it.description;
+    var categoryName = storeCategoryName(state, it.category);
+    if (categoryName) meta.categoryName = categoryName;
     if (it.imageUri) { if ((it.mediaType || '').indexOf('image') === 0) meta.image = it.imageUri; else meta.animation_url = it.imageUri; meta.mediaType = it.mediaType; }
-    try { it.metaUri = await pinJson(meta, (it.name || 'item') + '-item'); it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri); } catch (_) {}
+    try { it.metaUri = await pinJson(meta, (it.name || 'item') + '-item'); it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri); }
+    catch (e) { throw new Error('Could not pin metadata for “' + (it.name || ('Item #' + (n + 1))) + '”: ' + (e && e.message || e)); }
   }
 }
 
@@ -3984,7 +4022,13 @@ function buildTerminalConfigs(chainId, state, swapRouter) {
   return configs;
 }
 
-function buildMetadata(d) {
+function storeCategoryName(state, category) {
+  var id = Number(category) || 0;
+  var found = (state.storeCategories || []).find(function (entry) { return Number(entry.id) === id; });
+  return found && String(found.name || '').trim();
+}
+
+function buildMetadata(d, storeCategories) {
   var m = { version: 1, name: d.name || '', projectTagline: d.tagline || '', description: d.description || '' };
   // Custom projects don't deploy an ERC-20 at launch (tokens are credits), so the symbol can't live
   // on-chain yet — stash it in the project URI metadata so the UI can show "$SYMBOL" until/unless an
@@ -4001,6 +4045,12 @@ function buildMetadata(d) {
   if (d.whatsapp) m.whatsapp = d.whatsapp;
   if (d.payDisclosure) m.payDisclosure = d.payDisclosure;
   if (d.tags && d.tags.length) m.tags = d.tags;
+  var categories = {};
+  (storeCategories || []).forEach(function (entry) {
+    var id = Number(entry && entry.id), name = String((entry && entry.name) || '').trim();
+    if (Number.isSafeInteger(id) && id > 0 && name) categories[id] = name;
+  });
+  if (Object.keys(categories).length) m.storeCategories = categories;
   return m;
 }
 
@@ -4170,5 +4220,5 @@ export const __test = {
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
-  surplusTokenLabel, itemCashOutOn, anyTokenCashOut,
+  surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName,
 };

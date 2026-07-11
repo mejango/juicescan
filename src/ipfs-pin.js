@@ -51,18 +51,24 @@ export async function pinFile(file, name) {
   return await readPinResponse(res);
 }
 
-// Pin a JSON object. Returns "ipfs://<cid>". (v3 is file-based, so the JSON is uploaded as a .json file.)
+// Pin a JSON object. Returns a CIDv0 URI which can safely be reduced to the bytes32 digest used by
+// JB721TierConfig. Pinata's v3 endpoint stores a small upload as a raw CIDv1 block (`bafkrei…`). The 721 hook,
+// however, only stores the multihash digest and later reconstructs it as DAG-PB/CIDv0 (`Qm…`). Uploading plain
+// JSON therefore makes the reconstructed CID interpret JSON bytes as a PBNode and fail with an "invalid wireType"
+// error. We upload a canonical single-block UnixFS file node instead. The v3 raw CID and the returned CIDv0 share
+// the same multihash, while the CIDv0 codec correctly unwraps the node back to the original JSON.
 export async function pinJson(obj, name) {
   var jwt = getPinataJwt();
   if (!jwt) throw new Error('No Pinata JWT set — add one in settings, or paste an ipfs:// hash.');
   var base = name || obj.name || 'metadata';
-  var blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
+  var block = unixFsFileBlock(new TextEncoder().encode(JSON.stringify(obj)));
+  var blob = new Blob([block], { type: 'application/octet-stream' });
   var form = new FormData();
-  form.append('file', blob, base + '.json');
+  form.append('file', blob, base + '.unixfs');
   form.append('network', 'public');
   form.append('name', base);
   var res = await fetch(UPLOAD_URL, { method: 'POST', headers: { Authorization: 'Bearer ' + jwt }, body: form });
-  return await readPinResponse(res);
+  return dagPbUriFromRawUpload(await readPinResponse(res));
 }
 
 async function readPinResponse(res) {
@@ -81,6 +87,38 @@ async function readPinResponse(res) {
 var B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 var B32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 
+function varintBytes(value) {
+  value = Number(value);
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid protobuf length');
+  var out = [];
+  do {
+    var b = value & 0x7f;
+    value = Math.floor(value / 128);
+    out.push(value ? (b | 0x80) : b);
+  } while (value);
+  return new Uint8Array(out);
+}
+
+function concatBytes(parts) {
+  var size = parts.reduce(function (n, p) { return n + p.length; }, 0);
+  var out = new Uint8Array(size), at = 0;
+  parts.forEach(function (p) { out.set(p, at); at += p.length; });
+  return out;
+}
+
+// Canonical one-block UnixFS file:
+//   PBNode.Data = UnixFS.Data { Type: File(2), Data: <bytes>, filesize: <length> }
+// There are no PBLinks because project/tier JSON is intentionally small enough for one block.
+export function unixFsFileBlock(content) {
+  var data = content instanceof Uint8Array ? content : new Uint8Array(content || []);
+  var unixFs = concatBytes([
+    new Uint8Array([0x08, 0x02]), // field 1 (Type), varint File(2)
+    new Uint8Array([0x12]), varintBytes(data.length), data, // field 2 (Data)
+    new Uint8Array([0x18]), varintBytes(data.length), // field 3 (filesize)
+  ]);
+  return concatBytes([new Uint8Array([0x0a]), varintBytes(unixFs.length), unixFs]); // PBNode field 1 (Data)
+}
+
 // Decode a base58 (Bitcoin alphabet) string to a Uint8Array.
 function base58Decode(str) {
   var bytes = [0];
@@ -98,6 +136,23 @@ function base58Decode(str) {
   // Leading '1's in base58 are leading zero bytes.
   for (var k = 0; k < str.length && str[k] === '1'; k++) bytes.push(0);
   return new Uint8Array(bytes.reverse());
+}
+
+function base58Encode(bytes) {
+  var digits = [0];
+  for (var i = 0; i < bytes.length; i++) {
+    var carry = bytes[i];
+    for (var j = 0; j < digits.length; j++) {
+      carry += digits[j] << 8;
+      digits[j] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
+  }
+  var out = '';
+  for (var z = 0; z < bytes.length && bytes[z] === 0; z++) out += '1';
+  for (var k = digits.length - 1; k >= 0; k--) out += B58_ALPHABET[digits[k]];
+  return out;
 }
 
 // Decode a CIDv1 base32 multibase string ("baf…") to bytes.
@@ -132,12 +187,10 @@ function readVarint(bytes, offset) {
   throw new Error('Truncated CID varint');
 }
 
-function cidV1DigestBytes(cid) {
+function cidV1Parts(cid) {
   var raw = base32Decode(cid);
   var v = readVarint(raw, 0);
   if (v.value !== 1) throw new Error('Unsupported CID version: ' + v.value);
-  // Codec is intentionally read and discarded. The 721 hook stores only a sha2-256 multihash digest and the
-  // on-chain resolver reconstructs a CIDv0-style URL from that digest, so the codec cannot be preserved.
   var codec = readVarint(raw, v.offset);
   var mhCode = readVarint(raw, codec.offset);
   var mhLen = readVarint(raw, mhCode.offset);
@@ -145,7 +198,21 @@ function cidV1DigestBytes(cid) {
     throw new Error('Only sha2-256/32-byte IPFS hashes are supported; got multihash 0x' + mhCode.value.toString(16) + '/' + mhLen.value);
   }
   if (mhLen.offset + mhLen.value !== raw.length) throw new Error('Unexpected CIDv1 multihash length');
-  return raw.slice(mhLen.offset, mhLen.offset + mhLen.value);
+  return { codec: codec.value, digest: raw.slice(mhLen.offset, mhLen.offset + mhLen.value) };
+}
+
+function digestToCidV0(digest) {
+  return base58Encode(concatBytes([new Uint8Array([0x12, 0x20]), digest]));
+}
+
+function dagPbUriFromRawUpload(uri) {
+  var cid = bareCid(uri);
+  if (!cid || cid[0].toLowerCase() !== 'b') throw new Error('Pinata v3 returned an unexpected CID for metadata.');
+  var parts = cidV1Parts(cid);
+  if (parts.codec !== 0x55) {
+    throw new Error('Pinata v3 did not preserve the metadata block as a raw CID; refusing an unsafe on-chain hash.');
+  }
+  return 'ipfs://' + digestToCidV0(parts.digest);
 }
 
 // Strip "ipfs://" / gateway prefixes and any path, returning the bare CID.
@@ -181,7 +248,13 @@ export function encodeIpfsUriToBytes32(uri) {
     }
     digest = raw.slice(2);
   } else if (cid[0] && cid[0].toLowerCase() === 'b') {
-    digest = cidV1DigestBytes(cid);
+    var parts = cidV1Parts(cid);
+    // The hook cannot preserve a CIDv1 codec. It always reconstructs bytes32 as DAG-PB/CIDv0, so accepting a raw
+    // file CID here creates a permanently malformed token URI. pinJson() returns a compatible Qm CID instead.
+    if (parts.codec !== 0x70) {
+      throw new Error('Raw CIDv1 metadata cannot be stored in the 721 bytes32 URI slot; pin it as DAG-PB/CIDv0 first.');
+    }
+    digest = parts.digest;
   } else {
     throw new Error('Only CIDv0 (Qm…) or CIDv1 base32 (baf…) IPFS hashes are supported; got: ' + cid.slice(0, 8) + '…');
   }

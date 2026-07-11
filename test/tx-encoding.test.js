@@ -55,9 +55,10 @@ describe('splitState — JBSplit encoding per recipient type', () => {
     expect(sp.percent).toBe(500000000);
   });
   it('project → projectId + beneficiary, hook ZERO; per-chain projectId override honored', () => {
-    const sp = splitState({ type: 'project', projectId: 5, address: BOB }, 1, BOB, 1, 7);
+    const sp = splitState({ type: 'project', projectId: 5, address: BOB, preferAddToBalance: true }, 1, BOB, 1, 7);
     expect(sp.projectId).toBe(7); // override wins
     expect(sp.beneficiary.toLowerCase()).toBe(BOB.toLowerCase());
+    expect(sp.preferAddToBalance).toBe(true);
     expect(BigInt(sp.hook)).toBe(0n);
   });
   it('customhook (valid addr) → hook = address, projectId/beneficiary pass through', () => {

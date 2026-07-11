@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { __test } from '../src/create-flow.js';
 
-const { initState, recipientIssue, splitTotalIssue, customAccounting, applyAccountingDefaults, currentPayoutKinds, surplusTokenLabel } = __test;
+const { initState, recipientIssue, splitTotalIssue, customAccounting, applyAccountingDefaults, currentPayoutKinds, surplusTokenLabel, buildMetadata } = __test;
 const BOB = '0x2222222222222222222222222222222222222222';
 const DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
 
@@ -33,6 +33,21 @@ describe('recipientIssue — blocks splits/payouts/auto-issuance with a value bu
     s.stages[0].reservedRecipients = [{ type: 'project', projectId: 0, address: BOB, percent: 5 }];
     expect(recipientIssue(s)).toMatch(/project ID/i);
   });
+  it('requires an explicit token beneficiary for project-pay and reserved project splits', () => {
+    const s = custom();
+    s.stages[0].reservedRecipients = [{ type: 'project', projectId: 8, address: '', percent: 5 }];
+    expect(recipientIssue(s)).toMatch(/receives.*tokens/i);
+    s.stages[0].reservedRecipients = [];
+    s.stages[0].payoutMode = 'unlimited';
+    s.stages[0].payoutRecipients = [{ type: 'project', projectId: 8, address: '', percent: 100 }];
+    expect(recipientIssue(s)).toMatch(/receives.*tokens/i);
+  });
+  it('allows project add-to-balance payouts without a token beneficiary', () => {
+    const s = custom();
+    s.stages[0].payoutMode = 'unlimited';
+    s.stages[0].payoutRecipients = [{ type: 'project', projectId: 8, address: '', percent: 100, preferAddToBalance: true }];
+    expect(recipientIssue(s)).toBeNull();
+  });
   it('flags a custom-hook split with no valid hook address', () => {
     const s = custom();
     s.stages[0].reservedRecipients = [{ type: 'customhook', hookAddress: '', percent: 5 }];
@@ -47,6 +62,14 @@ describe('recipientIssue — blocks splits/payouts/auto-issuance with a value bu
     const s = custom();
     s.stages[0].autoIssuances = [{ count: '100', address: '' }];
     expect(recipientIssue(s)).toMatch(/auto-issuance/i);
+  });
+});
+
+describe('project metadata', () => {
+  it('persists operator-defined shop category names in the project URI', () => {
+    expect(buildMetadata({ name: 'Shop' }, [{ id: 1, name: 'Bounties' }, { id: 2, name: 'Judges' }])).toMatchObject({
+      storeCategories: { 1: 'Bounties', 2: 'Judges' },
+    });
   });
 });
 

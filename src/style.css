@@ -3487,6 +3487,12 @@ input[type="checkbox"].field {
 .splits-acct { color: var(--text); }
 .splits-acct-inner { display: inline; }
 .split-hook-label { color: var(--muted-3); font-weight: normal; font-size: 0.85em; }
+.split-hook-label.known { color: var(--c-teal); }
+.split-project-recipient { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; vertical-align: top; }
+.split-project-link { color: var(--c-teal); font-weight: bold; text-decoration: underline; text-underline-offset: 2px; }
+.split-project-route, .split-project-beneficiary { color: var(--muted-2); font-size: 10px; line-height: 1.25; }
+.split-project-beneficiary { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 3px; }
+.split-project-beneficiary.warn { color: var(--c-orange); }
 .splits-pct strong { color: var(--text); }
 .splits-muted { color: var(--muted-3); font-weight: normal; }
 .splits-pend { color: var(--text); }
@@ -4726,6 +4732,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .shop-tier-ph { font-size: 15px; color: var(--muted-3); }
 .shop-tier-info { padding: 10px 12px 12px; }
 .shop-tier-name { font-size: 14px; font-weight: bold; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shop-tier-description { color: var(--muted-2); font-size: 12px; line-height: 1.35; margin: -1px 0 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .shop-tier-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .shop-tier-pricecol { display: flex; flex-direction: column; min-width: 0; }
 .shop-tier-price { font-size: 15px; font-weight: bold; color: var(--text); }
@@ -4738,6 +4745,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .tier-detail-art { aspect-ratio: 1; background: var(--card-bg); border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; max-height: 280px; position: relative; }
 .tier-detail-art img, .tier-detail-art svg { width: 100%; height: 100%; object-fit: contain; }
 .tier-detail-name { font-size: 16px; font-weight: bold; }
+.tier-detail-description { color: var(--muted-2); font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
 .tier-detail-price { display: flex; align-items: baseline; gap: 8px; }
 .tier-detail-price-eff { font-size: 18px; font-weight: bold; }
 .tier-detail-price-orig { font-size: 13px; color: var(--muted-2); text-decoration: line-through; }
