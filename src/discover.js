@@ -1,7 +1,6 @@
 // src/discover.js
-// Discover tab: live project cards + detail page, read directly from the V6 contracts.
-// No indexer dependency — every value here is an on-chain read via component-base's
-// executeRead. Projects 1–7 are the canonical V6 set deployed across the testnets.
+// Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
+// display metadata and indexed aggregates come from Bendystraw with an on-chain URI fallback.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
 import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt } from './component-base.js';
@@ -55,8 +54,8 @@ function networkModeFromHash() {
 function getNetworkMode() {
   var fromHash = networkModeFromHash();
   if (fromHash) return fromHash;
-  // Default to mainnet (the real network — 7 canonical revnets live). Project cards read on-chain;
-  // indexer-backed feeds (activity/owners) populate once prod bendystraw indexes V6. Testnets via toggle.
+  // Default to mainnet (the real network — 7 canonical revnets live). Project metadata/feeds use the matching
+  // Bendystraw host while transaction-critical state stays on-chain. Testnets are available via the toggle.
   try { return localStorage.getItem('jb-network') === 'testnet' ? 'testnet' : 'mainnet'; } catch (_) { return 'mainnet'; }
 }
 var DISCOVER_NETWORK = getNetworkMode();
@@ -76,7 +75,7 @@ export function setDiscoverNetwork(mode) {
   try { localStorage.setItem('jb-network', mode); } catch (_) {}
   DISCOVER_CHAINS = mode === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
   setBendystrawNetwork(mode);
-  _groups = null; _cache = {}; _activeDetail = null;
+  _groups = null; _cache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {}; _preferredProjectMetadataCache = {}; _activeDetail = null;
   // Only discard a project route from the other network. Top-level routes such as #data must stay put.
   if (networkModeFromHash()) location.hash = '';
   if (_container) renderDiscoverTab();
@@ -923,7 +922,6 @@ function renderShopSection(project, shop, cart) {
 // sucker group. Lets a tier split route to the SAME project on every chain it's offered on, and lets us
 // confirm the project by name. Cached. Returns { name, byChain: { chainId: projectId } } or null.
 var _splitProjCache = {};
-var _splitProjOnchainCache = {};
 export var BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY =
   'query($id: String!) { suckerGroup(id: $id) { projects(limit: 100) { items { chainId projectId } } } }';
 
@@ -941,50 +939,32 @@ export function projectIdsByChainFromSuckerGroup(data, chainId, projectId) {
   return byChain;
 }
 
-function onchainSplitProjectInfo(projectId, chainId) {
-  var key = chainId + ':' + projectId;
-  if (_splitProjOnchainCache[key]) return _splitProjOnchainCache[key];
-  _splitProjOnchainCache[key] = (async function () {
-    var controller = await controllerAddressFor(chainId, projectId);
-    var uri = await clientFor(chainId).readContract({
-      address: controller,
-      abi: uriOfAbi,
-      functionName: 'uriOf',
-      args: [BigInt(projectId)],
-    });
-    var meta = uri ? await fetchMetadata(uri).catch(function () { return null; }) : null;
-    return { name: meta && (meta.name || meta.handle) || null };
-  })();
-  return _splitProjOnchainCache[key];
+function preferredSplitProjectInfo(projectId, chainId) {
+  return fetchPreferredProjectMetadata(projectId, chainId).then(function (record) {
+    return record ? { name: record.metadata && record.metadata.name || record.handle || null } : null;
+  });
 }
 
 function resolveSplitProject(projectId, chainId) {
   var key = chainId + ':' + projectId;
   if (_splitProjCache[key]) return _splitProjCache[key];
   var p = (async function () {
-    var indexed = bendystrawQuery(
-      'query($projectId: Float!, $chainId: Float!, $version: Float!) { project(projectId: $projectId, chainId: $chainId, version: $version) { name handle suckerGroupId } }',
-      { projectId: Number(projectId), chainId: Number(chainId), version: BENDYSTRAW_VERSION }
-    ).catch(function () { return null; });
-    var current = onchainSplitProjectInfo(projectId, chainId).catch(function () { return null; });
+    var indexed = fetchBendystrawProjectRecord(projectId, chainId);
+    var current = preferredSplitProjectInfo(projectId, chainId).catch(function () { return null; });
     var pair = await Promise.all([indexed, current]);
-    var res = pair[0];
-    var proj = res && res.project;
-    // Project metadata is mutable and its current on-chain URI is the source of truth. Bendystraw is still
-    // used below for sucker-group membership, but a missing/stale indexed name must not degrade the route label.
-    var onchain = pair[1];
+    var proj = pair[0];
+    var preferred = pair[1];
     if (!proj) {
       // Split routing is an on-chain feature and must not disappear just because the indexer is unavailable.
-      // The on-chain lookup above also verifies that the target project has a controller.
-      if (!onchain) return null;
-      return { name: onchain.name || ('Project #' + projectId), byChain: projectIdsByChainFromSuckerGroup(null, chainId, projectId) };
+      if (!preferred) return null;
+      return { name: preferred.name || ('Project #' + projectId), byChain: projectIdsByChainFromSuckerGroup(null, chainId, projectId) };
     }
     var byChain = projectIdsByChainFromSuckerGroup(null, chainId, projectId);
     if (proj.suckerGroupId) {
       var g = await bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY, { id: proj.suckerGroupId }).catch(function () { return null; });
       byChain = projectIdsByChainFromSuckerGroup(g, chainId, projectId);
     }
-    return { name: (onchain && onchain.name) || proj.name || proj.handle || ('Project #' + projectId), byChain: byChain };
+    return { name: (preferred && preferred.name) || proj.name || proj.handle || ('Project #' + projectId), byChain: byChain };
   })();
   _splitProjCache[key] = p;
   return p;
@@ -4047,9 +4027,7 @@ function splitAccountNode(sp, project, chainId, opts) {
     link.href = '#' + slugForChain(chainId) + ':' + pid + '/overview';
     link.textContent = 'Project #' + pid;
     node.appendChild(link);
-    // Use the current controller URI directly for the visible label. Cross-chain resolution also talks to the
-    // indexer and can take longer; it remains part of the edit/validation path, not the dashboard's critical path.
-    onchainSplitProjectInfo(pid, chainId).then(function (info) {
+    preferredSplitProjectInfo(pid, chainId).then(function (info) {
       if (info && info.name && link.isConnected) link.textContent = info.name + ' · #' + pid;
     }).catch(function () {});
 
@@ -4284,8 +4262,128 @@ async function controllerMapFor(chains, projectId) {
   return map;
 }
 
-// Fetch the full project record from chain (+ IPFS metadata). Never throws — missing
-// pieces come back null so a single failed read can't blank the whole card.
+var _bendystrawProjectRecordCache = {};
+var _preferredProjectMetadataCache = {};
+var INDEXED_PROJECT_METADATA_FIELDS = [
+  'name', 'description', 'projectTagline', 'logoUri', 'coverImageUri', 'infoUri', 'payDisclosure',
+  'twitter', 'farcaster', 'discord', 'telegram', 'domain', 'tags', 'tokens',
+];
+
+function parsedJsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return Object.assign({}, value);
+  if (typeof value === 'string' && value.trim()) {
+    try {
+      var parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch (_) {}
+  }
+  return null;
+}
+
+// Normalize Bendystraw's complete parsed metadata JSON, filling any absent searchable fields from the row.
+// `hasEmbeddedMetadata` distinguishes the complete JSON from a row containing only denormalized columns.
+export function projectMetadataFromBendystraw(row) {
+  if (!row) return null;
+  var embedded = parsedJsonObject(row.metadata);
+  var hasEmbedded = !!(embedded && Object.keys(embedded).length);
+  var meta = embedded ? Object.assign({}, embedded) : {};
+  INDEXED_PROJECT_METADATA_FIELDS.forEach(function (field) {
+    if (meta[field] == null && row[field] != null) meta[field] = row[field];
+  });
+  var hasValues = Object.keys(meta).some(function (key) { return meta[key] != null; });
+  if (!hasValues && !row.metadataUri && !row.handle) return null;
+  return {
+    uri: row.metadataUri || '',
+    metadata: meta,
+    handle: row.handle || null,
+    source: 'bendystraw',
+    hasEmbeddedMetadata: hasEmbedded,
+  };
+}
+
+function fetchBendystrawProjectRecord(id, chainId) {
+  var key = DISCOVER_NETWORK + ':' + chainId + ':' + id;
+  if (_bendystrawProjectRecordCache[key]) return _bendystrawProjectRecordCache[key];
+  _bendystrawProjectRecordCache[key] = optionalWithin(
+    bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
+      projectId: Number(id), chainId: Number(chainId), version: BENDYSTRAW_VERSION,
+    }).then(function (data) { return data && data.project || null; }).catch(function () { return null; }),
+    INDEXED_STATS_TIMEOUT_MS,
+    null
+  );
+  return _bendystrawProjectRecordCache[key];
+}
+
+async function fetchOnchainProjectMetadata(id, chainId) {
+  try {
+    var uri = await controllerRead(chainId, BigInt(id), uriOfAbi, 'uriOf', [BigInt(id)]);
+    if (!uri) return null;
+    var meta = await fetchMetadata(uri);
+    return meta ? { uri: uri, metadata: meta, handle: null, source: 'onchain', hasEmbeddedMetadata: true } : null;
+  } catch (_) { return null; }
+}
+
+// Project display metadata is indexed-first. If Bendystraw has only a URI, fetch that URI directly; only when
+// the indexed row/URI is absent or unusable do we ask the controller for its current URI.
+function fetchPreferredProjectMetadata(id, chainId) {
+  var key = DISCOVER_NETWORK + ':' + chainId + ':' + id;
+  if (_preferredProjectMetadataCache[key]) return _preferredProjectMetadataCache[key];
+  _preferredProjectMetadataCache[key] = (async function () {
+    var row = await fetchBendystrawProjectRecord(id, chainId);
+    var indexed = projectMetadataFromBendystraw(row);
+    if (indexed && indexed.hasEmbeddedMetadata) return indexed;
+    if (indexed && indexed.uri) {
+      var fetched = await fetchMetadata(indexed.uri).catch(function () { return null; });
+      if (fetched) {
+        return Object.assign({}, indexed, {
+          metadata: Object.assign({}, indexed.metadata || {}, fetched),
+          hasEmbeddedMetadata: true,
+        });
+      }
+    }
+    var fallback = await fetchOnchainProjectMetadata(id, chainId);
+    if (fallback && indexed) {
+      // Bendystraw remains primary for every field it has; the controller URI fills only missing indexed fields.
+      fallback.uri = indexed.uri || fallback.uri;
+      fallback.metadata = Object.assign({}, fallback.metadata || {}, indexed.metadata || {});
+      fallback.handle = indexed.handle || fallback.handle;
+      fallback.source = 'bendystraw';
+    }
+    return fallback || indexed;
+  })();
+  return _preferredProjectMetadataCache[key];
+}
+
+export function applyProjectMetadata(project, record) {
+  if (!project || !record || !record.metadata) return project;
+  var meta = record.metadata;
+  project.projectMetadata = meta;
+  project.projectMetadataSource = record.source || null;
+  project.metadataUri = record.uri || null;
+  project.handle = record.handle || null;
+  project.name = meta.name || null;
+  project.description = htmlToText(meta.description);
+  project.descriptionHtml = meta.description || null;
+  project.tagline = stripHtml(meta.projectTagline || meta.tagline) || null;
+  project.logoUri = meta.logoUri ? ipfsToHttp(meta.logoUri) : null;
+  project.coverImageUri = meta.coverImageUri ? ipfsToHttp(meta.coverImageUri) : null;
+  project.infoUri = meta.infoUri || meta.domain || null;
+  project.twitter = meta.twitter || null;
+  project.farcaster = meta.farcaster || null;
+  project.discord = meta.discord || null;
+  project.telegram = meta.telegram || null;
+  project.whatsapp = meta.whatsapp || null;
+  project.domain = meta.domain || null;
+  project.payDisclosure = meta.payDisclosure || null;
+  project.tags = Array.isArray(meta.tags) ? meta.tags : [];
+  project.tokens = Array.isArray(meta.tokens) ? meta.tokens : [];
+  project.metaSymbol = (meta.symbol || meta.ticker || '').toString().trim() || null;
+  project.storeCategories = (meta.storeCategories && typeof meta.storeCategories === 'object') ? meta.storeCategories : {};
+  return project;
+}
+
+// Fetch the full project record: Bendystraw-first display metadata/aggregates plus live contract state.
+// Never throws — missing pieces come back null so a single failed read can't blank the whole card.
 async function fetchProject(id, chainId) {
   var pid = BigInt(id);
   var project = {
@@ -4295,8 +4393,13 @@ async function fetchProject(id, chainId) {
     description: null,
     tagline: null,
     logoUri: null,
+    coverImageUri: null,
     infoUri: null,
     tags: [],
+    tokens: [],
+    metadataUri: null,
+    projectMetadata: null,
+    projectMetadataSource: null,
     owner: null,
     operator: null,
     tokenAddress: null,
@@ -4322,27 +4425,9 @@ async function fetchProject(id, chainId) {
   jobs.push(fetchProjectIndexedStats(id, chainId)
     .then(function (s) { if (s) project.indexedStats = s; }));
 
-  jobs.push(controllerRead(chainId, pid, uriOfAbi, 'uriOf', [pid])
-    .then(async function (uri) {
-      if (!uri) return;
-      var meta = await fetchMetadata(uri);
-      if (!meta) return;
-      project.name = meta.name || null;
-      project.description = htmlToText(meta.description);
-      project.descriptionHtml = meta.description || null; // raw rich-text (HTML) — rendered with list/paragraph structure
-      project.tagline = stripHtml(meta.projectTagline || meta.tagline) || null;
-      project.logoUri = meta.logoUri ? ipfsToHttp(meta.logoUri) : null;
-      project.infoUri = meta.infoUri || null;
-      project.twitter = meta.twitter || null;
-      project.discord = meta.discord || null;
-      project.telegram = meta.telegram || null;
-      project.tags = Array.isArray(meta.tags) ? meta.tags : [];
-      // Off-chain display symbol from the project URI (custom projects with no ERC-20 yet). Used only as
-      // a fallback — a deployed ERC-20's on-chain symbol wins (resolved after all reads, below).
-      project.metaSymbol = (meta.symbol || meta.ticker || '').toString().trim() || null;
-      // Operator-defined names for 721 store categories: { "1": "Memberships", … } (category 0 = Default).
-      project.storeCategories = (meta.storeCategories && typeof meta.storeCategories === 'object') ? meta.storeCategories : {};
-    }).catch(function () {}));
+  jobs.push(fetchPreferredProjectMetadata(id, chainId)
+    .then(function (record) { if (record) applyProjectMetadata(project, record); })
+    .catch(function () {}));
 
   var revOwnerAddr = getAddress('REVOwner', chainId);
   jobs.push(read(chainId, 'JBProjects', ownerOfAbi, 'ownerOf', [pid])
@@ -4420,9 +4505,9 @@ async function fetchProject(id, chainId) {
   // Symbol priority: deployed ERC-20 symbol (authoritative) → off-chain projectUri symbol (credits-only
   // custom projects). Resolved here, after both the token-of read and the metadata fetch have settled.
   if (!project.tokenSymbol && project.metaSymbol) project.tokenSymbol = project.metaSymbol;
-  // Name priority: on-chain ERC-20 name (V6, authoritative) → IPFS metadata name → symbol → id.
-  if (project.tokenName) project.name = project.tokenName;
-  else if (!project.name) project.name = project.tokenSymbol ? (project.tokenSymbol) : ('Project #' + id);
+  // Project metadata owns the project name. The ERC-20 name, handle, symbol, and id are progressively weaker
+  // fallbacks for projects whose indexed and on-chain URI metadata are both absent.
+  if (!project.name) project.name = project.handle || project.tokenName || project.tokenSymbol || ('Project #' + id);
   return project;
 }
 
@@ -4627,6 +4712,7 @@ function renderSkeletonCard() {
 
 function renderProjectCard(project) {
   var card = el('div', 'discover-card');
+  card.dataset.metadataSource = project.projectMetadataSource || 'none';
   card.style.cursor = 'pointer';
   card.addEventListener('click', function () { showProjectDetail(project); });
 
@@ -4758,6 +4844,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // `detail-spacious`: juicy-vision-style low-border layout — drop the boxed cards in favor of whitespace,
   // a single column divider, and thin section separators.
   var wrap = el('div', 'project-detail detail-spacious');
+  wrap.dataset.metadataSource = project.projectMetadataSource || 'none';
   var nftCart = makeNftCart(); // shared between the Pay-card strip and the Shop tab
 
   var back = document.createElement('button');
@@ -12165,8 +12252,11 @@ function detailSubSection(title, contentNode) {
   return s;
 }
 
-var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float!, $version: Float!) { '
-  + 'project(projectId: $projectId, chainId: $chainId, version: $version) { suckerGroupId tokenSupply volume volumeUsd paymentsCount contributorsCount } }';
+export var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float!, $version: Float!) { '
+  + 'project(projectId: $projectId, chainId: $chainId, version: $version) { '
+  + 'suckerGroupId tokenSupply volume volumeUsd paymentsCount contributorsCount '
+  + 'metadataUri metadata handle name description projectTagline logoUri coverImageUri infoUri payDisclosure '
+  + 'tags twitter farcaster discord telegram domain tokens } }';
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($id: String!) { '
   + 'suckerGroup(id: $id) { volume volumeUsd paymentsCount contributorsCount balance tokenSupply } }';
@@ -12614,11 +12704,7 @@ async function resolveBendystrawSuckerGroupId(project, chainIds) {
   }
   chainIds.forEach(addChain);
   var rows = await Promise.all(queryChainIds.map(function (chainId) {
-    return bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
-      projectId: Number(project.id),
-      chainId: Number(chainId),
-      version: BENDYSTRAW_VERSION,
-    }).then(function (data) { return data && data.project; }).catch(function () { return null; });
+    return fetchBendystrawProjectRecord(project.id, chainId);
   }));
   for (var i = 0; i < rows.length; i++) {
     if (rows[i] && rows[i].suckerGroupId) return rows[i].suckerGroupId;
@@ -12718,12 +12804,8 @@ async function fetchSwapHistory(project) {
 // project row. Returns null on any failure — never fabricates.
 async function fetchProjectIndexedStats(id, chainId) {
   try {
-    var data = await optionalWithin(bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
-      projectId: Number(id),
-      chainId: Number(chainId),
-      version: BENDYSTRAW_VERSION,
-    }), INDEXED_STATS_TIMEOUT_MS, null);
-    var p = data && data.project;
+    // Shared with the metadata loader so every card makes one project-row request, not separate metadata/stats calls.
+    var p = await fetchBendystrawProjectRecord(id, chainId);
     if (!p) return null;
     var stats = {
       volume: p.volume,

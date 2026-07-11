@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { encodedIpfsCandidates, fetchMetadata, ipfsGatewayUrls, ipfsToHttp } from '../src/discover.js';
+import {
+  BENDYSTRAW_PROJECT_QUERY,
+  applyProjectMetadata,
+  encodedIpfsCandidates,
+  fetchMetadata,
+  ipfsGatewayUrls,
+  ipfsToHttp,
+  projectMetadataFromBendystraw,
+} from '../src/discover.js';
 
 describe('IPFS metadata fetches', () => {
   beforeEach(() => {
@@ -50,5 +58,75 @@ describe('IPFS metadata fetches', () => {
       'ipfs://Qmb7EZvTHUeVTDi6YmwDFQvKEfCR4UGciUka24coJcNJzS',
       'ipfs://bafkreif5xakuko65fh226ynfihtdqlt2vtuga5vjxi6kh5vtxx34lcvcp4',
     ]);
+  });
+});
+
+describe('Bendystraw-first project metadata', () => {
+  it('requests the parsed JSON and every project metadata field used by Discovery', () => {
+    ['metadataUri', 'metadata', 'name', 'description', 'projectTagline', 'logoUri', 'infoUri', 'tags'].forEach((field) => {
+      expect(BENDYSTRAW_PROJECT_QUERY).toContain(field);
+    });
+  });
+
+  it('prefers the complete indexed JSON and fills fields it omits from searchable columns', () => {
+    const record = projectMetadataFromBendystraw({
+      metadataUri: 'ipfs://bafyproject',
+      metadata: { name: 'Indexed JSON name', logoUri: 'ipfs://bafylogo', symbol: 'META', storeCategories: { 1: 'Bounties' } },
+      name: 'Denormalized name',
+      description: 'Indexed description',
+      projectTagline: 'Indexed tagline',
+      handle: 'indexed-handle',
+    });
+    expect(record).toMatchObject({
+      uri: 'ipfs://bafyproject',
+      handle: 'indexed-handle',
+      source: 'bendystraw',
+      hasEmbeddedMetadata: true,
+      metadata: {
+        name: 'Indexed JSON name',
+        description: 'Indexed description',
+        projectTagline: 'Indexed tagline',
+        logoUri: 'ipfs://bafylogo',
+        symbol: 'META',
+        storeCategories: { 1: 'Bounties' },
+      },
+    });
+  });
+
+  it('normalizes searchable columns when parsed JSON is unavailable', () => {
+    expect(projectMetadataFromBendystraw({ name: 'Indexed fallback', logoUri: 'ipfs://bafylogo' })).toMatchObject({
+      source: 'bendystraw',
+      hasEmbeddedMetadata: false,
+      metadata: { name: 'Indexed fallback', logoUri: 'ipfs://bafylogo' },
+    });
+    expect(projectMetadataFromBendystraw(null)).toBeNull();
+  });
+
+  it('applies indexed metadata consistently to cards, details, shop categories, and edit prefills', () => {
+    const project = applyProjectMetadata({}, {
+      uri: 'ipfs://bafyproject',
+      source: 'bendystraw',
+      handle: 'indexed-handle',
+      metadata: {
+        name: 'Bounty 1',
+        description: 'A useful project',
+        projectTagline: 'Public bounties',
+        logoUri: 'ipfs://bafylogo',
+        symbol: 'BEN1',
+        payDisclosure: 'Include a public link.',
+        storeCategories: { 1: 'Entries' },
+      },
+    });
+    expect(project).toMatchObject({
+      name: 'Bounty 1',
+      description: 'A useful project',
+      tagline: 'Public bounties',
+      logoUri: 'https://gateway.pinata.cloud/ipfs/bafylogo',
+      metaSymbol: 'BEN1',
+      metadataUri: 'ipfs://bafyproject',
+      projectMetadataSource: 'bendystraw',
+      payDisclosure: 'Include a public link.',
+      storeCategories: { 1: 'Entries' },
+    });
   });
 });
