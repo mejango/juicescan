@@ -2045,7 +2045,9 @@ function normalizeProjectPayerMetadata(metadata) {
 export function buildProjectPayerDeployArgs(projectId, beneficiary, memo, metadata, addToBalance, owner) {
   if (projectId == null || String(projectId) === '') throw new Error('Missing project ID');
   if (!isAddr(beneficiary)) throw new Error('Missing default beneficiary');
-  if (!isAddr(owner) || String(owner).toLowerCase() === ZERO_ADDRESS.toLowerCase()) throw new Error('Missing payer owner');
+  // A zero owner intentionally makes the payer immutable. The Extras form defaults to this safer, simpler mode;
+  // users explicitly opt into an editable payer and provide a nonzero address admin.
+  if (!isAddr(owner)) throw new Error('Missing payer owner');
   return [BigInt(projectId), beneficiary, String(memo || ''), normalizeProjectPayerMetadata(metadata), !!addToBalance, owner];
 }
 export function buildProjectPayerDeployCall(chainId, projectId, beneficiary, memo, metadata, addToBalance, owner) {
@@ -9342,10 +9344,10 @@ export async function buildProjectCreateDraft(project) {
 
 function renderProjectDraftExport(project) {
   var card = el('div', 'detail-card extras-export-card');
-  var title = el('div', 'detail-card-title'); title.textContent = 'Reuse this project'; card.appendChild(title);
+  var title = el('div', 'detail-card-title'); title.textContent = 'Copy this project'; card.appendChild(title);
   var body = el('div', 'detail-card-body extras-body');
   var intro = el('div', 'extras-payer-copy');
-  intro.textContent = 'Export the project’s verified live setup as a .jb draft, then import it in New project and edit before deploying.';
+  intro.textContent = 'Take the project’s configuration as a .jb draft, import it when creating a new project, and make any edits you want before deploying.';
   body.appendChild(intro);
   var status = el('div', 'operator-edit-status'); body.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
@@ -9449,7 +9451,12 @@ function renderExtrasSection(project) {
   memoInput.value = '';
   body.appendChild(memoInput);
 
-  var ownerLabel = el('div', 'operator-edit-label extras-label'); ownerLabel.textContent = 'Address admin'; body.appendChild(ownerLabel);
+  var editableRow = el('label', 'extras-checkbox-row extras-editable-row');
+  var editableCb = document.createElement('input'); editableCb.type = 'checkbox'; editableCb.checked = false;
+  editableRow.appendChild(editableCb);
+  var editableText = el('span'); editableText.textContent = 'Editable'; editableRow.appendChild(editableText);
+  body.appendChild(editableRow);
+  var ownerFields = el('div', 'extras-conditional-fields extras-owner-fields');
   var ownerShared = el('div', 'extras-shared-address');
   var ownerInput = el('input', 'operator-edit-jwt extras-address');
   ownerInput.type = 'text';
@@ -9457,7 +9464,7 @@ function renderExtrasSection(project) {
   ownerInput.value = getAccount() || '';
   ownerShared.appendChild(ownerInput);
   var ownerHint = el('div', 'operator-edit-token-name'); ownerShared.appendChild(ownerHint);
-  body.appendChild(ownerShared);
+  ownerFields.appendChild(ownerShared);
   var ownerValueOf = attachAddressRecognition(ownerInput, ownerHint, project.chainId, {
     label: 'Address admin',
     zeroLabel: 'Zero address cannot administer the payer',
@@ -9472,10 +9479,20 @@ function renderExtrasSection(project) {
     onOpen: function () { ownerShared.style.display = 'none'; },
     onClose: function () { ownerShared.style.display = ''; },
   });
-  body.appendChild(ownerPerChain.node);
+  ownerFields.appendChild(ownerPerChain.node);
   var ownerExplainer = el('div', 'extras-payer-sub');
   ownerExplainer.textContent = 'The address admin can change this payer’s settings later. It does not receive payments or control the project.';
-  body.appendChild(ownerExplainer);
+  ownerFields.appendChild(ownerExplainer);
+  body.appendChild(ownerFields);
+  var immutableExplainer = el('div', 'extras-payer-sub');
+  immutableExplainer.textContent = 'Off by default: no address admin, so this payer’s settings cannot be changed later.';
+  body.appendChild(immutableExplainer);
+  function syncEditableFields() {
+    ownerFields.style.display = editableCb.checked ? '' : 'none';
+    immutableExplainer.style.display = editableCb.checked ? 'none' : '';
+  }
+  editableCb.addEventListener('change', syncEditableFields);
+  syncEditableFields();
 
   var advanced = document.createElement('details');
   advanced.className = 'extras-more';
@@ -9552,12 +9569,12 @@ function renderExtrasSection(project) {
     (async function () {
       if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
       if (!account) { setStatus('Connect a wallet to deploy payer addresses.', 'error'); return; }
-      if (!ownerInput.value.trim()) {
+      if (editableCb.checked && !ownerInput.value.trim()) {
         ownerInput.value = account;
         ownerInput.dispatchEvent(new Event('input'));
       }
       var beneficiary = originalCb.checked ? ZERO_ADDRESS : beneficiaryPerChain.snapshot();
-      var payerOwner = ownerPerChain.snapshot();
+      var payerOwner = editableCb.checked ? ownerPerChain.snapshot() : ZERO_ADDRESS;
       var metadata = normalizeProjectPayerMetadata(metadataInput.value);
       var addToBalance = modeSelect.value === 'balance';
       setStatus('Preparing payer deploys...', 'pending');
@@ -9565,6 +9582,9 @@ function renderExtrasSection(project) {
         var cid = chain.id;
         var ben = materializeChainValue(beneficiary, cid);
         var own = materializeChainValue(payerOwner, cid);
+        if (editableCb.checked && String(own).toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
+          throw new Error('Editable payers need a nonzero address admin on ' + (chain.name || chainNameOf(cid)) + '.');
+        }
         return buildProjectPayerDeployCall(cid, project.id, ben, memoInput.value, metadata, addToBalance, own);
       });
       if (calls.length === 1 && !forceRelayr) {
@@ -16674,7 +16694,14 @@ function attachCardPromptLinks(contentArea) {
     var t = card.querySelector('.detail-card-title');
     var title = t ? (t.textContent || '').trim().split('\n')[0]
       : (card.classList.contains('you-card') ? 'Your holdings & actions' : 'this section');
-    card.appendChild(discoverPromptFoot(title));
+    // Put the footer inside the card's content box when it has one. That keeps the prompt's right edge aligned
+    // with inputs, tables, and action rows instead of the outer card edge on wide/max-width layouts.
+    var cardBody = Array.prototype.find.call(card.children, function (child) {
+      return child.classList && child.classList.contains('detail-card-body');
+    });
+    // Some cards use a short `.detail-card-body` only as an intro and append tables/rows after it. Keep those
+    // footers at card level so they remain last; only nest when the body is the card's actual content wrapper.
+    (cardBody && card.lastElementChild === cardBody ? cardBody : card).appendChild(discoverPromptFoot(title));
   };
   var scan = function (root) {
     if (!root.querySelectorAll) return;

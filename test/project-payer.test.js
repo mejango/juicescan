@@ -9,10 +9,10 @@ const BASE_SEPOLIA_PROJECT_PAYER_DEPLOYER = '0x7321740fd0dcf73dd3e2aa8fc060454ab
 const BASE_SEPOLIA_ERC2771_FORWARDER = '0x3ba60b60933916a7c87d0860dcee62a0ce34e3e2';
 
 describe('buildProjectPayerDeployArgs', () => {
-  it('defaults safely to pay mode with zero beneficiary preserved', () => {
-    const args = buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, OWNER);
+  it('defaults safely to pay mode with zero beneficiary and immutable owner preserved', () => {
+    const args = buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, ZERO);
 
-    expect(args).toEqual([8n, ZERO, '', '0x', false, OWNER]);
+    expect(args).toEqual([8n, ZERO, '', '0x', false, ZERO]);
   });
 
   it('allows a custom beneficiary, metadata, add-to-balance mode, and owner', () => {
@@ -21,9 +21,10 @@ describe('buildProjectPayerDeployArgs', () => {
     expect(args).toEqual([8n, BENEFICIARY, 'memo', '0x1234', true, OWNER]);
   });
 
-  it('rejects invalid metadata and zero owner', () => {
+  it('rejects invalid metadata and malformed owners while allowing the zero owner', () => {
     expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x123', false, OWNER)).toThrow(/Metadata/);
-    expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, ZERO)).toThrow(/owner/);
+    expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, ZERO)).not.toThrow();
+    expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, 'not-an-address')).toThrow(/owner/);
   });
 
   it('uses raw Relayr entries for permissionless payer deploys, not ERC-2771 forwarding', () => {
@@ -43,6 +44,7 @@ describe('project payer build prompt', () => {
 
     expect(prompt).toContain('JBProjectPayerDeployer.deployProjectPayer');
     expect(prompt).toContain('defaultAddToBalance=false');
+    expect(prompt).toContain('zero address admin');
     expect(prompt).toContain('Bendystraw');
   });
 });
