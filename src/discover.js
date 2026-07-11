@@ -9347,7 +9347,7 @@ function renderProjectDraftExport(project) {
   var title = el('div', 'detail-card-title'); title.textContent = 'Copy this project'; card.appendChild(title);
   var body = el('div', 'detail-card-body extras-body');
   var intro = el('div', 'extras-payer-copy');
-  intro.textContent = 'Take the project’s configuration as a .jb draft, import it when creating a new project, and make any edits you want before deploying.';
+  intro.textContent = 'Take the project’s configuration as a .jb file, import it when creating a new project, and make any edits you want before deploying.';
   body.appendChild(intro);
   var status = el('div', 'operator-edit-status'); body.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
