@@ -43,6 +43,13 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     check('create flow shows 5 steps (Flavor/Basics/Rulesets/Shop/Deploy)',
       steps.length === 5 && steps.includes('Flavor') && steps.includes('Basics') && steps.includes('Deploy'), JSON.stringify(steps));
 
+    // 2b. The paste action consumes the same plain JSON stored in/exported by a .jb file.
+    await Q(page, '() => { [...document.querySelectorAll(".create-head button")].find(b=>/paste JSON/i.test(b.textContent)).click(); return 1; }');
+    await page.waitForTimeout(250);
+    const pasteImported = await Q(page, '() => { const ta=document.querySelector(".create-json-import-input"); const draft=JSON.parse(localStorage.getItem("jb-create-draft")); draft.details.name="Imported .jb"; ta.value=JSON.stringify(draft); ta.dispatchEvent(new Event("input",{bubbles:true})); [...document.querySelectorAll(".create-json-import-actions button")].find(b=>/Use this JSON/i.test(b.textContent)).click(); return JSON.parse(localStorage.getItem("jb-create-draft")).details.name; }');
+    await page.waitForTimeout(250);
+    check('create flow pastes the existing .jb JSON format', pasteImported === 'Imported .jb', pasteImported);
+
     // 3. Accounting offers ETH / USDC / Custom; custom is exclusive.
     const pills = await Q(page, '() => [...document.querySelectorAll(".create-pill")].map(p=>p.textContent.trim())');
     check('accounting offers ETH/USDC/Custom pills', ['ETH', 'USDC', 'Custom'].every(x => pills.includes(x)), JSON.stringify(pills));
@@ -64,8 +71,8 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     await freshCreateFlow(page, 505);
     await Q(page, '() => { const d=[...document.querySelectorAll(".create-step-label")].find(x=>/Deploy/i.test(x.textContent||"")); if(d)d.click(); return 1; }');
     await page.waitForTimeout(1100);
-    const deployNotes = await Q(page, '() => { const launch=[...document.querySelectorAll(".create-step button")].find(b=>/Launch|Deploy/i.test(b.textContent)); const notes=[...document.querySelectorAll(".create-step .create-hint, .create-step .create-banner")].map(h=>h.textContent.trim()).filter(Boolean); return { disabled: launch?launch.disabled:null, hasNameReason: notes.some(n=>/project name/i.test(n)), hasTosReason: notes.some(n=>/box above/i.test(n)) }; }');
-    check('deploy launch button disabled with explained reasons', deployNotes.disabled === true && deployNotes.hasNameReason && deployNotes.hasTosReason, JSON.stringify(deployNotes));
+    const deployNotes = await Q(page, '() => { const launch=[...document.querySelectorAll(".create-step button")].find(b=>/^Launch|^Deploy/.test(b.textContent)); const hasExport=[...document.querySelectorAll(".create-step button")].some(b=>b.textContent.trim()==="Export .jb"); const notes=[...document.querySelectorAll(".create-step .create-hint, .create-step .create-banner")].map(h=>h.textContent.trim()).filter(Boolean); return { disabled: launch?launch.disabled:null, hasExport, hasNameReason: notes.some(n=>/project name/i.test(n)), hasTosReason: notes.some(n=>/box above/i.test(n)) }; }');
+    check('deploy launch button disabled with explained reasons + pre-deploy .jb export', deployNotes.disabled === true && deployNotes.hasExport && deployNotes.hasNameReason && deployNotes.hasTosReason, JSON.stringify(deployNotes));
 
     // 6. Ruleset approval condition: renamed, offers a Custom address shown inline beside the dropdown.
     await freshCreateFlow(page, 507);

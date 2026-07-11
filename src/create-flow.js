@@ -442,6 +442,11 @@ function initState() {
   };
 }
 
+// Public constructor for integrations which need to produce a create-flow draft (for example the
+// existing-project ".jb" export action). Callers fill verified values over these defaults, then pass the
+// result through createDraftObject; imported values still cross the normal whitelist/normalization path.
+export function newCreateDraftState() { return initState(); }
+
 // ---------------------------------------------------------------------------
 // Draft persistence + .jb import/export
 // ---------------------------------------------------------------------------
@@ -461,19 +466,118 @@ function sanitizeState(state) {
   return c;
 }
 
-// Merge a loaded/imported draft over the current defaults (tolerant of schema drift + partial files).
+function cloneDraftValue(value) {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function mergeKnownDraftFields(defaults, input) {
+  var out = Object.assign({}, defaults);
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  Object.keys(defaults).forEach(function (key) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) out[key] = cloneDraftValue(input[key]);
+  });
+  return out;
+}
+
+function normalizeImportedStage(value) {
+  var stage = mergeKnownDraftFields(createStage(), value);
+  ['reservedRecipients', 'autoIssuances', 'payoutRecipients'].forEach(function (key) {
+    if (!Array.isArray(stage[key])) stage[key] = [];
+    else stage[key] = stage[key].slice(0, 100);
+  });
+  if (!stage.payoutByKind || typeof stage.payoutByKind !== 'object' || Array.isArray(stage.payoutByKind)) stage.payoutByKind = {};
+  return stage;
+}
+
+function normalizeImportedItem(value) {
+  var item = mergeKnownDraftFields(itemDraft(), value);
+  item.flags = mergeKnownDraftFields(itemDraft().flags, value && value.flags);
+  item.splitRecipients = Array.isArray(item.splitRecipients) ? item.splitRecipients.slice(0, 100) : [];
+  return item;
+}
+
+// Merge a loaded/imported draft over current defaults. Only known fields cross the boundary; arrays and chain
+// selections are bounded/normalized before they can reach a transaction builder.
 function mergeDraft(obj) {
-  if (!obj || typeof obj !== 'object') return null;
-  var s = Object.assign(initState(), obj);
-  Object.keys(s).forEach(function (k) { if (k.charAt(0) === '_') delete s[k]; }); // drop stale transient flags
-  s.details = Object.assign(initState().details, obj.details || {});
-  s.collection = Object.assign(initState().collection, obj.collection || {});
-  s.customToken = Object.assign(initState().customToken, obj.customToken || {}); // tolerate partial/missing custom token
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  var defaults = initState();
+  var s = mergeKnownDraftFields(defaults, obj);
+  s.projectType = obj.projectType === 'revnet' ? 'revnet' : 'custom';
+  s.network = obj.network === 'testnet' ? 'testnet' : 'mainnet';
+  s.details = mergeKnownDraftFields(defaults.details, obj.details);
+  s.details.tags = Array.isArray(s.details.tags) ? s.details.tags.slice(0, 50).map(String) : [];
+  s.collection = mergeKnownDraftFields(defaults.collection, obj.collection);
+  s.customToken = mergeKnownDraftFields(defaults.customToken, obj.customToken);
   if (s.customToken.status === 'loading') s.customToken.status = 'idle'; // never import a stuck in-flight lookup (re-verified on import)
+  s.stages = (Array.isArray(obj.stages) && obj.stages.length ? obj.stages : defaults.stages).slice(0, 20).map(normalizeImportedStage);
+  s.nfts = (Array.isArray(obj.nfts) ? obj.nfts : []).slice(0, 100).map(normalizeImportedItem);
+  s.storeCategories = (Array.isArray(obj.storeCategories) ? obj.storeCategories : []).slice(0, 255).map(function (entry) {
+    return { id: Number(entry && entry.id), name: String(entry && entry.name || '').trim() };
+  }).filter(function (entry) { return Number.isSafeInteger(entry.id) && entry.id > 0 && entry.name; });
+  var allowedChains = CHAIN_PAIRS.map(function (pair) { return s.network === 'testnet' ? pair.testnet : pair.canon; });
+  var seenChains = {};
+  s.chainIds = (Array.isArray(obj.chainIds) ? obj.chainIds : []).map(Number).filter(function (chainId) {
+    if (allowedChains.indexOf(chainId) === -1 || seenChains[chainId]) return false;
+    seenChains[chainId] = true; return true;
+  });
+  if (!s.chainIds.length) s.chainIds = allowedChains;
+  var seenAccepts = {};
+  s.accepts = (Array.isArray(obj.accepts) ? obj.accepts : defaults.accepts).filter(function (token) {
+    if (['eth', 'usdc', 'custom'].indexOf(token) === -1 || seenAccepts[token]) return false;
+    seenAccepts[token] = true; return true;
+  });
+  if (!s.accepts.length || (s.accepts.indexOf('custom') !== -1 && s.accepts.length !== 1)) s.accepts = ['eth'];
+  if (['native', 'ccip', 'both'].indexOf(s.suckerType) === -1) s.suckerType = 'both';
+  if (['wait', 'terminal', 'cycle'].indexOf(s.afterMode) === -1) s.afterMode = 'wait';
+  if (!s.perChain || typeof s.perChain !== 'object' || Array.isArray(s.perChain)) s.perChain = {};
+  Object.keys(s).forEach(function (k) { if (k.charAt(0) === '_') delete s[k]; });
   s.deploying = false; s.statusLines = []; s.done = false; delete s.deployed; s.quoteChoice = null;
   if (s.details) s.details.logoUploading = false;
   s.step = Math.max(0, Math.min(Number(s.step) || 0, stepsFor(s).length - 1));
   return s;
+}
+
+// The existing .jb file is the canonical interchange format: a plain, sanitized create-flow state object.
+// Keep this public so an existing project can be reconstructed from verified reads and exported identically.
+export function createDraftObject(state) { return sanitizeState(state); }
+
+function looksLikeCreateDraft(value) {
+  return !!(value && typeof value === 'object' && !Array.isArray(value)
+    && (value.projectType === 'custom' || value.projectType === 'revnet')
+    && value.details && typeof value.details === 'object'
+    && Array.isArray(value.stages) && Array.isArray(value.chainIds));
+}
+
+function unwrapCreateDraft(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (looksLikeCreateDraft(value)) return value;
+  return null;
+}
+
+// Accept the JSON contents of a .jb file, either directly or in a fenced JSON block. Returns a safe editable
+// state through the same whitelist used by file import; transaction calldata or unrelated JSON is rejected.
+export function parseCreateDraftJson(input) {
+  var candidates = [];
+  if (input && typeof input === 'object') candidates.push(input);
+  else {
+    var text = String(input || '').trim();
+    if (!text) throw new Error('Paste .jb JSON first.');
+    if (text.length > 2000000) throw new Error('The .jb JSON is too large.');
+    try { candidates.push(JSON.parse(text)); } catch (_) {}
+    var blocks = /```(?:json)?\s*([\s\S]*?)```/gi, match;
+    while ((match = blocks.exec(text))) { try { candidates.push(JSON.parse(match[1])); } catch (_) {} }
+  }
+  for (var i = 0; i < candidates.length; i++) {
+    var draft = unwrapCreateDraft(candidates[i]);
+    if (!draft) continue;
+    var merged = mergeDraft(draft);
+    if (!merged) continue;
+    merged.step = 0;
+    merged.tos = false; // every new deployment must re-acknowledge the risk confirmation
+    return merged;
+  }
+  throw new Error('No Juicebox V6 .jb draft was found. Paste the JSON contents of an exported .jb file.');
 }
 
 function saveDraft(state) { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(sanitizeState(state))); } catch (_) {} }
@@ -481,9 +585,9 @@ function loadDraft() { try { var r = localStorage.getItem(DRAFT_KEY); return r ?
 function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (_) {} }
 
 // Download the current draft as a `.jb` file (plain JSON) to save or share for review.
-function exportDraftFile(state) {
+export function exportDraftFile(state) {
   var nm = ((state.details && state.details.name) || 'project').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'project';
-  var blob = new Blob([JSON.stringify(sanitizeState(state), null, 2)], { type: 'application/json' });
+  var blob = new Blob([JSON.stringify(createDraftObject(state), null, 2)], { type: 'application/json' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a'); a.href = url; a.download = nm + '.jb';
   document.body.appendChild(a); a.click(); a.remove();
@@ -512,9 +616,7 @@ export function openCreateFlow() {
   document.addEventListener('keydown', onKey);
 
   // Replace the live state object's contents in place (render/handlers close over `state`), then re-render.
-  function applyImported(obj) {
-    var merged = mergeDraft(obj);
-    if (!merged) { alert('That doesn’t look like a valid .jb project file.'); return; }
+  function installImported(merged) {
     Object.keys(state).forEach(function (k) { if (k !== '_close') delete state[k]; });
     Object.assign(state, merged);
     render();
@@ -522,9 +624,16 @@ export function openCreateFlow() {
     if (customAccounting(state) && isAddr((state.customToken || {}).address)) lookupCustomToken(state, render);
     reresolveApproval(state, render); // re-resolve a custom approval-hook ENS name (cache isn't in the file)
   }
+  function applyImportedText(text) {
+    var merged = parseCreateDraftJson(text);
+    installImported(merged);
+  }
   function onImport(file) {
     var reader = new FileReader();
-    reader.onload = function () { try { applyImported(JSON.parse(String(reader.result))); } catch (_) { alert('Could not read that .jb file.'); } };
+    reader.onload = function () {
+      try { applyImportedText(String(reader.result)); }
+      catch (e) { alert((e && e.message) || 'Could not read that .jb file.'); }
+    };
     reader.onerror = function () { alert('Could not read that file.'); };
     reader.readAsText(file);
   }
@@ -532,7 +641,8 @@ export function openCreateFlow() {
 
   function render() {
     sheet.innerHTML = '';
-    sheet.appendChild(renderHeader(state, close, onImport, onExport));
+    sheet.appendChild(renderHeader(state, close, onImport, onExport, function () { state._pasteOpen = !state._pasteOpen; render(); }));
+    if (state._pasteOpen) sheet.appendChild(renderJsonImportPanel(state, applyImportedText, render));
     sheet.appendChild(renderStepper(state, render));
     var body = el('div', 'create-step');
     body.appendChild(renderStep(state, render));
@@ -549,7 +659,7 @@ export function openCreateFlow() {
   return { close: close };
 }
 
-function renderHeader(state, close, onImport, onExport) {
+function renderHeader(state, close, onImport, onExport, onPaste) {
   var head = el('div', 'create-head');
   var title = el('div', 'create-title');
   title.textContent = 'Create a project';
@@ -557,6 +667,10 @@ function renderHeader(state, close, onImport, onExport) {
 
   // .jb import/export — save the in-progress draft to a file, or load one (e.g. to share for review).
   var actions = el('div', 'create-head-actions');
+  var paste = el('button', 'create-io-btn'); paste.textContent = 'paste JSON';
+  paste.title = 'Paste the JSON contents of a Juicebox project draft (.jb)';
+  paste.disabled = !!state.deploying;
+  paste.addEventListener('click', function () { if (!state.deploying && onPaste) onPaste(); });
   var imp = el('button', 'create-io-btn'); imp.textContent = 'import';
   imp.title = 'Load a saved or shared project draft (.jb)';
   imp.disabled = !!state.deploying;
@@ -566,7 +680,7 @@ function renderHeader(state, close, onImport, onExport) {
   var exp = el('button', 'create-io-btn'); exp.textContent = 'export';
   exp.title = 'Download this draft as a .jb file to save or share for review';
   exp.addEventListener('click', function () { if (onExport) onExport(); });
-  actions.appendChild(imp); actions.appendChild(exp); actions.appendChild(fileIn);
+  actions.appendChild(paste); actions.appendChild(imp); actions.appendChild(exp); actions.appendChild(fileIn);
   head.appendChild(actions);
 
   var x = el('button', 'create-close');
@@ -575,6 +689,32 @@ function renderHeader(state, close, onImport, onExport) {
   x.addEventListener('click', function () { if (!state.deploying) close(); });
   head.appendChild(x);
   return head;
+}
+
+function renderJsonImportPanel(state, onImportText, render) {
+  var panel = el('div', 'create-json-import');
+  var label = el('label', 'create-json-import-label'); label.textContent = '.jb JSON'; panel.appendChild(label);
+  var hint = el('div', 'create-hint');
+  hint.textContent = 'Paste the JSON contents of an exported .jb file. It prepopulates an editable draft; transaction calldata and unrelated JSON are rejected.';
+  panel.appendChild(hint);
+  var input = el('textarea', 'create-json-import-input');
+  input.rows = 8; input.placeholder = '{\n  "projectType": "custom",\n  "details": { ... },\n  ...\n}';
+  input.spellcheck = false; input.value = state._pasteJsonText || '';
+  input.addEventListener('input', function () { state._pasteJsonText = input.value; });
+  panel.appendChild(input);
+  var status = el('div', 'create-json-import-status'); panel.appendChild(status);
+  var actions = el('div', 'create-json-import-actions');
+  var cancel = el('button', 'create-btn ghost small'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', function () { state._pasteOpen = false; delete state._pasteJsonText; render(); });
+  var load = el('button', 'create-btn primary small'); load.type = 'button'; load.textContent = 'Use this JSON';
+  load.addEventListener('click', function () {
+    status.textContent = '';
+    try { onImportText(input.value); }
+    catch (e) { status.textContent = (e && e.message) || 'Could not import this create JSON.'; }
+  });
+  actions.appendChild(cancel); actions.appendChild(load); panel.appendChild(actions);
+  setTimeout(function () { if (input.isConnected) input.focus(); }, 0);
+  return panel;
 }
 
 function renderStepper(state, render) {
@@ -2812,6 +2952,12 @@ function renderDeploy(state, render) {
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
   var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
+  var exportBeforeDeploy = el('button', 'create-btn ghost big create-predeploy-export');
+  exportBeforeDeploy.type = 'button'; exportBeforeDeploy.textContent = 'Export .jb';
+  exportBeforeDeploy.title = 'Save this exact editable project draft before deploying';
+  exportBeforeDeploy.disabled = !!state.deploying;
+  exportBeforeDeploy.addEventListener('click', function () { exportDraftFile(state); });
+  wrap.appendChild(exportBeforeDeploy);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
     launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || bad !== -1;
@@ -3209,6 +3355,9 @@ function deploy(state, render) {
     if (res === false) { render(); return; } // user cancelled at the raw-data review — not a success
     state.done = true;
     state.statusLines.push({ text: 'All done.', ok: true });
+    // Discover owns its own on-chain/indexer caches. Tell it a project was created so it can switch to the
+    // deployed network, drop the old project count, and enumerate the new project immediately.
+    if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
     render();
   }).catch(function (e) {
     state.deploying = false;

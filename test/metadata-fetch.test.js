@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BENDYSTRAW_PROJECT_QUERY,
+  BENDYSTRAW_NFT_TIERS_QUERY,
   applyProjectMetadata,
   encodedIpfsCandidates,
   fetchMetadata,
@@ -65,6 +66,12 @@ describe('Bendystraw-first project metadata', () => {
   it('requests the parsed JSON and every project metadata field used by Discovery', () => {
     ['metadataUri', 'metadata', 'name', 'description', 'projectTagline', 'logoUri', 'infoUri', 'tags'].forEach((field) => {
       expect(BENDYSTRAW_PROJECT_QUERY).toContain(field);
+    });
+  });
+
+  it('requests Bendystraw tier metadata for shop names, descriptions, media, and category labels', () => {
+    ['nftTiers', 'tierId', 'metadata', 'resolvedUri', 'encodedIpfsUri', 'category', 'votingUnits'].forEach((field) => {
+      expect(BENDYSTRAW_NFT_TIERS_QUERY).toContain(field);
     });
   });
 
