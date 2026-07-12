@@ -6374,61 +6374,6 @@ function renderOtherInfoPanel(project) {
   return card;
 }
 
-// Operator-only: rotate the revnet's operator on the chosen chains, via relayr (REVOwner.setOperatorOf).
-function openTransferOperatorModal(project) {
-  var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
-  var operatorAddr = projectAuthorityAddress(project);
-  var allChains = (project.chains && project.chains.length)
-    ? project.chains
-    : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
-
-  var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to transfer the operator role.'));
-
-  var warn = el('div', 'operator-edit-across');
-  warn.textContent = 'Hands over operator control on the selected chains. Use the zero address to relinquish operator powers permanently. This does not move funds or change the rulesets.';
-  content.appendChild(warn);
-
-  var nlbl = el('div', 'operator-edit-label'); nlbl.style.marginTop = '12px'; nlbl.textContent = 'New operator'; content.appendChild(nlbl);
-  var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new operator address'; content.appendChild(addrInput);
-  var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
-  var operatorValueOf = attachAddressRecognition(addrInput, addrHint, project.chainId, { label: 'New operator' });
-
-  var clbl = el('div', 'operator-edit-label'); clbl.style.marginTop = '12px'; clbl.textContent = 'Apply on'; content.appendChild(clbl);
-  var chainBox = el('div', 'splits-edit-chains');
-  var chainChecks = allChains.map(function (c) {
-    var row = el('label', 'splits-edit-chain');
-    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true; cb.value = String(c.id);
-    row.appendChild(cb);
-    row.appendChild(chainLogo(c.id, c.name));
-    var nm = el('span'); nm.textContent = c.name || ('Chain ' + c.id); row.appendChild(nm);
-    chainBox.appendChild(row);
-    return { chain: c, cb: cb };
-  });
-  content.appendChild(chainBox);
-
-  var status = el('div', 'operator-edit-status'); content.appendChild(status);
-  var actions = el('div', 'operator-edit-actions');
-  var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Transfer operator';
-  actions.appendChild(submit);
-  content.appendChild(actions);
-
-  var modal = openModal('Transfer operator', content);
-  var setStatus = makeStatusSetter(status, 'operator-edit-status');
-  var busy = false;
-  submit.addEventListener('click', function (e) {
-    e.preventDefault();
-    if (busy) return;
-    var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
-    var nextOperator;
-    try { nextOperator = operatorValueOf(); } catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
-    submitTransferOperator(project, selected, operatorAddr, nextOperator, setStatus, modal).catch(function (err) {
-      busy = false; setStatus(errMessage(err, 'Transfer failed'), 'error');
-    });
-    busy = true;
-  });
-}
-
 // JBProjects is an ERC-721; project ownership transfers by moving the NFT.
 var jbProjectsTransferAbi = [{
   type: 'function', name: 'transferFrom', stateMutability: 'nonpayable', outputs: [],
@@ -6508,25 +6453,6 @@ function openTransferAuthorityModal(project, opts) {
       setTimeout(function () { modal.close(); }, 2400);
     })();
   });
-}
-
-async function submitTransferOperator(project, selectedChains, operatorAddr, newOperator, setStatus, modal) {
-  newOperator = (newOperator || '').trim();
-  if (!isAddr(newOperator)) { setStatus('Enter a valid 0x operator address', 'error'); return; }
-  if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
-  if (!account) return;
-
-  await runRelayrAcrossChains(selectedChains, account, function (cid) {
-    var revOwner = getAddress('REVOwner', cid);
-    if (!revOwner) throw new Error('No REVOwner on ' + (CHAINS[cid] && CHAINS[cid].name || cid));
-    return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [BigInt(project.id), newOperator] }) };
-  }, 500000n, setStatus, { label: 'Transfer operator', title: 'Confirm transfer operator' });
-
-  setStatus('Operator transferred on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '', 'success');
-  project.operator = newOperator;
-  var liveOp = document.querySelector('.info-operator-val'); if (liveOp) { liveOp.innerHTML = ''; liveOp.appendChild(fullAddressNode(newOperator, true, project.chainId)); }
-  setTimeout(function () { modal.close(); }, 1400);
 }
 
 // Operator-only: edit the project's identity metadata — name, tagline, logo, description, website and
@@ -16131,7 +16057,6 @@ function buildClaimModal(project, creditRows) {
 
   var table = el('div', 'claim-rows');
   creditRows.forEach(function (r) {
-    var acct = getAccount && getAccount();
     var rowEl = el('div', 'claim-row');
     var chainCell = el('span', 'claim-row-chain');
     chainCell.appendChild(chainLogo(r.id, r.name));
@@ -18426,7 +18351,6 @@ function renderGossipSection(project) {
   desc.textContent = "Each chain's cash out and loan availability depends on knowledge of the project's composition on other chains.";
   wrap.appendChild(desc); wrap.appendChild(box);
   var section = ownersCard('Gossip', wrap);
-  var sym = project.tokenSymbol || 'tokens';
   function fill() {
     Promise.all([fetchCrossChainKnowledge(project), fetchOps(project)]).then(async function (out) {
       if (!section.isConnected) return;
@@ -18610,16 +18534,6 @@ function readBridgeableBalance(project, chainId) {
     .catch(function () { return { verified: false, token: null, balance: null }; });
 }
 
-// claim(JBClaim{token, JBLeaf{index,beneficiary,projectTokenCount,terminalTokenAmount,metadata}, bytes32[32] proof})
-// Cross-chain accounting snapshot a sucker holds about its PEER (per-context oracle-free surplus). Read on
-// a chain's sucker, these report what that chain knows about the peer's supply + per-currency balance.
-var suckerPeerAbi = [
-  { type: 'function', name: 'peerChainTotalSupplyValue', stateMutability: 'view', inputs: [{ name: 'chainId', type: 'uint256' }],
-    outputs: [{ type: 'tuple', components: [{ name: 'value', type: 'uint256' }, { name: 'peerChainId', type: 'uint256' }, { name: 'snapshotTimestamp', type: 'uint256' }] }] },
-  { type: 'function', name: 'peerChainContextsOf', stateMutability: 'view', inputs: [{ name: 'chainId', type: 'uint256' }], outputs: [
-    { name: 'contexts', type: 'tuple[]', components: [{ name: 'currency', type: 'uint32' }, { name: 'decimals', type: 'uint8' }, { name: 'surplus', type: 'uint128' }, { name: 'balance', type: 'uint128' }] },
-    { name: 'snapshot', type: 'uint256' }] },
-];
 // syncAccountingData() snapshots the LOCAL chain's accounting and bridges it to the peer (payable AMB fee).
 var suckerSyncAbi = [{ type: 'function', name: 'syncAccountingData', stateMutability: 'payable', inputs: [], outputs: [] }];
 // Emitted on the SOURCE sucker each time a snapshot is pushed. We scan this (like the Movement table scans
@@ -19898,7 +19812,7 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
   var acct = getAccount();
   if (!acct) throw new Error('Connect a wallet');
   if (!prep.acct || acct.toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
-  var key = prep.key, posm = prep.posm;
+  var posm = prep.posm;
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet');
   var wc = await wallet.getChainId();

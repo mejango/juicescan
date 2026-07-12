@@ -57,8 +57,6 @@ var CHAIN_OPTIONS = [
   { id: 84532, name: 'Base Sepolia', testnet: true }, { id: 421614, name: 'Arb Sepolia', testnet: true },
 ];
 
-var L1_CHAINS = { 1: true, 11155111: true };
-
 // USDC per chain (for the "Accepts" accounting-context option). 6 decimals.
 var USDC_BY_CHAIN = {
   1: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 10: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
@@ -782,10 +780,6 @@ function customCurrencyId(state) { var a = state.customToken && state.customToke
 function customAcctSym(state) { return customAccounting(state) ? ((state.customToken && state.customToken.symbol) || 'TOKEN') : null; }
 function customAcctDecimals(state) { var d = state.customToken && state.customToken.decimals; return (d != null && !isNaN(Number(d))) ? Number(d) : 18; }
 function customReady(state) { return customAccounting(state) && isAddr(state.customToken && state.customToken.address) && state.customToken.status === 'ok'; }
-
-function tokenCurrencyIdFromAddress(token) {
-  try { return token ? Number(BigInt(token) & 0xffffffffn) : 0; } catch (_) { return 0; }
-}
 
 // Every JBFundAccessLimits amount uses the associated accounting token context's decimals. `currency` changes
 // the denomination and may trigger a price conversion, but it never changes the fixed-point scale. Thus both
@@ -1672,12 +1666,9 @@ function recipLabel(rec) {
   return 'owner';
 }
 
-// Capitalized bullet strings for a stage (no leading "• "). stageSummary joins them for the card head.
+// Capitalized bullet strings for a stage (no leading "• ").
 function stageSummaryParts(stage, idx, state) {
   return stageSummaryRaw(stage, idx, state).map(function (p) { return p ? p.charAt(0).toUpperCase() + p.slice(1) : p; });
-}
-function stageSummary(stage, idx, state) {
-  return stageSummaryParts(stage, idx, state).map(function (p) { return '• ' + p; }).join('\n');
 }
 // Render bullets as per-line divs with a hanging indent, so a wrapped line aligns under the text
 // (after the "• "), not under the bullet.

@@ -1130,23 +1130,6 @@ export function simulateTransaction(opts) {
   });
 }
 
-// --- Decimals lookup ---
-
-export function lookupDecimals(chainId, tokenAddr, callback) {
-  var client = createPublicClientForChain(chainId);
-  if (!client) { callback(null); return; }
-  client.readContract({
-    address: tokenAddr,
-    abi: erc20DecimalsAbi,
-    functionName: 'decimals',
-    args: [],
-  }).then(function(result) {
-    callback(Number(result));
-  }).catch(function() {
-    callback(null);
-  });
-}
-
 // --- Component wrapper factory ---
 
 // Each component → the code file + contract function + a plain-English account of what it does and the
@@ -1186,8 +1169,6 @@ COMPONENT_SPECS['queue-ruleset'].desc = "Queues future rulesets with exact ABI t
 COMPONENT_SPECS.loan.desc = "Opens or repays a REVLoans position using REVLoan.sourceToken. The modal lists every accepted accounting context, quotes borrowableAmountFrom in the chosen token's real decimals/currency, and sets minBorrowAmount to 99% of a fresh submit-time quote. Repayment rereads the on-chain loan and current source fee, supports native and ERC-20 sources (direct ERC-20 allowance), adds a bounded two-minute fee-drift guard, and relies on REVLoans to refund unused native or token funds.";
 COMPONENT_SPECS.move.desc = "Moves a project's claimed ERC-20 tokens through a verified JBSucker route. Before prepare(), the modal verifies the sucker's project id, bridge infrastructure, source-to-destination backing-token mapping, destination accounting context, and a live terminal cash-out preview. Positive backing uses a 99% minTokensReclaimed floor; an exact zero-backing preview is allowed only with an explicit warning because the identical project-token count is still minted remotely. The ERC-20 approval and exact prepare call are simulated before signing. toRemote() is a separate batched action; its registry and transport payment is discovered by simulating the selected verified native or CCIP sucker, and an unverified route blocks instead of being guessed as native.";
 COMPONENT_SPECS['add-liquidity'].desc = "Adds or removes a Uniswap V4 concentrated-liquidity position in the project's live buyback pool. The pool, hook, pair token, accounting-token decimals, address ordering, tick spacing, current price, and position state are read on the selected chain; missing pair/context data blocks the action. Adds encode the exact MINT_POSITION/CLOSE/SWEEP plan and use Permit2 or native msg.value as appropriate. Full removals encode BURN_POSITION with TAKE_PAIR and set each positive token minimum to 95% of the displayed position amount, while a genuinely zero side remains zero. Both paths switch to the reviewed chain, simulate the exact call, recheck the connected account, and submit the simulation request.";
-var LINK_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
-
 // An LLM prompt: the code file + contract + an English account of the component's extent and gotchas, plus
 // a directive to build it completely and safely. `fileHint` overrides the source file (discover.js modals
 // reuse a component's spec but live in a different file).

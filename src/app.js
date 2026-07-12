@@ -571,7 +571,6 @@ function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, 
         selectorWrap.className = 'fn-view-selector';
 
         var componentEl = prettyRenderer();
-        var compTitle = componentEl._compTitle || '';
         var compPrefix = componentEl._compPrefix || '';
         var compGetEmbedParams = componentEl._compGetEmbedParams || null;
 

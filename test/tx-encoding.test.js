@@ -2,7 +2,7 @@
 // the contract ABIs (no type/arity mismatch, no silent truncation) and encode the right currency/decimals/
 // recipient. These guard the money path — a wrong currency id or decimals here mis-prices/mis-routes funds.
 import { describe, it, expect } from 'vitest';
-import { encodeFunctionData, decodeFunctionData, parseEther, parseUnits } from 'viem';
+import { encodeFunctionData, decodeFunctionData, parseUnits } from 'viem';
 import { __test } from '../src/create-flow.js';
 
 const {

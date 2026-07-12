@@ -3,12 +3,6 @@
 
 import { getChainTokens, getCurrentChainId, onChainChange } from './chain.js';
 
-const NATIVE_TOKEN = '0x000000000000000000000000000000000000EEEe';
-
-export function isNativeToken(address) {
-  return address && address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
-}
-
 export function renderTokenSelect(onSelect) {
   const container = document.createElement('div');
   container.className = 'token-pills';
@@ -45,4 +39,3 @@ export function renderTokenSelect(onSelect) {
   onChainChange(render);
   return container;
 }
-

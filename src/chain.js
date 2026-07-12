@@ -18,7 +18,6 @@ export const CHAINS = {
 };
 
 let currentChainId = 1; // Default to Ethereum mainnet
-let showTestnets = false;
 const listeners = [];
 
 // CORS-enabled public RPCs for the mainnets — viem's defaults (eth.merkle.io etc.) block browser CORS,
@@ -44,14 +43,6 @@ export function setCurrentChainId(id) {
 
 export function onChainChange(fn) {
   listeners.push(fn);
-}
-
-export function getShowTestnets() {
-  return showTestnets;
-}
-
-export function setShowTestnets(val) {
-  showTestnets = val;
 }
 
 export function getManifestChains() {

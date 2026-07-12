@@ -6,7 +6,7 @@ import {
   el, parseHashDefaults,
   discoverChains, createProjectAndChainInput, createComponentWrapper,
   executeTransaction, getBeneficiaryAddress, firstChainForNetwork,
-  createPublicClientForChain, connect, getChainTokens,
+  createPublicClientForChain, getChainTokens,
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
@@ -545,8 +545,6 @@ export function renderPayComponent() {
       state.error = state.beneficiary === 'custom' ? 'Enter a valid beneficiary address' : 'Connect wallet first';
       updateUI(); return;
     }
-
-    var isNative = state.selectedToken.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
 
     if (previewTimer) clearTimeout(previewTimer);
     previewTimer = null;

@@ -335,7 +335,6 @@ function extractRepo(repo, contracts) {
     }
 
     const fns = findFunctions(stripped, block.bodyOpen, block.bodyClose);
-    const functions = {};
     const fnsByName = {};
 
     for (const fn of fns) {

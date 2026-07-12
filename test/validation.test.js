@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { __test } from '../src/create-flow.js';
 
-const { initState, recipientIssue, splitTotalIssue, customAccounting, applyAccountingDefaults, currentPayoutKinds, surplusTokenLabel, buildMetadata } = __test;
+const { initState, recipientIssue, splitTotalIssue, applyAccountingDefaults, currentPayoutKinds, surplusTokenLabel, buildMetadata } = __test;
 const BOB = '0x2222222222222222222222222222222222222222';
 const DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
 

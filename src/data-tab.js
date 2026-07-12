@@ -341,7 +341,6 @@ function renderChainMultiPills(varDef) {
   const wrapper = document.createElement('div');
   wrapper.className = 'fn-chain-selector data-chain-selector data-chain-multi';
 
-  const chains = getManifestChains();
   const chainEntries = bendystrawChains();
   const allTestnetChainIds = chainEntries.map(entry => Number(entry.id));
   const selected = new Set();
