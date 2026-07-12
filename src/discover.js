@@ -12367,7 +12367,7 @@ function renderPriceChart(project, stages) {
   }
   // Pair denominator follows baseCurrency: token/ETH normally, token/USD for USD-based rulesets (e.g. ART).
   var baseLabel = baseUnitLabel(project);
-  var pairUnit = sym + '/' + baseLabel;
+  var pairUnit = baseLabel + '/' + sym;
   function setChipVal(c, numStr, tail) {
     c._val.textContent = '';
     c._val.appendChild(document.createTextNode(numStr + ' '));
@@ -12566,6 +12566,25 @@ function priceChartAxisLabel(timestamp, span) {
   return String(date.getFullYear());
 }
 
+// Keep the price chart's vertical domain anchored to the issuance schedule. AMM/cash-out data resolves later;
+// letting an outlier in either series redefine the domain makes the already-rendered issuance steps collapse into
+// a flat baseline. Overlay values outside this domain pin to the chart edge while their exact values remain in the
+// legend and hover details.
+export function issuancePriceScaleMax(prices) {
+  var max = 0;
+  (prices || []).forEach(function (price) {
+    price = Number(price);
+    if (Number.isFinite(price) && price > max) max = price;
+  });
+  return max > 0 ? max : 1;
+}
+
+export function issuancePriceScaleRatio(price, max) {
+  price = Number(price); max = Number(max);
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(max) || max <= 0) return 0;
+  return Math.max(0, Math.min(1, price / max));
+}
+
 // Plots PRICE (base token per project token = 1/issuance), rising as issuance is cut. The card
 // header still shows issuance (tokens/ETH). Zero-issuance regions clamp to the top of the finite range.
 function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past, cashoutHistory, ammHistory) {
@@ -12579,28 +12598,19 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
 
   var W = 600, H = 200, padL = 8, padR = 8, padT = 24, padB = 22, N = 240; // padT headroom so "Today" clears the line/now-line peak
   var pts = [];
-  var maxV = 0;
   for (var i = 0; i <= N; i++) {
     var t = t0 + (t1 - t0) * i / N;
     var iss = issuanceAtTime(sorted, t);
     var v = iss > 0 ? 1 / iss : null; // price (base token per project token); null when issuance is off
     pts.push([t, v]);
-    if (v !== null && v > maxV) maxV = v;
   }
-  if (maxV <= 0) maxV = 1;
-  if (ammPrice && ammPrice > maxV) maxV = ammPrice * 1.05; // keep the AMM line in view
+  var maxV = issuancePriceScaleMax(pts.map(function (point) { return point[1]; }));
   var ammSeries = visibleSeries(ammHistory || [], t0, t1);
-  if (ammSeries.length) {
-    for (var ap = 0; ap < ammSeries.length; ap++) if (ammSeries[ap].value > maxV) maxV = ammSeries[ap].value * 1.05;
-  }
   var cashSeries = visibleSeries(cashoutHistory || [], t0, t1);
-  if (cashSeries.length) {
-    for (var cp = 0; cp < cashSeries.length; cp++) if (cashSeries[cp].value > maxV) maxV = cashSeries[cp].value * 1.05;
-  } else if (cashoutPrice && cashoutPrice > maxV) maxV = cashoutPrice * 1.05;
   // Zero-issuance (price → ∞) clamps to the top of the finite range so the curve reads as "maxed out".
   for (var p = 0; p < pts.length; p++) if (pts[p][1] === null) pts[p][1] = maxV;
   function X(t) { return padL + (W - padL - padR) * (t - t0) / (t1 - t0); }
-  function Y(v) { return padT + (H - padT - padB) * (1 - v / maxV); }
+  function Y(v) { return padT + (H - padT - padB) * (1 - issuancePriceScaleRatio(v, maxV)); }
 
   var line = 'M' + X(pts[0][0]).toFixed(1) + ' ' + Y(pts[0][1]).toFixed(1);
   for (var j = 1; j < pts.length; j++) line += ' L' + X(pts[j][0]).toFixed(1) + ' ' + Y(pts[j][1]).toFixed(1);
@@ -12659,8 +12669,11 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
 
   var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="none" class="issuance-svg">'
     + '<path d="' + area + '" fill="rgba(110,196,196,0.18)"/>'
+    // Resolved overlays sit behind the issuance schedule so clipped/out-of-domain prices can never paint over
+    // the schedule this chart is primarily explaining.
+    + ammLine + cashLine
     + '<path d="' + line + '" fill="none" stroke="#6ec4c4" stroke-width="2"/>'
-    + dividers + nowLine + ammLine + cashLine
+    + dividers + nowLine
     + '</svg>';
   // Axis endpoints + "Today" go to mountChart as HTML overlays (regular font, not viewBox-shrunk).
   return { svg: svg, geo: { t0: t0, t1: t1, W: W, padL: padL, padR: padR, nowX: nowX, nowShow: nowShow, nearRight: nearRight, y0: y0, y1: y1 } };

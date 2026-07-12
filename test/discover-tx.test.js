@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, gossipAccountingStaleness, indexedActivityAmount, loanOpeningAmounts, loanUnlockFeeText, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -156,6 +156,13 @@ describe('source-of-truth data guards', () => {
     });
     expect(priceChartTimeBounds(now - 2 * year, now, 1, true).t0).toBe(now - year);
     expect(priceChartTimeBounds(now - 2 * year, now, 0, true).t0).toBe(now - 2 * year);
+  });
+
+  it('keeps resolved market outliers from flattening the issuance-price steps', () => {
+    const issuanceMax = issuancePriceScaleMax([0.0004, 0.0007, 0.0011]);
+    expect(issuanceMax).toBeCloseTo(0.0011);
+    expect(issuancePriceScaleRatio(0.0004, issuanceMax)).toBeCloseTo(0.0004 / 0.0011);
+    expect(issuancePriceScaleRatio(0.1088, issuanceMax)).toBe(1);
   });
 
   it('maps the nested sucker-group projectPage relation by chain', () => {
