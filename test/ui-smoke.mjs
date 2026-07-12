@@ -71,6 +71,30 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     const cards = await Q(page, '() => document.querySelectorAll(".discover-card:not(.discover-card--loading)").length');
     check('discover renders project cards', cards > 0, 'cards=' + cards);
 
+    // 1a. Mobile browsers without an injected provider offer wallet-app handoffs and the native share sheet.
+    await Q(page, `() => {
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' });
+      Object.defineProperty(navigator, 'share', { configurable: true, value: async (data) => { window.__sharedWalletUrl = data.url; } });
+      document.querySelector('#connect-btn').click();
+      return 1;
+    }`);
+    await page.waitForTimeout(650);
+    const mobileWalletMenu = await Q(page, `() => {
+      const menu = document.querySelector('.wallet-menu');
+      const links = [...menu.querySelectorAll('a')].map(a => a.textContent.trim());
+      const more = [...menu.querySelectorAll('button')].find(b => b.textContent.trim() === 'Open another wallet…');
+      if (more) more.click();
+      return { note: menu.querySelector('.wallet-menu-note').textContent.trim(), links, hasMore: !!more, pageUrl: location.href };
+    }`);
+    await page.waitForTimeout(50);
+    const sharedWalletUrl = await Q(page, '() => window.__sharedWalletUrl');
+    check('mobile connect offers wallet apps and a share-sheet fallback',
+      mobileWalletMenu.note === 'Choose a wallet app to continue. This page will reopen there.'
+        && ['Open in MetaMask', 'Open in Coinbase Wallet', 'Open in Trust Wallet'].every(x => mobileWalletMenu.links.includes(x))
+        && mobileWalletMenu.hasMore && sharedWalletUrl === mobileWalletMenu.pageUrl,
+      JSON.stringify({ mobileWalletMenu, sharedWalletUrl }));
+    await Q(page, '() => { document.querySelector("#connect-btn").click(); return 1; }');
+
     // 1b. Payer-address copy names the exact direct-transfer and admin boundaries.
     await Q(page, '() => { document.querySelector(".discover-card:not(.discover-card--loading)").click(); return 1; }');
     await page.waitForTimeout(500);

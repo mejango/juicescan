@@ -4,6 +4,7 @@
 
 import { createWalletClient, createPublicClient, custom, http } from 'viem';
 import { CHAINS, getCurrentChainId, getCustomRpc, defaultRpcFor } from './chain.js';
+import { isMobileDevice } from './wallet-links.js';
 
 let walletClient = null;
 let account = null;
@@ -135,8 +136,7 @@ export async function connect(chosen) {
   // Desktop injected wallets can re-prompt account selection through wallet_requestPermissions. On mobile
   // wallet browsers this method is inconsistently implemented and can fail before the real connect prompt,
   // so mobile goes straight to eth_requestAccounts.
-  var mobile = typeof navigator !== 'undefined'
-    && (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+  var mobile = isMobileDevice(typeof navigator !== 'undefined' ? navigator : null);
   if (!mobile) {
     try {
       await activeProvider.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] });

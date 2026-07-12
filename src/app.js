@@ -11,6 +11,7 @@ import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab } from './discover.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
+import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
 
 // Component renderers for pretty mode
 import { renderPayComponent } from './pay-component.js';
@@ -113,18 +114,6 @@ function initTabs() {
       walletMenu.style.top = (r.bottom + 6) + 'px';
       walletMenu.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
     }
-    function currentDappUrl() {
-      return encodeURIComponent(location.href.replace(/^https?:\/\//, ''));
-    }
-    function mobileWalletLinks() {
-      var full = location.href;
-      var dapp = currentDappUrl();
-      return [
-        { name: 'Open in MetaMask', href: 'https://metamask.app.link/dapp/' + dapp },
-        { name: 'Open in Coinbase Wallet', href: 'https://go.cb-w.com/dapp?cb_url=' + encodeURIComponent(full) },
-        { name: 'Open in Trust Wallet', href: 'https://link.trustwallet.com/open_url?coin_id=60&url=' + encodeURIComponent(full) },
-      ];
-    }
     function openWalletNotice(message, kind) {
       closeWalletMenu();
       walletMenu = document.createElement('div');
@@ -135,13 +124,31 @@ function initTabs() {
       note.textContent = message;
       walletMenu.appendChild(note);
       if (!getProviders().length) {
-        mobileWalletLinks().forEach(function (l) {
+        mobileWalletLinks(location.href).forEach(function (l) {
           var a = document.createElement('a');
           a.className = 'wallet-menu-item wallet-menu-link';
           a.href = l.href;
           a.textContent = l.name;
           walletMenu.appendChild(a);
         });
+        // iOS wallet apps can register an "Open in…" share action. This reaches Rainbow and other installed
+        // wallets without adding a connection SDK or depending on undocumented app-specific URL schemes.
+        if (typeof navigator.share === 'function') {
+          var share = document.createElement('button');
+          share.type = 'button';
+          share.className = 'wallet-menu-item';
+          share.textContent = 'Open another wallet…';
+          share.addEventListener('click', function () {
+            try {
+              navigator.share({ title: document.title, url: walletDappUrl(location.href) }).catch(function (err) {
+                if (!err || err.name !== 'AbortError') openWalletNotice(errMessage(err, 'Could not open wallet apps.'), 'wallet-menu-error');
+              });
+            } catch (err) {
+              openWalletNotice(errMessage(err, 'Could not open wallet apps.'), 'wallet-menu-error');
+            }
+          });
+          walletMenu.appendChild(share);
+        }
       }
       document.body.appendChild(walletMenu);
       setTimeout(function () { document.addEventListener('click', onDocClick, true); }, 0);
@@ -180,12 +187,14 @@ function initTabs() {
       closeWalletMenu();
       var providers = getProviders();
       if (!providers.length) {
-        openWalletNotice('Looking for wallet...', '');
+        var mobile = isMobileDevice(typeof navigator !== 'undefined' ? navigator : null);
+        openWalletNotice(mobile ? 'Checking this browser for wallet access…' : 'Looking for wallet...', '');
         refreshProviders(500).then(function (fresh) {
           if (getAccount() || !walletMenu) return;
           if (fresh.length === 1) { connectToProvider(fresh[0]); return; }
           if (fresh.length > 1) { openWalletPicker(); return; }
-          openWalletNotice('No wallet detected in this browser. Open this site in a wallet app browser, or install a browser wallet.', 'wallet-menu-error');
+          if (mobile) openWalletNotice('Choose a wallet app to continue. This page will reopen there.', '');
+          else openWalletNotice('No wallet detected in this browser. Open this site in a wallet app browser, or install a browser wallet.', 'wallet-menu-error');
         });
         return;
       }
