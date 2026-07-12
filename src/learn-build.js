@@ -37,7 +37,7 @@ export function renderLearnTab() {
     '<a class="guide-toc-link" href="#learn-migration">18. Migration</a>' +
     '<a class="guide-toc-link" href="#learn-distributor">19. Distributor</a>' +
     '<a class="guide-toc-link" href="#learn-handles">20. Project Handles</a>' +
-    '<a class="guide-toc-link" href="#learn-payer">21. Project Payer</a>';
+    '<a class="guide-toc-link" href="#learn-payer">21. Payer Address</a>';
   wrap.appendChild(toc);
 
   // ============================================
@@ -426,16 +426,16 @@ export function renderLearnTab() {
     textBlock('Subdomains work too. "sub.myproject.eth" is stored as ["sub", "myproject"] — the contract reconstructs the full name automatically and verifies it against the ENS registry.')
   ]));
 
-  wrap.appendChild(guideSection('learn-payer', '21. PROJECT PAYER', [
-    'A project payer is a dedicated deposit address for your project. Any funds sent to it are automatically forwarded into your project — no extra steps for the sender.',
+  wrap.appendChild(guideSection('learn-payer', '21. PAYER ADDRESS', [
+    'A payer address is a dedicated native-token (ETH) deposit address for your project. Native ETH sent directly to it is automatically forwarded into your project — no extra steps for the sender. ERC-20 tokens sent directly to the address do not trigger a payment.',
     'You can configure it in two modes. In the default mode, payments mint project tokens for the sender (just like paying the project directly). In "add to balance" mode, funds go straight into the project\'s balance without minting tokens — useful for revenue deposits, donations, or any scenario where token issuance isn\'t desired.',
-    'The payer automatically finds the right terminal to route funds to. If your project migrates to a new terminal later, the payer follows it automatically — no reconfiguration needed.'
+    'The payer address automatically finds the right terminal to route funds to. If your project migrates to a new terminal later, the payer address follows it automatically — no reconfiguration needed.'
   ], [
-    diagram('HOW THE PROJECT PAYER WORKS', [
+    diagram('HOW THE PAYER ADDRESS WORKS', [
       '  someone sends ETH to the payer address',
       '     │',
       '     ▼',
-      '  payer looks up the project\'s current terminal',
+      '  payer address looks up the project\'s current terminal',
       '     │',
       '     ├─ default mode',
       '     │  └─▶ pays the project → tokens minted for sender',
@@ -481,7 +481,7 @@ export function renderBuildTab() {
     '<a class="guide-toc-link" href="#build-hooks">14. Custom Hooks</a>' +
     '<a class="guide-toc-link" href="#build-distributor">15. Distributor</a>' +
     '<a class="guide-toc-link" href="#build-handles">16. Project Handles</a>' +
-    '<a class="guide-toc-link" href="#build-payer">17. Project Payer</a>' +
+    '<a class="guide-toc-link" href="#build-payer">17. Payer Address</a>' +
     '<a class="guide-toc-link" href="#build-swap-terminal">18. Router Terminal</a>' +
     '<a class="guide-toc-link" href="#build-buyback">19. Buyback Hook</a>' +
     '<div class="guide-toc-group-label" style="margin-top:8px">Build Your Own</div>' +
@@ -861,9 +861,9 @@ export function renderBuildTab() {
     textBlock('Name parts are in reverse order with .eth appended automatically. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["sub", "myproject"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client\'s responsibility, not the contract\'s.')
   ]));
 
-  wrap.appendChild(guideSection('build-payer', '17. PROJECT PAYER', [
-    'JBProjectPayer is deployed as a minimal proxy (clone). The constructor takes only a JBDirectory address. After deployment, defaults are set via initialize() or setDefaultValues().',
-    'When defaultAddToBalance is false, incoming funds trigger pay() — minting tokens for the beneficiary. When true, funds are added via addToBalanceOf() without minting. The beneficiary defaults to msg.sender if not configured.'
+  wrap.appendChild(guideSection('build-payer', '17. PAYER ADDRESS', [
+    'A JBProjectPayer address is deployed as a minimal proxy (clone). The constructor takes only a JBDirectory address. After deployment, defaults are set via initialize() or setDefaultValues().',
+    'The receive path accepts the native token (ETH) only. When defaultAddToBalance is false, incoming native ETH triggers pay() — minting tokens for the beneficiary. When true, funds are added via addToBalanceOf() without minting. The beneficiary defaults to msg.sender if not configured. ERC-20 payments must call pay() or addToBalanceOf() after approval; direct ERC-20 transfers do not trigger either path.'
   ], [
     codeBlock(
       'JBProjectPayer defaults',
@@ -874,12 +874,12 @@ export function renderBuildTab() {
       'defaultMetadata        // extra data for hooks\n' +
       'defaultAddToBalance    // false = pay(), true = addToBalance()\n' +
       '\n' +
-      '// Anyone sends ETH to the payer\'s address:\n' +
+      '// Anyone sends ETH to the payer address:\n' +
       '//   → receive() fires\n' +
       '//   → looks up DIRECTORY.primaryTerminalOf(projectId, token)\n' +
       '//   → calls pay() or addToBalanceOf() with defaults'
     ),
-    infoBox('Terminal lookup happens at payment time via JBDirectory, so the payer automatically follows terminal migrations without reconfiguration.')
+    infoBox('Terminal lookup happens at payment time via JBDirectory, so the payer address automatically follows terminal migrations without reconfiguration.')
   ]));
 
   wrap.appendChild(guideSection('build-swap-terminal', '18. ROUTER TERMINAL', [

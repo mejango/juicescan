@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { componentReproPrompt } from '../src/component-base.js';
-import { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from '../src/discover.js';
+import { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from '../src/project-payer.js';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const OWNER = '0x1111111111111111111111111111111111111111';
@@ -24,7 +24,7 @@ describe('buildProjectPayerDeployArgs', () => {
   it('rejects invalid metadata and malformed owners while allowing the zero owner', () => {
     expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x123', false, OWNER)).toThrow(/Metadata/);
     expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, ZERO)).not.toThrow();
-    expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, 'not-an-address')).toThrow(/owner/);
+    expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, 'not-an-address')).toThrow(/address admin/);
   });
 
   it('uses raw Relayr entries for permissionless payer deploys, not ERC-2771 forwarding', () => {
@@ -45,6 +45,10 @@ describe('project payer build prompt', () => {
     expect(prompt).toContain('JBProjectPayerDeployer.deployProjectPayer');
     expect(prompt).toContain('defaultAddToBalance=false');
     expect(prompt).toContain('zero address admin');
+    expect(prompt).toContain('destination project');
+    expect(prompt).toContain('transfer or renounce the admin role');
+    expect(prompt).toContain('native token (ETH)');
+    expect(prompt).toContain('not supported by direct token transfer');
     expect(prompt).toContain('Bendystraw');
   });
 });

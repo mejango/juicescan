@@ -1,17 +1,43 @@
 // UI smoke tests — exercise the live app's critical UX paths so future changes can't silently break them.
-// Requires the dev environment used throughout this repo:
-//   1. a static server for dist/ on http://localhost:8799 (the brave-cdp harness serves it), and
-//   2. Brave running with --remote-debugging-port=9222 --remote-allow-origins=*  (the connected wallet).
+// By default this serves dist/ on an ephemeral localhost port and launches an isolated headless Brave profile.
 // Run: NODE_PATH=$(cat /tmp/pwc_path.txt) node test/ui-smoke.mjs    (or: npm run test:ui)
+// Legacy live-browser mode is explicit: UI_SMOKE_LIVE_CDP=1 (expects the old localhost:8799 + Brave:9222 harness).
 // Exits non-zero if any scenario fails, so it can gate changes in CI/pre-push.
 import { createRequire } from 'module';
+import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
 
-const BASE = 'http://localhost:8799/index.html';
+let BASE = 'http://localhost:8799/index.html';
 let pass = 0, fail = 0;
 const results = [];
 function check(name, ok, info) { (ok ? pass++ : fail++); results.push((ok ? 'PASS ' : 'FAIL ') + name + (info && !ok ? '  → ' + info : '')); }
+
+async function startIsolatedServer() {
+  const root = fileURLToPath(new URL('../dist/', import.meta.url));
+  const contentTypes = { '.css': 'text/css', '.gif': 'image/gif', '.html': 'text/html', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
+  const server = createServer(async (request, response) => {
+    try {
+      const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+      const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+      if (relative.split('/').includes('..')) { response.writeHead(403).end(); return; }
+      const file = join(root, relative);
+      const body = await readFile(file);
+      response.writeHead(200, { 'content-type': contentTypes[extname(file)] || 'application/octet-stream' });
+      response.end(body);
+    } catch (_) {
+      response.writeHead(404).end();
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  return server;
+}
 
 async function freshCreateFlow(page, r) {
   await page.goto(BASE + '?r=' + r + '#discover', { waitUntil: 'domcontentloaded' });
@@ -25,17 +51,37 @@ async function freshCreateFlow(page, r) {
 const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
 
 (async () => {
-  const browser = await chromium.connectOverCDP('http://localhost:9222');
-  const ctx = browser.contexts()[0];
+  const isolated = process.env.UI_SMOKE_LIVE_CDP !== '1';
+  const staticServer = isolated ? await startIsolatedServer() : null;
+  if (staticServer) BASE = 'http://127.0.0.1:' + staticServer.address().port + '/index.html';
+  const browser = isolated
+    ? await chromium.launch({
+      headless: true,
+      executablePath: process.env.UI_SMOKE_BROWSER || '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+    })
+    : await chromium.connectOverCDP('http://localhost:9222');
+  const ctx = isolated ? await browser.newContext() : browser.contexts()[0];
   let page = ctx.pages().find(p => p.url().includes('localhost:8799')) || ctx.pages()[0] || await ctx.newPage();
   await page.setViewportSize({ width: 1100, height: 1000 });
 
   try {
     // 1. Discover renders project cards.
     await page.goto(BASE + '?r=500#discover', { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(1600);
-    const cards = await Q(page, '() => document.querySelectorAll(".project-card, .discover-card, [class*=card]").length');
+    await page.waitForSelector('.discover-card:not(.discover-card--loading)', { timeout: 20000 });
+    const cards = await Q(page, '() => document.querySelectorAll(".discover-card:not(.discover-card--loading)").length');
     check('discover renders project cards', cards > 0, 'cards=' + cards);
+
+    // 1b. Payer-address copy names the exact direct-transfer and admin boundaries.
+    await Q(page, '() => { document.querySelector(".discover-card:not(.discover-card--loading)").click(); return 1; }');
+    await page.waitForTimeout(500);
+    await Q(page, '() => { [...document.querySelectorAll(".detail-tab-btn")].find(b=>b.textContent.trim()==="Extras").click(); return 1; }');
+    await page.waitForTimeout(250);
+    const payerCopy = await Q(page, '() => { const card=document.querySelector(".extras-card"); const body=card.textContent; const editable=card.querySelector(".extras-editable-row input"); editable.click(); return { title:card.querySelector(".detail-card-title").textContent.trim(), body, admin:card.textContent }; }');
+    check('payer address copy specifies native ETH, direct ERC-20, immutable defaults, and admin powers',
+      payerCopy.title === 'Payer address' && payerCopy.body.includes('native token (ETH)')
+        && payerCopy.body.includes('ERC-20 tokens directly') && payerCopy.body.includes('are permanent')
+        && payerCopy.admin.includes('transfer or renounce the admin role') && payerCopy.admin.includes('does not receive payments or control either project'),
+      JSON.stringify(payerCopy));
 
     // 2. Create flow opens with all five steps.
     await freshCreateFlow(page, 501);
@@ -98,7 +144,9 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
   } catch (e) {
     check('smoke run completed without throwing', false, (e.message || String(e)).split('\n')[0]);
   } finally {
-    await browser.close();
+    // Never close a user-owned browser reached over CDP. Process exit disconnects this client without touching it.
+    if (isolated) await browser.close();
+    if (staticServer) await new Promise((resolve) => staticServer.close(resolve));
   }
 
   console.log('\n' + results.join('\n'));

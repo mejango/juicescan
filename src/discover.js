@@ -11,12 +11,13 @@ import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile } from './create-flow.js';
+import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
-import { toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
 import { TIER_UNLIMITED_SUPPLY, build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
+export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
 // component-base) — one cache for the whole app, keyed by chainId|customRpc so a custom RPC takes
@@ -2023,49 +2024,6 @@ var setTokenMetadataAbi = [{
   type: 'function', name: 'setTokenMetadataOf', stateMutability: 'nonpayable', outputs: [],
   inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }],
 }];
-// JBProjectPayerDeployer.deployProjectPayer — permissionless clone deploy. The UI defaults the native-token
-// receive() path to pay mode with a zero beneficiary, minting project tokens to the original payer unless changed.
-var deployProjectPayerAbi = [{
-  type: 'function', name: 'deployProjectPayer', stateMutability: 'nonpayable',
-  inputs: [
-    { name: 'defaultProjectId', type: 'uint256' },
-    { name: 'defaultBeneficiary', type: 'address' },
-    { name: 'defaultMemo', type: 'string' },
-    { name: 'defaultMetadata', type: 'bytes' },
-    { name: 'defaultAddToBalance', type: 'bool' },
-    { name: 'owner', type: 'address' },
-  ],
-  outputs: [{ name: 'projectPayer', type: 'address' }],
-}];
-function normalizeProjectPayerMetadata(metadata) {
-  var hex = String(metadata || '').trim() || '0x';
-  if (!/^0x([0-9a-fA-F]{2})*$/.test(hex)) throw new Error('Metadata must be hex bytes, e.g. 0x or 0x1234');
-  return hex;
-}
-export function buildProjectPayerDeployArgs(projectId, beneficiary, memo, metadata, addToBalance, owner) {
-  if (projectId == null || String(projectId) === '') throw new Error('Missing project ID');
-  if (!isAddr(beneficiary)) throw new Error('Missing default beneficiary');
-  // A zero owner intentionally makes the payer immutable. The Extras form defaults to this safer, simpler mode;
-  // users explicitly opt into an editable payer and provide a nonzero address admin.
-  if (!isAddr(owner)) throw new Error('Missing payer owner');
-  return [BigInt(projectId), beneficiary, String(memo || ''), normalizeProjectPayerMetadata(metadata), !!addToBalance, owner];
-}
-export function buildProjectPayerDeployCall(chainId, projectId, beneficiary, memo, metadata, addToBalance, owner) {
-  var target = getAddress('JBProjectPayerDeployer', chainId);
-  if (!target) throw new Error('No JBProjectPayerDeployer on ' + chainNameOf(chainId));
-  var args = buildProjectPayerDeployArgs(projectId, beneficiary, memo, metadata, addToBalance, owner);
-  return {
-    chainId: Number(chainId),
-    to: target,
-    abi: deployProjectPayerAbi,
-    functionName: 'deployProjectPayer',
-    args: args,
-    data: encodeFunctionData({ abi: deployProjectPayerAbi, functionName: 'deployProjectPayer', args: args }),
-  };
-}
-export function projectPayerRelayrEntry(call) {
-  return { chain: Number(call.chainId), target: call.to, data: call.data, value: '0' };
-}
 // REVOwner.setOperatorOf — current-operator-only. Rotates the revnet's split operator (address(0)
 // relinquishes permanently). Sent as an ERC-2771 meta-tx via relayr like the other operator actions.
 var setOperatorOfAbi = [{
@@ -8590,14 +8548,14 @@ function renderProjectPayerAddresses(project) {
 async function runProjectPayerRelayrDeploys(calls, setStatus) {
   var ok = await confirmTransactionModal({
     via: 'relayr — one prepaid payment calls the permissionless project-payer deployer on each chain below',
-    action: 'Deploy project payer',
+    action: 'Deploy payer address',
     chains: calls.map(function (c) {
       var nm = resolveContractName(c.to, c.chainId);
       return nm
         ? { chain: chainNameOf(c.chainId), contract: nm, address: c.to, calldata: c.data }
         : { chain: chainNameOf(c.chainId), contract: c.to, calldata: c.data };
     }),
-  }, { title: 'Confirm project payer deploy', confirmText: 'Confirm & send' });
+  }, { title: 'Confirm payer address deployment', confirmText: 'Confirm & send' });
   if (!ok) { setStatus('Transaction cancelled', ''); throw new Error('Transaction cancelled'); }
 
   setStatus('Requesting Relayr quote...', 'pending');
@@ -8805,25 +8763,36 @@ function draftSplitFingerprint(split) {
     !!split.preferAddToBalance, String(split.lockedUntil || 0), String(split.hook || '').toLowerCase()];
 }
 
-async function draftFundsFingerprint(project, source) {
+// Read each ruleset's fund-access state once. The same verified snapshot is used for both cross-chain
+// comparison and draft construction, avoiding a second identical batch of splits/limits RPC calls.
+export async function readDraftFunds(project, source, readContract) {
+  readContract = readContract || read;
   var pid = BigInt(project.id), rid = toBigInt(source.ruleset.id), terminal = getAddress('JBMultiTerminal', source.chainId);
-  var reserved = await read(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]);
-  var rows = await Promise.all(source.contexts.map(async function (context) {
+  var reserved = await readContract(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]);
+  var funds = await Promise.all(source.contexts.map(async function (context) {
     var values = await Promise.all([
-      read(source.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, context.address]),
-      read(source.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, rid, terminal, context.address]),
-      read(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(context.address)]),
+      readContract(source.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, context.address]),
+      readContract(source.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, rid, terminal, context.address]),
+      readContract(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(context.address)]),
     ]);
+    return { context: context, payouts: values[0] || [], allowances: values[1] || [], splits: values[2] || [] };
+  }));
+  return { reserved: reserved || [], funds: funds };
+}
+
+function draftFundsFingerprint(source, snapshot) {
+  var rows = snapshot.funds.map(function (fund) {
+    var context = fund.context;
     var tokenCurrency = tokenCurrencyIdForAccounting(context.address);
     function limits(list) { return (list || []).map(function (limit) {
       return [String(limit.amount), toBigInt(limit.currency) === tokenCurrency ? 'token' : String(limit.currency)];
     }); }
     var kind = draftContextKind(context, source.chainId);
     return { kind: kind, custom: kind === 'custom' ? String(context.address).toLowerCase() : '',
-      payouts: limits(values[0]), allowances: limits(values[1]), splits: (values[2] || []).map(draftSplitFingerprint) };
-  }));
+      payouts: limits(fund.payouts), allowances: limits(fund.allowances), splits: fund.splits.map(draftSplitFingerprint) };
+  });
   rows.sort(function (a, b) { return a.kind.localeCompare(b.kind); });
-  return draftFingerprint({ reserved: (reserved || []).map(draftSplitFingerprint), rows: rows });
+  return draftFingerprint({ reserved: snapshot.reserved.map(draftSplitFingerprint), rows: rows });
 }
 
 function applyDraftOwnerRemainders(state, sources, project) {
@@ -8970,10 +8939,8 @@ async function applyDraftSuckers(state, project, sources, warnings) {
   warnings.push('The .jb recreates the verified active bridge types; later custom token-mapping or deprecation changes are not included.');
 }
 
-async function applyDraftFunds(state, project, source, stage) {
-  var pid = BigInt(project.id), rid = toBigInt(source.ruleset.id);
-  var terminal = getAddress('JBMultiTerminal', source.chainId);
-  var reserved = await read(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]);
+function applyDraftFunds(state, project, source, stage, snapshot) {
+  var reserved = snapshot.reserved;
   var built = draftStageFromLive(source.ruleset, source.metadata, reserved, source.chainId);
   Object.assign(stage, built.stage);
   if (built.customApproval) {
@@ -8989,15 +8956,11 @@ async function applyDraftFunds(state, project, source, stage) {
       amountEth: '', lockedUntil: 0, preferAddToBalance: false, _ownerRemainder: true });
   }
 
-  var fundRows = await Promise.all(source.contexts.map(async function (context) {
-    var values = await Promise.all([
-      read(source.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, context.address]),
-      read(source.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, rid, terminal, context.address]),
-      read(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(context.address)]),
-    ]);
-    if ((values[0] || []).length > 1 || (values[1] || []).length > 1) throw new Error('A ruleset has multiple fund-access currencies for one token, which the .jb editor cannot reproduce.');
-    return { context: context, kind: draftContextKind(context, source.chainId), limit: (values[0] || [])[0], allowance: (values[1] || [])[0], splits: values[2] || [] };
-  }));
+  var fundRows = snapshot.funds.map(function (fund) {
+    if (fund.payouts.length > 1 || fund.allowances.length > 1) throw new Error('A ruleset has multiple fund-access currencies for one token, which the .jb editor cannot reproduce.');
+    return { context: fund.context, kind: draftContextKind(fund.context, source.chainId),
+      limit: fund.payouts[0], allowance: fund.allowances[0], splits: fund.splits };
+  });
   if (Number(stage.durationSeconds || 0) <= 0 && [reserved].concat(fundRows.map(function (row) { return row.splits; }))
     .some(function (rows) { return (rows || []).some(function (split) { return Number(split.lockedUntil || 0) > 0; }); })) {
     throw new Error('A flexible live ruleset contains locked splits, which the .jb editor cannot preserve.');
@@ -9244,7 +9207,8 @@ export async function buildProjectCreateDraft(project) {
   }
   await applyDraftAccountingAndTerminals(state, project, sources);
   await applyDraftSuckers(state, project, sources, warnings);
-  var fundFingerprints = await Promise.all(sources.map(function (source) { return draftFundsFingerprint(project, source); }));
+  var fundSnapshots = await Promise.all(sources.map(function (source) { return readDraftFunds(project, source); }));
+  var fundFingerprints = sources.map(function (source, index) { return draftFundsFingerprint(source, fundSnapshots[index]); });
   if (fundFingerprints.some(function (fingerprint) { return fingerprint !== fundFingerprints[0]; })) {
     throw new Error('Fund access, reserved splits, or payout splits differ by chain, which one .jb draft cannot reproduce safely.');
   }
@@ -9259,7 +9223,7 @@ export async function buildProjectCreateDraft(project) {
     // The current stage is reproducible from the live ruleset. Earlier stage history is useful context but cannot
     // enumerate unclaimed auto-issuance beneficiaries, so keep one current stage and disclose that limitation.
     var currentStage = createStage();
-    await applyDraftFunds(state, project, sources[0], currentStage);
+    applyDraftFunds(state, project, sources[0], currentStage, fundSnapshots[0]);
     currentStage.cutFreqDays = String(Number(currentStage.durationSeconds || 0) / 86400);
     currentStage.issuanceCutOn = Number(currentStage.durationSeconds || 0) > 0;
     currentStage.autoIssuances = [];
@@ -9269,7 +9233,7 @@ export async function buildProjectCreateDraft(project) {
     warnings.push('Any later revnet buyback-pool or registry-routing changes are not part of the .jb create form; review the new revnet’s market setup after deployment.');
   } else {
     var stage = createStage();
-    await applyDraftFunds(state, project, sources[0], stage);
+    applyDraftFunds(state, project, sources[0], stage, fundSnapshots[0]);
     state.stages = [stage]; state.afterMode = stage.durationSeconds > 0 ? 'cycle' : 'wait';
     var upcomingSources = await Promise.all(sources.map(function (source) { return draftUpcomingProjectChain(source, project); }));
     var upcomingCount = upcomingSources.filter(Boolean).length;
@@ -9279,8 +9243,9 @@ export async function buildProjectCreateDraft(project) {
       if (upcomingSources.slice(1).some(function (source) { return draftRulesetFingerprint(source) !== draftRulesetFingerprint(upcomingSources[0]); })) {
         throw new Error('The queued upcoming ruleset differs by chain.');
       }
-      var upcomingFunds = await Promise.all(upcomingSources.map(function (source) { return draftFundsFingerprint(project, source); }));
-      if (upcomingFunds.some(function (fingerprint) { return fingerprint !== upcomingFunds[0]; })) throw new Error('Upcoming fund access or splits differ by chain.');
+      var upcomingFundSnapshots = await Promise.all(upcomingSources.map(function (source) { return readDraftFunds(project, source); }));
+      var upcomingFundFingerprints = upcomingSources.map(function (source, index) { return draftFundsFingerprint(source, upcomingFundSnapshots[index]); });
+      if (upcomingFundFingerprints.some(function (fingerprint) { return fingerprint !== upcomingFundFingerprints[0]; })) throw new Error('Upcoming fund access or splits differ by chain.');
       sources.forEach(function (currentSource, index) {
         var nextSource = upcomingSources[index];
         var currentRole = isZeroishAddress(currentSource.metadata.dataHook) ? 'none'
@@ -9312,7 +9277,7 @@ export async function buildProjectCreateDraft(project) {
         }
       }));
       var nextStage = createStage();
-      await applyDraftFunds(state, project, upcomingSources[0], nextStage);
+      applyDraftFunds(state, project, upcomingSources[0], nextStage, upcomingFundSnapshots[0]);
       state.stages.push(nextStage); state.afterMode = nextStage.durationSeconds > 0 ? 'cycle' : 'wait';
       stageSourceSets.push(upcomingSources);
     }
@@ -9374,11 +9339,11 @@ function renderExtrasSection(project) {
   var section = el('div', 'detail-section');
   section.appendChild(renderProjectDraftExport(project));
   var card = el('div', 'detail-card extras-card');
-  var title = el('div', 'detail-card-title'); title.textContent = 'Project payer address'; card.appendChild(title);
+  var title = el('div', 'detail-card-title'); title.textContent = 'Payer address'; card.appendChild(title);
 
   var body = el('div', 'detail-card-body extras-body');
   var intro = el('div', 'extras-payer-copy');
-  intro.textContent = 'Pay this project by sending funds to an address. Anyone can add any number of project payer addresses.';
+  intro.textContent = 'Pay this project by sending the native token (ETH) to a dedicated payer address. Sending ERC-20 tokens directly to it does not trigger a payment. Anyone can create any number of payer addresses.';
   body.appendChild(intro);
 
   var tokenLabel = project.tokenSymbol || project.tokenName || 'Token';
@@ -9467,13 +9432,13 @@ function renderExtrasSection(project) {
   ownerFields.appendChild(ownerShared);
   var ownerValueOf = attachAddressRecognition(ownerInput, ownerHint, project.chainId, {
     label: 'Address admin',
-    zeroLabel: 'Zero address cannot administer the payer',
+    zeroLabel: 'Zero address cannot administer the payer address',
     ensLabel: function (name) { return name; },
   });
   var ownerPerChain = makePerChainAddressControl(chains, ownerValueOf, {
     label: 'Address admin',
     placeholder: '0x... or name.eth',
-    zeroLabel: 'Zero address cannot administer the payer',
+    zeroLabel: 'Zero address cannot administer the payer address',
     defaultRaw: function () { return ownerInput.value || getAccount() || ''; },
     ensLabel: function (name) { return name; },
     onOpen: function () { ownerShared.style.display = 'none'; },
@@ -9481,11 +9446,11 @@ function renderExtrasSection(project) {
   });
   ownerFields.appendChild(ownerPerChain.node);
   var ownerExplainer = el('div', 'extras-payer-sub');
-  ownerExplainer.textContent = 'The address admin can change this payer’s settings later. It does not receive payments or control the project.';
+  ownerExplainer.textContent = 'The address admin can later change this payer address’s destination project, Pay/Add to Balance behavior, beneficiary, memo, and metadata, or transfer or renounce the admin role. The role does not receive payments or control either project.';
   ownerFields.appendChild(ownerExplainer);
   body.appendChild(ownerFields);
   var immutableExplainer = el('div', 'extras-payer-sub');
-  immutableExplainer.textContent = 'Off by default: no address admin, so this payer’s settings cannot be changed later.';
+  immutableExplainer.textContent = 'Off by default: no address admin. This payer address’s destination project, Pay/Add to Balance behavior, beneficiary, memo, and metadata are permanent.';
   body.appendChild(immutableExplainer);
   function syncEditableFields() {
     ownerFields.style.display = editableCb.checked ? '' : 'none';
@@ -9539,7 +9504,7 @@ function renderExtrasSection(project) {
   var deployRelayr = el('a', 'operator-cta extras-relayr-submit');
   deployRelayr.href = '#';
   deployRelayr.textContent = 'Use Relayr';
-  var deploy = el('a', 'operator-cta operator-edit-submit'); deploy.href = '#'; deploy.textContent = 'Deploy project payer';
+  var deploy = el('a', 'operator-cta operator-edit-submit'); deploy.href = '#'; deploy.textContent = 'Deploy payer address';
   actions.appendChild(deployRelayr);
   actions.appendChild(deploy);
   body.appendChild(actions);
@@ -9555,7 +9520,7 @@ function renderExtrasSection(project) {
   }
   function syncDeployActions() {
     var selected = selectedChains();
-    deploy.textContent = selected.length > 1 ? 'Deploy project payers' : 'Deploy project payer';
+    deploy.textContent = selected.length > 1 ? 'Deploy payer addresses' : 'Deploy payer address';
     deployRelayr.style.display = selected.length === 1 ? '' : 'none';
   }
   chainChecks.forEach(function (r) { r.cb.addEventListener('change', syncDeployActions); });
@@ -9577,13 +9542,13 @@ function renderExtrasSection(project) {
       var payerOwner = editableCb.checked ? ownerPerChain.snapshot() : ZERO_ADDRESS;
       var metadata = normalizeProjectPayerMetadata(metadataInput.value);
       var addToBalance = modeSelect.value === 'balance';
-      setStatus('Preparing payer deploys...', 'pending');
+      setStatus('Preparing payer address deployments...', 'pending');
       var calls = selected.map(function (chain) {
         var cid = chain.id;
         var ben = materializeChainValue(beneficiary, cid);
         var own = materializeChainValue(payerOwner, cid);
         if (editableCb.checked && String(own).toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
-          throw new Error('Editable payers need a nonzero address admin on ' + (chain.name || chainNameOf(cid)) + '.');
+          throw new Error('Editable payer addresses need a nonzero address admin on ' + (chain.name || chainNameOf(cid)) + '.');
         }
         return buildProjectPayerDeployCall(cid, project.id, ben, memoInput.value, metadata, addToBalance, own);
       });
@@ -9597,8 +9562,8 @@ function renderExtrasSection(project) {
             functionName: call.functionName,
             args: call.args,
             contractName: 'JBProjectPayerDeployer',
-            label: 'Deploy project payer',
-            confirmTitle: 'Confirm project payer deploy',
+            label: 'Deploy payer address',
+            confirmTitle: 'Confirm payer address deployment',
             onStatus: function (m, k) { setStatus(m, k); },
             onError: function (m) { reject(new Error(m)); },
             onSuccess: function () { resolve(); },
@@ -9607,11 +9572,11 @@ function renderExtrasSection(project) {
       } else {
         await runProjectPayerRelayrDeploys(calls, setStatus);
       }
-      setStatus('Project payer deploy complete on ' + selected.length + ' chain' + (selected.length === 1 ? '' : 's') + '.', 'success');
+      setStatus('Payer address deployment complete on ' + selected.length + ' chain' + (selected.length === 1 ? '' : 's') + '.', 'success');
       if (payerList && payerList._refresh) payerList._refresh();
       document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
     })().catch(function (err) {
-      setStatus(errMessage(err, 'Project payer deploy failed'), 'error');
+      setStatus(errMessage(err, 'Payer address deployment failed'), 'error');
     }).finally(function () {
       busy = false;
       deploy.classList.remove('disabled');

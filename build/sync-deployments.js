@@ -10,6 +10,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.join(ROOT, "data");
@@ -94,6 +95,22 @@ function writeJSON(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+// Preserve the timestamp when the deployment inputs are byte-for-byte identical. This makes `npm run build`
+// reproducible (and keeps a clean worktree clean) while still recording when a changed snapshot was generated.
+// SOURCE_DATE_EPOCH gives CI/release builds a standard deterministic timestamp when accepting new inputs.
+function nextGeneratedAt(previous, sourceDigest) {
+  if (previous && previous.sourceDigest === sourceDigest && previous.generatedAt) return previous.generatedAt;
+  if (process.env.SOURCE_DATE_EPOCH) {
+    const epochSeconds = Number(process.env.SOURCE_DATE_EPOCH);
+    const generatedAt = new Date(epochSeconds * 1000);
+    if (!Number.isSafeInteger(epochSeconds) || epochSeconds < 0 || Number.isNaN(generatedAt.getTime())) {
+      throw new Error("SOURCE_DATE_EPOCH must be non-negative integer seconds in the supported date range");
+    }
+    return generatedAt.toISOString();
+  }
+  return new Date().toISOString();
+}
+
 function main() {
   if (!fs.existsSync(DEPLOYMENTS_DIR)) {
     throw new Error(`Deployments directory not found: ${DEPLOYMENTS_DIR}`);
@@ -103,9 +120,12 @@ function main() {
 
   const chains = {};
   const contracts = {};
+  const previousDeployments = loadJSON(DEPLOYMENTS_FILE, {});
+  const sourceHash = crypto.createHash("sha256");
   const deployments = {
     source: path.relative(ROOT, DEPLOYMENTS_DIR),
-    generatedAt: new Date().toISOString(),
+    generatedAt: null,
+    sourceDigest: null,
     chains: {},
     deployments: {},
   };
@@ -131,7 +151,9 @@ function main() {
     for (const file of files) {
       const deploymentName = file.replace(/\.json$/, "");
       const artifactPath = path.join(chainDir, file);
-      const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
+      const artifactJson = fs.readFileSync(artifactPath, "utf8");
+      sourceHash.update(chainSlug).update("\0").update(file).update("\0").update(artifactJson).update("\0");
+      const artifact = JSON.parse(artifactJson);
       if (!artifact.abi || !artifact.address || !artifact.chainId) continue;
 
       const chainId = parseChainId(artifact.chainId);
@@ -208,6 +230,8 @@ function main() {
     chains: sortedObject(chains),
     contracts: sortedObject(contracts),
   };
+  deployments.sourceDigest = `sha256:${sourceHash.digest("hex")}`;
+  deployments.generatedAt = nextGeneratedAt(previousDeployments, deployments.sourceDigest);
   deployments.chains = sortedObject(deployments.chains);
   deployments.deployments = sortedObject(deployments.deployments);
 
@@ -222,4 +246,6 @@ function main() {
   console.log(`ABI files:   ${Object.keys(abiByDeployment).length}`);
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { nextGeneratedAt };
