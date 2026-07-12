@@ -11,7 +11,7 @@ import { buildBurnArgs, burnTokensAbi } from '../src/burn-component.js';
 import { buildDeployErc20Args, deployERC20Abi } from '../src/deploy-erc20-component.js';
 import { buildSendReservedArgs, sendReservedAbi } from '../src/reserved-component.js';
 import { buildSetPermissionsArgs, setPermissionsAbi } from '../src/permissions-component.js';
-import { buildSendPayoutsArgs, normalizePayoutContext, payoutCurrencyIdForSelection, payoutAmountDecimals, payoutOutputFloor, sendPayoutsAbi, tokenCurrencyId } from '../src/payouts-component.js';
+import { availablePayoutAmount, buildSendPayoutsArgs, isExactPayoutCurrency, normalizePayoutContext, payoutBalanceInLimitCurrency, payoutCurrencyIdForSelection, payoutAmountDecimals, payoutOutputFloor, sendPayoutsAbi, tokenCurrencyId } from '../src/payouts-component.js';
 import { safeExecArgs, safeExecSignatures, safeUsableConfirmationCount, SAFE_EXEC_ABI } from '../src/safe.js';
 
 const CTRL = '0x4444444444444444444444444444444444444444';
@@ -164,6 +164,20 @@ describe('send payouts — JBMultiTerminal.sendPayoutsOf', () => {
     expect(payoutOutputFloor(1n)).toBe(1n);
     expect(payoutOutputFloor(1000000n, true)).toBe(1000000n);
     expect(() => buildSendPayoutsArgs({ chainId: 1, terminalAddr: TERMINAL, projectId: 5, token: USDC, amount: 1n, currency: 2n, minPaidOut: 0n })).toThrow(/quote/i);
+  });
+  it('caps a cross-currency payout by the terminal balance at the protocol price', () => {
+    // Reported Base Sepolia case: 0.000025 ETH at 1,817.53 USD/ETH funds 0.04543825 USD, not the 0.05 USD limit.
+    const balance = 25000000000000n;
+    const usdPerEth = 1817530000000000000000n;
+    const remainingUsd = 50000000000000000n;
+    expect(payoutBalanceInLimitCurrency(balance, usdPerEth)).toBe(45438250000000000n);
+    const available = availablePayoutAmount(remainingUsd, balance, usdPerEth);
+    expect(available).toBe(45438250000000000n);
+    expect(available * 1000000000000000000n / usdPerEth).toBeLessThanOrEqual(balance);
+    expect(availablePayoutAmount(remainingUsd, 1n * 10n ** 18n, usdPerEth)).toBe(remainingUsd);
+    expect(availablePayoutAmount(remainingUsd, balance, 1000000000000000000n)).toBe(balance);
+    expect(isExactPayoutCurrency(61166n, 61166n)).toBe(true);
+    expect(isExactPayoutCurrency(1n, 61166n)).toBe(false); // ETH id still converts when the context uses token id 61166.
   });
   it('rejects malformed accounting contexts before enabling the payout form', () => {
     const context = normalizePayoutContext({ token: USDC, decimals: 6, currency: 2 }, [{ address: USDC, symbol: 'USDC' }]);

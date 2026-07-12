@@ -124,6 +124,19 @@ export function errMessage(e, fallback) {
   return (e && (e.shortMessage || e.message)) || fallback;
 }
 
+// Decode high-frequency raw selectors which can bubble through wallets/RPCs without their ABI error name.
+// Keep this pure so transaction surfaces can share the same useful fallback and tests can pin the wording.
+export function friendlyTransactionError(errorText) {
+  var text = String(errorText || '').toLowerCase();
+  if (text.indexOf('0xd81b2f2e') !== -1 || text.indexOf('allowanceexpired') !== -1) {
+    return 'Token authorization expired. Review and try again to renew it before paying.';
+  }
+  if (text.indexOf('0x6b2bb382') !== -1 || text.indexOf('jbmultiterminal_undermin') !== -1) {
+    return 'The live return fell below the minimum you reviewed. Refresh the quote and try again.';
+  }
+  return null;
+}
+
 // One address-format check for the whole app (replaces ~39 inline `/^0x[0-9a-fA-F]{40}$/` regexes).
 // strict:false = format only (any case), matching the old regex; the `typeof` guard matches `.test()`'s
 // string coercion so isAddr(undefined) === false. addrOrZero coerces a blank/invalid address to 0x0.
@@ -998,6 +1011,7 @@ export function executeTransaction(opts) {
 
   function sendNow() {
   cbs.onStatus('Checking wallet network...', 'pending');
+  var approvalReceipt = null;
 
   wallet.getChainId().then(function(walletChainId) {
     if (walletChainId !== opts.chainId) {
@@ -1010,19 +1024,26 @@ export function executeTransaction(opts) {
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
       return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus);
     }
+  }).then(function(receipt) {
+    approvalReceipt = receipt || null;
   }).then(function() {
     var current = getAccount();
     if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     cbs.onStatus('Simulating the confirmed transaction...', 'pending');
     var pub = createPublicClientForChain(opts.chainId);
-    return pub.simulateContract({
+    var simulationRequest = {
       account: account,
       address: opts.address,
       abi: opts.abi,
       functionName: opts.functionName,
       args: opts.args,
       value: opts.value || 0n,
-    }).then(function(simulation) {
+    };
+    // Anchor the follow-on simulation to the approval block. Some load-balanced RPCs return the receipt from
+    // one backend while another backend's `latest` state still predates the approval; the terminal then falls
+    // through to an old/expired Permit2 allowance even though the approval just confirmed.
+    if (approvalReceipt && approvalReceipt.blockNumber != null) simulationRequest.blockNumber = approvalReceipt.blockNumber;
+    return pub.simulateContract(simulationRequest).then(function(simulation) {
       cbs.onStatus('Awaiting wallet confirmation...', 'pending');
       return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId] }));
     });
@@ -1033,12 +1054,16 @@ export function executeTransaction(opts) {
     var pub = createPublicClientForChain(opts.chainId);
     return pub.waitForTransactionReceipt({ hash: hash });
   }).then(function(receipt) {
+    if (!receipt || receipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' \u00b7 TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(function(err) {
     var msg = err.shortMessage || err.message || 'Unknown error';
-    var full = ((err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
+    var full = ((err.shortMessage || '') + ' ' + (err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
     var chainName = CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : ('chain ' + opts.chainId);
-    if (msg.indexOf('rejected') !== -1 || msg.indexOf('User rejected') !== -1 || /user rejected|denied transaction/i.test(full)) {
+    var friendly = friendlyTransactionError(full);
+    if (friendly) {
+      cbs.onError(friendly);
+    } else if (msg.indexOf('rejected') !== -1 || msg.indexOf('User rejected') !== -1 || /user rejected|denied transaction/i.test(full)) {
       cbs.onError('Transaction rejected by wallet');
     } else if (/insufficient funds|exceeds the balance|gas \* price|gas required exceeds/.test(full)) {
       // Most common real failure for destination-chain claims and any tx on a chain the wallet isn't funded on.
@@ -1048,6 +1073,20 @@ export function executeTransaction(opts) {
     }
   });
   }
+}
+
+export async function waitForErc20Approval(client, hash, tokenAddr, owner, spender, amount) {
+  var receipt = await client.waitForTransactionReceipt({ hash: hash });
+  if (!receipt || receipt.status !== 'success') throw new Error('Token approval reverted onchain. Nothing else was sent.');
+  var allowance = await client.readContract({
+    address: tokenAddr,
+    abi: erc20AllowanceAbi,
+    functionName: 'allowance',
+    args: [owner, spender],
+    blockNumber: receipt.blockNumber,
+  });
+  if (BigInt(allowance) < BigInt(amount)) throw new Error('Token approval confirmed but did not grant the reviewed amount. Nothing else was sent.');
+  return receipt;
 }
 
 function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
@@ -1078,7 +1117,7 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
       if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
       return wallet.writeContract(Object.assign({}, simulation.request, { account: owner, chain: CHAINS[chainId] }));
     }).then(function(hash) {
-      return pub.waitForTransactionReceipt({ hash: hash });
+      return waitForErc20Approval(pub, hash, tokenAddr, owner, spender, amount);
     });
   });
 }
@@ -1156,19 +1195,19 @@ export var COMPONENT_SPECS = {
   'project-payer': { file: 'project-payer.js (calldata boundary) + discover.js (renderExtrasSection / fetchProjectPayerRows)', fn: 'JBProjectPayerDeployer.deployProjectPayer(uint256 defaultProjectId, address defaultBeneficiary, string defaultMemo, bytes defaultMetadata, bool defaultAddToBalance, address owner) returns (address projectPayer)', desc: "Deploys a fresh JBProjectPayer forwarding address for a project on each selected chain. The deploy is permissionless and goes through JBProjectPayerDeployer; the UI defaults to pay mode (defaultAddToBalance=false), zero beneficiary (meaning the original payer receives the project's tokens), empty memo, 0x metadata, and zero address admin (an immutable payer address). Checking Editable reveals the admin field and defaults it to the connected wallet. Gotchas: defaultBeneficiary and owner can differ by chain via the per-chain address-control pattern; a nonzero owner/admin can later change the payer address's destination project, Pay/Add to Balance behavior, beneficiary, memo, and metadata, and can transfer or renounce the admin role, but the role does NOT receive funds or control either project. A zero owner can never edit those values. Sending the native token (ETH) directly to the payer address invokes its receive path; ERC-20s such as USDC require calling the payer contract's pay/addToBalanceOf functions after token approval and are not supported by direct token transfer. Metadata must be even-length hex bytes. The list under the form is indexed from Bendystraw's projectPayers table, ordered by totalFacilitatedUsd descending, and only appears after the deployer event and terminal Pay/AddToBalance events have been indexed." },
   'accounting-token': { file: 'discover.js (openAddAccountingTokenModal)', fn: 'JBMultiTerminal.addAccountingContextsFor(uint256 projectId, JBAccountingContext[] accountingContexts)', desc: "Registers a token the project's terminal will accept for payments (native ETH, USDC, custom). Gotchas: the JBAccountingContext.currency is uint32(uint160(token)) — token-keyed, NOT the standard currency id (ETH=1/USD=2); decimals must match the token (USDC=6); USDC is a DIFFERENT address per chain (native is the same 0x…EEEe everywhere), so per-chain token resolution matters; adding a context is effectively irreversible (danger-gated); needs a JBPrices feed if the project's base currency differs." },
   'split-groups': { file: 'discover.js (openEditSplitsModal / submitSplitsEdit)', fn: 'JBController.setSplitGroupsOf(uint256 projectId, uint256 rulesetId, JBSplitGroup[] splitGroups)', desc: "Replaces a ruleset's split groups (reserved-token recipients or payout recipients) for the current cycle, per chain. Gotchas: the call REPLACES the whole group — omitted recipients are dropped; split percents are 1e9-scaled (SPLITS_TOTAL_PERCENT = 1,000,000,000); the reserved group id differs from a payout group id (keyed by currency/token); the JBSplit tuple field order is load-bearing (wrong order changes the selector and reverts); a split can target another project, an address, or a split hook; locked splits can't be removed before lockedUntil." },
-  'add-liquidity': { file: 'discover.js (buildAddLiquidityModal / lpMint)', fn: 'Uniswap V4 PositionManager.modifyLiquidities(bytes unlockData, uint256 deadline)', desc: "Seeds the project's Uniswap V4 buyback pool so payers can route through the AMM, minting a concentrated-liquidity position over a price range. The pool/pair/hook are resolved per-project via JBDirectory → controllerOf → currentRulesetOf → ruleset dataHook (unwrapping REVOwner/registry/JBOmnichainDeployer wrappers), NOT the defaulting hookOf/terminalOf getters (which return a default even for non-users). Gotchas: this is a Uniswap V4 PositionManager.modifyLiquidities call, NOT a Juicebox terminal — the actions are abi-encoded (MINT_POSITION, CLOSE c0, CLOSE c1, +SWEEP for native refund); the pair token is native ETH or the project's accounting token (USDC 6-dec) — the pair amount uses pairDec, the project token is always 18-dec, and both are mapped onto pool currency0/currency1 by address ordering. The range (entered in pair-per-token) is converted to ticks and SNAPPED to the pool's tickSpacing (200 for the 1% fee tier), so a too-tight range collapses to one tickSpacing width. Crucially, single-sided liquidity is out-of-range by definition: if the current pool price sits at/above your Max the position is all-pair, at/below your Min it's all-project-token, and getLiquidity==0 at the current tick means the buyback hook won't route swaps through it — active depth needs a TWO-SIDED position STRADDLING the current price (Max above spot, Min below). Adding liquidity NEVER moves the price (the price is set once at pool initialize); to seed the other side you must move the price with a swap or widen the range. Range defaults span the cash-out floor to the issuance ceiling (1e18/weight); when there's no floor yet, or the cash-out price sits above the ceiling (inverted/anomalous), Min falls back to a mirror/10x band below the pool price. The Permit2 → PositionManager allowance is folded into the multicall (gasless signature) to save a tx; native pairs go via msg.value with a SWEEP refund, ERC-20 pairs pull the exact amount via Permit2. A companion Remove flow (openRemoveLiquidityModal) scans your positions across the current AND old buyback pools and full-exits with BURN_POSITION + TAKE_PAIR (0x0311), amount mins 0, no approval needed. Only chains with a V4 position+pool manager support it." },
+  'add-liquidity': { file: 'discover.js (buildAddLiquidityModal / lpMint)', fn: 'Uniswap V4 PositionManager.modifyLiquidities(bytes unlockData, uint256 deadline)', desc: "Seeds the project's Uniswap V4 buyback pool so payers can route through the AMM, minting a concentrated-liquidity position over a price range. The pool/pair/hook are resolved per-project via JBDirectory → controllerOf → currentRulesetOf → ruleset dataHook (unwrapping REVOwner/registry/JBOmnichainDeployer wrappers), NOT the defaulting hookOf/terminalOf getters (which return a default even for non-users). Gotchas: this is a Uniswap V4 PositionManager.modifyLiquidities call, NOT a Juicebox terminal — the actions are abi-encoded (MINT_POSITION, CLOSE c0, CLOSE c1, +SWEEP for native refund); the pair token is native ETH or the project's accounting token (USDC 6-dec) — the pair amount uses pairDec, the project token is always 18-dec, and both are mapped onto pool currency0/currency1 by address ordering. The range (entered in pair-per-token) is converted to ticks and SNAPPED to the pool's tickSpacing (200 for the 1% fee tier), so a too-tight range collapses to one tickSpacing width. Crucially, single-sided liquidity is out-of-range by definition: if the current pool price sits at/above your Max the position is all-pair, at/below your Min it's all-project-token, and getLiquidity==0 at the current tick means the buyback hook won't route swaps through it — active depth needs a TWO-SIDED position STRADDLING the current price (Max above spot, Min below). Adding liquidity NEVER moves the price (the price is set once at pool initialize); to seed the other side you must move the price with a swap or widen the range. Range defaults use the cash-out floor and issuance ceiling only when they strictly contain spot; inverted, degenerate, or out-of-range economics widen around the live pool price so both deposit tokens remain active. The Permit2 → PositionManager allowance is folded into the multicall (gasless signature) to save a tx; native pairs go via msg.value with a SWEEP refund, ERC-20 pairs pull the exact amount via Permit2. A companion Remove flow (openRemoveLiquidityModal) scans your positions across the current AND old buyback pools and full-exits with BURN_POSITION + TAKE_PAIR (0x0311), amount mins 0, no approval needed. Only chains with a V4 position+pool manager support it." },
 };
 
 // Keep the user-facing audit prompts aligned with the hardened transaction paths. These concise overrides
 // supersede older long-form notes above that documented now-removed unsafe fallbacks.
 COMPONENT_SPECS.pay.desc = "Pays through the best live-previewed recognized terminal and mints project tokens to the beneficiary. The form requires a non-zero preview at submit time and sets minReturnedTokens to 99% of that quote; it never submits an unpriced min=0 payment. Amount uses the payment token's decimals, returned project tokens use 18 decimals, native payments set msg.value, and ERC-20 payments approve the exact resolved terminal.";
 COMPONENT_SPECS.cashout.desc = "Burns 18-decimal project tokens to reclaim a selected on-chain accounting token. The component loads only the terminal's real accounting contexts, requires previewCashOutFrom to return a non-zero reclaim, and sets minTokensReclaimed to 95% of that quote (at least one raw unit); preview failure or a zero return blocks the transaction. The project-page AMM path instead carries its hard floor in buyback-hook metadata, where terminal min=0 is required by that route.";
-COMPONENT_SPECS.payouts.desc = "Calls sendPayoutsOf(projectId, token, amount, currency, minTokensPaidOut) using a token from the project's actual accounting contexts. Every JBCurrencyAmount uses that accounting token's decimals even when denominated in ETH, USD, or another currency. Before signing, the form reads the live ruleset, configured limit and already-used amount, rejects requests above the remaining limit, simulates terminal-token output, and sets a non-zero 99% floor so the contract's silent cap cannot make the transaction pay less than reviewed.";
+COMPONENT_SPECS.payouts.desc = "Calls sendPayoutsOf(projectId, token, amount, currency, minTokensPaidOut) using a token from the project's actual accounting contexts. Every JBCurrencyAmount uses that accounting token's decimals even when denominated in ETH, USD, or another currency. Before signing, the form reads the live ruleset, configured and used limit, terminal balance, and protocol price; rejects amounts above either the remaining limit or the balance converted into the limit currency; simulates terminal-token output; and sets a non-zero 99% floor so the contract's silent limit cap cannot make the transaction pay less than reviewed.";
 COMPONENT_SPECS.launch.desc = "Launches a project and its initial rulesets/terminals. Fund-access payout limits and surplus allowances are fixed-point values using the associated accounting token context's decimals for every currency (for example both token-keyed and USD limits on USDC use 6 decimals); currency changes denomination, not scale. Empty fund-access groups mean no payout access, and unlimited limits use uint224.max.";
 COMPONENT_SPECS['queue-ruleset'].desc = "Queues future rulesets with exact ABI tuple ordering. Fund-access amounts are raw uint224 fixed-point values and must use the associated terminal token context's decimals regardless of whether their currency id is token-keyed, ETH, USD, or custom. Limits are sorted by currency, empty groups mean no payout access, split percentages use 1e9, and ruleset percentage fields use their documented 10,000/1e9 scales.";
 COMPONENT_SPECS.loan.desc = "Opens or repays a REVLoans position using REVLoan.sourceToken. The modal lists every accepted accounting context, quotes borrowableAmountFrom in the chosen token's real decimals/currency, and sets minBorrowAmount to 99% of a fresh submit-time quote. Repayment rereads the on-chain loan and current source fee, supports native and ERC-20 sources (direct ERC-20 allowance), adds a bounded two-minute fee-drift guard, and relies on REVLoans to refund unused native or token funds.";
 COMPONENT_SPECS.move.desc = "Moves a project's claimed ERC-20 tokens through a verified JBSucker route. Before prepare(), the modal verifies the sucker's project id, bridge infrastructure, source-to-destination backing-token mapping, destination accounting context, and a live terminal cash-out preview. Positive backing uses a 99% minTokensReclaimed floor; an exact zero-backing preview is allowed only with an explicit warning because the identical project-token count is still minted remotely. The ERC-20 approval and exact prepare call are simulated before signing. toRemote() is a separate batched action; its registry and transport payment is discovered by simulating the selected verified native or CCIP sucker, and an unverified route blocks instead of being guessed as native.";
-COMPONENT_SPECS['add-liquidity'].desc = "Adds or removes a Uniswap V4 concentrated-liquidity position in the project's live buyback pool. The pool, hook, pair token, accounting-token decimals, address ordering, tick spacing, current price, and position state are read on the selected chain; missing pair/context data blocks the action. Adds encode the exact MINT_POSITION/CLOSE/SWEEP plan and use Permit2 or native msg.value as appropriate. Full removals encode BURN_POSITION with TAKE_PAIR and set each positive token minimum to 95% of the displayed position amount, while a genuinely zero side remains zero. Both paths switch to the reviewed chain, simulate the exact call, recheck the connected account, and submit the simulation request.";
+COMPONENT_SPECS['add-liquidity'].desc = "Adds or removes a Uniswap V4 concentrated-liquidity position in the project's live buyback pool. The pool, hook, pair token, accounting-token decimals, address ordering, tick spacing, current price, and position state are read on the selected chain; missing pair/context data blocks the action. The default range uses the economic floor/ceiling only when they strictly contain spot; otherwise it widens around spot so both deposit tokens remain active. Adds encode the exact MINT_POSITION/CLOSE/SWEEP plan and use Permit2 or native msg.value as appropriate. Full removals encode BURN_POSITION with TAKE_PAIR and set each positive token minimum to 95% of the displayed position amount, while a genuinely zero side remains zero. Both paths switch to the reviewed chain, simulate the exact call, recheck the connected account, and submit the simulation request.";
 // An LLM prompt: the code file + contract + an English account of the component's extent and gotchas, plus
 // a directive to build it completely and safely. `fileHint` overrides the source file (discover.js modals
 // reuse a component's spec but live in a different file).

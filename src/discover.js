@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an on-chain URI fallback.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
@@ -13,6 +13,7 @@ import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, exe
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
+import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
 import { TIER_UNLIMITED_SUPPLY, build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
@@ -403,6 +404,12 @@ function permit2MetadataId(target) {
   for (var i = 0; i < 8; i += 2) out += (parseInt(a.substr(i, 2), 16) ^ parseInt(b.substr(i, 2), 16)).toString(16).padStart(2, '0');
   return out;
 }
+async function latestChainTimestamp(client) {
+  var block = await client.getBlock({ blockTag: 'latest' });
+  var timestamp = Number(block.timestamp);
+  if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw new Error('Could not read the chain timestamp for authorization.');
+  return timestamp;
+}
 async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount, onStatus) {
   amount = BigInt(amount);
   if (amount <= 0n || amount > (1n << 160n) - 1n) throw new Error('Payment amount is outside Permit2’s uint160 range.');
@@ -421,12 +428,12 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     var approval = await client.simulateContract({ account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, maxU] });
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
     var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId] }));
-    await client.waitForTransactionReceipt({ hash: ah });
+    await waitForErc20Approval(client, ah, token, owner, PERMIT2_ADDRESS, amount);
   }
   // 2. Read the current Permit2 allowance to get the next nonce for (owner, token, spender=router).
   var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [owner, token, spender] });
   var nonce = Number(p2[2]);
-  var now = Math.floor(Date.now() / 1000);
+  var now = await latestChainTimestamp(client);
   var expiration = now + 1800, sigDeadline = BigInt(now + 1800);
   // 3. Sign the exact, expiring Permit2 single-allowance (gasless) authorizing the router to pull `amount`.
   if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
@@ -2968,12 +2975,12 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     var approval = await client.simulateContract({ account: recipient, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId] }));
-    await client.waitForTransactionReceipt({ hash: ah });
+    await waitForErc20Approval(client, ah, token, recipient, PERMIT2_ADDRESS, amountIn);
   }
   // 2. Sign an expiring Permit2 single-allowance authorizing the Universal Router to pull `amountIn`.
   var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [recipient, token, ur] });
   var nonce = Number(p2[2]);
-  var now = Math.floor(Date.now() / 1000);
+  var now = await latestChainTimestamp(client);
   var expiration = now + 1800, sigDeadline = BigInt(now + 1800);
   if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
   if (onStatus) onStatus('Sign the swap authorization…', 'pending');
@@ -3086,6 +3093,14 @@ var usedPayoutLimitAbi = [{
     { name: 'currency', type: 'uint256' },
   ],
   outputs: [{ type: 'uint256' }],
+}];
+var pricePerUnitAbi = [{
+  type: 'function', name: 'pricePerUnitOf', stateMutability: 'view',
+  inputs: [
+    { name: 'projectId', type: 'uint256' }, { name: 'pricingCurrency', type: 'uint256' },
+    { name: 'unitCurrency', type: 'uint256' }, { name: 'decimals', type: 'uint256' },
+  ],
+  outputs: [{ name: 'price', type: 'uint256' }],
 }];
 var usedSurplusAllowanceAbi = [{
   type: 'function', name: 'usedSurplusAllowanceOf', stateMutability: 'view',
@@ -11377,19 +11392,40 @@ function currencyMeta(cur, acct) {
   // JBCurrencyAmount.amount always uses the accounting token's fixed-point decimals, even when its unit is
   // another currency (for example a USD limit on a 6-decimal USDC context).
   var decimals = acct && acct.decimals != null ? Number(acct.decimals) : 18;
-  var isNativeAcct = !!(acct && acct.address && acct.address.toLowerCase() === NATIVE_TOKEN.toLowerCase());
-  if (cur === 1) return { decimals: decimals, symbol: 'ETH', tokenKeyed: isNativeAcct };
-  if (cur === 2) return { decimals: decimals, symbol: 'USD', tokenKeyed: false };
   var acctCur = 0;
   if (acct) {
     try { acctCur = acct.currency != null ? Number(acct.currency) : Number(BigInt(acct.address) & 0xffffffffn); } catch (_) { acctCur = 0; }
   }
-  if (cur === acctCur) return { decimals: decimals, symbol: acct.symbol, tokenKeyed: true };
+  var tokenKeyed = isExactPayoutCurrency(cur, acctCur);
+  if (cur === 1) return { decimals: decimals, symbol: 'ETH', tokenKeyed: tokenKeyed };
+  if (cur === 2) return { decimals: decimals, symbol: 'USD', tokenKeyed: tokenKeyed };
+  if (tokenKeyed) return { decimals: decimals, symbol: acct.symbol, tokenKeyed: true };
   return { decimals: decimals, symbol: 'currency ' + cur, tokenKeyed: false };
 }
 
 function formatCurrencyAmount(amount, meta) {
   return formatAmount(amount, meta.decimals) + ' ' + meta.symbol;
+}
+
+function formatCompactCurrencyAmount(amount, meta) {
+  var exact = formatAmount(amount, meta.decimals);
+  var parts = exact.split('.');
+  if (parts.length === 1) return exact + ' ' + meta.symbol;
+  var whole = parts[0], fraction = parts[1];
+  var firstNonZero = fraction.search(/[1-9]/);
+  if (firstNonZero === -1) return '0 ' + meta.symbol;
+  // Keep six significant fractional digits without rounding upward. Very small values use the shared scientific
+  // formatter rather than filling the table with leading zeros.
+  if (whole === '0' && firstNonZero >= 6) return formatBalance(amount, meta.decimals, meta.symbol);
+  var wholeDigits = whole === '0' ? 0 : whole.replace('-', '').length;
+  var keep = wholeDigits ? Math.max(0, 6 - wholeDigits) : firstNonZero + 6;
+  var shortFraction = fraction.slice(0, keep).replace(/0+$/, '');
+  return whole + (shortFraction ? '.' + shortFraction : '') + ' ' + meta.symbol;
+}
+
+function accessAmountDisplay(amount, meta) {
+  if (toBigInt(amount) >= (2n ** 200n)) return { compact: 'Unlimited ' + meta.symbol, exact: '' };
+  return { compact: formatCompactCurrencyAmount(amount, meta), exact: formatCurrencyAmount(amount, meta) };
 }
 
 export function remainingAccessAmount(limit, used) {
@@ -11418,51 +11454,67 @@ function buildPayoutsModal(project, acctKind) {
     return resolveAcctToken(cid, pid);
   }
 
-  var lbl1 = el('div', 'modal-label'); lbl1.textContent = 'Distribute payouts'; wrap.appendChild(lbl1);
-  var desc = el('div', 'modal-balance'); desc.textContent = 'Sends the project’s funds to its payout recipients (any splits, then the owner). Anyone can trigger this; a 2.5% protocol fee may apply.'; wrap.appendChild(desc);
-  var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
+  var desc = el('div', 'modal-balance'); desc.textContent = 'Sends funds to payout splits, then the project owner. Anyone can trigger it.'; wrap.appendChild(desc);
 
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
   chainRow.appendChild(chainSel); wrap.appendChild(chainRow);
 
-  var currencyRow = el('div', 'ops-chainrow');
-  var currencyLabel = el('span', 'modal-label'); currencyLabel.textContent = 'Payout limit'; currencyRow.appendChild(currencyLabel);
+  var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
+
+  var payoutSummary = document.createElement('table'); payoutSummary.className = 'payout-summary'; payoutSummary.hidden = true;
+  var payoutSummaryBody = document.createElement('tbody'); payoutSummary.appendChild(payoutSummaryBody); wrap.appendChild(payoutSummary);
+
+  var currencyRow = el('div', 'ops-chainrow access-currency-row payout-currency-row');
+  currencyRow.hidden = true;
+  var currencyLabel = el('span', 'modal-label'); currencyLabel.textContent = 'Limit currency'; currencyRow.appendChild(currencyLabel);
   var currencySel = document.createElement('select'); currencySel.className = 'ops-chain-select'; currencySel.disabled = true; currencyRow.appendChild(currencySel);
   wrap.appendChild(currencyRow);
 
+  var amountLabel = el('div', 'modal-label'); amountLabel.textContent = 'Amount'; wrap.appendChild(amountLabel);
   var inRow = el('div', 'ops-inrow');
-  var field = el('div', 'ops-field');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; field.appendChild(amt);
+  var field = el('div', 'ops-field ops-field--grow');
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; amt.disabled = true; field.appendChild(amt);
   var maxBtn = el('button', 'lp-max'); maxBtn.textContent = 'Max'; field.appendChild(maxBtn);
   var unit = el('span', 'ops-unit'); unit.textContent = '…'; field.appendChild(unit);
   inRow.appendChild(field); wrap.appendChild(inRow);
 
-  var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
+  var preview = el('div', 'ops-preview payout-preview'); wrap.appendChild(preview);
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
-  var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Distribute'; foot.appendChild(btn); wrap.appendChild(foot);
+  var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Distribute'; btn.disabled = true; foot.appendChild(btn); wrap.appendChild(foot);
 
-  // Up-to-2.5% protocol fee on payouts to non-feeless recipients, and where it goes. The fee is per-recipient
-  // (feeless splits — other JB projects, registered addresses — pay none), so this is an upper bound.
+  function updatePayoutSummary() {
+    payoutSummaryBody.innerHTML = '';
+    if (!state.acct || !state.meta || !state.selected) { payoutSummary.hidden = true; return; }
+    var balanceMeta = { decimals: state.acct.decimals, symbol: state.acct.symbol };
+    var limitDisplay = accessAmountDisplay(state.selected.remaining, state.meta);
+    [
+      ['Limit remaining', limitDisplay.compact, limitDisplay.exact],
+      ['Terminal balance', formatCompactCurrencyAmount(state.balance, balanceMeta), formatCurrencyAmount(state.balance, balanceMeta)],
+      ['Available now', formatCompactCurrencyAmount(state.selected.available, state.meta), formatCurrencyAmount(state.selected.available, state.meta)],
+    ].forEach(function (item, index) {
+      var row = document.createElement('tr');
+      if (index === 2) row.className = 'payout-summary-max';
+      var label = document.createElement('th'); label.scope = 'row'; label.textContent = item[0]; row.appendChild(label);
+      var value = document.createElement('td'); value.textContent = item[1];
+      if (item[2] && item[2] !== item[1]) value.title = item[2];
+      row.appendChild(value);
+      payoutSummaryBody.appendChild(row);
+    });
+    payoutSummary.hidden = false;
+  }
+
+  // The fee is assessed per recipient, so 2.5% is an upper bound; feeless recipients pay none.
   function updatePayoutPreview() {
     preview.innerHTML = '';
     if (!state.acct || !state.meta) return;
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
-    var line = el('div', 'ops-preview-line ops-preview-fee');
-    line.textContent = state.meta.tokenKeyed
-      ? 'Up to 2.5% protocol fee (≤ ' + formatBalance(amount / 40n, state.acct.decimals, state.acct.symbol) + ') on payouts to non-feeless recipients'
-      : 'The terminal-token output and fee are converted at the protocol’s live on-chain price.';
+    var line = el('div', 'ops-preview-line');
+    line.textContent = (state.meta.tokenKeyed ? '' : 'Uses the current on-chain price. ')
+      + 'Fee: up to 2.5%; JB projects and registered feeless addresses are exempt.';
     preview.appendChild(line);
-    var to = el('div', 'ops-preview-line ops-preview-feetok');
-    to.appendChild(document.createTextNode('↳ paid into '));
-    to.appendChild(feeProjectLink(state.chainId, FEE_BENEFICIARY_PROJECT_ID));
-    to.appendChild(document.createTextNode('; feeless recipients (JB projects, registered addresses) pay none'));
-    preview.appendChild(to);
-    var floor = el('div', 'ops-preview-line ops-preview-feetok');
-    floor.textContent = 'Before confirmation, the full request is simulated and protected by a live token-output floor.';
-    preview.appendChild(floor);
   }
   amt.addEventListener('input', updatePayoutPreview);
 
@@ -11484,8 +11536,22 @@ function buildPayoutsModal(project, acctKind) {
       if (!ruleset || toBigInt(ruleset.id) === 0n) throw new Error('No current ruleset.');
       return read(cid, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, toBigInt(ruleset.id), term, acct.address]).then(function (limits) {
         return Promise.all((limits || []).map(function (limit) {
-          return read(cid, 'JBTerminalStore', usedPayoutLimitAbi, 'usedPayoutLimitOf', [term, pid, acct.address, toBigInt(ruleset.cycleNumber), toBigInt(limit.currency)])
-            .then(function (used) { return { currency: Number(limit.currency), amount: toBigInt(limit.amount), used: toBigInt(used), remaining: remainingAccessAmount(limit.amount, used) }; });
+          var currency = toBigInt(limit.currency);
+          var price = isExactPayoutCurrency(currency, acct.currency)
+            ? Promise.resolve(1000000000000000000n)
+            : read(cid, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [pid, currency, toBigInt(acct.currency), 18n]);
+          return Promise.all([
+            read(cid, 'JBTerminalStore', usedPayoutLimitAbi, 'usedPayoutLimitOf', [term, pid, acct.address, toBigInt(ruleset.cycleNumber), currency]),
+            price,
+          ]).then(function (values) {
+            var used = toBigInt(values[0]);
+            var remaining = remainingAccessAmount(limit.amount, used);
+            var pricePerUnit = toBigInt(values[1]);
+            return {
+              currency: Number(currency), remaining: remaining,
+              available: availablePayoutAmount(remaining, head[0], pricePerUnit),
+            };
+          });
         })).then(function (rows) { return { term: term, balance: toBigInt(head[0]), ruleset: ruleset, limits: rows }; });
       });
     });
@@ -11495,17 +11561,21 @@ function buildPayoutsModal(project, acctKind) {
     state.selected = state.limits.filter(function (limit) { return String(limit.currency) === String(currency); })[0] || state.limits[0] || null;
     if (!state.selected || !state.acct) {
       state.currency = null; state.meta = null; state.maxAmount = null; unit.textContent = '—'; maxBtn.style.display = 'none';
+      amt.disabled = true; btn.disabled = true;
+      payoutSummary.hidden = true; currencyRow.hidden = true;
       bal.textContent = 'No payout limit is configured for this token in the current ruleset.';
       return;
     }
     state.currency = state.selected.currency;
     state.meta = currencyMeta(state.currency, state.acct);
-    state.maxAmount = state.meta.tokenKeyed && state.balance != null && state.balance < state.selected.remaining ? state.balance : state.selected.remaining;
+    state.maxAmount = state.selected.available;
     currencySel.value = String(state.currency);
     unit.textContent = state.meta.symbol;
     maxBtn.style.display = state.maxAmount > 0n ? '' : 'none';
-    bal.textContent = 'Remaining payout limit on ' + chainNameOf(state.chainId) + ': ' + formatCurrencyAmount(state.selected.remaining, state.meta)
-      + ' · terminal balance: ' + formatBalance(state.balance, state.acct.decimals, state.acct.symbol);
+    amt.disabled = state.maxAmount <= 0n; btn.disabled = state.maxAmount <= 0n;
+    currencyRow.hidden = state.limits.length < 2;
+    bal.textContent = '';
+    updatePayoutSummary();
     updatePayoutPreview();
   }
   currencySel.addEventListener('change', function () { selectPayoutLimit(currencySel.value); });
@@ -11513,8 +11583,10 @@ function buildPayoutsModal(project, acctKind) {
   var loadSeq = 0;
   function onChainChange() {
     var seq = ++loadSeq;
-    bal.textContent = 'Available: …'; unit.textContent = '…';
-    state.acct = null; state.selected = null; state.meta = null; state.limits = []; state.maxAmount = null;
+    bal.textContent = 'Loading payout access…'; unit.textContent = '…';
+    amt.disabled = true; btn.disabled = true;
+    payoutSummary.hidden = true; currencyRow.hidden = true;
+    state.acct = null; state.balance = null; state.selected = null; state.meta = null; state.limits = []; state.maxAmount = null;
     currencySel.innerHTML = ''; currencySel.disabled = true;
     resolveAcct(state.chainId).then(function (acct) {
       if (seq !== loadSeq) return null;
@@ -11527,12 +11599,17 @@ function buildPayoutsModal(project, acctKind) {
         state.limits.forEach(function (limit) {
           var meta = currencyMeta(limit.currency, acct);
           var opt = document.createElement('option'); opt.value = String(limit.currency);
-          opt.textContent = formatCurrencyAmount(limit.remaining, meta) + ' remaining'; currencySel.appendChild(opt);
+          opt.textContent = meta.symbol; currencySel.appendChild(opt);
         });
         currencySel.disabled = state.limits.length < 2;
         selectPayoutLimit(state.currency);
       });
-    }).catch(function (error) { if (seq === loadSeq) bal.textContent = errMessage(error, 'Could not read the current payout limit.'); });
+    }).catch(function (error) {
+      if (seq !== loadSeq) return;
+      payoutSummary.hidden = true; currencyRow.hidden = true;
+      amt.disabled = true; btn.disabled = true;
+      bal.textContent = errMessage(error, 'Could not read the current payout limit.');
+    });
   }
   onChainChange();
 
@@ -11542,7 +11619,7 @@ function buildPayoutsModal(project, acctKind) {
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (amount === 0n) { status.textContent = 'Enter an amount'; return; }
     if (amount > state.selected.remaining) { status.textContent = 'Amount exceeds the remaining payout limit'; return; }
-    if (state.meta.tokenKeyed && state.balance != null && amount > state.balance) { status.textContent = 'Amount exceeds the terminal balance'; return; }
+    if (amount > state.selected.available) { status.textContent = 'Amount exceeds what the terminal balance can currently fund'; return; }
     var term = getAddress('JBMultiTerminal', state.chainId);
     if (!term) { status.textContent = 'No terminal on this chain'; return; }
     var cid = state.chainId, currency = state.currency, acct = state.acct, meta = state.meta, account = getAccount();
@@ -11557,7 +11634,7 @@ function buildPayoutsModal(project, acctKind) {
     readPayoutAccess(cid, acct).then(function (access) {
       var live = access.limits.filter(function (limit) { return limit.currency === currency; })[0];
       if (!live || amount > live.remaining) throw new Error('The remaining payout limit changed. Review the new amount and try again.');
-      if (currencyMeta(currency, acct).tokenKeyed && amount > access.balance) throw new Error('The terminal balance changed and no longer covers this payout.');
+      if (amount > live.available) throw new Error('The terminal balance or price changed. Review the updated available amount and try again.');
       return clientFor(cid).simulateContract({ account: account, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', args: [pid, acct.address, amount, BigInt(currency), 0n] });
     }).then(function (sim) {
       if (!payoutInputsUnchanged()) throw new Error('Payout inputs, chain, or connected account changed while the live limit was loading. Review and try again.');
@@ -11573,7 +11650,13 @@ function buildPayoutsModal(project, acctKind) {
         onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
         onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Payouts distributed on ' + chainNameOf(cid) + '.'; btn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); onChainChange(); },
       });
-    }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not safely quote this payout.'); btn.disabled = false; onChainChange(); });
+    }).catch(function (error) {
+      var message = errMessage(error, 'Could not safely quote this payout.');
+      if (message.indexOf('0x9fa59b9a') !== -1 || message.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
+        message = 'The terminal balance no longer covers this amount. Review the updated available amount and try again.';
+      }
+      status.classList.remove('pending'); status.textContent = message; btn.disabled = false; onChainChange();
+    });
   });
   return wrap;
 }
@@ -11592,21 +11675,26 @@ function buildUseAllowanceModal(project, acctKind) {
   }
 
   wrap.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to use the surplus allowance.'));
-  var desc = el('div', 'modal-balance'); desc.textContent = 'Withdraws surplus (funds beyond the payout limit) to a beneficiary, up to this ruleset’s surplus allowance. A 2.5% protocol fee may apply.'; wrap.appendChild(desc);
-  var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
+  var desc = el('div', 'modal-balance'); desc.textContent = 'Withdraws surplus to a beneficiary, up to the current allowance. A fee of up to 2.5% may apply.'; wrap.appendChild(desc);
 
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
   chainRow.appendChild(chainSel); wrap.appendChild(chainRow);
 
-  var currencyRow = el('div', 'ops-chainrow');
-  var currencyLabel = el('span', 'modal-label'); currencyLabel.textContent = 'Surplus allowance'; currencyRow.appendChild(currencyLabel);
+  var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
+
+  var allowanceSummary = document.createElement('table'); allowanceSummary.className = 'payout-summary'; allowanceSummary.hidden = true;
+  var allowanceSummaryBody = document.createElement('tbody'); allowanceSummary.appendChild(allowanceSummaryBody); wrap.appendChild(allowanceSummary);
+
+  var currencyRow = el('div', 'ops-chainrow access-currency-row'); currencyRow.hidden = true;
+  var currencyLabel = el('span', 'modal-label'); currencyLabel.textContent = 'Allowance currency'; currencyRow.appendChild(currencyLabel);
   var currencySel = document.createElement('select'); currencySel.className = 'ops-chain-select'; currencySel.disabled = true; currencyRow.appendChild(currencySel);
   wrap.appendChild(currencyRow);
 
+  var amountLabel = el('div', 'modal-label'); amountLabel.textContent = 'Amount'; wrap.appendChild(amountLabel);
   var inRow = el('div', 'ops-inrow');
-  var field = el('div', 'ops-field');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; field.appendChild(amt);
+  var field = el('div', 'ops-field ops-field--grow');
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; amt.disabled = true; field.appendChild(amt);
   var maxBtn = el('button', 'lp-max'); maxBtn.textContent = 'Max'; field.appendChild(maxBtn);
   var unit = el('span', 'ops-unit'); unit.textContent = '…'; field.appendChild(unit);
   inRow.appendChild(field); wrap.appendChild(inRow);
@@ -11614,7 +11702,27 @@ function buildUseAllowanceModal(project, acctKind) {
   var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
-  var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Use allowance'; foot.appendChild(btn); wrap.appendChild(foot);
+  var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Use allowance'; btn.disabled = true; foot.appendChild(btn); wrap.appendChild(foot);
+
+  function updateAllowanceSummary() {
+    allowanceSummaryBody.innerHTML = '';
+    if (!state.acct || !state.meta || !state.selected) { allowanceSummary.hidden = true; return; }
+    var surplusMeta = { decimals: state.acct.decimals, symbol: state.acct.symbol };
+    var allowanceDisplay = accessAmountDisplay(state.selected.remaining, state.meta);
+    [
+      ['Allowance remaining', allowanceDisplay.compact, allowanceDisplay.exact],
+      ['Current surplus', formatCompactCurrencyAmount(state.surplus, surplusMeta), formatCurrencyAmount(state.surplus, surplusMeta)],
+      ['Available now', formatCompactCurrencyAmount(state.selected.available, state.meta), formatCurrencyAmount(state.selected.available, state.meta)],
+    ].forEach(function (item, index) {
+      var row = document.createElement('tr');
+      if (index === 2) row.className = 'payout-summary-max';
+      var label = document.createElement('th'); label.scope = 'row'; label.textContent = item[0]; row.appendChild(label);
+      var value = document.createElement('td'); value.textContent = item[1];
+      if (item[2] && item[2] !== item[1]) value.title = item[2];
+      row.appendChild(value); allowanceSummaryBody.appendChild(row);
+    });
+    allowanceSummary.hidden = false;
+  }
 
   // Net-to-beneficiary + the 2.5% protocol fee (where it goes, the JB #1 token it mints back).
   function updateAllowancePreview() {
@@ -11624,14 +11732,14 @@ function buildUseAllowanceModal(project, acctKind) {
     if (!amount || amount <= 0n) return;
     if (state.feeless == null) {
       var pendingFee = el('div', 'ops-preview-line ops-preview-feetok');
-      pendingFee.textContent = 'Fee status could not yet be verified. The exact withdrawal will be simulated before confirmation.';
+      pendingFee.textContent = 'Fee status unavailable; exact output is simulated before confirmation.';
       preview.appendChild(pendingFee);
       return;
     }
     var recv = el('div', 'ops-preview-line ops-preview-recv');
     recv.textContent = state.meta.tokenKeyed
-      ? 'Beneficiary receives ~ ' + formatBalance(state.feeless ? amount : amount - amount / 40n, state.acct.decimals, state.acct.symbol)
-      : 'The beneficiary’s terminal-token output is converted at the protocol’s live on-chain price.';
+      ? 'Beneficiary: ~' + formatCompactCurrencyAmount(state.feeless ? amount : amount - amount / 40n, { decimals: state.acct.decimals, symbol: state.acct.symbol })
+      : 'Uses the current on-chain price; the exact output is simulated before confirmation.';
     preview.appendChild(recv);
     if (state.feeless) {
       var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'No protocol fee — this address is feeless for the project.'; preview.appendChild(fl);
@@ -11642,9 +11750,6 @@ function buildUseAllowanceModal(project, acctKind) {
       cv.textContent = 'Protocol fee is converted by the terminal at the on-chain price.';
       preview.appendChild(cv);
     }
-    var floor = el('div', 'ops-preview-line ops-preview-feetok');
-    floor.textContent = 'Before confirmation, the withdrawal is simulated and protected by a 1% token-output floor.';
-    preview.appendChild(floor);
   }
   amt.addEventListener('input', updateAllowancePreview);
 
@@ -11666,10 +11771,23 @@ function buildUseAllowanceModal(project, acctKind) {
         read(cid, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, toBigInt(ruleset.id), term, acct.address]),
         read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [term], [acct.address], BigInt(acct.decimals), acctCurrency]),
       ]).then(function (r) {
+        var surplus = toBigInt(r[1]);
         return Promise.all((r[0] || []).map(function (allowance) {
-          return read(cid, 'JBTerminalStore', usedSurplusAllowanceAbi, 'usedSurplusAllowanceOf', [term, pid, acct.address, toBigInt(ruleset.id), toBigInt(allowance.currency)])
-            .then(function (used) { return { currency: Number(allowance.currency), amount: toBigInt(allowance.amount), used: toBigInt(used), remaining: remainingAccessAmount(allowance.amount, used) }; });
-        })).then(function (rows) { return { term: term, ruleset: ruleset, surplus: toBigInt(r[1]), allowances: rows }; });
+          var currency = toBigInt(allowance.currency);
+          var price = isExactPayoutCurrency(currency, acctCurrency)
+            ? Promise.resolve(1000000000000000000n)
+            : read(cid, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [pid, currency, acctCurrency, 18n]);
+          return Promise.all([
+            read(cid, 'JBTerminalStore', usedSurplusAllowanceAbi, 'usedSurplusAllowanceOf', [term, pid, acct.address, toBigInt(ruleset.id), currency]),
+            price,
+          ]).then(function (values) {
+            var remaining = remainingAccessAmount(allowance.amount, values[0]);
+            return {
+              currency: Number(currency), remaining: remaining,
+              available: availablePayoutAmount(remaining, surplus, values[1]),
+            };
+          });
+        })).then(function (rows) { return { term: term, ruleset: ruleset, surplus: surplus, allowances: rows }; });
       });
     });
   }
@@ -11678,17 +11796,20 @@ function buildUseAllowanceModal(project, acctKind) {
     state.selected = state.allowances.filter(function (allowance) { return String(allowance.currency) === String(currency); })[0] || state.allowances[0] || null;
     if (!state.selected || !state.acct) {
       state.currency = null; state.meta = null; state.usable = null; unit.textContent = '—'; maxBtn.style.display = 'none';
+      amt.disabled = true; btn.disabled = true; allowanceSummary.hidden = true; currencyRow.hidden = true;
       bal.textContent = 'No surplus allowance is configured for this token in the current ruleset.';
       return;
     }
     state.currency = state.selected.currency;
     state.meta = currencyMeta(state.currency, state.acct);
-    state.usable = state.meta.tokenKeyed && state.surplus < state.selected.remaining ? state.surplus : state.selected.remaining;
+    state.usable = state.selected.available;
     currencySel.value = String(state.currency);
     unit.textContent = state.meta.symbol;
     maxBtn.style.display = state.usable > 0n ? '' : 'none';
-    bal.textContent = 'Remaining allowance on ' + chainNameOf(state.chainId) + ': ' + formatCurrencyAmount(state.selected.remaining, state.meta)
-      + ' · current ' + state.acct.symbol + ' surplus: ' + formatBalance(state.surplus, state.acct.decimals, state.acct.symbol);
+    amt.disabled = state.usable <= 0n; btn.disabled = state.usable <= 0n;
+    currencyRow.hidden = state.allowances.length < 2;
+    bal.textContent = '';
+    updateAllowanceSummary();
     updateAllowancePreview();
   }
   currencySel.addEventListener('change', function () { selectAllowance(currencySel.value); });
@@ -11696,8 +11817,9 @@ function buildUseAllowanceModal(project, acctKind) {
   var loadSeq = 0;
   function onChainChange() {
     var seq = ++loadSeq;
-    bal.textContent = 'Usable: …'; unit.textContent = '…';
-    state.acct = null; state.selected = null; state.meta = null; state.allowances = []; state.usable = null; state.feeless = null;
+    bal.textContent = 'Loading allowance…'; unit.textContent = '…';
+    amt.disabled = true; btn.disabled = true; allowanceSummary.hidden = true; currencyRow.hidden = true;
+    state.acct = null; state.surplus = null; state.selected = null; state.meta = null; state.allowances = []; state.usable = null; state.feeless = null;
     currencySel.innerHTML = ''; currencySel.disabled = true;
     resolveAcct(state.chainId).then(function (acct) {
       if (seq !== loadSeq) return null;
@@ -11718,12 +11840,16 @@ function buildUseAllowanceModal(project, acctKind) {
         state.allowances.forEach(function (allowance) {
           var meta = currencyMeta(allowance.currency, acct);
           var opt = document.createElement('option'); opt.value = String(allowance.currency);
-          opt.textContent = formatCurrencyAmount(allowance.remaining, meta) + ' remaining'; currencySel.appendChild(opt);
+          opt.textContent = meta.symbol; currencySel.appendChild(opt);
         });
         currencySel.disabled = state.allowances.length < 2;
         selectAllowance(state.currency);
       });
-    }).catch(function (error) { if (seq === loadSeq) bal.textContent = errMessage(error, 'Could not read the current surplus allowance.'); });
+    }).catch(function (error) {
+      if (seq !== loadSeq) return;
+      allowanceSummary.hidden = true; currencyRow.hidden = true; amt.disabled = true; btn.disabled = true;
+      bal.textContent = errMessage(error, 'Could not read the current surplus allowance.');
+    });
   }
   onChainChange();
 
@@ -11734,7 +11860,7 @@ function buildUseAllowanceModal(project, acctKind) {
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (amount === 0n) { status.textContent = 'Enter an amount'; return; }
     if (amount > state.selected.remaining) { status.textContent = 'Amount exceeds the remaining allowance'; return; }
-    if (state.meta.tokenKeyed && amount > state.surplus) { status.textContent = 'Amount exceeds the current surplus'; return; }
+    if (amount > state.selected.available) { status.textContent = 'Amount exceeds what the current surplus can fund'; return; }
     var term = getAddress('JBMultiTerminal', state.chainId);
     if (!term) { status.textContent = 'No terminal on this chain'; return; }
     var cid = state.chainId, currency = state.currency, acct = state.acct, meta = state.meta, account = acc;
@@ -11749,7 +11875,7 @@ function buildUseAllowanceModal(project, acctKind) {
     readAllowanceAccess(cid, acct).then(function (access) {
       var live = access.allowances.filter(function (allowance) { return allowance.currency === currency; })[0];
       if (!live || amount > live.remaining) throw new Error('The remaining surplus allowance changed. Review the new amount and try again.');
-      if (currencyMeta(currency, acct).tokenKeyed && amount > access.surplus) throw new Error('The current surplus changed and no longer covers this withdrawal.');
+      if (amount > live.available) throw new Error('The current surplus or price changed. Review the updated available amount and try again.');
       return clientFor(cid).simulateContract({ account: acc, address: term, abi: useAllowanceAbi, functionName: 'useAllowanceOf', args: [pid, acct.address, amount, BigInt(currency), 0n, acc, acc, ''] });
     }).then(function (sim) {
       if (!allowanceInputsUnchanged()) throw new Error('Allowance inputs, chain, or connected account changed while the live allowance was loading. Review and try again.');
@@ -11763,9 +11889,19 @@ function buildUseAllowanceModal(project, acctKind) {
         confirmNote: 'Live simulation quotes ' + formatBalance(quoted, acct.decimals, acct.symbol) + ' net to you. The transaction reverts below ' + formatBalance(minOut, acct.decimals, acct.symbol) + '.',
         onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
         onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-        onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Surplus used on ' + chainNameOf(cid) + '.'; btn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); onChainChange(); },
+        onSuccess: function () {
+          status.classList.remove('pending'); status.textContent = 'Surplus used on ' + chainNameOf(cid) + '.'; btn.disabled = false;
+          wrap.dispatchEvent(new CustomEvent('jb:close-modal'));
+          document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+        },
       });
-    }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not safely quote this withdrawal.'); btn.disabled = false; onChainChange(); });
+    }).catch(function (error) {
+      var message = errMessage(error, 'Could not safely quote this withdrawal.');
+      if (message.indexOf('0x9fa59b9a') !== -1 || message.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
+        message = 'The current surplus no longer covers this amount. Review the updated available amount and try again.';
+      }
+      status.classList.remove('pending'); status.textContent = message; btn.disabled = false; onChainChange();
+    });
   });
   return wrap;
 }
@@ -12330,7 +12466,7 @@ function renderPriceChart(project, stages) {
     if (amm || cashout || cashoutHistory.length || ammHistory.length) draw();
 
     // Fill the chip value subtexts (no ETH/REV unit — the chart axis carries it). AMM is one line:
-    // "<price> on <x REV> + <y ETH> liq".
+    // "<price> on <x project-token> + <y pair-token> liq".
     var liq = (lp && pairScale && (lp.totalRev > 0n || lp.totalEth > 0n))
       ? formatCompactTokenAmount(lp.totalRev) + ' ' + sym + ' + ' + formatPrice(Number(lp.totalEth) / pairScale) + ' ' + pairSym
       : '';
@@ -12399,21 +12535,47 @@ function renderIssuance(project, stages) {
   return card;
 }
 
+// Bound a historical price view by both the selected lookback and the project's first ruleset. Before that first
+// ruleset there was no issuance/cash-out/pool price to chart, so extending a new project back a full year invents
+// empty history. Pure for regression tests.
+export function priceChartTimeBounds(firstStart, now, years, past) {
+  firstStart = Number(firstStart);
+  now = Number(now);
+  years = Number(years);
+  var t0, t1;
+  if (past) {
+    t1 = now;
+    var historyStart = Number.isFinite(firstStart) && firstStart > 0 ? firstStart : (years > 0 ? now - years * YEAR : now - YEAR);
+    // Preserve a drawable window for a ruleset whose start timestamp is equal to/slightly ahead of this browser's
+    // clock without fabricating a year of history.
+    historyStart = Math.min(historyStart, t1 - 60);
+    t0 = years > 0 ? Math.max(historyStart, now - years * YEAR) : historyStart;
+  } else {
+    t0 = Math.min(firstStart, now);
+    t1 = years > 0 ? now + years * YEAR : firstStart + 5 * YEAR;
+    if (t1 <= t0) t1 = t0 + YEAR;
+  }
+  return { t0: t0, t1: t1 };
+}
+
+function priceChartAxisLabel(timestamp, span) {
+  var date = new Date(timestamp * 1000);
+  if (span <= 2 * 86400) return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  if (span < YEAR) return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  if (span < 2 * YEAR) return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  return String(date.getFullYear());
+}
+
 // Plots PRICE (base token per project token = 1/issuance), rising as issuance is cut. The card
 // header still shows issuance (tokens/ETH). Zero-issuance regions clamp to the top of the finite range.
 function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past, cashoutHistory, ammHistory) {
   var firstStart = Number(sorted[0].start);
-  var t0, t1;
-  if (past) {
-    // History only: AMM and cash-out prices in the future are unknowable, so end at "now".
-    t1 = now;
-    t0 = years > 0 ? now - years * YEAR : firstStart;
-    if (t0 >= t1) t0 = t1 - YEAR;
-  } else {
-    t0 = Math.min(firstStart, now);
-    t1 = years > 0 ? now + years * YEAR : (Number(sorted[sorted.length - 1].start) + 5 * YEAR);
-    if (t1 <= t0) t1 = t0 + YEAR;
+  var bounds = priceChartTimeBounds(firstStart, now, years, past);
+  if (!past && years <= 0) {
+    bounds.t1 = Number(sorted[sorted.length - 1].start) + 5 * YEAR;
+    if (bounds.t1 <= bounds.t0) bounds.t1 = bounds.t0 + YEAR;
   }
+  var t0 = bounds.t0, t1 = bounds.t1;
 
   var W = 600, H = 200, padL = 8, padR = 8, padT = 24, padB = 22, N = 240; // padT headroom so "Today" clears the line/now-line peak
   var pts = [];
@@ -12491,15 +12653,16 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
     cashLine = '<line x1="' + padL + '" y1="' + Y(cashoutPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(cashoutPrice).toFixed(1) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="2 4"/>';
   }
 
-  var y0 = new Date(t0 * 1000).getFullYear();
-  var y1 = new Date(t1 * 1000).getFullYear();
+  var span = t1 - t0;
+  var y0 = priceChartAxisLabel(t0, span);
+  var y1 = priceChartAxisLabel(t1, span);
 
   var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="none" class="issuance-svg">'
     + '<path d="' + area + '" fill="rgba(110,196,196,0.18)"/>'
     + '<path d="' + line + '" fill="none" stroke="#6ec4c4" stroke-width="2"/>'
     + dividers + nowLine + ammLine + cashLine
     + '</svg>';
-  // Axis years + "Today" go to mountChart as HTML overlays (regular font, not viewBox-shrunk).
+  // Axis endpoints + "Today" go to mountChart as HTML overlays (regular font, not viewBox-shrunk).
   return { svg: svg, geo: { t0: t0, t1: t1, W: W, padL: padL, padR: padR, nowX: nowX, nowShow: nowShow, nearRight: nearRight, y0: y0, y1: y1 } };
 }
 
@@ -12538,7 +12701,7 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
     });
   }
   holder.innerHTML = c.svg;
-  // Axis years + "Today" as HTML overlays so they render at the regular font size (the chart SVG's
+  // Axis endpoints + "Today" as HTML overlays so they render at the regular font size (the chart SVG's
   // responsive viewBox would otherwise shrink them to ~6px on a phone).
   var g = c.geo;
   var lbl = '<span class="chart-axis chart-axis-l">' + g.y0 + '</span><span class="chart-axis chart-axis-r">' + g.y1 + '</span>';
@@ -14050,7 +14213,7 @@ function renderOwnersAmm(project) {
   if (ammAddr) { var a = addressNode(ammAddr); a.classList.add('lp-amm-title-addr'); lpTitle.appendChild(a); }
   wrap.appendChild(lpTitle);
   var lpHead = el('div', 'detail-card-body owners-intro');
-  lpHead.textContent = 'The market is used to fill orders that give payers more REV than issuance would.';
+  lpHead.textContent = 'The market is used to fill orders that give payers more ' + sym + ' than issuance would.';
   wrap.appendChild(lpHead);
   var loading = el('div', 'owners-load'); loading.appendChild(skelOwnersDistribution()); wrap.appendChild(loading);
   readLpPositions(project, project.chainId).then(function (lp) {
@@ -16126,9 +16289,15 @@ function renderYouCard(project, opts) {
   actions.appendChild(claimBtn);
 
   var loadSeq = 0;
+  var renderedAccountKey = null;
+  function currentAccountKey() {
+    var current = getAccount && getAccount();
+    return current ? current.toLowerCase() : '';
+  }
   function load() {
     var seq = ++loadSeq; // guard: stale in-flight loads must not append a second table (caused duplicate cards on connect)
     var acct = getAccount && getAccount();
+    renderedAccountKey = acct ? acct.toLowerCase() : '';
     body.innerHTML = '';
     if (!acct) {
       // Disconnected: show ONLY the connect prompt + button (hide the action buttons).
@@ -16144,6 +16313,9 @@ function renderYouCard(project, opts) {
     var status = skelOpsTable(noLoans ? ['Chain', 'Balance', 'Cash out', 'LP'] : ['Chain', 'Balance', 'Cash out', 'Max loan', 'LP'], 2); body.appendChild(status);
     Promise.all([fetchYouPosition(project), readCashOutDelay(project)]).then(function (out) {
       if (seq !== loadSeq || !body.isConnected) return; // a newer load() superseded this one
+      // Account switches can race an in-flight position read. Reconcile against the canonical wallet state even
+      // if a provider or another view emitted an unusual event sequence.
+      if (currentAccountKey() !== renderedAccountKey) { load(); return; }
       var rows = out[0], delay = out[1];
       // The revnet's cash-out delay gates BOTH direct cash-outs (REVOwner.beforeCashOutRecordedWith
       // reverts) AND loans (borrowableAmountFrom returns 0). The cash-out *value* still computes (pure
@@ -16283,6 +16455,14 @@ function renderYouCard(project, opts) {
   }
 
   load();
+  // Project cards are assembled off-DOM before being mounted. If an eager connect/account switch lands in that
+  // narrow window, its event correctly skips the detached card; reconcile once after mounting so the visible card
+  // cannot remain on its disconnected branch while the header shows an account.
+  var reconcileAfterMount = function () {
+    if (body.isConnected && currentAccountKey() !== renderedAccountKey) load();
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reconcileAfterMount);
+  else Promise.resolve().then(reconcileAfterMount);
   onWalletChange(function () { if (body.isConnected) load(); });
   document.addEventListener('jb:bridge-updated', function () { if (body.isConnected) load(); });
   return wrap;
@@ -16624,6 +16804,7 @@ function openModal(titleText, contentNode, opts) {
   overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
   function onKey(e) { if (e.key === 'Escape') close(); }
   function close() { document.removeEventListener('keydown', onKey); overlay.remove(); }
+  contentNode.addEventListener('jb:close-modal', close);
   document.addEventListener('keydown', onKey);
   document.body.appendChild(overlay);
   return { close: close };
@@ -17430,11 +17611,33 @@ function loanPrepaidDurationLabel(p) {
   return Math.round(days) + ' days';
 }
 
+// Opening amounts shown in the loan comparison and detailed fee summary. Keep this in one pure helper so the
+// prominent net-proceeds figure cannot drift from the breakdown beneath it.
+export function loanOpeningAmounts(gross, prepaidFee, feeless) {
+  gross = BigInt(gross || 0);
+  var protocolFee = feeless ? 0n : gross / 40n;
+  var revFee = gross * BigInt(LOAN_REV_FEE_PERCENT) / BigInt(LOAN_MAX_FEE);
+  var sourceFee = gross * BigInt(prepaidFee) / BigInt(LOAN_MAX_FEE);
+  return {
+    gross: gross,
+    protocolFee: protocolFee,
+    revFee: revFee,
+    sourceFee: sourceFee,
+    net: gross - protocolFee - revFee - sourceFee,
+  };
+}
+
+export function loanUnlockFeeText(prepaidFee, upperAmount) {
+  if (Number(prepaidFee) >= LOAN_MAX_PREPAID) return 'Never grows — fully prepaid';
+  return 'Grows after ' + loanPrepaidDurationLabel(Number(prepaidFee)) + '; up to ~ ' + upperAmount + ' by year 10';
+}
+
 var LOAN_CHART = { W: 460, H: 168, padL: 30, padR: 12, padT: 12, padB: 28 };
 
 // "Additional cost to unlock" (fraction of borrowed principal) at time t years, for prepaid percent p.
 // 0 through the prepaid window (p/500 × 10y), then linear up to (1 − p/1000) at year 10.
 function loanFeeFracAt(t, p) {
+  if (p >= LOAN_MAX_PREPAID) return 0;
   var pdY = (p / LOAN_MAX_PREPAID) * 10;
   if (t <= pdY) return 0;
   return (1 - p / LOAN_MAX_FEE) * (t - pdY) / (10 - pdY);
@@ -17446,7 +17649,7 @@ function renderLoanFeeSvg(p) {
   var W = LOAN_CHART.W, H = LOAN_CHART.H, padL = LOAN_CHART.padL, padR = LOAN_CHART.padR, padT = LOAN_CHART.padT, padB = LOAN_CHART.padB;
   var plotW = W - padL - padR, plotH = H - padT - padB;
   var pdY = (p / LOAN_MAX_PREPAID) * 10;     // prepaid window in years
-  var maxFrac = 1 - p / LOAN_MAX_FEE;        // peak additional cost as a fraction of principal
+  var maxFrac = p >= LOAN_MAX_PREPAID ? 0 : 1 - p / LOAN_MAX_FEE; // fully prepaid stays flat at zero
   var X = function (yr) { return padL + (yr / 10) * plotW; };
   var Y = function (frac) { return padT + (1 - frac) * plotH; };
   var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="loan-fee-svg" role="img" aria-label="Additional cost to unlock over time">';
@@ -17468,7 +17671,18 @@ function renderLoanFeeSvg(p) {
 function buildLoanModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
-  var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, prepaidFee: LOAN_MIN_PREPAID, accts: [], acct: null, acctLoading: true, feeless: null, loanOut: null };
+  var state = {
+    chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId,
+    balance: null,
+    prepaidFee: LOAN_MIN_PREPAID,
+    accts: [],
+    acct: null,
+    acctLoading: true,
+    feeless: null,
+    loanOut: null,
+    cashOutNet: null,
+    cashOutLoading: false,
+  };
   // A loan is denominated in REVLoan.sourceToken's accounting context, not the ruleset base currency.
   function fmtBorrow(v) {
     var acct = state.acct;
@@ -17488,13 +17702,13 @@ function buildLoanModal(project, requestClose) {
   chainRow.appendChild(chainSel);
   wrap.appendChild(chainRow);
 
-  var sourceRow = el('div', 'ops-chainrow');
+  var sourceRow = el('div', 'ops-chainrow access-currency-row loan-source-row'); sourceRow.hidden = true;
   var sourceLabel = el('span', 'modal-label'); sourceLabel.textContent = 'Borrow token'; sourceRow.appendChild(sourceLabel);
-  var sourceSel = document.createElement('select'); sourceSel.className = 'ops-chain-select'; sourceSel.disabled = true; sourceRow.appendChild(sourceSel);
+  var sourceSel = document.createElement('select'); sourceSel.className = 'field create-input create-input-auto loan-source-select'; sourceSel.disabled = true; sourceRow.appendChild(sourceSel);
   wrap.appendChild(sourceRow);
   sourceSel.addEventListener('change', function () {
     state.acct = state.accts.filter(function (candidate) { return candidate.address.toLowerCase() === sourceSel.value.toLowerCase(); })[0] || null;
-    state.borrowable = null;
+    state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false;
     updatePreview(); updateFeeViz(); updateSummary();
   });
 
@@ -17507,6 +17721,44 @@ function buildLoanModal(project, requestClose) {
   wrap.appendChild(opsPercentButtons(amt, function () { return state.balance; }));
 
   var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
+
+  // Put the actual decision in one compact place: current treasury cash-out value, net loan proceeds, and what
+  // happens to the collateral. This deliberately makes no personal tax recommendation.
+  var decision = el('section', 'loan-decision'); decision.hidden = true;
+  var decisionTitle = el('div', 'loan-decision-title'); decisionTitle.textContent = 'Compare'; decision.appendChild(decisionTitle);
+  var decisionTable = document.createElement('table'); decisionTable.className = 'payout-summary loan-decision-table';
+  var decisionBody = document.createElement('tbody'); decisionTable.appendChild(decisionBody); decision.appendChild(decisionTable);
+  var decisionNote = el('div', 'loan-decision-note');
+  decisionNote.textContent = 'Live treasury cash-out and loan quotes are net of protocol and project fees. Cashing out burns the tokens; repaying a loan lets you reclaim them. Personal tax effects are not included.';
+  decision.appendChild(decisionNote); wrap.appendChild(decision);
+
+  function decisionRow(label, value) {
+    var row = document.createElement('tr');
+    var key = document.createElement('th'); key.scope = 'row'; key.textContent = label;
+    var val = document.createElement('td'); val.textContent = value;
+    row.appendChild(key); row.appendChild(val); return row;
+  }
+  function updateDecision() {
+    var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
+    decision.hidden = collateral <= 0n;
+    decisionBody.innerHTML = '';
+    if (collateral <= 0n) return;
+    var tokenAmount = formatTokenCount(collateral) + ' ' + sym;
+    var cashValue = state.cashOutLoading
+      ? 'cash-out value checking…'
+      : (state.cashOutNet != null ? ('cash-out value ~ ' + fmtBorrow(state.cashOutNet)) : 'cash-out value unavailable');
+    decisionBody.appendChild(decisionRow('Hold', tokenAmount + ' · ' + cashValue));
+    var cashNow = state.cashOutLoading
+      ? 'Checking live quote…'
+      : (state.cashOutNet != null ? ('~ ' + fmtBorrow(state.cashOutNet) + ' now · tokens burned') : 'Unavailable now');
+    decisionBody.appendChild(decisionRow('Cash out now', cashNow));
+    var loanNow = 'Checking live quote…';
+    if (state.borrowable === 0n) loanNow = 'Unavailable until loans unlock';
+    else if (state.borrowable != null && state.feeless != null) {
+      loanNow = '~ ' + fmtBorrow(loanOpeningAmounts(state.borrowable, state.prepaidFee, state.feeless).net) + ' now · repay to reclaim';
+    }
+    decisionBody.appendChild(decisionRow('Loan now', loanNow));
+  }
 
   // ── Variable fee structure: prepaid-fee slider + cost-over-time chart ──
   var feeSec = el('div', 'loan-section');
@@ -17593,10 +17845,11 @@ function buildLoanModal(project, requestClose) {
       var gross = state.borrowable;
       // Opening a loan disburses via the terminal (2.5% protocol fee → JB #1), then deducts the 1% REV fee
       // (→ the $REV revnet) and the chosen prepaid source fee. The borrower receives what's left now.
-      var protocolFee = state.feeless ? 0n : gross / 40n;                        // 2.5% via useAllowanceOf (waived if feeless)
-      var revFee = gross * BigInt(LOAN_REV_FEE_PERCENT) / BigInt(LOAN_MAX_FEE);   // 1%
-      var sourceFee = gross * BigInt(p) / BigInt(LOAN_MAX_FEE);                   // prepaid source fee (now)
-      var net = gross - protocolFee - revFee - sourceFee;
+      var opening = loanOpeningAmounts(gross, p, state.feeless);
+      var protocolFee = opening.protocolFee; // 2.5% via useAllowanceOf (waived if feeless)
+      var revFee = opening.revFee;           // 1%
+      var sourceFee = opening.sourceFee;     // prepaid source fee (now)
+      var net = opening.net;
       // Snapshot for the success panel (token amounts fill in as their previews resolve).
       state.loanOut = { net: net, sym: state.acct && state.acct.symbol, decimals: state.acct && state.acct.decimals, collateral: collateral, protoTok: null, revTok: null, src: null };
 
@@ -17608,7 +17861,7 @@ function buildLoanModal(project, requestClose) {
       summary.appendChild(summaryRow((p / 10) + '% prepaid source fee (now)', '~ ' + fmtBorrow(sourceFee)));
       var srcTok = feeTokRow();
       summary.appendChild(summaryRow('You receive now', '~ ' + fmtBorrow(net), 'loan-summary-net'));
-      summary.appendChild(summaryRow('Later unlock fee', 'grows after ' + loanPrepaidDurationLabel(p) + ', up to ~ ' + fmtBorrow(gross - sourceFee) + ' by year 10'));
+      summary.appendChild(summaryRow('Later unlock fee', loanUnlockFeeText(p, fmtBorrow(gross - sourceFee))));
 
       // Each fee pays into a project on the borrower's behalf, minting that project's token to them:
       // protocol fee → JB #1, REV fee → the $REV revnet, source fee → THIS revnet (its own token).
@@ -17669,6 +17922,7 @@ function buildLoanModal(project, requestClose) {
       var li = document.createElement('li'); li.textContent = t; bl.appendChild(li);
     });
     summary.appendChild(bl);
+    updateDecision();
   }
   updateFeeViz();
   updateSummary();
@@ -17701,9 +17955,12 @@ function buildLoanModal(project, requestClose) {
     state.acct = null;
     state.acctLoading = true;
     state.borrowable = null;
+    state.cashOutNet = null;
+    state.cashOutLoading = false;
     sourceSel.innerHTML = '';
     var loadingOpt = document.createElement('option'); loadingOpt.textContent = 'Loading…'; sourceSel.appendChild(loadingOpt);
     sourceSel.disabled = true;
+    sourceRow.hidden = true;
     updateSummary();
     function done(contexts) {
       if (seq !== acctSeq || state.chainId !== cid) return;
@@ -17722,6 +17979,7 @@ function buildLoanModal(project, requestClose) {
       });
       if (state.acct) sourceSel.value = state.acct.address;
       sourceSel.disabled = state.accts.length < 2;
+      sourceRow.hidden = state.accts.length < 2;
       updatePreview(); updateFeeViz(); updateSummary();
     }
     resolveAcctTokens(cid, pid).then(done).catch(function () { done([]); });
@@ -17729,25 +17987,52 @@ function buildLoanModal(project, requestClose) {
   var previewSeq = 0;
   function updatePreview() {
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
-    if (!collateral || collateral === 0n) { preview.textContent = ''; state.borrowable = null; updateSummary(); return; }
-    if (state.acctLoading || !state.acct) { preview.textContent = 'Loading borrow token…'; state.borrowable = null; updateSummary(); return; }
+    if (!collateral || collateral === 0n) { preview.textContent = ''; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
+    if (state.acctLoading || !state.acct) { preview.textContent = 'Loading borrow token…'; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = true; updateSummary(); return; }
     var loans = getAddress('REVLoans', state.chainId);
-    if (!loans) { preview.textContent = ''; return; }
+    if (!loans) { preview.textContent = ''; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
     var currency = borrowCurrencyForAccountContext(state.acct);
-    if (currency == null) { preview.textContent = 'Could not resolve this token’s accounting currency.'; state.borrowable = null; return; }
+    if (currency == null) { preview.textContent = 'Could not resolve this token’s accounting currency.'; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
     var seq = ++previewSeq; preview.textContent = 'Calculating…';
-    read(state.chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, BigInt(state.acct.decimals), currency])
-      .then(function (r) {
+    var cid = state.chainId;
+    var terminal = getAddress('JBMultiTerminal', cid);
+    var quoteAccount = (getAccount && getAccount()) || '0x0000000000000000000000000000000000000001';
+    var reclaimToken = state.acct.address || NATIVE_TOKEN;
+    state.cashOutNet = null; state.cashOutLoading = !!terminal; updateDecision();
+    Promise.all([
+      read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, BigInt(state.acct.decimals), currency]),
+      terminal ? clientFor(cid).readContract({
+        address: terminal,
+        abi: previewCashOutAbi,
+        functionName: 'previewCashOutFrom',
+        args: [quoteAccount, pid, collateral, reclaimToken, quoteAccount, '0x'],
+      }).catch(function () { return null; }) : Promise.resolve(null),
+      terminal ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, reclaimToken]).then(toBigInt).catch(function () { return null; }) : Promise.resolve(null),
+      terminal ? isFeelessAddress(cid, quoteAccount, pid) : Promise.resolve(null),
+    ]).then(function (r) {
         if (seq !== previewSeq) return;
-        var b = Array.isArray(r) ? r[0] : r;
+        var borrowResult = r[0];
+        var b = Array.isArray(borrowResult) ? borrowResult[0] : borrowResult;
         state.borrowable = toBigInt(b);
+        var cashPreview = r[1];
+        var feeFreeSurplus = r[2];
+        var cashOutFeeless = r[3];
+        state.cashOutNet = null;
+        if (cashPreview && cashOutFeeless != null) {
+          var afterHook = toBigInt(cashPreview[1]);
+          var cashOutTaxRate = Number(cashPreview[2] || 0);
+          if (cashOutTaxRate || feeFreeSurplus != null) {
+            state.cashOutNet = afterHook - cashOutProtocolFee(afterHook, cashOutTaxRate, cashOutFeeless, feeFreeSurplus);
+          }
+        }
+        state.cashOutLoading = false;
         // borrowableAmountFrom returns 0 for ALL collateral while the revnet's cash-out delay is still in
         // effect (REVLoans gates loans on it) — so a 0 here means loans are time-locked, not "too little".
         preview.textContent = state.borrowable > 0n
           ? 'You’ll borrow ~ ' + fmtBorrow(state.borrowable)
           : 'Nothing borrowable yet — loans unlock after this revnet’s cash-out delay passes.';
         updateFeeViz(); updateSummary();
-      }).catch(function () { if (seq === previewSeq) { preview.textContent = ''; state.borrowable = null; updateFeeViz(); updateSummary(); } });
+      }).catch(function () { if (seq === previewSeq) { preview.textContent = ''; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateFeeViz(); updateSummary(); } });
   }
   amt.addEventListener('input', updatePreview);
   function onChainChange() {
@@ -19057,49 +19342,67 @@ function lpTrimNum(n) {
   return String(Number(n.toPrecision(6)));
 }
 
+// Prefer the economic [cash-out floor, issuance ceiling] corridor when it contains spot. If it is
+// inverted, degenerate, or spot has moved outside it, widen around the live pool price so the default
+// position is genuinely two-sided instead of silently disabling one deposit token.
+export function lpDefaultRange(poolPrice, floor, ceiling) {
+  var p = Number(poolPrice), f = Number(floor), c = Number(ceiling);
+  p = isFinite(p) && p > 0 ? p : 0;
+  f = isFinite(f) && f > 0 ? f : 0;
+  c = isFinite(c) && c > 0 ? c : 0;
+  var economic = p > 0 && f > 0 && c > f && f < p && p < c;
+  var min = economic ? f : (p > 0 ? p / 2 : (c > 0 ? c / 10 : 0));
+  var max = economic ? c : (p > 0 ? p * 2 : c);
+  if (p > 0 && (!(min > 0) || min >= p)) min = p / 2;
+  if (p > 0 && (!(max > p))) max = p * 2;
+  if (!(min > 0) && max > 0) min = max / 10;
+  if (!(max > min)) max = min > 0 ? min * 10 : 0;
+  return { min: min, max: max, economic: economic };
+}
+
 // A compact number-line of the LP price range relative to the cash-out floor, current pool price,
 // and issuance ceiling. All values are pair/base token per project token.
 function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   var pts = [floor, ceiling, poolP, pa, pb].filter(function (v) { return v > 0; });
   if (!pts.length) return { html: '<div class="modal-balance">Range preview unavailable.</div>', maxV: 0, W: 320, padL: 6, padR: 6 };
   var maxV = Math.max.apply(null, pts) * 1.12;
-  var W = 320, H = 74, padL = 6, padR = 6, baseY = 42;
+  var W = 320, padL = 6, padR = 6;
   function X(v) { return padL + (W - padL - padR) * (v / maxV); }
+  var topMarkers = [
+    { value: floor, color: '#2c2018', label: 'Floor' },
+    { value: ceiling, color: '#1a8a8a', label: 'Ceiling' },
+  ].filter(function (marker) { return marker.value > 0; });
+  var topLabels = lpDepthMarkerLabelLayout(topMarkers.map(function (marker) {
+    return { x: X(marker.value), label: marker.label + ' ' + formatPrice(marker.value) };
+  }), W);
+  var topRows = topLabels.reduce(function (max, label) { return Math.max(max, label.row + 1); }, 0);
+  var topH = Math.max(24, topRows * 22 + 2), baseY = topH + 18, H = baseY + 32;
   // Uniform scaling (no preserveAspectRatio="none") so the text labels don't render horizontally stretched.
   var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" class="lp-graph-svg">';
   svg += '<line x1="' + padL + '" y1="' + baseY + '" x2="' + (W - padR) + '" y2="' + baseY + '" stroke="rgba(0,0,0,0.25)" stroke-width="1"/>';
   if (pa > 0 && pb > pa) {
     svg += '<rect x="' + X(pa).toFixed(1) + '" y="' + (baseY - 9) + '" width="' + Math.max(1, X(pb) - X(pa)).toFixed(1) + '" height="18" fill="rgba(110,196,196,0.35)" stroke="#1a8a8a" stroke-width="1"/>';
   }
-  function marker(v, color, label, up, forceAnchor) {
+  function marker(v, color, label, up, layout) {
     if (!(v > 0)) return '';
     var xv = X(v);
     var valStr = formatPrice(v);
     // Keep the whole label inside the chart: anchor by where its half-width would overflow an edge.
     // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.) Use the wider of label/value.
     var half = Math.max(label.length, valStr.length) * 8 * 0.3;
-    var anchor = forceAnchor || 'middle', tx = xv;
-    if (anchor === 'middle') {
+    var anchor = 'middle', tx = layout ? layout.x : xv;
+    if (!layout && anchor === 'middle') {
       if (xv - half < padL) { anchor = 'start'; tx = padL; }
       else if (xv + half > W - padR) { anchor = 'end'; tx = W - padR; }
-    } else if (anchor === 'start' && xv + 2 * half > W - padR) { tx = Math.max(padL, W - padR - 2 * half); }
-    else if (anchor === 'end' && xv - 2 * half < padL) { tx = Math.min(W - padR, padL + 2 * half); }
+    }
     var x = xv.toFixed(1);
-    var labelY = up ? 10 : H - 13, valY = up ? 20 : H - 3;
+    var labelY = up ? (10 + layout.row * 22) : H - 13, valY = up ? (20 + layout.row * 22) : H - 3;
     return '<line x1="' + x + '" y1="' + (baseY - 13) + '" x2="' + x + '" y2="' + (baseY + 13) + '" stroke="' + color + '" stroke-width="1.5"/>'
       + '<text x="' + tx.toFixed(1) + '" y="' + labelY + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>'
       + '<text x="' + tx.toFixed(1) + '" y="' + valY + '" font-size="8" font-weight="bold" fill="' + color + '" text-anchor="' + anchor + '">' + valStr + '</text>';
   }
-  // Floor + ceiling share the top row; when their markers sit close (e.g. cash-out just below the ceiling) the full
-  // labels collide. Shorten to Floor/Ceiling and anchor them outward (lower-priced one's text left, other's right).
-  var floorLbl = 'Cash out floor', ceilLbl = 'Issuance ceiling', floorAnc, ceilAnc;
-  if (floor > 0 && ceiling > 0 && Math.abs(X(ceiling) - X(floor)) < 90) {
-    floorLbl = 'Floor'; ceilLbl = 'Ceiling';
-    if (X(floor) <= X(ceiling)) { floorAnc = 'end'; ceilAnc = 'start'; } else { floorAnc = 'start'; ceilAnc = 'end'; }
-  }
-  svg += marker(floor, '#2c2018', floorLbl, true, floorAnc);
-  svg += marker(poolP, '#b8602e', 'Current pool price', false);
-  svg += marker(ceiling, '#1a8a8a', ceilLbl, true, ceilAnc);
+  topMarkers.forEach(function (spec, index) { svg += marker(spec.value, spec.color, spec.label, true, topLabels[index]); });
+  svg += marker(poolP, '#b8602e', 'Current pool price', false, null);
   svg += '</svg>';
   return { html: svg, maxV: maxV, W: W, padL: padL, padR: padR };
 }
@@ -19478,6 +19781,23 @@ async function readLpPositions(project, chainId) {
 // V4 liquidity-depth histogram: how much active liquidity sits in each price band. Bars are colored by
 // side of the current pool price (below = teal/support, above = orange); dashed markers show the cash-out
 // floor, current AMM price, and issuance ceiling. Price axis is log-scaled (ranges span orders of magnitude).
+export function lpDepthMarkerLabelLayout(markers, width) {
+  var gap = 4, charWidth = 7.2, rowRight = [], placed = [];
+  (markers || []).forEach(function (marker, index) {
+    var label = String(marker.label || '');
+    var halfWidth = Math.max(12, label.length * charWidth / 2);
+    var labelX = Math.max(halfWidth + 1, Math.min(width - halfWidth - 1, Number(marker.x)));
+    placed.push({ index: index, labelX: labelX, left: labelX - halfWidth, right: labelX + halfWidth, row: 0 });
+  });
+  placed.sort(function (a, b) { return a.left - b.left; }).forEach(function (item) {
+    var row = 0;
+    while (row < rowRight.length && item.left < rowRight[row] + gap) row++;
+    item.row = row; rowRight[row] = item.right;
+  });
+  placed.sort(function (a, b) { return a.index - b.index; });
+  return placed.map(function (item) { return { x: item.labelX, row: item.row }; });
+}
+
 function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
   var positions = (lp && lp.positions) || [];
   if (!positions.length) return null;
@@ -19516,9 +19836,24 @@ function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
   var maxL = Math.max.apply(null, bands.map(function (b) { return b.liq; })) || 1;
   // viewBox aspect ≈ the container (left column ≈ 300px) so the SVG scales ~uniformly — otherwise the
   // <text> labels render horizontally stretched/thin under preserveAspectRatio="none".
-  var W = 300, H = 150, padL = 0, padR = 0, labelH = 20, padT = 4, padB = 24;
-  var plotTop = padT + labelH, plotW = W - padL - padR, plotH = H - plotTop - padB;
+  var W = 300, padL = 0, padR = 0, padT = 4, padB = 24;
+  var plotW = W - padL - padR;
   var xOf = function (price) { return padL + ((Math.log(price) - lmin) / span) * plotW; };
+  var markerSpecs = [
+    { price: cashout, color: '#2c2018', label: 'floor' },
+    { price: amm, color: '#b8602e', label: 'price' },
+    { price: issuance, color: '#6ec4c4', label: 'ceiling' },
+  ].filter(function (marker) {
+    return marker.price > 0 && marker.price >= pmin * (1 - 1e-9) && marker.price <= pmax * (1 + 1e-9);
+  }).map(function (marker) {
+    marker.lineX = Math.max(0.8, Math.min(W - 0.8, xOf(marker.price)));
+    marker.x = marker.lineX;
+    return marker;
+  });
+  var markerLabels = lpDepthMarkerLabelLayout(markerSpecs, W);
+  var labelRows = markerLabels.reduce(function (max, label) { return Math.max(max, label.row + 1); }, 0);
+  var labelH = Math.max(20, labelRows * 14 + 4), H = 130 + labelH;
+  var plotTop = padT + labelH, plotH = H - plotTop - padB;
   var bw = plotW / N, svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="lp-depth-svg" preserveAspectRatio="none" role="img" aria-label="Pool liquidity by price band">';
   for (var j = 0; j < N; j++) {
     if (bands[j].liq <= 0) continue;
@@ -19527,15 +19862,11 @@ function renderLpDepthChart(lp, amm, issuance, cashout, sym) {
     svg += '<rect x="' + x.toFixed(1) + '" y="' + (plotTop + plotH - h).toFixed(1) + '" width="' + Math.max(0.5, bw - 0.5).toFixed(1) + '" height="' + h.toFixed(1) + '" fill="' + color + '" opacity="0.5"/>';
   }
   // Markers: dashed line spans the bars; label sits in the row ABOVE the bars (no overlap).
-  function marker(price, color, label) {
-    if (!(price > 0) || price < pmin * (1 - 1e-9) || price > pmax * (1 + 1e-9)) return ''; // tol: exp(log(pmin)) can round just above pmin
-    var x = Math.max(0.8, Math.min(W - 0.8, xOf(price))); // full-bleed: keep edge markers fully visible
-    return '<line x1="' + x.toFixed(1) + '" y1="' + plotTop + '" x2="' + x.toFixed(1) + '" y2="' + (plotTop + plotH) + '" stroke="' + color + '" stroke-width="1.5" stroke-dasharray="3 2"/>'
-      + '<text x="' + Math.max(28, Math.min(W - 28, x)).toFixed(1) + '" y="' + (padT + 12) + '" font-size="12" fill="#7d6858" text-anchor="middle">' + label + '</text>';
+  function marker(spec, label) {
+    return '<line x1="' + spec.lineX.toFixed(1) + '" y1="' + plotTop + '" x2="' + spec.lineX.toFixed(1) + '" y2="' + (plotTop + plotH) + '" stroke="' + spec.color + '" stroke-width="1.5" stroke-dasharray="3 2"/>'
+      + '<text x="' + label.x.toFixed(1) + '" y="' + (padT + 11 + label.row * 14) + '" font-size="12" fill="#7d6858" text-anchor="middle">' + spec.label + '</text>';
   }
-  svg += marker(cashout, '#2c2018', 'floor');
-  svg += marker(amm, '#b8602e', 'price');
-  svg += marker(issuance, '#6ec4c4', 'ceiling');
+  markerSpecs.forEach(function (spec, index) { svg += marker(spec, markerLabels[index]); });
   svg += '<text x="' + padL + '" y="' + (H - 7) + '" font-size="12" fill="#7d6858" text-anchor="start">' + formatPrice(Math.exp(lmin)) + '</text>';
   svg += '<text x="' + (W - padR) + '" y="' + (H - 7) + '" font-size="12" fill="#7d6858" text-anchor="end">' + formatPrice(Math.exp(lmax)) + '</text>';
   svg += '</svg>';
@@ -20158,9 +20489,8 @@ function buildAddLiquidityModal(project) {
     lblR.textContent = 'Price range (' + ps + ' per ' + sym + ')';
     lbl2.textContent = ps + ' to add';
     eu.textContent = ps;
-    pairNote.textContent = 'Concentrated liquidity is deposited as a fixed ' + sym + ':' + ps + ' ratio set by the current pool '
-      + 'price within your range — so entering one side fills the other. The ratio shifts as you move the range: '
-      + 'when the pool price sits near the top of your range the deposit is mostly ' + ps + ', near the bottom mostly ' + sym + '.';
+    pairNote.textContent = 'Enter either amount; the other is calculated at the pool price. Near Min uses more '
+      + sym + '; near Max uses more ' + ps + '.';
   }
   applyPairLabels();
 
@@ -20288,24 +20618,14 @@ function buildAddLiquidityModal(project) {
       btn.disabled = !amm;
       priceLine.textContent = amm ? ('Pool price: ~' + formatPrice(amm) + ' ' + pair.symbol + ' / ' + sym) : 'Pool not initialized on this chain.';
       var poolP = state.poolP > 0 ? state.poolP : (ceiling > 0 ? ceiling / 10 : 0);
-      var maxDefault = ceiling > 0 ? ceiling : poolP;
-      // Meaningful AMM range = [cash-out floor, issuance ceiling]: below the cash-out price, redeeming beats selling.
-      // Use the cash-out floor as Min WHEN it sits below the ceiling (the normal case). If cash-out >= ceiling the
-      // pool is priced below its own cash-out floor (anomalous), so [floor, ceiling] would invert — fall back to a band.
-      var floorUsed = state.floor > 0 && state.floor < maxDefault;
-      var minDefault;
-      if (floorUsed) minDefault = state.floor;
-      else if (poolP > 0 && ceiling > poolP) { var mirror = 2 * poolP - ceiling; minDefault = mirror > 0 ? mirror : poolP * 0.1; }
-      else minDefault = maxDefault * 0.1; // price at/above the ceiling → "mirror below" collapses; 10x band below instead
-      // Never let the default range be degenerate (Min must be strictly below Max).
-      if (!(minDefault > 0) || minDefault >= maxDefault) minDefault = maxDefault * 0.1;
-      if (minDefault > 0) minInput.value = formatPrice(minDefault);
-      if (maxDefault > 0) maxInput.value = formatPrice(maxDefault);
-      rnote.textContent = floorUsed
+      var defaultRange = lpDefaultRange(poolP, state.floor, ceiling);
+      if (defaultRange.min > 0) minInput.value = lpTrimNum(defaultRange.min);
+      if (defaultRange.max > 0) maxInput.value = lpTrimNum(defaultRange.max);
+      rnote.textContent = defaultRange.economic
         ? 'Defaults span the cash-out floor (' + formatPrice(state.floor) + ') to the issuance ceiling.'
         : (state.floor > 0
-          ? 'Cash-out price (' + formatPrice(state.floor) + ') is ABOVE the issuance ceiling — the pool is priced below its cash-out floor, so [floor, ceiling] would invert. Range defaults to a band below the ceiling; re-price the pool (a swap) to seed normally.'
-          : 'No cash-out floor yet — Max defaults to the issuance ceiling and Min to a band below the current price. Adjust either bound; at the current price the deposit is single-sided (widen or move the price to add both).');
+          ? 'The floor and ceiling do not straddle the pool price. The default range is widened so both tokens can be added.'
+          : 'No cash-out floor yet. The default range is widened around the pool price so both tokens can be added.');
       onRangeChange();
     }).catch(function () {
       if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;

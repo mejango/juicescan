@@ -107,6 +107,147 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
         && payerCopy.admin.includes('transfer or renounce the admin role') && payerCopy.admin.includes('does not receive payments or control either project'),
       JSON.stringify(payerCopy));
 
+    // 1c. The reported Base Sepolia payout path presents one compact source of truth and no disabled one-option select.
+    await page.goto(BASE + '?r=502#basesep:10/funds', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Distribute payouts'), null, { timeout: 20000 });
+    await Q(page, '() => { [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Distribute payouts").click(); return 1; }');
+    await page.waitForSelector('.payout-summary:not([hidden])', { timeout: 20000 });
+    const payoutModal = await Q(page, `() => {
+      const modal = document.querySelector('.modal-dialog');
+      const body = modal.querySelector('.modal-body');
+      const rows = [...modal.querySelectorAll('.payout-summary tr')].map(row => [...row.children].map(cell => cell.textContent.trim()));
+      const input = modal.querySelector('.ops-amount');
+      input.value = '0.01'; input.dispatchEvent(new Event('input', { bubbles: true }));
+      const currency = modal.querySelector('.payout-currency-row');
+      return {
+        title: modal.querySelector('.modal-title').textContent.trim(), rows,
+        currencyHidden: currency.hidden, fieldGrows: input.parentElement.classList.contains('ops-field--grow'),
+        text: body.textContent,
+      };
+    }`);
+    check('payout modal shows limit/balance/available table with concise copy',
+      payoutModal.title === 'Distribute payouts'
+        && ['Limit remaining', 'Terminal balance', 'Available now'].every((label, i) => payoutModal.rows[i] && payoutModal.rows[i][0] === label)
+        && payoutModal.currencyHidden && payoutModal.fieldGrows
+        && !payoutModal.text.includes('↳') && !payoutModal.text.includes('paid into') && !payoutModal.text.includes('Before confirmation'),
+      JSON.stringify(payoutModal));
+    await Q(page, '() => { document.querySelector(".modal-close").click(); return 1; }');
+    await Q(page, '() => { [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Use surplus allowance").click(); return 1; }');
+    await page.waitForSelector('.modal-dialog .payout-summary:not([hidden])', { timeout: 20000 });
+    const allowanceModal = await Q(page, `() => {
+      const modal = document.querySelector('.modal-dialog');
+      const currency = modal.querySelector('.access-currency-row');
+      const field = modal.querySelector('.ops-field');
+      const bounds = modal.getBoundingClientRect();
+      const contained = [...modal.querySelectorAll('.payout-summary th, .payout-summary td, .ops-field')]
+        .every(node => { const rect = node.getBoundingClientRect(); return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1; });
+      return {
+        rows: [...modal.querySelectorAll('.payout-summary tr')].map(row => [...row.children].map(cell => cell.textContent.trim())),
+        currencyHidden: currency.hidden, fieldGrows: field.classList.contains('ops-field--grow'),
+        noHorizontalOverflow: contained,
+      };
+    }`);
+    check('surplus allowance keeps exact amounts inside a compact full-width layout',
+      ['Allowance remaining', 'Current surplus', 'Available now'].every((label, i) => allowanceModal.rows[i] && allowanceModal.rows[i][0] === label)
+        && allowanceModal.rows[0][1].startsWith('Unlimited')
+        && allowanceModal.currencyHidden && allowanceModal.fieldGrows && allowanceModal.noHorizontalOverflow,
+      JSON.stringify(allowanceModal));
+    await Q(page, '() => { document.querySelector(".modal-body").dispatchEvent(new CustomEvent("jb:close-modal")); return 1; }');
+    check('completed allowance flow can close its stale modal',
+      await Q(page, '() => !document.querySelector(".modal-dialog")'));
+
+    // 1d. Base Sepolia #8 has floor/price/ceiling clustered at the same end of both LP charts.
+    await page.goto(BASE + '?r=504#basesep:8/owners/market', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.lp-depth-svg', { timeout: 30000 });
+    const depthMarkers = await Q(page, `() => {
+      const labels = [...document.querySelectorAll('.lp-depth-svg text')]
+        .filter(node => ['floor', 'price', 'ceiling'].includes(node.textContent.trim()))
+        .map(node => ({ text: node.textContent.trim(), box: node.getBoundingClientRect().toJSON() }));
+      const overlaps = labels.some((a, i) => labels.slice(i + 1).some(b =>
+        a.box.left < b.box.right && a.box.right > b.box.left && a.box.top < b.box.bottom && a.box.bottom > b.box.top));
+      const intro = [...document.querySelectorAll('.owners-intro')]
+        .map(node => node.textContent.trim()).find(text => text.startsWith('The market is used')) || '';
+      return { labels, overlaps, intro };
+    }`);
+    check('LP depth floor/price/ceiling labels do not overlap',
+      depthMarkers.labels.length === 3 && !depthMarkers.overlaps, JSON.stringify(depthMarkers));
+    check('market copy uses the project token symbol instead of hardcoded REV',
+      depthMarkers.intro.includes('TEST') && !/\bREV\b/.test(depthMarkers.intro), depthMarkers.intro);
+
+    await page.goto(BASE + '?r=505#basesep:8/owners/accounts', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Add market liquidity'), null, { timeout: 20000 });
+    await Q(page, '() => { [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Add market liquidity").click(); return 1; }');
+    await page.waitForSelector('.modal-dialog .lp-graph-svg', { timeout: 30000 });
+    const liquidityRange = await Q(page, `() => {
+      const modal = document.querySelector('.modal-dialog');
+      const labels = [...modal.querySelectorAll('.lp-graph-svg text')]
+        .filter(node => ['Floor', 'Ceiling'].includes(node.textContent.trim()))
+        .map(node => ({ text: node.textContent.trim(), box: node.getBoundingClientRect().toJSON() }));
+      const overlap = labels.length === 2
+        && labels[0].box.left < labels[1].box.right && labels[0].box.right > labels[1].box.left
+        && labels[0].box.top < labels[1].box.bottom && labels[0].box.bottom > labels[1].box.top;
+      const range = [...modal.querySelectorAll('.ops-rangerow input')].map(input => Number(input.value));
+      const sides = [...modal.querySelectorAll('.lp-add-col input')];
+      return {
+        labels, overlap, range,
+        bothSidesEnabled: sides.length === 2 && sides.every(input => !input.disabled),
+        note: [...modal.querySelectorAll('.modal-balance')].map(node => node.textContent).find(text => text.includes('default range')) || '',
+      };
+    }`);
+    check('LP range labels separate and default range enables both deposit tokens',
+      liquidityRange.labels.length === 2 && !liquidityRange.overlap
+        && liquidityRange.range[0] > 0 && liquidityRange.range[0] < liquidityRange.range[1]
+        && liquidityRange.bothSidesEnabled && liquidityRange.note.includes('both tokens can be added'),
+      JSON.stringify(liquidityRange));
+    await Q(page, '() => { document.querySelector(".modal-close").click(); return 1; }');
+
+    // 1e. The loan modal compares the real net-now choices, hides a redundant source-token selector, and
+    // describes maximum prepayment as a fee that never grows.
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'Get a loan'), null, { timeout: 20000 });
+    await Q(page, '() => { [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Get a loan").click(); return 1; }');
+    await page.waitForSelector('.modal-dialog .loan-source-row', { state: 'attached', timeout: 20000 });
+    await page.waitForFunction(() => {
+      const select = document.querySelector('.modal-dialog .loan-source-select');
+      return select && select.options.length && !select.options[0].textContent.includes('Loading');
+    }, null, { timeout: 30000 });
+    await Q(page, `() => {
+      const modal = document.querySelector('.modal-dialog');
+      const amount = modal.querySelector('.ops-amount');
+      amount.value = '10'; amount.dispatchEvent(new Event('input', { bubbles: true }));
+      const slider = modal.querySelector('.loan-slider');
+      slider.value = '500'; slider.dispatchEvent(new Event('input', { bubbles: true }));
+      return 1;
+    }`);
+    await page.waitForFunction(() => {
+      const modal = document.querySelector('.modal-dialog');
+      const rows = [...modal.querySelectorAll('.loan-decision-table tr')].map(row => row.textContent);
+      return modal.querySelector('.loan-summary')?.textContent.includes('Never grows')
+        && rows.length === 3
+        && rows[0].includes('cash-out value ~') && rows[0].includes('USDC')
+        && rows[1].includes('USDC') && rows[2].includes('USDC');
+    }, null, { timeout: 30000 });
+    const loanModal = await Q(page, `() => {
+      const modal = document.querySelector('.modal-dialog');
+      return {
+        sourceHidden: modal.querySelector('.loan-source-row').hidden,
+        sourceOptions: [...modal.querySelector('.loan-source-select').options].map(option => option.textContent.trim()),
+        rows: [...modal.querySelectorAll('.loan-decision-table tr')].map(row => [...row.children].map(cell => cell.textContent.trim())),
+        note: modal.querySelector('.loan-decision-note').textContent.trim(),
+        summary: modal.querySelector('.loan-summary').textContent,
+      };
+    }`);
+    check('loan modal compares hold, live cash-out value, and net loan proceeds',
+      loanModal.rows[0][0] === 'Hold' && loanModal.rows[0][1].includes('TEST') && loanModal.rows[0][1].includes('cash-out value ~')
+        && loanModal.rows[1][0] === 'Cash out now' && loanModal.rows[1][1].includes('tokens burned')
+        && loanModal.rows[2][0] === 'Loan now' && loanModal.rows[2][1].includes('repay to reclaim')
+        && loanModal.note.includes('Personal tax effects are not included'),
+      JSON.stringify(loanModal));
+    check('loan modal hides its one-option token selector and says a fully prepaid fee never grows',
+      loanModal.sourceHidden && loanModal.sourceOptions.length === 1
+        && loanModal.summary.includes('Never grows — fully prepaid') && !loanModal.summary.includes('after never'),
+      JSON.stringify(loanModal));
+    await Q(page, '() => { document.querySelector(".modal-close").click(); return 1; }');
+
     // 2. Create flow opens with all five steps.
     await freshCreateFlow(page, 501);
     const steps = await Q(page, '() => [...document.querySelectorAll(".create-step-label")].map(s=>s.textContent.trim())');

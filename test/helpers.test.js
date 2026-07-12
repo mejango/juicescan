@@ -3,7 +3,7 @@
 // transaction amount (wrong decimals) or mis-routes funds, so they get their own guard.
 import { describe, it, expect } from 'vitest';
 import { parseAmount, formatAmount } from '../src/encoding.js';
-import { isAddr, addrOrZero, ZERO_ADDRESS } from '../src/component-base.js';
+import { isAddr, addrOrZero, friendlyTransactionError, waitForErc20Approval, ZERO_ADDRESS } from '../src/component-base.js';
 import { parseEther, parseUnits } from 'viem';
 
 const GOOD = '0x1111111111111111111111111111111111111111';
@@ -36,5 +36,35 @@ describe('addrOrZero / isAddr — recipient safety coercion', () => {
   });
   it('accepts a non-checksummed address (strict:false) so user paste isn’t rejected', () => {
     expect(isAddr(GOOD.toLowerCase())).toBe(true);
+  });
+});
+
+describe('raw transaction error messages', () => {
+  it('turns expired Permit2 and under-min selectors into useful recovery steps', () => {
+    expect(friendlyTransactionError('reverted with signature: 0xd81b2f2e')).toMatch(/authorization expired.*try again/i);
+    expect(friendlyTransactionError('0x6b2bb382')).toMatch(/below the minimum.*refresh/i);
+    expect(friendlyTransactionError('0xdeadbeef')).toBeNull();
+  });
+});
+
+describe('ERC-20 approval finality', () => {
+  it('verifies the receipt and allowance at the exact approval block', async () => {
+    const calls = [];
+    const client = {
+      waitForTransactionReceipt: async () => ({ status: 'success', blockNumber: 123n }),
+      readContract: async (request) => { calls.push(request); return 50n; },
+    };
+    await expect(waitForErc20Approval(client, '0xhash', GOOD, GOOD, GOOD, 50n)).resolves.toMatchObject({ blockNumber: 123n });
+    expect(calls[0].blockNumber).toBe(123n);
+  });
+
+  it('blocks the follow-on transaction when approval reverted or granted too little', async () => {
+    const reverted = { waitForTransactionReceipt: async () => ({ status: 'reverted', blockNumber: 1n }) };
+    await expect(waitForErc20Approval(reverted, '0xhash', GOOD, GOOD, GOOD, 1n)).rejects.toThrow(/reverted onchain/i);
+    const short = {
+      waitForTransactionReceipt: async () => ({ status: 'success', blockNumber: 2n }),
+      readContract: async () => 9n,
+    };
+    await expect(waitForErc20Approval(short, '0xhash', GOOD, GOOD, GOOD, 10n)).rejects.toThrow(/did not grant/i);
   });
 });

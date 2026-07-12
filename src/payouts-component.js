@@ -45,6 +45,10 @@ export function parsePayoutCurrencyId(value) {
   }
 }
 
+export function isExactPayoutCurrency(currency, accountingCurrency) {
+  try { return BigInt(currency) === BigInt(accountingCurrency); } catch (_) { return false; }
+}
+
 export function payoutCurrencyIdForSelection(mode, customCurrency, tokenAddr, accountingCurrency) {
   if (mode === 'eth') return 1n;
   if (mode === 'usd') return 2n;
@@ -75,6 +79,8 @@ var accountingContextsAbi = [{ type: 'function', name: 'accountingContextsOf', s
 var currentRulesetAbi = [{ type: 'function', name: 'currentRulesetOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: 'ruleset', type: 'tuple', components: [{ name: 'cycleNumber', type: 'uint256' }, { name: 'id', type: 'uint256' }, { name: 'basedOnId', type: 'uint256' }, { name: 'start', type: 'uint256' }, { name: 'duration', type: 'uint256' }, { name: 'weight', type: 'uint256' }, { name: 'weightCutPercent', type: 'uint256' }, { name: 'approvalHook', type: 'address' }, { name: 'metadata', type: 'uint256' }] }] }];
 var payoutLimitsAbi = [{ type: 'function', name: 'payoutLimitsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }, { name: 'terminal', type: 'address' }, { name: 'token', type: 'address' }], outputs: [{ name: 'limits', type: 'tuple[]', components: [{ name: 'amount', type: 'uint256' }, { name: 'currency', type: 'uint256' }] }] }];
 var usedPayoutLimitAbi = [{ type: 'function', name: 'usedPayoutLimitOf', stateMutability: 'view', inputs: [{ name: 'terminal', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }, { name: 'rulesetCycleNumber', type: 'uint256' }, { name: 'currency', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
+var storeBalanceAbi = [{ type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'terminal', type: 'address' }, { name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] }];
+var pricePerUnitAbi = [{ type: 'function', name: 'pricePerUnitOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'pricingCurrency', type: 'uint256' }, { name: 'unitCurrency', type: 'uint256' }, { name: 'decimals', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
 
 export function payoutOutputFloor(quoted, exact) {
   quoted = BigInt(quoted || 0);
@@ -82,6 +88,22 @@ export function payoutOutputFloor(quoted, exact) {
   if (exact) return quoted;
   var floor = quoted * 99n / 100n;
   return floor > 0n ? floor : 1n;
+}
+
+// JBTerminalStore converts an amount in the payout-limit currency to the terminal token as
+// `amount * 1e18 / price`. This inverse computes the largest limit-currency amount the terminal balance can fund
+// without rounding above the balance.
+export function payoutBalanceInLimitCurrency(balance, pricePerUnit) {
+  balance = BigInt(balance || 0);
+  pricePerUnit = BigInt(pricePerUnit || 0);
+  if (balance <= 0n || pricePerUnit <= 0n) return 0n;
+  return balance * pricePerUnit / 1000000000000000000n;
+}
+
+export function availablePayoutAmount(remainingLimit, balance, pricePerUnit) {
+  remainingLimit = BigInt(remainingLimit || 0);
+  var balanceInLimitCurrency = payoutBalanceInLimitCurrency(balance, pricePerUnit);
+  return remainingLimit < balanceInLimitCurrency ? remainingLimit : balanceInLimitCurrency;
 }
 
 function initialCurrencyMode(defaultCurrency) {
@@ -346,9 +368,10 @@ export function renderPayoutsComponent() {
     var controller = getAddress('JBController', chainId);
     var limitsAddr = getAddress('JBFundAccessLimits', chainId);
     var store = getAddress('JBTerminalStore', chainId);
+    var prices = getAddress('JBPrices', chainId);
     var client = createPublicClientForChain(chainId);
     var account = getAccount();
-    if (!controller || !limitsAddr || !store || !client || !account) { state.error = 'Could not resolve the payout contracts or wallet.'; updateUI(); return; }
+    if (!controller || !limitsAddr || !store || !prices || !client || !account) { state.error = 'Could not resolve the payout contracts or wallet.'; updateUI(); return; }
 
     state.phase = 'confirming'; state.txStatus = { message: 'Refreshing the payout limit and simulating output…', success: false }; updateUI();
     client.readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(state.projectId)] }).then(function (current) {
@@ -357,10 +380,19 @@ export function renderPayoutsComponent() {
       return client.readContract({ address: limitsAddr, abi: payoutLimitsAbi, functionName: 'payoutLimitsOf', args: [BigInt(state.projectId), BigInt(ruleset.id), terminalAddr, tokenAddr] }).then(function (limits) {
         var configured = (limits || []).filter(function (limit) { return BigInt(limit.currency) === currency; })[0];
         if (!configured) throw new Error('This currency is not a configured payout limit for the selected token.');
-        return client.readContract({ address: store, abi: usedPayoutLimitAbi, functionName: 'usedPayoutLimitOf', args: [terminalAddr, BigInt(state.projectId), tokenAddr, BigInt(ruleset.cycleNumber), currency] }).then(function (used) {
-          var cap = BigInt(configured.amount), consumed = BigInt(used);
+        var price = isExactPayoutCurrency(currency, accountingCurrency)
+          ? Promise.resolve(1000000000000000000n)
+          : client.readContract({ address: prices, abi: pricePerUnitAbi, functionName: 'pricePerUnitOf', args: [BigInt(state.projectId), currency, BigInt(accountingCurrency), 18n] });
+        return Promise.all([
+          client.readContract({ address: store, abi: usedPayoutLimitAbi, functionName: 'usedPayoutLimitOf', args: [terminalAddr, BigInt(state.projectId), tokenAddr, BigInt(ruleset.cycleNumber), currency] }),
+          client.readContract({ address: store, abi: storeBalanceAbi, functionName: 'balanceOf', args: [terminalAddr, BigInt(state.projectId), tokenAddr] }),
+          price,
+        ]).then(function (values) {
+          var cap = BigInt(configured.amount), consumed = BigInt(values[0]);
           var remaining = cap > consumed ? cap - consumed : 0n;
           if (amountParsed > remaining) throw new Error('Amount exceeds the remaining payout limit (' + String(remaining) + ' raw units).');
+          var available = availablePayoutAmount(remaining, values[1], values[2]);
+          if (amountParsed > available) throw new Error('Amount exceeds what the terminal balance can currently fund (' + String(available) + ' raw units).');
           return client.simulateContract({ account: account, address: terminalAddr, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', args: [BigInt(state.projectId), tokenAddr, amountParsed, currency, 0n] });
         });
       });
@@ -372,7 +404,7 @@ export function renderPayoutsComponent() {
         throw new Error('Payout inputs or the connected account changed while the quote was loading. Review the form and try again.');
       }
       var quoted = BigInt(simulation.result || 0);
-      var exactCurrency = accountingCurrency != null && currency === BigInt(accountingCurrency);
+      var exactCurrency = isExactPayoutCurrency(currency, accountingCurrency);
       var minPaidOut = payoutOutputFloor(quoted, exactCurrency);
       if (minPaidOut === 0n) throw new Error('This request would pay out 0 terminal tokens.');
       state.phase = 'ready'; state.txStatus = null; updateUI();
@@ -385,7 +417,11 @@ export function renderPayoutsComponent() {
       });
     }).catch(function (error) {
       state.phase = 'ready'; state.txStatus = null;
-      state.error = (error && (error.shortMessage || error.message)) || 'Could not safely quote this payout.'; updateUI();
+      state.error = (error && (error.shortMessage || error.message)) || 'Could not safely quote this payout.';
+      if (state.error.indexOf('0x9fa59b9a') !== -1 || state.error.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
+        state.error = 'The terminal balance no longer covers this amount. Review the available amount and try again.';
+      }
+      updateUI();
     });
   }
 

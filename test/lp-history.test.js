@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toEventSelector } from 'viem';
-import { lpCollectPoolLogs } from '../src/discover.js';
+import { lpCollectPoolLogs, lpDefaultRange, lpDepthMarkerLabelLayout } from '../src/discover.js';
 
 const INITIALIZE = toEventSelector('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)');
 const MODIFY = toEventSelector('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)');
@@ -40,5 +40,39 @@ describe('Uniswap V4 LP history parsing', () => {
       data: '0x1234',
       blockNumber: '0x65',
     }], POSITION_MANAGER, state)).toThrow(/Malformed ModifyLiquidity/);
+  });
+});
+
+describe('LP depth marker labels', () => {
+  it('stacks clustered floor, price, and ceiling labels without moving their markers', () => {
+    const clustered = lpDepthMarkerLabelLayout([
+      { x: 274, label: 'floor' },
+      { x: 278, label: 'price' },
+      { x: 299, label: 'ceiling' },
+    ], 300);
+    expect(new Set(clustered.map(label => label.row)).size).toBe(3);
+    expect(clustered.every(label => label.x > 0 && label.x < 300)).toBe(true);
+  });
+
+  it('keeps labels on one row when their text does not collide', () => {
+    const spread = lpDepthMarkerLabelLayout([
+      { x: 30, label: 'floor' },
+      { x: 150, label: 'price' },
+      { x: 270, label: 'ceiling' },
+    ], 300);
+    expect(spread.map(label => label.row)).toEqual([0, 0, 0]);
+  });
+});
+
+describe('LP default price range', () => {
+  it('keeps the economic corridor when it strictly contains the pool price', () => {
+    expect(lpDefaultRange(0.01, 0.005, 0.02)).toEqual({ min: 0.005, max: 0.02, economic: true });
+  });
+
+  it('widens around spot when floor and ceiling are inverted or meet spot', () => {
+    const range = lpDefaultRange(0.01, 0.0101, 0.01);
+    expect(range.economic).toBe(false);
+    expect(range.min).toBeLessThan(0.01);
+    expect(range.max).toBeGreaterThan(0.01);
   });
 });

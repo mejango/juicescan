@@ -95,6 +95,10 @@ export function getWalletClient() {
 
 export function onWalletChange(fn) {
   listeners.push(fn);
+  return function unsubscribeWalletChange() {
+    var index = listeners.indexOf(fn);
+    if (index !== -1) listeners.splice(index, 1);
+  };
 }
 
 // Cached per (chain, RPC) so we don't spin up a fresh client on every read (e.g. each pay-preview
@@ -114,8 +118,21 @@ export function createPublicClientForChain(chainId) {
   }));
 }
 
+// A stale/detached view must never prevent the rest of the app from learning about an account switch. Iterate a
+// snapshot (subscriptions may change during a callback) and isolate callback failures. Exported for regression
+// testing; notify() remains the only production caller.
+export function dispatchWalletChangeListeners(callbacks, state, onError) {
+  (callbacks || []).slice().forEach(function (fn) {
+    try { fn(state); } catch (error) {
+      if (onError) { try { onError(error); } catch (_) {} }
+    }
+  });
+}
+
 function notify() {
-  listeners.forEach(fn => fn({ account, connected: !!account }));
+  dispatchWalletChangeListeners(listeners, { account: account, connected: !!account }, function (error) {
+    if (typeof console !== 'undefined' && console.error) console.error('Wallet-change listener failed:', error);
+  });
 }
 
 export async function connect(chosen) {

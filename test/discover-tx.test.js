@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, gossipAccountingStaleness, indexedActivityAmount, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, gossipAccountingStaleness, indexedActivityAmount, loanOpeningAmounts, loanUnlockFeeText, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -73,6 +73,22 @@ function minimalRuleset(overrides = {}) {
 }
 
 describe('loan — REVLoans.borrowFrom', () => {
+  it('keeps the net opening quote aligned with its fee breakdown', () => {
+    expect(loanOpeningAmounts(1_000_000n, 25, false)).toEqual({
+      gross: 1_000_000n,
+      protocolFee: 25_000n,
+      revFee: 10_000n,
+      sourceFee: 25_000n,
+      net: 940_000n,
+    });
+    expect(loanOpeningAmounts(1_000_000n, 500, true).net).toBe(490_000n);
+  });
+
+  it('describes a fully prepaid unlock fee without saying “after never”', () => {
+    expect(loanUnlockFeeText(500, '0.5 USDC')).toBe('Never grows — fully prepaid');
+    expect(loanUnlockFeeText(25, '0.975 USDC')).toBe('Grows after 6 months; up to ~ 0.975 USDC by year 10');
+  });
+
   it('requires a resolved accounting token before building the borrow token arg', () => {
     const usdc = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
     expect(borrowLoanTokenForAccountContext(null, true)).toBe(null);
@@ -130,6 +146,18 @@ describe('loan — REVLoans.repayLoan (payable)', () => {
 });
 
 describe('source-of-truth data guards', () => {
+  it('does not invent pre-deployment history for a selected price-chart range', () => {
+    const year = 365 * 86400;
+    const now = 2_000_000_000;
+    const deployedTwentyMinutesAgo = now - 20 * 60;
+    expect(priceChartTimeBounds(deployedTwentyMinutesAgo, now, 1, true)).toEqual({
+      t0: deployedTwentyMinutesAgo,
+      t1: now,
+    });
+    expect(priceChartTimeBounds(now - 2 * year, now, 1, true).t0).toBe(now - year);
+    expect(priceChartTimeBounds(now - 2 * year, now, 0, true).t0).toBe(now - 2 * year);
+  });
+
   it('maps the nested sucker-group projectPage relation by chain', () => {
     const data = { suckerGroup: { projects: { items: [
       { chainId: 1, projectId: 7 }, { chainId: 10, projectId: 9 },
