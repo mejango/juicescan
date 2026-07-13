@@ -2,6 +2,7 @@
 // Renders an ABI function definition into an interactive DOM form
 // Each form has its own chain selector. Chain selection is remembered globally.
 
+import { encodeFunctionData } from 'viem';
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange } from './wallet.js';
 import { confirmTransactionModal, truncAddr } from './component-base.js';
@@ -333,9 +334,12 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
     confirmTransactionModal({
       action: fn.name,
       chain: (CHAINS[chainId] && CHAINS[chainId].name) || ('chain ' + chainId),
-      contract: contractAddress,
+      chainId: chainId,
+      contract: contractName,
+      address: contractAddress,
       function: fn.name,
       args: args,
+      calldata: encodeFunctionData({ abi: [fn], functionName: fn.name, args: args }),
       value: value || 0n,
     }, { title: 'Confirm transaction' }).then(function(ok) {
       if (!ok) { outputArea.innerHTML = ''; outputArea.appendChild(renderError('Transaction cancelled')); return; }

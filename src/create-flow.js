@@ -151,6 +151,10 @@ function rulesetConfigComponents(metaComponents) {
     { name: 'fundAccessLimitGroups', type: 'tuple[]', components: FUND_ACCESS_COMPONENTS },
   ];
 }
+// JBPayDataHookRulesetConfig is the reduced ruleset shape accepted by the single-chain 721 project deployer.
+// Export the canonical tuple components so queue builders cannot accidentally substitute a full
+// JBRulesetConfig[] (which has a different selector even though most fields look identical).
+export var PAY_DATA_HOOK_RULESET_COMPONENTS = rulesetConfigComponents(METADATA_PAYHOOK);
 var TERMINAL_CONFIG_COMPONENTS = [
   { name: 'terminal', type: 'address' },
   { name: 'accountingContextsToAccept', type: 'tuple[]', components: [
@@ -283,7 +287,7 @@ var deployer721Abi = [{
     { name: 'deployTiersHookConfig', type: 'tuple', components: DEPLOY_721_COMPONENTS },
     { name: 'launchProjectConfig', type: 'tuple', components: [
       { name: 'projectUri', type: 'string' },
-      { name: 'rulesetConfigurations', type: 'tuple[]', components: rulesetConfigComponents(METADATA_PAYHOOK) },
+      { name: 'rulesetConfigurations', type: 'tuple[]', components: PAY_DATA_HOOK_RULESET_COMPONENTS },
       { name: 'terminalConfigurations', type: 'tuple[]', components: TERMINAL_CONFIG_COMPONENTS },
       { name: 'memo', type: 'string' }] },
     { name: 'controller', type: 'address' },
@@ -1279,6 +1283,8 @@ export function createStage() {
     // token — by default the project issues 10,000 tokens per ETH/USD
     tokenMode: 'custom', weight: '10000', reservedPercent: 0, weightCutPercent: 0, issuanceCutOn: false,
     cashOutEnabled: false, cashOutTaxRate: 0, allowOwnerMinting: false, pauseTransfers: false,
+    // Queue-prefill-only fields which have no concise control but must survive an edit unchanged.
+    useTotalSurplusForCashOuts: false, ownerMustSendPayouts: false, metadataExtra: 0,
     reservedRecipients: [], tokenAdvancedOpen: false,
     // revnet-only stage fields (ignored by the custom flow)
     cutFreqDays: '30', autoIssuances: [], startDaysAfter: '30',
@@ -2449,9 +2455,9 @@ function collectionExtrasSection(state, render) {
   if (state.projectType === 'revnet') {
     var opHead = el('div', 'create-label'); opHead.style.marginTop = '16px'; opHead.textContent = 'Operator store permissions'; f.appendChild(opHead);
     var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet operator can do to the store after launch.'; f.appendChild(opNote);
-    f.appendChild(toggleRow('Operator can add & remove items', dz('The operator can adjust the store’s item tiers.', 'The operator can’t change the store’s item tiers.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
+    f.appendChild(toggleRow('Operator can add & remove items', dz('The operator can adjust the store’s items.', 'The operator can’t change the store’s items.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
     f.appendChild(toggleRow('Operator can update item metadata', dz('The operator can update the store’s metadata.', 'The operator can’t update the store’s metadata.'), c.opCanUpdateMetadata, function (v) { c.opCanUpdateMetadata = v; }));
-    f.appendChild(toggleRow('Operator privileged access', dz('The operator can take from inventory for free.', 'The operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
+    f.appendChild(toggleRow('Operator can mint items for free', dz('The operator can mint shop items from inventory without paying.', 'The operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
     f.appendChild(toggleRow('Operator can increase discounts', dz('The operator can raise an item’s discount.', 'The operator can’t raise item discounts.'), c.opCanIncreaseDiscount, function (v) { c.opCanIncreaseDiscount = v; }));
   }
   return f;
@@ -2567,9 +2573,13 @@ function itemEditor(state, nft, idx, render) {
   var mediaHint = el('div', 'create-hint'); mediaHint.textContent = 'Image, gif, video, audio, PDF, text… up to ' + ITEM_MAX_MEDIA_MB + ' MB.'; c.appendChild(mediaHint);
   c.appendChild(fieldBlock('Description', true, textArea(nft.description, '', function (v) { nft.description = v; })));
 
-  // Price — re-render on change (blur/enter) so split/discount gating updates without losing focus mid-type.
+  // Split/discount gating only changes when price crosses zero. Re-rendering after every positive-to-positive
+  // edit can remove the DOM target during blur, causing the checkbox click that follows to hit a stale node.
   var priceInput = textInput(nft.priceEth, '0.0', function (v) { nft.priceEth = v.trim(); });
-  priceInput.addEventListener('change', function () { render(); });
+  var hadPrice = parseFloat(nft.priceEth) > 0;
+  priceInput.addEventListener('change', function () {
+    if ((parseFloat(nft.priceEth) > 0) !== hadPrice) render();
+  });
   c.appendChild(fieldBlock('Price (' + priceUnit + ')', false, priceInput));
 
   // Split sales + Initial discount only make sense once there's a price — always shown, idle when free.
@@ -2645,12 +2655,12 @@ function itemEditor(state, nft, idx, render) {
         a.appendChild(warnNote('Add the address that receives the reserved set-aside, or this item will fail to deploy.'));
       }
     }
-    var minter = state.projectType === 'revnet' ? 'operator' : 'owner';
-    a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' privileged access', dz('The ' + minter + ' can take from inventory for free.', 'The ' + minter + ' pays like everyone else.'), nft.flags.allowOwnerMint, function (v) { nft.flags.allowOwnerMint = v; }));
+    var minter = state.projectType === 'revnet' ? 'revnet operator' : 'project owner';
+    a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' can mint for free', dz('The ' + minter + ' can mint this item from inventory without paying.', 'The ' + minter + ' pays like everyone else.'), nft.flags.allowOwnerMint, function (v) { nft.flags.allowOwnerMint = v; }));
     a.appendChild(toggleRow('Transfers pausable per ruleset', dz('This item’s transfers can be paused during a ruleset.', 'This item’s transfers can’t be paused.'), nft.flags.transfersPausable, function (v) { nft.flags.transfersPausable = v; }));
     a.appendChild(toggleRow('Permanent', dz('This item can never be removed from the store.', 'This item can be removed later.'), nft.flags.cantBeRemoved, function (v) { nft.flags.cantBeRemoved = v; }));
     a.appendChild(toggleRow('Allow credit purchases', dz('Payments that don’t buy an item become credit usable on items that allow it.', 'Payments that don’t buy this item don’t earn credit toward it.'), nft.flags.allowCredits, function (v) { nft.flags.allowCredits = v; }));
-    a.appendChild(toggleRow('Owner can edit discounts', dz('The owner can change this item’s discount later.', 'This item’s discount is locked.'), nft.flags.ownerCanEditDiscount, function (v) { nft.flags.ownerCanEditDiscount = v; }));
+    a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' can edit discounts', dz('The ' + minter + ' can change this item’s discount later.', 'This item’s discount is locked.'), nft.flags.ownerCanEditDiscount, function (v) { nft.flags.ownerCanEditDiscount = v; }));
     a.appendChild(toggleRow('Custom voting units', dz('Give this item a specific governance weight.', 'Governance weight follows the item price.'), nft.votingOn, function (v) { nft.votingOn = v; if (!v) nft.votingUnits = ''; render(); }));
     if (nft.votingOn) a.appendChild(fieldBlock('Voting units', false, textInput(nft.votingUnits, '0', function (v) { nft.votingUnits = v.trim(); })));
     return a;
@@ -3397,6 +3407,7 @@ async function runDeploy(state, owner) {
       var fn = p.functionName || 'launchProjectFor';
       return {
         chain: chainName(p.chainId),
+        chainId: p.chainId,
         address: p.address,
         'function': fn,
         value: p.value.toString() + ' wei (' + formatEther(p.value) + ' ETH creation fee)',
@@ -3759,13 +3770,13 @@ function buildRevStage(state, stage, idx, chainId, start) {
 // (resolveStages applies the "Afterwards" choice; assembleRuleset encodes each), minus the NFT/terminal
 // scaffolding. `immediateStart` aligns the first ruleset across chains for an omnichain queue (0 = next
 // cycle on a single chain). Returns the JBRulesetConfig[] for JBController/JBOmnichainDeployer.queueRulesetsOf.
-export function buildQueueRulesetConfigs(state, chainId, immediateStart) {
+export function buildQueueRulesetConfigs(state, chainId, immediateStart, opts) {
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
   return buildRulesetConfigs(effectiveStages.map(function (s, i) {
     var userIdx = Math.min(i, state.stages.length - 1);
     return assembleRuleset(state, s, userIdx, chainId, i === 0, deadlineOn, immediateStart || 0);
-  }));
+  }), opts);
 }
 
 function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineOn, immediateStart) {
@@ -3811,6 +3822,9 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100;
   rs.allowOwnerMinting = !!stage.allowOwnerMinting;
   rs.pauseCreditTransfers = !!stage.pauseTransfers;
+  rs.useTotalSurplusForCashOuts = !!stage.useTotalSurplusForCashOuts;
+  rs.ownerMustSendPayouts = !!stage.ownerMustSendPayouts;
+  rs.metadataExtra = Number(stage.metadataExtra) || 0;
   rs.useDataHookForCashOut = storeRedeem;
 
   // Queue-only 721-shop choice. The discover Rulesets tab sets state.shopChoice; the LAUNCH path leaves it
@@ -4329,5 +4343,5 @@ export const __test = {
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
-  surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName,
+  surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft,
 };

@@ -12,9 +12,9 @@ export function tierDiscountPercentFromPct(value) {
 export function clampTierInitialSupply(value, unlimited) {
   if (unlimited) return TIER_UNLIMITED_SUPPLY;
   var raw = String(value == null ? '' : value).trim();
-  if (!/^\d+$/.test(raw)) throw new Error('Tier supply must be a whole number.');
+  if (!/^\d+$/.test(raw)) throw new Error('Item supply must be a whole number.');
   var n = BigInt(raw);
-  if (n <= 0n || n > BigInt(TIER_UNLIMITED_SUPPLY)) throw new Error('Tier supply must be between 1 and ' + TIER_UNLIMITED_SUPPLY + '.');
+  if (n <= 0n || n > BigInt(TIER_UNLIMITED_SUPPLY)) throw new Error('Item supply must be between 1 and ' + TIER_UNLIMITED_SUPPLY + '.');
   return Number(n);
 }
 
@@ -39,10 +39,10 @@ export function sortTierEntriesByCategory(entries, pickTier) {
 
 export function build721TierConfig(o) {
   o = o || {};
-  var price; try { price = BigInt(o.price || 0); } catch (_) { throw new Error('Tier price must be an integer in base units.'); }
-  if (price < 0n || price > (1n << 104n) - 1n) throw new Error('Tier price exceeds uint104.');
+  var price; try { price = BigInt(o.price || 0); } catch (_) { throw new Error('Item price must be an integer in base units.'); }
+  if (price < 0n || price > (1n << 104n) - 1n) throw new Error('Item price exceeds uint104.');
   var reserveFrequency = uintNumber(o.reserveFrequency || 0, 16, 'Reserve frequency');
-  if (reserveFrequency > 0 && !isAddr(o.reserveBeneficiary)) throw new Error('A reserved tier needs a valid reserve beneficiary.');
+  if (reserveFrequency > 0 && !isAddr(o.reserveBeneficiary)) throw new Error('A reserved item needs a valid reserve beneficiary.');
   var reserveBeneficiary = reserveFrequency > 0 ? addrOrZero(o.reserveBeneficiary) : ZERO;
   var votingUnits = uintNumber(o.votingUnits || 0, 32, 'Voting units');
   var category = uintNumber(o.category || 0, 24, 'Category');

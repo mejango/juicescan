@@ -5,7 +5,7 @@ import { getAccount, getWalletClient, createPublicClientForChain, connect, disco
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
-import { decodeFunctionData, isAddress } from 'viem';
+import { decodeFunctionData, encodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
@@ -721,6 +721,105 @@ function decorateArgValue(input, value, ctx, valNode, formatted) {
 function txCalldata(tx) { return tx.calldata || tx.data || null; }
 function txFnName(tx) { return tx.function || tx.functionName || null; }
 function txArgsArray(tx) { return Array.isArray(tx.args) ? tx.args : (Array.isArray(tx.rawArgs) ? tx.rawArgs : []); }
+
+function txLinkChainId(tx, payload) {
+  var direct = tx && tx.chainId != null ? Number(tx.chainId) : (payload && payload.chainId != null ? Number(payload.chainId) : null);
+  if (Number.isSafeInteger(direct) && direct > 0) return direct;
+  var label = String((tx && tx.chain) || (payload && payload.chain) || '').trim().toLowerCase();
+  var numbered = /^chain\s+(\d+)$/.exec(label);
+  if (numbered) return Number(numbered[1]);
+  for (var key in CHAINS) {
+    if (CHAINS[key] && String(CHAINS[key].name || '').trim().toLowerCase() === label) return Number(key);
+  }
+  return null;
+}
+
+function txLinkValue(value) {
+  if (value == null || value === '') return 0n;
+  try {
+    if (typeof value === 'bigint' || typeof value === 'number' || /^\d+$/.test(String(value).trim())) return BigInt(value);
+    var wei = /^\s*(\d+)\s*wei\b/i.exec(String(value));
+    if (wei) return BigInt(wei[1]);
+    var eth = /^\s*(\d+(?:\.\d+)?)\s*ETH\b/i.exec(String(value));
+    if (eth) return parseAmount(eth[1], 18);
+  } catch (_) {}
+  return null;
+}
+
+function txLinkCalldata(tx) {
+  var direct = txCalldata(tx);
+  if (typeof direct === 'string' && /^0x[0-9a-fA-F]*$/.test(direct)) return direct;
+  var fn = txFnName(tx), args = txArgsArray(tx);
+  if (!fn || !Array.isArray(args)) return null;
+  var abi = Array.isArray(tx.abi) ? tx.abi : (tx.abiFragment ? [tx.abiFragment] : null);
+  if (!abi) {
+    var name = tx.contract && !/^0x/i.test(tx.contract) ? tx.contract : null;
+    try { if (name) abi = getABI(name); } catch (_) {}
+  }
+  if (!abi) return null;
+  try { return encodeFunctionData({ abi: abi, functionName: fn, args: args }); } catch (_) { return null; }
+}
+
+// Build txlink URLs from the exact call(s) represented by a confirmation payload. `from` is intentionally omitted:
+// txlink fills it from whichever wallet opens the shared URL. Multi-chain confirmations produce one URL per line,
+// because JSON-RPC cannot atomically switch chains inside one request.
+export function buildTxLinkEntries(payload) {
+  if (!payload || payload.txlinkUnavailableReason) return [];
+  var list = Array.isArray(payload.transactions) ? payload.transactions
+    : (Array.isArray(payload.chains) ? payload.chains : [payload]);
+  var entries = [];
+  for (var i = 0; i < list.length; i++) {
+    var tx = list[i] || {};
+    if (tx.txlinkUnavailableReason) return [];
+    var chainId = txLinkChainId(tx, payload);
+    var to = tx.address || tx.to || (typeof tx.contract === 'string' && isAddress(tx.contract) ? tx.contract : null);
+    var data = txLinkCalldata(tx);
+    var value = txLinkValue(tx.value);
+    if (!chainId || !to || !isAddress(to) || data == null || value == null || value < 0n) return [];
+    var params = { to: to, data: data, value: '0x' + value.toString(16) };
+    var url = new URL('https://txlink.stupidtech.net/');
+    url.searchParams.set('method', 'eth_sendTransaction');
+    url.searchParams.set('chainId', String(chainId));
+    url.searchParams.set('params', JSON.stringify(params));
+    entries.push({ chainId: chainId, chain: tx.chain || (CHAINS[chainId] && CHAINS[chainId].name) || ('Chain ' + chainId), url: url.toString() });
+  }
+  return entries;
+}
+
+function copyPlainText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+  return new Promise(function (resolve, reject) {
+    try {
+      var area = document.createElement('textarea'); area.value = text; area.setAttribute('readonly', '');
+      area.style.position = 'fixed'; area.style.opacity = '0'; document.body.appendChild(area); area.select();
+      var copied = document.execCommand('copy'); area.remove(); copied ? resolve() : reject(new Error('copy failed'));
+    } catch (error) { reject(error); }
+  });
+}
+
+export function appendTxLinkCopy(container, payload) {
+  var entries = buildTxLinkEntries(payload);
+  var row = el('div', 'tx-copy-row');
+  var button = el('button', 'create-btn ghost tx-copy-btn'); button.type = 'button'; button.textContent = 'Copy tx';
+  if (!entries.length) {
+    button.disabled = true;
+    button.title = payload && payload.txlinkUnavailableReason
+      ? payload.txlinkUnavailableReason
+      : 'An exact target, chain, value, and calldata are required before this transaction can be shared.';
+  } else {
+    button.title = entries.length === 1
+      ? 'Copy a txlink URL that anyone can open with their own wallet.'
+      : 'Copy one txlink URL per chain.';
+    button.addEventListener('click', function () {
+      var text = entries.map(function (entry) { return entry.url; }).join('\n');
+      copyPlainText(text).then(function () {
+        button.textContent = entries.length === 1 ? 'Copied tx link' : ('Copied ' + entries.length + ' tx links');
+      }).catch(function () { button.textContent = 'Copy failed'; });
+      setTimeout(function () { button.textContent = 'Copy tx'; }, 2200);
+    });
+  }
+  row.appendChild(button); container.appendChild(row); return button;
+}
 function shapeDecoded(abi, fnName, argsArr) {
   var frag = abi && abi.filter(function (e) { return e.type === 'function' && e.name === fnName; })[0];
   var inputs = (frag && frag.inputs) || [];
@@ -905,6 +1004,7 @@ export function renderConfirmBody(content, payload, opts) {
   } else {
     content.appendChild(pre);
   }
+  appendTxLinkCopy(content, payload);
   appendAuditPromptLink(content, payload);
 }
 
@@ -987,6 +1087,7 @@ export function executeTransaction(opts) {
       function: opts.functionName,
       abi: abiSignature(opts.abi, opts.functionName),
       args: opts.args,
+      calldata: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }),
       value: (opts.value || 0n),
     };
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {

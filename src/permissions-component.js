@@ -57,7 +57,7 @@ var PERMISSION_IDS = [
   { id: 24, name: 'ADJUST_721_TIERS', desc: 'Modify NFT tiers' },
   { id: 25, name: 'SET_721_METADATA', desc: 'Update NFT metadata' },
   { id: 26, name: 'MINT_721', desc: 'Mint NFTs directly' },
-  { id: 27, name: 'SET_721_DISCOUNT_PERCENT', desc: 'Set tier discount' },
+  { id: 27, name: 'SET_721_DISCOUNT_PERCENT', desc: 'Set item discount' },
   { id: 28, name: 'SET_BUYBACK_TWAP', desc: 'Set TWAP window' },
   { id: 29, name: 'SET_BUYBACK_POOL', desc: 'Set buyback pool' },
   { id: 30, name: 'SET_BUYBACK_HOOK', desc: 'Configure buyback hook' },

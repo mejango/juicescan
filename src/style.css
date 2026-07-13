@@ -2927,9 +2927,7 @@ input[type="checkbox"].field {
 .tier-split-line { display: flex; align-items: center; gap: 6px; }
 .tier-split-line .splits-edit-pct { width: 64px; flex: 0 0 auto; }
 .tier-split-to { font-size: 12px; color: var(--muted-2); flex: 0 0 auto; }
-.tier-split-recip { flex: 1 1 auto; min-width: 0; }
-.tier-split-projname { font-size: 11px; color: var(--c-teal); margin: 4px 0 0 70px; }
-.tier-split-projname.warn { color: var(--c-pink); }
+.tier-split-recip { width: 100%; min-width: 0; }
 .tier-split-benef { margin-top: 6px; padding-left: 70px; }
 .tier-split-benef .splits-edit-addr { width: 100%; box-sizing: border-box; }
 .splits-edit-total { font-size: 11px; color: var(--muted-2); margin-top: 8px; }
@@ -5553,6 +5551,9 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .tx-confirm-desc {
   font-size: 12px; line-height: 1.55; color: var(--muted); margin: 0 0 10px;
 }
+.tx-copy-row { display: flex; justify-content: flex-end; margin-top: 12px; }
+.tx-copy-btn { width: auto; }
+.tx-copy-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 .tx-audit-prompt { margin: 6px 0 10px; }
 .tx-audit-link { font-size: 11px; color: var(--muted-2); text-decoration: none; cursor: pointer; }
 .tx-audit-link:hover { color: var(--c-teal); }

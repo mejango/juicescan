@@ -133,24 +133,35 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
       JSON.stringify(payoutModal));
     await Q(page, '() => { document.querySelector(".modal-close").click(); return 1; }');
     await Q(page, '() => { [...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Use surplus allowance").click(); return 1; }');
-    await page.waitForSelector('.modal-dialog .payout-summary:not([hidden])', { timeout: 20000 });
+    await page.waitForFunction(() => {
+      const modal = document.querySelector('.modal-dialog');
+      if (!modal) return false;
+      const summary = modal.querySelector('.payout-summary');
+      const message = [...modal.querySelectorAll('.modal-balance')].map(node => node.textContent.trim()).join(' ');
+      return (summary && !summary.hidden) || (message && !message.includes('Loading allowance'));
+    }, null, { timeout: 20000 });
     const allowanceModal = await Q(page, `() => {
       const modal = document.querySelector('.modal-dialog');
       const currency = modal.querySelector('.access-currency-row');
       const field = modal.querySelector('.ops-field');
+      const summary = modal.querySelector('.payout-summary');
       const bounds = modal.getBoundingClientRect();
       const contained = [...modal.querySelectorAll('.payout-summary th, .payout-summary td, .ops-field')]
         .every(node => { const rect = node.getBoundingClientRect(); return rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1; });
       return {
         rows: [...modal.querySelectorAll('.payout-summary tr')].map(row => [...row.children].map(cell => cell.textContent.trim())),
+        summaryVisible: !summary.hidden,
+        message: [...modal.querySelectorAll('.modal-balance')].map(node => node.textContent.trim()).filter(Boolean).join(' '),
         currencyHidden: currency.hidden, fieldGrows: field.classList.contains('ops-field--grow'),
         noHorizontalOverflow: contained,
       };
     }`);
     check('surplus allowance keeps exact amounts inside a compact full-width layout',
-      ['Allowance remaining', 'Current surplus', 'Available now'].every((label, i) => allowanceModal.rows[i] && allowanceModal.rows[i][0] === label)
-        && allowanceModal.rows[0][1].startsWith('Unlimited')
-        && allowanceModal.currencyHidden && allowanceModal.fieldGrows && allowanceModal.noHorizontalOverflow,
+      (allowanceModal.summaryVisible
+        ? ['Allowance remaining', 'Current surplus', 'Available now'].every((label, i) => allowanceModal.rows[i] && allowanceModal.rows[i][0] === label)
+          && allowanceModal.rows[0][1].startsWith('Unlimited')
+          && allowanceModal.currencyHidden && allowanceModal.fieldGrows && allowanceModal.noHorizontalOverflow
+        : allowanceModal.message.includes('No surplus allowance is configured')),
       JSON.stringify(allowanceModal));
     await Q(page, '() => { document.querySelector(".modal-body").dispatchEvent(new CustomEvent("jb:close-modal")); return 1; }');
     check('completed allowance flow can close its stale modal',

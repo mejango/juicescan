@@ -11,7 +11,7 @@ import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
+import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -1186,9 +1186,11 @@ function openAddTierModal(project, shop) {
     var to = el('span', 'tier-split-to'); to.textContent = '% to';
     var recip = el('input', 'splits-edit-addr tier-split-recip'); recip.type = 'text'; recip.placeholder = '0x… or project ID';
     var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕';
-    line.appendChild(pct); line.appendChild(to); line.appendChild(recip); line.appendChild(rm); row.appendChild(line);
-    // Project-recipient extras: a confirmation of the project name + a token-beneficiary line.
-    var nameHint = el('div', 'tier-split-projname'); nameHint.style.display = 'none'; row.appendChild(nameHint);
+    line.appendChild(pct); line.appendChild(to);
+    // Resolve text follows the same field-aligned, neutral treatment as ENS address hints.
+    var recipCol = el('div', 'create-recip-box'); recipCol.appendChild(recip);
+    var nameHint = el('div', 'create-resolve-hint'); nameHint.style.display = 'none'; recipCol.appendChild(nameHint);
+    line.appendChild(recipCol); line.appendChild(rm); row.appendChild(line);
     var benefRow = el('div', 'tier-split-benef'); benefRow.style.display = 'none';
     var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… who receives the project’s tokens'; benefRow.appendChild(benef);
     var benefHint = el('div', 'splits-edit-hint'); benefRow.appendChild(benefHint);
@@ -1227,24 +1229,24 @@ function openAddTierModal(project, shop) {
       var v = (recip.value || '').trim();
       if (/^[0-9]+$/.test(v) && Number(v) > 0) {
         recipPerChain.node.style.display = 'none';
-        benefRow.style.display = ''; nameHint.style.display = ''; nameHint.className = 'tier-split-projname'; nameHint.textContent = 'Looking up project #' + v + '…';
+        benefRow.style.display = ''; nameHint.style.display = ''; nameHint.className = 'create-resolve-hint'; nameHint.textContent = 'Looking up project #' + v + '…';
         resolveSplitProject(v, splitRefChain).then(function (info) {
           if ((recip.value || '').trim() !== v) return;
-          if (info) { nameHint.textContent = '→ ' + info.name; }
-          else { nameHint.className = 'tier-split-projname warn'; nameHint.textContent = 'No project #' + v + ' found on this chain.'; }
+          if (info) { nameHint.className = 'create-resolve-hint ok'; nameHint.textContent = info.name; }
+          else { nameHint.className = 'create-resolve-hint warn'; nameHint.textContent = 'No project #' + v + ' found on this chain.'; }
         });
       } else {
         benefRow.style.display = 'none';
         recipPerChain.node.style.display = allChains.length > 1 ? '' : 'none';
         if (isEnsInput(v)) {
-          recipEnsAddr = null; nameHint.style.display = ''; nameHint.className = 'tier-split-projname'; nameHint.textContent = 'Resolving ' + v + '…';
+          recipEnsAddr = null; nameHint.style.display = ''; nameHint.className = 'create-resolve-hint'; nameHint.textContent = 'Resolving ' + v + '…';
           ensAddressOf(v).then(function (addr) {
             if ((recip.value || '').trim() !== v) return;
-            if (addr) { recipEnsAddr = addr; nameHint.className = 'tier-split-projname'; nameHint.textContent = addr; }
-            else { recipEnsAddr = null; nameHint.className = 'tier-split-projname warn'; nameHint.textContent = 'No address set for ' + v; }
-          }).catch(function () { if ((recip.value || '').trim() === v) { recipEnsAddr = null; nameHint.className = 'tier-split-projname warn'; nameHint.textContent = 'Could not resolve ' + v; } });
+            if (addr) { recipEnsAddr = addr; nameHint.className = 'create-resolve-hint ok'; nameHint.textContent = addr; }
+            else { recipEnsAddr = null; nameHint.className = 'create-resolve-hint warn'; nameHint.textContent = 'No address set for ' + v; }
+          }).catch(function () { if ((recip.value || '').trim() === v) { recipEnsAddr = null; nameHint.className = 'create-resolve-hint warn'; nameHint.textContent = 'Could not resolve ' + v; } });
         } else if (isAddr(v)) {
-          recipEnsAddr = null; nameHint.style.display = ''; describeKnownAddress(splitRefChain, v, nameHint, { hintClass: 'tier-split-projname', projectId: project.id, projectSymbol: project.tokenSymbol });
+          recipEnsAddr = null; nameHint.style.display = ''; describeKnownAddress(splitRefChain, v, nameHint, { hintClass: 'create-resolve-hint', projectId: project.id, projectSymbol: project.tokenSymbol });
         } else { recipEnsAddr = null; nameHint.style.display = 'none'; }
       }
     }
@@ -1416,14 +1418,15 @@ function openAddTierModal(project, shop) {
     if (sub) { var d = el('div', 'operator-flag-sub'); d.textContent = sub; adv.appendChild(d); }
     return cb;
   }
-  var allowOwnerMintCb = flagCheck('Owner privileged access', 'Owner can take from inventory for free');
+  var itemMinter = project.isRevnet ? 'Revnet operator' : 'Project owner';
+  var allowOwnerMintCb = flagCheck(itemMinter + ' can mint for free', 'The ' + itemMinter.toLowerCase() + ' can mint this item from inventory without paying.');
   // Transfers can only be paused per-ruleset; revnets have fixed rulesets, so the option doesn't apply.
   var transfersPausableCb = project.isRevnet ? null : flagCheck('Transfers pausable per ruleset', 'Allow this item’s transfers to be paused during a ruleset.');
   var cantBeRemovedCb = flagCheck('Permanent', 'Lock this item so it can never be removed from the store.');
   // Credits: default on. cantBuyWithCredits is the inverse of this checkbox.
   var allowCreditsCb = flagCheck('Allow credit purchases', 'Payments that don’t buy items get credits equal to their payment, usable later to buy items that allow it.', true);
   // Discount: a capability flag only — no initial discount is set here. cantIncreaseDiscountPercent is the inverse.
-  var ownerDiscountCb = flagCheck('Owner can edit discounts', 'The item can have its percent discount changed by the owner.', true);
+  var ownerDiscountCb = flagCheck(itemMinter + ' can edit discounts', 'The ' + itemMinter.toLowerCase() + ' can change this item’s discount.', true);
 
   // Voting units — opt-in, last in the list. Default off; the price drives governance weight unless overridden.
   var votingCbRow = el('label', 'operator-flag-row');
@@ -1453,7 +1456,7 @@ function openAddTierModal(project, shop) {
   var jwtInput = null;
   if (!hasPinata()) {
     var jlbl = el('div', 'operator-edit-label'); jlbl.style.marginTop = '12px';
-    jlbl.innerHTML = 'Pinata JWT <span class="operator-edit-hint">— to pin the tier image + metadata to IPFS. '
+    jlbl.innerHTML = 'Pinata JWT <span class="operator-edit-hint">— to pin the item image + metadata to IPFS. '
       + '<a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.</span>';
     content.appendChild(jlbl);
     jwtInput = el('input', 'operator-edit-jwt'); jwtInput.type = 'password'; jwtInput.placeholder = 'pinata JWT'; jwtInput.autocomplete = 'off'; jwtInput.spellcheck = false;
@@ -1743,7 +1746,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   if (discLabel) { var badge = el('span', 'shop-tier-discount'); badge.textContent = discLabel; imgWrap.appendChild(badge); }
 
   var info = el('div', 'shop-tier-info');
-  var nameEl = el('div', 'shop-tier-name'); nameEl.textContent = 'Tier ' + tier.id; info.appendChild(nameEl);
+  var nameEl = el('div', 'shop-tier-name'); nameEl.textContent = 'Item ' + tier.id; info.appendChild(nameEl);
   var descEl = el('div', 'shop-tier-description'); descEl.style.display = 'none'; info.appendChild(descEl);
   var row = el('div', 'shop-tier-row');
   var left = el('div', 'shop-tier-pricecol');
@@ -1781,7 +1784,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
 
   resolveTierMedia(shop, tier, project.chainId).then(function (m) {
     if (!c.isConnected) return;
-    var nm = m.name || ('Tier ' + tier.id);
+    var nm = m.name || ('Item ' + tier.id);
     if (cart) { cart.setImage(tier.id, m.image); if (m.name) cart.setName(tier.id, nm); }
     if (m.name) nameEl.textContent = m.name;
     if (m.description) { descEl.textContent = htmlToText(m.description); descEl.style.display = ''; }
@@ -1822,12 +1825,12 @@ function readTierSupplyAcrossChains(project, tierId) {
 function openTierDetail(project, shop, tier, cart, refreshers) {
   var content = el('div', 'tier-detail');
   var art = el('div', 'tier-detail-art'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; art.appendChild(ph); content.appendChild(art);
-  var nameEl = el('div', 'tier-detail-name'); nameEl.textContent = 'Tier ' + tier.id; content.appendChild(nameEl);
+  var nameEl = el('div', 'tier-detail-name'); nameEl.textContent = 'Item ' + tier.id; content.appendChild(nameEl);
   var descEl = el('div', 'tier-detail-description'); descEl.style.display = 'none'; content.appendChild(descEl);
   resolveTierMedia(shop, tier, project.chainId).then(function (m) {
     if (m.name) nameEl.textContent = m.name;
     if (m.description) { descEl.textContent = htmlToText(m.description); descEl.style.display = ''; }
-    if (m.image || m.animationUrl) renderTierMediaInto(art, m, m.name || ('Tier ' + tier.id), 'full');
+    if (m.image || m.animationUrl) renderTierMediaInto(art, m, m.name || ('Item ' + tier.id), 'full');
   }).catch(function () {});
 
   var priceRow = el('div', 'tier-detail-price');
@@ -1875,7 +1878,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   var cfg = el('div', 'tier-detail-cfg');
   var cfgH = el('div', 'tier-detail-section-h'); cfgH.textContent = 'Details'; cfg.appendChild(cfgH);
   function fact(label, val) { var r = el('div', 'tier-detail-fact'); var l = el('span', 'tier-detail-fact-l'); l.textContent = label; var v = el('span'); v.textContent = val; r.appendChild(l); r.appendChild(v); cfg.appendChild(r); }
-  fact('Tier id', '#' + tier.id);
+  fact('Item ID', '#' + tier.id);
   fact('Category', String(tier.category));
   if (tier.reserveFrequency > 0) fact('Reserve mint', '1 per ' + tier.reserveFrequency + ' sold');
   if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
@@ -1885,7 +1888,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   // Each set flag on its own row with a plain-English explanation.
   var fl = tier.flags || {};
   var FLAG_DESCS = [
-    ['allowOwnerMint', 'Owner can mint', 'The project owner can mint this item for free, without a payment.'],
+    ['allowOwnerMint', project.isRevnet ? 'Revnet operator can mint' : 'Project owner can mint', 'The ' + (project.isRevnet ? 'revnet operator' : 'project owner') + ' can mint this item for free, without a payment.'],
     ['transfersPausable', 'Transfers pausable', 'The owner can pause transfers of this item.'],
     ['cantBeRemoved', 'Cannot be removed', 'This item can never be removed from the shop.'],
     ['cantBuyWithCredits', 'No credit buys', 'Buyers can’t use project credits to mint this item — only a fresh payment.'],
@@ -1918,7 +1921,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     var dInput = document.createElement('input'); dInput.type = 'number'; dInput.min = '0'; dInput.max = '100'; dInput.step = '1';
     dInput.value = String(Number(tier.discountPercent || 0) / 2); dInput.className = 'tier-detail-op-input'; dRow.appendChild(dInput);
     var dBtn = el('button', 'create-btn'); dBtn.textContent = 'Set';
-    if (fl.cantIncreaseDiscountPercent) dBtn.title = 'This tier is discount-capped — you can only lower it.';
+    if (fl.cantIncreaseDiscountPercent) dBtn.title = 'This item is discount-capped — you can only lower it.';
     dBtn.addEventListener('click', function () {
       submitSetTierDiscount(project, tier, Number(dInput.value), opStatus)
         .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely update the discount.'), 'error'); });
@@ -2074,7 +2077,7 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
 
   resolveTierMedia(shop, tier, project.chainId).then(function (m) {
     if (!it.isConnected) return;
-    var nm = m.name || ('Tier ' + tier.id);
+    var nm = m.name || ('Item ' + tier.id);
     cart.setImage(tier.id, m.image); cart.setName(tier.id, nm);
     it.title = nm + ' | ' + formatShopPrice(shop, tier.price, project.chainId);
     if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'thumb');
@@ -3278,11 +3281,17 @@ var omnichainQueueAbi = [{
 }];
 // "Start a new shop" at queue time. Both overloads deploy a fresh 721 hook, transfer its ownership to the
 // PROJECT, and queue a ruleset wired to it — in one owner-signed tx (no stranded-ownership EOA path).
-// Single-chain: JB721TiersHookProjectDeployer.queueRulesetsOf(projectId, deployTiersHookConfig, rulesets, controller, salt).
+// Single-chain: JB721TiersHookProjectDeployer.queueRulesetsOf(projectId, deployTiersHookConfig,
+// JBQueueRulesetsConfig, controller, salt). The nested queue config is selector-significant.
 var projectDeployer721QueueAbi = [{
   type: 'function', name: 'queueRulesetsOf', stateMutability: 'nonpayable',
   inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'deployTiersHookConfig', type: 'tuple', components: DEPLOY_721_COMPONENTS },
-    RULESET_CFG_COMPONENT, { name: 'controller', type: 'address' }, { name: 'salt', type: 'bytes32' }],
+    { name: 'queueRulesetsConfig', type: 'tuple', components: [
+      { name: 'projectId', type: 'uint64' },
+      { name: 'rulesetConfigurations', type: 'tuple[]', components: PAY_DATA_HOOK_RULESET_COMPONENTS },
+      { name: 'memo', type: 'string' },
+    ] },
+    { name: 'controller', type: 'address' }, { name: 'salt', type: 'bytes32' }],
   outputs: [{ name: 'rulesetId', type: 'uint256' }, { name: 'hook', type: 'address' }],
 }];
 // Omnichain: JBOmnichainDeployer.queueRulesetsOf(projectId, deploy721Config, rulesets, memo) — non-empty tiers
@@ -3305,7 +3314,7 @@ export function buildNewShopQueueCall(o) {
       args: [pid, { deployTiersHookConfig: o.deployConfig, useDataHookForCashOut: !!o.useDataHookForCashOut, salt: o.salt }, o.cfgs, o.memo || ''] };
   }
   return { to: o.projectDeployer, abi: projectDeployer721QueueAbi, functionName: 'queueRulesetsOf',
-    args: [pid, o.deployConfig, o.cfgs, o.controller, o.salt] };
+    args: [pid, o.deployConfig, { projectId: pid, rulesetConfigurations: o.cfgs, memo: o.memo || '' }, o.controller, o.salt] };
 }
 // Map an approval-hook address → friendly deadline label for the current chain ('Custom' if unknown).
 function deadlineLabelOf(addr, chainId) {
@@ -5370,7 +5379,7 @@ function renderPayCard(project, cart) {
   }
   function nftSelectionList() {
     var sel = cart.entries();
-    return Object.keys(sel).map(function (id) { return { id: Number(id), qty: sel[id], name: cart.name(id) || ('Tier ' + id) }; });
+    return Object.keys(sel).map(function (id) { return { id: Number(id), qty: sel[id], name: cart.name(id) || ('Item ' + id) }; });
   }
   function syncNftAmountForSelection() {
     var floor = nftFloorForToken(state.token);
@@ -5946,6 +5955,9 @@ function renderPayCard(project, cart) {
       var dChain = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
       var dSymClean = (reviewedToken.symbol || (isNative ? 'ETH' : 'token')).replace(/\s*\(native\)/i, '');
       var dHuman = formatAmount(amt, reviewedToken.decimals == null ? 18 : reviewedToken.decimals) + ' ' + dSymClean;
+      // Native swaps are fully determined before review, so reuse this exact call after confirmation and expose
+      // its calldata to txlink. ERC-20 swaps still need a wallet-bound Permit2 signature and cannot be shared yet.
+      var directReviewTx = isNative ? buildDirectSwapNativeTx(reviewedChainId, ds.pool, amt, dsMinOut, beneficiary) : null;
       openPayConfirm({
         chain: dChain,
         chainId: reviewedChainId,
@@ -5953,6 +5965,8 @@ function renderPayCard(project, cart) {
         address: UNIVERSAL_ROUTER_BY_CHAIN[reviewedChainId],
         'function': 'execute',
         abi: abiSignature(urExecuteAbi, 'execute'),
+        calldata: directReviewTx ? encodeFunctionData({ abi: directReviewTx.abi, functionName: directReviewTx.functionName, args: directReviewTx.args }) : undefined,
+        txlinkUnavailableReason: directReviewTx ? null : 'This swap needs a Permit2 signature bound to the connected wallet before its exact calldata exists.',
         value: isNative ? (amt.toString() + ' wei (' + dHuman + ')') : '0',
         erc20Approval: isNative ? null : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: UNIVERSAL_ROUTER_BY_CHAIN[reviewedChainId] },
         args: {
@@ -5965,7 +5979,7 @@ function renderPayCard(project, cart) {
         },
       }, function send() {
         if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) { status.className = 'paybox-status error'; status.textContent = 'Connected account changed. Review the payment again.'; return; }
-        if (isNative) { sendPay(buildDirectSwapNativeTx(reviewedChainId, ds.pool, amt, dsMinOut, beneficiary), { addBalance: false }); return; }
+        if (isNative) { sendPay(directReviewTx, { addBalance: false }); return; }
         // ERC-20 (USDC) input → Permit2 approval/signature, then PERMIT2_PERMIT + V4_SWAP in one tx.
         var statusCb = function (m, kind) { status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m; };
         buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb)
@@ -6033,6 +6047,8 @@ function renderPayCard(project, cart) {
       address: terminal,
       'function': fnName,
       abi: abiSignature(fnAbi, fnName),
+      calldata: (viaRouter && !isNative) ? undefined : encodeFunctionData({ abi: fnAbi, functionName: fnName, args: args }),
+      txlinkUnavailableReason: (viaRouter && !isNative) ? 'This routed payment needs a Permit2 signature bound to the connected wallet before its exact calldata exists.' : null,
       value: isNative ? (amt.toString() + ' wei (' + human + ')') : '0',
       erc20Approval: isNative ? null
         : (viaRouter
@@ -6735,7 +6751,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
   var ok = await confirmTransactionModal({
     via: 'relayr — one prepaid payment relays the same change to every chain below',
     action: confirmOpts.label || 'Cross-chain update',
-    chains: calls.map(function (c) { var nm = resolveContractName(c.to, c.cid); return nm ? { chain: c.name, contract: nm, address: c.to, calldata: c.data } : { chain: c.name, contract: c.to, calldata: c.data }; }),
+    chains: calls.map(function (c) { var nm = resolveContractName(c.to, c.cid); return nm ? { chain: c.name, chainId: c.cid, contract: nm, address: c.to, calldata: c.data } : { chain: c.name, chainId: c.cid, contract: c.to, calldata: c.data }; }),
   }, { title: confirmOpts.title || 'Confirm cross-chain transaction', confirmText: 'Confirm & send' });
   if (!ok) { setStatus('Transaction cancelled', ''); throw new Error('Transaction cancelled'); }
 
@@ -7928,7 +7944,7 @@ function activityRowFromEvent(event, project) {
       txHash: nft.txHash || event.txHash, timestamp: Number(nft.timestamp || event.timestamp),
       account: nft.beneficiary || nft.from || event.from, from: nft.from || event.from,
       baseAmount: '',
-      tokenAmount: '', action: 'minted NFT (tier ' + nft.tierId + ')', memo: '',
+      tokenAmount: '', action: 'minted NFT (item #' + nft.tierId + ')', memo: '',
     };
   }
   if (event.deployErc20Event) {
@@ -8568,8 +8584,8 @@ async function runProjectPayerRelayrDeploys(calls, setStatus) {
     chains: calls.map(function (c) {
       var nm = resolveContractName(c.to, c.chainId);
       return nm
-        ? { chain: chainNameOf(c.chainId), contract: nm, address: c.to, calldata: c.data }
-        : { chain: chainNameOf(c.chainId), contract: c.to, calldata: c.data };
+        ? { chain: chainNameOf(c.chainId), chainId: c.chainId, contract: nm, address: c.to, calldata: c.data }
+        : { chain: chainNameOf(c.chainId), chainId: c.chainId, contract: c.to, calldata: c.data };
     }),
   }, { title: 'Confirm payer address deployment', confirmText: 'Confirm & send' });
   if (!ok) { setStatus('Transaction cancelled', ''); throw new Error('Transaction cancelled'); }
@@ -9176,10 +9192,10 @@ async function applyDraftShop(state, project, sources, warnings) {
     } else if (effectiveVotes !== toBigInt(tier.price || 0)) {
       explicitVotes = true;
     } else {
-      throw new Error('Shop item #' + tier.id + ' has ambiguous voting-unit configuration and no indexed AddTier value; exporting would risk changing it.');
+      throw new Error('Shop item #' + tier.id + ' has ambiguous voting-unit configuration and no indexed creation value; exporting would risk changing it.');
     }
     return {
-      expanded: false, advOpen: false, name: media.name || ('Tier ' + tier.id), description: media.description || '',
+      expanded: false, advOpen: false, name: media.name || ('Item ' + tier.id), description: media.description || '',
       imageUri: media.image || media.animationUrl || '', mediaType: media.mediaType || '', metaUri: '', encodedIpfsUri: tier.encodedIpfsUri || '',
       priceEth: formatAmount(tier.price, home.pricing.decimals), limited: !unlimited, supply: unlimited ? '' : String(tier.initial),
       splitOn: tier.splitPercent > 0, splitRecipients: splitRows,
@@ -15354,7 +15370,7 @@ function openQueueRulesetModal(project) {
     if (state.unsupportedMultiCurrencyAccess) {
       var accessWarning = el('div', 'operator-edit-across');
       accessWarning.style.marginBottom = '18px';
-      accessWarning.textContent = state.unsupportedQueueReason || 'This ruleset contains fund-access or split semantics this editor cannot preserve exactly, so queueing is disabled here. Use the advanced Queue Ruleset contract form instead.';
+      accessWarning.textContent = state.unsupportedQueueReason || 'This ruleset contains settings this editor cannot preserve safely, so queueing is disabled to avoid changing them.';
       body.appendChild(accessWarning);
     }
     body.appendChild(renderStages(state, renderEditor, { noHead: true }));
@@ -15453,15 +15469,11 @@ function openQueueRulesetModal(project) {
           state.unsupportedMultiCurrencyAccess = true;
           if (!state.unsupportedQueueReason) state.unsupportedQueueReason = reason;
         }
-        function splitSemanticsArePreservable(splits) {
-          return (splits || []).every(function (sp) { return !sp.preferAddToBalance; });
-        }
         function finitePayoutHasNoOwnerRemainder(limit, splits) {
           if (!limit || toBigInt(limit.amount) === 0n || toBigInt(limit.amount) >= (2n ** 200n)) return true;
           return (splits || []).reduce(function (sum, sp) { return sum + Number(sp.percent || 0); }, 0) === SPLITS_TOTAL;
         }
         if ((R[0] || []).length > 1 || (R[1] || []).length > 1) markUnsupported('This ruleset uses multiple limit currencies for one accounting token, which the concise editor cannot preserve.');
-        if (!splitSemanticsArePreservable((R[2] || []).concat(R[3] || []))) markUnsupported('At least one current split prefers add-to-balance, which the concise editor cannot preserve.');
         if (!finitePayoutHasNoOwnerRemainder((R[0] || [])[0], R[2])) markUnsupported('A finite payout limit leaves an implicit owner remainder, which the concise editor cannot reconstruct without changing its split semantics.');
         var stage = stageFromBaseRuleset(baseR, baseM, R[0], R[1], R[2], R[3], acct, project.chainId);
         if (Number(stage.durationSeconds || 0) <= 0 && (R[2] || []).concat(R[3] || []).some(function (sp) { return Number(sp.lockedUntil || 0) > 0; })) {
@@ -15488,7 +15500,6 @@ function openQueueRulesetModal(project) {
               var lim = (rr[0] || [])[0], allowances = rr[1] || [], splits = rr[2] || [], pk;
               var tokenCurrency = Number(tokenCurrencyIdForAccounting(tok));
               if (lim && Number(lim.currency) !== tokenCurrency) markUnsupported('A payout limit is denominated in a non-token currency, which the multi-token editor cannot preserve.');
-              if (!splitSemanticsArePreservable(splits)) markUnsupported('At least one current payout split prefers add-to-balance, which the concise editor cannot preserve.');
               if (!finitePayoutHasNoOwnerRemainder(lim, splits)) markUnsupported('A finite payout limit leaves an implicit owner remainder, which the concise editor cannot reconstruct without changing its split semantics.');
               if (!lim || BigInt(lim.amount) === 0n) pk = { mode: 'none', recipients: [] };
               else if (BigInt(lim.amount) >= (2n ** 200n)) pk = { mode: 'unlimited', recipients: splits.map(function (sp) { return recFromSplit(sp, lpHook, (Number(sp.percent) / SPLITS_TOTAL) * 100, ''); }) };
@@ -15555,6 +15566,9 @@ function openQueueRulesetModal(project) {
       s.allowSetCustomToken = !!m.allowSetCustomToken;
       s.allowAddAccountingContext = !!m.allowAddAccountingContext;
       s.allowAddPriceFeed = !!m.allowAddPriceFeed;
+      s.useTotalSurplusForCashOuts = !!m.useTotalSurplusForCashOuts;
+      s.ownerMustSendPayouts = !!m.ownerMustSendPayouts;
+      s.metadataExtra = Number(m.metadata) || 0;
     }
     // Reserved recipients — each row's percent is its share of ISSUANCE = (split share ÷ 1e9) × reserved rate.
     var reservedRate = m ? Number(m.reservedPercent) / 100 : 0; // 0..100
@@ -15637,7 +15651,7 @@ function openQueueRulesetModal(project) {
       return;
     }
     if (state.unsupportedMultiCurrencyAccess) {
-      setStatus('Nothing was sent. ' + (state.unsupportedQueueReason || 'This editor cannot preserve the current fund-access and split configuration exactly.') + ' Use the advanced Queue Ruleset contract form.', 'error');
+      setStatus('Nothing was sent. ' + (state.unsupportedQueueReason || 'This editor cannot preserve the current fund-access and split configuration exactly.'), 'error');
       return;
     }
     // Removing a live shop is destructive — confirm explicitly (the silent-drop this whole feature prevents).
@@ -15687,7 +15701,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   var buildCall = function (cid) {
     var liveController = state.controllerByChain && state.controllerByChain[cid];
     if (!liveController) throw new Error('The project controller is not verified on ' + chainNameOf(cid) + '.');
-    var cfgs = buildQueueRulesetConfigs(state, cid, immediateStart);
+    var cfgs = buildQueueRulesetConfigs(state, cid, immediateStart, newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
     if (newShop) {
       var nc = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
         useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
@@ -15738,7 +15752,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var liveController0 = state.controllerByChain && state.controllerByChain[cid0];
     if (!liveController0) { setStatus('The project controller is not verified on this chain', 'error'); return; }
     var configs;
-    try { configs = buildQueueRulesetConfigs(state, cid0, 0); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
+    try { configs = buildQueueRulesetConfigs(state, cid0, 0, newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var exec;
     if (newShop) {
       var dep = getAddress('JB721TiersHookProjectDeployer', cid0);
@@ -16681,7 +16695,8 @@ function renderBridgeTransactionsTable(rows, project) {
       var leaf = { index: BigInt(tx.index), beneficiary: tx.beneficiary32, projectTokenCount: toBigInt(tx.projectTokenCount), terminalTokenAmount: toBigInt(tx.terminalTokenAmount), metadata: tx.metadata };
       var payload = {
         action: 'Claim ' + formatCompactTokenAmount(toBigInt(tx.projectTokenCount)) + ' ' + sym + ' on ' + moveChainName(tx.peerChainId),
-        chainId: tx.peerChainId, contract: tx.peerSucker, function: 'claim',
+        chainId: tx.peerChainId, chain: moveChainName(tx.peerChainId), contract: 'JBSucker', address: tx.peerSucker, function: 'claim',
+        calldata: encodeFunctionData({ abi: suckerClaimAbi, functionName: 'claim', args: [{ token: tx.remoteToken || tx.token, leaf: leaf, proof: tx.proof }] }),
         args: { token: tx.remoteToken || tx.token, leaf: { index: tx.index, beneficiary: tx.beneficiary, projectTokenCount: leaf.projectTokenCount, terminalTokenAmount: leaf.terminalTokenAmount, metadata: tx.metadata }, proof: '[32-element merkle proof]' },
       };
       // Claiming runs on the DESTINATION chain — gas paid in that chain's native ETH. Warn early if the
@@ -20301,6 +20316,7 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
     contract: 'Uniswap V4 PositionManager',
     address: prep.posm,
     'function': 'modifyLiquidities',
+    txlinkUnavailableReason: 'The final liquidity calldata may include Permit2 signatures bound to the connected wallet, so it does not exist before confirmation.',
     value: prep.value > 0n ? (prep.value.toString() + ' wei (' + formatEth(prep.value) + ')') : '0',
     erc20Approvals: (prep.erc20 || []).map(function (s) {
       return { token: s.currency, via: 'Permit2', spender: prep.posm, amount: s.max.toString() };
@@ -20461,6 +20477,7 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
           openTxConfirm({
             chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
             'function': 'modifyLiquidities', value: '0',
+            calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
             position: { actions: 'BURN_POSITION, TAKE_PAIR (0x0311)', tokenId: pos.tokenId.toString(), expectedReturns: tokH + ' + ' + pairH,
               minimumReturns: formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol), recipient: acct },
             args: { unlockData: prep.unlockData, deadline: 'set at signing (~20 min)' },

@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData } from 'viem';
 import { build721Config, buildQueueRulesetConfigs, __test } from '../src/create-flow.js';
 import { buildNewShopQueueCall } from '../src/discover.js';
+import { getABI } from '../src/abi-registry.js';
 
 const { initState, storeUnit } = __test;
 const ALICE = '0x1111111111111111111111111111111111111111';
@@ -62,7 +63,7 @@ describe('buildNewShopQueueCall — routes "new shop" to the right deployer + en
   it('single-chain → JB721TiersHookProjectDeployer (deployTiersHookConfig + controller + salt)', () => {
     const s = newShopState();
     const cfg = build721Config(s, 'ipfs://x', 1);
-    const cfgs = buildQueueRulesetConfigs(s, 1, 0);
+    const cfgs = buildQueueRulesetConfigs(s, 1, 0, { payDataHookVariant: true });
     const call = buildNewShopQueueCall({ projectId: 5, deployConfig: cfg, cfgs, controller: CTRL, projectDeployer: SDEPLOYER, salt: SALT, isOmnichain: false });
     expect(call.to).toBe(SDEPLOYER);
     const data = encodeFunctionData({ abi: call.abi, functionName: 'queueRulesetsOf', args: call.args });
@@ -70,7 +71,17 @@ describe('buildNewShopQueueCall — routes "new shop" to the right deployer + en
     expect(dec.functionName).toBe('queueRulesetsOf');
     expect(dec.args[0]).toBe(5n);                                   // projectId
     expect(dec.args[1].tiersConfig.tiers.length).toBe(1);          // deploy config tiers
+    expect(dec.args[2].projectId).toBe(5n);                        // nested JBQueueRulesetsConfig
+    expect(dec.args[2].rulesetConfigurations).toHaveLength(cfgs.length);
+    expect(dec.args[2].rulesetConfigurations[0].metadata.useDataHookForPay).toBeUndefined();
     expect(dec.args[3]).toBe(CTRL);                                 // controller
+
+    // Decode with the generated deployment ABI too: a self-consistent but wrong local tuple would still pass
+    // the round-trip above while producing a selector the deployed contract rejects.
+    const canonical = decodeFunctionData({ abi: getABI('JB721TiersHookProjectDeployer'), data });
+    expect(canonical.functionName).toBe('queueRulesetsOf');
+    expect(canonical.args[2].projectId).toBe(5n);
+    expect(canonical.args[2].rulesetConfigurations).toHaveLength(cfgs.length);
   });
   it('omnichain → JBOmnichainDeployer (wrapped deploy721Config, memo)', () => {
     const s = newShopState();
