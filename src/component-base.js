@@ -134,6 +134,15 @@ export function friendlyTransactionError(errorText) {
   if (text.indexOf('0x6b2bb382') !== -1 || text.indexOf('jbmultiterminal_undermin') !== -1) {
     return 'The live return fell below the minimum you reviewed. Refresh the quote and try again.';
   }
+  if (text.indexOf('0x30116425') !== -1 || text.indexOf('deploymentfailed') !== -1) {
+    return 'The contract deployment failed. Close this confirmation and review the form before trying again. If this shop existed before, choose Reactivate archived shop instead of starting a new one.';
+  }
+  if (text.indexOf('0x76d03816') !== -1 || text.indexOf('jbprices_pricefeednotfound') !== -1) {
+    return 'This payment token cannot be converted into the shop’s pricing currency because no price feed is available. Choose a supported currency.';
+  }
+  if (text.indexOf('0xee890b46') !== -1 || text.indexOf('jb721tiershookstore_priceexceedsamount') !== -1) {
+    return 'The payment is worth less than the selected shop items. Review the item total and amount due before trying again.';
+  }
   return null;
 }
 
@@ -1040,6 +1049,14 @@ export function confirmTransactionModal(payload, opts) {
       statusEl.style.display = '';
       statusEl.className = 'tx-confirm-status ' + (kind === 'error' ? 'error' : kind === 'success' ? 'success' : 'pending');
       setStatusContent(statusEl, m, meta);
+      // A failed simulation/send is terminal for this reviewed confirmation. Unlock dismissal so the user can
+      // correct the form and try again instead of being trapped behind disabled Cancel/close controls. Confirm
+      // stays disabled because its one-shot promise has already handed the exact reviewed call to executeTransaction.
+      if (kind === 'error') {
+        inFlight = false;
+        cancel.disabled = false;
+        cancel.textContent = 'Close';
+      }
     }
     function onKey(e) { if (e.key === 'Escape' && !inFlight) close(cancelResult); }
     x.addEventListener('click', function () { if (!inFlight) close(cancelResult); });
@@ -1104,7 +1121,7 @@ export function executeTransaction(opts) {
       cbs = {
         onStatus: function (m, k, meta) { r.showStatus(m, k, meta); base.onStatus(m, k, meta); },
         onSuccess: function (m, meta) { if (r.close) r.close(); base.onSuccess(m, meta); },
-        onError: function (m, meta) { r.showStatus(m, 'error'); base.onError(m, meta); },
+        onError: function (m, meta) { r.showStatus(m, 'error', meta); base.onError(m, meta); },
       };
     }
     sendNow();
@@ -1301,7 +1318,7 @@ export var COMPONENT_SPECS = {
 
 // Keep the user-facing audit prompts aligned with the hardened transaction paths. These concise overrides
 // supersede older long-form notes above that documented now-removed unsafe fallbacks.
-COMPONENT_SPECS.pay.desc = "Pays through the best live-previewed recognized terminal and mints project tokens to the beneficiary. The form requires a non-zero preview at submit time and sets minReturnedTokens to 99% of that quote; it never submits an unpriced min=0 payment. Amount uses the payment token's decimals, returned project tokens use 18 decimals, native payments set msg.value, and ERC-20 payments approve the exact resolved terminal.";
+COMPONENT_SPECS.pay.desc = "Pays through the best live-previewed recognized terminal and may mint project tokens to the beneficiary. The form requires a verified preview at submit time: a positive token quote gets a 99% minReturnedTokens floor, while a verified zero-issuance quote legitimately uses minReturnedTokens=0 and still funds the project or mints selected NFTs. A failed or unavailable preview never becomes an unprotected write. Amount uses the payment token's decimals, returned project tokens use 18 decimals, native payments set msg.value, and ERC-20 payments approve the exact resolved terminal.";
 COMPONENT_SPECS.cashout.desc = "Burns 18-decimal project tokens to reclaim a selected on-chain accounting token. The component loads only the terminal's real accounting contexts, requires previewCashOutFrom to return a non-zero reclaim, and sets minTokensReclaimed to 95% of that quote (at least one raw unit); preview failure or a zero return blocks the transaction. The project-page AMM path instead carries its hard floor in buyback-hook metadata, where terminal min=0 is required by that route.";
 COMPONENT_SPECS.payouts.desc = "Calls sendPayoutsOf(projectId, token, amount, currency, minTokensPaidOut) using a token from the project's actual accounting contexts. Every JBCurrencyAmount uses that accounting token's decimals even when denominated in ETH, USD, or another currency. Before signing, the form reads the live ruleset, configured and used limit, terminal balance, and protocol price; rejects amounts above either the remaining limit or the balance converted into the limit currency; simulates terminal-token output; and sets a non-zero 99% floor so the contract's silent limit cap cannot make the transaction pay less than reviewed.";
 COMPONENT_SPECS.launch.desc = "Launches a project and its initial rulesets/terminals. Fund-access payout limits and surplus allowances are fixed-point values using the associated accounting token context's decimals for every currency (for example both token-keyed and USD limits on USDC use 6 decimals); currency changes denomination, not scale. Empty fund-access groups mean no payout access, and unlimited limits use uint224.max.";

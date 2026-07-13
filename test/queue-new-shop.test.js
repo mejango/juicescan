@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData } from 'viem';
 import { build721Config, buildQueueRulesetConfigs, __test } from '../src/create-flow.js';
-import { buildNewShopQueueCall } from '../src/discover.js';
+import { buildNewShopQueueCall, newShopDeploymentSalt } from '../src/discover.js';
 import { getABI } from '../src/abi-registry.js';
 
 const { initState, storeUnit } = __test;
@@ -60,6 +60,13 @@ describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)
 });
 
 describe('buildNewShopQueueCall — routes "new shop" to the right deployer + encodes cleanly', () => {
+  it('uses nonce-based CREATE for a fresh direct shop and reserves deterministic salt for omnichain hooks', () => {
+    const s = newShopState();
+    expect(newShopDeploymentSalt(s, ALICE, false)).toBe(SALT);
+    expect(newShopDeploymentSalt(s, ALICE, true)).toMatch(/^0x[0-9a-f]{64}$/i);
+    expect(newShopDeploymentSalt(s, ALICE, true)).not.toBe(SALT);
+  });
+
   it('single-chain → JB721TiersHookProjectDeployer (deployTiersHookConfig + controller + salt)', () => {
     const s = newShopState();
     const cfg = build721Config(s, 'ipfs://x', 1);

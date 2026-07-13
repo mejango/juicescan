@@ -146,7 +146,7 @@ var BUYBACK_META = [
 
 var PREVIEW_BENEFICIARY = '0x000000000000000000000000000000000000dEaD';
 
-// Preview a payment. opts: { chainId, projectId, token (address), amount (bigint, raw), beneficiary? }.
+// Preview a payment. opts: { chainId, projectId, token (address), amount (bigint, raw), beneficiary?, metadata?, allowZero? }.
 // Returns { received, reserved, routing: 'issuance'|'amm'|null, amm, unavailable, reason }.
 // received/reserved are bigint token amounts (18 decimals) or null.
 export async function computePayPreview(opts) {
@@ -160,7 +160,7 @@ export async function computePayPreview(opts) {
   var amount = opts.amount;
   var beneficiary = opts.beneficiary || PREVIEW_BENEFICIARY;
 
-  if (!chainId || !projectId || !token || !amount || amount === 0n) return result;
+  if (!chainId || !projectId || !token || amount == null || (amount === 0n && !opts.allowZero)) return result;
 
   // opts.terminal lets the caller route through the router registry (for swap currencies like USDC);
   // both the router registry and JBMultiTerminal expose the same previewPayFor signature.
@@ -175,7 +175,7 @@ export async function computePayPreview(opts) {
       address: terminal,
       abi: previewPayForAbi,
       functionName: 'previewPayFor',
-      args: [BigInt(projectId), token, amount, beneficiary, '0x'],
+      args: [BigInt(projectId), token, amount, beneficiary, opts.metadata || '0x'],
     });
     // out = [ruleset, beneficiaryTokenCount, reservedTokenCount, hookSpecifications]
     var beneficiaryTokenCount = out[1];

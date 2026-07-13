@@ -3179,6 +3179,8 @@ input[type="checkbox"].field {
 .loan-summary-net { border-top: 1px dashed var(--c-orange-light); margin-top: 4px; padding-top: 6px; }
 .loan-summary-bullets { margin: 10px 0 0; padding-left: 18px; font-size: 11px; color: var(--muted-2); line-height: 1.6; }
 .modal-status { font-size: 11px; color: var(--muted-2); margin-top: 10px; word-break: break-word; }
+.modal-status.error { color: var(--c-pink); }
+.modal-status.success { color: var(--c-green); font-weight: bold; }
 .tx-confirm-status { font-size: 12px; color: var(--muted-2); margin-top: 10px; word-break: break-word; }
 .tx-confirm-status.pending { color: var(--c-teal); }
 .tx-status-hash { color: inherit; text-decoration: underline; }
@@ -3890,6 +3892,9 @@ input[type="checkbox"].field {
 }
 .token-line-val { font-weight: bold; }
 .token-line .bo-sep { color: var(--c-pink-light); margin: 0 2px; }
+.token-empty-state { max-width: 720px; }
+.token-empty-title { font-size: 15px; font-weight: bold; color: var(--text); margin-bottom: 5px; }
+.token-empty-copy { font-size: 12px; line-height: 1.55; color: var(--muted-2); }
 
 /* Claim-credits modal — one row per chain with credits. */
 .claim-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
@@ -4789,6 +4794,9 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .queue-shop-opt-sub { font-size: 12px; color: var(--muted-2); }
 /* Shop header: title left, "+ Add items" operator CTA top-right. */
 .shop-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.shop-credits { margin: 8px 0 14px; padding: 8px 10px; border: 1px solid var(--c-teal); background: rgba(61, 145, 143, 0.06); }
+.shop-credits .token-line-val { font-weight: bold; color: var(--c-teal); }
+.shop-credits-note { flex-basis: 100%; margin-left: 0; font-size: 10px; color: var(--muted-2); }
 .shop-head-add { font-size: 13px; white-space: nowrap; }
 .shop-tier-supply { font-size: 11px; color: var(--muted-2); }
 .shop-tier-step { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
@@ -4957,6 +4965,20 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .paybox-countdown-time { font-size: 15px; font-weight: bold; color: var(--c-teal); font-variant-numeric: tabular-nums; }
 
 .paybox-feedback { margin: 8px 0; }
+.paybox-nft-summary {
+  margin: 10px 0 12px; padding: 7px 0;
+  border-top: 1px solid var(--c-orange-light); border-bottom: 1px solid var(--c-orange-light);
+}
+.paybox-nft-summary-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; font-size: 11px; color: var(--muted-2); }
+.paybox-nft-summary-label { min-width: 0; }
+.paybox-nft-summary-value { color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+.paybox-nft-summary-row.total { margin-top: 3px; padding-top: 5px; border-top: 1px solid var(--c-orange-light); font-weight: bold; }
+.paybox-nft-summary-row.total .paybox-nft-summary-value { font-size: 12px; }
+.paybox-nft-summary-row.credit .paybox-nft-summary-value,
+.paybox-nft-summary-row.enough .paybox-nft-summary-value { color: var(--c-teal); }
+.paybox-nft-summary-row.short,
+.paybox-nft-summary-row.short .paybox-nft-summary-value { color: var(--c-pink); font-weight: bold; }
+.paybox-nft-summary-row.muted .paybox-nft-summary-value { color: var(--muted); }
 .paybox-yg-label { font-size: 11px; color: var(--muted-2); }
 .paybox-yg-row { display: flex; align-items: center; gap: 11px; margin: 1px 0; flex-wrap: wrap; }
 .paybox-yg-val { font-size: 16px; font-weight: bold; color: var(--text); }

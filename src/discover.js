@@ -350,6 +350,7 @@ var TIER721_STORE_ABI = [
   { type: 'function', name: 'tokenUriResolverOf', stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'address' }] },
 ];
 var TIER721_PRICING_CONTEXT_ABI = [{ type: 'function', name: 'pricingContext', stateMutability: 'view', inputs: [], outputs: [{ name: 'currency', type: 'uint256' }, { name: 'decimals', type: 'uint256' }] }];
+var TIER721_PAY_CREDITS_ABI = [{ type: 'function', name: 'payCreditsOf', stateMutability: 'view', inputs: [{ name: 'addr', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 var TIER721_RESOLVER_ABI = [{ type: 'function', name: 'tokenUriOf', stateMutability: 'view', inputs: [{ type: 'address' }, { type: 'uint256' }], outputs: [{ type: 'string' }] }];
 
 // bytes32 IPFS hash → both codec candidates which have historically been stored by the app:
@@ -569,6 +570,42 @@ export function tierEffectivePrice(price, discountPercent) {
   if (d <= 0n) return p;
   if (d > 200n) d = 200n;
   return p - (p * d) / 200n;
+}
+
+// Apply a wallet's 721-shop pay credits exactly as JB721TiersHook does. Credit-restricted items must be paid
+// entirely with fresh funds, so only the rest of the subtotal is credit-eligible.
+export function nftCreditBreakdown(subtotal, restrictedCost, credits) {
+  subtotal = BigInt(subtotal || 0);
+  restrictedCost = BigInt(restrictedCost || 0);
+  credits = BigInt(credits || 0);
+  if (restrictedCost < 0n) restrictedCost = 0n;
+  if (restrictedCost > subtotal) restrictedCost = subtotal;
+  if (credits < 0n) credits = 0n;
+  var eligible = subtotal - restrictedCost;
+  var applied = credits < eligible ? credits : eligible;
+  return { subtotal: subtotal, restrictedCost: restrictedCost, eligibleCost: eligible, credits: credits, applied: applied, due: subtotal - applied };
+}
+
+// JBPrices returns payment-currency units per one shop-pricing unit at `paymentDecimals`. Convert a shop total
+// into the smallest sufficient payment, rounding UP so decimal truncation can never underfund the NFT mint.
+export function nftPaymentAmountFromPricing(pricingAmount, pricingDecimals, pricePerUnit) {
+  pricingAmount = BigInt(pricingAmount || 0);
+  pricePerUnit = BigInt(pricePerUnit || 0);
+  pricingDecimals = Number(pricingDecimals == null ? 18 : pricingDecimals);
+  if (pricingAmount <= 0n) return 0n;
+  if (pricePerUnit <= 0n || !Number.isInteger(pricingDecimals) || pricingDecimals < 0 || pricingDecimals > 77) return null;
+  var denominator = 10n ** BigInt(pricingDecimals);
+  return (pricingAmount * pricePerUnit + denominator - 1n) / denominator;
+}
+
+// Mirror JB721TiersHookLib.normalizePaymentValue for the shopper-facing comparison: express what the entered
+// payment is worth in the NFT collection's pricing currency. The contract rounds this direction DOWN.
+export function nftPricingValueFromPayment(paymentAmount, pricingDecimals, pricePerUnit) {
+  paymentAmount = BigInt(paymentAmount || 0);
+  pricePerUnit = BigInt(pricePerUnit || 0);
+  pricingDecimals = Number(pricingDecimals == null ? 18 : pricingDecimals);
+  if (paymentAmount < 0n || pricePerUnit <= 0n || !Number.isInteger(pricingDecimals) || pricingDecimals < 0 || pricingDecimals > 77) return null;
+  return paymentAmount * (10n ** BigInt(pricingDecimals)) / pricePerUnit;
 }
 
 // Human "% off" label for a tier's discount. discountPercent is out of 200, so the shopper-facing % off is
@@ -910,16 +947,22 @@ function renderShopSection(project, shop, cart) {
   var body = el('div', 'shop-body'); card.appendChild(body);
   wrap.appendChild(card);
 
-  // Instead of an intro blurb, surface the connected user's unclaimed credit balance for this project
-  // (NFT overpayment becomes credits) as a key/value at the top — only when they actually hold some.
-  function showCredits() {
+  // 721 shop pay credits are separate from Juicebox project-token credits. They are held by this collection's
+  // hook in its pricing currency and automatically combine with a same-wallet checkout.
+  var resolvedShop = shop || null;
+  function showCredits(s) {
+    s = s || resolvedShop;
+    var old = card.querySelector('.shop-credits');
+    if (old) old.remove();
     var acct = getAccount();
-    if (!acct) return;
-    read(project.chainId, 'JBTokens', creditBalanceOfAbi, 'creditBalanceOf', [acct, BigInt(project.id)]).then(toBigInt).then(function (credit) {
+    if (!acct || !s || !s.hook) return;
+    clientFor(project.chainId).readContract({ address: s.hook, abi: TIER721_PAY_CREDITS_ABI, functionName: 'payCreditsOf', args: [acct] }).then(toBigInt).then(function (credit) {
       if (!credit || credit <= 0n || !wrap.isConnected || card.querySelector('.shop-credits')) return;
       var row = el('div', 'about-link-row shop-credits');
-      var k = el('span', 'about-link-key'); k.textContent = 'Your credits:'; row.appendChild(k);
-      var v = el('span', 'token-line-val'); v.textContent = formatTokens(credit) + ' ' + (project.tokenSymbol || 'credits'); row.appendChild(v);
+      row.title = 'Overpayment becomes NFT shop credit and is applied automatically to eligible items at checkout.';
+      var k = el('span', 'about-link-key'); k.textContent = 'Your NFT shop credit'; row.appendChild(k);
+      var v = el('span', 'token-line-val'); v.textContent = formatShopPrice(s, credit, project.chainId); row.appendChild(v);
+      var note = el('span', 'shop-credits-note'); note.textContent = 'Applied automatically at checkout'; row.appendChild(note);
       card.insertBefore(row, body);
     }).catch(function () {});
   }
@@ -943,6 +986,7 @@ function renderShopSection(project, shop, cart) {
   body.textContent = 'Loading items…';
   ready.then(function (s) {
     if (!wrap.isConnected) return;
+    resolvedShop = s;
     body.innerHTML = '';
     if (!s || !s.tiers.length) {
       body.className = 'detail-card-body owners-empty';
@@ -950,7 +994,7 @@ function renderShopSection(project, shop, cart) {
       appendAddTierFoot(s);
       return;
     }
-    showCredits();
+    showCredits(s);
     appendAddTierFoot(s);
     body.className = 'shop-body';
     // Group tiers under category headings (juicy-vision layout), sorted by category number.
@@ -1029,6 +1073,7 @@ function renderShopSection(project, shop, cart) {
   if (cart) cart.subscribe(updateCheckout);
   updateCheckout();
   wrap.appendChild(checkoutBar);
+  onWalletChange(function () { if (wrap.isConnected) showCredits(resolvedShop); });
   return wrap;
 }
 
@@ -3325,6 +3370,13 @@ export function buildNewShopQueueCall(o) {
   return { to: o.projectDeployer, abi: projectDeployer721QueueAbi, functionName: 'queueRulesetsOf',
     args: [pid, o.deployConfig, { projectId: pid, rulesetConfigurations: o.cfgs, memo: o.memo || '' }, o.controller, o.salt] };
 }
+
+// A direct 721 collection can use nonce-based CREATE, which avoids colliding with any prior collection that used
+// the same project name/owner. Omnichain deployment still needs one deterministic salt so every chain derives the
+// same hook address.
+export function newShopDeploymentSalt(state, owner, isOmnichain) {
+  return isOmnichain ? deploySalt(state, owner) : ('0x' + '0'.repeat(64));
+}
 // Map an approval-hook address → friendly deadline label for the current chain ('Custom' if unknown).
 function deadlineLabelOf(addr, chainId) {
   if (!addr || addr === ZERO_ADDRESS) return 'No deadline';
@@ -3764,7 +3816,46 @@ function accountingContextMeta(chainId, ctx) {
   var known = chainTokens.filter(function (candidate) { return candidate.address.toLowerCase() === address.toLowerCase(); })[0];
   var usdc = USDC_BY_CHAIN[chainId];
   var symbol = known ? tokenSymbolClean(known.symbol) : ((usdc && address.toLowerCase() === usdc.toLowerCase()) ? 'USDC' : truncAddr(address));
-  return { address: address, decimals: decimals, symbol: symbol, currency: currency };
+  return { address: address, decimals: decimals, symbol: symbol, name: known && known.name ? String(known.name) : '', currency: currency };
+}
+
+function cleanAccountingTokenText(value, maxLength) {
+  var text = String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!text) return '';
+  return text.length > maxLength ? text.slice(0, maxLength - 1) + '…' : text;
+}
+
+// ERC-20 display priority: symbol → name → address. The address remains attached to every enriched context for
+// calldata/audit use; this helper only chooses the human-facing label.
+export function accountingTokenDisplayLabel(symbol, name, address) {
+  return cleanAccountingTokenText(tokenSymbolClean(symbol), 24)
+    || cleanAccountingTokenText(name, 40)
+    || (isAddr(address) ? truncAddr(address) : 'Token');
+}
+
+var _accountingTokenMetadataCache = {};
+function resolveAccountingContextMetadata(chainId, ctx) {
+  var base = ctx && ctx.address ? ctx : accountingContextMeta(chainId, ctx);
+  var address = base.address;
+  var lc = address.toLowerCase();
+  if (lc === NATIVE_TOKEN.toLowerCase()) return Promise.resolve(Object.assign({}, base, { symbol: 'ETH', name: 'Ether' }));
+  var usdc = USDC_BY_CHAIN[chainId];
+  if (usdc && lc === usdc.toLowerCase()) return Promise.resolve(Object.assign({}, base, { symbol: 'USDC', name: 'USD Coin' }));
+  var key = Number(chainId) + ':' + lc;
+  if (!_accountingTokenMetadataCache[key]) {
+    var client = clientFor(chainId);
+    _accountingTokenMetadataCache[key] = Promise.all([
+      client.readContract({ address: address, abi: erc20SymbolAbi, functionName: 'symbol', args: [] }).catch(function () { return ''; }),
+      client.readContract({ address: address, abi: erc20NameAbi, functionName: 'name', args: [] }).catch(function () { return ''; }),
+    ]).then(function (values) {
+      var symbol = cleanAccountingTokenText(tokenSymbolClean(values[0]), 24);
+      var name = cleanAccountingTokenText(values[1], 80);
+      return { symbol: accountingTokenDisplayLabel(symbol, name, address), name: name };
+    }).catch(function () { return { symbol: truncAddr(address), name: '' }; });
+  }
+  return _accountingTokenMetadataCache[key].then(function (metadata) {
+    return Object.assign({}, base, metadata);
+  });
 }
 
 // Every token context the terminal accepts. Transaction forms that let the user choose a source must use
@@ -3773,7 +3864,7 @@ function resolveAcctTokens(chainId, pid) {
   if (!getAddress('JBMultiTerminal', chainId)) return Promise.reject(new Error('No terminal on this chain.'));
   return read(chainId, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [pid]).then(function (ctxs) {
     if (!ctxs || !ctxs.length) throw new Error('No accounting contexts are configured for this project.');
-    return ctxs.map(function (ctx) { return accountingContextMeta(chainId, ctx); });
+    return Promise.all(ctxs.map(function (ctx) { return resolveAccountingContextMetadata(chainId, ctx); }));
   });
 }
 
@@ -4616,6 +4707,41 @@ var _gridWrapper = null;
 var _cache = {}; // "<chainId>-<projectId>" -> projectData
 var _groups = null; // cached buildGroups result
 var _activeDetail = null; // { key, showTab, project, isMobile } for the currently open project detail
+var _projectRefreshTimer = null;
+var _projectRefreshSeq = 0;
+
+function scheduleActiveProjectRefresh(project) {
+  if (!_activeDetail || !_activeDetail.project || String(_activeDetail.project.id) !== String(project.id)) return;
+  if (_projectRefreshTimer) clearTimeout(_projectRefreshTimer);
+  var seq = ++_projectRefreshSeq;
+  // Give load-balanced RPCs a short moment to converge after the confirmed receipt, then rebuild the active tab
+  // from on-chain state. The browser URL/tab stays put and no manual refresh is required.
+  _projectRefreshTimer = setTimeout(function () {
+    _projectRefreshTimer = null;
+    var active = _activeDetail;
+    if (!active || !active.project || String(active.project.id) !== String(project.id)) return;
+    var tab = active.current, subtab = active.subtab;
+    var chains = (active.project.chains || project.chains || []).slice();
+    var urlChainId = active.project._urlChainId || project._urlChainId || project.chainId;
+    Object.keys(_cache).forEach(function (key) { if (key.endsWith('-' + project.id)) delete _cache[key]; });
+    _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {};
+    fetchProject(project.id, urlChainId).then(function (fresh) {
+      if (seq !== _projectRefreshSeq || !_activeDetail || String(_activeDetail.project.id) !== String(project.id)) return;
+      fresh.chains = chains.length ? chains : [{ id: urlChainId, name: chainNameOf(urlChainId) }];
+      fresh._urlChainId = urlChainId;
+      _cache[urlChainId + '-' + project.id] = fresh;
+      showProjectDetail(fresh, tab, true, subtab);
+    }).catch(function () {});
+  }, 700);
+}
+
+function notifyProjectUpdated(project) {
+  document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+  var detail = _container && _container.querySelector('.project-detail');
+  if (detail && _activeDetail && String(_activeDetail.project.id) === String(project.id)) {
+    detail.dispatchEvent(new CustomEvent('jb:project-updated'));
+  }
+}
 
 export function invalidateDiscoverProjects() {
   _groups = null; _cache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {};
@@ -4992,6 +5118,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
       if (headerEl.parentNode) { headerEl.parentNode.replaceChild(fresh, headerEl); headerEl = fresh; }
     });
     if (activityCardEl && activityCardEl._refresh) activityCardEl._refresh();
+    scheduleActiveProjectRefresh(project);
   });
 
   var columns = el('div', 'project-detail-columns');
@@ -5216,6 +5343,16 @@ export function payPreviewCanSubmit(phase, preview) {
   try { return BigInt(preview.received) >= 0n; } catch (_) { return false; }
 }
 
+// Keep zero-issuance payments legitimate without presenting meaningless token output. An unavailable preview stays
+// visible as an error state; a verified zero/zero quote (or an idle ruleset whose weight is 0) hides token issuance.
+export function payTokenOutputVisible(rulesetWeight, phase, preview) {
+  if (preview && preview.unavailable) return true;
+  if (phase === 'ready' && preview && preview.received != null) {
+    try { return BigInt(preview.received) > 0n || BigInt(preview.reserved || 0n) > 0n; } catch (_) { return true; }
+  }
+  try { return BigInt(rulesetWeight || 0) > 0n; } catch (_) { return true; }
+}
+
 // Inline pay card (revnet.app-style) for the project detail page. The project is already known, so it
 // only needs a chain (when omnichain), a currency, and an amount. Live feedback — tokens received,
 // reserved/splits, and the Issuance-vs-AMM routing tag — comes from the shared computePayPreview.
@@ -5252,25 +5389,26 @@ function renderPayCard(project, cart) {
     state.contextsReady = false;
     state.contextsError = false;
     if (!term) { state.contextsError = true; return; }
-    clientFor(chainId).readContract({ address: term, abi: TERMINAL_CONTEXTS_ABI, functionName: 'accountingContextsOf', args: [BigInt(project.id)] })
-      .then(function (ctxs) {
+    Promise.all([
+      resolveAcctTokens(chainId, BigInt(project.id)),
+      readProjectPaymentSurface(project, chainId).catch(function () { return null; }),
+    ]).then(function (loaded) {
+        var ctxs = loaded[0], surface = loaded[1];
         if (state.chainId !== chainId) return;
         if (!ctxs || !ctxs.length) { state.contextsError = true; renderTerminalNotice(); return; }
-        var chainTokens = getChainTokens(chainId);
         var usdc = USDC_BY_CHAIN[chainId];
-        var symbolFor = function (addr) {
-          var t = chainTokens.filter(function (x) { return x.address.toLowerCase() === addr.toLowerCase(); })[0];
-          if (t) return t.symbol;
-          if (usdc && addr.toLowerCase() === usdc.toLowerCase()) return 'USDC';
-          return truncAddr(addr);
-        };
         var list = ctxs.map(function (ctx) {
-          return { address: ctx.token, symbol: symbolFor(ctx.token), decimals: Number(ctx.decimals), currency: Number(ctx.currency), viaRouter: false };
+          return { address: ctx.address, symbol: ctx.symbol, name: ctx.name || '', decimals: Number(ctx.decimals), currency: Number(ctx.currency), viaRouter: false };
         });
         var has = function (a) { return list.some(function (t) { return t.address.toLowerCase() === a.toLowerCase(); }); };
-        // Swap-via-router convenience currencies the project doesn't take directly.
-        if (!has(NATIVE_TOKEN)) list.push({ address: NATIVE_TOKEN, symbol: chainTokens[0].symbol, decimals: 18, viaRouter: true });
-        if (usdc && !has(usdc)) list.push({ address: usdc, symbol: 'USDC', decimals: 6, viaRouter: true });
+        // Offer swap currencies only after the Directory verifies the router registry/direct router as one of this
+        // project's terminals. The selected amount still gets a live router preview, which catches missing feeds,
+        // pools, or liquidity before Pay can be submitted.
+        if (surface) { state.terminalSurface = surface; state.terminalSurfaceChain = chainId; }
+        if (surface && surface.hasRouter) {
+          if (!has(NATIVE_TOKEN)) list.push({ address: NATIVE_TOKEN, symbol: 'ETH', name: 'Ether', decimals: 18, viaRouter: true });
+          if (usdc && !has(usdc)) list.push({ address: usdc, symbol: 'USDC', name: 'USD Coin', decimals: 6, viaRouter: true });
+        }
         _tokenCache[chainId] = list;
         state.contextsReady = true;
         state.contextsError = false;
@@ -5278,10 +5416,9 @@ function renderPayCard(project, cart) {
         // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
         // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
         state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
-        rebuildCurrency();
         renderTerminalNotice();
-        if (selectedTierIds().length) syncNftAmountForSelection();
-        schedulePreview();
+        if (selectedTierIds().length) refreshNftCheckoutRoutes();
+        else { rebuildCurrency(); schedulePreview(); }
       }).catch(function () { if (state.chainId === chainId) { state.contextsError = true; renderTerminalNotice(); } });
   }
 
@@ -5303,6 +5440,10 @@ function renderPayCard(project, cart) {
     terminalSurfaceChain: null,
     contextsReady: false,
     contextsError: false,
+    nftRoutes: {},       // token key -> { supported, pricePerUnit, reason }
+    nftRoutesLoading: false,
+    nftCredits: 0n,      // per-beneficiary 721 hook credits, denominated in the shop pricing context
+    nftCreditsLoading: false,
   };
   state.token = state.tokens[0] || null;
   loadAcceptedTokens(state.chainId); // refine direct-vs-router from the project's accounting contexts
@@ -5319,13 +5460,22 @@ function renderPayCard(project, cart) {
     var usdc = USDC_BY_CHAIN[state.chainId];
     return !!(t && t.address && usdc && t.address.toLowerCase() === usdc.toLowerCase());
   }
-  function rescaleAmount(v, fromDecimals, toDecimals) {
-    fromDecimals = Number(fromDecimals == null ? 18 : fromDecimals);
-    toDecimals = Number(toDecimals == null ? 18 : toDecimals);
-    if (fromDecimals === toDecimals) return v;
-    return fromDecimals > toDecimals ? (v / (10n ** BigInt(fromDecimals - toDecimals))) : (v * (10n ** BigInt(toDecimals - fromDecimals)));
-  }
   function nftPricing() { return pricingContextOf(state.shop, state.chainId); }
+  function nftTokenKey(t) {
+    return t ? [String(t.address || '').toLowerCase(), t.viaRouter ? 'router' : 'direct', tokenCurrency(t), Number(t.decimals == null ? 18 : t.decimals)].join(':') : '';
+  }
+  function nftSameCurrency(t, p) {
+    if (!t || !p) return false;
+    // Match the hook exactly: it only skips JBPrices when the accounting-context currency ID equals the shop
+    // currency ID. A token which happens to be USDC/ETH by address is not automatically currency 2/1.
+    return tokenCurrency(t) === p.currency;
+  }
+  function nftRouteForToken(t) { return t ? state.nftRoutes[nftTokenKey(t)] : null; }
+  function nftCheckoutTokens() {
+    if (!selectedTierIds().length) return state.tokens || [];
+    if (state.nftRoutesLoading) return [];
+    return (state.tokens || []).filter(function (t) { var route = nftRouteForToken(t); return route && route.supported; });
+  }
   function nftPayTokenScore(t) {
     if (!state.shop || !t) return 0;
     var p = nftPricing();
@@ -5334,19 +5484,34 @@ function renderPayCard(project, cart) {
     if ((p.currency === 1 || p.currency === Number(BigInt(NATIVE_TOKEN) & 0xffffffffn)) && isNativePayToken(t)) return 10 + directBonus;
     return tokenCurrency(t) === p.currency ? 8 + directBonus : 0;
   }
-  function preferredNftPayToken() {
+  function preferredNftPayToken(candidates) {
     var best = null, bestScore = 0;
-    (state.tokens || []).forEach(function (t) { var score = nftPayTokenScore(t); if (score > bestScore) { best = t; bestScore = score; } });
-    return best;
+    (candidates || state.tokens || []).forEach(function (t) { var score = nftPayTokenScore(t); if (score > bestScore) { best = t; bestScore = score; } });
+    return best || ((candidates || [])[0]) || null;
   }
+  function nftRestrictedWei() {
+    var s = 0n, sel = cart.entries();
+    Object.keys(sel).forEach(function (id) {
+      var t = nftTierById(Number(id));
+      if (t && t.flags && t.flags.cantBuyWithCredits) s += tierEffectivePrice(t.price, t.discountPercent) * BigInt(sel[id]);
+    });
+    return s;
+  }
+  function nftCheckoutBreakdown() { return nftCreditBreakdown(nftTotalWei(), nftRestrictedWei(), state.nftCredits); }
   function nftFloorForToken(token) {
-    var total = nftTotalWei();
-    if (!state.shop || !token || total <= 0n) return total;
+    var due = nftCheckoutBreakdown().due;
+    if (due <= 0n) return 0n;
+    if (!state.shop || !token) return null;
     var p = nftPricing();
-    var sameCurrency = tokenCurrency(token) === p.currency
-      || (p.currency === 2 && isUsdcPayToken(token))
-      || ((p.currency === 1 || p.currency === Number(BigInt(NATIVE_TOKEN) & 0xffffffffn)) && isNativePayToken(token));
-    return sameCurrency ? rescaleAmount(total, p.decimals, token.decimals == null ? 18 : token.decimals) : null;
+    var route = nftRouteForToken(token);
+    if (!route || !route.supported || !route.pricePerUnit) return null;
+    return nftPaymentAmountFromPricing(due, p.decimals, route.pricePerUnit);
+  }
+  function nftEnteredPricingValue(token, amount) {
+    if (!state.shop || !token) return null;
+    var route = nftRouteForToken(token);
+    if (!route || !route.supported || !route.pricePerUnit) return null;
+    return nftPricingValueFromPayment(amount, nftPricing().decimals, route.pricePerUnit);
   }
   function formatSwapUnits(n) {
     if (!isFinite(n) || n <= 0) return '0';
@@ -5389,6 +5554,89 @@ function renderPayCard(project, cart) {
     var sel = cart.entries();
     return Object.keys(sel).map(function (id) { return { id: Number(id), qty: sel[id], name: cart.name(id) || ('Item ' + id) }; });
   }
+  var nftRouteGeneration = 0;
+  function refreshNftCheckoutRoutes() {
+    var tierIds = selectedTierIds();
+    if (!tierIds.length || !state.shop) {
+      state.nftRoutes = {};
+      state.nftRoutesLoading = false;
+      rebuildCurrency();
+      return Promise.resolve();
+    }
+    var chainId = state.chainId;
+    var shop = state.shop;
+    var pricing = nftPricing();
+    var tokens = (state.tokens || []).slice();
+    var gen = ++nftRouteGeneration;
+    state.nftRoutesLoading = true;
+    rebuildCurrency();
+    renderFeedback();
+    return Promise.all(tokens.map(function (token) {
+      var key = nftTokenKey(token);
+      // The router's input token is swapped before the 721 hook sees the payment. Its exact destination context
+      // is route-dependent, so this checkout only offers directly accepted currencies whose shop conversion can
+      // be proven up front. Plain project payments keep every verified router option.
+      if (token.viaRouter) return Promise.resolve([key, { supported: false, reason: 'NFT checkout requires a directly accepted payment currency.' }]);
+      var decimals = Number(token.decimals == null ? 18 : token.decimals);
+      if (nftSameCurrency(token, pricing)) {
+        return Promise.resolve([key, { supported: true, pricePerUnit: 10n ** BigInt(decimals) }]);
+      }
+      return read(chainId, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [BigInt(project.id), BigInt(tokenCurrency(token)), BigInt(pricing.currency), BigInt(decimals)])
+        .then(toBigInt)
+        .then(function (price) {
+          return [key, price > 0n
+            ? { supported: true, pricePerUnit: price }
+            : { supported: false, reason: 'No price feed converts this token into ' + pricing.symbol + '.' }];
+        })
+        .catch(function () { return [key, { supported: false, reason: 'No price feed converts this token into ' + pricing.symbol + '.' }]; });
+    })).then(function (entries) {
+      if (gen !== nftRouteGeneration || state.chainId !== chainId || state.shop !== shop) return;
+      var routes = {};
+      entries.forEach(function (entry) { routes[entry[0]] = entry[1]; });
+      state.nftRoutes = routes;
+      state.nftRoutesLoading = false;
+      var supported = nftCheckoutTokens();
+      if (!supported.some(function (t) { return t === state.token; })) {
+        state.token = preferredNftPayToken(supported);
+        state.tokenTouched = false;
+      }
+      rebuildCurrency();
+      syncNftAmountForSelection();
+      renderFeedback();
+      schedulePreview();
+    });
+  }
+
+  var nftCreditGeneration = 0;
+  function refreshNftCredits() {
+    var acct = getAccount();
+    var shop = state.shop;
+    var gen = ++nftCreditGeneration;
+    if (!acct || !shop || !shop.hook) {
+      state.nftCredits = 0n;
+      state.nftCreditsLoading = false;
+      if (selectedTierIds().length) syncNftAmountForSelection();
+      renderFeedback();
+      return Promise.resolve(0n);
+    }
+    state.nftCreditsLoading = true;
+    renderFeedback();
+    return clientFor(state.chainId).readContract({ address: shop.hook, abi: TIER721_PAY_CREDITS_ABI, functionName: 'payCreditsOf', args: [acct] })
+      .then(toBigInt)
+      .catch(function () { return 0n; })
+      .then(function (credits) {
+        var currentAccount = getAccount();
+        if (gen !== nftCreditGeneration || state.shop !== shop || !currentAccount || currentAccount.toLowerCase() !== acct.toLowerCase()) return credits;
+        state.nftCredits = credits;
+        state.nftCreditsLoading = false;
+        if (selectedTierIds().length) {
+          syncNftAmountForSelection();
+          schedulePreview();
+        }
+        renderFeedback();
+        return credits;
+      });
+  }
   function syncNftAmountForSelection() {
     var floor = nftFloorForToken(state.token);
     if (floor != null) {
@@ -5401,12 +5649,14 @@ function renderPayCard(project, cart) {
   }
   // Selecting NFTs drives the pay flow: use the 721 hook's pricing context, not a hard-coded ETH amount.
   function onNftChange() {
-    var total = nftTotalWei();
-    if (total > 0n) {
-      var tok = preferredNftPayToken();
-      if (tok && state.token !== tok) { state.token = tok; state.tokenTouched = false; rebuildCurrency(); }
-      syncNftAmountForSelection();
+    if (selectedTierIds().length) {
+      refreshNftCheckoutRoutes();
+      refreshNftCredits();
+      return;
     }
+    state.nftRoutes = {};
+    state.nftRoutesLoading = false;
+    rebuildCurrency();
     schedulePreview();
   }
 
@@ -5439,7 +5689,11 @@ function renderPayCard(project, cart) {
   cart.subscribe(function () { onNftChange(); });
   cart.onName(function () { renderFeedback(); });
   card.appendChild(renderPayShopStrip(project, cart, {
-    onShop: function (shop) { state.shop = shop; },
+    onShop: function (shop) {
+      state.shop = shop;
+      refreshNftCredits();
+      if (selectedTierIds().length) refreshNftCheckoutRoutes();
+    },
     focusInShop: focusShopTier,
     onViewAll: openShopTab,
   }));
@@ -5475,15 +5729,17 @@ function renderPayCard(project, cart) {
     chainSel.addEventListener('change', function () {
       state.chainId = Number(chainSel.value);
       state.contextsReady = false; state.contextsError = false;
+      state.nftRoutes = {}; state.nftRoutesLoading = false;
+      state.nftCredits = 0n;
       state.tokenTouched = false; // a new chain re-defaults to that chain's accounting token
       state.tokens = tokensForChain(state.chainId);
       state.token = state.tokens[0] || null;
       sizeSelectToText(chainSel);
       rebuildCurrency();
       loadPaymentSurface(state.chainId);
-      if (selectedTierIds().length) syncNftAmountForSelection();
       schedulePreview();
       loadAcceptedTokens(state.chainId); // refine for the newly-selected chain
+      refreshNftCredits();
     });
     payOn.appendChild(chainSel);
     sizeSelectToText(chainSel);
@@ -5501,20 +5757,33 @@ function renderPayCard(project, cart) {
 
   function rebuildCurrency() {
     currWrap.innerHTML = '';
-    if (state.tokens.length > 1) {
+    var shownTokens = nftCheckoutTokens();
+    if (selectedTierIds().length && state.nftRoutesLoading) {
+      var checking = el('span', 'paybox-curr-static'); checking.textContent = 'Checking…'; currWrap.appendChild(checking);
+      if (payBtn) payBtn.disabled = true;
+      return;
+    }
+    if (selectedTierIds().length && !shownTokens.length) {
+      var unavailable = el('span', 'paybox-curr-static'); unavailable.textContent = 'Unavailable'; currWrap.appendChild(unavailable);
+      if (payBtn) payBtn.disabled = true;
+      return;
+    }
+    if (payBtn && startsAt <= Math.floor(Date.now() / 1000)) payBtn.disabled = false;
+    if (shownTokens.length > 1) {
       var sel = el('select', 'paybox-select');
       // Value by INDEX (not address) — a project can offer the same address both directly and via-router, and
       // we must keep the displayed option in lock-step with state.token (else the user sees USDC but pays ETH).
-      state.tokens.forEach(function (t, i) {
+      shownTokens.forEach(function (t, i) {
         var o = document.createElement('option');
         o.value = String(i);
         o.textContent = currencyLabel(t.symbol);
+        o.title = (t.name ? t.name + ' · ' : '') + t.address;
         sel.appendChild(o);
       });
-      var curIdx = state.tokens.indexOf(state.token);
+      var curIdx = shownTokens.indexOf(state.token);
       if (curIdx >= 0) sel.value = String(curIdx); // sync the shown option to the actual selected token
       sel.addEventListener('change', function () {
-        var t = state.tokens[Number(sel.value)];
+        var t = shownTokens[Number(sel.value)];
         if (t) { state.token = t; state.tokenTouched = true; }
         sizeSelectToText(sel, 13);
         renderTerminalNotice();
@@ -5525,7 +5794,9 @@ function renderPayCard(project, cart) {
       sizeSelectToText(sel, 13);
     } else {
       var s = el('span', 'paybox-curr-static');
+      if (shownTokens.length === 1 && state.token !== shownTokens[0]) state.token = shownTokens[0];
       s.textContent = state.token ? currencyLabel(state.token.symbol) : 'ETH';
+      if (state.token && state.token.address) s.title = (state.token.name ? state.token.name + ' · ' : '') + state.token.address;
       currWrap.appendChild(s);
     }
   }
@@ -5632,15 +5903,60 @@ function renderPayCard(project, cart) {
     return box;
   }
 
+  function nftCheckoutSummary() {
+    if (!selectedTierIds().length || !state.shop) return null;
+    var pricing = nftPricing();
+    var breakdown = nftCheckoutBreakdown();
+    var box = el('div', 'paybox-nft-summary');
+    function row(labelText, valueText, cls) {
+      var r = el('div', 'paybox-nft-summary-row' + (cls ? ' ' + cls : ''));
+      var label = el('span', 'paybox-nft-summary-label'); label.textContent = labelText; r.appendChild(label);
+      var value = el('span', 'paybox-nft-summary-value'); value.textContent = valueText; r.appendChild(value);
+      box.appendChild(r);
+    }
+    row('Items', formatShopPrice(state.shop, breakdown.subtotal, state.chainId));
+    if (!getAccount()) {
+      row('Shop credit', 'Connect wallet to check', 'muted');
+    } else if (state.nftCreditsLoading) {
+      row('Shop credit', 'Checking…', 'muted');
+    } else if (breakdown.applied > 0n) {
+      row('Shop credit applied', '−' + formatShopPrice(state.shop, breakdown.applied, state.chainId), 'credit');
+    } else {
+      row('Shop credit', formatShopPrice(state.shop, state.nftCredits, state.chainId), 'muted');
+    }
+    if (breakdown.restrictedCost > 0n) {
+      row('Fresh payment required', formatShopPrice(state.shop, breakdown.restrictedCost, state.chainId), 'muted');
+    }
+    row('Amount due', formatShopPrice(state.shop, breakdown.due, state.chainId), 'total');
+
+    if (state.nftRoutesLoading) {
+      row('Entered value', 'Checking payment currencies…', 'muted');
+      return box;
+    }
+    var entered = null;
+    try {
+      if (state.token && state.amount !== '') entered = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals);
+    } catch (_) {}
+    if (entered != null && state.token) {
+      var shopValue = nftEnteredPricingValue(state.token, entered);
+      if (shopValue != null) {
+        var enteredPayment = formatBalance(entered, state.token.decimals == null ? 18 : state.token.decimals, currencyLabel(state.token.symbol));
+        var shortfall = breakdown.due > shopValue ? breakdown.due - shopValue : 0n;
+        row('Entered value', enteredPayment + ' = ' + formatShopPrice(state.shop, shopValue, state.chainId), shortfall > 0n ? 'short' : 'enough');
+        if (shortfall > 0n) row('Still needed', formatShopPrice(state.shop, shortfall, state.chainId), 'short');
+      }
+    }
+    return box;
+  }
+
   function renderFeedback() {
     feedback.innerHTML = '';
     var p = state.preview;
     var isAmm = !!(p && p.routing === 'amm');
 
-    // Add-to-balance mints nothing — funds land in the project balance. "You get" is always 0; for a
-    // swap-via-router top-up, show how much of the project's accepted token lands on-chain after the swap.
+    // Add-to-balance mints nothing — describe the balance effect rather than a meaningless "You get 0 tokens".
+    // For a swap-via-router top-up, show how much of the project's accepted token lands on-chain after the swap.
     if (state.mode === 'addbalance') {
-      var aline = el('div', 'paybox-yg-zero'); aline.textContent = 'You get 0 ' + sym; feedback.appendChild(aline);
       if (state.token && state.token.viaRouter) {
         var conv = el('div', 'paybox-conv');
         if (state.phase === 'previewing') conv.textContent = 'Estimating swap…';
@@ -5654,6 +5970,9 @@ function renderPayCard(project, cart) {
       feedback.appendChild(abal);
       return;
     }
+
+    var checkoutSummary = nftCheckoutSummary();
+    if (checkoutSummary) feedback.appendChild(checkoutSummary);
 
     // Direct AMM swap beats paying: the buyback hook would skim the reserved % even on its swap route, so
     // we route the buy through Uniswap directly — the user keeps 100% of the output, splits get nothing.
@@ -5672,6 +5991,14 @@ function renderPayCard(project, cart) {
       var extra = ds.out > p.received ? ' (+' + formatTokenCount(ds.out - p.received) + ' vs paying)' : '';
       dNote.textContent = 'Swapped from the market — splits take 0 ' + sym + extra + '.';
       feedback.appendChild(dNote);
+      return;
+    }
+
+    // A verified payment can intentionally mint no project tokens (for example, a balance-funding project with
+    // weight 0). Keep selected NFT receipts, but omit "0 tokens" and "Splits get 0 tokens" entirely.
+    if (!payTokenOutputVisible(project.ruleset && project.ruleset.weight, state.phase, p)) {
+      var zeroNfts = nftBlock();
+      if (zeroNfts) feedback.appendChild(zeroNfts);
       return;
     }
 
@@ -5773,7 +6100,17 @@ function renderPayCard(project, cart) {
     if (!state.amount || !state.token) return;
     var amt;
     try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { return; }
-    if (amt === 0n) { state.preview = null; renderFeedback(); return; }
+    var previewTierIds = state.mode === 'pay' ? selectedTierIds() : [];
+    if (previewTierIds.length && (!nftRouteForToken(state.token) || !nftRouteForToken(state.token).supported)) {
+      state.preview = { received: null, reserved: null, unavailable: true, reason: 'This payment currency cannot be converted into the shop pricing currency.' };
+      state.phase = 'ready';
+      renderFeedback();
+      return;
+    }
+    if (amt === 0n && !previewTierIds.length) { state.preview = null; renderFeedback(); return; }
+    var previewMetadata = previewTierIds.length && state.shop
+      ? buildTierMintMetadata(state.shop.idTarget || state.shop.hook, previewTierIds)
+      : '0x';
 
     state.phase = 'previewing';
     renderFeedback();
@@ -5786,6 +6123,8 @@ function renderPayCard(project, cart) {
       amount: amt,
       beneficiary: getAccount() || undefined,
       terminal: state.token.viaRouter ? routerTerminalFor(state.chainId) : undefined,
+      metadata: previewMetadata,
+      allowZero: previewTierIds.length > 0,
     }).then(function (p) {
       if (gen !== previewGen) return;
       state.phase = 'ready';
@@ -5829,7 +6168,7 @@ function renderPayCard(project, cart) {
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (startsAt > Math.floor(Date.now() / 1000)) { return; }
     if (!state.contextsReady) { status.textContent = state.contextsError ? 'Could not verify the project’s accepted tokens.' : 'Accepted tokens are still loading…'; return; }
-    if (!state.amount || !state.token) { status.textContent = 'Enter an amount'; return; }
+    if (state.amount === '' || !state.token) { status.textContent = selectedTierIds().length ? 'No supported payment currency is available for these items.' : 'Enter an amount'; return; }
     var amt;
     try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { status.textContent = 'Invalid amount'; return; }
 
@@ -5840,8 +6179,19 @@ function renderPayCard(project, cart) {
     var tierIds = addBalance ? [] : selectedTierIds();
     var metadata = '0x';
     if (tierIds.length && state.shop) {
+      if (state.nftRoutesLoading) { status.textContent = 'Payment currencies are still being checked…'; return; }
+      if (state.nftCreditsLoading) { status.textContent = 'Your NFT shop credit is still loading…'; return; }
+      var nftRoute = nftRouteForToken(state.token);
+      if (!nftRoute || !nftRoute.supported) {
+        status.textContent = 'This payment token cannot be converted into the shop’s pricing currency. Choose a supported currency.';
+        return;
+      }
       var nftFloor = nftFloorForToken(state.token);
-      if (nftFloor != null && amt < nftFloor) {
+      if (nftFloor == null) {
+        status.textContent = 'Could not verify this payment token’s value in the shop’s pricing currency.';
+        return;
+      }
+      if (amt < nftFloor) {
         amt = nftFloor;
         state.amount = formatAmount(amt, state.token.decimals == null ? 18 : state.token.decimals);
         amtInput.value = state.amount;
@@ -5851,7 +6201,7 @@ function renderPayCard(project, cart) {
       }
       metadata = buildTierMintMetadata(state.shop.idTarget || state.shop.hook, tierIds);
     }
-    if (amt === 0n) { status.textContent = 'Enter an amount'; return; }
+    if (amt === 0n && !tierIds.length) { status.textContent = 'Enter an amount'; return; }
 
     var beneficiary = getAccount();
     if (!beneficiary) {
@@ -5892,6 +6242,8 @@ function renderPayCard(project, cart) {
     var reviewedTierKey = tierIds.join(',');
     var reviewedConversion = state.conversion;
     var reviewedNfts = tierIds.length ? nftSelectionList() : [];
+    var reviewedNftCheckout = tierIds.length ? nftCheckoutBreakdown() : null;
+    var reviewedNftCredits = state.nftCredits;
     function payInputsUnchanged() {
       var current;
       try { current = parseAmount(state.amount, reviewedToken.decimals == null ? 18 : reviewedToken.decimals); } catch (_) { current = -1n; }
@@ -5899,6 +6251,7 @@ function renderPayCard(project, cart) {
         && state.token && state.token.address.toLowerCase() === reviewedToken.address.toLowerCase()
         && !!state.token.viaRouter === !!reviewedToken.viaRouter && current === amt
         && selectedTierIds().join(',') === reviewedTierKey && (state.slippageBps || 0) === reviewedSlippage
+        && (!tierIds.length || state.nftCredits === reviewedNftCredits)
         && (addBalance || (state.preview === reviewedPreview && state.directSwap === reviewedDirectSwap))
         && state.contextsReady && getAccount() && getAccount().toLowerCase() === beneficiary.toLowerCase();
     }
@@ -6033,6 +6386,9 @@ function renderPayCard(project, cart) {
     if (tierIds.length) {
       confirmArgs.mints = reviewedNfts.map(function (s) { return s.name + ' ×' + s.qty; }).join(', ')
         + ' — ' + tierIds.length + ' NFT' + (tierIds.length > 1 ? 's' : '') + ' minted by the 721 hook';
+      confirmArgs.itemTotal = formatShopPrice(state.shop, reviewedNftCheckout.subtotal, reviewedChainId);
+      if (reviewedNftCheckout.applied > 0n) confirmArgs.shopCreditApplied = formatShopPrice(state.shop, reviewedNftCheckout.applied, reviewedChainId);
+      confirmArgs.amountDue = formatShopPrice(state.shop, reviewedNftCheckout.due, reviewedChainId);
     }
     confirmArgs.amount = amt.toString() + ' (' + human + ')';
     if (addBalance) {
@@ -6119,6 +6475,7 @@ function renderPayCard(project, cart) {
       onSuccess: function (m, meta) {
         setPayStatus('paybox-status success', confirmed, meta);
         if (opts.clearCartOnSuccess) clearPurchasedNfts();
+        if (opts.clearCartOnSuccess) refreshNftCredits();
         status.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true }));
       },
       onError: function (m) { status.className = 'paybox-status error'; status.textContent = m; },
@@ -6155,6 +6512,12 @@ function renderPayCard(project, cart) {
     cdTime.textContent = fmtCountdown(startsAt - Math.floor(Date.now() / 1000));
   }
 
+  onWalletChange(function () {
+    if (!card.isConnected) return;
+    refreshNftCredits();
+    if (selectedTierIds().length) refreshNftCheckoutRoutes();
+    else schedulePreview();
+  });
   renderFeedback();
   card.appendChild(promptFoot('Pay', 'pay'));
   return card;
@@ -6325,9 +6688,69 @@ function renderProjectLinks(project) {
 
 // Token card — "TOKEN" header, then a single content line (name | symbol | type | truncated address,
 // full on hover | on-chains), then its operator Edit (deploy or rename the ERC-20) beneath.
+export function tokenUiCapabilities(project) {
+  var tokenAddress = project && project.tokenAddress;
+  var hasErc20 = !!tokenAddress && String(tokenAddress).toLowerCase() !== ZERO_ADDRESS.toLowerCase();
+  return {
+    hasErc20: hasErc20,
+    // Internal Juicebox credits are the project-token balance before an ERC-20 is deployed. They remain
+    // cash-out eligible; only an external ERC-20 market/LP position depends on deployment.
+    canCashOut: true,
+    canAddMarketLiquidity: hasErc20,
+    showMarket: hasErc20,
+  };
+}
+
+var JB_PERMISSION_DEPLOY_ERC20 = 8;
+var JB_PERMISSION_SET_TOKEN_METADATA = 22;
+
+async function accountCanManageProjectToken(project, account, permissionId) {
+  if (!project || !account || !isAddr(account)) return false;
+  var accountKey = account.toLowerCase();
+  var authority = projectAuthorityAddress(project);
+
+  // Delegated operators call the controller directly. Verify the relevant permission against the live owner on
+  // every project chain because the token edit/deploy flow deliberately fans the same change across all chains.
+  var pid = BigInt(project.id);
+  var chains = projectChains(project);
+  var allowed = await Promise.all(chains.map(function (chain) {
+    return read(chain.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).then(function (owner) {
+      if (owner && owner.toLowerCase() === accountKey) return true;
+      if (!owner) return false;
+      return read(chain.id, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
+        account, owner, pid, BigInt(permissionId), true, true,
+      ]).then(Boolean).catch(function () { return false; });
+    }).catch(function () { return false; });
+  }));
+  if (allowed.length > 0 && allowed.every(Boolean)) return true;
+
+  // A Safe signer can propose the owner/operator call even though the signer itself is not the project owner.
+  if (authority) {
+    var safe = await fetchSafeInfo(authority, project.chainId).catch(function () { return null; });
+    if (safe && safe.owners.some(function (owner) { return owner.toLowerCase() === accountKey; })) return true;
+  }
+  return false;
+}
+
+async function ensureProjectTokenManager(project, permissionId, setStatus) {
+  var account = getAccount();
+  if (!account) {
+    setStatus('Connecting wallet…', 'pending');
+    account = await connect().then(getAccount).catch(function () { return null; });
+  }
+  if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
+  setStatus('Checking token permissions…', 'pending');
+  if (!await accountCanManageProjectToken(project, account, permissionId)) {
+    setStatus('This wallet is not the project owner and does not have the required token permission on every project chain.', 'error');
+    return null;
+  }
+  return account;
+}
+
 function renderTokenPanel(project) {
   var card = el('div', 'detail-card token-line-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Token'; card.appendChild(title);
+  var capabilities = tokenUiCapabilities(project);
   var row = el('div', 'token-line');
 
   // Each value is preceded by its key label.
@@ -6339,21 +6762,27 @@ function renderTokenPanel(project) {
     return s;
   }
 
-  var name = el('span'); name.textContent = project.tokenName || project.tokenSymbol || 'Token';
-  row.appendChild(seg('Name', name));
+  if (!capabilities.hasErc20) {
+    var empty = el('div', 'token-empty-state');
+    var emptyTitle = el('div', 'token-empty-title'); emptyTitle.textContent = 'No ERC-20 yet'; empty.appendChild(emptyTitle);
+    var emptyCopy = el('div', 'token-empty-copy');
+    emptyCopy.textContent = 'Project balances remain internal Juicebox credits and can still be cashed out. Deploying an ERC-20 makes them claimable as a transferable token and enables market liquidity.';
+    empty.appendChild(emptyCopy);
+    card.appendChild(empty);
+  } else {
+    var name = el('span'); name.textContent = project.tokenName || project.tokenSymbol || 'Token';
+    row.appendChild(seg('Name', name));
 
-  if (project.tokenSymbol) {
+    if (project.tokenSymbol) {
+      row.appendChild(boSep());
+      row.appendChild(seg('Symbol', project.tokenSymbol));
+    }
+
     row.appendChild(boSep());
-    row.appendChild(seg('Symbol', project.tokenSymbol));
-  }
+    row.appendChild(seg('Type', 'ERC-20'));
 
-  // Type: until an ERC-20 is deployed, holdings are non-transferable credits.
-  row.appendChild(boSep());
-  row.appendChild(seg('Type', project.tokenAddress ? 'ERC-20' : 'Credits'));
-
-  // Address — truncated, full address reveals instantly on hover. JB omnichain ERC-20s share a
-  // deterministic CREATE2 address, so this one applies on every chain.
-  if (project.tokenAddress) {
+    // Address — truncated, full address reveals instantly on hover. JB omnichain ERC-20s share a
+    // deterministic CREATE2 address, so this one applies on every chain.
     row.appendChild(boSep());
     row.appendChild(seg('Address', addressNode(project.tokenAddress)));
     // "On" — the chains the token lives on, each linking to its address on that chain's explorer.
@@ -6364,15 +6793,29 @@ function renderTokenPanel(project) {
       onIds.forEach(function (id) { onWrap.appendChild(chainAddrBubble(id, project.tokenAddress)); });
       row.appendChild(seg('On', onWrap));
     }
+    card.appendChild(row);
   }
-  card.appendChild(row);
 
   var foot = el('div', 'detail-about-foot');
-  var edit = el('a', 'operator-cta'); edit.textContent = 'Edit'; edit.href = '#';
-  edit.title = 'Edit the token name & symbol (operator only)';
+  var edit = el('a', 'operator-cta'); edit.textContent = capabilities.hasErc20 ? 'Edit' : 'Deploy ERC-20'; edit.href = '#';
+  edit.title = capabilities.hasErc20 ? 'Edit the token name & symbol' : 'Deploy a transferable ERC-20 for this project';
+  edit.style.display = 'none';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditTokenModal(project); });
   foot.appendChild(edit);
   card.appendChild(foot);
+
+  var permissionId = capabilities.hasErc20 ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20;
+  var permissionSeq = 0;
+  function refreshPermissionAction() {
+    var seq = ++permissionSeq;
+    var account = getAccount && getAccount();
+    if (!account) { edit.style.display = 'none'; return; }
+    accountCanManageProjectToken(project, account, permissionId).then(function (allowed) {
+      if (seq === permissionSeq) edit.style.display = allowed ? '' : 'none';
+    }).catch(function () { if (seq === permissionSeq) edit.style.display = 'none'; });
+  }
+  refreshPermissionAction();
+  onWalletChange(function () { if (card.isConnected) refreshPermissionAction(); });
   return card;
 }
 
@@ -6852,10 +7295,28 @@ function openEditTokenModal(project) {
   var chains = (project.chains && project.chains.length)
     ? project.chains
     : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
-  var deployed = !!project.tokenAddress;
+  var deployed = tokenUiCapabilities(project).hasErc20;
+  var permissionId = deployed ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20;
 
   var content = el('div', 'modal-body operator-edit');
-  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit the token.', project.chainId));
+  var permissionGate = el('div', 'operator-gate');
+  permissionGate.textContent = 'Requires the project ' + authorityLabel + ' or an operator with '
+    + (deployed ? 'SET_TOKEN_METADATA' : 'DEPLOY_ERC20') + ' permission on every project chain.';
+  content.appendChild(permissionGate);
+  function refreshPermissionGate() {
+    var account = getAccount && getAccount();
+    if (!account) return;
+    accountCanManageProjectToken(project, account, permissionId).then(function (allowed) {
+      if (!permissionGate.isConnected) return;
+      permissionGate.className = 'operator-gate' + (allowed ? ' ok' : '');
+      permissionGate.textContent = allowed
+        ? 'Connected wallet is authorized to ' + (deployed ? 'edit this token.' : 'deploy this project’s ERC-20.')
+        : 'This wallet is not authorized. Connect the project ' + authorityLabel + ' or an operator with '
+          + (deployed ? 'SET_TOKEN_METADATA' : 'DEPLOY_ERC20') + ' permission.';
+    }).catch(function () {});
+  }
+  refreshPermissionGate();
+  onWalletChange(function () { if (permissionGate.isConnected) refreshPermissionGate(); });
 
   var nlbl = el('div', 'operator-edit-label'); nlbl.textContent = 'Token name'; content.appendChild(nlbl);
   var nameInput = el('input', 'operator-edit-jwt'); nameInput.type = 'text'; nameInput.placeholder = 'e.g. My Project Token';
@@ -6932,7 +7393,7 @@ async function submitTokenEdit(project, chains, operatorAddr, deployed, name, sy
   }
 
   // EOA owner → the existing Relayr cross-chain path (the wallet itself is the owner).
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  var account = await ensureProjectTokenManager(project, deployed ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20, setStatus);
   if (!account) return;
   await runRelayrAcrossChains(chains, account, buildCall, deployed ? 300000n : 1500000n, setStatus,
     { label: deployed ? 'Rename token' : 'Deploy ERC-20 token', title: deployed ? 'Confirm token rename' : 'Confirm token deploy' });
@@ -11670,6 +12131,7 @@ function buildPayoutsModal(project, acctKind) {
     state.maxAmount = state.selected.available;
     currencySel.value = String(state.currency);
     unit.textContent = state.meta.symbol;
+    unit.title = (state.acct.name ? state.acct.name + ' · ' : '') + state.acct.address;
     maxBtn.style.display = state.maxAmount > 0n ? '' : 'none';
     amt.disabled = state.maxAmount <= 0n; btn.disabled = state.maxAmount <= 0n;
     currencyRow.hidden = state.limits.length < 2;
@@ -11746,15 +12208,23 @@ function buildPayoutsModal(project, acctKind) {
         args: [pid, acct.address, amount, BigInt(currency), minOut], label: 'Distribute payouts',
         confirmNote: 'Live simulation quotes ' + formatBalance(quoted, acct.decimals, acct.symbol) + '. The transaction reverts below ' + formatBalance(minOut, acct.decimals, acct.symbol) + ' instead of silently paying out less.',
         onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
-        onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-        onSuccess: function () { status.classList.remove('pending'); status.textContent = 'Payouts distributed on ' + chainNameOf(cid) + '.'; btn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); onChainChange(); },
+        onError: function (m) { status.className = 'modal-status error'; status.textContent = m; btn.disabled = false; },
+        onSuccess: function () {
+          amt.value = '';
+          preview.innerHTML = '';
+          status.className = 'modal-status success';
+          status.textContent = 'Payouts distributed on ' + chainNameOf(cid) + '.';
+          btn.disabled = true;
+          notifyProjectUpdated(project);
+          onChainChange();
+        },
       });
     }).catch(function (error) {
       var message = errMessage(error, 'Could not safely quote this payout.');
       if (message.indexOf('0x9fa59b9a') !== -1 || message.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
         message = 'The terminal balance no longer covers this amount. Review the updated available amount and try again.';
       }
-      status.classList.remove('pending'); status.textContent = message; btn.disabled = false; onChainChange();
+      status.className = 'modal-status error'; status.textContent = message; btn.disabled = false; onChainChange();
     });
   });
   return wrap;
@@ -11904,6 +12374,7 @@ function buildUseAllowanceModal(project, acctKind) {
     state.usable = state.selected.available;
     currencySel.value = String(state.currency);
     unit.textContent = state.meta.symbol;
+    unit.title = (state.acct.name ? state.acct.name + ' · ' : '') + state.acct.address;
     maxBtn.style.display = state.usable > 0n ? '' : 'none';
     amt.disabled = state.usable <= 0n; btn.disabled = state.usable <= 0n;
     currencyRow.hidden = state.allowances.length < 2;
@@ -11989,9 +12460,9 @@ function buildUseAllowanceModal(project, acctKind) {
         onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
         onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
         onSuccess: function () {
-          status.classList.remove('pending'); status.textContent = 'Surplus used on ' + chainNameOf(cid) + '.'; btn.disabled = false;
+          status.className = 'modal-status success'; status.textContent = 'Surplus used on ' + chainNameOf(cid) + '.'; btn.disabled = false;
           wrap.dispatchEvent(new CustomEvent('jb:close-modal'));
-          document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+          notifyProjectUpdated(project);
         },
       });
     }).catch(function (error) {
@@ -12007,9 +12478,19 @@ function buildUseAllowanceModal(project, acctKind) {
 
 // A funds "kind" descriptor — one per accounting context the project's terminal accepts. Resolves the
 // right token ADDRESS per chain (native = same everywhere; USDC differs per chain; custom = fixed).
-function nativeFundsKind(dec) { return { key: 'native', symbol: 'ETH', decimals: dec == null ? 18 : dec, addrForChain: function () { return NATIVE_TOKEN; }, matchCur: function (c) { c = Number(c); return c === 1 || c === 61166; } }; }
-function usdcFundsKind(dec) { return { key: 'usdc', symbol: 'USDC', decimals: dec == null ? 6 : dec, addrForChain: function (cid) { return USDC_BY_CHAIN[cid] || null; }, matchCur: function (c, cid) { var u = USDC_BY_CHAIN[cid]; return !!u && Number(c) === Number(BigInt(u) & 0xffffffffn); } }; }
-function customFundsKind(addr, dec) { var curr = Number(BigInt(addr) & 0xffffffffn); return { key: addr.toLowerCase(), symbol: acctTokenLabel(addr), decimals: dec == null ? 18 : Number(dec), addrForChain: function () { return addr; }, matchCur: function (c) { return Number(c) === curr; } }; }
+function nativeFundsKind(dec) { return { key: 'native', symbol: 'ETH', name: 'Ether', address: NATIVE_TOKEN, decimals: dec == null ? 18 : dec, addrForChain: function () { return NATIVE_TOKEN; }, matchCur: function (c) { c = Number(c); return c === 1 || c === 61166; } }; }
+function usdcFundsKind(dec) { return { key: 'usdc', symbol: 'USDC', name: 'USD Coin', address: '', decimals: dec == null ? 6 : dec, addrForChain: function (cid) { return USDC_BY_CHAIN[cid] || null; }, matchCur: function (c, cid) { var u = USDC_BY_CHAIN[cid]; return !!u && Number(c) === Number(BigInt(u) & 0xffffffffn); } }; }
+function customFundsKind(meta) {
+  var addr = meta.address, curr = Number(BigInt(addr) & 0xffffffffn);
+  return { key: addr.toLowerCase(), symbol: meta.symbol || acctTokenLabel(addr), name: meta.name || '', address: addr,
+    decimals: meta.decimals == null ? 18 : Number(meta.decimals), addrForChain: function () { return addr; }, matchCur: function (c) { return Number(c) === curr; } };
+}
+
+function fundsKindAuditLabel(kind, chainId) {
+  if (!kind) return '';
+  var address = kind.addrForChain ? kind.addrForChain(chainId) : kind.address;
+  return (kind.name ? kind.name + ' · ' : '') + (address || kind.symbol || '');
+}
 
 function resolveFundsKindAcct(chainId, pid, kind) {
   var address = kind && kind.addrForChain(chainId);
@@ -12017,7 +12498,7 @@ function resolveFundsKindAcct(chainId, pid, kind) {
   return resolveAcctTokens(chainId, pid).then(function (contexts) {
     var acct = contexts.filter(function (context) { return context.address.toLowerCase() === address.toLowerCase(); })[0] || null;
     if (acct && acct.decimals !== Number(kind.decimals)) throw new Error('The accounting token decimals differ on ' + chainNameOf(chainId) + '.');
-    return acct;
+    return acct ? Object.assign({}, acct, { symbol: kind.symbol || acct.symbol, name: kind.name || acct.name || '' }) : null;
   });
 }
 
@@ -12026,15 +12507,14 @@ function acctKindsForFunds(project) {
   var pid = BigInt(project.id);
   var home = project.chainId;
   if (!getAddress('JBMultiTerminal', home)) return Promise.reject(new Error('No terminal on this chain.'));
-  return read(home, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [pid]).then(function (ctxs) {
-    if (!ctxs || !ctxs.length) throw new Error('No accounting contexts are configured for this project.');
+  return resolveAcctTokens(home, pid).then(function (ctxs) {
     var usdcHome = (USDC_BY_CHAIN[home] || '').toLowerCase();
     return ctxs.map(function (c) {
-      var verified = accountingContextMeta(home, c);
+      var verified = c;
       var lc = verified.address.toLowerCase(); var dec = verified.decimals;
       if (lc === NATIVE_TOKEN.toLowerCase()) return nativeFundsKind(dec);
       if (usdcHome && lc === usdcHome) return usdcFundsKind(dec);
-      return customFundsKind(verified.address, dec);
+      return customFundsKind(verified);
     });
   });
 }
@@ -12065,6 +12545,7 @@ async function readFundsAccessSnapshot(project, kind, chainId) {
   var contexts = await resolveAcctTokens(chainId, pid);
   var acct = contexts.filter(function (context) { return context.address.toLowerCase() === token.toLowerCase(); })[0];
   if (!acct || acct.decimals !== Number(kind.decimals)) throw new Error('The accounting context differs on ' + chainNameOf(chainId) + '.');
+  acct = Object.assign({}, acct, { symbol: kind.symbol || acct.symbol, name: kind.name || acct.name || '' });
   var head = await Promise.all([
     read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, token]),
     controllerRead(chainId, pid, currentRulesetAbi, 'currentRulesetOf', [pid]),
@@ -12125,7 +12606,7 @@ function renderFundsCard(project) {
       pane.appendChild(built[i]);
     }
     kinds.forEach(function (kind, i) {
-      var btn = el('button', 'owners-subtab'); btn.textContent = kind.symbol; btns.push(btn);
+      var btn = el('button', 'owners-subtab'); btn.textContent = kind.symbol; btn.title = fundsKindAuditLabel(kind, project.chainId); btns.push(btn);
       btn.addEventListener('click', function () { show(i); });
       subRow.appendChild(btn);
       totalBalanceForKind(project, kind).then(function (t) { bals[i] = t; btns[i].textContent = labelFor(i); }).catch(function () {});
@@ -12153,10 +12634,11 @@ function buildFundsTokenBlock(project, kind, showHead) {
   }
 
   var wrap = el('div', 'rf-funds-token');
+  wrap.dataset.tokenAddress = kind.addrForChain(home) || '';
   if (showHead) { var th = el('div', 'rf-funds-token-head'); th.textContent = kind.symbol; wrap.appendChild(th); }
 
   var balHead = el('div', 'rf-funds-label'); balHead.textContent = 'Balance'; wrap.appendChild(balHead);
-  var balTotal = el('div', 'rf-funds-big'); balTotal.textContent = '…'; wrap.appendChild(balTotal);
+  var balTotal = el('div', 'rf-funds-big'); balTotal.textContent = '…'; balTotal.title = fundsKindAuditLabel(kind, home); wrap.appendChild(balTotal);
   var chainTable = el('div', 'funds-chain-table'); wrap.appendChild(chainTable);
   var cHead = el('div', 'funds-chain-row funds-chain-head');
   ['Chain', 'Balance', 'Payout limit remaining', 'Surplus'].forEach(function (h) { var s = el('span'); s.textContent = h; cHead.appendChild(s); });
@@ -12198,9 +12680,10 @@ function buildFundsTokenBlock(project, kind, showHead) {
       var row = el('div', 'funds-chain-row');
       var nm = el('span', 'funds-chain-name'); nm.appendChild(chainLogo(x.c.id, x.c.name));
       var t = el('span'); t.textContent = ' ' + x.c.name; nm.appendChild(t); row.appendChild(nm);
-      var b = el('span'); b.textContent = snapshot ? fmt(snapshot.balance) : '—'; row.appendChild(b);
-      var a = el('span'); a.textContent = snapshot ? formatAccessRows(snapshot.payouts, snapshot.acct) : '—'; row.appendChild(a);
-      var s = el('span'); s.textContent = snapshot ? fmt(snapshot.surplus) : '—'; row.appendChild(s);
+      var auditLabel = fundsKindAuditLabel(kind, x.c.id);
+      var b = el('span'); b.textContent = snapshot ? fmt(snapshot.balance) : '—'; b.title = auditLabel; row.appendChild(b);
+      var a = el('span'); a.textContent = snapshot ? formatAccessRows(snapshot.payouts, snapshot.acct) : '—'; a.title = auditLabel; row.appendChild(a);
+      var s = el('span'); s.textContent = snapshot ? fmt(snapshot.surplus) : '—'; s.title = auditLabel; row.appendChild(s);
       chainTable.appendChild(row);
     });
     balTotal.textContent = fmt(total);
@@ -13187,7 +13670,9 @@ function renderOwnersSection(project, opts) {
       return ownersCard('Active loans', loansBox);
     },
   };
-  var order = opts.subtabs || ['Accounts', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'];
+  var tokenCapabilities = tokenUiCapabilities(project);
+  var order = (opts.subtabs || ['Accounts', 'Market', 'Settlement', 'Splits', 'Auto Issuance', 'Loans'])
+    .filter(function (name) { return name !== 'Market' || tokenCapabilities.showMarket; });
 
   var subRow = el('div', 'owners-subtabs');
   var content = el('div', 'owners-subcontent');
@@ -15704,6 +16189,7 @@ function openQueueRulesetModal(project) {
         if (execRes && execRes.done) {
           setStatus('Executed on ' + readySafeExecs.length + ' chain' + (readySafeExecs.length === 1 ? '' : 's') + '.', 'success');
           readySafeExecs = null; safeExecDone = true; submit.textContent = 'Close';
+          notifyProjectUpdated(project);
         } else {
           submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
           setStatus('Execution cancelled — queued transactions are still in the ' + queueTab + ' tab or Safe app.', '');
@@ -15736,6 +16222,9 @@ function openQueueRulesetModal(project) {
         submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
       } else if (res && res.safe && res.queued > 0) {
         queuedToSafe = true; submit.textContent = 'Go to ' + queueTab + ' tab';
+      } else if (res && res.executed) {
+        safeExecDone = true; submit.textContent = 'Close';
+        setTimeout(function () { modal.close(); }, 1200);
       }
     }).catch(function (err) {
       busy = false; setStatus(errMessage(err, 'Queue failed'), 'error');
@@ -15765,7 +16254,10 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // "Start a new shop" deploys a fresh 721 collection + wires it, via the one-call deployer (ownership → the
   // project). Pin the new items' metadata once up front (images are already pinned on upload).
   var newShop = state.shopChoice === 'new';
-  var newShopSalt = newShop ? deploySalt(state, operatorAddr) : ('0x' + '0'.repeat(64));
+  // A direct one-chain collection does not need a CREATE2 address. Use the deployer's nonce-based CREATE path so
+  // starting another shop can never collide with an older collection that used the same project name/owner salt.
+  // Omnichain wrappers retain one shared deterministic salt so their hook addresses match across chains.
+  var newShopSalt = newShop ? newShopDeploymentSalt(state, operatorAddr, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
   var projUri = project.metadataUri || project.uri || '';
   if (newShop) { setStatus('Pinning new shop items…', 'pending'); await pinShopItemsMetadata(state); }
 
@@ -15808,12 +16300,13 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var skippedNote = res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ' — add the Safe there first)' : '';
     if (res.executedReady) {
       setStatus('Queued and executed on ' + res.executedReady + ' chain' + (res.executedReady === 1 ? '' : 's') + skippedNote + '.', 'success');
+      notifyProjectUpdated(project);
     } else if (readyCount) {
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + skippedNote + ' — ' + readyCount + ' ready to execute now.', 'success');
     } else {
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + skippedNote + ' — confirm + execute in the ' + tabName + ' tab or the Safe app.', 'success');
     }
-    return { safe: true, queued: res.queued, readyExecs: res.readyExecs || [] };
+    return { safe: true, queued: res.queued, readyExecs: res.readyExecs || [], executed: !!res.executedReady };
   }
 
   // EOA owner — the connected wallet must be the owner.
@@ -15843,16 +16336,17 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
         chainId: cid0, address: exec.address, abi: exec.abi, functionName: exec.functionName, contractName: exec.contractName,
         args: exec.args, label: exec.label,
         onStatus: function (m, k) { setStatus(m, k); }, onError: function (m) { reject(new Error(m)); },
-        onSuccess: function () { setStatus((newShop ? 'New shop deployed + ruleset queued on ' : 'Ruleset queued on ') + chainNameOf(cid0) + '.', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); resolve(); },
+        onSuccess: function () { setStatus((newShop ? 'New shop deployed + ruleset queued on ' : 'Ruleset queued on ') + chainNameOf(cid0) + '.', 'success'); notifyProjectUpdated(project); resolve(); },
       });
     });
-    return;
+    return { executed: true };
   }
 
   // Multiple selected chains → one Relayr bundle, with each entry targeting its verified wrapper/controller.
   await runRelayrAcrossChains(selected, account, buildCall, 1500000n, setStatus, { label: 'Queue ruleset', title: 'Confirm queue ruleset' });
   setStatus('Ruleset queued on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.', 'success');
-  document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+  notifyProjectUpdated(project);
+  return { executed: true };
 }
 
 // Operator-only: edit the current ruleset's reserved-token split recipients on the chains the operator
@@ -16310,13 +16804,14 @@ function opsActionsRow(project, opts) {
   opts = opts || {};
   var row = el('div', 'ops-actions');
   var multiChain = (project.chains || []).length > 1;
+  var capabilities = tokenUiCapabilities(project);
   [
     ['Cash out', function () { var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close; }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
     opts.noLoans ? null : ['Get a loan', function () { var h = {}; var content = buildLoanModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Get a loan', content).close; }],
     // Moving funds only makes sense when the project lives on more than one chain.
     multiChain ? ['Move between chains', function () { openModal('Move between chains', buildMoveModal(project)); }] : null,
-    ['Add market liquidity', function () { openModal('Add market liquidity', buildAddLiquidityModal(project)); }],
+    capabilities.canAddMarketLiquidity ? ['Add market liquidity', function () { openModal('Add market liquidity', buildAddLiquidityModal(project)); }] : null,
   ].filter(Boolean).forEach(function (a) {
     var b = document.createElement('button');
     b.className = 'ops-action-btn';
@@ -16331,7 +16826,7 @@ function opsActionsRow(project, opts) {
 function renderOpsActions(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title');
-  title.textContent = 'Use your ' + (project.tokenSymbol || 'tokens');
+  title.textContent = 'Use your ' + (tokenUiCapabilities(project).hasErc20 ? (project.tokenSymbol || 'tokens') : 'project credits');
   card.appendChild(title);
   card.appendChild(opsActionsRow(project));
   return card;
@@ -16445,7 +16940,9 @@ function readCashOutDelay(project) {
 function renderYouCard(project, opts) {
   opts = opts || {};
   var noLoans = !!opts.noLoans;
-  var sym = project.tokenSymbol || 'tokens';
+  var capabilities = tokenUiCapabilities(project);
+  var showLp = capabilities.canAddMarketLiquidity;
+  var sym = capabilities.hasErc20 ? (project.tokenSymbol || 'tokens') : 'project credits';
   var wrap = el('div', 'you-card');
   var body = el('div', 'you-body');
   var actions = opsActionsRow(project, opts); // shown only while connected
@@ -16479,14 +16976,17 @@ function renderYouCard(project, opts) {
       // Disconnected: show ONLY the connect prompt + button (hide the action buttons).
       actions.style.display = 'none';
       var m = el('div', 'detail-card-body you-empty');
-      m.textContent = 'Connect a wallet to see your ' + sym + ' across chains, its cash-out value, and your max loan.';
+      m.textContent = 'Connect a wallet to see your ' + sym + ' across chains and their cash-out value'
+        + (noLoans ? '.' : ', plus your max loan.');
       var c = document.createElement('button'); c.className = 'ops-action-btn you-connect'; c.textContent = 'Connect wallet';
       c.addEventListener('click', function () { connect().then(load).catch(function () {}); });
       body.appendChild(m); body.appendChild(c);
       return;
     }
     actions.style.display = ''; // connected: reveal the action buttons
-    var status = skelOpsTable(noLoans ? ['Chain', 'Balance', 'Cash out', 'LP'] : ['Chain', 'Balance', 'Cash out', 'Max loan', 'LP'], 2); body.appendChild(status);
+    var headers = noLoans ? ['Chain', 'Balance', 'Cash out'] : ['Chain', 'Balance', 'Cash out', 'Max loan'];
+    if (showLp) headers.push('LP');
+    var status = skelOpsTable(headers, 2); body.appendChild(status);
     Promise.all([fetchYouPosition(project), readCashOutDelay(project)]).then(function (out) {
       if (seq !== loadSeq || !body.isConnected) return; // a newer load() superseded this one
       // Account switches can race an in-flight position read. Reconcile against the canonical wallet state even
@@ -16540,7 +17040,7 @@ function renderYouCard(project, opts) {
         claimRows = []; claimBtn.style.display = 'none';
         var none = el('div', 'detail-card-body you-empty');
         none.textContent = balanceComplete
-          ? ('You don’t hold any ' + sym + ' yet. Pay the project to get some.')
+          ? ('You don’t hold any ' + sym + ' yet.')
           : 'Could not verify your token balance on every project chain. Try again shortly.';
         body.appendChild(none);
         return;
@@ -16558,7 +17058,7 @@ function renderYouCard(project, opts) {
         return sub ? { main: main, sub: sub } : main;
       }
       var table = el('div', 'detail-ops-table');
-      table.appendChild(opsRow('Chain', 'Balance', 'Cash out', noLoans ? undefined : 'Max loan', true, false, undefined, 'LP'));
+      table.appendChild(opsRow('Chain', 'Balance', 'Cash out', noLoans ? undefined : 'Max loan', true, false, undefined, showLp ? 'LP' : undefined));
       var totBal = 0n, totCash = 0n, totLoan = 0n, anyCredit = false, anyErc20 = false;
       held.forEach(function (r) {
         table.appendChild(opsRow(
@@ -16566,7 +17066,7 @@ function renderYouCard(project, opts) {
           balCell(r),
           cashCell(r),
           noLoans ? undefined : loanCell(r),
-          false, false, r.id, lpCell(r)));
+          false, false, r.id, showLp ? lpCell(r) : undefined));
         totBal += r.balance;
         if (r.credit != null && r.credit > 0n) anyCredit = true;
         if (r.credit != null && r.balance != null && r.balance > r.credit) anyErc20 = true;
@@ -16597,7 +17097,7 @@ function renderYouCard(project, opts) {
         ? (cashComplete && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (cashComplete ? 'Locked' : '—'))
         : (loanComplete ? fmtLoan(held[0], totLoan) : '—');
       // A Total row is redundant when there's only one chain row.
-      if (held.length > 1) table.appendChild(opsRow('Total', totBalCell, totCashCell, noLoans ? undefined : totLoanCell, false, true, undefined, ''));
+      if (held.length > 1) table.appendChild(opsRow('Total', totBalCell, totCashCell, noLoans ? undefined : totLoanCell, false, true, undefined, showLp ? '' : undefined));
       body.appendChild(table);
       if (!balanceComplete) {
         var incomplete = el('div', 'you-footnote'); incomplete.textContent = 'Some chain balances could not be verified, so cross-chain totals are hidden.'; body.appendChild(incomplete);
