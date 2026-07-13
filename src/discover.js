@@ -2759,7 +2759,8 @@ export function matchesKnown721HookClone(identity, chainId, projectId) {
 // deciding it is custom. This is the same identity fetchProjectTiers relies on to trust a single-chain custom shop.
 function isKnown721HookClone(address, chainId, projectId) {
   if (isZeroishAddress(address)) return Promise.resolve(false);
-  if (recognizeProjectContract(address, chainId).known) return Promise.resolve(true);
+  // A manifest singleton (including the shared implementation) is never a project-bound clone.
+  if (recognizeProjectContract(address, chainId).known) return Promise.resolve(false);
   return registeredInstanceProvenance(address, chainId).then(function (provenance) {
     if (!provenance || provenance.family !== 'JB721TiersHook') return false;
     var client = clientFor(chainId);
@@ -3142,6 +3143,14 @@ var RULESET_OUTPUTS = [
 var upcomingRulesetAbi = [{
   type: 'function', name: 'upcomingRulesetOf', stateMutability: 'view',
   inputs: [{ name: 'projectId', type: 'uint256' }], outputs: RULESET_OUTPUTS,
+}];
+var allRulesetsWithMetadataAbi = [{
+  type: 'function', name: 'allRulesetsOf', stateMutability: 'view',
+  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'startingId', type: 'uint256' }, { name: 'size', type: 'uint256' }],
+  outputs: [{ name: 'rulesets', type: 'tuple[]', components: [
+    { name: 'ruleset', type: 'tuple', components: RULESET_OUTPUTS[0].components },
+    { name: 'metadata', type: 'tuple', components: RULESET_OUTPUTS[1].components },
+  ] }],
 }];
 var payoutLimitsAbi = [{
   type: 'function', name: 'payoutLimitsOf', stateMutability: 'view',
@@ -15127,9 +15136,13 @@ function openQueueRulesetModal(project) {
     details: { name: project.name || '', ticker: project.tokenSymbol || '' },
     stages: [],
     afterMode: 'cycle',
-    shopChoice: null,                    // queue-time 721-shop choice: continue | remove | new
+    shopChoice: null,                    // queue-time 721-shop choice: continue | remove | reactivate | new
     currentDataHook: '',                 // the ruleset data hook to preserve (not necessarily the 721 hook)
     currentShopHook: '',                 // verified 721 hook, if one exists
+    archivedShops: [],                   // verified prior direct 721 hooks which can be reattached
+    reactivatedShopHook: '',
+    reactivatedShopHookByChain: {},
+    reactivatedShopUseDataHookForCashOut: false,
     currentUseDataHookForPay: false,
     currentUseDataHookForCashOut: false, // preserve item-redemption on "continue"
     currentDataHookByChain: {},
@@ -15243,6 +15256,54 @@ function openQueueRulesetModal(project) {
       state.currentShopHook = dataHook;
       state.canRemoveShop = true;
       state.canAddShop = true;
+    }
+  }
+
+  // A detached single-chain shop remains a perfectly usable 721 collection; it simply no longer appears in the
+  // current ruleset metadata. Read the decoded ruleset history, verify every candidate against the known 721
+  // deployer/store/project identity, and offer each unique old hook for reactivation. Never infer a shop from an
+  // RPC failure or a contract which merely happens to expose a STORE() function.
+  async function loadArchivedShops() {
+    state.archivedShops = [];
+    // Direct hooks can be reattached by putting the old hook back in JBRulesetMetadata.dataHook. The deployed
+    // omnichain wrapper has no entry point for selecting an arbitrary historical mapping, and independently
+    // deployed multi-chain hooks cannot be paired safely by this concise editor.
+    if (project.isRevnet || allChains.length !== 1) return;
+    try {
+      var chainId = project.chainId;
+      var controller = await controllerAddressFor(chainId, pid);
+      var history = await clientFor(chainId).readContract({
+        address: controller, abi: allRulesetsWithMetadataAbi, functionName: 'allRulesetsOf', args: [pid, 0n, 100n],
+      });
+      var seen = {};
+      for (var i = 0; i < (history || []).length; i++) {
+        var entry = history[i];
+        var ruleset = entry && (entry.ruleset || entry[0]);
+        var metadata = entry && (entry.metadata || entry[1]);
+        var hook = metadata && metadata.dataHook;
+        if (!ruleset || !metadata || !metadata.useDataHookForPay || isZeroishAddress(hook)) continue;
+        var key = hook.toLowerCase();
+        if (seen[key] || (state.currentShopHook && sameAddr(hook, state.currentShopHook))) continue;
+        seen[key] = true;
+        var omni = getAddress('JBOmnichainDeployer', chainId);
+        if (omni && sameAddr(hook, omni)) continue;
+        if (!await isKnown721HookClone(hook, chainId, project.id)) continue;
+        var names = await Promise.all([
+          clientFor(chainId).readContract({ address: hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'name', args: [] }).catch(function () { return ''; }),
+          clientFor(chainId).readContract({ address: hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'symbol', args: [] }).catch(function () { return ''; }),
+        ]);
+        state.archivedShops.push({
+          hook: hook,
+          rulesetId: toBigInt(ruleset.id),
+          name: String(names[0] || '').trim(),
+          symbol: String(names[1] || '').trim(),
+          useDataHookForCashOut: !!metadata.useDataHookForCashOut,
+        });
+      }
+    } catch (_) {
+      // History is an optional enhancement. A failed history read must not prevent the verified current-ruleset
+      // editor from preserving or updating everything it can already prove.
+      state.archivedShops = [];
     }
   }
 
@@ -15374,35 +15435,46 @@ function openQueueRulesetModal(project) {
     }
     body.appendChild(renderStages(state, renderEditor, { noHead: true }));
 
-    // 721 shop choice. Shows once the current-hook read resolves. With a live shop: keep (single-chain
-    // re-passes the hook so it isn't dropped) / remove (single-chain only — no omnichain detach path) / new.
-    // With NO shop: a checkbox to add one. "new"/add deploys a fresh collection via the one-call deployer.
+    // 721 shop choice. A prior direct collection is not destroyed when a ruleset detaches it, so verified hooks
+    // from the ruleset history are offered alongside keep/remove/new. Reactivation reuses the exact collection,
+    // inventory, and items; "new" is the only path which deploys another hook.
     if (state.shopChecked && !project.isRevnet) {
       var shopH = el('div', 'operator-edit-label'); shopH.style.marginTop = '18px'; shopH.textContent = 'Shop (NFT items)'; body.appendChild(shopH);
-      if (state.currentShopHook) {
+      if (state.currentShopHook || state.canAddShop) {
         var shopBox = el('div', 'queue-shop-choice');
-        var shopOpts = [['continue', 'Keep the current shop', 'Same items for purchase remain during the new rulesets.']];
-        if (state.canRemoveShop) shopOpts.push(['remove', 'Remove the shop', 'Stops NFT minting; payments mint project tokens at the ruleset weight instead.']);
-        if (state.canAddShop) shopOpts.push(['new', 'Start a new shop', 'Make a new shop with the new rulesets, replacing the current one entirely.']);
-        shopOpts.forEach(function (o) {
+        function chooseShop(choice, archived) {
+          state.shopChoice = choice;
+          state.reactivatedShopHook = archived ? archived.hook : '';
+          state.reactivatedShopHookByChain = {};
+          if (archived) state.reactivatedShopHookByChain[project.chainId] = archived.hook;
+          state.reactivatedShopUseDataHookForCashOut = !!(archived && archived.useDataHookForCashOut);
+          if (choice === 'new') ensureNewShopState(state, allChains);
+          renderEditor();
+        }
+        function addShopOption(choice, name, description, checked, archived) {
           var row = el('label', 'queue-shop-opt');
-          var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = state.shopChoice === o[0];
-          rb.addEventListener('change', function () { if (rb.checked) { state.shopChoice = o[0]; if (o[0] === 'new') ensureNewShopState(state, allChains); renderEditor(); } });
+          var rb = document.createElement('input'); rb.type = 'radio'; rb.name = 'queue-shop'; rb.checked = !!checked;
+          rb.addEventListener('change', function () { if (rb.checked) chooseShop(choice, archived); });
           var txt = el('div', 'queue-shop-opt-txt');
-          var nm = el('div', 'queue-shop-opt-name'); nm.textContent = o[1]; txt.appendChild(nm);
-          var sub = el('div', 'queue-shop-opt-sub'); sub.textContent = o[2]; txt.appendChild(sub);
+          var nm = el('div', 'queue-shop-opt-name'); nm.textContent = name; txt.appendChild(nm);
+          var sub = el('div', 'queue-shop-opt-sub'); sub.textContent = description; txt.appendChild(sub);
           row.appendChild(rb); row.appendChild(txt); shopBox.appendChild(row);
+        }
+        if (state.currentShopHook) {
+          addShopOption('continue', 'Keep the current shop', 'Same collection and items remain available in the new ruleset.', state.shopChoice === 'continue');
+          if (state.canRemoveShop) addShopOption('remove', 'No shop', 'Detaches the collection in the new ruleset. The collection remains available to reactivate later.', state.shopChoice === 'remove');
+        } else {
+          addShopOption(null, 'No shop', 'Payments do not mint NFT items in the new ruleset.', !state.shopChoice);
+        }
+        (state.archivedShops || []).forEach(function (archived) {
+          var collectionName = archived.name || archived.symbol || ('Shop ' + truncAddr(archived.hook));
+          var symbol = archived.symbol && archived.symbol !== collectionName ? ' (' + archived.symbol + ')' : '';
+          addShopOption('reactivate', 'Reactivate ' + collectionName + symbol,
+            'Reuses the existing collection and all its items · item cash-outs ' + (archived.useDataHookForCashOut ? 'on' : 'off') + ' · ' + truncAddr(archived.hook),
+            state.shopChoice === 'reactivate' && sameAddr(state.reactivatedShopHook, archived.hook), archived);
         });
+        if (state.canAddShop) addShopOption('new', 'Start a new shop', 'Deploys a new collection with new items.', state.shopChoice === 'new');
         body.appendChild(shopBox);
-      } else if (state.canAddShop) {
-        // No current shop — let the operator add one with this ruleset (deploys a fresh 721 collection).
-        var addRow = el('label', 'queue-shop-opt');
-        var addCb = document.createElement('input'); addCb.type = 'checkbox'; addCb.checked = state.shopChoice === 'new';
-        addCb.addEventListener('change', function () { state.shopChoice = addCb.checked ? 'new' : (state.currentDataHook ? 'continue' : null); if (addCb.checked) ensureNewShopState(state, allChains); renderEditor(); });
-        var addTxt = el('div', 'queue-shop-opt-txt');
-        var addNm = el('div', 'queue-shop-opt-name'); addNm.textContent = 'Sell NFT items'; addTxt.appendChild(addNm);
-        var addSub = el('div', 'queue-shop-opt-sub'); addSub.textContent = 'This project has no shop yet — add one and start selling NFT items with this ruleset.'; addTxt.appendChild(addSub);
-        addRow.appendChild(addCb); addRow.appendChild(addTxt); body.appendChild(addRow);
       } else {
         var opaqueHook = el('div', 'operator-edit-across');
         opaqueHook.textContent = 'This project uses a non-shop data hook. It will be preserved; adding a shop here is disabled because it would replace that hook.';
@@ -15451,7 +15523,7 @@ function openQueueRulesetModal(project) {
       if (up && up[0] && Number(up[0].id) > 0 && String(up[0].id) !== String(current[0].id)) { baseR = up[0]; baseM = up[1]; }
       if (!baseR) throw new Error('No current ruleset');
       await applyCurrentShopMetadata(baseM, baseR);
-      await loadQueueDataHooksAcrossChains();
+      await Promise.all([loadQueueDataHooksAcrossChains(), loadArchivedShops()]);
 
       var terminal = getAddress('JBMultiTerminal', project.chainId);
       var fal = getAddress('JBFundAccessLimits', project.chainId);
@@ -15678,6 +15750,9 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     throw new Error('The live source configuration is not fully verified or cannot be preserved by this editor.');
   }
   if (state.shopChoice === 'new' && (project.isRevnet || !state.canAddShop)) throw new Error('A new shop cannot be safely composed with this project’s current data hook.');
+  if (state.shopChoice === 'reactivate' && (project.isRevnet || state.isOmnichain || !state.canAddShop || !isAddr(state.reactivatedShopHook))) {
+    throw new Error('The archived shop could not be verified for safe reactivation.');
+  }
   if (state.shopChoice === 'remove' && !state.canRemoveShop) throw new Error('This shop cannot be safely removed through the queue editor.');
   if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
   var multi = selected.length > 1;

@@ -3833,10 +3833,16 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   // Queue-only 721-shop choice. The discover Rulesets tab sets state.shopChoice; the LAUNCH path leaves it
   // undefined so this whole block no-ops (launch stays exactly as-is). On the SINGLE-CHAIN queue path the 721
   // hook IS metadata.dataHook, and the default encodes dataHook=0 — which silently DETACHES a live shop. So
-  // "continue" must re-pass the current hook to keep it. On the OMNICHAIN path the shop rides the deploy721
-  // empty-tiers carry-forward (metadata.dataHook is the extra/buyback slot), so we leave the metadata alone.
+  // "continue" must re-pass the current hook to keep it, while "reactivate" puts a verified historical hook back.
+  // On the OMNICHAIN path the shop rides the deploy721 empty-tiers carry-forward (metadata.dataHook is the
+  // extra/buyback slot), so we leave the metadata alone.
   if (state.shopChoice && !state.isOmnichain) {
-    if (state.shopChoice === 'continue') {
+    if (state.shopChoice === 'reactivate') {
+      rs.dataHook = (state.reactivatedShopHookByChain && state.reactivatedShopHookByChain[chainId]) || state.reactivatedShopHook || '';
+      rs.useDataHookForPay = true;
+      // Reactivation is explicit, so preserve whether the archived collection previously gave items cash-out access.
+      rs.useDataHookForCashOut = !!state.reactivatedShopUseDataHookForCashOut;
+    } else if (state.shopChoice === 'continue') {
       rs.dataHook = (state.currentDataHookByChain && state.currentDataHookByChain[chainId]) || state.currentDataHook || '';
       rs.useDataHookForPay = state.currentUseDataHookForPayByChain && state.currentUseDataHookForPayByChain[chainId] != null
         ? !!state.currentUseDataHookForPayByChain[chainId]

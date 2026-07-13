@@ -38,6 +38,16 @@ describe('queue-ruleset 721-shop choice → ruleset data-hook metadata', () => {
     expect(rs.useDataHookForPay).toBe(false);
     expect(rs.useDataHookForCashOut).toBe(false);
   });
+  it('reactivate (single-chain) reattaches the exact archived collection and its item cash-out setting', () => {
+    const rs = rsFor(queueState({
+      shopChoice: 'reactivate', isOmnichain: false,
+      reactivatedShopHook: HOOK, reactivatedShopHookByChain: { 1: HOOK },
+      reactivatedShopUseDataHookForCashOut: true,
+    }));
+    expect(rs.dataHook).toBe(HOOK);
+    expect(rs.useDataHookForPay).toBe(true);
+    expect(rs.useDataHookForCashOut).toBe(true);
+  });
   it('omnichain continue re-passes the wrapper extra hook while the shop rides the carry-forward', () => {
     const rs = rsFor(queueState({ shopChoice: 'continue', currentDataHook: HOOK, currentUseDataHookForPay: true, isOmnichain: true }));
     expect(rs.dataHook).toBe(HOOK);
