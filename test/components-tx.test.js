@@ -41,9 +41,9 @@ describe('pay — JBMultiTerminal.pay', () => {
     expect(tx.args[4]).toBeGreaterThan(0n);
     expect(buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: 1n, beneficiary: BOB, memo: '', route: okRoute(1n) }).args[4]).toBe(1n);
   });
-  it('refuses to build an unpriced or zero-output payment', () => {
+  it('refuses an unpriced payment but allows a verified zero-token payment', () => {
     expect(() => buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(null) })).toThrow(/preview/i);
-    expect(() => buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(0n) })).toThrow(/no project tokens/i);
+    expect(buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(0n) }).args[4]).toBe(0n);
   });
   it('ERC20 (6-dec USDC): value 0, approves the terminal for the exact amount', () => {
     const tx = buildPayArgs({ chainId: 1, projectId: 5, token: USDC, amount: parseUnits('250', 6), beneficiary: BOB, memo: '', route: okRoute(parseEther('100')) });

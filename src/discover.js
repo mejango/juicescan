@@ -5199,13 +5199,12 @@ function renderPayRuleChangeNotice(project) {
   return link;
 }
 
-// A verified zero fungible-token quote is still executable when the same payment mints selected 721 tiers.
-// The terminal's minReturnedTokens is legitimately zero in that case; the NFT hook enforces the requested tier
-// prices and availability from the pay metadata. Plain zero-issuance contributions remain an Add to balance action.
-export function payPreviewCanSubmit(phase, preview, selectedTierCount) {
+// A verified terminal preview is executable even when it returns zero project tokens. Zero issuance is a valid
+// `pay`: the payment still funds the project, while minReturnedTokens is legitimately zero. Keep unavailable or
+// incomplete previews blocked so an RPC/terminal failure can never be mistaken for an intentional zero quote.
+export function payPreviewCanSubmit(phase, preview) {
   if (phase !== 'ready' || !preview || preview.unavailable || preview.received == null) return false;
-  var received = BigInt(preview.received);
-  return received > 0n || (received === 0n && Number(selectedTierCount) > 0);
+  try { return BigInt(preview.received) >= 0n; } catch (_) { return false; }
 }
 
 // Inline pay card (revnet.app-style) for the project detail page. The project is already known, so it
@@ -5865,10 +5864,10 @@ function renderPayCard(project, cart) {
       status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no on-chain minimum-output field for this action.';
       return;
     }
-    if (!addBalance && !payPreviewCanSubmit(state.phase, state.preview, tierIds.length)) {
+    if (!addBalance && !payPreviewCanSubmit(state.phase, state.preview)) {
       status.textContent = tierIds.length
         ? 'A verified live quote is required before buying these items. Wait for the preview and try again.'
-        : 'A non-zero live quote is required before paying. Wait for the preview, or use Add to balance for a contribution that mints no tokens.';
+        : 'A verified live quote is required before paying. Wait for the preview and try again.';
       schedulePreview();
       return;
     }

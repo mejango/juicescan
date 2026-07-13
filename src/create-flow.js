@@ -2387,7 +2387,10 @@ function tokenSection(stage, render, state, stageIdx) {
   // Token options apply whether or not THIS stage issues tokens (tokens can exist from prior stages or
   // owner mints) — always shown, each in its own container like the issuance section.
   wrap.appendChild(toggleRow('Give owner privileged access to tokens', dz('The project owner can mint any amount of project tokens without paying.', 'The project owner can’t mint tokens without paying.'), t.allowOwnerMinting, function (v) { t.allowOwnerMinting = v; }));
-  wrap.appendChild(toggleRow('Pause token credit transfers', dz('Project credits can’t be transferred (ERC-20s, once issued, are always transferable).', 'Project credits can be transferred freely.'), t.pauseTransfers, function (v) { t.pauseTransfers = v; }));
+  var transferCopy = t.tokenMode === 'custom'
+    ? 'Internal project credits can be transferred until they are claimed as ERC-20 tokens.'
+    : 'This stage issues no credits. Existing credits from earlier stages can still be transferred.';
+  wrap.appendChild(toggleRow('Pause internal credit transfers', dz('Existing internal credits can’t be transferred. Claimed ERC-20 tokens remain transferable.', transferCopy), t.pauseTransfers, function (v) { t.pauseTransfers = v; }));
   return wrap;
 }
 

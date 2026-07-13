@@ -36,16 +36,16 @@ var accountingContextsAbi = [{
 // Pure builder for the JBMultiTerminal.pay transaction — returns the executeTransaction config (no callbacks).
 // `o`: { chainId, projectId, token, amount (bigint), beneficiary, memo, route } where route carries the
 // resolved terminal/router address and a `preview.received` (raw, BigInt-able) token estimate.
-// minReturnedTokens is a 1% slippage floor off the previewed output. A missing/zero quote is rejected:
-// encoding an unprotected payment is never a valid fallback for this component.
+// minReturnedTokens is a 1% slippage floor off positive previewed output. A verified zero quote is valid for a
+// zero-issuance project and deliberately encodes a zero floor; a missing/unavailable quote is still rejected.
 export function buildPayArgs(o) {
   var isNative = String(o.token).toLowerCase() === NATIVE_TOKEN.toLowerCase();
   var pv = o.route && o.route.preview;
   if (!pv || pv.unavailable || pv.received == null) throw new Error('A live pay preview is required.');
   var quoted = BigInt(pv.received);
-  if (quoted <= 0n) throw new Error('The pay preview returned no project tokens.');
+  if (quoted < 0n) throw new Error('The pay preview returned an invalid project-token count.');
   var minReturned = quoted * 99n / 100n;
-  if (minReturned === 0n) minReturned = 1n;
+  if (quoted > 0n && minReturned === 0n) minReturned = 1n;
   return {
     chainId: o.chainId,
     address: o.route.address,
@@ -116,9 +116,9 @@ function resolveBestPayRoute(opts) {
     for (var i = 0; i < resolved.length; i++) {
       if (!best || payRouteIsBetter(resolved[i], best)) best = resolved[i];
     }
-    if (best && best.preview && !best.preview.unavailable && best.preview.received != null && BigInt(best.preview.received) > 0n) return best;
-    // Never turn an unavailable/zero quote into a minReturnedTokens=0 payment. The Components pay form is
-    // explicitly an exchange for project tokens; users who intend a donation can use Add to balance in Discover.
+    if (best && best.preview && !best.preview.unavailable && best.preview.received != null && BigInt(best.preview.received) >= 0n) return best;
+    // Never turn an unavailable preview into a minReturnedTokens=0 payment. An exact, verified zero quote is a
+    // legitimate zero-issuance payment; an RPC or terminal failure is not.
     return null;
   });
 }
