@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -146,6 +146,26 @@ describe('loan — REVLoans.repayLoan (payable)', () => {
 });
 
 describe('source-of-truth data guards', () => {
+  it('clears only a light image matte connected to all four outer corners', () => {
+    const width = 5, height = 5;
+    const pixels = new Uint8ClampedArray(width * height * 4).fill(255);
+    // A black ring isolates the center white pixel, representing white logo detail inside dark artwork.
+    for (let y = 1; y <= 3; y++) {
+      for (let x = 1; x <= 3; x++) {
+        if (x === 2 && y === 2) continue;
+        const offset = (y * width + x) * 4;
+        pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = 0;
+      }
+    }
+    expect(clearLightEdgeMatte(pixels, width, height)).toBe(true);
+    expect(pixels[3]).toBe(0); // outer matte becomes transparent
+    expect(pixels[((2 * width + 2) * 4) + 3]).toBe(255); // isolated white logo detail stays opaque
+    expect(pixels[((1 * width + 1) * 4) + 3]).toBe(255); // dark artwork stays opaque
+
+    const noMatte = new Uint8ClampedArray(width * height * 4).fill(0);
+    expect(clearLightEdgeMatte(noMatte, width, height)).toBe(false);
+  });
+
   it('does not invent pre-deployment history for a selected price-chart range', () => {
     const year = 365 * 86400;
     const now = 2_000_000_000;

@@ -722,6 +722,81 @@ function setMediaSource(node, url, onExhausted) {
   node.addEventListener('error', next);
   next();
 }
+
+function isLightNeutralPixel(rgba, pixelIndex) {
+  var offset = pixelIndex * 4;
+  var r = rgba[offset], g = rgba[offset + 1], b = rgba[offset + 2], a = rgba[offset + 3];
+  return a >= 200 && Math.min(r, g, b) >= 210 && Math.max(r, g, b) - Math.min(r, g, b) <= 30;
+}
+
+// Remove a white/light-neutral matte only when all four image corners carry it. The flood fill starts at the
+// outer edge, so disconnected whites inside the artwork (logos, text, highlights) remain opaque. Mutates RGBA and
+// returns whether anything changed; pure apart from that explicit buffer mutation so it is easy to regression-test.
+export function clearLightEdgeMatte(rgba, width, height) {
+  width = Number(width); height = Number(height);
+  if (!rgba || !Number.isInteger(width) || !Number.isInteger(height) || width < 2 || height < 2 || rgba.length < width * height * 4) return false;
+  var last = width * height - 1;
+  var corners = [0, width - 1, last - width + 1, last];
+  if (!corners.every(function (index) { return isLightNeutralPixel(rgba, index); })) return false;
+
+  var visited = new Uint8Array(width * height);
+  var queue = new Int32Array(width * height);
+  var head = 0, tail = 0, cleared = 0;
+  function enqueue(index) {
+    if (index < 0 || index > last || visited[index] || !isLightNeutralPixel(rgba, index)) return;
+    visited[index] = 1; queue[tail++] = index;
+  }
+  for (var x = 0; x < width; x++) { enqueue(x); enqueue((height - 1) * width + x); }
+  for (var y = 1; y < height - 1; y++) { enqueue(y * width); enqueue(y * width + width - 1); }
+  while (head < tail) {
+    var index = queue[head++];
+    rgba[index * 4 + 3] = 0; cleared++;
+    var px = index % width;
+    if (px > 0) enqueue(index - 1);
+    if (px < width - 1) enqueue(index + 1);
+    if (index >= width) enqueue(index - width);
+    if (index < last - width + 1) enqueue(index + width);
+  }
+  return cleared > 0;
+}
+
+// Best-effort visual cleanup for legacy/uploaded art with an opaque white outer matte. The visible image always
+// loads normally first; a separate CORS-enabled probe performs the optional canvas read, so hosts without CORS can
+// never make otherwise-valid art disappear.
+function removeLightEdgeMatteFromImage(img) {
+  if (!img || img.dataset.edgeMatteState) return;
+  var source = img.currentSrc || img.src;
+  if (!source) return;
+  img.dataset.edgeMatteState = 'checking';
+  var probe = new Image();
+  if (/^https?:/i.test(source)) probe.crossOrigin = 'anonymous';
+  probe.onload = function () {
+    var naturalW = probe.naturalWidth || probe.width, naturalH = probe.naturalHeight || probe.height;
+    if (!naturalW || !naturalH) { img.dataset.edgeMatteState = 'done'; return; }
+    // Cards/detail art render well below 512px; cap the working bitmap so several lazy-loaded tiers cannot create
+    // large transient pixel/queue buffers on mobile.
+    var scale = Math.min(1, 512 / naturalW, 512 / naturalH);
+    var width = Math.max(2, Math.round(naturalW * scale)), height = Math.max(2, Math.round(naturalH * scale));
+    var canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    var ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) { img.dataset.edgeMatteState = 'done'; return; }
+    try {
+      ctx.drawImage(probe, 0, 0, width, height);
+      var pixels = ctx.getImageData(0, 0, width, height);
+      if (!clearLightEdgeMatte(pixels.data, width, height)) { img.dataset.edgeMatteState = 'done'; return; }
+      ctx.putImageData(pixels, 0, 0);
+    } catch (_) { img.dataset.edgeMatteState = 'done'; return; }
+    canvas.toBlob(function (blob) {
+      if (!blob || !img.isConnected) { img.dataset.edgeMatteState = 'done'; return; }
+      var objectUrl = URL.createObjectURL(blob);
+      img.dataset.edgeMatteState = 'done';
+      img.addEventListener('load', function () { URL.revokeObjectURL(objectUrl); }, { once: true });
+      img.src = objectUrl;
+    }, 'image/png');
+  };
+  probe.onerror = function () { img.dataset.edgeMatteState = 'done'; };
+  probe.src = source;
+}
 // Render a tier's media (any file type) into `container`. mode 'full' (card) or 'thumb' (small preview).
 function renderTierMediaInto(container, m, alt, mode) {
   container.innerHTML = '';
@@ -729,7 +804,7 @@ function renderTierMediaInto(container, m, alt, mode) {
   if (!kind) return false;
   var media = m.animationUrl || m.image;
   if (kind === 'image') {
-    var img = document.createElement('img'); img.loading = 'lazy'; setMediaSource(img, m.image || media); img.alt = alt || ''; container.appendChild(img); return true;
+    var img = document.createElement('img'); img.loading = 'lazy'; img.addEventListener('load', function () { removeLightEdgeMatteFromImage(img); }); setMediaSource(img, m.image || media); img.alt = alt || ''; container.appendChild(img); return true;
   }
   if (kind === 'video') {
     var v = document.createElement('video'); setMediaSource(v, media); v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
@@ -17614,6 +17689,7 @@ function buildCashOutModal(project, requestClose) {
 
 // REVLoans fee constants (REVLoans.sol). Percents are in MAX_FEE=1000 units (25 = 2.5%).
 var LOAN_MIN_PREPAID = 25, LOAN_MAX_PREPAID = 500, LOAN_LIQ_DAYS = 3650, LOAN_MAX_FEE = 1000;
+var LOAN_QUOTE_TIMEOUT_MS = 12000;
 
 // Human label for when the time-based fee starts (the prepaid window): p/500 of the 10-year liquidation span.
 function loanPrepaidDurationLabel(p) {
@@ -17693,6 +17769,7 @@ function buildLoanModal(project, requestClose) {
     acctLoading: true,
     feeless: null,
     loanOut: null,
+    borrowableLoading: false,
     cashOutNet: null,
     cashOutLoading: false,
   };
@@ -17765,7 +17842,7 @@ function buildLoanModal(project, requestClose) {
       ? 'Checking live quote…'
       : (state.cashOutNet != null ? ('~ ' + fmtBorrow(state.cashOutNet) + ' now · tokens burned') : 'Unavailable now');
     decisionBody.appendChild(decisionRow('Cash out now', cashNow));
-    var loanNow = 'Checking live quote…';
+    var loanNow = state.borrowableLoading ? 'Checking live quote…' : 'Unavailable now';
     if (state.borrowable === 0n) loanNow = 'Unavailable until loans unlock';
     else if (state.borrowable != null && state.feeless != null) {
       loanNow = '~ ' + fmtBorrow(loanOpeningAmounts(state.borrowable, state.prepaidFee, state.feeless).net) + ' now · repay to reclaim';
@@ -17968,6 +18045,7 @@ function buildLoanModal(project, requestClose) {
     state.acct = null;
     state.acctLoading = true;
     state.borrowable = null;
+    state.borrowableLoading = false;
     state.cashOutNet = null;
     state.cashOutLoading = false;
     sourceSel.innerHTML = '';
@@ -18000,33 +18078,34 @@ function buildLoanModal(project, requestClose) {
   var previewSeq = 0;
   function updatePreview() {
     var collateral; try { collateral = parseAmount(amt.value, 18); } catch (_) { collateral = 0n; }
-    if (!collateral || collateral === 0n) { preview.textContent = ''; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
-    if (state.acctLoading || !state.acct) { preview.textContent = 'Loading borrow token…'; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = true; updateSummary(); return; }
+    if (!collateral || collateral === 0n) { preview.textContent = ''; state.borrowable = null; state.borrowableLoading = false; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
+    if (state.acctLoading || !state.acct) { preview.textContent = 'Loading borrow token…'; state.borrowable = null; state.borrowableLoading = true; state.cashOutNet = null; state.cashOutLoading = true; updateSummary(); return; }
     var loans = getAddress('REVLoans', state.chainId);
-    if (!loans) { preview.textContent = ''; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
+    if (!loans) { preview.textContent = ''; state.borrowable = null; state.borrowableLoading = false; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
     var currency = borrowCurrencyForAccountContext(state.acct);
-    if (currency == null) { preview.textContent = 'Could not resolve this token’s accounting currency.'; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
+    if (currency == null) { preview.textContent = 'Could not resolve this token’s accounting currency.'; state.borrowable = null; state.borrowableLoading = false; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
     var seq = ++previewSeq; preview.textContent = 'Calculating…';
     var cid = state.chainId;
     var terminal = getAddress('JBMultiTerminal', cid);
     var quoteAccount = (getAccount && getAccount()) || '0x0000000000000000000000000000000000000001';
     var reclaimToken = state.acct.address || NATIVE_TOKEN;
-    state.cashOutNet = null; state.cashOutLoading = !!terminal; updateDecision();
+    state.borrowableLoading = true; state.cashOutNet = null; state.cashOutLoading = !!terminal; updateDecision();
     Promise.all([
-      read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, BigInt(state.acct.decimals), currency]),
-      terminal ? clientFor(cid).readContract({
+      optionalWithin(read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, BigInt(state.acct.decimals), currency]), LOAN_QUOTE_TIMEOUT_MS, null),
+      terminal ? optionalWithin(clientFor(cid).readContract({
         address: terminal,
         abi: previewCashOutAbi,
         functionName: 'previewCashOutFrom',
         args: [quoteAccount, pid, collateral, reclaimToken, quoteAccount, '0x'],
-      }).catch(function () { return null; }) : Promise.resolve(null),
-      terminal ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, reclaimToken]).then(toBigInt).catch(function () { return null; }) : Promise.resolve(null),
-      terminal ? isFeelessAddress(cid, quoteAccount, pid) : Promise.resolve(null),
+      }), LOAN_QUOTE_TIMEOUT_MS, null) : Promise.resolve(null),
+      terminal ? optionalWithin(read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, reclaimToken]).then(toBigInt), LOAN_QUOTE_TIMEOUT_MS, null) : Promise.resolve(null),
+      terminal ? optionalWithin(isFeelessAddress(cid, quoteAccount, pid), LOAN_QUOTE_TIMEOUT_MS, null) : Promise.resolve(null),
     ]).then(function (r) {
         if (seq !== previewSeq) return;
         var borrowResult = r[0];
-        var b = Array.isArray(borrowResult) ? borrowResult[0] : borrowResult;
-        state.borrowable = toBigInt(b);
+        var b = borrowResult == null ? null : (Array.isArray(borrowResult) ? borrowResult[0] : borrowResult);
+        state.borrowable = b == null ? null : toBigInt(b);
+        state.borrowableLoading = false;
         var cashPreview = r[1];
         var feeFreeSurplus = r[2];
         var cashOutFeeless = r[3];
@@ -18041,11 +18120,13 @@ function buildLoanModal(project, requestClose) {
         state.cashOutLoading = false;
         // borrowableAmountFrom returns 0 for ALL collateral while the revnet's cash-out delay is still in
         // effect (REVLoans gates loans on it) — so a 0 here means loans are time-locked, not "too little".
-        preview.textContent = state.borrowable > 0n
-          ? 'You’ll borrow ~ ' + fmtBorrow(state.borrowable)
-          : 'Nothing borrowable yet — loans unlock after this revnet’s cash-out delay passes.';
+        preview.textContent = state.borrowable == null
+          ? 'Could not verify the live loan quote. Try again shortly.'
+          : (state.borrowable > 0n
+            ? 'You’ll borrow ~ ' + fmtBorrow(state.borrowable)
+            : 'Nothing borrowable yet — loans unlock after this revnet’s cash-out delay passes.');
         updateFeeViz(); updateSummary();
-      }).catch(function () { if (seq === previewSeq) { preview.textContent = ''; state.borrowable = null; state.cashOutNet = null; state.cashOutLoading = false; updateFeeViz(); updateSummary(); } });
+      }).catch(function () { if (seq === previewSeq) { preview.textContent = 'Could not verify the live loan quote. Try again shortly.'; state.borrowable = null; state.borrowableLoading = false; state.cashOutNet = null; state.cashOutLoading = false; updateFeeViz(); updateSummary(); } });
   }
   amt.addEventListener('input', updatePreview);
   function onChainChange() {
@@ -18064,6 +18145,7 @@ function buildLoanModal(project, requestClose) {
     if (collateral === 0n) { status.textContent = 'Enter an amount'; return; }
     if (state.balance == null) { status.textContent = 'Your collateral balance is still loading or could not be verified.'; return; }
     if (collateral > state.balance) { status.textContent = 'Collateral exceeds your balance on this chain.'; return; }
+    if (state.borrowableLoading || state.borrowable == null) { status.textContent = 'The live loan quote could not be verified. Try again shortly.'; return; }
     if (state.borrowable === 0n) { status.textContent = 'Nothing borrowable yet — loans are locked until this revnet’s cash-out delay passes.'; return; }
     var chainId = state.chainId;
     var prepaidFee = state.prepaidFee;

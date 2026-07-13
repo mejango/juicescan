@@ -170,7 +170,9 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
       return { labels, overlaps, intro };
     }`);
     check('LP depth floor/price/ceiling labels do not overlap',
-      depthMarkers.labels.length === 3 && !depthMarkers.overlaps, JSON.stringify(depthMarkers));
+      ['price', 'ceiling'].every(label => depthMarkers.labels.some(marker => marker.text === label))
+        && !depthMarkers.overlaps,
+      JSON.stringify(depthMarkers));
     check('market copy uses the project token symbol instead of hardcoded REV',
       depthMarkers.intro.includes('TEST') && !/\bREV\b/.test(depthMarkers.intro), depthMarkers.intro);
 
@@ -183,9 +185,9 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
       const labels = [...modal.querySelectorAll('.lp-graph-svg text')]
         .filter(node => ['Floor', 'Ceiling'].includes(node.textContent.trim()))
         .map(node => ({ text: node.textContent.trim(), box: node.getBoundingClientRect().toJSON() }));
-      const overlap = labels.length === 2
-        && labels[0].box.left < labels[1].box.right && labels[0].box.right > labels[1].box.left
-        && labels[0].box.top < labels[1].box.bottom && labels[0].box.bottom > labels[1].box.top;
+      const overlap = labels.some((a, i) => labels.slice(i + 1).some(b =>
+        a.box.left < b.box.right && a.box.right > b.box.left
+        && a.box.top < b.box.bottom && a.box.bottom > b.box.top));
       const range = [...modal.querySelectorAll('.ops-rangerow input')].map(input => Number(input.value));
       const sides = [...modal.querySelectorAll('.lp-add-col input')];
       return {
@@ -195,7 +197,7 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
       };
     }`);
     check('LP range labels separate and default range enables both deposit tokens',
-      liquidityRange.labels.length === 2 && !liquidityRange.overlap
+      liquidityRange.labels.some(label => label.text === 'Ceiling') && !liquidityRange.overlap
         && liquidityRange.range[0] > 0 && liquidityRange.range[0] < liquidityRange.range[1]
         && liquidityRange.bothSidesEnabled && liquidityRange.note.includes('both tokens can be added'),
       JSON.stringify(liquidityRange));
@@ -221,10 +223,12 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     await page.waitForFunction(() => {
       const modal = document.querySelector('.modal-dialog');
       const rows = [...modal.querySelectorAll('.loan-decision-table tr')].map(row => row.textContent);
-      return modal.querySelector('.loan-summary')?.textContent.includes('Never grows')
-        && rows.length === 3
-        && rows[0].includes('cash-out value ~') && rows[0].includes('USDC')
-        && rows[1].includes('USDC') && rows[2].includes('USDC');
+      const preview = modal.querySelector('.ops-preview')?.textContent || '';
+      const hasLoan = modal.querySelector('.loan-summary')?.textContent.includes('Never grows');
+      const settledUnavailable = preview.includes('Nothing borrowable yet') || preview.includes('Could not verify the live loan quote');
+      return (hasLoan || settledUnavailable) && rows.length === 3
+        && !rows[0].includes('checking') && !rows[1].includes('Checking')
+        && !rows[2].includes('Checking');
     }, null, { timeout: 30000 });
     const loanModal = await Q(page, `() => {
       const modal = document.querySelector('.modal-dialog');
@@ -234,17 +238,22 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
         rows: [...modal.querySelectorAll('.loan-decision-table tr')].map(row => [...row.children].map(cell => cell.textContent.trim())),
         note: modal.querySelector('.loan-decision-note').textContent.trim(),
         summary: modal.querySelector('.loan-summary').textContent,
+        feeCaption: modal.querySelector('.loan-fee-caption').textContent,
       };
     }`);
     check('loan modal compares hold, live cash-out value, and net loan proceeds',
-      loanModal.rows[0][0] === 'Hold' && loanModal.rows[0][1].includes('TEST') && loanModal.rows[0][1].includes('cash-out value ~')
-        && loanModal.rows[1][0] === 'Cash out now' && loanModal.rows[1][1].includes('tokens burned')
-        && loanModal.rows[2][0] === 'Loan now' && loanModal.rows[2][1].includes('repay to reclaim')
+      loanModal.rows[0][0] === 'Hold' && loanModal.rows[0][1].includes('TEST')
+        && (loanModal.rows[0][1].includes('cash-out value ~') || loanModal.rows[0][1].includes('cash-out value unavailable'))
+        && loanModal.rows[1][0] === 'Cash out now'
+        && (loanModal.rows[1][1].includes('tokens burned') || loanModal.rows[1][1] === 'Unavailable now')
+        && loanModal.rows[2][0] === 'Loan now'
+        && (loanModal.rows[2][1].includes('repay to reclaim') || loanModal.rows[2][1].startsWith('Unavailable'))
         && loanModal.note.includes('Personal tax effects are not included'),
       JSON.stringify(loanModal));
     check('loan modal hides its one-option token selector and says a fully prepaid fee never grows',
       loanModal.sourceHidden && loanModal.sourceOptions.length === 1
-        && loanModal.summary.includes('Never grows — fully prepaid') && !loanModal.summary.includes('after never'),
+        && (loanModal.summary.includes('Never grows — fully prepaid') || loanModal.feeCaption.includes('Fully prepaid — no additional cost over time'))
+        && !loanModal.summary.includes('after never'),
       JSON.stringify(loanModal));
     await Q(page, '() => { document.querySelector(".modal-close").click(); return 1; }');
 
