@@ -17,6 +17,7 @@
     "test:ui": "node test/ui-smoke.mjs"
   },
   "dependencies": {
+    "pdfjs-dist": "^5.6.205",
     "viem": "^2.21.0"
   },
   "devDependencies": {

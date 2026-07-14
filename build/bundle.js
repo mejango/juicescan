@@ -51,6 +51,13 @@ async function build() {
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(DIST, asset));
   }
 
+  // pdf.js — lazy-loaded via dynamic import only when a shop item is a PDF. Same-origin copies keep the app
+  // self-contained on IPFS. Official minified npm builds; verify against the pinned pdfjs-dist version.
+  const PDFJS = path.join(__dirname, '..', 'node_modules', 'pdfjs-dist', 'build');
+  for (const asset of ['pdf.min.mjs', 'pdf.worker.min.mjs']) {
+    fs.copyFileSync(path.join(PDFJS, asset), path.join(DIST, asset));
+  }
+
   console.log(`Built dist/index.html (${(final.length / 1024).toFixed(0)} KB), dist/app.js (${(js.length / 1024).toFixed(0)} KB)`);
 }
 

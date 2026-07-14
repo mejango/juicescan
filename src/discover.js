@@ -834,36 +834,101 @@ function removeLightEdgeMatteFromImage(img) {
   probe.onerror = function () { img.dataset.edgeMatteState = 'done'; };
   probe.src = source;
 }
-// Real first-page PDF preview without a PDF library: fetch the bytes ourselves (with IPFS gateway fallback),
-// verify the %PDF- magic so a mislabeled HTML document can never enter a frame, and hand the browser's own PDF
-// viewer a typed blob in an <object>. The blob's application/pdf MIME is authoritative — the bytes can't be
-// reinterpreted as HTML — and script-in-a-PDF runs in the same viewer users already reach by clicking the badge
-// link. Browsers without an inline viewer (navigator.pdfViewerEnabled false) keep the badge; so do CORS-blocked
-// hosts and files that turn out not to be PDFs.
-function attachPdfPreview(container, media, mode) {
-  if (navigator.pdfViewerEnabled !== true) return;
+// Real PDF previews rendered with pdf.js (same engine Firefox ships): page one on a plain <canvas> in
+// cards/thumbs, a page-through pager in the detail view. Pure canvas — no plugin, no frame, works on mobile.
+// The library is lazy-loaded from same-origin copies (dist/pdf.min.mjs + worker) only when a PDF item exists;
+// the %PDF- magic check keeps mislabeled files out, and isEvalSupported:false disables pdf.js's font eval path.
+// Any failure (CORS, corrupt file, import error) leaves the PDF badge in place.
+var _pdfjsPromise = null;
+function loadPdfjs() {
+  if (!_pdfjsPromise) {
+    var moduleUrl = './pdf.min.mjs'; // non-literal arg keeps esbuild from trying to bundle the lazy module
+    _pdfjsPromise = import(moduleUrl).then(function (lib) {
+      lib.GlobalWorkerOptions.workerSrc = './pdf.worker.min.mjs';
+      return lib;
+    });
+  }
+  return _pdfjsPromise;
+}
+var _pdfDocCache = {};
+function loadPdfDocument(media) {
   var safe = safeMediaUrl(media);
-  if (!safe) return;
+  if (!safe) return Promise.reject(new Error('unsafe media url'));
+  if (_pdfDocCache[safe]) return _pdfDocCache[safe];
   var candidates = ipfsPath(safe) ? ipfsGatewayUrls(safe) : (httpUrlOnly(safe) ? [httpUrlOnly(safe)] : []);
   var i = 0;
   function next() {
-    if (i >= candidates.length) return;
-    fetch(candidates[i++]).then(function (r) {
+    if (i >= candidates.length) return Promise.reject(new Error('no reachable PDF source'));
+    return fetch(candidates[i++]).then(function (r) {
       if (!r.ok) throw new Error('http ' + r.status);
       return r.arrayBuffer();
-    }).then(function (buf) {
-      if (String.fromCharCode.apply(null, new Uint8Array(buf.slice(0, 5))) !== '%PDF-') return; // keep the badge
-      if (!container.isConnected) return;
-      var obj = document.createElement('object');
-      obj.type = 'application/pdf';
-      obj.className = 'tier-pdf-preview' + (mode === 'detail' ? ' tier-pdf-preview--detail' : '');
-      var params = mode === 'detail' ? '#view=FitH' : '#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
-      obj.data = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' })) + params;
-      container.innerHTML = '';
-      container.appendChild(obj);
     }).catch(next);
   }
-  next();
+  _pdfDocCache[safe] = next().then(function (buf) {
+    if (String.fromCharCode.apply(null, new Uint8Array(buf.slice(0, 5))) !== '%PDF-') throw new Error('not a PDF');
+    return loadPdfjs().then(function (lib) {
+      return lib.getDocument({ data: buf, isEvalSupported: false }).promise;
+    });
+  });
+  _pdfDocCache[safe].catch(function () { delete _pdfDocCache[safe]; });
+  return _pdfDocCache[safe];
+}
+function renderPdfPageCanvas(doc, pageNum, cssWidth) {
+  return doc.getPage(pageNum).then(function (page) {
+    var base = page.getViewport({ scale: 1 });
+    var scale = Math.max(0.2, (cssWidth * (window.devicePixelRatio || 1)) / base.width);
+    var viewport = page.getViewport({ scale: scale });
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+    return page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise.then(function () {
+      return canvas;
+    });
+  });
+}
+function attachPdfPreview(container, media, mode) {
+  loadPdfDocument(media).then(function (doc) {
+    if (!container.isConnected) return;
+    var cssWidth = Math.max(container.clientWidth || 0, mode === 'detail' ? 480 : 288);
+    if (mode !== 'detail') {
+      return renderPdfPageCanvas(doc, 1, cssWidth).then(function (canvas) {
+        if (!container.isConnected) return;
+        canvas.className = 'tier-pdf-canvas';
+        container.innerHTML = '';
+        container.appendChild(canvas);
+      });
+    }
+    // Detail view: page one plus a pager when the document has more pages.
+    var pageNum = 1, busy = false;
+    var wrap = el('div', 'tier-pdf-detail');
+    var canvasBox = el('div', 'tier-pdf-detail-page');
+    wrap.appendChild(canvasBox);
+    var pager = null, label = null, prev = null, nxt = null;
+    if (doc.numPages > 1) {
+      pager = el('div', 'tier-pdf-pager');
+      prev = el('button', 'rf-arrow'); prev.type = 'button'; prev.textContent = '←'; prev.title = 'Previous page';
+      label = el('span', 'tier-pdf-pager-label');
+      nxt = el('button', 'rf-arrow'); nxt.type = 'button'; nxt.textContent = '→'; nxt.title = 'Next page';
+      pager.appendChild(prev); pager.appendChild(label); pager.appendChild(nxt);
+      wrap.appendChild(pager);
+    }
+    function show(n) {
+      if (busy || n < 1 || n > doc.numPages) return;
+      busy = true;
+      renderPdfPageCanvas(doc, n, cssWidth).then(function (canvas) {
+        busy = false; pageNum = n;
+        canvas.className = 'tier-pdf-canvas tier-pdf-canvas--page';
+        canvasBox.innerHTML = ''; canvasBox.appendChild(canvas);
+        if (label) label.textContent = pageNum + ' / ' + doc.numPages;
+        if (prev) prev.disabled = pageNum <= 1;
+        if (nxt) nxt.disabled = pageNum >= doc.numPages;
+      }).catch(function () { busy = false; });
+    }
+    if (prev) prev.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); show(pageNum - 1); });
+    if (nxt) nxt.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); show(pageNum + 1); });
+    container.innerHTML = '';
+    container.appendChild(wrap);
+    show(1);
+  }).catch(function () {}); // keep the badge
 }
 
 // Render a tier's media (any file type) into `container`. mode 'full' (card) or 'thumb' (small preview).
