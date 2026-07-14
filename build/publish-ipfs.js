@@ -78,6 +78,22 @@ async function main() {
   console.log(`Pinata:  https://gateway.pinata.cloud/ipfs/${cid}/`);
   console.log(`ipfs.io: https://ipfs.io/ipfs/${cid}/`);
   console.log(`dweb:    https://${cid}.ipfs.dweb.link/`);
+
+  // Warm public gateways so the first visitor doesn't hit a cold CID (the 8MB app.js takes ~50s to
+  // retrieve cold; ~1s once a gateway has the blocks). Sequential per gateway, failures ignored.
+  console.log('\nWarming gateways…');
+  for (const base of [`https://ipfs.io/ipfs/${cid}`, `https://${cid}.ipfs.dweb.link`]) {
+    for (const f of files) {
+      const started = Date.now();
+      try {
+        const r = await fetch(`${base}/${f.rel}`, { signal: AbortSignal.timeout(90_000) });
+        await r.arrayBuffer();
+        console.log(`  ${base.includes('dweb') ? 'dweb   ' : 'ipfs.io'} ${f.rel} ${r.status} ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      } catch (e) {
+        console.log(`  ${base.includes('dweb') ? 'dweb   ' : 'ipfs.io'} ${f.rel} failed (${e.name}) — continuing`);
+      }
+    }
+  }
 }
 
 main().catch((e) => { console.error('\n❌ ' + e.message); process.exit(1); });
