@@ -103,15 +103,17 @@ async function main() {
   // records that Pinata can lag on announcing for hours — "No providers were found". Those clients also read
   // trustless gateways directly, so pulling the whole DAG as a CAR seeds the cache they actually use.
   // Two passes: cold sourcing regularly times out mid-DAG, and the second pass finishes from its cache.
-  for (let pass = 1; pass <= 2; pass++) {
+  for (let pass = 1; pass <= 5; pass++) {
     const started = Date.now();
     try {
       const r = await fetch(`https://trustless-gateway.link/ipfs/${cid}?format=car&dag-scope=all`, { signal: AbortSignal.timeout(300_000) });
       const bytes = (await r.arrayBuffer()).byteLength;
       console.log(`  trustless CAR pass ${pass}: ${r.status} ${(bytes / 1e6).toFixed(1)}MB ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      if (r.status === 200 && bytes > 1e6) break; // full DAG landed
     } catch (e) {
       console.log(`  trustless CAR pass ${pass} failed (${e.name}) — continuing`);
     }
+    await new Promise((res) => setTimeout(res, 5000));
   }
 }
 
