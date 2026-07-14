@@ -845,7 +845,7 @@ function renderTierMediaInto(container, m, alt, mode) {
   }
   if (kind === 'video') {
     var v = document.createElement('video'); setMediaSource(v, media); v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
-    if (mode === 'full') { v.controls = true; v.autoplay = true; } else { v.autoplay = true; }
+    if (mode === 'full' || mode === 'detail') { v.controls = true; v.autoplay = true; } else { v.autoplay = true; }
     container.appendChild(v); return true;
   }
   if (kind === 'audio') {
@@ -859,7 +859,7 @@ function renderTierMediaInto(container, m, alt, mode) {
     // An <iframe src> executes its target — a data:text/html or javascript: media URL would run script. Only
     // embed a real http(s) PDF; otherwise show a link badge (which itself sanitizes the href).
     var pdfSrc = httpUrlOnly(media);
-    if (mode === 'thumb' || !pdfSrc) { container.appendChild(tierMediaBadge('PDF', alt, media)); return true; }
+    if (mode !== 'detail' || !pdfSrc) { container.appendChild(tierMediaBadge('PDF', alt, media)); return true; }
     var f = document.createElement('iframe'); f.src = pdfSrc; f.className = 'tier-media-frame'; f.setAttribute('loading', 'lazy'); f.setAttribute('sandbox', ''); container.appendChild(f); return true;
   }
   if (kind === 'text') {
@@ -959,8 +959,8 @@ function renderShopSection(project, shop, cart) {
     clientFor(project.chainId).readContract({ address: s.hook, abi: TIER721_PAY_CREDITS_ABI, functionName: 'payCreditsOf', args: [acct] }).then(toBigInt).then(function (credit) {
       if (!credit || credit <= 0n || !wrap.isConnected || card.querySelector('.shop-credits')) return;
       var row = el('div', 'about-link-row shop-credits');
-      row.title = 'Overpayment becomes NFT shop credit and is applied automatically to eligible items at checkout.';
-      var k = el('span', 'about-link-key'); k.textContent = 'Your NFT shop credit'; row.appendChild(k);
+      row.title = 'Overpayment becomes shop credit and is applied automatically to eligible items at checkout.';
+      var k = el('span', 'about-link-key'); k.textContent = 'Your shop credit'; row.appendChild(k);
       var v = el('span', 'token-line-val'); v.textContent = formatShopPrice(s, credit, project.chainId); row.appendChild(v);
       var note = el('span', 'shop-credits-note'); note.textContent = 'Applied automatically at checkout'; row.appendChild(note);
       card.insertBefore(row, body);
@@ -1875,7 +1875,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   resolveTierMedia(shop, tier, project.chainId).then(function (m) {
     if (m.name) nameEl.textContent = m.name;
     if (m.description) { descEl.textContent = htmlToText(m.description); descEl.style.display = ''; }
-    if (m.image || m.animationUrl) renderTierMediaInto(art, m, m.name || ('Item ' + tier.id), 'full');
+    if (m.image || m.animationUrl) renderTierMediaInto(art, m, m.name || ('Item ' + tier.id), 'detail');
   }).catch(function () {});
 
   var priceRow = el('div', 'tier-detail-price');
@@ -6180,7 +6180,7 @@ function renderPayCard(project, cart) {
     var metadata = '0x';
     if (tierIds.length && state.shop) {
       if (state.nftRoutesLoading) { status.textContent = 'Payment currencies are still being checked…'; return; }
-      if (state.nftCreditsLoading) { status.textContent = 'Your NFT shop credit is still loading…'; return; }
+      if (state.nftCreditsLoading) { status.textContent = 'Your shop credit is still loading…'; return; }
       var nftRoute = nftRouteForToken(state.token);
       if (!nftRoute || !nftRoute.supported) {
         status.textContent = 'This payment token cannot be converted into the shop’s pricing currency. Choose a supported currency.';
