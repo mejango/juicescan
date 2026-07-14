@@ -13194,16 +13194,14 @@ function renderPriceChart(project, stages) {
     if (amm) setChipVal(ammChip, formatPrice(amm), liq ? 'on ' + liq + ' liq' : '');
     else ammChip._val.textContent = swaps.count ? '—' : 'No liquidity yet';
     if (cashout) setChipVal(cashChip, formatPrice(cashout)); else cashChip._val.textContent = '—';
-    // Show the floor's asymptote in the legend and explain the mechanics in plain equations on hover.
+    // The floor's asymptote lives in the hover tip and the dashed chart line — not as a legend row.
     var lastMin = 0;
     for (var hi = history.length - 1; hi >= 0; hi--) { if (history[hi].min > 0) { lastMin = history[hi].min; break; } }
-    if (lastMin > 0) {
-      cashChip._liq.textContent = 'min ' + formatPrice(lastMin) + ' ' + pairUnit;
-      cashChip._liq.style.display = '';
-    }
     if (cashout) {
       cashChip.setAttribute('data-tip', 'Live quote for cashing out 1 ' + sym + ': (balance ÷ supply) × ((1 − tax) + tax × your share of supply). '
-        + 'As supply grows it approaches the dashed minimum, (1 − tax) × balance ÷ supply — payments can only raise that minimum; only payouts lower it.');
+        + 'As supply grows it approaches the dashed minimum'
+        + (lastMin > 0 ? ' — currently ' + formatPrice(lastMin) + ' ' + pairUnit : '')
+        + ', (1 − tax) × balance ÷ supply. Payments can only raise that minimum; only payouts lower it.');
     }
     // (The liquidity-by-price depth chart lives in the Owners → AMM section, not here.)
   });
