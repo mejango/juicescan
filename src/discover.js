@@ -13488,9 +13488,10 @@ function visibleSeries(series, t0, t1) {
     if (point.timestamp > t1) break;
     out.push(point);
   }
-  if (previous) out.unshift({ timestamp: t0, value: previous.value });
+  // Synthetic edge points carry `min` too so companion lines (the cash out minimum) span the full range.
+  if (previous) out.unshift({ timestamp: t0, value: previous.value, min: previous.min });
   if (out.length && out[out.length - 1].timestamp < t1) {
-    out.push({ timestamp: t1, value: out[out.length - 1].value });
+    out.push({ timestamp: t1, value: out[out.length - 1].value, min: out[out.length - 1].min });
   }
   return out;
 }
