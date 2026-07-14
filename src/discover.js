@@ -10498,9 +10498,11 @@ function renderBackOfficeSection(project) {
   // (not the ruleset-flag owner powers, which it doesn't hold) — show those actual powers, read-only. Custom:
   // the owner exercises the ruleset-gated owner powers (Powers card) AND can manage operators (Permissions card).
   if (project.isRevnet) {
+    section.appendChild(renderEditsCard(project));
     section.appendChild(renderBuybackRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
   } else {
+    section.appendChild(renderEditsCard(project));
     section.appendChild(renderPowersCard(project));
     section.appendChild(renderBuybackRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
@@ -11044,6 +11046,31 @@ var OWNER_POWERS = [
   { key: 'allowTerminalMigration', label: 'Migrate terminal', desc: 'Move the project’s funds to a new terminal version.', actionLabel: 'Migrate balance', danger: 'Dangerous: this moves the project’s funds to another terminal. A wrong destination can lose the funds.', open: function (p) { openPowerModal(p, POWER_MIGRATE); } },
   { key: 'allowSetCustomToken', label: 'Set custom token', desc: 'Replace the project token with a custom ERC-20.', actionLabel: 'Set token', danger: 'Irreversible: replacing the project token is permanent and affects every holder.', open: function (p) { openPowerModal(p, POWER_SET_TOKEN); } },
 ];
+
+// Everyday owner/operator edits that live on other tabs (About card, Rulesets splits, Tokens card) —
+// mirrored here because this tab is where people look for them. Each row opens the exact same modal as
+// its home surface; the permission gate lives inside the modal per the house pattern.
+function renderEditsCard(project) {
+  var card = el('div', 'detail-card');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Edits'; card.appendChild(title);
+  var rows = [
+    { label: 'Set project metadata', desc: 'Update the project’s name, logo, description, links, and tags.', cta: 'Edit project', open: function (p) { openEditProjectModal(p); } },
+    { label: 'Set token metadata', desc: 'Set the project token’s name and symbol (deploys the ERC-20 if the project still uses credits).', cta: 'Edit token', open: function (p) { openEditTokenModal(p); } },
+    { label: 'Set splits', desc: 'Edit the reserved token recipients. Payout splits are edited per token from the Rulesets tab.', cta: 'Edit reserved splits', open: function (p) { openEditSplitsModal(p); } },
+  ];
+  rows.forEach(function (r) {
+    var row = el('div', 'powers-row');
+    var head = el('div', 'powers-head');
+    var lab = el('span', 'powers-label'); lab.textContent = r.label; head.appendChild(lab);
+    row.appendChild(head);
+    var desc = el('div', 'powers-desc'); desc.textContent = r.desc; row.appendChild(desc);
+    var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = r.cta;
+    act.addEventListener('click', function (e) { e.preventDefault(); r.open(project); });
+    row.appendChild(act);
+    card.appendChild(row);
+  });
+  return card;
+}
 
 function renderPowersCard(project) {
   var card = el('div', 'detail-card');
