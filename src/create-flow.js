@@ -826,7 +826,12 @@ function applyAccountingDefaults(state) {
   else cur = accepts.indexOf('usdc') !== -1 ? 2 : 1;
   state.storePricingCurrency = cur;
   if (state.projectType === 'revnet') state.revBaseCurrency = cur;
-  else (state.stages || []).forEach(function (s) { s.baseCurrency = cur; s.payoutCurrency = cur; s.surplusAllowanceCurrency = cur; });
+  else (state.stages || []).forEach(function (s) {
+    s.baseCurrency = cur; s.payoutCurrency = cur; s.surplusAllowanceCurrency = cur;
+    // A custom token has no default price feed, so keep the owner's escape hatch open: pricing in ETH/USD
+    // later requires adding a feed, which the ruleset must allow.
+    if (accepts[0] === 'custom') s.allowAddPriceFeed = true;
+  });
 }
 // True when the base currency is forced (USDC accepted → USD, or a custom token) and the user must not pick ETH.
 function usdcAccounting(state) { return !customAccounting(state) && (state.accepts || []).indexOf('usdc') !== -1; }
@@ -964,7 +969,7 @@ function customTokenBlock(state, render) {
   wrap.appendChild(input);
   wrap.appendChild(status);
   var note = el('div', 'create-hint');
-  note.textContent = 'Must be deployed at the SAME address on every selected chain. Every ruleset, payout, and shop currency is denominated in ' + (ct.symbol || 'this token') + ' (no price feed).';
+  note.textContent = 'Must be deployed at the SAME address on every selected chain. Every ruleset, payout, and shop price is denominated in ' + (ct.symbol || 'this token') + ' itself, so issuing tokens and paying need no price feed. Pricing in ETH or USD instead requires the owner to add a ' + (ct.symbol || 'token') + ' price feed after deploy (Owner tab → Add price feed) — the “Allow adding price feeds” rule is on by default for custom-token projects.';
   wrap.appendChild(note);
   renderStatus();
   return wrap;
