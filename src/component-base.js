@@ -1193,7 +1193,7 @@ export function executeTransaction(opts) {
       // Most common real failure for destination-chain claims and any tx on a chain the wallet isn't funded on.
       cbs.onError('Not enough ' + chainName + ' ETH to cover gas. Fund your wallet on ' + chainName + ', then try again.');
     } else {
-      cbs.onError(msg.length > 150 ? msg.slice(0, 150) + '...' : msg);
+      cbs.onError(msg.length > 150 ? msg.slice(0, 150) + '…' : msg);
     }
   });
   }

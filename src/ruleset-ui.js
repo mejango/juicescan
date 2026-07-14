@@ -46,7 +46,7 @@ export function renderRulesetFieldset(rs, index, state, updateUI, opts) {
   rsFieldset.appendChild(collapsibleSection('\u25B8 Splits', '\u25BE Splits', rs, 'splitsExpanded', updateUI, function() {
     return renderSplitGroupsEditor(rs, updateUI);
   }));
-  rsFieldset.appendChild(collapsibleSection('\u25B8 Fund Access Limits', '\u25BE Fund Access Limits', rs, 'fundAccessExpanded', updateUI, function() {
+  rsFieldset.appendChild(collapsibleSection('\u25B8 Fund access limits', '\u25BE Fund access limits', rs, 'fundAccessExpanded', updateUI, function() {
     return renderFundAccessEditor(rs, updateUI);
   }));
   rsFieldset.appendChild(collapsibleSection('\u25B8 Flags', '\u25BE Flags', rs, 'flagsExpanded', updateUI, function() {
@@ -125,7 +125,7 @@ function renderSplitGroupsEditor(rs, updateUI) {
           if (group.splits.length > 1) {
             var removeSplitBtn = el('button', 'ruleset-remove');
             removeSplitBtn.type = 'button';
-            removeSplitBtn.textContent = 'x';
+            removeSplitBtn.textContent = '✕';
             removeSplitBtn.addEventListener('click', function() {
               group.splits.splice(sIdx, 1);
               updateUI();
@@ -188,10 +188,10 @@ function renderFundAccessEditor(rs, updateUI) {
       groupEl.appendChild(addressRow('terminal', group, 'terminal'));
       groupEl.appendChild(addressRow('token', group, 'token'));
 
-      appendFundAccessSection(groupEl, 'Payout Limits', group.payoutLimits, 'payout limit', function() {
+      appendFundAccessSection(groupEl, 'Payout limits', group.payoutLimits, 'payout limit', function() {
         group.payoutLimits.push(createDefaultPayoutLimit());
       }, updateUI, 'uint224 fixed-point in terminal token decimals (e.g. 18 for ETH, 6 for USDC; use max for unlimited)');
-      appendFundAccessSection(groupEl, 'Surplus Allowances', group.surplusAllowances, 'surplus allowance', function() {
+      appendFundAccessSection(groupEl, 'Surplus allowances', group.surplusAllowances, 'surplus allowance', function() {
         group.surplusAllowances.push(createDefaultSurplusAllowance());
       }, updateUI, 'uint224 fixed-point in terminal token decimals (e.g. 18 for ETH, 6 for USDC)');
       wrap.appendChild(groupEl);
@@ -227,7 +227,7 @@ function appendFundAccessSection(groupEl, title, rows, singular, addRow, updateU
       if (rows.length > 1) {
         var removeBtn = el('button', 'ruleset-remove');
         removeBtn.type = 'button';
-        removeBtn.textContent = 'x';
+        removeBtn.textContent = '✕';
         removeBtn.addEventListener('click', function() {
           rows.splice(idx, 1);
           updateUI();

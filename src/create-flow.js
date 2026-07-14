@@ -668,13 +668,13 @@ function renderHeader(state, close, onImport, onExport) {
 
   // .jb import/export — save the in-progress draft to a file, or load one (e.g. to share for review).
   var actions = el('div', 'create-head-actions');
-  var imp = el('button', 'create-io-btn'); imp.textContent = 'import';
+  var imp = el('button', 'create-io-btn'); imp.textContent = 'Import';
   imp.title = 'Load a saved or shared project draft (.jb)';
   imp.disabled = !!state.deploying;
   var fileIn = el('input'); fileIn.type = 'file'; fileIn.accept = '.jb,application/json'; fileIn.style.display = 'none';
   fileIn.addEventListener('change', function () { var f = fileIn.files && fileIn.files[0]; if (f && onImport) onImport(f); fileIn.value = ''; });
   imp.addEventListener('click', function () { if (!state.deploying) fileIn.click(); });
-  var exp = el('button', 'create-io-btn'); exp.textContent = 'export';
+  var exp = el('button', 'create-io-btn'); exp.textContent = 'Export';
   exp.title = 'Download this draft as a .jb file to save or share for review';
   exp.addEventListener('click', function () { if (onExport) onExport(); });
   actions.appendChild(imp); actions.appendChild(exp); actions.appendChild(fileIn);
@@ -2554,7 +2554,7 @@ function itemMediaPicker(state, nft, render) {
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
     if (!f) return;
-    if (!hasPinata()) { alert('Add a Pinata JWT in the Collection section to upload media.'); return; }
+    if (!hasPinata()) { alert('Add a Pinata JWT in the Store config section to upload media.'); return; }
     if (f.size > ITEM_MAX_MEDIA_BYTES) { alert('That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
     nft._mediaBusy = true; render();
     pinFile(f, nft.name || f.name).then(function (uri) { nft.imageUri = uri; nft.mediaType = (f.type || '').toLowerCase(); nft._mediaBusy = false; render(); })
@@ -2791,7 +2791,7 @@ function uncoveredPairs(state) {
 function renderDeploy(state, render) {
   var isRev = state.projectType === 'revnet';
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Review & Deploy', isRev ? 'Review, then deploy your revnet.' : 'Review your project, then launch.'));
+  wrap.appendChild(stepHead('Review & deploy', isRev ? 'Review, then deploy your revnet.' : 'Review your project, then launch.'));
 
   // Review summary
   wrap.appendChild(reviewSummary(state));
@@ -3438,7 +3438,7 @@ async function runDeploy(state, owner) {
       await simulateTransaction({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, account: signer });
       push('Simulation passed on ' + chainName(p0.chainId), 'ok');
     } catch (e) {
-      throw new Error('Couldn’t simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
+      throw new Error('Could not simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
     }
     if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the launch transaction again.');
     push('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
