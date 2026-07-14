@@ -9,7 +9,7 @@ export function tierDiscountPercentFromPct(value) {
   return Math.round(pct * 2);
 }
 
-export function clampTierInitialSupply(value, unlimited) {
+function clampTierInitialSupply(value, unlimited) {
   if (unlimited) return TIER_UNLIMITED_SUPPLY;
   var raw = String(value == null ? '' : value).trim();
   if (!/^\d+$/.test(raw)) throw new Error('Item supply must be a whole number.');

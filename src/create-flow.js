@@ -1043,7 +1043,7 @@ function textArea(value, placeholder, onInput) {
 // desc may be a string or a function(checked) → string, so the subtext reflects the toggle's state and
 // updates in place when toggled.
 // State-reflective subtext: prefix "On:"/"Off:" so the sentence reads as the current checkbox state.
-export function dz(on, off) { return function (checked) { return checked ? 'On: ' + on : 'Off: ' + off; }; }
+function dz(on, off) { return function (checked) { return checked ? 'On: ' + on : 'Off: ' + off; }; }
 export function toggleRow(label, desc, checked, onChange) {
   var w = el('div', 'create-toggle-row');
   var lbl = el('label', 'create-toggle');
@@ -1819,7 +1819,7 @@ function stageTiming(stage, idx, isLast, render) {
 
 // ETH/USD currency <select> (JBCurrencyIds 1/2). `onChange` receives the numeric id; `cls` overrides the
 // default compact inline style. Consolidates the identical option-loop used across the wizard.
-export function currencySelect(current, onChange, cls, lockedSym) {
+function currencySelect(current, onChange, cls, lockedSym) {
   var sel = el('select', cls || 'create-amount-cur');
   // A custom accounting token forces every currency to itself (no ETH/USD choice, no price feed) — show it
   // as a single locked option.
@@ -2263,7 +2263,7 @@ function anyTokenCashOut(state) { return (state.stages || []).some(function (s) 
 
 // Cash-out access for token holders — they reclaim a share of the project's surplus by burning tokens.
 // Lives next to the owner's surplus allowance (both draw from surplus). Tax rate shapes the bonding curve.
-export function cashOutSection(state, stage, render) {
+function cashOutSection(state, stage, render) {
   var t = stage;
   var wrap = el('div', '');
   var label = surplusTokenLabel(state);

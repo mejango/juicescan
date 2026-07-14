@@ -111,9 +111,15 @@ export function truncAddr(addr) {
   return addr.slice(0, 6) + '...' + addr.slice(-4);
 }
 
+export function tokenByAddress(tokens, address) {
+  var wanted = String(address || '').toLowerCase();
+  if (!wanted) return null;
+  return (tokens || []).filter(function (token) { return token.address && token.address.toLowerCase() === wanted; })[0] || null;
+}
+
 // Pretty-print a tx payload for the confirm/decode views: BigInt → decimal string, then unquote
 // JSON keys ({ "to": … } → { to: … }) so it reads like a config rather than wire JSON.
-export function formatPayloadJson(obj) {
+function formatPayloadJson(obj) {
   return JSON.stringify(obj, function (k, v) { return typeof v === 'bigint' ? v.toString() : v; }, 2)
     .replace(/^(\s*)"([A-Za-z_][\w]*)":/gm, '$1$2:');
 }
@@ -447,7 +453,7 @@ export function createWalletButton(label, onClick, permissionNote) {
 
 // Build a copy-pasteable prompt the user can feed to an LLM to sanity-check a transaction before signing.
 // Includes the exact payload, block-explorer link(s) to the target contract(s), and a safety checklist.
-export function buildTxAuditPrompt(payload) {
+function buildTxAuditPrompt(payload) {
   var lines = [];
   lines.push("I'm about to sign a blockchain transaction in the Juicebox **V6** web app (the `nana` V6 / revnet V6 protocol release — NOT Juicebox v1/v2/v3/v4/v5). Act as a careful security reviewer: independently verify the transaction, confirm it matches my intent, and only then give a go/no-go. Assume I could be the target of a scam or a spoofed UI — trust the on-chain data and the V6 source code over anything the page says. When you look up contract source, use ONLY the V6 repositories (names ending in `-v6`); same-named repos without that suffix are older protocol versions and will mislead you.");
   lines.push('');
@@ -600,7 +606,7 @@ function auditLinksFromPayload(payload) {
 }
 
 // Append a subtle "[copy prompt to verify with your LLM]" link that copies buildTxAuditPrompt(payload).
-export function appendAuditPromptLink(container, payload) {
+function appendAuditPromptLink(container, payload) {
   var DEFAULT = '[copy tx audit prompt]';
   var wrap = el('div', 'tx-audit-prompt');
   var link = el('a', 'tx-audit-link'); link.href = '#'; link.textContent = DEFAULT;
@@ -1363,7 +1369,7 @@ export function promptLinkButton(buildText) {
 }
 
 // Component-specific link — names the exact code file + contract function via COMPONENT_SPECS.
-export function componentPromptLink(title, prefix) {
+function componentPromptLink(title, prefix) {
   return promptLinkButton(function () { return componentReproPrompt(title, prefix); });
 }
 

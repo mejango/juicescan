@@ -902,14 +902,6 @@ a:hover { color: var(--c-teal); }
   border: 1px solid var(--c-orange-light);
 }
 
-/* Validation errors */
-.validation-error {
-  color: var(--error);
-  font-size: 10px;
-  display: block;
-  margin-top: 2px;
-}
-
 /* Footer */
 footer {
   text-align: center;
@@ -984,13 +976,8 @@ input[type="checkbox"].field {
 .component-wrapper .pay-btn {
   border-radius: 0 var(--c-radius, 3px) var(--c-radius, 3px) 0;
 }
-.component-wrapper .amount-with-token .amount-input {
-  border-radius: var(--c-radius, 3px) 0 0 var(--c-radius, 3px);
-}
-
 /* Cascade max-width to inner fields */
-.component-wrapper .field,
-.component-wrapper .amount-with-token {
+.component-wrapper .field {
   max-width: calc(var(--c-max-width, 520px) - var(--c-padding, 14px) * 2);
 }
 
@@ -1008,13 +995,6 @@ input[type="checkbox"].field {
 
 .component-wrapper .field.payable-field {
   border-color: var(--write);
-}
-
-.component-wrapper .amount-with-token .amount-input {
-  background: var(--c-input-bg, var(--input-bg));
-  color: var(--c-text, var(--text));
-  border-color: var(--write);
-  font-size: var(--c-body-size, 12px);
 }
 
 /* Cascade font sizes by role */
@@ -1333,20 +1313,7 @@ input[type="checkbox"].field {
 }
 
 
-/* Amount field with inline token dropdown */
-.amount-with-token {
-  position: relative;
-  display: flex;
-  align-items: center;
-  max-width: 320px;
-}
-
-.amount-with-token .amount-input {
-  flex: 1;
-  padding-right: 90px;
-  max-width: none;
-}
-
+/* Inline token dropdown */
 .token-dropdown {
   position: absolute;
   right: 1px;
@@ -1379,13 +1346,7 @@ input[type="checkbox"].field {
   border-left-color: var(--focus-ring);
 }
 
-/* Chain header with inline network dropdown */
-.chain-header-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-
+/* Inline network dropdown */
 .network-dropdown {
   border: none;
   background: none;
@@ -3004,20 +2965,11 @@ input[type="checkbox"].field {
 .cashout-success-extra { font-size: 13px; color: var(--text); margin-top: 2px; }
 .cashout-success-tx { margin-top: 12px; font-size: 12px; }
 .ops-inrow { display: flex; align-items: stretch; gap: 0; }
-.ops-select {
-  font-family: inherit; font-size: 12px; padding: 8px 24px 8px 10px; border: 2px solid var(--write); border-right: none;
-  appearance: none; -webkit-appearance: none;
-  background:
-    linear-gradient(45deg, transparent 50%, var(--muted-2) 50%) calc(100% - 14px) 55% / 6px 6px no-repeat,
-    linear-gradient(135deg, var(--muted-2) 50%, transparent 50%) calc(100% - 8px) 55% / 6px 6px no-repeat,
-    var(--card-bg);
-  color: var(--text); max-width: 45%;
-}
 .ops-amount {
   flex: 1; min-width: 0; font-family: inherit; font-size: 16px; font-weight: bold; padding: 8px 10px;
   border: 2px solid var(--write); border-right: none; background: var(--card-bg); color: var(--text);
 }
-.ops-amount:focus, .ops-select:focus { outline: none; }
+.ops-amount:focus { outline: none; }
 .ops-amount::-webkit-outer-spin-button, .ops-amount::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .ops-amount[type=number] { -moz-appearance: textfield; }
 .ops-unit {
@@ -3035,16 +2987,6 @@ input[type="checkbox"].field {
 .ops-field .ops-unit { border: none; background: transparent; padding: 0 12px 0 4px; }
 .ops-field .lp-max { border: none; }
 .ops-chainrow { margin-bottom: 8px; }
-.ops-chainrow .ops-select {
-  font-family: inherit; font-size: 13px; font-weight: bold; cursor: pointer;
-  border: none; background: transparent; color: var(--text); opacity: 0.85;
-  max-width: 100%; width: auto; padding: 0 15px 0 0;
-  -webkit-appearance: none; appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='6'%3E%3Cpath d='M1 1l3.5 3.5L8 1' fill='none' stroke='%237d6858' stroke-width='1.4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right center;
-}
-.ops-chainrow .ops-select:hover { opacity: 1; }
-.ops-chainrow .ops-select:focus { outline: none; }
 /* Min/Max range row: two bordered fields with a plain "to" between them (not its own box). */
 .ops-rangerow { display: flex; align-items: stretch; gap: 8px; }
 .ops-between { display: flex; align-items: center; padding: 0 4px; font-size: 12px; color: var(--muted-2); }
@@ -3127,7 +3069,6 @@ input[type="checkbox"].field {
 
 .bridge-types { display: flex; flex-wrap: wrap; gap: 6px; }
 .ops-bridge-row { margin-top: 10px; }
-.ops-bridge-row .ops-select { width: 100%; border-right: 2px solid var(--write); }
 .ops-bridge-note { margin-top: 6px; font-size: 11px; color: var(--muted-2); line-height: 1.6; }
 .ops-bridge-note a { color: var(--c-teal); }
 .move-backing { color: var(--text); }
@@ -4009,28 +3950,6 @@ input[type="checkbox"].field {
   text-align: right;
 }
 
-/* Splits rows */
-.detail-split-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 4px 0;
-  border-bottom: 1px solid var(--depth-bg-1);
-  font-size: 11px;
-}
-
-.detail-split-row:last-child {
-  border-bottom: none;
-}
-
-.detail-split-name {
-  color: var(--text);
-}
-
-.detail-split-percent {
-  color: var(--muted);
-  font-weight: bold;
-}
-
 /* Payouts table: percent · recipient · current amount. */
 /* Funds bottom: Payouts | Surplus allowance side by side, with a bg-color vertical divider between. */
 .funds-bottom-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); column-gap: 0; row-gap: 18px; align-items: start; }
@@ -4329,11 +4248,6 @@ input[type="checkbox"].field {
   gap: 10px;
   flex-wrap: wrap;
 }
-.bendystraw-key-input {
-  flex: 1;
-  max-width: 360px;
-}
-
 /* Data row content sits beneath .fn-summary on expand. The ACTIONS form
    stacks 12px fn-inputs padding + 16px input-group margin + 8px+12px fn-actions
    padding, which adds up to ~36px of dead space around the QUERY button.
@@ -4479,8 +4393,6 @@ input[type="checkbox"].field {
 .detail-address { white-space: nowrap; }
 
 /* Revnet stage countdown + auto-issuance controls */
-.detail-autoissue-row { display: flex; gap: 8px; margin: 8px 0 4px; }
-.detail-autoissue-input { flex: 1; min-width: 0; }
 .detail-check-btn {
   font-size: 11px; font-weight: bold; letter-spacing: 0.5px; padding: 3px 12px; cursor: pointer;
   color: var(--text); background: var(--pill-bg);
@@ -4488,7 +4400,6 @@ input[type="checkbox"].field {
 }
 .detail-check-btn:hover { border-color: var(--c-teal); color: var(--c-teal); }
 .detail-check-btn:disabled { opacity: 0.6; cursor: default; }
-.detail-autoissue-results { margin-top: 4px; font-size: 12px; }
 .autoissue-tablewrap {
   border: 1px solid var(--c-orange-light);
   container-type: inline-size;
@@ -5597,7 +5508,6 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .create-inline-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
 /* Payout amount row: match the currency dropdown's height to the amount field; space the two lines. */
 .create-split-row .create-amount-cur { border-left: 1px solid var(--c-black-light); padding: 6px 26px 6px 8px; font-size: 12px; }
-.payout-line2 { margin-top: 8px; }
 /* Inline reserved-split rows: "Split [%] to [recipient]" */
 /* Gap BETWEEN splits — larger than the ~4px line-break gap within a single split, so each split reads
    as its own block. */

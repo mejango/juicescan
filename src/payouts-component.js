@@ -7,6 +7,7 @@ import {
   createWalletButton, discoverChains, selectChain, firstChainForNetwork,
   executeTransaction, renderError, getAddress,
   getChainTokens, parseAmount, parseHashDefaults, createPublicClientForChain, getAccount, truncAddr,
+  tokenByAddress,
 } from './component-base.js';
 
 export var sendPayoutsAbi = [{
@@ -35,7 +36,7 @@ export function tokenCurrencyId(tokenAddr) {
   try { return BigInt(tokenAddr) & 0xFFFFFFFFn; } catch (_) { return null; }
 }
 
-export function parsePayoutCurrencyId(value) {
+function parsePayoutCurrencyId(value) {
   try {
     if (value == null || String(value).trim() === '') return null;
     var currency = BigInt(String(value).trim());
@@ -111,15 +112,6 @@ function initialCurrencyMode(defaultCurrency) {
   if (defaultCurrency === '2' || defaultCurrency === 'usd') return 'usd';
   if (defaultCurrency && defaultCurrency !== 'token') return 'custom';
   return 'token';
-}
-
-function tokenByAddress(tokens, addr) {
-  if (!addr) return null;
-  var lower = String(addr).toLowerCase();
-  for (var i = 0; i < tokens.length; i++) {
-    if (tokens[i].address && tokens[i].address.toLowerCase() === lower) return tokens[i];
-  }
-  return null;
 }
 
 export function renderPayoutsComponent() {

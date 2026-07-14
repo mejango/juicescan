@@ -7,7 +7,7 @@ import {
   createBeneficiaryInput, createWalletButton, discoverChains, selectChain,
   firstChainForNetwork, executeTransaction, executeRead, renderError, getAddress,
   getAccount, getChainTokens, parseAmount, formatAmount, parseHashDefaults,
-  getBeneficiaryAddress, createPublicClientForChain, truncAddr,
+  getBeneficiaryAddress, createPublicClientForChain, truncAddr, tokenByAddress,
 } from './component-base.js';
 
 export var cashOutAbi = [{
@@ -99,11 +99,6 @@ export function renderCashOutComponent() {
   }, { permissionNote: 'Token holder burns their own tokens to reclaim a share of the project\'s funds.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
-
-  function tokenByAddress(tokens, address) {
-    var wanted = String(address || '').toLowerCase();
-    return (tokens || []).filter(function (token) { return token.address && token.address.toLowerCase() === wanted; })[0] || null;
-  }
 
   function loadReclaimTokens(chainId) {
     var term = getAddress('JBMultiTerminal', chainId);

@@ -266,7 +266,7 @@ export function svg(value) {
 }
 
 // Permissions are an array of permission IDs. Render compactly.
-export function permissionList(value) {
+function permissionList(value) {
   const span = document.createElement('span');
   if (!Array.isArray(value) || value.length === 0) { span.textContent = '—'; return span; }
   span.textContent = '[' + value.join(', ') + ']';

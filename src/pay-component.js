@@ -39,7 +39,7 @@ var accountingContextsAbi = [{
 // minReturnedTokens is a 1% slippage floor off positive previewed output. A verified zero quote is valid for a
 // zero-issuance project and deliberately encodes a zero floor; a missing/unavailable quote is still rejected.
 export function buildPayArgs(o) {
-  var isNative = String(o.token).toLowerCase() === NATIVE_TOKEN.toLowerCase();
+  var isNative = sameAddress(String(o.token), NATIVE_TOKEN);
   var pv = o.route && o.route.preview;
   if (!pv || pv.unavailable || pv.received == null) throw new Error('A live pay preview is required.');
   var quoted = BigInt(pv.received);
@@ -163,15 +163,15 @@ export function renderPayComponent() {
       if (gen !== tokenGeneration || state.selectedChain !== chainId || !contexts || !contexts.length) return;
       var catalog = getChainTokens(chainId);
       var tokens = contexts.map(function (context) {
-        var known = catalog.filter(function (token) { return token.address.toLowerCase() === context.token.toLowerCase(); })[0];
+        var known = catalog.filter(function (token) { return sameAddress(token.address, context.token); })[0];
         return { address: context.token, decimals: Number(context.decimals), symbol: known ? known.symbol : truncAddr(context.token) };
       });
       catalog.forEach(function (token) {
-        if (!tokens.some(function (candidate) { return candidate.address.toLowerCase() === token.address.toLowerCase(); })) tokens.push(token);
+        if (!tokens.some(function (candidate) { return sameAddress(candidate.address, token.address); })) tokens.push(token);
       });
       var wanted = state._defaultToken || (state.selectedToken && state.selectedToken.address);
       state.tokens = tokens;
-      state.selectedToken = tokens.filter(function (token) { return wanted && token.address.toLowerCase() === wanted.toLowerCase(); })[0] || tokens[0] || null;
+      state.selectedToken = tokens.filter(function (token) { return sameAddress(token.address, wanted); })[0] || tokens[0] || null;
       state.decimals = state.selectedToken ? state.selectedToken.decimals : 18;
       state._defaultToken = null;
       state.preview = null;
@@ -235,7 +235,7 @@ export function renderPayComponent() {
         var opt = document.createElement('option');
         opt.value = state.tokens[t].address;
         opt.textContent = state.tokens[t].symbol;
-        if (state.selectedToken && state.selectedToken.address.toLowerCase() === state.tokens[t].address.toLowerCase()) {
+        if (state.selectedToken && sameAddress(state.selectedToken.address, state.tokens[t].address)) {
           opt.selected = true;
         }
         tokenSelect.appendChild(opt);
@@ -454,7 +454,7 @@ export function renderPayComponent() {
       var preferredToken = null;
       if (state._defaultToken) {
         for (var ti = 0; ti < state.tokens.length; ti++) {
-          if (state.tokens[ti].address.toLowerCase() === state._defaultToken.toLowerCase()) {
+          if (sameAddress(state.tokens[ti].address, state._defaultToken)) {
             preferredToken = state.tokens[ti];
             break;
           }
@@ -606,7 +606,7 @@ export function renderPayComponent() {
     if (!client) { state._decimalsUnknown = true; updateUI(); return; }
     client.readContract({ address: tokenAddr, abi: erc20DecimalsAbi, functionName: 'decimals', args: [] })
       .then(function(result) {
-        if (state.selectedToken && state.selectedToken.address.toLowerCase() === tokenAddr.toLowerCase()) {
+        if (state.selectedToken && sameAddress(state.selectedToken.address, tokenAddr)) {
           state.decimals = Number(result);
           state.selectedToken.decimals = Number(result);
           state._decimalsUnknown = false;

@@ -22,7 +22,7 @@ var UPLOAD_URL = 'https://uploads.pinata.cloud/v3/files';
 // No baked-in JWT in the public bundle (see header). Defined empty by esbuild; kept guarded for safety.
 var BUILTIN_JWT = (typeof __PINATA_JWT__ === 'string' && __PINATA_JWT__) ? __PINATA_JWT__ : '';
 
-export function getPinataJwt() {
+function getPinataJwt() {
   try { var v = localStorage.getItem(JWT_KEY); if (v) return v; } catch (_) { /* private mode — fall through */ }
   return BUILTIN_JWT;
 }

@@ -218,7 +218,7 @@ export function renderUintInput(param, context) {
   return group;
 }
 
-export function renderAddressInput(param, context) {
+function renderAddressInput(param, context) {
   var input = document.createElement('input');
   input.type = 'text';
   input.placeholder = '0x...';
@@ -314,7 +314,7 @@ export function renderAddressInput(param, context) {
   return group;
 }
 
-export function renderBoolInput(param) {
+function renderBoolInput(param) {
   var input = document.createElement('input');
   input.type = 'checkbox';
   var group = makeGroup(param, input);
@@ -346,7 +346,7 @@ export function renderBytesInput(param) {
   return group;
 }
 
-export function renderStringInput(param) {
+function renderStringInput(param) {
   var input = document.createElement('textarea');
   input.rows = 1;
   input.placeholder = '';
@@ -361,7 +361,7 @@ export function renderStringInput(param) {
 
 // --- Composites ---
 
-export function renderTupleInput(param, context, depth) {
+function renderTupleInput(param, context, depth) {
   var container = document.createElement('div');
   container.className = 'tuple-group';
   container.style.paddingLeft = ((depth + 1) * 8) + 'px';
@@ -395,7 +395,7 @@ export function renderTupleInput(param, context, depth) {
   return container;
 }
 
-export function renderArrayInput(param, context, depth) {
+function renderArrayInput(param, context, depth) {
   var container = document.createElement('div');
   container.className = 'array-group';
 
