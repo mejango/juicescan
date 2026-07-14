@@ -6837,26 +6837,14 @@ function renderTokenPanel(project) {
     card.appendChild(row);
   }
 
+  // Always-visible CTA, matching the other owner/operator actions ("Queue ruleset", splits Edit):
+  // the permission requirement is stated inside the modal (operator-gate note), not by hiding the entry point.
   var foot = el('div', 'detail-about-foot');
   var edit = el('a', 'operator-cta'); edit.textContent = capabilities.hasErc20 ? 'Edit' : 'Deploy ERC-20'; edit.href = '#';
   edit.title = capabilities.hasErc20 ? 'Edit the token name & symbol' : 'Deploy a transferable ERC-20 for this project';
-  edit.style.display = 'none';
   edit.addEventListener('click', function (e) { e.preventDefault(); openEditTokenModal(project); });
   foot.appendChild(edit);
   card.appendChild(foot);
-
-  var permissionId = capabilities.hasErc20 ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20;
-  var permissionSeq = 0;
-  function refreshPermissionAction() {
-    var seq = ++permissionSeq;
-    var account = getAccount && getAccount();
-    if (!account) { edit.style.display = 'none'; return; }
-    accountCanManageProjectToken(project, account, permissionId).then(function (allowed) {
-      if (seq === permissionSeq) edit.style.display = allowed ? '' : 'none';
-    }).catch(function () { if (seq === permissionSeq) edit.style.display = 'none'; });
-  }
-  refreshPermissionAction();
-  onWalletChange(function () { if (card.isConnected) refreshPermissionAction(); });
   return card;
 }
 
@@ -6931,8 +6919,11 @@ function renderOtherInfoPanel(project) {
   // address / on-chains, no Edit.
   var tnVal = el('span', 'info-token-name'); tnVal.textContent = project.tokenName || '—';
   grid.appendChild(infoItem('Token name', tnVal));
-  var tsVal = el('span', 'info-token-symbol'); tsVal.textContent = project.tokenSymbol || 'credits';
-  grid.appendChild(infoItem('Token symbol', tsVal));
+  // No symbol row while the token is still credits — there is no symbol until an ERC-20 exists.
+  if (project.tokenAddress && project.tokenSymbol) {
+    var tsVal = el('span', 'info-token-symbol'); tsVal.textContent = project.tokenSymbol;
+    grid.appendChild(infoItem('Token symbol', tsVal));
+  }
   if (project.tokenAddress) {
     // "Token on" sits above "Token address"; "Token type" drops to the row beside Operator.
     var onIds = orderedProjectChainIds(project);
