@@ -2427,7 +2427,7 @@ function feeProjectLink(chainId, projectId, label) {
   a.textContent = label || ('JB #' + String(projectId));
   return a;
 }
-// Subtle fee receipt: "<label>: <feeAmount>" then "↳ get ~<X> <token> in <project link> for the fee" — shows where
+// Subtle fee receipt: "<label>: <feeAmount>" then "• get ~<X> <token> in <project link> for the fee" — shows where
 // the protocol fee goes and the project token it mints back to the beneficiary. opts: { chainId, feeProjectId,
 // feeTokenAddr, decimals, symbol, feeAmount (bigint), beneficiary, label, projectLabel }.
 function renderFeeReceipt(container, opts) {
@@ -2442,7 +2442,7 @@ function renderFeeReceipt(container, opts) {
     feeTok.appendChild(feeProjectLink(opts.chainId, opts.feeProjectId, opts.projectLabel));
     if (suffix) feeTok.appendChild(document.createTextNode(suffix));
   }
-  withLink('↳ paid into ', ', minting its token to you…');
+  withLink('• paid into ', ', minting its token to you…');
   container.appendChild(feeTok);
   Promise.all([
     computePayPreview({ chainId: opts.chainId, projectId: Number(opts.feeProjectId), token: opts.feeTokenAddr || NATIVE_TOKEN, amount: opts.feeAmount, beneficiary: opts.beneficiary }),
@@ -2450,9 +2450,9 @@ function renderFeeReceipt(container, opts) {
   ]).then(function (r) {
     var p = r[0], fsym = r[1] || 'tokens';
     if (p && !p.unavailable && p.received != null && p.received > 0n) {
-      withLink('↳ get ~ ' + formatTokens(p.received) + ' ' + fsym + ' in ', ' for the fee');
+      withLink('• get ~ ' + formatTokens(p.received) + ' ' + fsym + ' in ', ' for the fee');
       if (opts.onReceived) opts.onReceived(p.received, fsym);
-    } else withLink('↳ fee funds ', null);
+    } else withLink('• fee funds ', null);
   }).catch(function () {});
 }
 
@@ -18033,7 +18033,7 @@ function buildCashOutModal(project, requestClose) {
       var dataHook = project.metadata && project.metadata.dataHook;
       if (!f.approx && dataHook && dataHook !== ZERO_ADDRESS) {
         var revTok = el('div', 'ops-preview-line ops-preview-feetok');
-        revTok.textContent = '↳ minting the fee revnet’s token to you…';
+        revTok.textContent = '• minting the fee revnet’s token to you…';
         preview.appendChild(revTok);
         var racct = (getAccount && getAccount()) || undefined;
         feeRevnetIdOf(state.chainId, dataHook).then(function (frid) {
@@ -18047,13 +18047,13 @@ function buildCashOutModal(project, requestClose) {
             var p = r[0], rsym = r[1] || 'tokens';
             if (p && !p.unavailable && p.received != null && p.received > 0n) {
               revTok.textContent = '';
-              revTok.appendChild(document.createTextNode('↳ get ~ ' + formatTokens(p.received) + ' ' + rsym + ' in '));
+              revTok.appendChild(document.createTextNode('• get ~ ' + formatTokens(p.received) + ' ' + rsym + ' in '));
               revTok.appendChild(feeProjectLink(state.chainId, frid, 'revnet #' + String(frid)));
               revTok.appendChild(document.createTextNode(' for the fee'));
               if (state.outcome) state.outcome.revToken = { amount: p.received, sym: rsym, id: String(frid) };
             } else {
               revTok.textContent = '';
-              revTok.appendChild(document.createTextNode('↳ fee funds '));
+              revTok.appendChild(document.createTextNode('• fee funds '));
               revTok.appendChild(feeProjectLink(state.chainId, frid, 'revnet #' + String(frid)));
             }
           });
@@ -18553,7 +18553,7 @@ function buildLoanModal(project, requestClose) {
         // Resolve the token amount each fee mints, then label the row. `id` may be a promise (REV id).
         function fillTok(row, feeAmt, idP, symP, label, onAmount) {
           if (feeAmt <= 0n) { row.textContent = ''; return; }
-          row.textContent = '↳ minting ' + label + ' to you…';
+          row.textContent = '• minting ' + label + ' to you…';
           Promise.resolve(idP).then(function (id) {
             if (seq !== feeTokSeq) return;
             if (id == null) { row.textContent = ''; return; }
@@ -18562,12 +18562,12 @@ function buildLoanModal(project, requestClose) {
               var got = r[0], tsym = r[1] || 'tokens';
               row.textContent = '';
               if (got && got > 0n) {
-                row.appendChild(document.createTextNode('↳ get ~ ' + formatTokens(got) + ' ' + tsym + ' in '));
+                row.appendChild(document.createTextNode('• get ~ ' + formatTokens(got) + ' ' + tsym + ' in '));
                 row.appendChild(feeProjectLink(cid, id, label));
                 row.appendChild(document.createTextNode(' for the fee'));
                 if (onAmount) onAmount(got, tsym);
               } else {
-                row.appendChild(document.createTextNode('↳ fee funds '));
+                row.appendChild(document.createTextNode('• fee funds '));
                 row.appendChild(feeProjectLink(cid, id, label));
               }
             });
@@ -18581,14 +18581,14 @@ function buildLoanModal(project, requestClose) {
         // Source fee mints THIS revnet's token (same token as the burned collateral), so it nets against
         // the collateral — mirror the wallet, which shows a single net `−(collateral − sourceMint)` change.
         if (sourceFee > 0n) {
-          srcTok.textContent = '↳ minting ' + sym + ' back to you…';
+          srcTok.textContent = '• minting ' + sym + ' back to you…';
           feeTokenEstimate(cid, BigInt(project.id), NATIVE_TOKEN, sourceFee, who).then(function (got) {
             if (seq !== feeTokSeq) return;
             if (got && got > 0n) {
               var netColl = collateral > got ? collateral - got : 0n;
-              srcTok.textContent = '↳ get ~ ' + formatTokens(got) + ' ' + sym + ' back → net ' + formatTokens(netColl) + ' ' + sym + ' collateral out';
+              srcTok.textContent = '• get ~ ' + formatTokens(got) + ' ' + sym + ' back → net ' + formatTokens(netColl) + ' ' + sym + ' collateral out';
               if (state.loanOut) state.loanOut.src = { got: got, netColl: netColl };
-            } else { srcTok.textContent = '↳ fee funds this revnet'; }
+            } else { srcTok.textContent = '• fee funds this revnet'; }
           }).catch(function () { if (seq === feeTokSeq) srcTok.textContent = ''; });
         }
       }
