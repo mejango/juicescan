@@ -1,14 +1,24 @@
 #!/usr/bin/env node
-// Publish the built `dist/` directory to IPFS via Pinata. Reads PINATA_JWT from .env (never committed).
+// Publish the built `dist/` directory to IPFS via Filebase. Reads FILEBASE_KEY / FILEBASE_SECRET /
+// FILEBASE_BUCKET from .env (never committed).
+//
+// Flow: local kubo (`ipfs`) builds the directory DAG (deterministic CID — identical input bytes give the
+// identical CID Pinata used to return) and exports it as a CAR; Filebase's IPFS RPC imports + pins the CAR.
+// Filebase announces pins to IPFS routing (DHT + IPNI) promptly, so browser-native gateways
+// (inbrowser.link, check.ipfs.network) can find providers — the reason we switched from Pinata's v3
+// uploads, which never announced ("No providers were found"). Pinata remains only for the in-app
+// user-side pinning (src/ipfs-pin.js), which is a separate key.
+//
 // Usage: node build/publish-ipfs.js
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist');
-const WRAP = 'jb-directory'; // wrapping folder name inside the returned directory CID
 
 function envVal(key) {
   if (process.env[key]) return process.env[key].trim();
@@ -20,101 +30,100 @@ function envVal(key) {
   return '';
 }
 
-// The JWT is scoped for Pinata's v3 uploads API (the legacy /pinning endpoint + the API key/secret
-// pair both return NO_SCOPES_FOUND for this account).
-function bearer() {
-  const jwt = envVal('PINATA_JWT');
-  if (!jwt) throw new Error('PINATA_JWT not found in env or .env');
-  return jwt;
+// Filebase's IPFS RPC bearer token is base64("<key>:<secret>:<bucket>") — derivable, not console-minted.
+function filebaseToken() {
+  const key = envVal('FILEBASE_KEY');
+  const secret = envVal('FILEBASE_SECRET');
+  const bucket = envVal('FILEBASE_BUCKET');
+  if (!key || !secret || !bucket) throw new Error('FILEBASE_KEY / FILEBASE_SECRET / FILEBASE_BUCKET not found in env or .env');
+  return Buffer.from(`${key}:${secret}:${bucket}`).toString('base64');
 }
 
-// Only the built runtime app lives in dist/ — but defensively skip anything that isn't runtime so test,
-// devops, source-map, or editor files can never get pinned (users download the pinned set on every load).
-// The bundle is intentionally NOT minified so the IPFS-loaded code stays inspectable (see the audit-prompt
-// feature) — that's runtime, kept.
+// Guard against pinning non-runtime files (tests, source maps, editor litter) — users download the
+// pinned set on every load. The bundle is intentionally NOT minified so the IPFS-loaded code stays
+// inspectable (see the audit-prompt feature) — that's runtime, kept.
 function isRuntimeFile(name) {
   if (name === '.DS_Store' || name.startsWith('.')) return false;
   return !/\.(test|spec)\.[cm]?js$|\.map$|\.bak$|\.ts$|\.md$/i.test(name);
 }
-function walk(dir, base) {
-  const out = [];
+function assertDistClean(dir, base) {
   for (const name of fs.readdirSync(dir)) {
     const full = path.join(dir, name);
     const rel = base ? base + '/' + name : name;
-    if (fs.statSync(full).isDirectory()) out.push(...walk(full, rel));
-    else if (isRuntimeFile(name)) out.push({ full, rel });
+    if (fs.statSync(full).isDirectory()) assertDistClean(full, rel);
+    else if (!isRuntimeFile(name)) throw new Error(`non-runtime file in dist/: ${rel} — remove it before publishing`);
   }
-  return out;
 }
 
 async function main() {
   if (!fs.existsSync(DIST)) throw new Error('dist/ not found — run `npm run build` first');
-  const jwt = bearer();
-  const files = walk(DIST, '');
-  if (!files.length) throw new Error('dist/ is empty');
+  assertDistClean(DIST, '');
+  const token = filebaseToken();
 
+  // Deterministic local DAG build. `--offline` works with or without a running daemon.
+  console.log('Building the directory DAG with kubo…');
+  const cid = execFileSync('ipfs', ['add', '-rQ', '--cid-version', '1', '--offline', DIST], { encoding: 'utf8' }).trim();
+  const carPath = path.join(os.tmpdir(), `jb-directory-${cid}.car`);
+  execFileSync('ipfs', ['dag', 'export', cid], { stdio: ['ignore', fs.openSync(carPath, 'w'), 'inherit'] });
+  const carBytes = fs.statSync(carPath).size;
+  console.log(`CID ${cid} (${(carBytes / 1e6).toFixed(1)} MB CAR)`);
+
+  console.log('Importing + pinning on Filebase…');
   const form = new FormData();
-  for (const f of files) {
-    const buf = fs.readFileSync(f.full);
-    // The leading path segment becomes the wrapping directory in the returned CID.
-    form.append('file', new Blob([buf]), `${WRAP}/${f.rel}`);
-  }
-  form.append('network', 'public');
-  form.append('name', WRAP);
-
-  console.log(`Uploading ${files.length} files (${(files.reduce((a, f) => a + fs.statSync(f.full).size, 0) / 1e6).toFixed(1)} MB) to Pinata…`);
-  const res = await fetch('https://uploads.pinata.cloud/v3/files', {
+  form.append('file', new Blob([fs.readFileSync(carPath)]), 'site.car');
+  const res = await fetch('https://rpc.filebase.io/api/v0/dag/import?pin-roots=true', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${jwt}` },
+    headers: { Authorization: `Bearer ${token}` },
     body: form,
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Pinata ${res.status}: ${text}`);
-  const out = JSON.parse(text);
-  const cid = out.data && out.data.cid;
-  if (!cid) throw new Error('No CID in response: ' + text);
-  console.log('\n✅ Published');
-  console.log(`CID:     ${cid}`);
-  console.log(`Pinata:  https://gateway.pinata.cloud/ipfs/${cid}/`);
-  console.log(`ipfs.io: https://ipfs.io/ipfs/${cid}/`);
-  console.log(`dweb:    https://${cid}.ipfs.dweb.link/`);
+  if (!res.ok) throw new Error(`Filebase ${res.status}: ${text}`);
+  let imported;
+  try { imported = JSON.parse(text.trim().split('\n')[0]); } catch (_) { throw new Error('Unexpected Filebase response: ' + text); }
+  const rootCid = imported && imported.Root && imported.Root.Cid && imported.Root.Cid['/'];
+  const pinError = imported && imported.Root && imported.Root.PinErrorMsg;
+  if (rootCid !== cid) throw new Error(`Filebase pinned ${rootCid}, expected ${cid}`);
+  if (pinError) throw new Error('Filebase pin error: ' + pinError);
+  fs.unlinkSync(carPath);
 
-  // Warm public gateways so the first visitor doesn't hit a cold CID (the 8MB app.js takes ~50s to
-  // retrieve cold; ~1s once a gateway has the blocks). Sequential per gateway, failures ignored.
+  console.log('\n✅ Published');
+  console.log(`CID:      ${cid}`);
+  console.log(`ipfs.io:  https://ipfs.io/ipfs/${cid}/`);
+  console.log(`dweb:     https://${cid}.ipfs.dweb.link/`);
+  console.log(`sw:       https://${cid}.ipfs.inbrowser.link/`);
+
+  // Filebase announces to routing, so gateways CAN find the content — warming just saves the first
+  // visitor the ~50s cold retrieval of the 8MB app.js. Retries resume from partial gateway caches.
   console.log('\nWarming gateways…');
+  const rels = [];
+  (function walk(dir, base) {
+    for (const name of fs.readdirSync(dir)) {
+      const full = path.join(dir, name);
+      if (fs.statSync(full).isDirectory()) walk(full, base ? base + '/' + name : name);
+      else rels.push(base ? base + '/' + name : name);
+    }
+  })(DIST, '');
   for (const base of [`https://ipfs.io/ipfs/${cid}`, `https://${cid}.ipfs.dweb.link`]) {
     const name = base.includes('dweb') ? 'dweb   ' : 'ipfs.io';
-    for (const f of files) {
-      // Cold sourcing 504/520s regularly; each retry resumes from whatever the gateway cached, so a
-      // few passes land the big files.
+    for (const rel of rels) {
       let status = 'failed';
       const started = Date.now();
       for (let attempt = 1; attempt <= 3 && status !== 200; attempt++) {
         try {
-          const r = await fetch(`${base}/${f.rel}`, { signal: AbortSignal.timeout(90_000) });
+          const r = await fetch(`${base}/${rel}`, { signal: AbortSignal.timeout(90_000) });
           await r.arrayBuffer();
           status = r.status;
         } catch (e) { status = e.name; }
       }
-      console.log(`  ${name} ${f.rel} ${status} ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      console.log(`  ${name} ${rel} ${status} ${((Date.now() - started) / 1000).toFixed(1)}s`);
     }
   }
-  // Browser-native IPFS (inbrowser.link and other service-worker gateways) discovers blocks via routing
-  // records that Pinata can lag on announcing for hours — "No providers were found". Those clients also read
-  // trustless gateways directly, so pulling the whole DAG as a CAR seeds the cache they actually use.
-  // Two passes: cold sourcing regularly times out mid-DAG, and the second pass finishes from its cache.
-  for (let pass = 1; pass <= 5; pass++) {
-    const started = Date.now();
-    try {
-      const r = await fetch(`https://trustless-gateway.link/ipfs/${cid}?format=car&dag-scope=all`, { signal: AbortSignal.timeout(300_000) });
-      const bytes = (await r.arrayBuffer()).byteLength;
-      console.log(`  trustless CAR pass ${pass}: ${r.status} ${(bytes / 1e6).toFixed(1)}MB ${((Date.now() - started) / 1000).toFixed(1)}s`);
-      if (r.status === 200 && bytes > 1e6) break; // full DAG landed
-    } catch (e) {
-      console.log(`  trustless CAR pass ${pass} failed (${e.name}) — continuing`);
-    }
-    await new Promise((res) => setTimeout(res, 5000));
-  }
+  // Verify routing sees a provider (the property Pinata lacked). Informational — no hard fail.
+  try {
+    const r = await fetch(`https://delegated-ipfs.dev/routing/v1/providers/${cid}`, { signal: AbortSignal.timeout(20_000) });
+    const providers = ((await r.json()).Providers || []).length;
+    console.log(`\nRouting providers: ${providers}${providers ? '' : ' — announcement may take a few minutes'}`);
+  } catch (_) { /* routing check is best-effort */ }
 }
 
 main().catch((e) => { console.error('\n❌ ' + e.message); process.exit(1); });
