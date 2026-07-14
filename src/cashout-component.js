@@ -96,7 +96,7 @@ export function renderCashOutComponent() {
     if (state.beneficiary === 'custom' && state.customBeneficiary) params.beneficiary = state.customBeneficiary;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Token holder burns their own tokens to reclaim a share of the project\'s funds.' });
+  }, { permissionNote: 'Token holder burns their own tokens to reclaim a share of the project’s funds.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 

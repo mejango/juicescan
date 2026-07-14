@@ -162,7 +162,7 @@ export async function proposeSafeTx(opts) {
   if (!base) throw new Error('No Safe Transaction Service configured for ' + ((CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || opts.chainId));
   // Caller may pick the nonce (e.g. to replace a queued tx); otherwise use the recommended next nonce.
   var nonce = (opts.nonce != null) ? Number(opts.nonce) : await getSafeNextNonce(opts.chainId, opts.safe);
-  if (nonce == null) throw new Error('Could not read the Safe nonce on ' + ((CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || opts.chainId));
+  if (nonce == null) throw new Error('Could not read the Safe nonce on ' + ((CHAINS[opts.chainId] && CHAINS[opts.chainId].name) || opts.chainId) + '.');
   var fields = { to: opts.to, value: opts.value || 0, data: opts.data || '0x', operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO, refundReceiver: ZERO, nonce: nonce };
   var safeTxHash = safeTxHashOf(opts.chainId, opts.safe, fields);
   var signature = await signSafeTx(opts.chainId, opts.safe, fields, opts.signer);

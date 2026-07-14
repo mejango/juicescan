@@ -836,7 +836,7 @@ function lockedCurrencySym(state) { return customAcctSym(state) || (usdcAccounti
 // decimals (a per-chain decimals/contract mismatch breaks the accounting math). status: loading → ok|error.
 function lookupCustomToken(state, render) {
   var ct = state.customToken; var addr = (ct.address || '').trim();
-  if (!isAddr(addr)) { ct.status = addr ? 'error' : 'idle'; ct.error = addr ? 'Not a valid address' : ''; ct.name = ct.symbol = ''; ct.decimals = null; ct.chains = null; return; }
+  if (!isAddr(addr)) { ct.status = addr ? 'error' : 'idle'; ct.error = addr ? 'Not a valid address.' : ''; ct.name = ct.symbol = ''; ct.decimals = null; ct.chains = null; return; }
   var chainIds = (state.chainIds || []).slice(); if (!chainIds.length) return;
   ct.status = 'loading'; ct.error = ''; ct.chains = null;
   var ERC20 = [
@@ -870,7 +870,7 @@ function lookupCustomToken(state, render) {
     applyAccountingDefaults(state); render();
   }).catch(function () {
     if (stale()) return;
-    ct.status = 'error'; ct.error = 'Token lookup failed (RPC error). Try again.'; render();
+    ct.status = 'error'; ct.error = 'Could not look up the token (RPC error). Try again.'; render();
   });
 }
 
@@ -1178,7 +1178,7 @@ function collapse(state, key, label, optional, render, contentFn) {
 function renderDetails(state, render) {
   var d = state.details;
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Project Details', 'You can edit these at any time.'));
+  wrap.appendChild(stepHead('Project details', 'You can edit these at any time.'));
 
   wrap.appendChild(fieldBlock('Name', false, textInput(d.name, 'My project', function (v) { d.name = v; })));
   // Token ticker — required for revnets (it names the ERC-20 deployed for the token). Optional otherwise.
@@ -1259,7 +1259,7 @@ function renderImagePicker(uri, busy, onChange) {
     if (!hasPinata()) { alert('IPFS pinning isn’t available right now — you can add a logo later by editing the project.'); return; }
     onChange(uri, true);
     pinFile(f, f.name).then(function (ipfs) { onChange(ipfs, false); })
-      .catch(function (e) { alert('Upload failed: ' + (e && e.message || e)); onChange(uri, false); });
+      .catch(function (e) { alert('Could not upload: ' + (e && e.message || e)); onChange(uri, false); });
   });
   w.appendChild(file);
   if (busy) { var hint = el('span', 'operator-edit-hint'); hint.textContent = 'Uploading…'; w.appendChild(hint); }
@@ -1862,7 +1862,7 @@ function splitLockRow(stage, rec, render) {
     // Clamp ≥ 0 — a negative timestamp would overflow JBSplit.lockedUntil (uint48) and abort the whole deploy build.
     d.addEventListener('change', function () { rec.lockedUntil = d.value ? Math.max(0, Math.floor(Date.parse(d.value + 'T00:00:00Z') / 1000)) : 0; render(); });
     wrap.appendChild(d);
-    wrap.appendChild(infoNote("Locked until this date — the split can't be edited or removed for the rest of this ruleset."));
+    wrap.appendChild(infoNote("Locked until this date — the split can’t be edited or removed for the rest of this ruleset."));
   }
   return wrap;
 }
@@ -2505,7 +2505,7 @@ export function renderNfts(state, render) {
 
   // Store Config (collection name/symbol, Pinata JWT, store-wide flags) is always available — the owner
   // can configure the store even when launching with no items in stock.
-  var extras = collapse(state.collection, 'extrasOpen', 'Store Config', false, render, function () { return collectionExtrasSection(state, render); });
+  var extras = collapse(state.collection, 'extrasOpen', 'Store config', false, render, function () { return collectionExtrasSection(state, render); });
   extras.style.marginTop = '16px';
   wrap.appendChild(extras);
   return wrap;
@@ -2558,7 +2558,7 @@ function itemMediaPicker(state, nft, render) {
     if (f.size > ITEM_MAX_MEDIA_BYTES) { alert('That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
     nft._mediaBusy = true; render();
     pinFile(f, nft.name || f.name).then(function (uri) { nft.imageUri = uri; nft.mediaType = (f.type || '').toLowerCase(); nft._mediaBusy = false; render(); })
-      .catch(function (e) { nft._mediaBusy = false; render(); alert('Upload failed: ' + (e && e.message || e)); });
+      .catch(function (e) { nft._mediaBusy = false; render(); alert('Could not upload: ' + (e && e.message || e)); });
   });
   w.appendChild(file);
   if (nft._mediaBusy) { var b = el('span', 'operator-edit-hint'); b.textContent = 'Pinning…'; w.appendChild(b); }
@@ -3296,7 +3296,7 @@ function deploy(state, render) {
   var signer = getAccount && getAccount();
   if (!signer) {
     connect().then(function () { state.statusLines.push({ text: 'Wallet connected — click Launch again.' }); render(); })
-      .catch(function (e) { state.statusLines.push({ text: 'Connect failed: ' + (e && e.message || e), err: true }); render(); });
+      .catch(function (e) { state.statusLines.push({ text: 'Could not connect: ' + (e && e.message || e), err: true }); render(); });
     return;
   }
   var accepts = state.accepts || [];
@@ -3349,7 +3349,7 @@ async function runDeploy(state, owner) {
       projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
       push('Metadata pinned: ' + projectUri, 'ok');
     } catch (e) {
-      push('Metadata pin failed (' + (e && e.message || e) + ') — nothing was sent.', 'err');
+      push('Could not pin metadata (' + (e && e.message || e) + ') — nothing was sent.', 'err');
       throw e;
     }
   } else {
@@ -3370,7 +3370,7 @@ async function runDeploy(state, owner) {
         it.metaUri = await pinJson(meta, (it.name || 'item') + '-item');
         it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri);
       } catch (e) {
-        push('Item metadata pin failed (' + (e && e.message || e) + ') — nothing was sent.', 'err');
+        push('Could not pin item metadata (' + (e && e.message || e) + ') — nothing was sent.', 'err');
         throw e;
       }
     }

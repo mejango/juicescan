@@ -1030,7 +1030,7 @@ function sectionLinkButton(id) {
   btn.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
     var url = location.origin + location.pathname + location.search + '#' + id;
-    var ok = function () { btn.classList.add('guide-copy-link--ok'); btn.title = 'Copied!'; setTimeout(function () { btn.classList.remove('guide-copy-link--ok'); btn.title = 'Copy a link to this section'; }, 1300); };
+    var ok = function () { btn.classList.add('guide-copy-link--ok'); btn.title = 'Copied'; setTimeout(function () { btn.classList.remove('guide-copy-link--ok'); btn.title = 'Copy a link to this section'; }, 1300); };
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, ok);
     else { try { var ta = document.createElement('textarea'); ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch (_) {} ok(); }
   });

@@ -22,8 +22,8 @@ describe('tx status hash → block-explorer link', () => {
   });
   it('falls back to plain text with no meta', () => {
     const el = document.createElement('div');
-    setStatusContent(el, 'Awaiting wallet confirmation...', undefined);
+    setStatusContent(el, 'Awaiting wallet confirmation…', undefined);
     expect(el.querySelector('a')).toBeNull();
-    expect(el.textContent).toBe('Awaiting wallet confirmation...');
+    expect(el.textContent).toBe('Awaiting wallet confirmation…');
   });
 });

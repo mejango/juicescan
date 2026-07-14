@@ -98,7 +98,7 @@ function initTabs() {
     var connecting = false;
     var updateConnect = function() {
       var acc = getAccount();
-      connectBtn.textContent = acc ? truncAddr(acc) : (connecting ? 'Connecting...' : 'Connect wallet');
+      connectBtn.textContent = acc ? truncAddr(acc) : (connecting ? 'Connecting…' : 'Connect wallet');
       connectBtn.classList.toggle('connected', !!acc);
       connectBtn.title = acc || 'Connect a wallet';
     };
@@ -188,7 +188,7 @@ function initTabs() {
       var providers = getProviders();
       if (!providers.length) {
         var mobile = isMobileDevice(typeof navigator !== 'undefined' ? navigator : null);
-        openWalletNotice(mobile ? 'Checking this browser for wallet access…' : 'Looking for wallet...', '');
+        openWalletNotice(mobile ? 'Checking this browser for wallet access…' : 'Looking for wallet…', '');
         refreshProviders(500).then(function (fresh) {
           if (getAccount() || !walletMenu) return;
           if (fresh.length === 1) { connectToProvider(fresh[0]); return; }

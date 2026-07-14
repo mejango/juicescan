@@ -360,7 +360,7 @@ export function createProjectAndChainInput(state, onProjectUpdate, onChainChange
 
   if (state.phase === 'discovering') {
     var disc = el('div', 'component-status component-discovering');
-    disc.textContent = 'Searching chains...';
+    disc.textContent = 'Searching chains…';
     section.appendChild(disc);
   }
 
@@ -1134,12 +1134,12 @@ export function executeTransaction(opts) {
   });
 
   function sendNow() {
-  cbs.onStatus('Checking wallet network...', 'pending');
+  cbs.onStatus('Checking wallet network…', 'pending');
   var approvalReceipt = null;
 
   wallet.getChainId().then(function(walletChainId) {
     if (walletChainId !== opts.chainId) {
-      cbs.onStatus('Switching to ' + (CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : 'chain ' + opts.chainId) + '...', 'pending');
+      cbs.onStatus('Switching to ' + (CHAINS[opts.chainId] ? CHAINS[opts.chainId].name : 'chain ' + opts.chainId) + '…', 'pending');
       return switchChain(opts.chainId);
     }
   }).then(function() {
@@ -1153,7 +1153,7 @@ export function executeTransaction(opts) {
   }).then(function() {
     var current = getAccount();
     if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    cbs.onStatus('Simulating the confirmed transaction...', 'pending');
+    cbs.onStatus('Simulating the confirmed transaction…', 'pending');
     var pub = createPublicClientForChain(opts.chainId);
     var simulationRequest = {
       account: account,
@@ -1168,7 +1168,7 @@ export function executeTransaction(opts) {
     // through to an old/expired Permit2 allowance even though the approval just confirmed.
     if (approvalReceipt && approvalReceipt.blockNumber != null) simulationRequest.blockNumber = approvalReceipt.blockNumber;
     return pub.simulateContract(simulationRequest).then(function(simulation) {
-      cbs.onStatus('Awaiting wallet confirmation...', 'pending');
+      cbs.onStatus('Awaiting wallet confirmation…', 'pending');
       return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId] }));
     });
   }).then(function(hash) {
@@ -1229,7 +1229,7 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
   }).then(function(allowance) {
     if (BigInt(allowance) >= BigInt(amount)) return;
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    onStatus('Approving token spend...', 'pending');
+    onStatus('Approving token spend…', 'pending');
     var wallet = getWalletClient();
     return pub.simulateContract({
       account: owner,

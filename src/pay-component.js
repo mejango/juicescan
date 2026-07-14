@@ -309,7 +309,7 @@ export function renderPayComponent() {
     if (state.preview && state.preview.beneficiaryTokens) {
       youGetText.textContent = ' get: ' + state.preview.beneficiaryTokens + ' tokens';
     } else if (state.phase === 'previewing') {
-      youGetText.textContent = ' get: loading...';
+      youGetText.textContent = ' get: loading…';
     } else {
       youGetText.textContent = ' get: project tokens';
     }
@@ -595,7 +595,7 @@ export function renderPayComponent() {
       }));
     }).catch(function (err) {
       state.phase = 'ready';
-      state.error = (err && (err.shortMessage || err.message)) || 'Could not resolve pay route';
+      state.error = (err && (err.shortMessage || err.message)) || 'Could not resolve the pay route.';
       updateUI();
     });
   }

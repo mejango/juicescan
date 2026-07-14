@@ -318,7 +318,7 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
   var value;
   try { value = valueInput ? parseEtherSafe(valueInput.getValue()) : undefined; }
   catch (_) { outputArea.appendChild(renderError('msg.value: enter a valid non-negative ETH amount')); return; }
-  if (value != null && value < 0n) { outputArea.appendChild(renderError('msg.value cannot be negative')); return; }
+  if (value != null && value < 0n) { outputArea.appendChild(renderError('msg.value cannot be negative.')); return; }
   var reviewedAccount = getAccount();
   if (!reviewedAccount) { outputArea.appendChild(renderError('Connect wallet to transact')); return; }
 
@@ -343,7 +343,7 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
       value: value || 0n,
     }, { title: 'Confirm transaction' }).then(function(ok) {
       if (!ok) { outputArea.innerHTML = ''; outputArea.appendChild(renderError('Transaction cancelled')); return; }
-      setOutputMessage(outputArea, 'tx-pending', 'Simulating the confirmed transaction...');
+      setOutputMessage(outputArea, 'tx-pending', 'Simulating the confirmed transaction…');
       var currentAccount = getAccount();
       if (!currentAccount || currentAccount.toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
       // Re-run the exact reviewed call before opening the wallet. Besides surfacing contract reverts early,
@@ -360,7 +360,7 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
         });
       }).then(function(simulation) {
         if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-        setOutputMessage(outputArea, 'tx-pending', 'Awaiting wallet confirmation...');
+        setOutputMessage(outputArea, 'tx-pending', 'Awaiting wallet confirmation…');
         return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId] }));
       }).then(function(hash) {
         setOutputMessage(outputArea, 'tx-success', 'TX submitted: ' + hash);
@@ -391,9 +391,9 @@ function executeSimulate(fn, inputs, valueInput, contractAddress, abi, outputAre
   var value;
   try { value = valueInput ? parseEtherSafe(valueInput.getValue()) : undefined; }
   catch (_) { outputArea.appendChild(renderError('msg.value: enter a valid non-negative ETH amount')); return; }
-  if (value != null && value < 0n) { outputArea.appendChild(renderError('msg.value cannot be negative')); return; }
+  if (value != null && value < 0n) { outputArea.appendChild(renderError('msg.value cannot be negative.')); return; }
 
-  setOutputMessage(outputArea, 'tx-pending', 'Simulating...');
+  setOutputMessage(outputArea, 'tx-pending', 'Simulating…');
 
   pub.simulateContract({
     address: contractAddress,

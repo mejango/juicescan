@@ -1632,7 +1632,7 @@
         {
           "id": "cashout-events",
           "title": "Recent cash-outs",
-          "hint": "Tokens burned for treasury reclaim, across the sucker group.",
+          "hint": "Tokens burned for surplus reclaim, across the sucker group.",
           "kind": "list",
           "path": "cashOutTokensEvents",
           "resolveSuckerGroup": true,

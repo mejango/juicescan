@@ -102,7 +102,7 @@ export async function relayrPostBundle(transactions) {
   });
   if (!res.ok) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
-    throw new Error('relayr HTTP ' + res.status + (detail ? ': ' + detail.slice(0, 240) : ''));
+    throw new Error('Relayr HTTP ' + res.status + (detail ? ': ' + detail.slice(0, 240) : ''));
   }
   return await res.json();
 }
@@ -155,11 +155,11 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
         if (onUpdate) onUpdate(txs, body);
         if (txs.length && txs.every(function (t) { return t.status && t.status.state === 'Success'; })) return resolve(txs);
         var failed = txs.filter(function (t) { return t.status && t.status.state === 'Failed'; });
-        if (failed.length) return reject(new Error(failed.length + ' chain' + (failed.length > 1 ? 's' : '') + ' failed to execute'));
-        if (Date.now() - start > timeoutMs) return reject(new Error('Timed out waiting for relayr execution'));
+        if (failed.length) return reject(new Error('Could not execute on ' + failed.length + ' chain' + (failed.length > 1 ? 's' : '') + '.'));
+        if (Date.now() - start > timeoutMs) return reject(new Error('Timed out waiting for Relayr execution.'));
         setTimeout(tick, intervalMs);
       }).catch(function () {
-        if (Date.now() - start > timeoutMs) return reject(new Error('Timed out waiting for relayr execution'));
+        if (Date.now() - start > timeoutMs) return reject(new Error('Timed out waiting for Relayr execution.'));
         setTimeout(tick, intervalMs);
       });
     }
