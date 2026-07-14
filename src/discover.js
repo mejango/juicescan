@@ -834,6 +834,38 @@ function removeLightEdgeMatteFromImage(img) {
   probe.onerror = function () { img.dataset.edgeMatteState = 'done'; };
   probe.src = source;
 }
+// Real first-page PDF preview without a PDF library: fetch the bytes ourselves (with IPFS gateway fallback),
+// verify the %PDF- magic so a mislabeled HTML document can never enter a frame, and hand the browser's own PDF
+// viewer a typed blob in an <object>. The blob's application/pdf MIME is authoritative — the bytes can't be
+// reinterpreted as HTML — and script-in-a-PDF runs in the same viewer users already reach by clicking the badge
+// link. Browsers without an inline viewer (navigator.pdfViewerEnabled false) keep the badge; so do CORS-blocked
+// hosts and files that turn out not to be PDFs.
+function attachPdfPreview(container, media, mode) {
+  if (navigator.pdfViewerEnabled !== true) return;
+  var safe = safeMediaUrl(media);
+  if (!safe) return;
+  var candidates = ipfsPath(safe) ? ipfsGatewayUrls(safe) : (httpUrlOnly(safe) ? [httpUrlOnly(safe)] : []);
+  var i = 0;
+  function next() {
+    if (i >= candidates.length) return;
+    fetch(candidates[i++]).then(function (r) {
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      if (String.fromCharCode.apply(null, new Uint8Array(buf.slice(0, 5))) !== '%PDF-') return; // keep the badge
+      if (!container.isConnected) return;
+      var obj = document.createElement('object');
+      obj.type = 'application/pdf';
+      obj.className = 'tier-pdf-preview' + (mode === 'detail' ? ' tier-pdf-preview--detail' : '');
+      var params = mode === 'detail' ? '#view=FitH' : '#toolbar=0&navpanes=0&scrollbar=0&view=FitH';
+      obj.data = URL.createObjectURL(new Blob([buf], { type: 'application/pdf' })) + params;
+      container.innerHTML = '';
+      container.appendChild(obj);
+    }).catch(next);
+  }
+  next();
+}
+
 // Render a tier's media (any file type) into `container`. mode 'full' (card) or 'thumb' (small preview).
 function renderTierMediaInto(container, m, alt, mode) {
   container.innerHTML = '';
@@ -856,11 +888,11 @@ function renderTierMediaInto(container, m, alt, mode) {
     container.appendChild(wrapA); return true;
   }
   if (kind === 'pdf') {
-    // An <iframe src> executes its target — a data:text/html or javascript: media URL would run script. Only
-    // embed a real http(s) PDF; otherwise show a link badge (which itself sanitizes the href).
-    var pdfSrc = httpUrlOnly(media);
-    if (mode !== 'detail' || !pdfSrc) { container.appendChild(tierMediaBadge('PDF', alt, media)); return true; }
-    var f = document.createElement('iframe'); f.src = pdfSrc; f.className = 'tier-media-frame'; f.setAttribute('loading', 'lazy'); f.setAttribute('sandbox', ''); container.appendChild(f); return true;
+    // Badge first (also the permanent fallback), then upgrade in place to a real first-page preview
+    // when the browser can render PDFs inline.
+    container.appendChild(tierMediaBadge('PDF', alt, media));
+    attachPdfPreview(container, media, mode);
+    return true;
   }
   if (kind === 'text') {
     if (mode === 'thumb') { container.appendChild(tierMediaBadge('TXT', alt, media)); return true; }
