@@ -7,7 +7,7 @@
 // Flow:
 //   1. buildForwardedTx(chainId, from, to, data)  -> signs ForwardRequest, returns {chain, target, data, value}
 //   2. relayrPostBundle(transactions)             -> POST /v1/bundle/prepaid -> { bundle_uuid, payment_info }
-//   3. relayrPay(payment)                         -> one on-chain payment funds all chains
+//   3. relayrPay(payment)                         -> one onchain payment funds all chains
 //   4. relayrPoll(uuid, onUpdate)                 -> GET /v1/bundle/{uuid} until every tx is "Success"
 //
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
@@ -136,7 +136,7 @@ export async function relayrPay(payment, expectedAccount) {
     data: calldata,
   });
   var receipt = await pub.waitForTransactionReceipt({ hash: hash });
-  if (receipt && receipt.status && receipt.status !== 'success') throw new Error('Relayr payment reverted on-chain.');
+  if (receipt && receipt.status && receipt.status !== 'success') throw new Error('Relayr payment reverted onchain.');
   return hash;
 }
 

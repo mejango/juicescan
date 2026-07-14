@@ -131,7 +131,7 @@ async function signSafeTx(chainId, safe, fields, signer) {
   return signature;
 }
 
-// The Safe's current queue nonce (next nonce to use). Reads the service; falls back to on-chain `nonce()`.
+// The Safe's current queue nonce (next nonce to use). Reads the service; falls back to onchain `nonce()`.
 export function getSafeNextNonce(chainId, safe) {
   var key = chainId + ':' + String(safe).toLowerCase();
   if (_nonceInflight[key]) return _nonceInflight[key];
@@ -143,7 +143,7 @@ export function getSafeNextNonce(chainId, safe) {
         if (r.ok) { var d = await r.json(); if (d && d.nonce != null) return Number(d.nonce); }
       } catch (_) {}
     }
-    // On-chain fallback.
+    // Onchain fallback.
     try {
       var pub = createPublicClientForChain(chainId);
       var n = await pub.readContract({ address: safe, abi: [{ type: 'function', name: 'nonce', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }], functionName: 'nonce', args: [] });
@@ -271,7 +271,7 @@ export function safeExecArgs(tx, signatures) {
   return [cs(tx.to), BigInt(tx.value || 0), tx.data || '0x', Number(tx.operation || 0), BigInt(tx.safeTxGas || 0),
     BigInt(tx.baseGas || 0), BigInt(tx.gasPrice || 0), tx.gasToken || ZERO, tx.refundReceiver || ZERO, signatures];
 }
-// Signature bytes (no 0x) for one confirmation. A real off-chain signature passes through; an on-chain
+// Signature bytes (no 0x) for one confirmation. A real offchain signature passes through; an onchain
 // approveHash confirmation has a null signature, so synthesize Safe's pre-validated signature: r = the owner
 // left-padded to 32 bytes, s = 0 (32 bytes), v = 1. Dropping these shifted owner recovery → GS026/GS020 revert.
 function sigBytesFor(c) {
@@ -318,7 +318,7 @@ async function feeOverrides(chainId) {
   } catch (_) { return { maxFeePerGas: 1000000000n, maxPriorityFeePerGas: 50000000n }; }
 }
 
-// Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an on-chain revert surfaces as
+// Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an onchain revert surfaces as
 // an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
 async function sendAndConfirm(wallet, chainId, params, label) {
   var account = getAccount();
@@ -334,9 +334,9 @@ async function sendAndConfirm(wallet, chainId, params, label) {
   var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[chainId] }, fees));
   try {
     var rcpt = await pub.waitForTransactionReceipt({ hash: hash });
-    if (rcpt && rcpt.status && rcpt.status !== 'success') throw new Error((label || 'Transaction') + ' reverted on-chain (tx ' + hash + ').');
+    if (rcpt && rcpt.status && rcpt.status !== 'success') throw new Error((label || 'Transaction') + ' reverted onchain (tx ' + hash + ').');
   } catch (e) {
-    if (e && /reverted on-chain/.test(e.message || '')) throw e; // genuine revert → propagate
+    if (e && /reverted onchain/.test(e.message || '')) throw e; // genuine revert → propagate
     // receipt read failed (RPC hiccup) — return the hash anyway; the caller re-reads state to confirm.
   }
   return hash;
@@ -365,9 +365,9 @@ export function safeExecRelayrTx(chainId, safe, tx) {
   return { chain: Number(chainId), target: cs(safe), data: data, value: '0' };
 }
 
-// ── On-chain Safe path (no Transaction Service) ─────────────────────────────────────────────────────
-// Some chains have no hosted Safe Transaction Service (e.g. Arbitrum/OP Sepolia). There's no off-chain queue to
-// post to, so signers coordinate ENTIRELY on-chain: each owner calls approveHash(safeTxHash), and once the
+// ── Onchain Safe path (no Transaction Service) ─────────────────────────────────────────────────────
+// Some chains have no hosted Safe Transaction Service (e.g. Arbitrum/OP Sepolia). There's no offchain queue to
+// post to, so signers coordinate ENTIRELY onchain: each owner calls approveHash(safeTxHash), and once the
 // threshold is met anyone calls execTransaction with pre-validated "approved-hash" signatures (sigBytesFor above
 // already synthesizes those for null-signature confirmations). This makes the operator/owner flow work on any
 // chain where the Safe is deployed, regardless of Safe's API coverage.
@@ -379,7 +379,7 @@ var SAFE_ONCHAIN_ABI = [
   { type: 'function', name: 'nonce', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
 ];
 
-// True when Safe's hosted Transaction Service covers this chain. False → use the on-chain approveHash path.
+// True when Safe's hosted Transaction Service covers this chain. False → use the onchain approveHash path.
 export function hasSafeService(chainId) { return !!txBase(chainId); }
 
 // Deploy the SAME-address Safe on a chain the Safe app doesn't list, by replaying its original creation. The Safe
@@ -436,7 +436,7 @@ export function safeTxHashForCall(chainId, safe, call) {
   });
 }
 
-// Read the Safe's on-chain params (nonce / threshold / owners) directly — no Transaction Service.
+// Read the Safe's onchain params (nonce / threshold / owners) directly — no Transaction Service.
 export async function safeOnChainContext(chainId, safe) {
   var pub = createPublicClientForChain(chainId);
   var r = await Promise.all([
@@ -447,7 +447,7 @@ export async function safeOnChainContext(chainId, safe) {
   return { nonce: Number(r[0]), threshold: Number(r[1]), owners: r[2] || [] };
 }
 
-// Which of `owners` have approved `hash` on-chain (approvedHashes == 1). Returns the approved owner addresses.
+// Which of `owners` have approved `hash` onchain (approvedHashes == 1). Returns the approved owner addresses.
 export async function safeApprovalsOf(chainId, safe, hash, owners) {
   var pub = createPublicClientForChain(chainId);
   var flags = await Promise.all((owners || []).map(function (o) {
@@ -457,7 +457,7 @@ export async function safeApprovalsOf(chainId, safe, hash, owners) {
   return (owners || []).filter(function (o, i) { return flags[i]; });
 }
 
-// Approve a SafeTx hash on-chain from the connected signer (records approvedHashes[signer][hash] = 1). The wallet
+// Approve a SafeTx hash onchain from the connected signer (records approvedHashes[signer][hash] = 1). The wallet
 // must be on `chainId` and be a Safe owner. Returns the approveHash tx hash.
 export async function approveSafeHashOnChain(chainId, safe, hash) {
   var wallet = getWalletClient();

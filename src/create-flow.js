@@ -96,7 +96,7 @@ function tokenAmount18(v, maxV) {
 // ABI building blocks (shared struct components)
 // ---------------------------------------------------------------------------
 
-// Field order MUST match the on-chain JBSplit struct exactly (the selector hashes the tuple types in
+// Field order MUST match the onchain JBSplit struct exactly (the selector hashes the tuple types in
 // order): percent, projectId, beneficiary, preferAddToBalance, lockedUntil, hook.
 var SPLIT_COMPONENTS = [
   { name: 'percent', type: 'uint32' },
@@ -622,7 +622,7 @@ export function openCreateFlow() {
     Object.keys(state).forEach(function (k) { if (k !== '_close') delete state[k]; });
     Object.assign(state, merged);
     render();
-    // Re-verify a custom accounting token against the imported chain set (its on-chain state isn't in the file).
+    // Re-verify a custom accounting token against the imported chain set (its onchain state isn't in the file).
     if (customAccounting(state) && isAddr((state.customToken || {}).address)) lookupCustomToken(state, render);
     reresolveApproval(state, render); // re-resolve a custom approval-hook ENS name (cache isn't in the file)
   }
@@ -930,7 +930,7 @@ function accountingBlock(state, render) {
   })());
 }
 
-// Custom accounting token: address input + on-chain ERC-20 lookup (name/symbol/decimals), shown below the
+// Custom accounting token: address input + onchain ERC-20 lookup (name/symbol/decimals), shown below the
 // pills. Updates a status line in place (no full re-render) so the address field keeps focus while typing.
 function customTokenBlock(state, render) {
   var ct = state.customToken;
@@ -942,7 +942,7 @@ function customTokenBlock(state, render) {
     if (ct.status === 'loading') { status.textContent = 'Looking up token…'; status.style.color = ''; }
     else if (ct.status === 'ok') {
       var n = (state.chainIds || []).length;
-      status.textContent = (ct.name ? ct.name + ' — ' : '') + ct.symbol + ' · ' + ct.decimals + ' decimals' + (n > 1 ? ' · verified on all ' + n + ' chains' : '');
+      status.textContent = (ct.name ? ct.name + ' — ' : '') + ct.symbol + ' | ' + ct.decimals + ' decimals' + (n > 1 ? ' | verified on all ' + n + ' chains' : '');
       status.style.color = 'var(--c-teal)';
     }
     else if (ct.status === 'error') { status.textContent = ct.error; status.className = 'create-hint warn'; status.style.color = ''; }
@@ -1123,7 +1123,7 @@ function resolveStages(state) {
   if (state.afterMode === 'terminal') return stages.concat([terminalStage(last)]);
   return stages; // 'cycle'
 }
-// Standby: zero issuance, no payouts/surplus, payments paused, no expiry; cash-outs preserved so holders can exit.
+// Standby: zero issuance, no payouts/surplus, payments paused, no expiry; cash outs preserved so holders can exit.
 function standbyStage(s1) {
   var s = createStage();
   s.durationSeconds = 0;            // never expires — sits in standby
@@ -1163,7 +1163,7 @@ function collapse(state, key, label, optional, render, contentFn) {
   if (optional) { var o = el('span', 'create-optional'); o.textContent = ' (Optional)'; lab.appendChild(o); }
   head.appendChild(lab);
   var caret = el('span', 'create-collapse-caret');
-  caret.textContent = state[key] ? '▴' : '▾';
+  caret.textContent = state[key] ? '▾' : '▸';
   head.appendChild(caret);
   head.addEventListener('click', function () { state[key] = !state[key]; render(); });
   w.appendChild(head);
@@ -1334,7 +1334,7 @@ export function renderStages(state, render, opts) {
     afterRow.appendChild(sel);
     wrap.appendChild(afterRow);
     var notes = {
-      wait: 'The project idles safely — no issuance, payments paused, cash-outs preserved — until you change it.',
+      wait: 'The project idles safely — no issuance, payments paused, cash outs preserved — until you change it.',
       terminal: 'Ruleset #1’s terms continue on forever, without cycling again.',
       cycle: 'Ruleset #1 repeats its cycle over and over until you change it. Changes will only be able to be made once a cycled ruleset ends.',
     };
@@ -1420,7 +1420,7 @@ function renderStageCard(stage, idx, state, render) {
     rm.addEventListener('click', function () { state.stages.splice(idx, 1); render(); });
     head.appendChild(rm);
   }
-  var caret = el('span', 'create-stage-caret'); caret.textContent = stage.expanded ? '▴' : '▾'; head.appendChild(caret);
+  var caret = el('span', 'create-stage-caret'); caret.textContent = stage.expanded ? '▾' : '▸'; head.appendChild(caret);
   card.appendChild(head);
   if (stage.expanded) card.appendChild(renderStageEditor(stage, idx, state, render));
   return card;
@@ -1469,7 +1469,7 @@ function revStageCard(stage, idx, state, render) {
     rm.addEventListener('click', function () { state.stages.splice(idx, 1); render(); });
     head.appendChild(rm);
   }
-  var caret = el('span', 'create-stage-caret'); caret.textContent = stage.expanded ? '▴' : '▾'; head.appendChild(caret);
+  var caret = el('span', 'create-stage-caret'); caret.textContent = stage.expanded ? '▾' : '▸'; head.appendChild(caret);
   card.appendChild(head);
   if (stage.expanded) card.appendChild(revStageEditor(stage, idx, state, render));
   return card;
@@ -1484,7 +1484,7 @@ function revStageSummary(stage, idx, state) {
   if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('−' + round2(stage.weightCutPercent) + '%/' + (stage.cutFreqDays || '30') + 'd');
   var splitTotal = revSplitTotalPct(stage);
   if (splitTotal > 0) parts.push(round2(splitTotal) + '% to splits');
-  parts.push(round2(Number(stage.cashOutTaxRate)) + '% cash-out tax');
+  parts.push(round2(Number(stage.cashOutTaxRate)) + '% cash out tax');
   return parts.join(' | ');
 }
 
@@ -1981,7 +1981,7 @@ function payoutsSection(stage, render, state) {
       wrap.appendChild(idleToggle('Give owner access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus available.'));
       wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'All funds are allocated to unlimited payouts, no surplus to cash out.'));
     } else {
-      // Surplus is the project's TOTAL across all accepted tokens (cash-out reclaim prices against the
+      // Surplus is the project's TOTAL across all accepted tokens (cash out reclaim prices against the
       // cumulative surplus). Owner access is unlimited-across-tokens here to avoid per-token cap ambiguity.
       wrap.appendChild(toggleRow('Give owner access to surplus funds', dz('The owner can withdraw the project’s surplus (funds beyond payouts) — an unlimited allowance per accepted token (ETH, USDC, …), each in its own currency.', 'The owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
       wrap.appendChild(cashOutSection(state, stage, render));
@@ -2110,7 +2110,7 @@ function appendRecipientPicker(toFieldNode, rec, render, opts) {
     if (opts.isPayout) {
       var routeLabel = el('div', 'create-split-sublabel'); routeLabel.textContent = 'route as'; col.appendChild(routeLabel);
       var route = el('select', 'field create-input create-split-subsel');
-      [['pay', 'Pay project · mint its tokens'], ['balance', 'Add to project balance · mint none']].forEach(function (o) {
+      [['pay', 'Pay project | mint its tokens'], ['balance', 'Add to project balance | mint none']].forEach(function (o) {
         var op = el('option'); op.value = o[0]; op.textContent = o[1];
         if ((rec.preferAddToBalance ? 'balance' : 'pay') === o[0]) op.selected = true;
         route.appendChild(op);
@@ -2192,7 +2192,7 @@ function reservedSplitRow(t, rec, idx, render, onTotal, state, stageIdx) {
 }
 
 // Token issuance section for a stage (folded into the stage editor).
-// Bonding-curve preview: token cash-out value vs % of tokens cashed out, at tax rate r (0..1). The
+// Bonding-curve preview: token cash out value vs % of tokens cashed out, at tax rate r (0..1). The
 // orange curve f(x)=x·((1−r)+r·x) bows below the straight no-tax line, meeting it at the ends.
 function cashOutCurveSvg(r) {
   var W = 320, H = 170, padL = 30, padR = 10, padT = 10, padB = 26;
@@ -2245,7 +2245,7 @@ function idleToggle(label, subtext) {
   return t;
 }
 
-// The accounting token(s) the project's surplus is held in (for cash-out copy). Custom → its symbol; ETH/USDC
+// The accounting token(s) the project's surplus is held in (for cash out copy). Custom → its symbol; ETH/USDC
 // (either or both) → "ETH", "USDC", or "ETH and USDC" — honors a project that accepts more than one token.
 function surplusTokenLabel(state) {
   if (customAccounting(state)) return customAcctSym(state) || 'TOKEN';
@@ -2255,24 +2255,24 @@ function surplusTokenLabel(state) {
   if (a.indexOf('usdc') !== -1) syms.push('USDC');
   return syms.length ? syms.join(' and ') : 'ETH';
 }
-// Token cash-out (rulesets) and item cash-out (the 721 store) are MUTUALLY EXCLUSIVE on-chain: with the 721
-// hook as the cash-out data hook, JB721Hook.beforeCashOutRecordedWith reverts on any project-token cash-out
+// Token cash out (rulesets) and item cash out (the 721 store) are MUTUALLY EXCLUSIVE onchain: with the 721
+// hook as the cash out data hook, JB721Hook.beforeCashOutRecordedWith reverts on any project-token cash out
 // (JB721Hook.sol:107). So enabling one idles the other in the UI.
 function itemCashOutOn(state) { return !!(state.shopEnabled && state.collection && state.collection.useForRedemptions); }
 function anyTokenCashOut(state) { return (state.stages || []).some(function (s) { return s.cashOutEnabled; }); }
 
-// Cash-out access for token holders — they reclaim a share of the project's surplus by burning tokens.
+// Cash out access for token holders — they reclaim a share of the project's surplus by burning tokens.
 // Lives next to the owner's surplus allowance (both draw from surplus). Tax rate shapes the bonding curve.
 function cashOutSection(state, stage, render) {
   var t = stage;
   var wrap = el('div', '');
   var label = surplusTokenLabel(state);
-  // Item cash-out (Shop) overrides token cash-out — they can't both be on. Idle the token toggle, but keep the
+  // Item cash out (Shop) overrides token cash out — they can't both be on. Idle the token toggle, but keep the
   // tax card: the same ruleset cashOutTaxRate governs item redemption (JB721Hook forwards it).
   if (itemCashOutOn(state) && !t.cashOutEnabled) {
     wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'Items cash out for surplus instead (enabled in the Shop) — tokens and items can’t both be cashed out.'));
     wrap.appendChild(cashOutTaxCard(t, render, label));
-    wrap.appendChild(infoNote('This cash-out tax applies to item redemptions.'));
+    wrap.appendChild(infoNote('This cash out tax applies to item redemptions.'));
     return wrap;
   }
   wrap.appendChild(toggleRow('Give tokens cash out access to surplus funds', dz('Token holders can cash out their tokens for a share of the project’s surplus ' + label + '.', 'Token holders can’t cash out their tokens.'), t.cashOutEnabled, function (v) { t.cashOutEnabled = v; render(); }));
@@ -2280,7 +2280,7 @@ function cashOutSection(state, stage, render) {
   return wrap;
 }
 
-// The cash-out tax chips + bonding-curve preview, shared by the custom flow's cashOutSection and the revnet
+// The cash out tax chips + bonding-curve preview, shared by the custom flow's cashOutSection and the revnet
 // stage editor. Stores `stage.cashOutTaxRate` as a percent (0–100). `reclaimVerb` lets the revnet copy differ.
 function cashOutTaxCard(t, render, acctSym, reclaimVerb, bare) {
   var coCard = el('div', bare ? '' : 'create-subcard');
@@ -2399,7 +2399,7 @@ function tokenSection(stage, render, state, stageIdx) {
 // ---------------------------------------------------------------------------
 
 // Collection name/symbol default to the project name set in Details (empty if none); the project owner
-// can change them on-chain later. Once the user edits a field, their value sticks.
+// can change them onchain later. Once the user edits a field, their value sticks.
 function collectionNameOf(state) {
   var c = state.collection || {};
   if (c.nameTouched) return c.name;
@@ -2442,14 +2442,14 @@ function collectionExtrasSection(state, render) {
   f.appendChild(toggleRow('Lock owner minting after launch', dz('New items added after launch can’t let the owner mint for free.', 'New items added after launch can let the owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
   f.appendChild(toggleRow('Give split recipients project tokens', dz('Sale-split recipients also receive project tokens for their share.', 'Sale-split recipients receive funds only, no project tokens.'), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
   // useDataHookForCashOut — item holders redeem items against project surplus. Revnets force this on at the
-  // deployer (so it's custom-only). Mutually exclusive with TOKEN cash-out (set in rulesets): the 721 hook
-  // reverts on any token cash-out, so if token cash-outs are on we idle this instead of letting both be set.
+  // deployer (so it's custom-only). Mutually exclusive with TOKEN cash out (set in rulesets): the 721 hook
+  // reverts on any token cash out, so if token cash outs are on we idle this instead of letting both be set.
   if (state.projectType !== 'revnet') {
     if (anyTokenCashOut(state) && !c.useForRedemptions) {
       f.appendChild(idleToggle('Give items cash out access to surplus funds', 'Token cash outs are enabled in your rulesets — tokens and items can’t both be cashed out. Turn off token cash outs to let items redeem.'));
     } else {
       f.appendChild(toggleRow('Give items cash out access to surplus funds', dz('Item holders can cash out their items for a share of the project’s surplus ' + surplusTokenLabel(state) + '.', 'Items can’t be cashed out — they grant no claim on surplus.'), c.useForRedemptions, function (v) { c.useForRedemptions = v; render(); }));
-      if (c.useForRedemptions) f.appendChild(infoNote('Items redeem at the cash-out tax you set in your rulesets.'));
+      if (c.useForRedemptions) f.appendChild(infoNote('Items redeem at the cash out tax you set in your rulesets.'));
     }
   }
 
@@ -2523,7 +2523,7 @@ function itemCard(state, nft, idx, render) {
   var rm = el('button', 'create-stage-remove'); rm.textContent = '✕';
   rm.addEventListener('click', function () { state.nfts.splice(idx, 1); if (!state.nfts.length) state.shopEnabled = false; render(); });
   head.appendChild(rm);
-  var caret = el('span', 'create-stage-caret'); caret.textContent = nft.expanded ? '▴' : '▾'; head.appendChild(caret);
+  var caret = el('span', 'create-stage-caret'); caret.textContent = nft.expanded ? '▾' : '▸'; head.appendChild(caret);
   card.appendChild(head);
   if (nft.expanded) card.appendChild(itemEditor(state, nft, idx, render));
   return card;
@@ -3251,7 +3251,7 @@ var DEPLOY_ERROR_GUIDE = [
   { sel: '0x50dcc307', name: 'jbprojects_zerocreationfeereceiver', msg: 'The protocol’s creation-fee receiver isn’t configured on this chain, so deploys aren’t available here right now. Try a different chain.' },
   { sel: '0xba2fe6f3', name: 'revdeployer_stagetimesmustincrease', msg: 'Each stage must start after the previous one. On the Stages step, give a later stage a larger “days after”.' },
   { sel: '0x8249b409', name: 'revdeployer_musthavesplits', msg: 'A stage has a split percentage but no recipients. On the Stages step, add a split recipient or remove the split.' },
-  { sel: '0x8c4564bd', name: 'revdeployer_cashoutscantbeturnedoffcompletely', msg: 'A stage’s cash-out tax is 100%, which fully blocks cash outs (not allowed for a revnet). Lower the cash-out tax on the Stages step.' },
+  { sel: '0x8c4564bd', name: 'revdeployer_cashoutscantbeturnedoffcompletely', msg: 'A stage’s cash out tax is 100%, which fully blocks cash outs (not allowed for a revnet). Lower the cash out tax on the Stages step.' },
   { sel: '0x141d4794', name: 'revdeployer_stagesrequired', msg: 'A revnet needs at least one stage. Add a stage on the Stages step.' },
   { sel: '0x87971d24', name: 'jbrulesets_invalidweightcutpercent', msg: 'An issuance-cut percentage is out of range. Set it between 0 and 100% on the Rulesets/Stages step.' },
   { sel: '0xbad92c41', name: 'jb721tiershookstore_invalidquantity', msg: 'A store item’s quantity is too high (max 999,999,999). Lower it on the Shop step.' },
@@ -3328,7 +3328,7 @@ function deploy(state, render) {
     if (res === false) { render(); return; } // user cancelled at the raw-data review — not a success
     state.done = true;
     state.statusLines.push({ text: 'All done.', ok: true });
-    // Discover owns its own on-chain/indexer caches. Tell it a project was created so it can switch to the
+    // Discover owns its own onchain/indexer caches. Tell it a project was created so it can switch to the
     // deployed network, drop the old project count, and enumerate the new project immediately.
     if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
     render();
@@ -3556,7 +3556,7 @@ export function deploySalt(state, owner) {
 }
 
 // Build the launchProjectFor call for one chain. Returns { contract, address, abi, args, missingSuckers }.
-// Used BOTH for the on-chain send (runDeploy) and the JSON payload preview, so what the user reviews is
+// Used BOTH for the onchain send (runDeploy) and the JSON payload preview, so what the user reviews is
 // byte-for-byte what they sign.
 function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var multi = state.chainIds.length > 1;
@@ -3815,11 +3815,11 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
   // Cash outs / owner minting / pausing apply to the project's tokens regardless of whether THIS stage
   // issues new tokens (tokens can exist from prior stages or owner mints). Clamp 0–100 so a stray value
   // can't overflow MAX_CASH_OUT_TAX_RATE and revert at deploy.
-  // Item redemptions route cash-out through the 721 hook (item holders redeem for surplus). Only when a store
-  // is actually on this chain AND the project opted in. Mutually exclusive with token cash-out by contract.
+  // Item redemptions route cash out through the 721 hook (item holders redeem for surplus). Only when a store
+  // is actually on this chain AND the project opted in. Mutually exclusive with token cash out by contract.
   var storeRedeem = state.shopEnabled && !!(state.collection && state.collection.useForRedemptions)
     && (state.nfts || []).some(function (_, i) { return chainItemIncluded(state, chainId, i); });
-  // The cash-out tax governs whoever can cash out — token holders OR (mutually exclusively) item holders — so
+  // The cash out tax governs whoever can cash out — token holders OR (mutually exclusively) item holders — so
   // it applies when either is on. 100% = cash outs off (also forced when payouts leave no surplus).
   rs.cashOutTaxRate = ((stage.cashOutEnabled || storeRedeem) && !noSurplus)
     ? Math.max(0, Math.min(100, Number(stage.cashOutTaxRate) || 0)) : 100;
@@ -3840,7 +3840,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
     if (state.shopChoice === 'reactivate') {
       rs.dataHook = (state.reactivatedShopHookByChain && state.reactivatedShopHookByChain[chainId]) || state.reactivatedShopHook || '';
       rs.useDataHookForPay = true;
-      // Reactivation is explicit, so preserve whether the archived collection previously gave items cash-out access.
+      // Reactivation is explicit, so preserve whether the archived collection previously gave items cash out access.
       rs.useDataHookForCashOut = !!state.reactivatedShopUseDataHookForCashOut;
     } else if (state.shopChoice === 'continue') {
       rs.dataHook = (state.currentDataHookByChain && state.currentDataHookByChain[chainId]) || state.currentDataHook || '';
@@ -4163,7 +4163,7 @@ function storeCategoryName(state, category) {
 function buildMetadata(d, storeCategories) {
   var m = { version: 1, name: d.name || '', projectTagline: d.tagline || '', description: d.description || '' };
   // Custom projects don't deploy an ERC-20 at launch (tokens are credits), so the symbol can't live
-  // on-chain yet — stash it in the project URI metadata so the UI can show "$SYMBOL" until/unless an
+  // onchain yet — stash it in the project URI metadata so the UI can show "$SYMBOL" until/unless an
   // ERC-20 is deployed later. Revnets pass the ticker to REVDeployer instead (real ERC-20), but it's
   // harmless to also record it here.
   if (d.ticker) m.symbol = d.ticker;

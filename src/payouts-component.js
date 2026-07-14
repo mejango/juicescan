@@ -16,7 +16,7 @@ export var sendPayoutsAbi = [{
     { name: 'projectId', type: 'uint256' },
     { name: 'token', type: 'address' },
     { name: 'amount', type: 'uint256' },
-    { name: 'currency', type: 'uint256' }, // JBCurrencyIds is uint256 on-chain — uint32 here changed the selector → tx reverted
+    { name: 'currency', type: 'uint256' }, // JBCurrencyIds is uint256 onchain — uint32 here changed the selector → tx reverted
     { name: 'minTokensPaidOut', type: 'uint256' },
   ],
   outputs: [{ name: '', type: 'uint256' }],
@@ -282,8 +282,8 @@ export function renderPayoutsComponent() {
     if (state.currencyMode !== 'token') {
       var curHint = el('div');
       curHint.style.fontSize = '12px'; curHint.style.color = 'var(--muted)'; curHint.style.marginTop = '4px';
-      curHint.textContent = state.currencyMode === 'eth' ? 'Amount is denominated in ETH, using the selected token context’s ' + state.decimals + '-decimal scale, then converted on-chain.'
-        : state.currencyMode === 'usd' ? 'Amount is denominated in USD, using the selected token context’s ' + state.decimals + '-decimal scale, then converted on-chain.'
+      curHint.textContent = state.currencyMode === 'eth' ? 'Amount is denominated in ETH, using the selected token context’s ' + state.decimals + '-decimal scale, then converted onchain.'
+        : state.currencyMode === 'usd' ? 'Amount is denominated in USD, using the selected token context’s ' + state.decimals + '-decimal scale, then converted onchain.'
         : 'Amount is denominated in this currency id and uses the selected token context’s ' + state.decimals + '-decimal scale.';
       curSection.appendChild(curHint);
     }
@@ -398,7 +398,7 @@ export function renderPayoutsComponent() {
       var quoted = BigInt(simulation.result || 0);
       var exactCurrency = isExactPayoutCurrency(currency, accountingCurrency);
       var minPaidOut = payoutOutputFloor(quoted, exactCurrency);
-      if (minPaidOut === 0n) throw new Error('This request would pay out 0 terminal tokens.');
+      if (minPaidOut === 0n) throw new Error('This payout would send 0 terminal tokens. Nothing was sent.');
       state.phase = 'ready'; state.txStatus = null; updateUI();
       executeTransaction({
         ...buildSendPayoutsArgs({ chainId: chainId, terminalAddr: terminalAddr, projectId: state.projectId, token: tokenAddr, amount: amountParsed, currency: currency, minPaidOut: minPaidOut }),

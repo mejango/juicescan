@@ -37,9 +37,9 @@ export function normalizeProjectPayerMetadata(metadata) {
 }
 
 export function buildProjectPayerDeployArgs(projectId, beneficiary, memo, metadata, addToBalance, owner) {
-  if (projectId == null || String(projectId) === '') throw new Error('Missing project ID');
-  if (!validAddress(beneficiary)) throw new Error('Missing default beneficiary');
-  if (!validAddress(owner)) throw new Error('Missing payer address admin');
+  if (projectId == null || String(projectId) === '') throw new Error('Enter a project ID');
+  if (!validAddress(beneficiary)) throw new Error('Enter a default beneficiary address');
+  if (!validAddress(owner)) throw new Error('Enter the payer admin address');
   return [BigInt(projectId), beneficiary, String(memo || ''), normalizeProjectPayerMetadata(metadata), !!addToBalance, owner];
 }
 

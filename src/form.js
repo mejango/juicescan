@@ -342,7 +342,7 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
       calldata: encodeFunctionData({ abi: [fn], functionName: fn.name, args: args }),
       value: value || 0n,
     }, { title: 'Confirm transaction' }).then(function(ok) {
-      if (!ok) { outputArea.innerHTML = ''; outputArea.appendChild(renderError('Transaction cancelled')); return; }
+      if (!ok) { outputArea.innerHTML = ''; outputArea.appendChild(renderError('Cancelled')); return; }
       setOutputMessage(outputArea, 'tx-pending', 'Simulating the confirmed transaction…');
       var currentAccount = getAccount();
       if (!currentAccount || currentAccount.toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');

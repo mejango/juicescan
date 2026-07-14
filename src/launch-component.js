@@ -156,7 +156,7 @@ export function renderLaunchComponent() {
     memoSection.appendChild(memoLabel);
     var memoInput = el('input', 'field string-field optional-field');
     memoInput.type = 'text';
-    memoInput.placeholder = 'Launch memo...';
+    memoInput.placeholder = 'Add a memo (optional)';
     memoInput.value = state.memo;
     memoInput.addEventListener('input', function() { state.memo = memoInput.value; });
     memoSection.appendChild(memoInput);

@@ -1,6 +1,6 @@
 // src/discover.js
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
-// display metadata and indexed aggregates come from Bendystraw with an on-chain URI fallback.
+// display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
 import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval } from './component-base.js';
@@ -57,7 +57,7 @@ function getNetworkMode() {
   var fromHash = networkModeFromHash();
   if (fromHash) return fromHash;
   // Default to mainnet (the real network — 7 canonical revnets live). Project metadata/feeds use the matching
-  // Bendystraw host while transaction-critical state stays on-chain. Testnets are available via the toggle.
+  // Bendystraw host while transaction-critical state stays onchain. Testnets are available via the toggle.
   try { return localStorage.getItem('jb-network') === 'testnet' ? 'testnet' : 'mainnet'; } catch (_) { return 'mainnet'; }
 }
 var DISCOVER_NETWORK = getNetworkMode();
@@ -197,7 +197,7 @@ function routerSetHash(h) {
 // not even a JBRouterTerminal — no DIRECTORY()).
 function routerTerminalFor(chainId) { return getAddress('JBRouterTerminalRegistry', chainId); }
 
-// Cash-out protocol fee (2.5%), mirroring JBMultiTerminal._cashOutTokensOf. NON-ZERO cash-out tax → fee on the
+// Cash out protocol fee (2.5%), mirroring JBMultiTerminal._cashOutTokensOf. NON-ZERO cash out tax → fee on the
 // full reclaim; ZERO tax → fee only on min(reclaim, feeFreeSurplus) (round-trip prevention), 0 if no fee-free
 // surplus. Feeless casher → 0. All amounts are the reclaim token's own units (BigInt). Pure for testability.
 export function cashOutProtocolFee(reclaim, taxRate, feeless, feeFreeSurplus) {
@@ -209,7 +209,7 @@ export function cashOutProtocolFee(reclaim, taxRate, feeless, feeFreeSurplus) {
   return feeable / 40n;
 }
 
-// Pick the pay token after the on-chain accounting-context refine resolves the real token list. Preserve the
+// Pick the pay token after the onchain accounting-context refine resolves the real token list. Preserve the
 // user's pick ONLY when they explicitly chose one (tokenTouched); otherwise default to the project's first
 // accounting token (list[0]). This is the fix for the fund-loss desync where a USDC-accounting project stayed
 // stuck on the native-ETH sync default (the dropdown showed USDC but the tx paid 1 ETH). Pure for testability.
@@ -325,7 +325,7 @@ var controllerOfAbi = [{ type: 'function', name: 'controllerOf', stateMutability
 var extraDataHookOfAbi = [{ type: 'function', name: 'extraDataHookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'rulesetId', type: 'uint256' }], outputs: [{ type: 'tuple', components: [{ name: 'dataHook', type: 'address' }, { name: 'useDataHookForPay', type: 'bool' }, { name: 'useDataHookForCashOut', type: 'bool' }] }] }];
 // The buyback hook's per-(project,terminalToken) TWAP window — public, non-zero iff a pool is initialized for that
 // pair (MIN_TWAP_WINDOW is 5 min, so 0 = unset). The PoolKey (fee/tickSpacing) is stored in an internal mapping and
-// is NOT readable on-chain, so this tells us "initialized + TWAP", not the exact fee/tick.
+// is NOT readable onchain, so this tells us "initialized + TWAP", not the exact fee/tick.
 var twapWindowOfAbi = [{ type: 'function', name: 'twapWindowOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 
 // ---- 721 NFT tiers (Shop). Verified against nana-721-hook-v6 + REVOwner.tiered721HookOf. ----
@@ -474,7 +474,7 @@ function buildTierMintMetadata(idTarget, tierIds) {
   return '0x' + '00'.repeat(32) + nftId + '02' + '00'.repeat(27) + data.slice(2);
 }
 
-// Cash-out routing metadata: tells the buyback hook to sell into the pool with a slippage floor, skipping the
+// Cash out routing metadata: tells the buyback hook to sell into the pool with a slippage floor, skipping the
 // (cold) TWAP. id = getId("cashOut", buybackHook) = bytes4(hook[:4] ^ keccak256("cashOut")[:4]); data =
 // abi.encode(uint256 minimumSwapAmountOut, bool skip=false). Passing a non-zero minimum makes the hook route
 // AMM whenever it beats the direct reclaim, without waiting for the oracle to seed (see beforeCashOutRecordedWith).
@@ -488,7 +488,7 @@ function buildCashOutAmmMetadata(hookAddr, minReturned) {
   var data = encodeAbiParameters([{ type: 'uint256' }, { type: 'bool' }], [minReturned, false]);
   return '0x' + '00'.repeat(32) + cashOutMetadataId(hookAddr) + '02' + '00'.repeat(27) + data.slice(2);
 }
-// The buyback hook's cash-out spec metadata is a fixed 8-word static blob: (minOut, cashOutCountToSell,
+// The buyback hook's cash out spec metadata is a fixed 8-word static blob: (minOut, cashOutCountToSell,
 // netDirect, twapTick, twapLiquidity, poolId, rawSwapQuote, userSpecifiedMin). Slice the two words we need
 // (tokens the hook would sell + the net direct reclaim it compares against) — no decodeAbiParameters import.
 function decodeBuybackCashOutSpec(metaHex) {
@@ -563,7 +563,7 @@ function bustTiersCache(project) { delete _tiersCache[project.chainId + ':' + pr
 
 // A tier's effective (discounted) price. Mirrors JB721TiersHookStore: effective = price - mulDiv(price,
 // discountPercent, 200), where DISCOUNT_DENOMINATOR = 200 (so discountPercent 200 = 100% off). Integer-floor
-// division matches the on-chain mulDiv, so the displayed/charged amount equals what the store charges at mint.
+// division matches the onchain mulDiv, so the displayed/charged amount equals what the store charges at mint.
 export function tierEffectivePrice(price, discountPercent) {
   var p = BigInt(price || 0);
   var d = BigInt(discountPercent || 0);
@@ -617,7 +617,7 @@ export function tierDiscountLabel(tier) {
   return (Number.isInteger(pct) ? String(pct) : pct.toFixed(1)) + '% off';
 }
 
-// A shopper-facing "% off" (0–100) → the on-chain discountPercent (0–200, denominator 200). The operator
+// A shopper-facing "% off" (0–100) → the onchain discountPercent (0–200, denominator 200). The operator
 // edit form takes % off; the store stores discountPercent. round(pctOff/100 * 200) = round(pctOff * 2).
 export function pctOffToDiscountPercent(pctOff) {
   return tierDiscountPercentFromPct(pctOff);
@@ -664,7 +664,7 @@ async function fetchProjectTiersUncached(project) {
   return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers };
 }
 
-// Resolve a tier's display { name, image, category } — prefer the on-chain tokenUriResolver (it returns
+// Resolve a tier's display { name, image, category } — prefer the onchain tokenUriResolver (it returns
 // productName + categoryName + image uniformly for every tier, even ones that also carry an IPFS URI),
 // falling back to the tier's IPFS metadata when no resolver is set. Best-effort.
 function resolveTierMedia(shop, tier, chainId) {
@@ -690,7 +690,7 @@ function resolveTierMedia(shop, tier, chainId) {
     };
   };
   // Bendystraw stores parsed tier metadata when available. It is the display source of truth; the verified
-  // on-chain resolver/IPFS value below remains the fallback for indexer gaps or older rows.
+  // onchain resolver/IPFS value below remains the fallback for indexer gaps or older rows.
   var indexed = tier.indexedMetadata;
   if (indexed) {
     var indexedJson = parsedJsonObject(indexed.metadata);
@@ -1067,7 +1067,7 @@ function renderShopSection(project, shop, cart) {
     if (!wrap.isConnected) return;
     var entries = cart ? cart.entries() : {};
     var n = 0; for (var k in entries) n += entries[k];
-    checkoutBar.textContent = 'Checkout · ' + n + ' item' + (n === 1 ? '' : 's') + ' →';
+    checkoutBar.textContent = 'Checkout | ' + n + ' item' + (n === 1 ? '' : 's') + ' →';
     checkoutBar.classList.toggle('shown', n > 0);
   }
   if (cart) cart.subscribe(updateCheckout);
@@ -1114,7 +1114,7 @@ function resolveSplitProject(projectId, chainId) {
     var proj = pair[0];
     var preferred = pair[1];
     if (!proj) {
-      // Split routing is an on-chain feature and must not disappear just because the indexer is unavailable.
+      // Split routing is an onchain feature and must not disappear just because the indexer is unavailable.
       if (!preferred) return null;
       return { name: preferred.name || ('Project #' + projectId), byChain: projectIdsByChainFromSuckerGroup(null, chainId, projectId) };
     }
@@ -2031,7 +2031,7 @@ async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
     return { to: hookMap[cid], data: encodeFunctionData({ abi: setDiscountPercentsOfAbi, functionName: 'setDiscountPercentsOf', args: [[cfg]] }) };
   }, 300000n, setStatus, { label: 'Set discount', title: 'Confirm discount' });
   bustTiersCache(project);
-  setStatus('Discount set on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : ''), 'success');
+  setStatus('Discount set on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : '') + '.', 'success');
 }
 // Operator: remove a tier from the shop on every chain (JB721TiersHook.adjustTiers with tierIdsToRemove).
 async function submitRemoveTier(project, tier, statusEl) {
@@ -2046,7 +2046,7 @@ async function submitRemoveTier(project, tier, statusEl) {
     return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[], [BigInt(tier.id)]] }) };
   }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove' });
   bustTiersCache(project);
-  setStatus('Removed on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : ''), 'success');
+  setStatus('Removed on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : '') + '.', 'success');
 }
 
 // Compact mini-shop folded into the top of the Pay card: a horizontal strip of tier thumbnails backed by
@@ -2868,7 +2868,7 @@ function inspectProjectContractsOnChain(project, chain) {
       : clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }).catch(function () { return null; });
     var terminalsP = readProjectPaymentSurface(project, chainId).then(function (surface) {
       return Promise.all((surface.terminals || []).map(function (terminal) {
-        return addUnknownProjectContract(unknown, chainId, chainName, 'Payment terminal', terminal, 'Payments, payouts, cash-outs, and balances depend on terminal behavior.');
+        return addUnknownProjectContract(unknown, chainId, chainName, 'Payment terminal', terminal, 'Payments, payouts, cash outs, and balances depend on terminal behavior.');
       }));
     }).catch(function () {});
     return Promise.all([rulesetP, terminalsP, controllerAuditP]).then(function (r) {
@@ -2880,7 +2880,7 @@ function inspectProjectContractsOnChain(project, chain) {
       var approvalHookP = addUnknownProjectContract(unknown, chainId, chainName, 'Rule-change hook', approvalHook, 'This hook can affect when queued rulesets take effect.');
       var hookP = inspectBuybackHookBehindDataHook(unknown, chainId, chainName, pid, dataHook, 'Buyback hook');
       var dataHookP = isKnown721HookClone(dataHook, chainId, pid).then(function (knownClone) {
-        if (!knownClone) return addUnknownProjectContract(unknown, chainId, chainName, 'Data hook', dataHook, 'Payments and cash-outs can run custom hook logic.');
+        if (!knownClone) return addUnknownProjectContract(unknown, chainId, chainName, 'Data hook', dataHook, 'Payments and cash outs can run custom hook logic.');
       });
       var baseHookAuditP = Promise.all([hookP, dataHookP, approvalHookP]);
       var omni = getAddress('JBOmnichainDeployer', chainId);
@@ -2932,7 +2932,7 @@ function renderProjectContractWarnings(project) {
       var row = el('div', 'project-contract-warning-row');
       var left = el('span', 'project-contract-warning-left');
       left.appendChild(chainLogo(u.chainId, u.chain));
-      var label = el('span'); label.textContent = ' ' + u.chain + ' · ' + u.role; left.appendChild(label);
+      var label = el('span'); label.textContent = ' ' + u.chain + ' | ' + u.role; left.appendChild(label);
       row.appendChild(left);
       var right = el('span', 'project-contract-warning-right');
       right.appendChild(addressLinkNode(u.address, u.chainId));
@@ -3021,7 +3021,7 @@ function quoteDirectSwap(chainId, pool, amountIn) {
 // Resolve the buyback pool + swap direction for SELLING the project token (the mirror of directSwapPoolFor). The
 // returned object plugs into quoteDirectSwap / encodeV4SwapInput / buildDirectSwapErc20Tx unchanged: `pairAddr` is
 // the swap INPUT (here the project token being sold) and `tokenOut` the output (the pool's pair, USDC/ETH). Used
-// both to quote a sell and to execute a direct pool sell that bypasses the terminal (no 2.5% cash-out fee).
+// both to quote a sell and to execute a direct pool sell that bypasses the terminal (no 2.5% cash out fee).
 function directSellPoolFor(project, chainId) {
   if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
   return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
@@ -3131,7 +3131,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   };
 }
 
-// Current cash-out price (accounting token reclaimed per project token) — the price floor.
+// Current cash out price (accounting token reclaimed per project token) — the price floor.
 // Null when supply/surplus is 0.
 async function readCashoutPrice(project, chainId) {
   var pid = BigInt(project.id);
@@ -3144,7 +3144,7 @@ async function readCashoutPrice(project, chainId) {
     var controller = await read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]);
     if (!controller || /^0x0+$/.test(controller)) return null;
     // Curve inputs — fetch together (one multicall round-trip) before the reclaim read. Denominator is total
-    // supply WITH pending reserved (the contract's cash-out denominator); numerator is the reclaim token's
+    // supply WITH pending reserved (the contract's cash out denominator); numerator is the reclaim token's
     // surplus (net of payout limits) via currentSurplusOf. Raw balanceOf overstated it when a payout limit exists.
     var res = await Promise.all([
       clientFor(chainId).readContract({ address: controller, abi: totalSupplyWithReservedAbi, functionName: 'totalTokenSupplyWithReservedTokensOf', args: [pid] }),
@@ -3457,7 +3457,7 @@ var autoIssueForAbi = [{
   outputs: [],
 }];
 
-// Decode reserved %, cash-out tax, and base currency from a ruleset's packed metadata uint.
+// Decode reserved %, cash out tax, and base currency from a ruleset's packed metadata uint.
 // Layout per JBRulesetMetadataResolver: reservedPercent << 4, cashOutTaxRate << 20, baseCurrency << 36.
 function decodeStageMetadata(packed) {
   var m = BigInt(packed);
@@ -3482,18 +3482,18 @@ var reclaimableAbi = [{
   ],
   outputs: [{ name: '', type: 'uint256' }],
 }];
-// The supply + surplus inputs the cash-out bonding curve runs on (for the "how it's calculated" breakdown).
+// The supply + surplus inputs the cash out bonding curve runs on (for the "how it's calculated" breakdown).
 // totalTokenSupplyWithReservedTokensOf = circulating + pending reserved (the curve's denominator).
 var totalSupplyWithReservedAbi = [{ type: 'function', name: 'totalTokenSupplyWithReservedTokensOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
 // currentSurplusOf with empty terminals/tokens = surplus across ALL of a chain's terminals and accounting
-// tokens, valued in `currency`/`decimals` (the cumulative surplus the cash-out curve prices against).
+// tokens, valued in `currency`/`decimals` (the cumulative surplus the cash out curve prices against).
 var currentSurplusOfAbi = [{ type: 'function', name: 'currentSurplusOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminals', type: 'address[]' }, { name: 'tokens', type: 'address[]' }, { name: 'decimals', type: 'uint256' }, { name: 'currency', type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
-// Surplus paid in from another JB project (JBMultiTerminal public mapping). On a ZERO cash-out-tax project only,
-// the protocol fee applies to this portion of a cash-out reclaim (round-trip prevention) — see _cashOutTokensOf.
+// Surplus paid in from another JB project (JBMultiTerminal public mapping). On a ZERO cash out-tax project only,
+// the protocol fee applies to this portion of a cash out reclaim (round-trip prevention) — see _cashOutTokensOf.
 var feeFreeSurplusOfAbi = [{ type: 'function', name: 'feeFreeSurplusOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [{ type: 'uint256' }] }];
-// JBMultiTerminal.previewCashOutFrom — runs the project's cash-out data hook (for revnets, REVOwner's
+// JBMultiTerminal.previewCashOutFrom — runs the project's cash out data hook (for revnets, REVOwner's
 // 2.5%-of-tokens fee + buyback routing), returning the bonding-curve reclaim NET of the hook but BEFORE
-// the terminal's 2.5% protocol fee. This is the only way to price a revnet cash-out correctly — the REV
+// the terminal's 2.5% protocol fee. This is the only way to price a revnet cash out correctly — the REV
 // fee math (cross-chain effective surplus, local-liquidity scaling) is infeasible to replicate client-side.
 var previewCashOutAbi = [{
   type: 'function', name: 'previewCashOutFrom', stateMutability: 'view',
@@ -3529,10 +3529,10 @@ var borrowableAbi = [{
     { name: 'decimals', type: 'uint256' },
     { name: 'currency', type: 'uint256' },
   ],
-  // borrowableNow = min(capacity, live project surplus); 0 while the revnet's cash-out delay is active.
+  // borrowableNow = min(capacity, live project surplus); 0 while the revnet's cash out delay is active.
   outputs: [{ name: 'borrowableNow', type: 'uint256' }, { name: 'borrowableCapacity', type: 'uint256' }],
 }];
-// REVOwner (a revnet's data hook): when loans/cash-outs unlock. 0 = no delay; future = locked until then.
+// REVOwner (a revnet's data hook): when loans/cash outs unlock. 0 = no delay; future = locked until then.
 var cashOutDelayAbi = [{
   type: 'function', name: 'cashOutDelayOf', stateMutability: 'view',
   inputs: [{ name: 'revnetId', type: 'uint256' }], outputs: [{ name: '', type: 'uint256' }],
@@ -3694,7 +3694,7 @@ export function safeMediaUrl(url) {
 export function httpUrlOnly(url) { var u = (url || '').trim(); return /^https?:\/\//i.test(u) ? u : ''; }
 
 // DOMParser is INERT — unlike `div.innerHTML = html`, the parsed document never loads <img src> (so an
-// `<img onerror>` in untrusted on-chain text can't fire) and never runs script. Use it everywhere we parse
+// `<img onerror>` in untrusted onchain text can't fire) and never runs script. Use it everywhere we parse
 // project-controlled HTML to extract text/structure.
 function parseInertHtml(html) { return new DOMParser().parseFromString(String(html || ''), 'text/html').body; }
 
@@ -3706,7 +3706,7 @@ function stripHtml(html) {
 // Like stripHtml, but PRESERVES paragraph/line breaks. Rich-text descriptions are HTML
 // (`<p>…</p><p><br></p><p>…</p>`); textContent concatenates block elements with no whitespace, so
 // sentences run together ("loans.$CPN"). Convert <br> and block boundaries to newlines first, then
-// extract text — never inject the raw HTML into the live DOM (untrusted on-chain content).
+// extract text — never inject the raw HTML into the live DOM (untrusted onchain content).
 function htmlToText(html) {
   if (!html) return '';
   var tmp = parseInertHtml(html);
@@ -3720,7 +3720,7 @@ function htmlToText(html) {
 }
 
 // Render rich-text metadata (HTML from the editor) into `container` as paragraphs AND lists — so
-// `<ul>`/`<ol>` keep their bullets/numbers instead of flattening to plain lines. Untrusted on-chain
+// `<ul>`/`<ol>` keep their bullets/numbers instead of flattening to plain lines. Untrusted onchain
 // content: parse into a detached node and copy only text + list structure (never inject raw HTML).
 function renderRichTextInto(container, html) {
   var tmp = parseInertHtml(html);
@@ -4218,11 +4218,11 @@ function splitAccountNode(sp, project, chainId, opts) {
     link.textContent = 'Project #' + pid;
     node.appendChild(link);
     preferredSplitProjectInfo(pid, chainId).then(function (info) {
-      if (info && info.name && link.isConnected) link.textContent = info.name + ' · #' + pid;
+      if (info && info.name && link.isConnected) link.textContent = info.name + ' | #' + pid;
     }).catch(function () {});
 
     var route = el('span', 'split-project-route');
-    if (opts.kind === 'payout') route.textContent = sp.preferAddToBalance ? 'add to balance · no tokens minted' : 'pay project';
+    if (opts.kind === 'payout') route.textContent = sp.preferAddToBalance ? 'Add to balance | no tokens minted' : 'Pay project';
     else route.textContent = 'reserved-token project recipient';
     node.appendChild(route);
 
@@ -4280,7 +4280,7 @@ function addressNode(address, chainId) {
   // too — the instant .addr-tip is clipped inside ellipsis cells (e.g. the owners table), so this guarantees the
   // address is visible on hover everywhere.
   label.style.cursor = 'pointer';
-  label.title = address + ' · click to copy';
+  label.title = address + ' | click to copy';
   label.addEventListener('click', function (e) {
     e.preventDefault(); e.stopPropagation();
     var prevTip = tip.textContent;
@@ -4355,7 +4355,7 @@ var SAFE_CHAIN_PREFIX = { 1: 'eth', 10: 'oeth', 8453: 'base', 42161: 'arb1', 111
 var SAFE_ICON_SVG = '<svg viewBox="0 0 661.62 661.47" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="m531.98 330.7h-49.42c-14.76 0-26.72 11.96-26.72 26.72v71.73c0 14.76-11.96 26.72-26.72 26.72h-196.61c-14.76 0-26.72 11.96-26.72 26.72v49.42c0 14.76 11.96 26.72 26.72 26.72h207.99c14.76 0 26.55-11.96 26.55-26.72v-39.65c0-14.76 11.96-25.23 26.72-25.23h38.2c14.76 0 26.72-11.96 26.72-26.72v-83.3c0-14.76-11.96-26.41-26.72-26.41zm-326.2-98.18c0-14.76 11.96-26.72 26.72-26.72h196.49c14.76 0 26.72-11.96 26.72-26.72v-49.42c0-14.76-11.96-26.72-26.72-26.72h-207.88c-14.76 0-26.72 11.96-26.72 26.72v38.08c0 14.76-11.96 26.72-26.72 26.72h-38.03c-14.76 0-26.72 11.96-26.72 26.72v83.39c0 14.76 12.01 26.12 26.77 26.12h49.42c14.76 0 26.72-11.96 26.72-26.72l-.05-71.44zm101.77 46.23h47.47c15.47 0 28.02 12.56 28.02 28.02v47.47c0 15.47-12.56 28.02-28.02 28.02h-47.47c-15.47 0-28.02-12.56-28.02-28.02v-47.47c0-15.47 12.56-28.02 28.02-28.02z" fill="currentColor"></path></svg>';
 
 var _safeCache = {};
-// Return { owners, threshold } if `address` is a Safe on `chainId`, else null. On-chain (works any chain).
+// Return { owners, threshold } if `address` is a Safe on `chainId`, else null. Onchain (works any chain).
 function fetchSafeInfo(address, chainId) {
   if (!address || address === ZERO_ADDRESS || !chainId) return Promise.resolve(null);
   var key = chainId + ':' + address.toLowerCase();
@@ -4413,7 +4413,7 @@ function openSafeModal(address, chainId, info) {
   openModal('Safe', content);
 }
 
-// -- On-chain fetch --
+// -- Onchain fetch --
 
 export async function fetchMetadata(uri) {
   if (!uri) return null;
@@ -4594,7 +4594,7 @@ async function fetchProject(id, chainId) {
     operator: null,
     tokenAddress: null,
     tokenSymbol: null,
-    metaSymbol: null, // off-chain display symbol from projectUri (custom credits-only projects)
+    metaSymbol: null, // offchain display symbol from projectUri (custom credits-only projects)
     tokenName: null,
     totalSupply: null,
     pendingReserved: null,
@@ -4645,7 +4645,7 @@ async function fetchProject(id, chainId) {
       project.tokenSymbol = await c.readContract({
         address: tokenAddr, abi: erc20SymbolAbi, functionName: 'symbol', args: [],
       }).catch(function () { return null; });
-      // The ERC-20 name is the authoritative on-chain project name (set from the deploy config,
+      // The ERC-20 name is the authoritative onchain project name (set from the deploy config,
       // e.g. "Bananapus (Juicebox V6)") — fresher than the reused IPFS metadata JSON.
       project.tokenName = await c.readContract({
         address: tokenAddr, abi: erc20NameAbi, functionName: 'name', args: [],
@@ -4692,11 +4692,11 @@ async function fetchProject(id, chainId) {
     project.operator = await revnetOperatorOf(id, chainId);
   }
 
-  // Symbol priority: deployed ERC-20 symbol (authoritative) → off-chain projectUri symbol (credits-only
+  // Symbol priority: deployed ERC-20 symbol (authoritative) → offchain projectUri symbol (credits-only
   // custom projects). Resolved here, after both the token-of read and the metadata fetch have settled.
   if (!project.tokenSymbol && project.metaSymbol) project.tokenSymbol = project.metaSymbol;
   // Project metadata owns the project name. The ERC-20 name, handle, symbol, and id are progressively weaker
-  // fallbacks for projects whose indexed and on-chain URI metadata are both absent.
+  // fallbacks for projects whose indexed and onchain URI metadata are both absent.
   if (!project.name) project.name = project.handle || project.tokenName || project.tokenSymbol || ('Project #' + id);
   return project;
 }
@@ -4715,7 +4715,7 @@ function scheduleActiveProjectRefresh(project) {
   if (_projectRefreshTimer) clearTimeout(_projectRefreshTimer);
   var seq = ++_projectRefreshSeq;
   // Give load-balanced RPCs a short moment to converge after the confirmed receipt, then rebuild the active tab
-  // from on-chain state. The browser URL/tab stays put and no manual refresh is required.
+  // from onchain state. The browser URL/tab stays put and no manual refresh is required.
   _projectRefreshTimer = setTimeout(function () {
     _projectRefreshTimer = null;
     var active = _activeDetail;
@@ -5102,7 +5102,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
 
   // Auto-refresh balance/supply (+ owners via the rebuilt header) and the activity feed when a tx
   // confirms in this view — a bubbling 'jb:project-updated' event is dispatched by the
-  // pay/cash-out/distribute flows. `activityCardEl` is assigned just below, before any tx can fire.
+  // pay/cash out/distribute flows. `activityCardEl` is assigned just below, before any tx can fire.
   var activityCardEl = null;
   wrap.addEventListener('jb:project-updated', function () {
     var pid = BigInt(project.id);
@@ -5366,7 +5366,7 @@ function renderPayCard(project, cart) {
   // Pay currencies for a chain. The DIRECT tokens are whatever the project's terminal actually accepts
   // (its accounting contexts) — for an ETH-based project that's native ETH; for a USD-based project (e.g.
   // ART) that's USDC. Tokens the project does NOT accept directly (native ETH and/or USDC) are offered as
-  // swap-via-router currencies. The accepted set needs an on-chain read, so we start from a sensible sync
+  // swap-via-router currencies. The accepted set needs an onchain read, so we start from a sensible sync
   // default and refine once `loadAcceptedTokens` resolves.
   var _tokenCache = {}; // chainId -> resolved token list
 
@@ -5777,7 +5777,7 @@ function renderPayCard(project, cart) {
         var o = document.createElement('option');
         o.value = String(i);
         o.textContent = currencyLabel(t.symbol);
-        o.title = (t.name ? t.name + ' · ' : '') + t.address;
+        o.title = (t.name ? t.name + ' | ' : '') + t.address;
         sel.appendChild(o);
       });
       var curIdx = shownTokens.indexOf(state.token);
@@ -5796,7 +5796,7 @@ function renderPayCard(project, cart) {
       var s = el('span', 'paybox-curr-static');
       if (shownTokens.length === 1 && state.token !== shownTokens[0]) state.token = shownTokens[0];
       s.textContent = state.token ? currencyLabel(state.token.symbol) : 'ETH';
-      if (state.token && state.token.address) s.title = (state.token.name ? state.token.name + ' · ' : '') + state.token.address;
+      if (state.token && state.token.address) s.title = (state.token.name ? state.token.name + ' | ' : '') + state.token.address;
       currWrap.appendChild(s);
     }
   }
@@ -5955,14 +5955,14 @@ function renderPayCard(project, cart) {
     var isAmm = !!(p && p.routing === 'amm');
 
     // Add-to-balance mints nothing — describe the balance effect rather than a meaningless "You get 0 tokens".
-    // For a swap-via-router top-up, show how much of the project's accepted token lands on-chain after the swap.
+    // For a swap-via-router top-up, show how much of the project's accepted token lands onchain after the swap.
     if (state.mode === 'addbalance') {
       if (state.token && state.token.viaRouter) {
         var conv = el('div', 'paybox-conv');
         if (state.phase === 'previewing') conv.textContent = 'Estimating swap…';
-        else if (state.conversion) conv.textContent = '≈ ' + state.conversion.amount + ' ' + state.conversion.sym + ' lands on-chain after the swap';
-        else if (p && p.unavailable) { conv.className = 'paybox-conv muted'; conv.textContent = 'Swaps into ' + (acceptedTokenSym() || 'the project token') + ' on-chain'; }
-        else { conv.className = 'paybox-conv muted'; conv.textContent = 'Swaps into ' + (acceptedTokenSym() || 'the project token') + ' on-chain'; }
+        else if (state.conversion) conv.textContent = '≈ ' + state.conversion.amount + ' ' + state.conversion.sym + ' lands onchain after the swap';
+        else if (p && p.unavailable) { conv.className = 'paybox-conv muted'; conv.textContent = 'Swaps into ' + (acceptedTokenSym() || 'the project token') + ' onchain'; }
+        else { conv.className = 'paybox-conv muted'; conv.textContent = 'Swaps into ' + (acceptedTokenSym() || 'the project token') + ' onchain'; }
         feedback.appendChild(conv);
       }
       var abal = el('div', 'paybox-splits');
@@ -6220,7 +6220,7 @@ function renderPayCard(project, cart) {
     var isNative = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     var viaRouter = !!state.token.viaRouter; // swap currency → authorize via a gasless Permit2 signature, not a router approve
     if (addBalance && viaRouter) {
-      status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no on-chain minimum-output field for this action.';
+      status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no onchain minimum-output field for this action.';
       return;
     }
     if (!addBalance && !payPreviewCanSubmit(state.phase, state.preview)) {
@@ -6694,7 +6694,7 @@ export function tokenUiCapabilities(project) {
   return {
     hasErc20: hasErc20,
     // Internal Juicebox credits are the project-token balance before an ERC-20 is deployed. They remain
-    // cash-out eligible; only an external ERC-20 market/LP position depends on deployment.
+    // cash out eligible; only an external ERC-20 market/LP position depends on deployment.
     canCashOut: true,
     canAddMarketLiquidity: hasErc20,
     showMarket: hasErc20,
@@ -7191,7 +7191,7 @@ async function ensureOperatorAccount(project, operatorAddr, setStatus) {
 // buildCall(chainId) -> { to, data }. Resolves when every chain reports Success.
 async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus, confirmOpts) {
   confirmOpts = confirmOpts || {};
-  // Build each chain's call first so we can show the exact on-chain target + calldata before anything is signed.
+  // Build each chain's call first so we can show the exact onchain target + calldata before anything is signed.
   var calls = [];
   for (var i = 0; i < chains.length; i++) {
     var cid = chains[i].id;
@@ -7204,7 +7204,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     action: confirmOpts.label || 'Cross-chain update',
     chains: calls.map(function (c) { var nm = resolveContractName(c.to, c.cid); return nm ? { chain: c.name, chainId: c.cid, contract: nm, address: c.to, calldata: c.data } : { chain: c.name, chainId: c.cid, contract: c.to, calldata: c.data }; }),
   }, { title: confirmOpts.title || 'Confirm cross-chain transaction', confirmText: 'Confirm & send' });
-  if (!ok) { setStatus('Transaction cancelled', ''); throw new Error('Transaction cancelled'); }
+  if (!ok) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
 
   setStatus('Sign the change for ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
   var txs = [];
@@ -7272,7 +7272,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
     return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
   }, 400000n, setStatus, { label: 'Edit project details', title: 'Confirm edit' });
 
-  setStatus('Project updated across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '', 'success');
+  setStatus('Project updated across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.', 'success');
   // Reflect changes in memory + the live card without a reload.
   project.name = meta.name; project.tagline = meta.projectTagline;
   project.descriptionHtml = meta.description || null; project.description = htmlToText(meta.description);
@@ -7516,7 +7516,7 @@ function executeReadySafeTransactions(readyExecs, opts) {
   });
 }
 
-// Suggested next on-chain nonce per (safe, chain, signer), bumped each time this signer approves an on-chain tx so a
+// Suggested next onchain nonce per (safe, chain, signer), bumped each time this signer approves an onchain tx so a
 // run of separate operator actions defaults to sequential nonces (N, N+1, N+2…) instead of all colliding at the
 // current nonce. Persisted to localStorage so it survives a page reload mid-queue (the default is still
 // max(currentNonce, hint), so a stale-low hint is harmless).
@@ -7535,16 +7535,16 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var queueTabName = opts.queueTab || (project && project.isRevnet ? 'Operator' : 'Owner');
     var wrap = el('div', 'modal-body');
     var intro = el('div', 'modal-balance');
-    intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the ' + queueTabName + ' tab). Chains without one are approved + executed on-chain right here. One “Sign & queue” does your part on every chain.';
+    intro.textContent = 'Apply this change on each chain’s Safe. Chains with a hosted Safe service are queued for the multisig (sign once; co-sign + execute from the ' + queueTabName + ' tab). Chains without one are approved + executed onchain right here. One “Sign & queue” does your part on every chain.';
     wrap.appendChild(intro);
     if (chains.some(function (c) { return !hasSafeService(c.id); })) {
       var coNote = el('div', 'modal-balance');
-      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you AND set the same <strong>nonce</strong> — the status under each on-chain chain reads ✓ when both match a pending approval (0 = they differ, and you’d start a separate tx). The first signer can queue several on-chain txs at sequential nonces; the Safe runs them lowest-nonce-first, and this modal executes the one whose nonce is current (click again to run the next).';
+      coNote.innerHTML = '<strong>Co-signing someone else’s transaction?</strong> Enter the <strong>exact</strong> values they gave you AND set the same <strong>nonce</strong> — the status under each chain without a Safe service reads “matches a tx approved by …” when both match a pending approval (0 = they differ, and you’d start a separate tx). The first signer can queue several onchain txs at sequential nonces; the Safe runs them lowest-nonce-first, and this modal executes the one whose nonce is current (click again to run the next).';
       coNote.style.marginTop = '6px';
       wrap.appendChild(coNote);
     }
     var sigBanner = el('div', 'create-banner');
-    sigBanner.textContent = 'It’s a multisig — you sign/approve once per chain. If a chain needs more signers, switch wallets and click again; on-chain chains execute automatically once the threshold is met.';
+    sigBanner.textContent = 'It’s a multisig — you sign/approve once per chain. If a chain needs more signers, switch wallets and click again; chains without a Safe service execute automatically once the threshold is met.';
     wrap.appendChild(sigBanner);
     var listEl = el('div', 'safe-propose-list'); wrap.appendChild(listEl);
     var status = el('div', 'modal-status'); wrap.appendChild(status);
@@ -7595,13 +7595,13 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             });
           });
           st.appendChild(dep);
-          st.appendChild(document.createTextNode(' · or '));
+          st.appendChild(document.createTextNode(' | or '));
           var a = document.createElement('a'); a.href = safeHomeLink(c.id, safe); a.target = '_blank'; a.rel = 'noopener'; a.textContent = 'the Safe app ↗'; st.appendChild(a);
           st.appendChild(document.createTextNode('. Skipped for now.')); return;
         }
         rec.deployed = true; rec.threshold = info.threshold; rec.owners = info.owners;
         if (hasSafeService(c.id)) {
-          st.textContent = 'Safe service · ' + info.threshold + '-of-' + info.owners.length + ' multisig.';
+          st.textContent = 'Safe service | ' + info.threshold + '-of-' + info.owners.length + ' multisig.';
           return Promise.all([getSafeNextNonce(c.id, safe), listPendingSafeTxs(c.id, safe).catch(function () { return []; })]).then(function (rr) {
             var next = rr[0] != null ? rr[0] : 0;
             var queuedNonces = (rr[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (v, i, a) { return a.indexOf(v) === i; }).sort(function (a, b) { return a - b; });
@@ -7609,7 +7609,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             var nrow = el('div', 'safe-propose-nonce'); nrow.style.marginTop = '4px';
             var nlbl = el('span', 'safe-propose-noncelbl'); nlbl.textContent = 'Nonce '; nrow.appendChild(nlbl);
             var nInput = el('input', 'safe-nonce-input'); nInput.type = 'number'; nInput.min = '0'; nInput.value = String(def); nrow.appendChild(nInput);
-            var nhint = el('span', 'safe-propose-hint'); nhint.textContent = queuedNonces.length ? (' next ' + def + ' · queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'; nrow.appendChild(nhint);
+            var nhint = el('span', 'safe-propose-hint'); nhint.textContent = queuedNonces.length ? (' next ' + def + ' | queued #' + queuedNonces.join(', #') + ' — reuse one to replace it') : ' next nonce'; nrow.appendChild(nhint);
             rec.block.appendChild(nrow); rec.nInput = nInput;
           });
         }
@@ -7618,9 +7618,9 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       }).catch(function () { block.classList.add('safe-propose-skip'); rec.deployed = false; st.textContent = 'Could not read the Safe here — skipped.'; });
     });
 
-    // (Re-)read an on-chain chain's approvals AT THE CHOSEN NONCE and paint its status. On first call it renders an
+    // (Re-)read an onchain chain's approvals AT THE CHOSEN NONCE and paint its status. On first call it renders an
     // editable nonce input defaulting to the next sequential slot (current Safe nonce, bumped by _onchainNonceHint as
-    // this signer queues more txs) so the first signer can queue several on-chain txs without colliding at one nonce.
+    // this signer queues more txs) so the first signer can queue several onchain txs without colliding at one nonce.
     // The Safe executes in strict nonce order, so the hash is computed at the CHOSEN nonce; the submit loop only
     // executes the tx whose chosen nonce == the Safe's current nonce.
     function refreshOnChainStatus(rec) {
@@ -7652,18 +7652,18 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           // approvals read for THIS exact tx at the CHOSEN nonce → a non-zero count is the "your values (and nonce)
           // match a pending approval" signal for a co-signer.
           var note = ap.length >= ctx.threshold
-            ? (ahead === 0 ? ' — ✓ ready to execute' : ' — ✓ fully approved; executes once nonce ' + ctx.nonce + '-' + (chosen - 1) + ' clear')
+            ? (ahead === 0 ? ' — ready to execute' : ' — fully approved; executes once nonce ' + ctx.nonce + '-' + (chosen - 1) + ' clear')
             : ap.length > 0
-              ? ' — ✓ matches a tx approved by ' + ap.length + ' signer' + (ap.length > 1 ? 's' : '')
+              ? ' — matches a tx approved by ' + ap.length + ' signer' + (ap.length > 1 ? 's' : '')
               : ' — none yet at nonce ' + chosen + '. Co-signing? match the first signer’s values AND nonce, or this starts a separate tx';
-          rec.st.textContent = 'No Safe service · nonce ' + chosen + ' · ' + ap.length + ' / ' + ctx.threshold + ' approvals' + note;
+          rec.st.textContent = 'No Safe service | nonce ' + chosen + ' | ' + ap.length + ' / ' + ctx.threshold + ' approvals' + note;
         });
       });
     }
 
     function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
     cancel.addEventListener('click', function () { finish(lastResult || { queued: 0, skipped: [], cancelled: true }); });
-    // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; on-chain chains get
+    // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; onchain chains get
     // approveHash, then execTransaction automatically once the threshold is met. Chains that still need more
     // signers stay pending — switch wallets and click again (already-done chains are skipped). All in one flow.
     btn.addEventListener('click', function () {
@@ -7673,14 +7673,14 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         setStatus('Preparing execution…', 'pending');
         executeReadySafeTransactions(readyExecs, { title: 'Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's') }).then(function (res) {
           if (res && res.done) {
-            readyExecs.forEach(function (r) { if (r.rec && r.rec.st) r.rec.st.textContent = 'Executed ✓'; });
+            readyExecs.forEach(function (r) { if (r.rec && r.rec.st) r.rec.st.textContent = 'Executed'; });
             if (lastResult) { lastResult.executedReady = readyExecs.length; lastResult.readyExecs = []; }
             document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
             setStatus('Executed on ' + readyExecs.length + ' chain' + (readyExecs.length === 1 ? '' : 's') + '.', 'success');
             setTimeout(function () { finish(lastResult || { queued: 0, executedReady: readyExecs.length, skipped: [], cancelled: false }); }, 1400);
           } else {
             btn.disabled = false; cancel.disabled = false;
-            setStatus('Execution cancelled — queued transactions are still available in the ' + queueTabName + ' tab or Safe app.', '');
+            setStatus('Cancelled — queued transactions are still available in the ' + queueTabName + ' tab or Safe app.', '');
           }
         }).catch(function (e) {
           btn.disabled = false; cancel.disabled = false;
@@ -7711,9 +7711,9 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
               var qtx = Object.assign({}, proposed.tx || {}, { confirmationsRequired: r.threshold });
               if (safeUsableConfirmationCount(qtx) >= Number(r.threshold || 1)) {
                 readyExecs.push({ cid: r.cid, chain: r.chain, safe: safe, tx: qtx, rec: r });
-                r.st.textContent = 'Queued ✓ — ready to execute now.';
+                r.st.textContent = 'Queued — ready to execute now.';
               } else {
-                r.st.textContent = 'Queued ✓ — co-sign + execute it in the ' + queueTabName + ' tab’s “Pending Multisig Transactions”.';
+                r.st.textContent = 'Queued — co-sign + execute it in the ' + queueTabName + ' tab’s “Pending Multisig Transactions”.';
               }
             } else {
               await refreshOnChainStatus(r); // re-read at the chosen nonce so a co-signer's earlier approval counts
@@ -7724,17 +7724,17 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                 setStatus('Approving on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
                 await approveSafeHashOnChain(r.cid, safe, r.hash);
                 r.approved = (r.approved || []).concat([acct]); approvedThisRun++;
-                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; _saveOnchainNonceHint(); // this signer's next on-chain tx here defaults to the next nonce
+                _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; _saveOnchainNonceHint(); // this signer's next onchain tx here defaults to the next nonce
               }
               if ((r.approved || []).length >= r.ctx.threshold) {
                 if (chosen === current) {
                   setStatus('Executing on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
                   await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o }; }) });
-                  r.done = true; r.st.textContent = 'Executed ✓ (nonce ' + chosen + ')'; executed++;
+                  r.done = true; r.st.textContent = 'Executed (nonce ' + chosen + ')'; executed++;
                 } else {
                   // Fully approved but not next in line — the Safe executes in strict nonce order, so lower nonces
                   // run first. Left un-done so a later click (once the nonce is current) picks it up and executes it.
-                  r.st.textContent = 'Fully approved ✓ at nonce ' + chosen + ' — executes after nonce ' + current + '-' + (chosen - 1) + ' run. Click again once they clear.'; pendingExec++;
+                  r.st.textContent = 'Fully approved at nonce ' + chosen + ' — executes after nonce ' + current + '-' + (chosen - 1) + ' run. Click again once they clear.'; pendingExec++;
                 }
               } else {
                 r.st.textContent = 'Approved ' + r.approved.length + ' / ' + r.ctx.threshold + ' at nonce ' + chosen + ' — needs ' + (r.ctx.threshold - r.approved.length) + ' more signer(s). Switch wallets and click again.'; pending++;
@@ -7750,7 +7750,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           if (approvedThisRun) summary.push('approved on ' + approvedThisRun);
           if (pendingExec) summary.push(pendingExec + ' awaiting nonce order');
           var didSomething = (queued + executed + approvedThisRun) > 0;
-          var base = (summary.join(' · ') || 'No new actions') + (skipped.length ? ' · skipped ' + skipped.join(', ') : '') + '.';
+          var base = (summary.join(' | ') || 'No new actions') + (skipped.length ? ' | skipped ' + skipped.join(', ') : '') + '.';
           lastResult = { queued: queued, executed: executed, skipped: skipped, cancelled: false, readyExecs: readyExecs.slice() };
           if (!didSomething && !pending && !pendingExec && !staleNonce && notOwner) {
             // Nothing happened because the connected wallet signs for none of these Safes — say so loudly.
@@ -7787,7 +7787,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           // problem — maxFeePerGas is already over-capped. Point the signer at the real fix (switch the chain's RPC in
           // their wallet) so they don't keep bumping gas in vain.
           if (/HTTP client error|internal error|RPC submit|InternalRpcError|-32603/i.test(msg)) {
-            msg += ' — this is your wallet’s RPC failing to broadcast (not a gas/fee issue). Switch this chain’s RPC in your wallet (Base Sepolia → https://sepolia.base.org · Arbitrum Sepolia → https://sepolia-rollup.arbitrum.io/rpc) and click again.';
+            msg += ' — this is your wallet’s RPC failing to broadcast (not a gas/fee issue). Switch this chain’s RPC in your wallet (Base Sepolia → https://sepolia.base.org | Arbitrum Sepolia → https://sepolia-rollup.arbitrum.io/rpc) and click again.';
           }
           setStatus(msg, 'error');
         }
@@ -8097,7 +8097,7 @@ function renderActivityCard(project, opts) {
     if (opts && opts.onContent) opts.onContent();
   }
 
-  // Load the sucker map first so the feed can relabel under-the-hood sucker cash-outs as bridges.
+  // Load the sucker map first so the feed can relabel under-the-hood sucker cash outs as bridges.
   // `keepOnEmpty` (used by refreshes) leaves existing rows in place when a refetch returns nothing
   // yet — the indexer lags the chain by a few seconds after a tx confirms.
   function load(keepOnEmpty) {
@@ -8291,7 +8291,7 @@ function activityRowFromEvent(event, project) {
   if (event.cashOutTokensEvent) {
     var cash = event.cashOutTokensEvent;
     // A sucker cashes out under the hood when it bridges (prepare()). Relabel that as a bridge so users
-    // don't see a confusing "cashed out" — the cash-out is an internal abstraction. Detect by the actor
+    // don't see a confusing "cashed out" — the cash out is an internal abstraction. Detect by the actor
     // being one of the project's local suckers; the map value is the destination chain.
     // Bendystraw may set `from` to the EOA caller while holder/beneficiary are the sucker — so test ALL.
     // Key by this event's chain (suckers share addresses across chains; the remote differs per source chain).
@@ -8305,7 +8305,7 @@ function activityRowFromEvent(event, project) {
         type: 'bridge', direction: 'out', chainId: chainId,
         txHash: cash.txHash || event.txHash, timestamp: Number(cash.timestamp || event.timestamp),
         account: bridgeActor, from: bridgeActor, baseAmount: '', tokenAmount: '',
-        // This event is the bridge PREPARE (the under-the-hood cash-out) — the tokens are queued, not yet
+        // This event is the bridge PREPARE (the under-the-hood cash out) — the tokens are queued, not yet
         // shipped. The actual send happens on toRemote (tracked in the Movement table). Label accordingly.
         action: 'sending ' + formatCompactTokenAmount(toBigInt(cash.cashOutCount)) + ' ' + sym + ' to ' + moveChainName(bridgeRemote),
         memo: '',
@@ -8749,7 +8749,7 @@ function renderRulesetsFundsSection(project) {
     var st = el('span'); st.textContent = statusTxt; meta.appendChild(st);
     meta.appendChild(boSep());
     var rm = el('span'); rm.textContent = remLabel + ': ' + remaining; meta.appendChild(rm);
-    // Ruleset ID — the on-chain id (queue timestamp). Only real for an actual ruleset (projected cycles have id 0).
+    // Ruleset ID — the onchain id (queue timestamp). Only real for an actual ruleset (projected cycles have id 0).
     if (Number(v.r.id) > 0) { meta.appendChild(boSep()); var idEl = el('span'); idEl.textContent = 'ID: ' + String(v.r.id); meta.appendChild(idEl); }
     tmain.appendChild(meta);
     tiles.appendChild(tmain);
@@ -8890,7 +8890,7 @@ function renderRulesetsFundsSection(project) {
     upcomingNotice.appendChild(head);
     var diff = el('div', 'rf-upcoming-diff');
     info.changes.forEach(function (ch) {
-      diff.appendChild(rfDiffRow(ch.section + ' · ' + ch.label, ch.from, ch.to));
+      diff.appendChild(rfDiffRow(ch.section + ' | ' + ch.label, ch.from, ch.to));
     });
     upcomingNotice.appendChild(diff);
   }
@@ -9012,7 +9012,7 @@ function renderProjectPayerAddresses(project) {
 
       var behavior = el('div');
       var mode = el('div', 'extras-payers-main');
-      mode.textContent = row.defaultAddToBalance ? 'Add to Balance' : 'Pay';
+      mode.textContent = row.defaultAddToBalance ? 'Add to balance' : 'Pay';
       behavior.appendChild(mode);
       var count = el('div', 'extras-payers-sub'); count.textContent = countsText(row); behavior.appendChild(count);
       r.appendChild(behavior);
@@ -9057,7 +9057,7 @@ async function runProjectPayerRelayrDeploys(calls, setStatus) {
         : { chain: chainNameOf(c.chainId), chainId: c.chainId, contract: c.to, calldata: c.data };
     }),
   }, { title: 'Confirm payer address deployment', confirmText: 'Confirm & send' });
-  if (!ok) { setStatus('Transaction cancelled', ''); throw new Error('Transaction cancelled'); }
+  if (!ok) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
 
   setStatus('Requesting Relayr quote…', 'pending');
   var bundle = await relayrPostBundle(calls.map(projectPayerRelayrEntry));
@@ -9599,7 +9599,7 @@ async function applyDraftShop(state, project, sources, warnings) {
       if (!sameAddr(dataHook, shop.hook)) throw new Error('The live data hook is not the verified shop hook.');
       return !!source.metadata.useDataHookForCashOut;
     }));
-    if (redemptionModes.some(function (mode) { return mode !== redemptionModes[0]; })) throw new Error('Shop cash-out behavior differs by chain.');
+    if (redemptionModes.some(function (mode) { return mode !== redemptionModes[0]; })) throw new Error('Shop cash out behavior differs by chain.');
     state.collection.useForRedemptions = redemptionModes[0];
   }
 
@@ -9825,7 +9825,7 @@ function renderProjectDraftExport(project) {
     status.className = 'operator-edit-status pending'; status.textContent = 'Verifying live rules, funds, splits, terminals, and shop…';
     buildProjectCreateDraft(project).then(function (result) {
       if (result.warnings.length && !window.confirm(result.warnings.join('\n\n') + '\n\nExport this editable .jb anyway?')) {
-        status.className = 'operator-edit-status'; status.textContent = 'Export cancelled.'; return;
+        status.className = 'operator-edit-status'; status.textContent = 'Cancelled'; return;
       }
       exportDraftFile(result.state);
       status.className = 'operator-edit-status success'; status.textContent = 'Exported .jb. Import it from New project to review and edit.';
@@ -9852,7 +9852,7 @@ function renderExtrasSection(project) {
   var modeLabel = el('div', 'operator-edit-label extras-label'); modeLabel.textContent = 'Behavior'; body.appendChild(modeLabel);
   var modeSelect = el('select', 'operator-edit-jwt extras-select extras-behavior-select');
   var payOpt = document.createElement('option'); payOpt.value = 'pay'; payOpt.textContent = 'Pay';
-  var balanceOpt = document.createElement('option'); balanceOpt.value = 'balance'; balanceOpt.textContent = 'Add to Balance';
+  var balanceOpt = document.createElement('option'); balanceOpt.value = 'balance'; balanceOpt.textContent = 'Add to balance';
   modeSelect.appendChild(payOpt); modeSelect.appendChild(balanceOpt);
   body.appendChild(modeSelect);
   var modeHint = el('div', 'extras-payer-sub');
@@ -10030,7 +10030,7 @@ function renderExtrasSection(project) {
   function submitDeploy(forceRelayr) {
     if (busy) return;
     var selected = selectedChains();
-    if (!selected.length) { setStatus('Choose at least one chain.', 'error'); return; }
+    if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
     var account = getAccount && getAccount();
     (async function () {
       if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
@@ -10124,10 +10124,10 @@ function labelForQueuedTx(tx) {
 function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
   var nm = resolveContractName(tx.to, cid);
   var warns = [];
-  if (Number(tx.operation) === 1) warns.push('⚠ DELEGATECALL — runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets).');
+  if (Number(tx.operation) === 1) warns.push('DELEGATECALL — runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets).');
   var ethVal; try { ethVal = BigInt(tx.value || 0); } catch (_) { ethVal = 0n; }
   if (ethVal > 0n) warns.push('Sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe.');
-  if (!nm) warns.push('⚠ Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
+  if (!nm) warns.push('Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
   var viewOnly = actionLabel === 'View';
   var desc = warns.join(' ') || null;
   if (viewOnly) desc = (desc ? (desc + ' ') : '') + 'This details view is read-only. To sign, use the Sign button on the transaction row, or open the transaction in the Safe app.';
@@ -10396,11 +10396,11 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       block.appendChild(h);
       var list = el('div', 'backoffice-list'); list.appendChild(skel('100%', '20px')); block.appendChild(list);
       body.appendChild(block);
-      // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → there's no off-chain queue to list.
-      // Operator/owner txs there are coordinated on-chain (approve + execute via the action panels), not here.
+      // No hosted Safe service on this chain (e.g. Arbitrum/OP Sepolia) → there's no offchain queue to list.
+      // Operator/owner txs there are coordinated onchain (approve + execute via the action panels), not here.
       if (!hasSafeService(c.id)) {
         list.innerHTML = '';
-        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — no off-chain queue here. A second signer completes a pending tx by re-running the same operator action (e.g. Buyback & swap router → Set buyback hook): it reads the on-chain approvals and lets them approve + execute.';
+        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — no offchain queue here. A second signer completes a pending tx by re-running the same operator action (e.g. Buyback & swap router → Set buyback hook): it reads the onchain approvals and lets them approve + execute.';
         list.appendChild(nos); return Promise.resolve();
       }
       return listPendingSafeTxs(c.id, safe).then(function (txs) {
@@ -10431,7 +10431,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           // context) and any ETH the tx sends. Both are WYSIWYS-critical before a signer approves.
           var isDelegate = Number(tx.operation) === 1;
           var ethVal = (function () { try { return BigInt(tx.value || 0); } catch (_) { return 0n; } })();
-          if (isDelegate) { sub.appendChild(boSep()); var dc = el('span', 'backoffice-warn'); dc.textContent = '⚠ DELEGATECALL'; sub.appendChild(dc); }
+          if (isDelegate) { sub.appendChild(boSep()); var dc = el('span', 'backoffice-warn'); dc.textContent = 'DELEGATECALL'; sub.appendChild(dc); }
           if (ethVal > 0n) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('sends ' + formatBalance(ethVal, 18, 'ETH'))); }
           main.appendChild(sub);
           // Show WHO has signed (and who's still needed), so a coordinator can chase the exact missing signer(s)
@@ -10937,7 +10937,7 @@ function renderPowersCard(project) {
 // router terminal, initialize the Uniswap buyback pool — each queued on the chains you pick and bundled into one
 // relayr payment (or proposed to the Safe) via openPowerModal, exactly like the other operator actions.
 // Read a hook/terminal-style scalar on every AMM-available chain the project spans → [{name, value|null}].
-// Shared by the operator form (✓/⚠ consistency note) and the summary card (combined "Current:" line).
+// Shared by the operator form (consistency note) and the summary card (combined "Current:" line).
 function crossChainValues(project, field, chainAvailable) {
   if (!field || !field.crossChainRead) return Promise.resolve([]);
   var chains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !chainAvailable || chainAvailable(c.id); });
@@ -11177,7 +11177,7 @@ export function renderBuybackRouterCard(project) {
         var setCount = rows.filter(function (r) { return r.value; }).length;
         if (distinct.length === 0) cur.textContent = 'Current: not set on any chain';
         else if (distinct.length === 1) cur.textContent = 'Current: ' + shortAddr6(distinct[0]) + (setCount === rows.length ? ' (all chains)' : ' (' + setCount + '/' + rows.length + ' chains — rest unset)');
-        else cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ');
+        else cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' | ');
       });
     } else if (action.poolStateRead) {
       // Pool has no scalar getter; poolStateRead returns a per-chain summary string (initialized pairs + TWAP).
@@ -11190,7 +11190,7 @@ export function renderBuybackRouterCard(project) {
         var known = rows.filter(function (r) { return r.value; }).length;
         if (!known) pcur.textContent = 'Current pool: unknown';
         else if (distinctP.length === 1 && known === rows.length) pcur.textContent = 'Current pool: ' + distinctP[0] + ' (all chains)';
-        else pcur.textContent = 'Current pool: ' + rows.map(function (r) { return r.name + ' — ' + (r.value || 'unknown'); }).join(' · ');
+        else pcur.textContent = 'Current pool: ' + rows.map(function (r) { return r.name + ' — ' + (r.value || 'unknown'); }).join(' | ');
       });
     }
     var act = el('a', 'operator-cta powers-act'); act.href = '#'; act.textContent = action.title;
@@ -11201,7 +11201,7 @@ export function renderBuybackRouterCard(project) {
   return card;
 }
 
-// Every operator the project has authorized, deduped across chains. Source is bendystraw (no on-chain way to
+// Every operator the project has authorized, deduped across chains. Source is bendystraw (no onchain way to
 // ENUMERATE operators — only to check a known one). Stale empty grants (permissions cleared but row kept) are
 // dropped. Returns [{ operator, account, isRevnetOperator, chains:[id], permsUnion:[ids] }].
 async function fetchPermissionOperators(project) {
@@ -11514,7 +11514,7 @@ function openPowerModal(project, action) {
   // tx on chains without a hosted Safe service (any difference = a separate tx). Shown for fields-bearing actions.
   if (action.fields && action.fields.length) {
     var coTip = el('div', 'operator-edit-across');
-    coTip.innerHTML = '<strong>Co-signing another signer’s transaction?</strong> Enter the exact values they gave you. On chains without a Safe service, the next step shows ✓ when your values match their pending approval.';
+    coTip.innerHTML = '<strong>Co-signing another signer’s transaction?</strong> Enter the exact values they gave you. On chains without a Safe service, the next step shows “matches a tx approved by …” under each chain when your values match their pending approval.';
     coTip.style.opacity = '0.85'; content.appendChild(coTip);
   }
 
@@ -11635,7 +11635,7 @@ function openPowerModal(project, action) {
     if (f.defaultAccount) { var a = getAccount && getAccount(); if (a) inp.value = a; }
     if (f.defaultNative) inp.value = NATIVE_TOKEN;
     if (f.defaultValue) inp.value = f.defaultValue;
-    // Async default: pre-fill with the project's CURRENT on-chain value (e.g. its registered hook/terminal),
+    // Async default: pre-fill with the project's CURRENT onchain value (e.g. its registered hook/terminal),
     // unless the user has already typed. No fallback default — blank stays blank.
     if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') { input.value = val; input.dispatchEvent(new Event('input')); } input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
     content.appendChild(inp);
@@ -11655,7 +11655,7 @@ function openPowerModal(project, action) {
         if (distinct.length <= 1) {
           cc.textContent = setCount ? ('currently same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortAddr6(distinct[0])) : 'not set on any chain yet';
         } else {
-          cc.innerHTML = '⚠ <strong>differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' · ') + '. The value you set applies only to the chains you check below.';
+          cc.innerHTML = '<strong>Differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' | ') + '. The value you set applies only to the chains you check below.';
           cc.style.color = '#b23550';
         }
       });
@@ -12072,7 +12072,7 @@ function buildPayoutsModal(project, acctKind) {
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
     var line = el('div', 'ops-preview-line');
-    line.textContent = (state.meta.tokenKeyed ? '' : 'Uses the current on-chain price. ')
+    line.textContent = (state.meta.tokenKeyed ? '' : 'Uses the current onchain price. ')
       + 'Fee: up to 2.5%; JB projects and registered feeless addresses are exempt.';
     preview.appendChild(line);
   }
@@ -12131,7 +12131,7 @@ function buildPayoutsModal(project, acctKind) {
     state.maxAmount = state.selected.available;
     currencySel.value = String(state.currency);
     unit.textContent = state.meta.symbol;
-    unit.title = (state.acct.name ? state.acct.name + ' · ' : '') + state.acct.address;
+    unit.title = (state.acct.name ? state.acct.name + ' | ' : '') + state.acct.address;
     maxBtn.style.display = state.maxAmount > 0n ? '' : 'none';
     amt.disabled = state.maxAmount <= 0n; btn.disabled = state.maxAmount <= 0n;
     currencyRow.hidden = state.limits.length < 2;
@@ -12308,7 +12308,7 @@ function buildUseAllowanceModal(project, acctKind) {
     var recv = el('div', 'ops-preview-line ops-preview-recv');
     recv.textContent = state.meta.tokenKeyed
       ? 'Beneficiary: ~' + formatCompactCurrencyAmount(state.feeless ? amount : amount - amount / 40n, { decimals: state.acct.decimals, symbol: state.acct.symbol })
-      : 'Uses the current on-chain price; the exact output is simulated before confirmation.';
+      : 'Uses the current onchain price; the exact output is simulated before confirmation.';
     preview.appendChild(recv);
     if (state.feeless) {
       var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'No protocol fee — this address is feeless for the project.'; preview.appendChild(fl);
@@ -12316,7 +12316,7 @@ function buildUseAllowanceModal(project, acctKind) {
       renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: amount / 40n, beneficiary: getAccount && getAccount() });
     } else {
       var cv = el('div', 'ops-preview-line ops-preview-feetok');
-      cv.textContent = 'Protocol fee is converted by the terminal at the on-chain price.';
+      cv.textContent = 'Protocol fee is converted by the terminal at the onchain price.';
       preview.appendChild(cv);
     }
   }
@@ -12374,7 +12374,7 @@ function buildUseAllowanceModal(project, acctKind) {
     state.usable = state.selected.available;
     currencySel.value = String(state.currency);
     unit.textContent = state.meta.symbol;
-    unit.title = (state.acct.name ? state.acct.name + ' · ' : '') + state.acct.address;
+    unit.title = (state.acct.name ? state.acct.name + ' | ' : '') + state.acct.address;
     maxBtn.style.display = state.usable > 0n ? '' : 'none';
     amt.disabled = state.usable <= 0n; btn.disabled = state.usable <= 0n;
     currencyRow.hidden = state.allowances.length < 2;
@@ -12489,7 +12489,7 @@ function customFundsKind(meta) {
 function fundsKindAuditLabel(kind, chainId) {
   if (!kind) return '';
   var address = kind.addrForChain ? kind.addrForChain(chainId) : kind.address;
-  return (kind.name ? kind.name + ' · ' : '') + (address || kind.symbol || '');
+  return (kind.name ? kind.name + ' | ' : '') + (address || kind.symbol || '');
 }
 
 function resolveFundsKindAcct(chainId, pid, kind) {
@@ -12957,7 +12957,7 @@ function renderPriceChart(project, stages) {
     if (tail) c._val.appendChild(document.createTextNode(' ' + tail));
   }
   var amm = null;        // current AMM price (pair token/project token), filled in lazily
-  var cashout = null;    // current cash-out floor (pair token/project token), filled in lazily
+  var cashout = null;    // current cash out floor (pair token/project token), filled in lazily
   var cashoutHistory = [];
   var ammHistory = [];   // realized AMM trade prices from Bendystraw swapEvents
   var curYears = 1;
@@ -12995,7 +12995,7 @@ function renderPriceChart(project, stages) {
   card.appendChild(chartWrap);
   draw();
 
-  // Live AMM price (pool slot0, works even with zero liquidity), current cash-out floor, and
+  // Live AMM price (pool slot0, works even with zero liquidity), current cash out floor, and
   // indexed floor history from Bendystraw's sucker group moments.
   Promise.all([
     readAmmPrice(project, project.chainId),
@@ -13036,14 +13036,14 @@ function renderPriceChart(project, stages) {
       var last = history[history.length - 1];
       cashout = last && last.value > 0 ? last.value : f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      cashChip.title = 'Historical cash-out floor from Bendystraw';
+      cashChip.title = 'Historical cash out floor from Bendystraw';
     }
     if (f && f > 0) {
       cashout = cashout || f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      if (!history.length) cashChip.title = '~' + formatPrice(f) + ' ' + pairSym + ' / ' + sym + ' (current cash-out floor)';
+      if (!history.length) cashChip.title = '~' + formatPrice(f) + ' ' + pairSym + ' / ' + sym + ' (current cash out floor)';
     } else if (!history.length) {
-      cashChip.title = 'No cash-out floor indexed yet';
+      cashChip.title = 'No cash out floor indexed yet';
     }
     if (amm || cashout || cashoutHistory.length || ammHistory.length) draw();
 
@@ -13118,7 +13118,7 @@ function renderIssuance(project, stages) {
 }
 
 // Bound a historical price view by both the selected lookback and the project's first ruleset. Before that first
-// ruleset there was no issuance/cash-out/pool price to chart, so extending a new project back a full year invents
+// ruleset there was no issuance/cash out/pool price to chart, so extending a new project back a full year invents
 // empty history. Pure for regression tests.
 export function priceChartTimeBounds(firstStart, now, years, past) {
   firstStart = Number(firstStart);
@@ -13148,7 +13148,7 @@ function priceChartAxisLabel(timestamp, span) {
   return String(date.getFullYear());
 }
 
-// Keep the price chart's vertical domain anchored to the issuance schedule. AMM/cash-out data resolves later;
+// Keep the price chart's vertical domain anchored to the issuance schedule. AMM/cash out data resolves later;
 // letting an outlier in either series redefine the domain makes the already-rendered issuance steps collapse into
 // a flat baseline. Overlay values outside this domain pin to the chart edge while their exact values remain in the
 // legend and hover details.
@@ -13413,7 +13413,7 @@ function formatSourceTokenAmount(raw, token, chainId, project) {
   return meta ? formatActivityAmount(raw, meta.symbol, meta.decimals) : '';
 }
 
-// Pay/cash-out rows do not index their token or decimals. USD is the only denomination the source records
+// Pay/cash out rows do not index their token or decimals. USD is the only denomination the source records
 // explicitly, so use it when present and leave the field blank otherwise instead of guessing ETH vs USDC.
 export function indexedActivityAmount(scaledUsd) {
   var usd = Number(usdFromScaled(scaledUsd));
@@ -13452,7 +13452,7 @@ function identGradient(seed) {
 }
 
 // Full auto-issuance table. Beneficiary rows come solely from Bendystraw (no deploy-script fallback);
-// the live remaining amount per row is read on-chain from REVOwner. If Bendystraw fails, the section
+// the live remaining amount per row is read onchain from REVOwner. If Bendystraw fails, the section
 // shows an error rather than fabricated data.
 function renderAutoIssuance(project, stages) {
   var card = el('div');
@@ -13771,7 +13771,7 @@ var BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY = 'query($suckerGroupId: String!, $v
   + 'cashOutTaxSnapshots(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
   + 'orderBy: "start", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { chainId start duration rulesetId cashOutTax } totalCount } }';
-// Activity feed spans every meaningful event the indexer tracks (pays, cash-outs, payouts,
+// Activity feed spans every meaningful event the indexer tracks (pays, cash outs, payouts,
 // reserved-token distributions, loans, NFT mints, ERC20 deploys, project creation).
 var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutTokensEvent_not: null }, '
   + '{ sendPayoutsEvent_not: null }, { sendReservedTokensToSplitsEvent_not: null }, '
@@ -14441,13 +14441,13 @@ async function fetchRulesetQueueRows(project) {
   var chainIds = projectBendystrawChainIds(project);
   if (!chainIds.length) return [];
   // Preferred path — fully indexed (PR #15: rulesetQueuedEvent carries basedOnId + cycleNumber): build rows with
-  // NO on-chain read. Auto-activates when those fields land; until then the query throws and we fall through.
+  // NO onchain read. Auto-activates when those fields land; until then the query throws and we fall through.
   try {
     var fd = await bendystrawQuery(RULESET_QUEUED_FULL_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
     var fitems = (fd && fd.rulesetQueuedEvents && fd.rulesetQueuedEvents.items) || [];
     // Trust the index ONLY when basedOnId + cycleNumber are actually populated — a migrated-but-not-yet-backfilled
     // schema returns the fields as null, and skipping every null-basedOnId row would silently drop ruleset rows
-    // instead of falling back to allOf. Any null → fall through to the on-chain path.
+    // instead of falling back to allOf. Any null → fall through to the onchain path.
     var populated = fitems.length && fitems.every(function (e) { return e.basedOnId != null && e.cycleNumber != null; });
     if (populated) {
       var frows = [];
@@ -14916,7 +14916,7 @@ function renderSplitHookCard(project) {
           foot.appendChild(b);
         }
         if (!hasPool) {
-          actBtn('Deploy pool', 'deployPool', function () { return [pid, 0n]; }, 'Seed the Uniswap V4 pool from accumulated tokens (accepts any cash-out return)');
+          actBtn('Deploy pool', 'deployPool', function () { return [pid, 0n]; }, 'Seed the Uniswap V4 pool from accumulated tokens (accepts any cash out return)');
         } else {
           if (accumulated > 0n) actBtn('Add liquidity', 'addLiquidity', function () { return [pid, tok, 0n]; }, 'Add accumulated ' + sym + ' to the LP position');
           actBtn('Collect fees', 'collectAndRouteLPFees', function () { return [pid, tok]; }, 'Collect LP trading fees and route them to the project');
@@ -15249,7 +15249,7 @@ function renderOwnersTable(participants, totalSupply, sym) {
 function formatLoanSourceAmount(project, loan, raw) {
   var meta = sourceTokenMeta(project, Number(loan.chainId) || project.chainId, loan.token);
   if (meta) return formatBalance(toBigInt(raw), meta.decimals, meta.symbol);
-  var token = loan.token ? ' · ' + truncAddr(loan.token) : '';
+  var token = loan.token ? ' | ' + truncAddr(loan.token) : '';
   return toBigInt(raw).toLocaleString('en-US') + ' raw units' + token;
 }
 
@@ -15445,7 +15445,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   var wrap = el('div', 'splits-edit-item'); wrap.appendChild(row);
   var routeRow = el('div', 'splits-edit-benef'); routeRow.style.display = 'none';
   var routeSel = el('select', 'field create-input');
-  [['pay', 'Pay project · mint its tokens'], ['balance', 'Add to project balance · mint none']].forEach(function (o) {
+  [['pay', 'Pay project | mint its tokens'], ['balance', 'Add to project balance | mint none']].forEach(function (o) {
     var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; routeSel.appendChild(op);
   });
   routeRow.appendChild(routeSel);
@@ -15955,7 +15955,7 @@ function openQueueRulesetModal(project) {
           var collectionName = archived.name || archived.symbol || ('Shop ' + truncAddr(archived.hook));
           var symbol = archived.symbol && archived.symbol !== collectionName ? ' (' + archived.symbol + ')' : '';
           addShopOption('reactivate', 'Reactivate ' + collectionName + symbol,
-            'Reuses the existing collection and all its items · item cash-outs ' + (archived.useDataHookForCashOut ? 'on' : 'off') + ' · ' + truncAddr(archived.hook),
+            'Reuses the existing collection and all its items | item cash outs ' + (archived.useDataHookForCashOut ? 'on' : 'off') + ' | ' + truncAddr(archived.hook),
             state.shopChoice === 'reactivate' && sameAddr(state.reactivatedShopHook, archived.hook), archived);
         });
         if (state.canAddShop) addShopOption('new', 'Start a new shop', 'Deploys a new collection with new items.', state.shopChoice === 'new');
@@ -16163,7 +16163,7 @@ function openQueueRulesetModal(project) {
     return s;
   }
 
-  // One on-chain split → a create-flow recipient (wallet / project / market-funding LP hook).
+  // One onchain split → a create-flow recipient (wallet / project / market-funding LP hook).
   function recFromSplit(sp, lpHook, pct, amountEth) {
     var base = { percent: pct || 0, amountEth: amountEth || '', lockedUntil: Number(sp.lockedUntil) || 0,
       preferAddToBalance: !!sp.preferAddToBalance };
@@ -16192,7 +16192,7 @@ function openQueueRulesetModal(project) {
           notifyProjectUpdated(project);
         } else {
           submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
-          setStatus('Execution cancelled — queued transactions are still in the ' + queueTab + ' tab or Safe app.', '');
+          setStatus('Cancelled — queued transactions are still in the ' + queueTab + ' tab or Safe app.', '');
         }
       }).catch(function (err) {
         busy = false; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
@@ -16263,7 +16263,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
 
   // Route through JBOmnichainDeployer only when the LIVE ruleset already uses it as its data-hook wrapper.
   // Multi-chain revnets use REVOwner, so they must queue directly through each JBController; routing them through
-  // the generic omnichain wrapper would replace REVOwner and break revnet pay/cash-out/fee semantics.
+  // the generic omnichain wrapper would replace REVOwner and break revnet pay/cash out/fee semantics.
   var buildCall = function (cid) {
     var liveController = state.controllerByChain && state.controllerByChain[cid];
     if (!liveController) throw new Error('The project controller is not verified on ' + chainNameOf(cid) + '.');
@@ -16492,7 +16492,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
   groupIdForChain = groupIdForChain || function () { return splitGroupId; };
   if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
   // Percentages are entered as % OF ISSUANCE and must sum to the split limit (reserved rate for the
-  // reserved group, else 100%). The on-chain JBSplit.percent is a share of SPLITS_TOTAL (1e9) of the
+  // reserved group, else 100%). The onchain JBSplit.percent is a share of SPLITS_TOTAL (1e9) of the
   // group total, so groupShare = issuance% ÷ limit. Clamp the running total so rounding can't exceed 1e9.
   var limitPct = Number(expectedLimitPct != null ? expectedLimitPct : splitLimitPctFor(project, splitGroupId));
   var splits = [];
@@ -16652,9 +16652,9 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
 }
 
 // The token summary card (ERC-20 status, supply, reserved). Reused standalone and inside the "All" subtab.
-// Ops: the same project across every chain. Reads per-chain supply / native balance / unit cash-out
+// Ops: the same project across every chain. Reads per-chain supply / native balance / unit cash out
 // value directly from each chain (one Multicall3 batch per chain), then totals supply + balance.
-// The per-chain supply / native balance / unit cash-out value table (omnichain). Returns a body node
+// The per-chain supply / native balance / unit cash out value table (omnichain). Returns a body node
 // (desc + async table) — the caller wraps it in a titled card. Shown in Owners (revnets) or Ops (others).
 function renderAcrossChainsBody(project) {
   var body = el('div');
@@ -16832,7 +16832,7 @@ function renderOpsActions(project) {
   return card;
 }
 
-// Per chain: the connected wallet's token balance, its cash-out value (reclaimable ETH), and its max
+// Per chain: the connected wallet's token balance, its cash out value (reclaimable ETH), and its max
 // loan (borrowable ETH against that balance via REVLoans). Null fields where unavailable on a chain.
 function fetchYouPosition(project) {
   var pid = BigInt(project.id);
@@ -16845,7 +16845,7 @@ function fetchYouPosition(project) {
     var revLoans = getAddress('REVLoans', cid);
     return Promise.all([
       readUserBalance(project, cid),
-      // The contract's cash-out denominator: total supply plus pending reserved tokens.
+      // The contract's cash out denominator: total supply plus pending reserved tokens.
       controllerRead(cid, pid, totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
       // The terminal's surplus is held in its accounting token (USDC/ETH), not necessarily native ETH.
       terminal ? resolveAcctToken(cid, pid).catch(function () { return null; }) : Promise.resolve(null),
@@ -16856,16 +16856,16 @@ function fetchYouPosition(project) {
       var hasBal = bal != null && bal > 0n;
       var surplusJob = terminal && acct
         // Actual reclaimable surplus (balance − remaining payout limit), in the accounting token's units — not
-        // raw balanceOf, which overstated the cash-out value when a payout limit exists.
+        // raw balanceOf, which overstated the cash out value when a payout limit exists.
         ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals == null ? 18 : acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; })
         : Promise.resolve(null);
       return surplusJob.then(function (surplus) {
-        // Cash-out value: what `bal` tokens reclaim now, in the accounting token.
+        // Cash out value: what `bal` tokens reclaim now, in the accounting token.
         var cashJob = (hasBal && supply && supply >= bal && surplus != null)
           ? read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, bal, supply, surplus]).catch(function () { return null; })
           : Promise.resolve(hasBal ? null : 0n);
         // Max loan in the selected source accounting token's exact decimals/currency. Returns 0 while
-        // the cash-out delay is active.
+        // the cash out delay is active.
         var loanJob = (hasBal && revLoans && acct)
           ? read(cid, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, bal, BigInt(acct.decimals == null ? 18 : acct.decimals), borrowCurrencyForAccountContext(acct)]).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; })
           : Promise.resolve(revLoans ? (hasBal ? null : 0n) : null);
@@ -16925,7 +16925,7 @@ function buildClaimModal(project, creditRows) {
   return wrap;
 }
 
-// When this revnet's loans/cash-outs unlock (the cash-out delay), read from its data hook (REVOwner).
+// When this revnet's loans/cash outs unlock (the cash out delay), read from its data hook (REVOwner).
 // Returns a bigint unix timestamp, or null when there's no delay / no data hook.
 function readCashOutDelay(project) {
   var dh = project.metadata && project.metadata.dataHook;
@@ -16976,7 +16976,7 @@ function renderYouCard(project, opts) {
       // Disconnected: show ONLY the connect prompt + button (hide the action buttons).
       actions.style.display = 'none';
       var m = el('div', 'detail-card-body you-empty');
-      m.textContent = 'Connect a wallet to see your ' + sym + ' across chains and their cash-out value'
+      m.textContent = 'Connect a wallet to see your ' + sym + ' across chains and their cash out value'
         + (noLoans ? '.' : ', plus your max loan.');
       var c = document.createElement('button'); c.className = 'ops-action-btn you-connect'; c.textContent = 'Connect wallet';
       c.addEventListener('click', function () { connect().then(load).catch(function () {}); });
@@ -16993,8 +16993,8 @@ function renderYouCard(project, opts) {
       // if a provider or another view emitted an unusual event sequence.
       if (currentAccountKey() !== renderedAccountKey) { load(); return; }
       var rows = out[0], delay = out[1];
-      // The revnet's cash-out delay gates BOTH direct cash-outs (REVOwner.beforeCashOutRecordedWith
-      // reverts) AND loans (borrowableAmountFrom returns 0). The cash-out *value* still computes (pure
+      // The revnet's cash out delay gates BOTH direct cash outs (REVOwner.beforeCashOutRecordedWith
+      // reverts) AND loans (borrowableAmountFrom returns 0). The cash out *value* still computes (pure
       // bonding-curve calc), so we show it but mark it locked; loans can't compute, so they read "Locked".
       var locked = delay != null && delay > 0n && Number(delay) > Math.floor(Date.now() / 1000);
       function fmtCash(r, v) { var a = r.acct || { decimals: 18, symbol: 'ETH' }; return formatBalance(v, a.decimals, a.symbol); }
@@ -17004,7 +17004,7 @@ function renderYouCard(project, opts) {
         return locked ? { main: fmtCash(r, r.cashout), sub: 'locked' } : fmtCash(r, r.cashout);
       }
       // While locked, borrowableAmountFrom returns 0, but the contract's borrowable capacity IS the
-      // bonding-curve reclaim — i.e. ≈ the cash-out value. Show that as the would-be loan, marked locked.
+      // bonding-curve reclaim — i.e. ≈ the cash out value. Show that as the would-be loan, marked locked.
       function loanCell(r) {
         if (r.maxLoan == null) return '—'; // no REVLoans on this chain
         if (r.maxLoan > 0n) return fmtLoan(r, r.maxLoan); // unlocked: the real borrowable
@@ -17092,7 +17092,7 @@ function renderYouCard(project, opts) {
       var cashComplete = completeHomogeneous('cashout');
       var loanComplete = completeHomogeneous('maxLoan');
       var totCashCell = !cashComplete ? '—' : (locked ? { main: fmtCash(held[0], totCash), sub: 'locked' } : fmtCash(held[0], totCash));
-      // Locked total loan ≈ total cash-out value (same bonding-curve reclaim, in the accounting token).
+      // Locked total loan ≈ total cash out value (same bonding-curve reclaim, in the accounting token).
       var totLoanCell = locked
         ? (cashComplete && totCash > 0n ? { main: fmtCash(held[0], totCash), sub: 'locked' } : (cashComplete ? 'Locked' : '—'))
         : (loanComplete ? fmtLoan(held[0], totLoan) : '—');
@@ -17105,8 +17105,8 @@ function renderYouCard(project, opts) {
       if (locked) {
         var note = el('div', 'you-footnote');
         note.textContent = noLoans
-          ? 'Cash-outs unlock ' + formatDateShort(delay) + '. Locked values estimate what you could redeem then.'
-          : 'Cash-outs and loans unlock ' + formatDateShort(delay) + '. Locked values estimate what you could redeem or borrow then.';
+          ? 'Cash outs unlock ' + formatDateShort(delay) + '. Locked values estimate what you could redeem then.'
+          : 'Cash outs and loans unlock ' + formatDateShort(delay) + '. Locked values estimate what you could redeem or borrow then.';
         body.appendChild(note);
       }
       // Your open loans (owner == connected wallet) + per-loan repay. Custom projects have no loans.
@@ -17184,7 +17184,7 @@ function renderBridgeTransactions(project) {
     var visible = status === 'all' ? rows : rows.filter(function (row) { return String(row.status) === status; });
     body.appendChild(renderBridgeTransactionsTable(visible, project));
   }
-  // While anything is still in flight (sent but not yet delivered/claimable), re-read on-chain every 45s so
+  // While anything is still in flight (sent but not yet delivered/claimable), re-read onchain every 45s so
   // the row flips to "claimable" on its own once the destination inbox receives the root — no manual reload.
   var pollTimer = null;
   function schedulePoll() {
@@ -17529,7 +17529,7 @@ function openPayConfirm(payload, onConfirm) {
 // Shared: a chain <select> from the project's chains.
 function opsChainSelect(project, onChange, opts) {
   opts = opts || {};
-  // Compact dropdown styling (matches the cash-out selectors), not the heavy full-width bordered control.
+  // Compact dropdown styling (matches the cash out selectors), not the heavy full-width bordered control.
   var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
   var sym = project.tokenSymbol || 'tokens';
   (opts.chains || project.chains || []).forEach(function (c) {
@@ -17616,10 +17616,10 @@ function renderBalanceTables(balTable, project, sym, opts) {
   }).catch(function () { tt.textContent = 'Could not read balances.'; });
 }
 
-// The protocol fee on payouts/cash-outs is paid into this project (JBConstants.FEE_BENEFICIARY_PROJECT_ID).
+// The protocol fee on payouts/cash outs is paid into this project (JBConstants.FEE_BENEFICIARY_PROJECT_ID).
 var FEE_BENEFICIARY_PROJECT_ID = 1n;
 
-// REVOwner.FEE_REVNET_ID — the revnet that receives a revnet's 2.5%-of-tokens cash-out fee.
+// REVOwner.FEE_REVNET_ID — the revnet that receives a revnet's 2.5%-of-tokens cash out fee.
 var feeRevnetIdAbi = [{ type: 'function', name: 'FEE_REVNET_ID', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }];
 
 // Cached ERC-20 symbol of a project's token, per (chain, projectId) — labels the tokens a casher-out
@@ -17657,7 +17657,7 @@ function buildCashOutModal(project, requestClose) {
   function loadBalanceTable() { renderBalanceTables(balTable, project, sym); }
 
   // One line: "Cash out on [chain], reclaim in [token]". The reclaim picker shows only for multi-token
-  // projects (cash-out reclaim is per token — each is bounded by THAT token's surplus, so to cash out ETH
+  // projects (cash out reclaim is per token — each is bounded by THAT token's surplus, so to cash out ETH
   // surplus you reclaim in ETH; USDC may have unlimited payouts → 0 surplus). Populated once kinds resolve.
   var selRow = el('div', 'cashout-selrow');
   selRow.appendChild(document.createTextNode('Cash out on'));
@@ -17749,7 +17749,7 @@ function buildCashOutModal(project, requestClose) {
     state.cashOutRoute = { via: 'treasury' }; state.net = null; ++previewSeq; if (btn) btn.disabled = true;
     updatePreview();
     if (!contextAccount) {
-      preview.textContent = 'Connect a wallet to verify your exact hook-aware cash-out amount.';
+      preview.textContent = 'Connect a wallet to verify your exact hook-aware cash out amount.';
       return;
     }
     var terminal = getAddress('JBMultiTerminal', cid);
@@ -17758,13 +17758,13 @@ function buildCashOutModal(project, requestClose) {
       if (contextSeq !== cashContextSeq || state.chainId !== cid) return null;
       state.acct = acct;
       return Promise.all([
-        // The contract's cash-out denominator: total supply plus pending reserved tokens.
+        // The contract's cash out denominator: total supply plus pending reserved tokens.
         controllerRead(cid, pid, totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
         // Actual reclaimable SURPLUS (= terminal balance − remaining payout limit), in the accounting token's
         // own decimals/currency. Reading raw `balanceOf` here overstated it when a payout limit exists and could
         // push the fallback min-reclaimed floor above the real reclaim → cashOutTokensOf revert.
         terminal ? read(cid, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; }) : Promise.resolve(null),
-        // The 2.5% protocol fee on cash-out only applies when the ruleset's cash-out tax rate is non-zero.
+        // The 2.5% protocol fee on cash out only applies when the ruleset's cash out tax rate is non-zero.
         controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid]).catch(function () { return null; }),
         // Fee-free surplus for this token: on a ZERO-tax project, the fee applies ONLY to this portion (the rest of
         // the reclaim is fee-free). Zero on the common path (no inter-project payout received) → no fee, as before.
@@ -17778,7 +17778,7 @@ function buildCashOutModal(project, requestClose) {
       var currentAccount = getAccount && getAccount();
       if (!currentAccount || currentAccount.toLowerCase() !== contextAccount.toLowerCase()) throw new Error('Connected account changed.');
       if (r[0] == null || r[1] == null || !r[2] || !r[2][1] || r[3] == null || r[4] == null) {
-        throw new Error('The live cash-out inputs could not be verified.');
+        throw new Error('The live cash out inputs could not be verified.');
       }
       state.supply = r[0] != null ? toBigInt(r[0]) : null; state.surplus = r[1];
       state.cashOutTaxRate = Number(r[2][1].cashOutTaxRate || 0);
@@ -17865,7 +17865,7 @@ function buildCashOutModal(project, requestClose) {
       if (!liveAccount || liveAccount.toLowerCase() !== quoteAccount.toLowerCase()) { onChainChange(); return; }
       var preCut = r[0];
       var fullGross = r[1] != null ? toBigInt(r[1]) : null;
-      // The hook-aware preview reverts while a revnet's cash-out delay is active (and the real cash-out
+      // The hook-aware preview reverts while a revnet's cash out delay is active (and the real cash out
       // would too). Surface that as a lock + countdown instead of a broken estimate.
       if (!preCut || fullGross == null) {
         return readCashOutDelay(Object.assign({}, project, { chainId: state.chainId })).then(function (delay) {
@@ -17883,7 +17883,7 @@ function buildCashOutModal(project, requestClose) {
           // The hook may override supply, surplus, token count, tax, and routing. A raw bonding-curve estimate is
           // not a safe substitute: it can show the wrong payout and produce a misleading transaction floor.
           state.locked = false; state.exact = null; state.reclaim = null; state.net = null; state.outcome = null;
-          preview.textContent = 'Could not verify the exact hook-aware cash-out amount. Nothing can be sent until the preview succeeds.';
+          preview.textContent = 'Could not verify the exact hook-aware cash out amount. Nothing can be sent until the preview succeeds.';
           btn.disabled = true;
         });
       }
@@ -17891,7 +17891,7 @@ function buildCashOutModal(project, requestClose) {
       // afterHook = reclaim after the data hook (REV fee + buyback) but before the terminal's protocol fee.
       var afterHook = toBigInt(preCut[1]);
       var taxRate = Number(preCut[2] || 0);
-      // The exact REV fee value is the cash-out hook spec routed back to the data hook (REVOwner) — it pays
+      // The exact REV fee value is the cash out hook spec routed back to the data hook (REVOwner) — it pays
       // the fee revnet on the holder's behalf. (A separate buyback spec, if any, has a different `hook`.)
       var specs = preCut[3] || [];
       var dataHook = (project.metadata && project.metadata.dataHook || '').toLowerCase();
@@ -17907,23 +17907,23 @@ function buildCashOutModal(project, requestClose) {
       state.net = net;
       state.cashOutRoute = { via: 'treasury' };
       renderCashPreview(seq, { net: net, revFee: revFee, protocolFee: protocolFee });
-      // Probe the two pool routes: a direct sell (bypass the terminal) and the buyback-routed cash-out. Offer
+      // Probe the two pool routes: a direct sell (bypass the terminal) and the buyback-routed cash out. Offer
       // whichever nets more than the treasury reclaim. Async; leaves the treasury route on failure.
       maybeOfferCashOutRoutes(seq, specs, net, count);
     }).catch(function () {
       if (seq === previewSeq) {
-        preview.textContent = 'Could not verify the exact hook-aware cash-out amount. Nothing can be sent until the preview succeeds.';
+        preview.textContent = 'Could not verify the exact hook-aware cash out amount. Nothing can be sent until the preview succeeds.';
         state.exact = null; state.reclaim = null; state.net = null; state.outcome = null; btn.disabled = true;
       }
     });
   }
 
   // Offer the more lucrative pool route above the treasury reclaim:
-  //   • DIRECT SELL (route 'directsell') — sell the whole cash-out amount straight on the pool via the Universal
-  //     Router, bypassing the terminal. Keeps the 2.5% cash-out fee the terminal route pays (it sells the full
+  //   • DIRECT SELL (route 'directsell') — sell the whole cash out amount straight on the pool via the Universal
+  //     Router, bypassing the terminal. Keeps the 2.5% cash out fee the terminal route pays (it sells the full
   //     `count`, not `count`−fee), so it strictly wins when available — but it can only move CLAIMED ERC-20, so
-  //     it's offered only when the user holds enough of it to cover the whole cash-out.
-  //   • BUYBACK via terminal (route 'amm') — the credits fallback: the terminal cash-out routed through the hook
+  //     it's offered only when the user holds enough of it to cover the whole cash out.
+  //   • BUYBACK via terminal (route 'amm') — the credits fallback: the terminal cash out routed through the hook
   //     via a minReturned. Works when part of the balance is unclaimed credits (a direct sell can't touch those).
   // The buyback spec (hook == projectBuybackHook) from the treasury-path preview carries the fee-net sell count.
   function maybeOfferCashOutRoutes(seq, specs, treasuryNet, count) {
@@ -17946,7 +17946,7 @@ function buildCashOutModal(project, requestClose) {
         var liveAccount = getAccount && getAccount();
         if (!acct || !liveAccount || liveAccount.toLowerCase() !== acct.toLowerCase()) { onChainChange(); return; }
         var directOut = q[0], buybackOut = q[1], erc20Bal = q[2] || 0n;
-        // Route 3 — direct pool sell (preferred when the user holds enough claimed ERC-20 to cover the cash-out).
+        // Route 3 — direct pool sell (preferred when the user holds enough claimed ERC-20 to cover the cash out).
         if (pool && directOut != null && directOut > treasuryNet && erc20Bal >= count) {
           state.cashOutRoute = { via: 'directsell', pool: pool, out: directOut, count: count, treasuryNet: treasuryNet };
           renderCashPreview(seq, { net: directOut, revFee: 0n, protocolFee: 0n, route: 'directsell', treasuryNet: treasuryNet });
@@ -17974,7 +17974,7 @@ function buildCashOutModal(project, requestClose) {
     if (!a) return;
     var liveAccount = getAccount && getAccount();
     if (!state.contextAccount || !liveAccount || liveAccount.toLowerCase() !== state.contextAccount.toLowerCase()) {
-      preview.textContent = 'Connected account changed. Refresh the cash-out quote before continuing.';
+      preview.textContent = 'Connected account changed. Refresh the cash out quote before continuing.';
       state.net = null; btn.disabled = true; return;
     }
     // Snapshot the outcome for the success panel (fee-token amounts fill in as their previews resolve).
@@ -17991,7 +17991,7 @@ function buildCashOutModal(project, requestClose) {
     // via the terminal, or the project treasury.
     if (f.route === 'directsell') {
       var viaDS = el('div', 'ops-preview-line ops-preview-feetok');
-      viaDS.textContent = 'via a direct pool sell — bypasses the terminal (no 2.5% cash-out fee), beats ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the treasury';
+      viaDS.textContent = 'via a direct pool sell — bypasses the terminal (no 2.5% cash out fee), beats ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the treasury';
       preview.appendChild(viaDS);
     } else if (f.route === 'amm') {
       var viaAmm = el('div', 'ops-preview-line ops-preview-feetok');
@@ -18002,7 +18002,7 @@ function buildCashOutModal(project, requestClose) {
       viaT.textContent = 'via the project treasury';
       preview.appendChild(viaT);
     }
-    // Pool routes: the ~ amount is the quote; the on-chain floor = quote × (1 − max slippage). The swap REVERTS
+    // Pool routes: the ~ amount is the quote; the onchain floor = quote × (1 − max slippage). The swap REVERTS
     // below it (protection, not an expected loss). Reads state.slippageBps so the slippage control updates it live.
     if (poolRoute && f.net != null) {
       var slip = state.slippageBps || 100;
@@ -18016,11 +18016,11 @@ function buildCashOutModal(project, requestClose) {
       note.textContent = '(estimate — exact reclaim couldn’t be previewed)';
       preview.appendChild(note);
     }
-    // When the payout reads ~0, explain why (cash-outs draw only from surplus across all tokens): either
-    // cash-outs are off (100% tax) or there's no surplus (payout limit covers the whole balance).
+    // When the payout reads ~0, explain why (cash outs draw only from surplus across all tokens): either
+    // cash outs are off (100% tax) or there's no surplus (payout limit covers the whole balance).
     if (f.net != null && f.net === 0n) {
       var why = '';
-      if ((state.cashOutTaxRate || 0) >= 10000) why = 'Cash outs are off this ruleset (100% cash-out tax).';
+      if ((state.cashOutTaxRate || 0) >= 10000) why = 'Cash outs are off this ruleset (100% cash out tax).';
       else if (state.aggSurplus != null && state.aggSurplus === 0n) why = 'No ' + a.symbol + ' surplus — its payout limit covers the whole ' + a.symbol + ' balance.' + (state.kinds && state.kinds.length > 1 ? ' Try reclaiming a different token above.' : '');
       if (why) { var wl = el('div', 'ops-preview-line ops-preview-feetok'); wl.textContent = why; preview.appendChild(wl); }
     }
@@ -18071,16 +18071,16 @@ function buildCashOutModal(project, requestClose) {
 
     // Breakdown — the bonding-curve inputs the payout is derived from: total supply (the denominator,
     // aggregated across chains for omnichain projects), the project's total surplus across all tokens, and
-    // the cash-out tax. reclaim = surplus × share × ((1 − tax) + tax × share), where share = count / supply.
+    // the cash out tax. reclaim = surplus × share × ((1 − tax) + tax × share), where share = count / supply.
     var count2; try { count2 = parseAmount(amt.value, 18); } catch (_) { count2 = 0n; }
     if (f.route === 'amm' || f.route === 'directsell') {
       // Pool route: the payout is a swap, not the surplus×share bonding curve — show that instead of the treasury
-      // formula (which would misleadingly read "100% cash-out tax", the routing mechanism, not a fee).
+      // formula (which would misleadingly read "100% cash out tax", the routing mechanism, not a fee).
       var bd2 = el('div', 'ops-cash-breakdown');
       var bh2 = el('div', 'ops-cash-bd-head'); bh2.textContent = 'How this is calculated'; bd2.appendChild(bh2);
       var fm2 = el('div', 'ops-cash-bd-formula');
       fm2.textContent = f.route === 'directsell'
-        ? 'Sold straight into the buyback pool via the Universal Router — the terminal (and its 2.5% cash-out fee) is bypassed entirely. The ~ amount is the current quote; you receive the actual swap output, which the max-slippage floor guarantees (the swap reverts below it).'
+        ? 'Sold straight into the buyback pool via the Universal Router — the terminal (and its 2.5% cash out fee) is bypassed entirely. The ~ amount is the current quote; you receive the actual swap output, which the max-slippage floor guarantees (the swap reverts below it).'
         : 'Sold into the buyback pool at the current AMM price; the treasury bonding curve is bypassed. The ~ amount is the current quote; you receive the actual swap output, which the max-slippage floor guarantees (the swap reverts below it).';
       bd2.appendChild(fm2);
       preview.appendChild(bd2);
@@ -18118,7 +18118,7 @@ function buildCashOutModal(project, requestClose) {
     var acct = getAccount && getAccount();
     if (!acct) { connect().then(onChainChange).catch(function () {}); return; }
     if (!state.contextAccount || state.contextAccount.toLowerCase() !== acct.toLowerCase()) {
-      onChainChange(); status.textContent = 'Refreshing the cash-out quote for the connected account…'; return;
+      onChainChange(); status.textContent = 'Refreshing the cash out quote for the connected account…'; return;
     }
     var count; try { count = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
     if (count === 0n) { status.textContent = 'Enter an amount'; return; }
@@ -18150,16 +18150,16 @@ function buildCashOutModal(project, requestClose) {
     function requireCashInputs() {
       if (cashInputsUnchanged()) return true;
       status.classList.remove('pending');
-      status.textContent = 'Cash-out inputs, chain, or connected account changed while the quote was loading. Review and try again.';
+      status.textContent = 'Cash out inputs, chain, or connected account changed while the quote was loading. Review and try again.';
       btn.disabled = false;
       return false;
     }
     btn.disabled = true; status.textContent = '';
 
-    // A TERMINAL cash-out: treasury reclaim, or the buyback route via a minReturned metadata. For the buyback
-    // route, RE-QUOTE at submit — minReturned is a hard on-chain floor (userSpecifiedMin=true) that reverts the
+    // A TERMINAL cash out: treasury reclaim, or the buyback route via a minReturned metadata. For the buyback
+    // route, RE-QUOTE at submit — minReturned is a hard onchain floor (userSpecifiedMin=true) that reverts the
     // swap if the realized fill misses it, so a >1% adverse move since the preview would revert the whole
-    // cash-out against a stale floor. If the pool no longer beats the treasury (or the quote fails), fall to the
+    // cash out against a stale floor. If the pool no longer beats the treasury (or the quote fails), fall to the
     // treasury path. `r` may differ from the outer route (the direct-sell fallback passes a forced treasury r).
     function submitTerminalCashOut(r) {
       var routeP = (r.via === 'amm' && r.hook && r.cashOutCountToSell)
@@ -18196,12 +18196,12 @@ function buildCashOutModal(project, requestClose) {
     }
 
     // DIRECT pool sell — a Universal Router swap that bypasses the terminal entirely (not cashOutTokensOf). It
-    // sells the claimed ERC-20 straight into the pool, dodging the 2.5% cash-out fee. Re-quote for a fresh floor;
-    // if the pool no longer beats the treasury (or the quote fails), fall back to the terminal cash-out.
+    // sells the claimed ERC-20 straight into the pool, dodging the 2.5% cash out fee. Re-quote for a fresh floor;
+    // if the pool no longer beats the treasury (or the quote fails), fall back to the terminal cash out.
     if (route.via === 'directsell' && route.pool && route.count) {
       // Re-quote the pool AND re-read the claimed ERC-20 balance at submit: a direct sell pulls `count` via
       // Permit2, so if the balance dropped below `count` since the preview (e.g. a sell in another tab) the swap
-      // would approve+sign+revert. Fall back to the terminal cash-out (credits-safe) when either check fails.
+      // would approve+sign+revert. Fall back to the terminal cash out (credits-safe) when either check fails.
       Promise.all([
         quoteDirectSwap(cid, route.pool, route.count),
         clientFor(cid).readContract({ address: route.pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }),
@@ -18237,7 +18237,7 @@ function buildCashOutModal(project, requestClose) {
   function renderCashSuccess(count, o, meta) {
     var done = el('div', 'cashout-success');
     var title = el('div', 'cashout-success-title');
-    // A direct pool sell isn't a protocol cash-out (nothing is burned) — it's a secondary-market sale.
+    // A direct pool sell isn't a protocol cash out (nothing is burned) — it's a secondary-market sale.
     title.textContent = o && o.sold ? 'Sold on the pool' : 'Cashed out';
     done.appendChild(title);
 
@@ -18368,7 +18368,7 @@ function buildLoanModal(project, requestClose) {
     return acct ? formatBalance(v, acct.decimals, acct.symbol) : '—';
   }
 
-  // Your balance + project balances per chain, boxed at the top (like the cash-out modal).
+  // Your balance + project balances per chain, boxed at the top (like the cash out modal).
   var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
   renderBalanceTables(balTable, project, sym);
 
@@ -18401,14 +18401,14 @@ function buildLoanModal(project, requestClose) {
 
   var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
 
-  // Put the actual decision in one compact place: current treasury cash-out value, net loan proceeds, and what
+  // Put the actual decision in one compact place: current treasury cash out value, net loan proceeds, and what
   // happens to the collateral. This deliberately makes no personal tax recommendation.
   var decision = el('section', 'loan-decision'); decision.hidden = true;
   var decisionTitle = el('div', 'loan-decision-title'); decisionTitle.textContent = 'Compare'; decision.appendChild(decisionTitle);
   var decisionTable = document.createElement('table'); decisionTable.className = 'payout-summary loan-decision-table';
   var decisionBody = document.createElement('tbody'); decisionTable.appendChild(decisionBody); decision.appendChild(decisionTable);
   var decisionNote = el('div', 'loan-decision-note');
-  decisionNote.textContent = 'Live treasury cash-out and loan quotes are net of protocol and project fees. Cashing out burns the tokens; repaying a loan lets you reclaim them. Personal tax effects are not included.';
+  decisionNote.textContent = 'Live treasury cash out and loan quotes are net of protocol and project fees. Cashing out burns the tokens; repaying a loan lets you reclaim them. Personal tax effects are not included.';
   decision.appendChild(decisionNote); wrap.appendChild(decision);
 
   function decisionRow(label, value) {
@@ -18424,17 +18424,17 @@ function buildLoanModal(project, requestClose) {
     if (collateral <= 0n) return;
     var tokenAmount = formatTokenCount(collateral) + ' ' + sym;
     var cashValue = state.cashOutLoading
-      ? 'cash-out value checking…'
-      : (state.cashOutNet != null ? ('cash-out value ~ ' + fmtBorrow(state.cashOutNet)) : 'cash-out value unavailable');
-    decisionBody.appendChild(decisionRow('Hold', tokenAmount + ' · ' + cashValue));
+      ? 'cash out value checking…'
+      : (state.cashOutNet != null ? ('cash out value ~ ' + fmtBorrow(state.cashOutNet)) : 'cash out value unavailable');
+    decisionBody.appendChild(decisionRow('Hold', tokenAmount + ' | ' + cashValue));
     var cashNow = state.cashOutLoading
       ? 'Checking live quote…'
-      : (state.cashOutNet != null ? ('~ ' + fmtBorrow(state.cashOutNet) + ' now · tokens burned') : 'Unavailable now');
+      : (state.cashOutNet != null ? ('~ ' + fmtBorrow(state.cashOutNet) + ' now | tokens burned') : 'Unavailable now');
     decisionBody.appendChild(decisionRow('Cash out now', cashNow));
     var loanNow = state.borrowableLoading ? 'Checking live quote…' : 'Unavailable now';
     if (state.borrowable === 0n) loanNow = 'Unavailable until loans unlock';
     else if (state.borrowable != null && state.feeless != null) {
-      loanNow = '~ ' + fmtBorrow(loanOpeningAmounts(state.borrowable, state.prepaidFee, state.feeless).net) + ' now · repay to reclaim';
+      loanNow = '~ ' + fmtBorrow(loanOpeningAmounts(state.borrowable, state.prepaidFee, state.feeless).net) + ' now | repay to reclaim';
     }
     decisionBody.appendChild(decisionRow('Loan now', loanNow));
   }
@@ -18707,13 +18707,13 @@ function buildLoanModal(project, requestClose) {
           }
         }
         state.cashOutLoading = false;
-        // borrowableAmountFrom returns 0 for ALL collateral while the revnet's cash-out delay is still in
+        // borrowableAmountFrom returns 0 for ALL collateral while the revnet's cash out delay is still in
         // effect (REVLoans gates loans on it) — so a 0 here means loans are time-locked, not "too little".
         preview.textContent = state.borrowable == null
           ? 'Could not verify the live loan quote. Try again shortly.'
           : (state.borrowable > 0n
             ? 'You’ll borrow ~ ' + fmtBorrow(state.borrowable)
-            : 'Nothing borrowable yet — loans unlock after this revnet’s cash-out delay passes.');
+            : 'Nothing borrowable yet — loans unlock after this revnet’s cash out delay passes.');
         updateFeeViz(); updateSummary();
       }).catch(function () { if (seq === previewSeq) { preview.textContent = 'Could not verify the live loan quote. Try again shortly.'; state.borrowable = null; state.borrowableLoading = false; state.cashOutNet = null; state.cashOutLoading = false; updateFeeViz(); updateSummary(); } });
   }
@@ -18735,7 +18735,7 @@ function buildLoanModal(project, requestClose) {
     if (state.balance == null) { status.textContent = 'Your collateral balance is still loading or could not be verified.'; return; }
     if (collateral > state.balance) { status.textContent = 'Collateral exceeds your balance on this chain.'; return; }
     if (state.borrowableLoading || state.borrowable == null) { status.textContent = 'The live loan quote could not be verified. Try again shortly.'; return; }
-    if (state.borrowable === 0n) { status.textContent = 'Nothing borrowable yet — loans are locked until this revnet’s cash-out delay passes.'; return; }
+    if (state.borrowable === 0n) { status.textContent = 'Nothing borrowable yet — loans are locked until this revnet’s cash out delay passes.'; return; }
     var chainId = state.chainId;
     var prepaidFee = state.prepaidFee;
     var loanToken = borrowLoanTokenForAccountContext(state.acct, state.acctLoading);
@@ -18813,7 +18813,7 @@ function buildLoanModal(project, requestClose) {
         if (!requireLoanInputs()) return;
         var r = live[0];
         var sourceBorrowable = toBigInt(Array.isArray(r) ? r[0] : r);
-        if (sourceBorrowable === 0n) { fail('Nothing borrowable yet — loans are locked until this revnet’s cash-out delay passes.'); return; }
+        if (sourceBorrowable === 0n) { fail('Nothing borrowable yet — loans are locked until this revnet’s cash out delay passes.'); return; }
         if (live[1] == null) { fail('Could not verify the protocol fee status for this loan. Nothing was sent.'); return; }
         state.borrowable = sourceBorrowable; state.feeless = live[1]; updateSummary();
         var reviewedOutcome = state.loanOut ? Object.assign({}, state.loanOut) : null;
@@ -18864,7 +18864,7 @@ function buildLoanModal(project, requestClose) {
   return wrap;
 }
 
-// Repay an open loan: reads the exact on-chain loan + current source fee, repays principal + fee and
+// Repay an open loan: reads the exact onchain loan + current source fee, repays principal + fee and
 // reclaims all collateral. Native (ETH) loans pay via msg.value (excess auto-refunded by REVLoans); the
 // arg `maxRepayBorrowAmount` is ignored for native, so a small buffer over the fee covers per-second drift.
 function buildRepayModal(project, loanRow, requestClose) {
@@ -19422,7 +19422,7 @@ function renderGossipSection(project) {
           row.appendChild(c0); row.appendChild(c4); row.appendChild(c5);
           row.appendChild(c1); row.appendChild(c2); row.appendChild(c3);
           // Repaint status + sync action for a given pending state. Called once now (cheap, no log scan) and
-          // again if the lazy on-chain in-flight check finds a sync mid-flight — so the table never blocks.
+          // again if the lazy onchain in-flight check finds a sync mid-flight — so the table never blocks.
           function paint(pending) {
             c4.innerHTML = ''; c5.innerHTML = '';
             if (pending) {
@@ -19452,7 +19452,7 @@ function renderGossipSection(project) {
           }
           paint(localPending);
           table.appendChild(row);
-          // Lazy ON-CHAIN in-flight check (universal, reload-proof) — only for stale rows (an in-sync row
+          // Lazy ONCHAIN in-flight check (universal, reload-proof) — only for stale rows (an in-sync row
           // can't have a pending sync) and only when not already shown pending. Runs AFTER render, off the
           // critical path, so it never delays the table; patches the row to "Syncing…" if a push is bridging.
           if (!localPending && p.syncSucker && st.level !== 'synced' && st.level !== 'unknown') {
@@ -19473,7 +19473,7 @@ function renderGossipSection(project) {
   return section;
 }
 
-// { chainId -> { lowercased local sucker address -> remoteChainId } }. Used to relabel the cash-out a
+// { chainId -> { lowercased local sucker address -> remoteChainId } }. Used to relabel the cash out a
 // sucker performs under the hood on prepare() as a bridge in the activity feed (not "cashed out"). MUST be
 // keyed by chain: native-bridge suckers share the SAME address on both chains, so a flat map would collide.
 function fetchProjectSuckerMap(project) {
@@ -19506,7 +19506,7 @@ function readBridgeableBalance(project, chainId) {
 // syncAccountingData() snapshots the LOCAL chain's accounting and bridges it to the peer (payable AMB fee).
 var suckerSyncAbi = [{ type: 'function', name: 'syncAccountingData', stateMutability: 'payable', inputs: [], outputs: [] }];
 // Emitted on the SOURCE sucker each time a snapshot is pushed. We scan this (like the Movement table scans
-// InsertToOutboxTree) to detect an in-flight sync ON-CHAIN — universal (any caller) and reload-proof.
+// InsertToOutboxTree) to detect an in-flight sync ONCHAIN — universal (any caller) and reload-proof.
 var ACCOUNTING_SYNCED_EVENT = { type: 'event', name: 'AccountingDataSynced', inputs: [{ name: 'sourceTimestamp', type: 'uint256', indexed: false }, { name: 'caller', type: 'address', indexed: false }] };
 // Latest accounting-snapshot push from `sucker` (its `peerChainId` is the destination), as unix seconds
 // (sourceTimestamp is packed (block.timestamp << 128 | seq) — unpack >> 128). 0 if none / unreadable.
@@ -19590,7 +19590,7 @@ function suckerBranchRoot(leaf, proof, index) {
 //   LINK from the caller via transferFrom — which the wallet hasn't approved, so it reverts (the exact bug a
 //   tx-auditor caught on project 8's Ethereum↔Base USDC move). We discover the needed native budget by
 //   simulating toRemote at escalating values: the contract computes getFee() internally (ground truth, no
-//   fragile off-chain message reconstruction) and excess transportPayment is refunded to the caller
+//   fragile offchain message reconstruction) and excess transportPayment is refunded to the caller
 //   (JBCCIPLib refunds msg.value − fees), so the smallest working tier is safe. Returns bigint, or null when
 //   a CCIP fee couldn't be determined (so callers surface an error instead of prompting a reverting tx).
 async function findToRemoteValue(chainId, sucker, token, account) {
@@ -19615,7 +19615,7 @@ async function findToRemoteValue(chainId, sucker, token, account) {
         account: account, to: sucker, data: data, value: value,
         stateOverride: [{ address: account, balance: fundedBalance }],
       });
-      return value; // succeeded — this budget covers getFee; excess refunds on-chain
+      return value; // succeeded — this budget covers getFee; excess refunds onchain
     } catch (_) { /* insufficient (or sim limitation) — try a larger budget */ }
   }
   return null;
@@ -19678,7 +19678,7 @@ function buildMoveModal(project) {
   var status = el('div', 'modal-status'); wrap.appendChild(status);
 
   var hint = el('div', 'modal-status');
-  hint.textContent = 'Once it’s bridged, claim it on the destination from the Movement table below.';
+  hint.textContent = 'Once it’s bridged, claim it on the destination from the Queued movements table below.';
   wrap.appendChild(hint);
 
   var foot = el('div', 'modal-foot');
@@ -19726,7 +19726,7 @@ function buildMoveModal(project) {
     else if (status.textContent === btn.title || /no ERC-20|to bridge on|Pick two different|Finding a verified|No verified bridge|Loading the verified backing|Could not verify your bridgeable/i.test(status.textContent)) status.textContent = '';
   }
   // The proportional backing that bridges with the tokens: terminalBalance × amount / totalSupply (suckers
-  // move the full proportional share, no cash-out tax). Read on the FROM chain.
+  // move the full proportional share, no cash out tax). Read on the FROM chain.
   function loadBacking() {
     var from = state.from;
     var backingKey = state.backingKey;
@@ -19746,7 +19746,7 @@ function buildMoveModal(project) {
       var term = getAddress('JBMultiTerminal', from);
       return Promise.all([
         read(from, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
-        // What bridges = the sucker's cash-out of the moved tokens, which draws from this token's SURPLUS
+        // What bridges = the sucker's cash out of the moved tokens, which draws from this token's SURPLUS
         // (balance − payout limit) at 0% tax — not the full balance. A token with unlimited payouts has 0.
         term ? read(from, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; }) : Promise.resolve(null),
       ]);
@@ -19939,7 +19939,7 @@ function buildMoveModal(project) {
           throw new Error('Movement inputs or the connected account changed while the backing preview was loading. Review and try again.');
         }
         // Step 1: approve the sucker for the ERC-20, then prepare (cash out to terminal funds + insert outbox
-        // leaf). A positive backing preview gets a 99% on-chain floor. Zero backing can still move the same project
+        // leaf). A positive backing preview gets a 99% onchain floor. Zero backing can still move the same project
         // token count to the remote chain, but the confirmation calls that out explicitly instead of hiding min=0.
         executeTransaction(Object.assign(buildSuckerPrepareArgs({
           chainId: from, sucker: sucker, projectTokenCount: amount, beneficiary32: beneficiary32, minReclaimed: minReclaimed,
@@ -19947,7 +19947,7 @@ function buildMoveModal(project) {
         }), {
           confirmTitle: 'Prepare movement — step 1 of 2',
           confirmNote: net > 0n
-            ? 'The live bridge cash-out preview is ' + formatBalance(net, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + '; this reverts below the 99% floor.'
+            ? 'The live bridge cash out preview is ' + formatBalance(net, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + '; this reverts below the 99% floor.'
             : 'This source chain currently contributes zero backing. The same project-token count will still be minted remotely, but no backing tokens will move with it.',
           onStatus: onStatus, onError: fail,
           onSuccess: function () {
@@ -19965,11 +19965,11 @@ function buildMoveModal(project) {
                 + 'This step ships that queued batch to ' + moveChainName(to) + ' — it delivers every pending move in the '
                 + 'queue (yours and anyone else’s) in one bridge message, so anyone can trigger it. The small value is the '
                 + 'bridge’s messaging fee — you pay it to relay the message; it’s not the bridged tokens (those move from the '
-                + 'project’s funds). Once it lands, claim your tokens on ' + moveChainName(to) + ' from the Movement table.',
+                + 'project’s funds). Once it lands, claim your tokens on ' + moveChainName(to) + ' from the Queued movements table.',
               onStatus: onStatus, onError: fail,
               onSuccess: function () {
                 status.classList.remove('pending');
-                status.textContent = 'Bridging to ' + moveChainName(to) + ' — once it delivers (a few minutes for native bridges) claim it from the Movement table.';
+                status.textContent = 'Bridging to ' + moveChainName(to) + ' — once it delivers (a few minutes for native bridges) claim it from the Queued movements table.';
                 btn.disabled = false;
                 document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
               },
@@ -20026,7 +20026,7 @@ function lpTrimNum(n) {
   return String(Number(n.toPrecision(6)));
 }
 
-// Prefer the economic [cash-out floor, issuance ceiling] corridor when it contains spot. If it is
+// Prefer the economic [cash out floor, issuance ceiling] corridor when it contains spot. If it is
 // inverted, degenerate, or spot has moved outside it, widen around the live pool price so the default
 // position is genuinely two-sided instead of silently disabling one deposit token.
 export function lpDefaultRange(poolPrice, floor, ceiling) {
@@ -20044,7 +20044,7 @@ export function lpDefaultRange(poolPrice, floor, ceiling) {
   return { min: min, max: max, economic: economic };
 }
 
-// A compact number-line of the LP price range relative to the cash-out floor, current pool price,
+// A compact number-line of the LP price range relative to the cash out floor, current pool price,
 // and issuance ceiling. All values are pair/base token per project token.
 function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
   var pts = [floor, ceiling, poolP, pa, pb].filter(function (v) { return v > 0; });
@@ -20463,7 +20463,7 @@ async function readLpPositions(project, chainId) {
 }
 
 // V4 liquidity-depth histogram: how much active liquidity sits in each price band. Bars are colored by
-// side of the current pool price (below = teal/support, above = orange); dashed markers show the cash-out
+// side of the current pool price (below = teal/support, above = orange); dashed markers show the cash out
 // floor, current AMM price, and issuance ceiling. Price axis is log-scaled (ranges span orders of magnitude).
 export function lpDepthMarkerLabelLayout(markers, width) {
   var gap = 4, charWidth = 7.2, rowRight = [], placed = [];
@@ -20847,7 +20847,7 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
       await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max] });
     }
     // 2. Permit2 → PositionManager allowance. Reuse if still valid; else sign one (gasless) and fold it
-    //    into the mint multicall — no separate on-chain approval tx.
+    //    into the mint multicall — no separate onchain approval tx.
     var p2 = await clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, side.currency, posm] });
     var p2amount = BigInt(p2[0]), p2exp = Number(p2[1]), p2nonce = Number(p2[2]);
     if (!(p2amount >= side.max && p2exp > now)) {
@@ -21032,9 +21032,9 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
     positions.forEach(function (pos) {
       var row = el('div', 'lp-remove-row');
       var info = el('div', 'lp-remove-info');
-      var head = el('div', 'lp-remove-head'); head.textContent = 'Position #' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' · current pool' : ' · old pool'); info.appendChild(head);
+      var head = el('div', 'lp-remove-head'); head.textContent = 'Position #' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' | current pool' : ' | old pool'); info.appendChild(head);
       var pairH = formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol), tokH = formatTokens(pos.tokAmt) + ' ' + sym;
-      var amts = el('div', 'modal-balance'); amts.textContent = tokH + ' + ' + pairH + '  ·  oracle ' + truncAddr(pos.oracleHook); info.appendChild(amts);
+      var amts = el('div', 'modal-balance'); amts.textContent = tokH + ' + ' + pairH + ' | oracle ' + truncAddr(pos.oracleHook); info.appendChild(amts);
       var rmStatus = el('div', 'modal-status'); rmStatus.style.display = 'none'; info.appendChild(rmStatus);
       row.appendChild(info);
       var rm = el('button', 'detail-check-btn'); rm.textContent = 'Remove';
@@ -21045,7 +21045,7 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
           pos = fresh;
           pairH = formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol);
           tokH = formatTokens(pos.tokAmt) + ' ' + sym;
-          amts.textContent = tokH + ' + ' + pairH + '  ·  oracle ' + truncAddr(pos.oracleHook);
+          amts.textContent = tokH + ' + ' + pairH + ' | oracle ' + truncAddr(pos.oracleHook);
           var prep = prepareRemoveLiquidity(chainId, pos, acct);
           rm.disabled = false; rm.textContent = 'Remove';
           openTxConfirm({
@@ -21098,7 +21098,7 @@ function buildAddLiquidityModal(project) {
   intro.textContent = 'Seed the buyback pool so payers can route through the AMM. Liquidity is added at the current pool price.';
   wrap.appendChild(intro);
 
-  // Your balance per chain, boxed at the top (like the cash-out modal). Add-liquidity skips project balances.
+  // Your balance per chain, boxed at the top (like the cash out modal). Add-liquidity skips project balances.
   var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
   renderBalanceTables(balTable, project, sym, { skipProjectBalances: true });
 
@@ -21132,7 +21132,7 @@ function buildAddLiquidityModal(project) {
   graphWrap.addEventListener('mouseleave', function () { graphTip.style.display = 'none'; });
 
   var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
-  var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash-out floor to the issuance ceiling.'; wrap.appendChild(rnote);
+  var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash out floor to the issuance ceiling.'; wrap.appendChild(rnote);
   var rangeRow = el('div', 'ops-rangerow');
   var minField = el('div', 'ops-field ops-field--grow');
   var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.placeholder = 'Min'; minField.appendChild(minInput);
@@ -21308,10 +21308,10 @@ function buildAddLiquidityModal(project) {
       if (defaultRange.min > 0) minInput.value = lpTrimNum(defaultRange.min);
       if (defaultRange.max > 0) maxInput.value = lpTrimNum(defaultRange.max);
       rnote.textContent = defaultRange.economic
-        ? 'Defaults span the cash-out floor (' + formatPrice(state.floor) + ') to the issuance ceiling.'
+        ? 'Defaults span the cash out floor (' + formatPrice(state.floor) + ') to the issuance ceiling.'
         : (state.floor > 0
           ? 'The floor and ceiling do not straddle the pool price. The default range is widened so both tokens can be added.'
-          : 'No cash-out floor yet. The default range is widened around the pool price so both tokens can be added.');
+          : 'No cash out floor yet. The default range is widened around the pool price so both tokens can be added.');
       onRangeChange();
     }).catch(function () {
       if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;

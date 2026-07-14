@@ -88,7 +88,7 @@ export function renderBurnComponent() {
       var balBox = el('div', 'pay-preview');
       var row = el('div', 'preview-row');
       var lbl = el('span', 'preview-label');
-      lbl.textContent = 'Your token balance';
+      lbl.textContent = 'Your project token balance';
       row.appendChild(lbl);
       var val = el('span', 'preview-value');
       val.textContent = formatAmount(state.balance, 18);
@@ -117,7 +117,7 @@ export function renderBurnComponent() {
     memoSection.appendChild(memoLabel);
     var memoInput = el('input', 'field string-field optional-field');
     memoInput.type = 'text';
-    memoInput.placeholder = 'Burn memo...';
+    memoInput.placeholder = 'Add a memo (optional)';
     memoInput.value = state.memo;
     memoInput.addEventListener('input', function() { state.memo = memoInput.value; });
     memoSection.appendChild(memoInput);

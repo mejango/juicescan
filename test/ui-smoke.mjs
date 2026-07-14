@@ -252,9 +252,9 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
         feeCaption: modal.querySelector('.loan-fee-caption').textContent,
       };
     }`);
-    check('loan modal compares hold, live cash-out value, and net loan proceeds',
+    check('loan modal compares hold, live cash out value, and net loan proceeds',
       loanModal.rows[0][0] === 'Hold' && loanModal.rows[0][1].includes('TEST')
-        && (loanModal.rows[0][1].includes('cash-out value ~') || loanModal.rows[0][1].includes('cash-out value unavailable'))
+        && (loanModal.rows[0][1].includes('cash out value ~') || loanModal.rows[0][1].includes('cash out value unavailable'))
         && loanModal.rows[1][0] === 'Cash out now'
         && (loanModal.rows[1][1].includes('tokens burned') || loanModal.rows[1][1] === 'Unavailable now')
         && loanModal.rows[2][0] === 'Loan now'

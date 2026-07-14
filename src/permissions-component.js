@@ -273,8 +273,8 @@ export function renderPermissionsComponent() {
     // Flag the two highest-stakes grants explicitly in the confirm (the decoded `permissionIds: [1]` alone
     // doesn't convey "full control"): ROOT (id 1) = every permission; projectId 0 = ALL of your projects.
     var danger = [];
-    if (selectedArr.indexOf(1) !== -1) danger.push('⚠ ROOT grants ' + truncAddr(state.operator) + ' EVERY permission — full operator control of your project(s).');
-    if (projectId === 0) danger.push('⚠ Project ID 0 applies these permissions to ALL your projects on this chain, not just one.');
+    if (selectedArr.indexOf(1) !== -1) danger.push('ROOT grants ' + truncAddr(state.operator) + ' EVERY permission — full operator control of your project(s).');
+    if (projectId === 0) danger.push('Project ID 0 applies these permissions to ALL your projects on this chain, not just one.');
 
     executeTransaction({
       ...buildSetPermissionsArgs({ chainId: state.chainId, permissionsAddr: permissionsAddr, account: account, operator: state.operator, projectId: projectId, permissionIds: selectedArr }),

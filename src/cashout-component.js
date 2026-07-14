@@ -37,7 +37,7 @@ export function cashOutMinReclaimed(reclaimAmount) {
 // Pure builder for JBMultiTerminal.cashOutTokensOf. `o`: { chainId, terminalAddr, holder, projectId,
 // cashOutCount (bigint), tokenToReclaim, beneficiary, minReclaimed (bigint) }.
 export function buildCashOutArgs(o) {
-  if (o.minReclaimed == null || BigInt(o.minReclaimed) <= 0n) throw new Error('A non-zero cash-out preview is required.');
+  if (o.minReclaimed == null || BigInt(o.minReclaimed) <= 0n) throw new Error('A non-zero cash out preview is required.');
   return {
     chainId: o.chainId,
     address: o.terminalAddr,
@@ -343,7 +343,7 @@ export function renderCashOutComponent() {
     if (state.selectedChain !== chainId || state.amount !== amountText || !state.selectedToken
       || state.selectedToken.address.toLowerCase() !== reclaimToken.toLowerCase()
       || String(getBeneficiaryAddress(state) || '').toLowerCase() !== beneficiary.toLowerCase()) {
-      state.error = 'Cash-out inputs changed while the preview was loading. Review the refreshed form and try again.';
+      state.error = 'Cash out inputs changed while the preview was loading. Review the refreshed form and try again.';
       updateUI(); return;
     }
 

@@ -22,7 +22,7 @@ function uintNumber(value, bits, label) {
   var raw = typeof value === 'number' ? (Number.isSafeInteger(value) ? String(value) : '') : String(value == null ? 0 : value).trim();
   if (!/^\d+$/.test(raw)) throw new Error(label + ' must be a whole number.');
   var n = BigInt(raw), max = (1n << BigInt(bits)) - 1n;
-  if (n > max) throw new Error(label + ' exceeds uint' + bits + '.');
+  if (n > max) throw new Error(label + ' is too large (max uint' + bits + ').');
   return Number(n);
 }
 
@@ -40,7 +40,7 @@ export function sortTierEntriesByCategory(entries, pickTier) {
 export function build721TierConfig(o) {
   o = o || {};
   var price; try { price = BigInt(o.price || 0); } catch (_) { throw new Error('Item price must be an integer in base units.'); }
-  if (price < 0n || price > (1n << 104n) - 1n) throw new Error('Item price exceeds uint104.');
+  if (price < 0n || price > (1n << 104n) - 1n) throw new Error('Item price is too large (max uint104).');
   var reserveFrequency = uintNumber(o.reserveFrequency || 0, 16, 'Reserve frequency');
   if (reserveFrequency > 0 && !isAddr(o.reserveBeneficiary)) throw new Error('A reserved item needs a valid reserve beneficiary.');
   var reserveBeneficiary = reserveFrequency > 0 ? addrOrZero(o.reserveBeneficiary) : ZERO;

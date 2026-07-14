@@ -3811,7 +3811,7 @@ input[type="checkbox"].field {
 .backoffice-none { font-size: 13px; color: var(--muted-2); }
 .backoffice-batch { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .backoffice-batch:empty { display: none; }
-.bo-sep { color: var(--muted-3); margin: 0 7px; }
+.bo-sep { color: var(--muted-3); margin: 0 7px; background: var(--depth-bg-0); padding: 0 4px; border-radius: 2px; }
 /* Account card (per-chain owner/operator + type + Safe details) */
 .account-chain { padding: 10px 0; border-top: 1px solid var(--bg); }
 .account-chain:first-child { border-top: none; padding-top: 0; }

@@ -210,7 +210,7 @@ function dagPbUriFromRawUpload(uri) {
   if (!cid || cid[0].toLowerCase() !== 'b') throw new Error('Pinata v3 returned an unexpected CID for metadata.');
   var parts = cidV1Parts(cid);
   if (parts.codec !== 0x55) {
-    throw new Error('Pinata v3 did not preserve the metadata block as a raw CID; refusing an unsafe on-chain hash.');
+    throw new Error('Pinata v3 did not preserve the metadata block as a raw CID; refusing an unsafe onchain hash.');
   }
   return 'ipfs://' + digestToCidV0(parts.digest);
 }
@@ -236,7 +236,7 @@ function bareCid(uri) {
 
 // Encode an IPFS URI into the bytes32 the 721 hook stores (JB721TierConfig.encodedIpfsUri).
 // CIDv0 = base58(0x12 0x20 <32-byte sha256 digest>); CIDv1 = multibase + multicodec + the same multihash.
-// In both cases the hook stores only the 32-byte sha2-256 digest and reconstructs a CIDv0-style URL on-chain.
+// In both cases the hook stores only the 32-byte sha2-256 digest and reconstructs a CIDv0-style URL onchain.
 export function encodeIpfsUriToBytes32(uri) {
   var cid = bareCid(uri);
   if (!cid) return '0x0000000000000000000000000000000000000000000000000000000000000000';

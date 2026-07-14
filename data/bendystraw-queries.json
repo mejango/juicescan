@@ -410,8 +410,8 @@
         },
         {
           "id": "cashout-tax-history",
-          "title": "Cash-out tax history",
-          "hint": "Historical cash-out tax (basis points) per ruleset, across the sucker group.",
+          "title": "Cash out tax history",
+          "hint": "Historical cash out tax (basis points) per ruleset, across the sucker group.",
           "kind": "list",
           "path": "cashOutTaxSnapshots",
           "resolveSuckerGroup": true,
@@ -1184,7 +1184,7 @@
         {
           "id": "activity-project",
           "title": "Project activity feed",
-          "hint": "All events for a project across the sucker group (pay, cash-out, mint, payout, loan…).",
+          "hint": "All events for a project across the sucker group (pay, cash out, mint, payout, loan…).",
           "kind": "list",
           "path": "activityEvents",
           "resolveSuckerGroup": true,
@@ -1250,7 +1250,7 @@
             },
             {
               "key": "cashOutTokensEvent",
-              "label": "Cash-out",
+              "label": "Cash out",
               "format": "json"
             },
             {
@@ -1344,7 +1344,7 @@
             },
             {
               "key": "cashOutTokensEvent",
-              "label": "Cash-out",
+              "label": "Cash out",
               "format": "json"
             }
           ]
@@ -1406,7 +1406,7 @@
             },
             {
               "key": "cashOutTokensEvent",
-              "label": "Cash-out",
+              "label": "Cash out",
               "format": "json"
             }
           ]
@@ -1414,7 +1414,7 @@
       ]
     },
     {
-      "title": "Payments / Cash-outs",
+      "title": "Payments / Cash outs",
       "queries": [
         {
           "id": "pay-events",
@@ -1631,7 +1631,7 @@
         },
         {
           "id": "cashout-events",
-          "title": "Recent cash-outs",
+          "title": "Recent cash outs",
           "hint": "Tokens burned for surplus reclaim, across the sucker group.",
           "kind": "list",
           "path": "cashOutTokensEvents",
@@ -1710,8 +1710,8 @@
         },
         {
           "id": "cashout-by-holder",
-          "title": "Cash-outs by holder",
-          "hint": "All cash-outs by a specific token holder.",
+          "title": "Cash outs by holder",
+          "hint": "All cash outs by a specific token holder.",
           "kind": "list",
           "path": "cashOutTokensEvents",
           "query": "query($holder: String!, $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { version: 6, holder: $holder }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary cashOutCount reclaimAmount reclaimAmountUsd txHash } totalCount } }",
@@ -2220,7 +2220,7 @@
         {
           "id": "burn-events",
           "title": "Burn events",
-          "hint": "Tokens burned (cash-out driven), across the sucker group.",
+          "hint": "Tokens burned (cash out driven), across the sucker group.",
           "kind": "list",
           "path": "burnEvents",
           "resolveSuckerGroup": true,

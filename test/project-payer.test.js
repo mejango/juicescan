@@ -24,7 +24,7 @@ describe('buildProjectPayerDeployArgs', () => {
   it('rejects invalid metadata and malformed owners while allowing the zero owner', () => {
     expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x123', false, OWNER)).toThrow(/Metadata/);
     expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, ZERO)).not.toThrow();
-    expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, 'not-an-address')).toThrow(/address admin/);
+    expect(() => buildProjectPayerDeployArgs(8, ZERO, '', '0x', false, 'not-an-address')).toThrow(/admin address/);
   });
 
   it('uses raw Relayr entries for permissionless payer deploys, not ERC-2771 forwarding', () => {

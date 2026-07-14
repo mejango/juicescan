@@ -286,7 +286,7 @@ export function renderPayComponent() {
     }
 
     var payBtn = el('button', 'pay-btn');
-    payBtn.textContent = 'Pay';
+    payBtn.textContent = 'PAY';
     payBtn.addEventListener('click', function() {
       if (state.phase === 'ready' || state.phase === 'idle') {
         executePay();
@@ -531,8 +531,11 @@ export function renderPayComponent() {
     state.error = null;
     state.txStatus = null;
 
-    if (!state.selectedChain || !state.selectedToken || !state.amount) {
-      state.error = 'Fill in all fields'; updateUI(); return;
+    if (!state.selectedChain || !state.selectedToken) {
+      state.error = 'Select a project and chain'; updateUI(); return;
+    }
+    if (!state.amount) {
+      state.error = 'Enter an amount'; updateUI(); return;
     }
 
     var amountParsed;

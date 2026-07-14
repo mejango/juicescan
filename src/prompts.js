@@ -20,7 +20,7 @@ function pushRepoContext(lines, contractName) {
   lines.push('- Full ecosystem (start here for cross-repo audits): ' + ECOSYSTEM_REPO_URL + ' — read its root `AUDIT_INSTRUCTIONS.md` for the audit engine.');
   var src = getContractRepo(contractName);
   if (src && src.githubUrl) {
-    var contractRef = '- This contract\'s repo: ' + src.githubUrl;
+    var contractRef = '- This contract’s repo: ' + src.githubUrl;
     if (src.path) contractRef += ' (' + src.path + ')';
     lines.push(contractRef);
     lines.push('- Repo-local audit notes: ' + src.githubUrl + '/blob/main/AUDIT_INSTRUCTIONS.md');
@@ -29,12 +29,12 @@ function pushRepoContext(lines, contractName) {
 }
 
 var CONTRACT_DESCRIPTIONS = {
-  JBMultiTerminal: 'Holds funds and executes pay, payout, cash-out, surplus allowance, and fee-processing flows. Multi-token. Handles fees (2.5%, 28-day hold). Permit2 integration.',
+  JBMultiTerminal: 'Holds funds and executes pay, payout, cash out, surplus allowance, and fee-processing flows. Multi-token. Handles fees (2.5%, 28-day hold). Permit2 integration.',
   JBTerminalStore: 'Owns accounting and surplus logic. Records payment minting, payout limit usage, and bonding curve reclaim math. Data hook integration point.',
   JBController: 'Orchestrator for project lifecycle — ruleset queuing, token minting/burning, reserved token distribution, ERC2771 meta-transactions.',
   JBDirectory: 'Routes projects to their terminals and controllers. Handles migration hooks.',
   JBRulesets: 'Stores current and queued economic parameters. Linked-list via basedOnId. Weight decay with cache. Approval hooks.',
-  JBTokens: 'Dual token system: internal credits + ERC-20. Credits burned first on cash-out. 18-decimal requirement.',
+  JBTokens: 'Dual token system: internal credits + ERC-20. Credits burned first on cash out. 18-decimal requirement.',
   JBSplits: 'Packed split storage for payout and reserved token distribution. Locked splits enforcement.',
   JBFundAccessLimits: 'Payout limits and surplus allowances per terminal/token/currency.',
   JBPrices: 'Price feed registry with project-specific and protocol default fallback. Inverse auto-calculation. Immutable feeds.',
@@ -42,7 +42,7 @@ var CONTRACT_DESCRIPTIONS = {
   JBProjects: 'ERC-721 project ownership NFTs.',
   JBERC20: 'Cloneable ERC20Votes+Permit token. Owned by JBTokens.',
   JBFeelessAddresses: 'Fee-exempt address registry.',
-  JB721TiersHook: 'Tiered NFT rewards hook. Tiers sorted by category. Supports pay and cash-out hooks.',
+  JB721TiersHook: 'Tiered NFT rewards hook. Tiers sorted by category. Supports pay and cash out hooks.',
   JB721TiersHookStore: 'Storage for 721 tier data, pricing, and metadata.',
   JB721TiersHookDeployer: 'Factory for deploying 721 tiered hooks.',
   JB721TiersHookProjectDeployer: 'Combined project + 721 hook deployment.',
@@ -51,24 +51,24 @@ var CONTRACT_DESCRIPTIONS = {
   JBSuckerRegistry: 'Registry for cross-chain sucker bridges.',
   JBAddressRegistry: 'Maps deployed contract addresses to their deployers for trust verification.',
   REVDeployer: 'Deploys and manages revnet (revenue network) projects.',
-  REVOwner: 'Runtime data hook for every revnet — coordinates the 721 and buyback hooks at pay time, aggregates cross-chain supply/surplus, and routes the 2.5% fee at cash-out. Split from REVDeployer for EIP-170 size limits.',
+  REVOwner: 'Runtime data hook for every revnet — coordinates the 721 and buyback hooks at pay time, aggregates cross-chain supply/surplus, and routes the 2.5% fee at cash out. Split from REVDeployer for EIP-170 size limits.',
   REVLoans: 'Loan system using project tokens as collateral.',
-  JBRouterTerminal: 'Universal payment terminal: accepts any token and converts it into whatever the destination project accepts, picking the route (direct forward, Uniswap V3/V4 swap, recursive cash-out) that yields the most project tokens. Never holds a balance.',
+  JBRouterTerminal: 'Universal payment terminal: accepts any token and converts it into whatever the destination project accepts, picking the route (direct forward, Uniswap V3/V4 swap, recursive cash out) that yields the most project tokens. Never holds a balance.',
   JBRouterTerminalRegistry: 'Registry for router terminal configurations.',
   JBProjectHandles: 'Maps ENS names to project IDs.',
-  JBProjectPayer: 'Payment relay that auto-forwards received ETH/ERC-20 to a project\'s terminal via receive(), or routes explicitly via pay/addToBalanceOf. Deployed as an EIP-1167 clone.',
+  JBProjectPayer: 'Payment relay that auto-forwards received ETH/ERC-20 to a project’s terminal via receive(), or routes explicitly via pay/addToBalanceOf. Deployed as an EIP-1167 clone.',
   JBProjectPayerDeployer: 'Factory that deploys JBProjectPayer EIP-1167 minimal-proxy clones.',
   JBOmnichainDeployer: 'One-stop deployer for omnichain projects: launches a project with a tiered 721 hook and cross-chain suckers in one transaction, then inserts itself as every ruleset data hook to coordinate the 721/buyback hooks and compute cross-chain total supply and surplus.',
-  JBOptimismSucker: 'Cross-chain bridge to/from Optimism: cashes out a project\'s tokens locally and queues funds+tokens into an outbox merkle tree, then mints them to beneficiaries on the peer chain via an inbox merkle proof. Registered via JBSuckerRegistry.',
-  JBArbitrumSucker: 'Cross-chain bridge to/from Arbitrum, using merkle outbox/inbox trees to move a project\'s tokens and backing funds between chains. Registered via JBSuckerRegistry.',
-  JBBaseSucker: 'Cross-chain bridge to/from Base, using merkle outbox/inbox trees to move a project\'s tokens and backing funds between chains. Registered via JBSuckerRegistry.',
+  JBOptimismSucker: 'Cross-chain bridge to/from Optimism: cashes out a project’s tokens locally and queues funds+tokens into an outbox merkle tree, then mints them to beneficiaries on the peer chain via an inbox merkle proof. Registered via JBSuckerRegistry.',
+  JBArbitrumSucker: 'Cross-chain bridge to/from Arbitrum, using merkle outbox/inbox trees to move a project’s tokens and backing funds between chains. Registered via JBSuckerRegistry.',
+  JBBaseSucker: 'Cross-chain bridge to/from Base, using merkle outbox/inbox trees to move a project’s tokens and backing funds between chains. Registered via JBSuckerRegistry.',
   JBUniswapV4Hook: 'Uniswap V4 hook that routes swaps to whichever venue — V4 pool or Juicebox project — gives the user more tokens. Uses a 30-minute TWAP oracle to resist price manipulation.',
-  JBUniswapV4LPSplitHook: 'Split hook that builds and manages a project-owned Uniswap V4 liquidity position, seeded by the project\'s reserved-token distributions via a two-stage accumulate-then-deploy lifecycle.',
+  JBUniswapV4LPSplitHook: 'Split hook that builds and manages a project-owned Uniswap V4 liquidity position, seeded by the project’s reserved-token distributions via a two-stage accumulate-then-deploy lifecycle.',
   JBUniswapV4LPSplitHookDeployer: 'Factory that deploys lightweight JBUniswapV4LPSplitHook clones.',
-  DefifaDeployer: 'Deploys and manages Defifa prediction-market games — each game has tiers representing outcomes; players mint tier NFTs during the MINT phase, a scorecard assigns cash-out weights after the event, and the pooled funds are distributed proportionally to winning holders. Phases: COUNTDOWN → MINT → REFUND → SCORING → COMPLETE/NO_CONTEST.',
-  DefifaHook: 'The 721 hook powering Defifa games — enforces game-phase rules on minting and cash-out, and applies the scorecard cash-out weights per tier.',
-  DefifaGovernor: 'Manages ratification of Defifa scorecards via token-weighted attestation — NFT holders attest to proposed cash-out weights with power proportional to NFTs held; a scorecard ratifies once it reaches quorum.',
-  CTPublisher: 'The Croptop publishing engine. Anyone can publish NFT posts to a project\'s 721 hook subject to per-category criteria (min price, supply bounds, allowlist) set by the collection owner; routes a 5% fee to the fee project, pays the remainder into the project terminal, and dedups duplicate IPFS URIs to reuse existing tiers.',
+  DefifaDeployer: 'Deploys and manages Defifa prediction-market games — each game has tiers representing outcomes; players mint tier NFTs during the MINT phase, a scorecard assigns cash out weights after the event, and the pooled funds are distributed proportionally to winning holders. Phases: COUNTDOWN → MINT → REFUND → SCORING → COMPLETE/NO_CONTEST.',
+  DefifaHook: 'The 721 hook powering Defifa games — enforces game-phase rules on minting and cash out, and applies the scorecard cash out weights per tier.',
+  DefifaGovernor: 'Manages ratification of Defifa scorecards via token-weighted attestation — NFT holders attest to proposed cash out weights with power proportional to NFTs held; a scorecard ratifies once it reaches quorum.',
+  CTPublisher: 'The Croptop publishing engine. Anyone can publish NFT posts to a project’s 721 hook subject to per-category criteria (min price, supply bounds, allowlist) set by the collection owner; routes a 5% fee to the fee project, pays the remainder into the project terminal, and dedups duplicate IPFS URIs to reuse existing tiers.',
   CTDeployer: 'Deploys Juicebox projects pre-configured for Croptop — a permissionless NFT publishing system — and registers posting permissions/criteria.',
   CTProjectOwner: 'A dead-end project owner that locks ownership while preserving Croptop posting permissions.',
   JBMatchingPriceFeed: 'A 1:1 price feed used when a payout limit is denominated in the same currency as the terminal token, so no conversion is needed.',
@@ -77,7 +77,7 @@ var CONTRACT_DESCRIPTIONS = {
 
 export function getAuditPrompt() {
   return [
-    'You are a world-class security engineer auditing the Juicebox V6 protocol — an open-source, permissionless programmable money system deployed on Ethereum and L2s (Optimism, Arbitrum, Base, and possibly more). Your goal is to prove me wrong: once we have deployed projects (revnets) 1-7 alongside the ecosystem in deploy-all-v6 Deploy.s.sol, and other juicebox projects begin being created (revnets and omnichain deployed), and they all start receiving payments and being used in their full capacity, you cannot find a way to brick any of them, steal their funds, or corrupt project owner and token holder invariants on your own, you cannot find a way to have made project operations more efficient for any and all network participants that we should have considered before deployment, and you cannot find ways to have made documentation more clear, efficient, and friendly for both AIs and humans looking to get things done with the protocol. find as many ways as you can to prove me wrong, dont stop at just your first find – the wellbeing and safety of the protocol that we will be deploying depends on you. Start from first principles, using the other audit files in the repos as reference but not as a priority guide. use a new .md file as a scratchpad as needed and for results.',
+    'You are a world-class security engineer auditing the Juicebox V6 protocol — an open-source, permissionless programmable money system deployed on Ethereum and L2s (Optimism, Arbitrum, Base, and possibly more). Your goal is to prove me wrong: once we have deployed projects (revnets) 1-7 alongside the ecosystem in deploy-all-v6 Deploy.s.sol, and other juicebox projects begin being created (revnets and omnichain deployed), and they all start receiving payments and being used in their full capacity, you cannot find a way to brick any of them, steal their funds, or corrupt project owner and token holder invariants on your own, you cannot find a way to have made project operations more efficient for any and all network participants that we should have considered before deployment, and you cannot find ways to have made documentation more clear, efficient, and friendly for both AIs and humans looking to get things done with the protocol. Find as many ways as you can to prove me wrong, don’t stop at just your first find — the wellbeing and safety of the protocol that we will be deploying depends on you. Start from first principles, using the other audit files in the repos as reference but not as a priority guide. Use a new .md file as a scratchpad as needed and for results.',
     '',
     'Start by cloning the full ecosystem repo and following its top-level audit engine:',
     '',
@@ -92,7 +92,7 @@ export function getAuditPrompt() {
     'The protocol is built from ~47 contracts across 17 repositories under github.com/Bananapus.',
     '',
     'Core contracts:',
-    '- JBMultiTerminal: Holds funds. Executes pay, payout, cash-out, surplus allowance, and fee-processing flows. Multi-token. 2.5% fee with 28-day hold.',
+    '- JBMultiTerminal: Holds funds. Executes pay, payout, cash out, surplus allowance, and fee-processing flows. Multi-token. 2.5% fee with 28-day hold.',
     '- JBTerminalStore: Accounting engine. Records balances, computes surplus, bonding curve reclaim math.',
     '- JBController: Project lifecycle orchestrator. Ruleset queuing, token mint/burn, reserved token distribution.',
     '- JBRulesets: Economic parameter storage. Linked-list with weight decay, approval hooks, bit-packed metadata.',
@@ -114,7 +114,7 @@ export function getAuditPrompt() {
     '',
     '1. Terminal solvency: internal balances + held-fee obligations must reconcile with actual token balances',
     '2. No over-withdrawal: payouts and allowance usage must never exceed configured per-cycle limits',
-    '3. Cash-out correctness: surplus, total supply, tax rate, fee treatment, and hook overrides must produce correct reclaim',
+    '3. Cash out correctness: surplus, total supply, tax rate, fee treatment, and hook overrides must produce correct reclaim',
     '4. Ruleset integrity: active ruleset and fallback/cycling behavior must match exact timing and approval-hook semantics',
     '5. Token accounting: credits, ERC-20 supply, reserved balance, and burn/mint paths must stay coherent',
     '6. Privilege containment: permissions, wildcards, controller migration, and terminal routing must not allow unauthorized control',
@@ -150,7 +150,7 @@ export function getAuditPrompt() {
     '- surplus aggregation across terminals and token types',
     '- controller and terminal migration',
     '- setPermissionsFor and wildcard semantics',
-    '- hook reentrancy: pay hooks, cash-out hooks, split hooks',
+    '- hook reentrancy: pay hooks, cash out hooks, split hooks',
     '- cross-chain token mapping and bridge message integrity',
     '- native token handling on chains where the native token is not ETH',
     '',
@@ -199,7 +199,7 @@ function formatTupleType(param) {
   return 'tuple(' + fields + ')' + (param.type.endsWith('[]') ? '[]' : '');
 }
 
-// Extract current field values from a component's DOM
+// Extract current field values from a component’s DOM
 function extractComponentFields(componentEl) {
   var fields = [];
   var sections = componentEl.querySelectorAll('.component-section');
@@ -253,7 +253,7 @@ function extractComponentFields(componentEl) {
 
 export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl) {
   var lines = [];
-  lines.push('I\'m about to execute a Juicebox V6 transaction using a frontend component. Please audit what I\'m about to sign — verify the parameters are correct, flag any risks, and confirm the on-chain effect matches my intent.');
+  lines.push('I’m about to execute a Juicebox V6 transaction using a frontend component. Please audit what I’m about to sign — verify the parameters are correct, flag any risks, and confirm the onchain effect matches my intent.');
   lines.push('');
 
   pushRepoContext(lines, contractName);
@@ -319,7 +319,7 @@ export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl
   // What to check
   lines.push('## Please Verify');
   lines.push('1. Do my input values correctly map to the function parameters?');
-  lines.push('2. Will the on-chain effect match what I intend (based on the action name and values)?');
+  lines.push('2. Will the onchain effect match what I intend (based on the action name and values)?');
   lines.push('3. Are there any risks, gotchas, or edge cases with these specific values?');
   if (fn.stateMutability === 'payable') {
     lines.push('4. This function accepts ETH via msg.value — is the amount and token correct?');
