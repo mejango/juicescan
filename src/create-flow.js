@@ -2598,6 +2598,7 @@ function itemEditor(state, nft, idx, render) {
       var addS = el('a', 'operator-cta create-add-link'); addS.href = '#'; addS.textContent = '+ Add recipient'; addS.style.marginTop = '12px';
       addS.addEventListener('click', function (e) { e.preventDefault(); nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); });
       sc.appendChild(addS);
+      if (nft.flags.allowCredits) sc.appendChild(warnNote('Buying with shop credit bypasses this split — the split only divides new payment, and a credit purchase brings in little or none. To make every sale honor the split, turn off “Allow credit purchases” under Extra options.'));
       c.appendChild(sc);
     }
     c.appendChild(toggleRow('Initial discount', dz('The item starts at a percent off its price.', 'The item sells at full price.'), nft.discountOn, function (v) { nft.discountOn = v; if (!v) nft.discountPct = ''; render(); }));

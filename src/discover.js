@@ -1313,9 +1313,16 @@ function openAddTierModal(project, shop) {
   }
   var addSplit = el('a', 'operator-cta splits-edit-add'); addSplit.href = '#'; addSplit.textContent = '+ Add recipient';
   addSplit.addEventListener('click', function (e) { e.preventDefault(); addTierSplitRow(); }); splitWrap.appendChild(addSplit);
+  // Only surfaced while a split is being configured AND credit purchases are on — the one combination where
+  // the split silently doesn't fire (a credit buy brings in no new payment to divide).
+  var creditSplitNote = el('div', 'create-banner');
+  creditSplitNote.textContent = 'Buying with shop credit bypasses this split — the split only divides new payment, and a credit purchase brings in little or none. To make every sale honor the split, untick “Allow credit purchases” below.';
+  splitWrap.appendChild(creditSplitNote);
+  function updateCreditSplitNote() { creditSplitNote.style.display = (typeof allowCreditsCb !== 'undefined' && allowCreditsCb.checked) ? '' : 'none'; }
   splitCb.addEventListener('change', function () {
     splitWrap.style.display = splitCb.checked ? '' : 'none';
     if (splitCb.checked && !splitRows.length) addTierSplitRow();
+    updateCreditSplitNote();
   });
 
   // Initial discount — opt-in checkbox under Split sales; sets the item's starting % off the price.
@@ -1470,6 +1477,8 @@ function openAddTierModal(project, shop) {
   var cantBeRemovedCb = flagCheck('Permanent', 'Lock this item so it can never be removed from the store.');
   // Credits: default on. cantBuyWithCredits is the inverse of this checkbox.
   var allowCreditsCb = flagCheck('Allow credit purchases', 'Payments that don’t buy items get credits equal to their payment, usable later to buy items that allow it.', true);
+  allowCreditsCb.addEventListener('change', updateCreditSplitNote);
+  updateCreditSplitNote();
   // Discount: a capability flag only — no initial discount is set here. cantIncreaseDiscountPercent is the inverse.
   var ownerDiscountCb = flagCheck(itemMinter + ' can edit discounts', 'The ' + itemMinter.toLowerCase() + ' can change this item’s discount.', true);
 
