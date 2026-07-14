@@ -9111,6 +9111,16 @@ function renderProjectPayerAddresses(project) {
       var mode = el('div', 'extras-payers-main');
       mode.textContent = row.defaultAddToBalance ? 'Add to balance' : 'Pay';
       behavior.appendChild(mode);
+      // Where minted tokens go — the routing detail payers differ by most often.
+      var benef = el('div', 'extras-payers-sub');
+      var benefAddr = row.defaultBeneficiary && !/^0x0{40}$/i.test(row.defaultBeneficiary) ? row.defaultBeneficiary : null;
+      if (row.defaultAddToBalance) benef.textContent = 'No tokens minted';
+      else if (benefAddr) {
+        benef.textContent = 'Tokens mint to ' + truncAddr(benefAddr);
+        benef.title = benefAddr;
+        ensNameOf(benefAddr).then(function (n) { if (n && benef.isConnected) benef.textContent = 'Tokens mint to ' + n; }).catch(function () {});
+      } else benef.textContent = 'Tokens mint to the sender';
+      behavior.appendChild(benef);
       var count = el('div', 'extras-payers-sub'); count.textContent = countsText(row); behavior.appendChild(count);
       r.appendChild(behavior);
 
@@ -10060,10 +10070,10 @@ function renderExtrasSection(project) {
   var advanced = document.createElement('details');
   advanced.className = 'extras-more';
   var advancedSummary = document.createElement('summary');
-  advancedSummary.textContent = 'Extra options ▾';
+  advancedSummary.textContent = 'Extra options ▸';
   advanced.appendChild(advancedSummary);
   advanced.addEventListener('toggle', function () {
-    advancedSummary.textContent = 'Extra options ' + (advanced.open ? '▴' : '▾');
+    advancedSummary.textContent = 'Extra options ' + (advanced.open ? '▾' : '▸');
   });
   var metadataLabel = el('div', 'operator-edit-label extras-label'); metadataLabel.textContent = 'Default metadata'; advanced.appendChild(metadataLabel);
   var metadataInput = el('input', 'operator-edit-jwt extras-memo');
@@ -10096,6 +10106,37 @@ function renderExtrasSection(project) {
     return { chain: c, cb: cb, deployer: deployer };
   });
   body.appendChild(chainBox);
+
+  // Surface identical already-deployed payers so nobody redeploys one they could just reuse — matching
+  // behavior + beneficiary on any selected chain. Skipped while an ENS beneficiary hasn't resolved.
+  var dupNote = el('div', 'create-banner'); dupNote.style.display = 'none'; body.appendChild(dupNote);
+  var existingPayerRows = [];
+  function syncDuplicateNote() {
+    var wantBalance = modeSelect.value === 'balance';
+    var formBenef;
+    if (originalCb.checked) formBenef = '';
+    else {
+      var raw = (beneficiaryInput.value || '').trim();
+      formBenef = isAddr(raw) ? raw.toLowerCase() : null; // null = can't compare yet
+    }
+    var selectedIds = chainChecks.filter(function (r) { return r.cb.checked && !r.cb.disabled; }).map(function (r) { return Number(r.chain.id); });
+    var matches = formBenef === null ? [] : existingPayerRows.filter(function (row) {
+      if (selectedIds.indexOf(Number(row.chainId)) === -1) return false;
+      if (!!row.defaultAddToBalance !== wantBalance) return false;
+      var rowBenef = row.defaultBeneficiary && !/^0x0{40}$/i.test(row.defaultBeneficiary) ? row.defaultBeneficiary.toLowerCase() : '';
+      return rowBenef === formBenef;
+    });
+    if (!matches.length) { dupNote.style.display = 'none'; return; }
+    dupNote.textContent = 'This project already has a payer address with these settings: '
+      + matches.map(function (row) { return chainNameOf(row.chainId) + ' ' + truncAddr(row.address); }).join(', ')
+      + '. Anyone can pay it directly — deploying again creates another address that behaves the same.';
+    dupNote.style.display = '';
+  }
+  fetchProjectPayerRows(project).then(function (rows) { existingPayerRows = rows || []; syncDuplicateNote(); }).catch(function () {});
+  modeSelect.addEventListener('change', syncDuplicateNote);
+  originalCb.addEventListener('change', syncDuplicateNote);
+  beneficiaryInput.addEventListener('input', syncDuplicateNote);
+  chainChecks.forEach(function (r) { r.cb.addEventListener('change', syncDuplicateNote); });
 
   var status = el('div', 'operator-edit-status'); body.appendChild(status);
   var actions = el('div', 'operator-edit-actions extras-actions');
@@ -13866,7 +13907,7 @@ var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $version: Int
 var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'projectPayers(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
   + 'orderBy: "totalFacilitatedUsd", orderDirection: "desc", limit: $limit, offset: $offset) { '
-  + 'items { chainId address defaultAddToBalance paymentsCount addToBalanceCount totalFacilitated totalFacilitatedUsd lastUsedAt createdAt } totalCount } }';
+  + 'items { chainId address defaultAddToBalance defaultBeneficiary paymentsCount addToBalanceCount totalFacilitated totalFacilitatedUsd lastUsedAt createdAt } totalCount } }';
 // Buyback-hook AMM trades (V6 swapEvent model). Each buy/sell is a realized
 // AMM price; mints are the issuance route, not a market trade.
 var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
