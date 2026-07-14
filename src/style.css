@@ -4780,6 +4780,15 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .chart-today { position: absolute; top: 4px; font-size: 12px; font-weight: bold; color: var(--c-teal); white-space: nowrap; pointer-events: none; transform: translateX(3px); }
 .chart-today-r { transform: translateX(calc(-100% - 3px)); }
 .chart-guide { position: absolute; top: 0; bottom: 18px; width: 1px; background: rgba(44,32,24,0.4); pointer-events: none; }
+/* Instant chip tooltips (native title has a fixed ~1s OS delay). Same look as the chart hover tip. */
+.price-chip { position: relative; }
+.price-chip[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); left: 0; width: 320px; max-width: 74vw;
+  background: var(--c-black); color: var(--card-bg); padding: 8px 10px;
+  border-radius: 3px; font-size: 11px; line-height: 1.55; white-space: normal;
+  pointer-events: none; z-index: 6;
+}
 .chart-tip {
   position: absolute; top: 4px; background: var(--c-black); color: var(--card-bg); padding: 6px 8px;
   border-radius: 3px; font-size: 10px; line-height: 1.5; pointer-events: none; white-space: nowrap; z-index: 5;

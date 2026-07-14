@@ -13082,7 +13082,7 @@ function renderPriceChart(project, stages) {
     col.appendChild(v);
     var liq = el('span', 'price-chip-val price-chip-liq'); liq.style.display = 'none'; col.appendChild(liq);
     c.appendChild(col); c._val = v; c._liq = liq;
-    if (note) c.title = note;
+    if (note) c.setAttribute('data-tip', note);
     return c;
   }
   // Pair denominator follows baseCurrency: token/ETH normally, token/USD for USD-based rulesets (e.g. ART).
@@ -13164,25 +13164,25 @@ function renderPriceChart(project, stages) {
         ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
           + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + pairSym + ' volume | '
         : '';
-      ammChip.title = 'What the Uniswap pool charges per ' + sym + ' right now — set by trading, and kept between the issuance price (mint instead) and the cash out floor (cash out instead) by arbitrage. ' + volNote + '~' + formatPrice(p) + ' ' + pairSym + ' / ' + sym + '.';
+      ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now — set by trading, and kept between the issuance price (mint instead) and the cash out floor (cash out instead) by arbitrage. ' + volNote + '~' + formatPrice(p) + ' ' + pairSym + ' / ' + sym + '.');
     } else if (swaps.count) {
       ammChip.classList.remove('muted'); ammChip.classList.add('active');
-      ammChip.title = swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
-        + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + pairSym + ' volume';
-    } else { ammChip.title = 'No liquidity in the pool yet'; }
+      ammChip.setAttribute('data-tip', swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
+        + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + pairSym + ' volume');
+    } else { ammChip.setAttribute('data-tip', 'No liquidity in the pool yet'); }
     if (history.length) {
       cashoutHistory = history;
       var last = history[history.length - 1];
       cashout = last && last.value > 0 ? last.value : f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      cashChip.title = 'Historical cash out floor from Bendystraw';
+      cashChip.setAttribute('data-tip', 'Historical cash out floor from Bendystraw');
     }
     if (f && f > 0) {
       cashout = cashout || f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      if (!history.length) cashChip.title = '~' + formatPrice(f) + ' ' + pairSym + ' / ' + sym + ' (current cash out floor)';
+      if (!history.length) cashChip.setAttribute('data-tip', '~' + formatPrice(f) + ' ' + pairSym + ' / ' + sym + ' (current cash out floor)');
     } else if (!history.length) {
-      cashChip.title = 'No cash out floor indexed yet';
+      cashChip.setAttribute('data-tip', 'No cash out floor indexed yet');
     }
     if (amm || cashout || cashoutHistory.length || ammHistory.length) draw();
 
@@ -13202,8 +13202,8 @@ function renderPriceChart(project, stages) {
       cashChip._liq.style.display = '';
     }
     if (cashout) {
-      cashChip.title = 'Live quote for cashing out 1 ' + sym + ': (balance ÷ supply) × ((1 − tax) + tax × your share of supply). '
-        + 'As supply grows it approaches the dashed minimum, (1 − tax) × balance ÷ supply — payments can only raise that minimum; only payouts lower it.';
+      cashChip.setAttribute('data-tip', 'Live quote for cashing out 1 ' + sym + ': (balance ÷ supply) × ((1 − tax) + tax × your share of supply). '
+        + 'As supply grows it approaches the dashed minimum, (1 − tax) × balance ÷ supply — payments can only raise that minimum; only payouts lower it.');
     }
     // (The liquidity-by-price depth chart lives in the Owners → AMM section, not here.)
   });
