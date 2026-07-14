@@ -83,15 +83,20 @@ async function main() {
   // retrieve cold; ~1s once a gateway has the blocks). Sequential per gateway, failures ignored.
   console.log('\nWarming gateways…');
   for (const base of [`https://ipfs.io/ipfs/${cid}`, `https://${cid}.ipfs.dweb.link`]) {
+    const name = base.includes('dweb') ? 'dweb   ' : 'ipfs.io';
     for (const f of files) {
+      // Cold sourcing 504/520s regularly; each retry resumes from whatever the gateway cached, so a
+      // few passes land the big files.
+      let status = 'failed';
       const started = Date.now();
-      try {
-        const r = await fetch(`${base}/${f.rel}`, { signal: AbortSignal.timeout(90_000) });
-        await r.arrayBuffer();
-        console.log(`  ${base.includes('dweb') ? 'dweb   ' : 'ipfs.io'} ${f.rel} ${r.status} ${((Date.now() - started) / 1000).toFixed(1)}s`);
-      } catch (e) {
-        console.log(`  ${base.includes('dweb') ? 'dweb   ' : 'ipfs.io'} ${f.rel} failed (${e.name}) — continuing`);
+      for (let attempt = 1; attempt <= 3 && status !== 200; attempt++) {
+        try {
+          const r = await fetch(`${base}/${f.rel}`, { signal: AbortSignal.timeout(90_000) });
+          await r.arrayBuffer();
+          status = r.status;
+        } catch (e) { status = e.name; }
       }
+      console.log(`  ${name} ${f.rel} ${status} ${((Date.now() - started) / 1000).toFixed(1)}s`);
     }
   }
   // Browser-native IPFS (inbrowser.link and other service-worker gateways) discovers blocks via routing
