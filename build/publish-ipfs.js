@@ -2,12 +2,12 @@
 // Publish the built `dist/` directory to IPFS via Filebase. Reads FILEBASE_KEY / FILEBASE_SECRET /
 // FILEBASE_BUCKET from .env (never committed).
 //
-// Flow: local kubo (`ipfs`) builds the directory DAG (deterministic CID — identical input bytes give the
-// identical CID Pinata used to return) and exports it as a CAR; Filebase's IPFS RPC imports + pins the CAR.
-// Filebase announces pins to IPFS routing (DHT + IPNI) promptly, so browser-native gateways
-// (inbrowser.link, check.ipfs.network) can find providers — the reason we switched from Pinata's v3
-// uploads, which never announced ("No providers were found"). Pinata remains only for the in-app
-// user-side pinning (src/ipfs-pin.js), which is a separate key.
+// Flow: local kubo (`ipfs`) builds the directory DAG (deterministic CID) and exports it as a CAR;
+// Filebase's IPFS RPC imports + pins the CAR, then the same dist/ is uploaded to Pinata as a second pin.
+// Filebase is the load-bearing pin for discovery: it announces to IPFS routing (DHT + IPNI) promptly, so
+// browser-native gateways (inbrowser.link, check.ipfs.network) find providers — Pinata's v3 uploads never
+// announce ("No providers were found") but serve fine through gateway peering, so they add retrieval
+// redundancy. Both produce the identical CID for identical bytes.
 //
 // Usage: node build/publish-ipfs.js
 'use strict';
@@ -29,6 +29,10 @@ function envVal(key) {
   }
   return '';
 }
+
+// The Pinata JWT is scoped for the v3 uploads API (the legacy /pinning endpoint returns NO_SCOPES_FOUND
+// for this account). Missing key just skips the redundancy pin — Filebase is the required one.
+function pinataJwt() { return envVal('PINATA_JWT'); }
 
 // Filebase's IPFS RPC bearer token is base64("<key>:<secret>:<bucket>") — derivable, not console-minted.
 function filebaseToken() {
@@ -85,6 +89,39 @@ async function main() {
   if (rootCid !== cid) throw new Error(`Filebase pinned ${rootCid}, expected ${cid}`);
   if (pinError) throw new Error('Filebase pin error: ' + pinError);
   fs.unlinkSync(carPath);
+
+  // Second pin: Pinata (best-effort — the Filebase pin already succeeded). Same bytes → same CID.
+  const jwt = pinataJwt();
+  if (jwt) {
+    console.log('Pinning to Pinata (redundancy)…');
+    try {
+      const pform = new FormData();
+      (function walk(dir, base) {
+        for (const name of fs.readdirSync(dir)) {
+          const full = path.join(dir, name);
+          const rel = base ? base + '/' + name : name;
+          if (fs.statSync(full).isDirectory()) walk(full, rel);
+          else pform.append('file', new Blob([fs.readFileSync(full)]), `jb-directory/${rel}`);
+        }
+      })(DIST, '');
+      pform.append('network', 'public');
+      pform.append('name', 'jb-directory');
+      const pres = await fetch('https://uploads.pinata.cloud/v3/files', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${jwt}` },
+        body: pform,
+        signal: AbortSignal.timeout(300_000),
+      });
+      const pout = JSON.parse(await pres.text());
+      const pinataCid = pout.data && pout.data.cid;
+      if (pinataCid === cid) console.log('Pinata pinned the same CID.');
+      else console.log(`⚠ Pinata returned ${pinataCid} — expected ${cid}; the Filebase pin is authoritative.`);
+    } catch (e) {
+      console.log('⚠ Pinata pin failed (' + e.message + ') — continuing; the Filebase pin succeeded.');
+    }
+  } else {
+    console.log('PINATA_JWT not set — skipping the redundancy pin.');
+  }
 
   console.log('\n✅ Published');
   console.log(`CID:      ${cid}`);
