@@ -13059,7 +13059,8 @@ function renderPriceChart(project, stages) {
   var ammHistory = [];   // realized AMM trade prices from Bendystraw swapEvents
   var curYears = 1;
   // Order: Issuance, Cash out, then AMM price.
-  var issChip = chip('Issuance price', 'pc-issuance', true);
+  var issChip = chip('Issuance price', 'pc-issuance', true,
+    'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight. Payments go into the project’s balance and mint ' + sym + ' at this rate.');
   legend.appendChild(issChip);
   var cashChip = chip('Cash out price', 'pc-cashout', true, 'Loading historical floor…');
   legend.appendChild(cashChip);
@@ -13122,7 +13123,7 @@ function renderPriceChart(project, stages) {
         ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
           + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + pairSym + ' volume | '
         : '';
-      ammChip.title = volNote + '~' + formatPrice(p) + ' ' + pairSym + ' / ' + sym + ' (current pool price)';
+      ammChip.title = 'What the Uniswap pool charges per ' + sym + ' right now — set by trading, and kept between the issuance price (mint instead) and the cash out floor (cash out instead) by arbitrage. ' + volNote + '~' + formatPrice(p) + ' ' + pairSym + ' / ' + sym + '.';
     } else if (swaps.count) {
       ammChip.classList.remove('muted'); ammChip.classList.add('active');
       ammChip.title = swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
@@ -13152,6 +13153,17 @@ function renderPriceChart(project, stages) {
     if (amm) setChipVal(ammChip, formatPrice(amm), liq ? 'on ' + liq + ' liq' : '');
     else ammChip._val.textContent = swaps.count ? '—' : 'No liquidity yet';
     if (cashout) setChipVal(cashChip, formatPrice(cashout)); else cashChip._val.textContent = '—';
+    // Show the floor's asymptote in the legend and explain the mechanics in plain equations on hover.
+    var lastMin = 0;
+    for (var hi = history.length - 1; hi >= 0; hi--) { if (history[hi].min > 0) { lastMin = history[hi].min; break; } }
+    if (lastMin > 0) {
+      cashChip._liq.textContent = 'min ' + formatPrice(lastMin) + ' ' + pairUnit;
+      cashChip._liq.style.display = '';
+    }
+    if (cashout) {
+      cashChip.title = 'Live quote for cashing out 1 ' + sym + ': (balance ÷ supply) × ((1 − tax) + tax × your share of supply). '
+        + 'As supply grows it approaches the dashed minimum, (1 − tax) × balance ÷ supply — payments can only raise that minimum; only payouts lower it.';
+    }
     // (The liquidity-by-price depth chart lives in the Owners → AMM section, not here.)
   });
   return card;
@@ -13338,6 +13350,16 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
       cashLine += ' L' + X(cashSeries[ci].timestamp).toFixed(1) + ' ' + Y(cashSeries[ci].value).toFixed(1);
     }
     cashLine = '<path d="' + cashLine + '" fill="none" stroke="#c43550" stroke-width="1.7"/>';
+    // Dashed minimum underneath: (1 − tax) × balance ÷ supply — the level the cash out quote approaches
+    // as supply grows; only payouts can push it lower.
+    var minPts = cashSeries.filter(function (point) { return point.min > 0; });
+    if (minPts.length) {
+      var minLine = 'M' + X(minPts[0].timestamp).toFixed(1) + ' ' + Y(minPts[0].min).toFixed(1);
+      for (var mi = 1; mi < minPts.length; mi++) {
+        minLine += ' L' + X(minPts[mi].timestamp).toFixed(1) + ' ' + Y(minPts[mi].min).toFixed(1);
+      }
+      cashLine += '<path d="' + minLine + '" fill="none" stroke="rgba(196,53,80,0.55)" stroke-width="1.3" stroke-dasharray="5 4"/>';
+    }
   } else if (cashoutPrice && cashoutPrice > 0) {
     cashLine = '<line x1="' + padL + '" y1="' + Y(cashoutPrice).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + Y(cashoutPrice).toFixed(1) + '" stroke="#c43550" stroke-width="1.5" stroke-dasharray="2 4"/>';
   }
@@ -13386,6 +13408,8 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
       if (ammVal) html += row('AMM', ammVal, '#b8602e');
       var floor = seriesValueAt(ch.cashoutHistory || [], t) || ch.cashout;
       if (floor) html += row('Cash out', floor, '#c43550');
+      var minAt = seriesValueAt(ch.minHistory || [], t);
+      if (minAt) html += row('Cash out min', minAt, 'rgba(196,53,80,0.55)');
       wrap._tip.innerHTML = html;
       wrap._guide.style.display = ''; wrap._guide.style.left = x + 'px';
       wrap._tip.style.display = '';
@@ -13401,7 +13425,12 @@ function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHi
     lbl += '<span class="chart-today' + (g.nearRight ? ' chart-today-r' : '') + '" style="left:' + (g.nowX / g.W * 100).toFixed(1) + '%">Today</span>';
   }
   holder.insertAdjacentHTML('beforeend', lbl);
-  wrap._chart = { geo: c.geo, sorted: sorted, sym: sym, amm: amm, cashout: cashout, cashoutHistory: cashoutHistory || [], ammHistory: ammHistory || [] };
+  wrap._chart = {
+    geo: c.geo, sorted: sorted, sym: sym, amm: amm, cashout: cashout,
+    cashoutHistory: cashoutHistory || [], ammHistory: ammHistory || [],
+    minHistory: (cashoutHistory || []).filter(function (p) { return p.min > 0; })
+      .map(function (p) { return { timestamp: p.timestamp, value: p.min }; }),
+  };
 }
 
 function visibleSeries(series, t0, t1) {
@@ -14319,7 +14348,8 @@ async function fetchPriceFloorHistory(project, stages) {
     var timestamp = Number(moment.timestamp);
     var tax = cashOutTaxAt(timestamp, taxes, currentTax);
     var value = calculateFloorPrice(toBigInt(moment.balance), toBigInt(moment.tokenSupply), tax, pairDecimals);
-    out.push({ timestamp: timestamp, value: value });
+    var min = calculateFloorMinPrice(toBigInt(moment.balance), toBigInt(moment.tokenSupply), tax, pairDecimals);
+    out.push({ timestamp: timestamp, value: value, min: min });
   });
   return out.sort(function (a, b) { return a.timestamp - b.timestamp; });
 }
@@ -14461,7 +14491,22 @@ function cashOutTaxAt(timestamp, snapshots, fallback) {
   return tax;
 }
 
-function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDecimals) {
+// The floor's asymptote: (1 − tax) × balance ÷ supply — the cash out quote without the small own-share
+// bonus. The live quote approaches this from above as supply grows and can only drop below it when funds
+// leave the project (payouts); payments can only raise it.
+export function calculateFloorMinPrice(balance, tokenSupply, cashOutTax, balanceDecimals) {
+  if (!balance || !tokenSupply) return 0;
+  var o = toBigInt(balance), s = toBigInt(tokenSupply), x = ONE_TOKEN;
+  if (o <= 0n || s <= 0n) return 0;
+  var tax = toBigInt(cashOutTax || 0);
+  if (tax < 0n) tax = 0n;
+  if (tax > 10000n) tax = 10000n;
+  var y = o * x * (10000n - tax) / (s * 10000n);
+  var value;
+  try { value = Number(formatAmount(y, balanceDecimals == null ? 18 : Number(balanceDecimals))); } catch (_) { return 0; }
+  return isFinite(value) && value > 0 ? value : 0;
+}
+export function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDecimals) {
   if (!balance || !tokenSupply || balance === 0n || tokenSupply === 0n) return 0;
   var o = toBigInt(balance), s = toBigInt(tokenSupply), x = ONE_TOKEN;
   if (o <= 0n || s <= 0n) return 0;
