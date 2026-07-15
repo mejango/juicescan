@@ -19261,9 +19261,25 @@ var ccipRouterAbi = [{ type: 'function', name: 'CCIP_ROUTER', stateMutability: '
 // identifies a native bridge. A failed probe stays unknown: treating an RPC failure as native can select the
 // wrong fee regime and can make a CCIP sucker try LINK-fee mode.
 function classifySuckerInfra(chainId, local) {
-  return clientFor(chainId).readContract({ address: local, abi: ccipRouterAbi, functionName: 'CCIP_ROUTER', args: [] })
+  var client = clientFor(chainId);
+  function probe(name) {
+    return client.readContract({
+      address: local,
+      abi: [{ type: 'function', name: name, stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }],
+      functionName: name,
+      args: [],
+    });
+  }
+  return client.readContract({ address: local, abi: ccipRouterAbi, functionName: 'CCIP_ROUTER', args: [] })
     .then(function (r) { return (r && String(r).toLowerCase() !== ZERO_ADDRESS) ? 'CCIP' : 'native'; })
-    .catch(function () { return 'unknown'; });
+    .catch(function () {
+      // Native suckers don't implement CCIP_ROUTER at all, so that read REVERTS (it isn't an RPC failure).
+      // Identify them positively by their bridge-specific getters — OPMESSENGER on Optimism/Base suckers,
+      // ARBINBOX on Arbitrum suckers. Only when no probe answers is the infra genuinely unknown.
+      return probe('OPMESSENGER').then(function () { return 'native'; }).catch(function () {
+        return probe('ARBINBOX').then(function () { return 'native'; }).catch(function () { return 'unknown'; });
+      });
+    });
 }
 
 function fetchProjectSuckerInfra(project) {
