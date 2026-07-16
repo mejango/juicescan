@@ -27,6 +27,33 @@ describe('shop item editor', () => {
     expect(renders).toBe(0);
   });
 
+  it('checking Reserve inventory re-renders once instead of recursing (wizard-collapse bug)', () => {
+    const state = initState();
+    const item = itemDraft();
+    item.advOpen = true;
+    state.shopEnabled = true;
+    state.nfts = [item];
+
+    let renders = 0;
+    let root;
+    const rerender = () => {
+      renders += 1;
+      if (renders > 10) throw new Error('render recursion');
+      root = renderNfts(state, rerender);
+    };
+    root = renderNfts(state, rerender);
+
+    const toggle = Array.from(root.querySelectorAll('.create-toggle'))
+      .find((l) => /Reserve inventory/.test(l.textContent));
+    const cb = toggle.querySelector('input');
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(item.reserveOn).toBe(true);
+    expect(renders).toBe(1);
+    expect(root.textContent).toContain('1 of');
+  });
+
   it('preserves add-to-balance payout splits in queued ruleset calldata', () => {
     const state = initState();
     state.chainIds = [1];

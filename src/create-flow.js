@@ -2657,7 +2657,11 @@ function itemEditor(state, nft, idx, render) {
       rRow.appendChild(fInp); rRow.appendChild(document.createTextNode(' sold to '));
       var bInp = el('input', 'field'); bInp.type = 'text'; bInp.placeholder = '0x… or name.eth'; bInp.value = nft.reserveBeneficiary || ''; bInp.style.flex = '1';
       bInp.addEventListener('input', function () { nft.reserveBeneficiary = bInp.value.trim(); });
-      var bHint = attachEns(bInp, function () { render(); }, { chainId: (state.chainIds || [])[0] }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
+      // attachEns fires store() synchronously at attach time; an unconditional render() here recurses
+      // (render → attachEns → store → render) until the stack blows and the wizard body vanishes.
+      // Only re-render when an ENS resolution lands (async, addr set) while the missing-beneficiary warn is up.
+      var warnShown = Number(nft.reserveFrequency) > 0 && !isAddr(resolvedStr(nft.reserveBeneficiary));
+      var bHint = attachEns(bInp, function (name, addr) { if (addr && warnShown) render(); }, { chainId: (state.chainIds || [])[0] }); // resolves on mainnet; populates the global ENS cache resolvedStr reads
       rRow.appendChild(recipBoxWith(bInp, bHint)); a.appendChild(rRow);
       // Reserving requires a beneficiary, or the deploy reverts (JB721TiersHookStore_MissingReserveBeneficiary).
       if (Number(nft.reserveFrequency) > 0 && !isAddr(resolvedStr(nft.reserveBeneficiary))) {
