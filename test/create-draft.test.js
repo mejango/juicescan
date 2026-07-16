@@ -29,17 +29,6 @@ describe('.jb draft interchange', () => {
     expect(imported.tos).toBe(false);
   });
 
-  it('imports legacy .jb items whose price field was named priceEth', () => {
-    const state = newCreateDraftState();
-    state.shopEnabled = true;
-    const exported = createDraftObject(state);
-    exported.nfts = [{ name: 'Old item', priceEth: '1.5' }];
-
-    const imported = parseCreateDraftJson(JSON.stringify(exported));
-    expect(imported.nfts[0].price).toBe('1.5');
-    expect(imported.nfts[0].priceEth).toBeUndefined();
-  });
-
   it('accepts the same .jb JSON from a fenced paste and strips unknown/transient fields', () => {
     const state = newCreateDraftState();
     state.details.name = 'Fenced';

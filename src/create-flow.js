@@ -494,8 +494,6 @@ function normalizeImportedStage(value) {
 
 function normalizeImportedItem(value) {
   var item = mergeKnownDraftFields(itemDraft(), value);
-  // Older drafts/.jb files called this field `priceEth` — it's the price in the store's pricing currency.
-  if (item.price === '' && value && value.priceEth != null) item.price = cloneDraftValue(value.priceEth);
   item.flags = mergeKnownDraftFields(itemDraft().flags, value && value.flags);
   item.splitRecipients = Array.isArray(item.splitRecipients) ? item.splitRecipients.slice(0, 100) : [];
   return item;
