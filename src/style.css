@@ -4676,7 +4676,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .shop-tier-description { color: var(--muted-2); font-size: 12px; line-height: 1.35; margin: -1px 0 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .shop-tier-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .shop-tier-pricecol { display: flex; flex-direction: column; min-width: 0; }
-.shop-tier-price { font-size: 15px; font-weight: bold; color: var(--text); }
+.shop-tier-price { font-size: 15px; font-weight: bold; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Tier discount: an enticing badge over the art + the original price struck through. */
 .shop-tier-discount { position: absolute; top: 6px; left: 6px; background: var(--c-teal); color: var(--bg); font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 3px; letter-spacing: 0.3px; z-index: 1; }
 .shop-tier-price-orig { font-size: 11px; color: var(--muted-2); text-decoration: line-through; }
@@ -4685,7 +4685,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .tier-detail { display: flex; flex-direction: column; gap: 12px; width: 100%; }
 .tier-detail-art { aspect-ratio: 1; background: var(--card-bg); border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; max-height: 280px; position: relative; }
 .tier-detail-art img, .tier-detail-art svg { width: 100%; height: 100%; object-fit: contain; }
-.tier-detail-name { font-size: 16px; font-weight: bold; }
+.tier-detail-name { font-size: 16px; font-weight: bold; word-break: break-word; }
 .tier-detail-description { color: var(--muted-2); font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
 .tier-detail-price { display: flex; align-items: baseline; gap: 8px; }
 .tier-detail-price-eff { font-size: 18px; font-weight: bold; }
@@ -4743,8 +4743,8 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .paybox-shop-thumb .tier-media-badge-ext { font-size: 10px; padding: 3px 6px; }
 .paybox-shop-thumb span { font-size: 11px; color: var(--muted-3); }
 .paybox-shop-badge { position: absolute; top: -6px; right: -6px; z-index: 2; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--c-teal); color: var(--card-bg); font-size: 11px; font-weight: bold; line-height: 18px; text-align: center; }
-.paybox-shop-foot { min-height: 20px; display: flex; align-items: center; justify-content: center; }
-.paybox-shop-price { font-size: 10px; font-weight: bold; color: var(--text); padding: 3px 4px; white-space: nowrap; }
+.paybox-shop-foot { min-height: 20px; display: flex; align-items: center; justify-content: center; min-width: 0; overflow: hidden; }
+.paybox-shop-price { font-size: 10px; font-weight: bold; color: var(--text); padding: 3px 4px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .paybox-shop-step { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 1px 2px; }
 .paybox-shop-stepbtn { width: 20px; height: 20px; border: none; background: none; color: var(--c-teal); font-size: 15px; font-weight: bold; cursor: pointer; line-height: 1; padding: 0; }
 .paybox-shop-stepbtn:disabled { color: var(--muted-3); cursor: default; }

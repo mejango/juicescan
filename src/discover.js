@@ -648,6 +648,13 @@ async function fetchProjectTiersUncached(project) {
   };
   if (!Number.isSafeInteger(pricing.currency) || pricing.currency <= 0 || !Number.isInteger(pricing.decimals) || pricing.decimals < 0 || pricing.decimals > 77) return null;
   pricing.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
+  // A custom accounting token (a project's own ERC-20) isn't in the known-token list, so pricingSymbol
+  // falls back to "currency <uint32(address)>" — resolve the real symbol from the accounting contexts.
+  if (/^currency \d+$/.test(pricing.symbol)) {
+    var acctCtxs = await resolveAcctTokens(project.chainId, BigInt(project.id)).catch(function () { return null; });
+    var acctMatch = (acctCtxs || []).filter(function (c) { return Number(c.currency) === pricing.currency; })[0];
+    if (acctMatch && acctMatch.symbol) pricing.symbol = acctMatch.symbol;
+  }
   var resolver = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] });
   if (resolver && /^0x0+$/.test(resolver)) resolver = null;
   var raw = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], false, 0n, 200n] });
