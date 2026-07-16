@@ -48,6 +48,19 @@ var CHAIN_PAIRS = [
   { canon: 8453, name: 'Base', testnet: 84532 },
 ];
 function actualChainId(canon, network) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === canon; }); return p ? (network === 'mainnet' ? p.canon : p.testnet) : canon; }
+// Flip the wizard between mainnets/testnets: remap every selected chain to its pair twin and force a
+// re-verify of a custom accounting token (its existence is per-network).
+function setWizardNetwork(state, mode) {
+  mode = mode === 'testnet' ? 'testnet' : 'mainnet';
+  if (state.network === mode) return;
+  state.network = mode;
+  state.chainIds = (state.chainIds || []).map(function (cid) {
+    var pair = CHAIN_PAIRS.find(function (p) { return p.canon === cid || p.testnet === cid; });
+    return pair ? (mode === 'mainnet' ? pair.canon : pair.testnet) : cid;
+  });
+  if (!state.chainIds.length) state.chainIds = CHAIN_PAIRS.map(function (p) { return mode === 'mainnet' ? p.canon : p.testnet; });
+  if (state.customToken && isAddr((state.customToken.address || '').trim())) { state.customToken.status = 'idle'; state.customToken.chains = null; }
+}
 function canonChainId(id) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === id || x.testnet === id; }); return p ? p.canon : id; }
 
 var CHAIN_OPTIONS = [
@@ -603,6 +616,10 @@ export function exportDraftFile(state) {
 export function openCreateFlow() {
   // Restore a saved draft if one exists (survives refresh); otherwise start fresh.
   var state = loadDraft() || initState();
+  // The Discover toggle is the source of truth when the wizard opens. A draft saved in the other mode
+  // silently pins its old chain ids behind identical-looking pills ("Base" reads the same in both modes),
+  // so a testnet token kept failing lookup after the user toggled to Testnets and refreshed.
+  try { setWizardNetwork(state, localStorage.getItem('jb-network') === 'testnet' ? 'testnet' : 'mainnet'); } catch (_) {}
   var pre = getAccount && getAccount();
   // Owner/operator are required and explicit — prefill the connected wallet only where still blank.
   if (pre) { if (!state.details.owner) state.details.owner = pre; if (!state.revOperator) state.revOperator = pre; }
@@ -655,6 +672,8 @@ export function openCreateFlow() {
   }
   render();
   reresolveApproval(state, render); // a restored draft's approval ENS isn't in the cache yet — re-resolve it
+  // A network remap above reset the custom token to idle — re-verify it against the remapped chain set.
+  if (customAccounting(state) && state.customToken.status === 'idle' && isAddr((state.customToken.address || '').trim())) lookupCustomToken(state, render);
 
   document.body.appendChild(overlay);
   return { close: close };
@@ -2745,7 +2764,22 @@ function otherRulesSection(stage, render) {
 // custom Settlement step and the revnet Deploy step.
 function chainBridgeBlock(state, render) {
   var wrap = el('div', ''); wrap.style.marginBottom = '18px'; // breathing room before the owner/operator field
-  var label = el('div', 'create-label'); label.style.marginTop = '18px'; label.textContent = 'On'; wrap.appendChild(label);
+  // "On [Mainnets ▾]" — the network is part of the sentence, like the pay box's "[Pay ▾] on <chain>".
+  // Without it, the chain pills read "Base" in BOTH modes and a wrong-network draft is invisible.
+  var labelRow = el('div', 'create-net-row');
+  var label = el('div', 'create-label'); label.textContent = 'On'; labelRow.appendChild(label);
+  var netSel = el('select', 'paybox-select paybox-mode');
+  [['mainnet', 'Mainnets'], ['testnet', 'Testnets']].forEach(function (o) {
+    var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (state.network === o[0]) op.selected = true; netSel.appendChild(op);
+  });
+  netSel.addEventListener('change', function () {
+    setWizardNetwork(state, netSel.value);
+    try { localStorage.setItem('jb-network', state.network); } catch (_) {} // keep the site-level toggle in step
+    if (customAccounting(state) && isAddr((state.customToken || {}).address)) lookupCustomToken(state, render);
+    render();
+  });
+  labelRow.appendChild(netSel);
+  wrap.appendChild(labelRow);
   var chainRow = el('div', 'create-chain-row');
   CHAIN_PAIRS.forEach(function (p) {
     var actual = actualChainId(p.canon, state.network);
