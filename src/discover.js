@@ -9808,7 +9808,7 @@ async function applyDraftShop(state, project, sources, warnings) {
     return {
       expanded: false, advOpen: false, name: media.name || ('Item ' + tier.id), description: media.description || '',
       imageUri: media.image || media.animationUrl || '', mediaType: media.mediaType || '', metaUri: '', encodedIpfsUri: tier.encodedIpfsUri || '',
-      priceEth: formatAmount(tier.price, home.pricing.decimals), limited: !unlimited, supply: unlimited ? '' : String(tier.initial),
+      price: formatAmount(tier.price, home.pricing.decimals), limited: !unlimited, supply: unlimited ? '' : String(tier.initial),
       splitOn: tier.splitPercent > 0, splitRecipients: splitRows,
       discountOn: Number(tier.discountPercent || 0) > 0, discountPct: String(Number(tier.discountPercent || 0) / 2), category: Number(tier.category || 0),
       reserveOn: Number(tier.reserveFrequency || 0) > 0, reserveFrequency: String(tier.reserveFrequency || ''), reserveBeneficiary: tier.reserveBeneficiary || '',
@@ -12273,7 +12273,8 @@ function buildPayoutsModal(project, acctKind) {
     if (!amount || amount <= 0n) return;
     var line = el('div', 'ops-preview-line');
     line.textContent = (state.meta.tokenKeyed ? '' : 'Uses the current onchain price. ')
-      + 'Fee: up to 2.5%; JB projects and registered feeless addresses are exempt.';
+      + 'Fee: up to 2.5%, charged in the terminal token; JB projects and registered feeless addresses are exempt. '
+      + 'If the protocol can’t accept this token, the fee is returned to the project’s balance.';
     preview.appendChild(line);
   }
   amt.addEventListener('input', updatePayoutPreview);
@@ -12444,7 +12445,7 @@ function buildUseAllowanceModal(project, acctKind) {
   }
 
   wrap.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to use the surplus allowance.'));
-  var desc = el('div', 'modal-balance'); desc.textContent = 'Withdraws surplus to a beneficiary, up to the current allowance. A fee of up to 2.5% may apply.'; wrap.appendChild(desc);
+  var desc = el('div', 'modal-balance'); desc.textContent = 'Withdraws surplus to a beneficiary, up to the current allowance. A fee of up to 2.5% may apply, charged in the terminal token; if the protocol can’t accept it, the fee is returned to the project’s balance.'; wrap.appendChild(desc);
 
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });

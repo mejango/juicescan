@@ -22,7 +22,7 @@ function newShopState() {
   s.stages[0].weight = '1000'; s.stages[0].durationSeconds = 2592000;
   s.shopEnabled = true; s.shopChoice = 'new';
   s.collection = { name: 'NewCol', symbol: 'NEW', nameTouched: true, symbolTouched: true };
-  s.nfts = [{ priceEth: '0.1', limited: true, supply: '100', category: 0 }];
+  s.nfts = [{ price: '0.1', limited: true, supply: '100', category: 0 }];
   return s;
 }
 
@@ -38,7 +38,7 @@ describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)
     const s = newShopState();
     s.accepts = ['eth', 'usdc'];
     s.storePricingCurrency = 2;
-    s.nfts[0].priceEth = '1';
+    s.nfts[0].price = '1';
     expect(storeUnit(s)).toBe('USD');
     const cfg = build721Config(s, 'ipfs://x', 1);
     expect(cfg.tiersConfig.currency).toBe(2);
@@ -49,9 +49,9 @@ describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)
   it('sorts tiers by category before deployer encoding', () => {
     const s = newShopState();
     s.nfts = [
-      { priceEth: '0.1', limited: true, supply: '10', category: 7 },
-      { priceEth: '0.2', limited: true, supply: '20', category: 0 },
-      { priceEth: '0.3', limited: true, supply: '30', category: 3 },
+      { price: '0.1', limited: true, supply: '10', category: 7 },
+      { price: '0.2', limited: true, supply: '20', category: 0 },
+      { price: '0.3', limited: true, supply: '30', category: 3 },
     ];
     const cfg = build721Config(s, 'ipfs://x', 1);
     expect(cfg.tiersConfig.tiers.map((t) => t.category)).toEqual([0, 3, 7]);

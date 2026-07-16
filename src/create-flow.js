@@ -494,6 +494,8 @@ function normalizeImportedStage(value) {
 
 function normalizeImportedItem(value) {
   var item = mergeKnownDraftFields(itemDraft(), value);
+  // Older drafts/.jb files called this field `priceEth` — it's the price in the store's pricing currency.
+  if (item.price === '' && value && value.priceEth != null) item.price = cloneDraftValue(value.priceEth);
   item.flags = mergeKnownDraftFields(itemDraft().flags, value && value.flags);
   item.splitRecipients = Array.isArray(item.splitRecipients) ? item.splitRecipients.slice(0, 100) : [];
   return item;
@@ -2537,7 +2539,7 @@ function itemCard(state, nft, idx, render) {
 function itemSummary(state, nft) {
   var unit = storeUnit(state);
   var parts = [];
-  parts.push((nft.priceEth ? nft.priceEth : '0') + ' ' + unit);
+  parts.push((nft.price ? nft.price : '0') + ' ' + unit);
   parts.push(nft.limited ? ((nft.supply || '0') + ' for sale') : 'unlimited');
   if (Number(nft.category) > 0) {
     var c = (state.storeCategories || []).find(function (x) { return x.id === Number(nft.category); });
@@ -2583,15 +2585,15 @@ function itemEditor(state, nft, idx, render) {
 
   // Split/discount gating only changes when price crosses zero. Re-rendering after every positive-to-positive
   // edit can remove the DOM target during blur, causing the checkbox click that follows to hit a stale node.
-  var priceInput = textInput(nft.priceEth, '0.0', function (v) { nft.priceEth = v.trim(); });
-  var hadPrice = parseFloat(nft.priceEth) > 0;
+  var priceInput = textInput(nft.price, '0.0', function (v) { nft.price = v.trim(); });
+  var hadPrice = parseFloat(nft.price) > 0;
   priceInput.addEventListener('change', function () {
-    if ((parseFloat(nft.priceEth) > 0) !== hadPrice) render();
+    if ((parseFloat(nft.price) > 0) !== hadPrice) render();
   });
   c.appendChild(fieldBlock('Price (' + priceUnit + ')', false, priceInput));
 
   // Split sales + Initial discount only make sense once there's a price — always shown, idle when free.
-  var hasPrice = parseFloat(nft.priceEth) > 0;
+  var hasPrice = parseFloat(nft.price) > 0;
   if (!hasPrice) {
     c.appendChild(idleToggle('Split sales', 'Set a price above to split each sale.'));
     c.appendChild(idleToggle('Initial discount', 'Set a price above to start the item at a discount.'));
@@ -3210,7 +3212,7 @@ function itemDraft() {
     expanded: true, advOpen: false, _mediaBusy: false, _catAdding: false,
     name: '', description: '',
     imageUri: '', mediaType: '', metaUri: '', encodedIpfsUri: '',
-    priceEth: '', limited: false, supply: '',
+    price: '', limited: false, supply: '',
     splitOn: false, splitRecipients: [],   // {pct, recip, benef}
     discountOn: false, discountPct: '',
     category: 0,
@@ -4082,7 +4084,7 @@ export function build721Config(state, projectUri, chainId) {
     var discountPercent = nft.discountOn ? tierDiscountPercentFromPct(nft.discountPct) : 0;
     var sp = itemSplits(nft, state, chainId, e.idx);
     var tier = build721TierConfig({
-      price: priceUnits(nft.priceEth, priceDecimals),
+      price: priceUnits(nft.price, priceDecimals),
       initialSupply: chainSupply,
       unlimited: !limited,
       votingUnits: votes,

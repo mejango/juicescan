@@ -7,7 +7,7 @@ describe('shop item editor', () => {
   it('keeps split sales enabled when a positive price changes to another positive price', () => {
     const state = initState();
     const item = itemDraft();
-    item.priceEth = '0.0001';
+    item.price = '0.0001';
     item.splitOn = true;
     item.splitRecipients = [{ pct: '100', recip: '11', benef: '0x1111111111111111111111111111111111111111' }];
     state.shopEnabled = true;
@@ -21,7 +21,7 @@ describe('shop item editor', () => {
     price.dispatchEvent(new Event('input', { bubbles: true }));
     price.dispatchEvent(new Event('change', { bubbles: true }));
 
-    expect(item.priceEth).toBe('0.0002');
+    expect(item.price).toBe('0.0002');
     expect(item.splitOn).toBe(true);
     expect(item.splitRecipients).toHaveLength(1);
     expect(renders).toBe(0);
