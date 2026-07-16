@@ -3365,7 +3365,34 @@ var bannyHookAbi = [
   { type: 'function', name: 'addLiquidity', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'minCashOutReturn', type: 'uint256' }], outputs: [] },
   { type: 'function', name: 'collectAndRouteLPFees', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [] },
   { type: 'function', name: 'claimFeeTokensFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'beneficiary', type: 'address' }], outputs: [] },
+  // Custom errors — included so viem decodes a reverting simulate/tx to the real reason (else it surfaces the
+  // opaque "the contract function deployPool reverted"). Mapped to friendly copy by lpHookErrorText.
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_ZeroLiquidity', inputs: [{ name: 'amount0', type: 'uint256' }, { name: 'amount1', type: 'uint256' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_InsufficientLiquidity', inputs: [{ name: 'liquidity', type: 'uint128' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_InsufficientBalance', inputs: [{ name: 'available', type: 'uint256' }, { name: 'required', type: 'uint256' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_NoTokensAccumulated', inputs: [{ name: 'projectId', type: 'uint256' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_PoolAlreadyDeployed', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'tokenId', type: 'uint256' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_OnlyOneTerminalTokenSupported', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_InvalidStageForAction', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'tokenId', type: 'uint256' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_TwapUnavailable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_PriceDeviationTooHigh', inputs: [{ name: 'spotTick', type: 'int24' }, { name: 'twapTick', type: 'int24' }, { name: 'maxDeviationTicks', type: 'int24' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHook_InvalidTerminalToken', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHookMath_InvalidTickBounds', inputs: [{ name: 'tickLower', type: 'int24' }, { name: 'tickUpper', type: 'int24' }] },
+  { type: 'error', name: 'JBUniswapV4LPSplitHookMath_NoTerminalTokenFound', inputs: [{ name: 'projectId', type: 'uint256' }] },
 ];
+// Map a decoded LP-hook revert to plain copy. `sym`/`acctSym` name the project + terminal tokens.
+function lpHookErrorText(msg, sym) {
+  var m = String(msg || '');
+  if (/ZeroLiquidity|InvalidTickBounds|InsufficientLiquidity/.test(m)) {
+    return 'Not enough reserved ' + sym + ' has accumulated yet to seed a two-sided pool position. Let more reserved ' + sym + ' collect here, then try again.';
+  }
+  if (/NoTokensAccumulated/.test(m)) return 'No reserved ' + sym + ' has accumulated here yet.';
+  if (/PoolAlreadyDeployed|OnlyOneTerminalTokenSupported/.test(m)) return 'A pool is already deployed for this project — use Add liquidity instead.';
+  if (/InvalidStageForAction/.test(m)) return 'No pool exists for this token yet — deploy the pool first.';
+  if (/Twap(Unavailable)?|PriceDeviationTooHigh/.test(m)) return 'The pool’s price is off its oracle average right now (or the oracle is still warming up). Try again shortly.';
+  if (/InvalidTerminalToken|NoTerminalTokenFound/.test(m)) return 'The project has no priced terminal token to pair against.';
+  return null;
+}
 var sendPayoutsAbi = [{
   type: 'function', name: 'sendPayoutsOf', stateMutability: 'nonpayable',
   inputs: [
@@ -15125,7 +15152,7 @@ function renderSplitHookCard(project) {
               chainId: c.id, address: getAddress('BannyLPSplitHook', c.id), contractName: 'BannyLPSplitHook',
               abi: bannyHookAbi, functionName: fn, args: args(), label: label,
               onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
-              onError: function (m) { status.classList.remove('pending'); status.textContent = m; b.disabled = false; },
+              onError: function (m) { status.classList.remove('pending'); status.textContent = lpHookErrorText(m, sym) || m; b.disabled = false; },
               onSuccess: function () { status.classList.remove('pending'); status.textContent = label + ' confirmed on ' + c.name + '.'; b.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
             });
           });
