@@ -21823,7 +21823,15 @@ function fetchOps(project) {
         var balance = arr[0], chainBalances = arr[1], adjustment = arr[2];
         var tokens = chainBalances.tokens || [];
         var listed = surface.list || [];
-        var standardOnly = !!terminal && listed.every(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });
+        // The router registry / direct router forward funds and record no balances (their surplus reads are
+        // hardwired to 0), so they only add zero-amount duplicate contexts to the sucker's snapshot — having
+        // them listed must not block verification, or every router-enabled project reads "Unverified".
+        var routerRegistry = routerTerminalFor(cid);
+        var directRouter = getAddress('JBRouterTerminal', cid);
+        var accounted = listed.filter(function (listedTerminal) {
+          return !sameAddr(listedTerminal, routerRegistry) && !sameAddr(listedTerminal, directRouter);
+        });
+        var standardOnly = !!terminal && accounted.every(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });
         var standardListed = !!terminal && listed.some(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });
         var baseGossipTokens = standardListed ? tokens : [];
         var gossipTokens = baseGossipTokens.concat(adjustment.tokens || []);
