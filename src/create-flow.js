@@ -475,7 +475,9 @@ function sanitizeState(state) {
   // Skip transient UI flags (any `_`-prefixed key: _bridgeOpen, _pcOpen, _close, …) and functions — they
   // must not persist in the draft, so panels like the bridge selector always start collapsed on reopen.
   Object.keys(state).forEach(function (k) { if (k.charAt(0) === '_' || typeof state[k] === 'function') return; c[k] = state[k]; });
-  c = JSON.parse(JSON.stringify(c)); // deep clone + strip any nested functions
+  // Deep clone + strip functions AND nested `_`-prefixed transients (item _mediaBusy/_catAdding etc.),
+  // so the exported .jb carries only durable config.
+  c = JSON.parse(JSON.stringify(c, function (key, val) { return key.charAt(0) === '_' ? undefined : val; }));
   c.deploying = false; c.statusLines = []; c.done = false; delete c.deployed; c.quoteChoice = null;
   if (c.details) c.details.logoUploading = false;
   return c;
@@ -502,12 +504,19 @@ function normalizeImportedStage(value) {
     else stage[key] = stage[key].slice(0, 100);
   });
   if (!stage.payoutByKind || typeof stage.payoutByKind !== 'object' || Array.isArray(stage.payoutByKind)) stage.payoutByKind = {};
+  else Object.keys(stage.payoutByKind).forEach(function (key) {
+    var pk = stage.payoutByKind[key];
+    if (!pk || typeof pk !== 'object' || Array.isArray(pk)) { delete stage.payoutByKind[key]; return; }
+    pk.mode = ['none', 'unlimited', 'limited'].indexOf(pk.mode) !== -1 ? pk.mode : 'none';
+    pk.recipients = Array.isArray(pk.recipients) ? pk.recipients.slice(0, 100) : [];
+  });
   return stage;
 }
 
 function normalizeImportedItem(value) {
   var item = mergeKnownDraftFields(itemDraft(), value);
   item.flags = mergeKnownDraftFields(itemDraft().flags, value && value.flags);
+  Object.keys(item).forEach(function (k) { if (k.charAt(0) === '_') delete item[k]; }); // exports strip transients; mirror on import
   item.splitRecipients = Array.isArray(item.splitRecipients) ? item.splitRecipients.slice(0, 100) : [];
   return item;
 }
@@ -1927,9 +1936,16 @@ function payoutRow(stage, rec, idx, mode, render, state) {
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
-  // Fixed amounts can differ per chain (each chain's terminal pays out of its own balance).
-  if (mode !== 'percent' && state) wrap.appendChild(perChainAmountControl(state, render, 'pamt:' + state.stages.indexOf(stage) + ':' + idx, rec.amountEth || ''));
-  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'p:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, pidKey: 'ppid:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, isPayout: true });
+  var stageIdx = state ? state.stages.indexOf(stage) : 0;
+  if (mode !== 'percent' && state) {
+    // Fixed amounts can differ per chain — one combined control covers amount + recipient per chain.
+    appendRecipientPicker(toField, rec, render, { state: state, isPayout: true });
+    wrap.appendChild(perChainPayoutRowControl(state, render, rec,
+      { amt: 'pamt:' + stageIdx + ':' + idx, addr: 'p:' + stageIdx + ':' + idx, pid: 'ppid:' + stageIdx + ':' + idx },
+      { amt: rec.amountEth || '', addr: pickResolved(rec.address, rec), pid: rec.projectId || '' }));
+  } else {
+    appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'p:' + stageIdx + ':' + idx, pidKey: 'ppid:' + stageIdx + ':' + idx, isPayout: true });
+  }
   var plk = splitLockRow(stage, rec, render); if (plk) wrap.appendChild(plk);
   return wrap;
 }
@@ -1964,9 +1980,15 @@ function payoutKindRow(pk, kind, rec, idx, render, state, stage) {
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
-  // Fixed amounts can differ per chain (each chain's terminal pays out of its own balance).
-  if (mode !== 'percent' && state) wrap.appendChild(perChainAmountControl(state, render, 'pkamt:' + kind.key + ':' + idx, rec.amountEth || ''));
-  appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'pk:' + kind.key + ':' + idx, pidKey: 'pkpid:' + kind.key + ':' + idx, isPayout: true });
+  if (mode !== 'percent' && state) {
+    // Fixed amounts can differ per chain — one combined control covers amount + recipient per chain.
+    appendRecipientPicker(toField, rec, render, { state: state, isPayout: true });
+    wrap.appendChild(perChainPayoutRowControl(state, render, rec,
+      { amt: 'pkamt:' + kind.key + ':' + idx, addr: 'pk:' + kind.key + ':' + idx, pid: 'pkpid:' + kind.key + ':' + idx },
+      { amt: rec.amountEth || '', addr: pickResolved(rec.address, rec), pid: rec.projectId || '' }));
+  } else {
+    appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'pk:' + kind.key + ':' + idx, pidKey: 'pkpid:' + kind.key + ':' + idx, isPayout: true });
+  }
   var klk = splitLockRow(stage, rec, render); if (klk) wrap.appendChild(klk);
   return wrap;
 }
@@ -3185,12 +3207,53 @@ function perChainAddrControl(state, render, key, defStr) {
 function perChainNumControl(state, render, key, defStr) {
   return perChainControl(state, render, key, defStr, pcNumField);
 }
-// Same control for payout amounts and item supplies.
-function perChainAmountControl(state, render, key, defStr) {
-  return perChainControl(state, render, key, defStr, pcAmountField, 'Set amount per chain');
-}
 function perChainSupplyControl(state, render, key, defStr) {
   return perChainControl(state, render, key, defStr, pcSupplyField, 'Set quantity per chain');
+}
+// ONE "Set per chain" for a fixed-amount payout row: each chain's row carries the amount AND the
+// recipient's chain-specific fields (wallet address, or project id + token beneficiary) together —
+// two side-by-side per-field links read as clutter. Writes the same override keys the deploy build
+// already consumes (pamt/pkamt, p/pk, ppid/pkpid).
+function perChainPayoutRowControl(state, render, rec, keys, defaults) {
+  var wrap = el('div', 'create-pcaddr');
+  if ((state.chainIds || []).length < 2) return wrap;
+  if (!state._pcOpen) state._pcOpen = {};
+  var allKeys = [keys.amt, keys.addr, keys.pid].filter(Boolean);
+  var hasOverrides = state.chainIds.some(function (cid) {
+    var pc = perChainPeek(state, cid);
+    return pc && pc.addr && allKeys.some(function (k) { return pc.addr[k]; });
+  });
+  var open = !!state._pcOpen[keys.amt] || hasOverrides;
+  if (!open) {
+    wrap.classList.add('create-pcaddr-collapsed');
+    var link = el('a', 'create-pcaddr-toggle'); link.href = '#'; link.textContent = 'Set per chain';
+    link.title = 'Set a different amount and recipient on each chain';
+    link.addEventListener('click', function (e) { e.preventDefault(); state._pcOpen[keys.amt] = true; render(); });
+    wrap.appendChild(link);
+    return wrap;
+  }
+  var wantsPid = rec.type === 'project' || rec.type === 'customhook';
+  var wantsAddr = rec.type === 'wallet' || !(rec.preferAddToBalance && rec.type === 'project');
+  state.chainIds.forEach(function (cid) {
+    var rowc = el('div', 'create-pcaddr-row');
+    var nm = el('span', 'create-pcaddr-chain'); nm.appendChild(chainIcon(cid, chainName(cid))); rowc.appendChild(nm);
+    rowc.appendChild(pcAmountField(state, cid, keys.amt, defaults.amt));
+    if (wantsPid && keys.pid) rowc.appendChild(pcNumField(state, cid, keys.pid, defaults.pid));
+    if (wantsAddr && keys.addr) rowc.appendChild(pcAddrField(state, cid, keys.addr, defaults.addr));
+    wrap.appendChild(rowc);
+  });
+  var foot = el('div', 'create-pcaddr-foot');
+  var collapse = el('a', 'create-pcaddr-toggle'); collapse.href = '#'; collapse.textContent = 'Use same on all chains';
+  collapse.addEventListener('click', function (e) {
+    e.preventDefault();
+    state.chainIds.forEach(function (cid) {
+      var pc = perChainPeek(state, cid);
+      if (pc && pc.addr) allKeys.forEach(function (k) { delete pc.addr[k]; });
+    });
+    state._pcOpen[keys.amt] = false; render();
+  });
+  foot.appendChild(collapse); wrap.appendChild(foot);
+  return wrap;
 }
 function perChainControl(state, render, key, defStr, fieldFn, linkLabel) {
   var wrap = el('div', 'create-pcaddr');

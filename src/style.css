@@ -1993,7 +1993,7 @@ input[type="checkbox"].field {
 /* Inside the create wizard, match .create-foot's horizontal padding so the link right-aligns with Next. */
 .create-sheet > .comp-prompt-foot { padding: 0 22px; }
 /* "On [Mainnets ▾]" row — the network dropdown sits inline with the label, pay-box style. */
-.create-net-row { display: flex; align-items: baseline; gap: 16px; margin-top: 18px; }
+.create-net-row { display: flex; align-items: baseline; gap: 8px; margin-top: 18px; }
 .create-net-row .create-label { margin: 0; }
 .create-net-row .paybox-select {
   font-size: 13px; padding-right: 22px;
