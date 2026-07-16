@@ -3052,7 +3052,7 @@ input[type="checkbox"].field {
 .xchain-status { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .xchain-status-label { font-size: 11px; white-space: nowrap; }
 .xchain-status-label--synced { color: var(--c-green); }
-.xchain-status-label--slight { color: var(--c-orange); }
+.xchain-status-label--slight { color: var(--c-green); }
 .xchain-status-label--danger { color: var(--c-pink); font-weight: bold; }
 .xchain-status-label--unknown { color: var(--c-muted); }
 .xchain-sync {

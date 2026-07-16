@@ -49,7 +49,15 @@ describe('cross-chain gossip freshness', () => {
       { token: USDC, decimals: 6, balance: 100n },
     ] };
     // Both sides sum to 150 raw units, but each real asset is 50% stale.
-    expect(gossipAccountingStaleness(peer, actual)).toEqual({ level: 'danger', label: 'Stale' });
+    expect(gossipAccountingStaleness(peer, actual)).toEqual({ level: 'danger', label: '50% stale', pct: 0.5 });
+  });
+
+  it('reports sub-threshold drift as a green percentage', () => {
+    const peer = { _viewChainId: 1, supply: 1000n, balances: [{ token: NATIVE_TOKEN, decimals: 18, balance: 989n }] };
+    const actual = { id: 1, gossipSupply: 1000n, gossipVerified: true, gossipTokens: [
+      { token: NATIVE_TOKEN, decimals: 18, balance: 1000n },
+    ] };
+    expect(gossipAccountingStaleness(peer, actual)).toEqual({ level: 'slight', label: '1.1% stale', pct: 0.011 });
   });
 
   it('never treats an unreadable live source as zero', () => {

@@ -19604,9 +19604,15 @@ function gossipStaleness(snapSupply, actualSupply, snapBal, actualBal) {
     return Number(d * 10000n / hi) / 10000;
   }
   var worst = Math.max(rel(snapSupply, actualSupply), rel(snapBal, actualBal));
-  if (worst === 0) return { level: 'synced', label: 'In sync' };
-  if (worst <= 0.05) return { level: 'slight', label: 'Slightly stale' };
-  return { level: 'danger', label: 'Stale' };
+  return stalenessFromPct(worst);
+}
+
+// Drift below the keeper's 5% sync threshold stays green — it's the % that matters, not the word.
+function stalenessFromPct(worst) {
+  if (worst === 0) return { level: 'synced', label: 'In sync', pct: 0 };
+  var label = (Math.round(worst * 10000) / 100) + '% stale';
+  if (worst <= 0.05) return { level: 'slight', label: label, pct: worst };
+  return { level: 'danger', label: label, pct: worst };
 }
 
 var GOSSIP_U128_MAX = (1n << 128n) - 1n;
@@ -19644,12 +19650,12 @@ export function gossipAccountingStaleness(peer, actual) {
   var keys = {};
   Object.keys(snap).forEach(function (key) { keys[key] = true; });
   Object.keys(live).forEach(function (key) { keys[key] = true; });
-  var worst = gossipStaleness(peer.supply, toBigInt(actual.gossipSupply), 0n, 0n);
+  var worstPct = gossipStaleness(peer.supply, toBigInt(actual.gossipSupply), 0n, 0n).pct;
   Object.keys(keys).forEach(function (key) {
     var next = gossipStaleness(0n, 0n, snap[key] || 0n, live[key] || 0n);
-    if (next.level === 'danger' || (next.level === 'slight' && worst.level === 'synced')) worst = next;
+    if (next.pct > worstPct) worstPct = next.pct;
   });
-  return worst;
+  return stalenessFromPct(worstPct);
 }
 
 // "Gossip" — its own table (between the settlement table and Bridges): per chain, what it knows about each
