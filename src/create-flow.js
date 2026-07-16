@@ -744,7 +744,7 @@ function renderType(state, render) {
   wrap.appendChild(stepHead('Project flavor', 'Follow a preset, or design your project from scratch.'));
 
   var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
-  [['custom', 'Custom'], ['revnet', 'Revnet']].forEach(function (o) {
+  [['custom', 'Custom project'], ['revnet', 'Revnet']].forEach(function (o) {
     var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (state.projectType === o[0]) op.selected = true; sel.appendChild(op);
   });
   sel.addEventListener('change', function () {
@@ -884,7 +884,7 @@ function accountingBlock(state, render) {
   var isCustom = customAccounting(state);
   return fieldBlock('Accounting', false, (function () {
     var w = el('div', '');
-    var opts = [{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }, { key: 'custom', label: 'Custom' }];
+    var opts = [{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }, { key: 'custom', label: 'Custom token' }];
     // Both custom projects and revnets can hold ETH and/or USDC (multi-select); a custom ERC-20 is exclusive.
     var row = el('div', 'create-pills');
     opts.forEach(function (o) {

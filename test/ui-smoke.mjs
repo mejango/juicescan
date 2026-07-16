@@ -280,11 +280,11 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
 
     // 3. Accounting offers ETH / USDC / Custom; custom is exclusive.
     const pills = await Q(page, '() => [...document.querySelectorAll(".create-pill")].map(p=>p.textContent.trim())');
-    check('accounting offers ETH/USDC/Custom pills', ['ETH', 'USDC', 'Custom'].every(x => pills.includes(x)), JSON.stringify(pills));
-    await Q(page, '() => { [...document.querySelectorAll(".create-pill")].find(p=>p.textContent.trim()==="Custom").click(); return 1; }');
+    check('accounting offers ETH/USDC/Custom token pills', ['ETH', 'USDC', 'Custom token'].every(x => pills.includes(x)), JSON.stringify(pills));
+    await Q(page, '() => { [...document.querySelectorAll(".create-pill")].find(p=>p.textContent.trim()==="Custom token").click(); return 1; }');
     await page.waitForTimeout(400);
     const customExclusive = await Q(page, '() => { const sel=[...document.querySelectorAll(".create-pill.selected")].map(p=>p.textContent.trim()); const addr=[...document.querySelectorAll(".create-step input")].some(i=>/ERC-20 token address/.test(i.placeholder||"")); return { sel, addr }; }');
-    check('selecting Custom is exclusive + shows the token-address field', customExclusive.sel.length === 1 && customExclusive.sel[0] === 'Custom' && customExclusive.addr, JSON.stringify(customExclusive));
+    check('selecting Custom is exclusive + shows the token-address field', customExclusive.sel.length === 1 && customExclusive.sel[0] === 'Custom token' && customExclusive.addr, JSON.stringify(customExclusive));
 
     // 4. Revnet accounting is multi-select (ETH + USDC).
     await freshCreateFlow(page, 503);
