@@ -2785,7 +2785,7 @@ function chainBridgeBlock(state, render) {
     var actual = actualChainId(p.canon, state.network);
     var on = state.chainIds.indexOf(actual) !== -1;
     var pill = el('button', 'create-chain-pill' + (on ? ' selected' : ''));
-    pill.textContent = p.name;
+    pill.textContent = chainName(actual); // "Base" in mainnet mode, "Base Sepolia" in testnet mode
     pill.addEventListener('click', function () {
       var ids = state.chainIds.slice();
       if (on) ids = ids.filter(function (x) { return x !== actual; });
