@@ -857,11 +857,21 @@ function lookupCustomToken(state, render) {
       pub.readContract({ address: addr, abi: ERC20, functionName: 'symbol' }),
       pub.readContract({ address: addr, abi: ERC20, functionName: 'decimals' }),
     ]).then(function (r) { return { cid: cid, ok: true, name: r[0], symbol: r[1], decimals: Number(r[2]) }; })
-      .catch(function () { return { cid: cid, ok: false }; });
+      // A transport failure must not read as "token doesn't exist" — classify it so the error can say retry.
+      .catch(function (e) { return { cid: cid, ok: false, rpcFail: /HttpRequestError|timeout|fetch|network/i.test(String((e && e.name) || '') + ' ' + String((e && e.message) || '')) }; });
   })).then(function (results) {
     if (stale()) return;
     var first = results.filter(function (r) { return r.ok; })[0];
-    if (!first) { ct.status = 'error'; ct.error = 'No ERC-20 found at this address on any selected chain.'; ct.symbol = ''; ct.decimals = null; ct.chains = null; render(); return; }
+    if (!first) {
+      ct.status = 'error';
+      // Name the exact chains checked — "Base" selected in mainnet mode checks Base, not Base Sepolia,
+      // and a token deployed only on a testnet fails here without this being obvious.
+      ct.error = results.every(function (r) { return r.rpcFail; })
+        ? 'Could not look up the token (RPC error). Try again.'
+        : 'No ERC-20 found at this address on ' + chainIds.map(chainName).join(', ') + '.'
+          + (state.network === 'mainnet' ? ' Looking for a testnet token? Switch Discover to Testnets first, then create the project.' : '');
+      ct.symbol = ''; ct.decimals = null; ct.chains = null; render(); return;
+    }
     ct.name = first.name || ''; ct.symbol = first.symbol || ''; ct.decimals = Number(first.decimals); ct.chains = results;
     if (!Number.isInteger(ct.decimals) || ct.decimals < 0 || ct.decimals > 36) {
       ct.status = 'error'; ct.error = 'This token reports ' + ct.decimals + ' decimals; Juicebox accounting contexts support 0–36.'; render(); return;
