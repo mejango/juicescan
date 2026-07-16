@@ -1990,6 +1990,8 @@ input[type="checkbox"].field {
 .comp-prompt-link--ok { opacity: 1; color: var(--c-teal); }
 /* In a modal/form the tag sits right under the submit button — give it room to breathe. */
 .modal-dialog > .comp-prompt-foot { margin-top: 14px; }
+/* Inside the create wizard, match .create-foot's horizontal padding so the link right-aligns with Next. */
+.create-sheet > .comp-prompt-foot { padding: 0 22px; }
 
 .guide-text {
   color: var(--text);
