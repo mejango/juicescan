@@ -1215,13 +1215,16 @@ function renderDetails(state, render) {
   wrap.appendChild(stepHead('Project details', 'You can edit these at any time.'));
 
   wrap.appendChild(fieldBlock('Name', false, textInput(d.name, 'My project', function (v) { d.name = v; })));
-  // Token ticker — required for revnets (it names the ERC-20 deployed for the token). Optional otherwise.
-  wrap.appendChild(fieldBlock('Token symbol', state.projectType !== 'revnet', (function () {
-    var n = textInput(d.ticker, 'TOKEN', function (v) { d.ticker = v.trim().toUpperCase().slice(0, 11); });
-    n.classList.add('create-symbol-field'); // a symbol is short — 1/4 width
-    n.addEventListener('input', function () { n.value = n.value.toUpperCase(); });
-    return n;
-  })()));
+  // Token ticker — revnets only (it names the ERC-20 REVDeployer deploys). A custom project's ERC-20 is
+  // deployed later from the Owner tab, which asks for the symbol then.
+  if (state.projectType === 'revnet') {
+    wrap.appendChild(fieldBlock('Token symbol', false, (function () {
+      var n = textInput(d.ticker, 'TOKEN', function (v) { d.ticker = v.trim().toUpperCase().slice(0, 11); });
+      n.classList.add('create-symbol-field'); // a symbol is short — 1/4 width
+      n.addEventListener('input', function () { n.value = n.value.toUpperCase(); });
+      return n;
+    })()));
+  }
   wrap.appendChild(fieldBlock('Tagline', true, (function () {
     var n = textInput(d.tagline, 'A brief one-sentence summary of your project.', function (v) { d.tagline = v; });
     return n;
