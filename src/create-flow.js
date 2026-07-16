@@ -442,7 +442,7 @@ function initState() {
     network: network, // mainnet | testnet — follows the Discover toggle; maps the selected canonical chains to actual ids
     suckerType: 'both', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both — default Both (broadest coverage)
     nfts: [], // item drafts — see itemDraft() for shape
-    perChain: {}, // multichain overrides: { [chainId]: { payouts:{[stageIdx]:{[recipIdx]:amtStr}}, items:{[itemIdx]:{include,supply}} } }
+    perChain: {}, // multichain overrides: { [chainId]: { addr: { [key]: str } } } — keys: 'p:/r:/pk:' addresses, 'ppid:/rpid:/pkpid:' project ids, 'pamt:/pkamt:' payout amounts, 'isup:' item supplies
     storeCategories: [], // {id, name} named categories the user adds locally in the Shop step
     collection: { // top-level JB721 hook config (name/symbol auto-derive from the project until edited)
       name: '', symbol: '', nameTouched: false, symbolTouched: false, extrasOpen: false,
@@ -1927,6 +1927,8 @@ function payoutRow(stage, rec, idx, mode, render, state) {
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
+  // Fixed amounts can differ per chain (each chain's terminal pays out of its own balance).
+  if (mode !== 'percent' && state) wrap.appendChild(perChainAmountControl(state, render, 'pamt:' + state.stages.indexOf(stage) + ':' + idx, rec.amountEth || ''));
   appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'p:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, pidKey: 'ppid:' + (state ? state.stages.indexOf(stage) : 0) + ':' + idx, isPayout: true });
   var plk = splitLockRow(stage, rec, render); if (plk) wrap.appendChild(plk);
   return wrap;
@@ -1962,6 +1964,8 @@ function payoutKindRow(pk, kind, rec, idx, render, state, stage) {
     row.appendChild(toField); if (!lockLast) row.appendChild(rm);
   }
   wrap.appendChild(row);
+  // Fixed amounts can differ per chain (each chain's terminal pays out of its own balance).
+  if (mode !== 'percent' && state) wrap.appendChild(perChainAmountControl(state, render, 'pkamt:' + kind.key + ':' + idx, rec.amountEth || ''));
   appendRecipientPicker(toField, rec, render, { state: state, perChainKey: 'pk:' + kind.key + ':' + idx, pidKey: 'pkpid:' + kind.key + ':' + idx, isPayout: true });
   var klk = splitLockRow(stage, rec, render); if (klk) wrap.appendChild(klk);
   return wrap;
@@ -2649,7 +2653,11 @@ function itemEditor(state, nft, idx, render) {
   }
 
   c.appendChild(toggleRow('Unlimited inventory', dz('Any number can be sold.', 'Only a set quantity can be sold.'), !nft.limited, function (v) { nft.limited = !v; render(); }));
-  if (nft.limited) c.appendChild(fieldBlock('Quantity', false, textInput(nft.supply, '100', function (v) { nft.supply = v.trim(); })));
+  if (nft.limited) {
+    c.appendChild(fieldBlock('Quantity', false, textInput(nft.supply, '100', function (v) { nft.supply = v.trim(); })));
+    // Each chain's shop carries its own inventory — the quantity can differ per chain.
+    c.appendChild(perChainSupplyControl(state, render, 'isup:' + idx, nft.supply || ''));
+  }
 
   // Category
   var catField = el('div', 'create-field');
@@ -3114,33 +3122,25 @@ function pcAddrGet(state, chainId, key, def) {
 function pcAddrSet(state, chainId, key, val) { var pc = perChainOf(state, chainId); pc.addr[key] = val; }
 // The resolved 0x address for a field on a chain (per-chain override → default), ENS-resolved.
 function chainAddr(state, chainId, key, defStr) { return resolvedStr(pcAddrGet(state, chainId, key, defStr)); }
-// Per-chain payout amount for one recipient (override → default).
+// Per-chain payout amount for one stage recipient (override → default). Stored in the shared per-chain
+// override store under 'pamt:<stage>:<recip>' so the "Set per chain" control machinery applies untouched.
 function chainPayoutAmount(state, chainId, stageIdx, recipIdx) {
-  var pc = perChainPeek(state, chainId);
-  var ov = pc && pc.payouts && pc.payouts[stageIdx] && pc.payouts[stageIdx][recipIdx];
-  if (ov != null && ov !== '') return ov;
-  return state.stages[stageIdx].payoutRecipients[recipIdx].amountEth;
+  return pcAddrGet(state, chainId, 'pamt:' + stageIdx + ':' + recipIdx, state.stages[stageIdx].payoutRecipients[recipIdx].amountEth);
+}
+// Per-chain payout amount for a per-token (kind) recipient — multi-token custom projects.
+function chainKindPayoutAmount(state, chainId, kindKey, recipIdx, def) {
+  return pcAddrGet(state, chainId, 'pkamt:' + kindKey + ':' + recipIdx, def);
 }
 function chainItemIncluded(state, chainId, itemIdx) {
   var pc = perChainPeek(state, chainId);
   var ov = pc && pc.items && pc.items[itemIdx];
   return ov ? ov.include !== false : true;
 }
-// Per-chain "unlimited inventory" toggle for an item (override → item default).
-function chainItemUnlimited(state, chainId, itemIdx) {
-  var pc = perChainPeek(state, chainId);
-  var ov = pc && pc.items && pc.items[itemIdx];
-  if (ov && ov.unlimited != null) return ov.unlimited;
-  return !state.nfts[itemIdx].limited;
-}
-// Per-chain supply string for an item ('' = unlimited).
+// Per-chain supply string for an item ('' = unlimited). Unlimited items have no per-chain supply.
 function chainItemSupply(state, chainId, itemIdx) {
-  if (chainItemUnlimited(state, chainId, itemIdx)) return '';
-  var pc = perChainPeek(state, chainId);
-  var ov = pc && pc.items && pc.items[itemIdx];
-  if (ov && ov.supply != null && ov.supply !== '') return ov.supply;
   var nft = state.nfts[itemIdx];
-  return nft.limited ? nft.supply : '';
+  if (!nft.limited) return '';
+  return pcAddrGet(state, chainId, 'isup:' + itemIdx, nft.supply);
 }
 
 // An address input prefilled with the per-chain override (or default), with ENS resolution shown below.
@@ -3157,6 +3157,22 @@ function pcNumField(state, chainId, key, defStr) {
   input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
   return input;
 }
+// Per-chain amount field (payout amounts) — blank means "use the default", shown as the placeholder.
+function pcAmountField(state, chainId, key, defStr) {
+  var input = el('input', 'field create-inline-num create-payout-amt'); input.type = 'number'; input.min = '0'; input.step = 'any';
+  input.placeholder = defStr || '0.0';
+  input.value = pcAddrGet(state, chainId, key, '');
+  input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
+  return input;
+}
+// Per-chain whole-number field (store item supply) — blank means "use the default".
+function pcSupplyField(state, chainId, key, defStr) {
+  var input = el('input', 'field create-inline-num'); input.type = 'number'; input.min = '1'; input.step = '1';
+  input.placeholder = defStr || '100';
+  input.value = pcAddrGet(state, chainId, key, '');
+  input.addEventListener('input', function () { pcAddrSet(state, chainId, key, input.value.trim()); });
+  return input;
+}
 
 // Inline "same on all chains" control shown under an address field (only when >1 chain is selected). The
 // address defaults to the same on every chain; clicking the indicator reveals a per-chain input for each
@@ -3169,7 +3185,14 @@ function perChainAddrControl(state, render, key, defStr) {
 function perChainNumControl(state, render, key, defStr) {
   return perChainControl(state, render, key, defStr, pcNumField);
 }
-function perChainControl(state, render, key, defStr, fieldFn) {
+// Same control for payout amounts and item supplies.
+function perChainAmountControl(state, render, key, defStr) {
+  return perChainControl(state, render, key, defStr, pcAmountField, 'Set amount per chain');
+}
+function perChainSupplyControl(state, render, key, defStr) {
+  return perChainControl(state, render, key, defStr, pcSupplyField, 'Set quantity per chain');
+}
+function perChainControl(state, render, key, defStr, fieldFn, linkLabel) {
   var wrap = el('div', 'create-pcaddr');
   if ((state.chainIds || []).length < 2) return wrap; // single chain — nothing to differ
   if (!state._pcOpen) state._pcOpen = {};
@@ -3177,7 +3200,7 @@ function perChainControl(state, render, key, defStr, fieldFn) {
   var open = !!state._pcOpen[key] || hasOverrides;
   if (!open) {
     wrap.classList.add('create-pcaddr-collapsed'); // right-align the link under the field
-    var link = el('a', 'create-pcaddr-toggle'); link.href = '#'; link.textContent = 'Set per chain';
+    var link = el('a', 'create-pcaddr-toggle'); link.href = '#'; link.textContent = linkLabel || 'Set per chain';
     link.title = 'Set a different value on each chain';
     link.addEventListener('click', function (e) { e.preventDefault(); state._pcOpen[key] = true; render(); });
     wrap.appendChild(link);
@@ -3969,7 +3992,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, isFirst, deadlineO
         });
       } else if (pk.mode === 'limited') {
         var limitedRows = (pk.recipients || []).map(function (x, idx) {
-          return { x: x, idx: idx, amount: puK(x.amountEth, kind.decimals) };
+          return { x: x, idx: idx, amount: puK(chainKindPayoutAmount(state, chainId, kind.key, idx, x.amountEth), kind.decimals) };
         }).filter(function (row) { return row.amount > 0n; });
         var totalAmt = limitedRows.reduce(function (s, row) { return s + row.amount; }, 0n);
         if (totalAmt > 0n) payoutLimits.push({ amount: totalAmt, currency: cur });

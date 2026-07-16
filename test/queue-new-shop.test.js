@@ -46,6 +46,26 @@ describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)
     expect(cfg.tiersConfig.tiers[0].price).toBe(1000000n);
   });
 
+  it('per-chain item supply flows into each chain\'s tiersConfig', () => {
+    const s = newShopState();
+    s.chainIds = [1, 8453];
+    __test.pcAddrSet(s, 8453, 'isup:0', '7');
+    expect(build721Config(s, 'ipfs://x', 1).tiersConfig.tiers[0].initialSupply).toBe(100);
+    expect(build721Config(s, 'ipfs://x', 8453).tiersConfig.tiers[0].initialSupply).toBe(7);
+  });
+
+  it('per-chain payout amounts produce per-chain limits and splits', () => {
+    const s = initState();
+    s.projectType = 'custom'; s.network = 'mainnet'; s.chainIds = [1, 8453]; s.accepts = ['eth'];
+    s.details.name = 'P'; s.details.owner = ALICE;
+    s.stages[0].payoutMode = 'limited';
+    s.stages[0].payoutRecipients = [{ type: 'wallet', address: ALICE, projectId: 0, percent: 0, amountEth: '1' }];
+    __test.pcAddrSet(s, 8453, 'pamt:0:0', '2.5');
+    const limitOn = (cid) => buildQueueRulesetConfigs(s, cid, 0)[0].fundAccessLimitGroups[0].payoutLimits[0].amount;
+    expect(limitOn(1)).toBe(1000000000000000000n);
+    expect(limitOn(8453)).toBe(2500000000000000000n);
+  });
+
   it('sorts tiers by category before deployer encoding', () => {
     const s = newShopState();
     s.nfts = [
