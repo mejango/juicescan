@@ -4111,9 +4111,13 @@ function readChainBalances(chainId, pid) {
   return clientFor(chainId).readContract({ address: term, abi: TERMINAL_CONTEXTS_ABI, functionName: 'accountingContextsOf', args: [pid] }).then(function (ctxs) {
     if (!ctxs || !ctxs.length) return { chainId: chainId, tokens: [], verified: true };
     return Promise.all(ctxs.map(function (ctx) {
-      return read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, ctx.token])
-        .then(function (bal) { return { token: ctx.token, balance: bal, decimals: Number(ctx.decimals), symbol: acctTokenLabel(ctx.token) }; })
-        .catch(function () { return { token: ctx.token, balance: null, decimals: Number(ctx.decimals), symbol: acctTokenLabel(ctx.token) }; });
+      // Resolve the real ERC-20 symbol (cached) — acctTokenLabel alone shows a truncated ADDRESS for
+      // custom accounting tokens, which leaks into the header balance and its per-chain popover.
+      var metaP = Promise.resolve().then(function () { return resolveAccountingContextMetadata(chainId, ctx); }).catch(function () { return null; });
+      var balP = read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, ctx.token]).catch(function () { return null; });
+      return Promise.all([balP, metaP]).then(function (r) {
+        return { token: ctx.token, balance: r[0], decimals: Number(ctx.decimals), symbol: (r[1] && r[1].symbol) || acctTokenLabel(ctx.token) };
+      });
     })).then(function (toks) { return { chainId: chainId, tokens: toks, verified: true }; });
   }).catch(function () { return { chainId: chainId, tokens: [], verified: false }; });
 }
@@ -12011,8 +12015,13 @@ function openAddAccountingContextModal(project) {
   // Show what's already accepted on the primary chain (read-only reference).
   var cur = el('div', 'operator-edit-cur'); cur.textContent = 'Reading current accounting tokens…'; content.appendChild(cur);
   read(project.chainId, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [pid]).then(function (ctxs) {
+    return Promise.all((ctxs || []).map(function (c) {
+      return Promise.resolve().then(function () { return resolveAccountingContextMetadata(project.chainId, c); })
+        .then(function (meta) { return (meta && meta.symbol) || acctTokenLabel(c.token); })
+        .catch(function () { return acctTokenLabel(c.token); });
+    }));
+  }).then(function (names) {
     if (!cur.isConnected) return;
-    var names = (ctxs || []).map(function (c) { return acctTokenLabel(c.token); });
     cur.textContent = names.length ? ('Currently accepted: ' + names.join(', ')) : 'No accounting tokens set yet.';
   }).catch(function () { cur.textContent = ''; });
 
