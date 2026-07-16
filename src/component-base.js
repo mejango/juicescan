@@ -989,6 +989,20 @@ function txRawJson(tx) {
   if (!obj) obj = { contract: tx.contract, address: tx.address || tx.to, chain: tx.chain, function: txFnName(tx), args: (tx.args || tx.rawArgs), calldata: cd, value: tx.value };
   return formatPayloadJson(obj);
 }
+// Plain-language confirm summary: an action line + labeled rows, for calls whose ABI decode is unreadable.
+function renderFriendlySummary(summary) {
+  if (!summary) return null;
+  var wrap = el('div', 'tx-friendly');
+  if (summary.action) { var a = el('div', 'tx-friendly-action'); a.textContent = summary.action; wrap.appendChild(a); }
+  (summary.rows || []).forEach(function (row) {
+    var r = el('div', 'tx-friendly-row');
+    var k = el('span', 'tx-friendly-k'); k.textContent = row[0]; r.appendChild(k);
+    var v = el('span', 'tx-friendly-v'); v.textContent = row[1]; r.appendChild(v);
+    wrap.appendChild(r);
+  });
+  return wrap;
+}
+
 function renderDecodedSummary(payload) {
   var list = Array.isArray(payload.transactions) ? payload.transactions : (Array.isArray(payload.chains) ? payload.chains : null);
   var wrap = el('div', 'tx-decoded-list');
@@ -1008,13 +1022,19 @@ export function renderConfirmBody(content, payload, opts) {
   note.textContent = opts.note || 'This is the exact transaction that will be sent to your wallet. Review it before signing.';
   content.appendChild(note);
   if (opts.description) { var desc = el('div', 'tx-confirm-desc'); desc.textContent = opts.description; content.appendChild(desc); }
+  // A plain-language summary (payload.summary = { action, rows: [[label, value], …] }) reads first for calls
+  // whose raw decode is opaque (e.g. the Universal Router's `execute(commands, inputs[], deadline)`); the exact
+  // decoded call + raw payload move into "Show raw data" so nothing is hidden.
+  var friendly = payload.summary ? renderFriendlySummary(payload.summary) : null;
+  if (friendly) content.appendChild(friendly);
   var decoded = renderDecodedSummary(payload);
-  if (decoded) content.appendChild(decoded);
+  if (decoded && !friendly) content.appendChild(decoded);
   var pre = el('pre', 'create-payload');
   pre.textContent = annotateTimestamps(annotateAddresses(formatPayloadJson(payload)));
-  if (decoded) {
+  if (friendly || decoded) {
     var details = document.createElement('details'); details.className = 'tx-rawdata';
     var sm = document.createElement('summary'); sm.textContent = 'Show raw data'; details.appendChild(sm);
+    if (friendly && decoded) details.appendChild(decoded);
     details.appendChild(pre); content.appendChild(details);
   } else {
     content.appendChild(pre);
@@ -1112,6 +1132,7 @@ export function executeTransaction(opts) {
       args: opts.args,
       calldata: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }),
       value: (opts.value || 0n),
+      summary: opts.confirmSummary || undefined,
     };
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
       payload.erc20Approval = { token: opts.tokenAddr, spender: opts.spenderAddr, amount: opts.approvalAmount };

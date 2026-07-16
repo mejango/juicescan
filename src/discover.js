@@ -3353,6 +3353,7 @@ var usedSurplusAllowanceAbi = [{
 // anyone can deploy/seed a Uniswap V4 LP position and route its fees back to the project. Reads + the
 // permissionless keeper actions used by the Market split-hook card.
 var bannyHookAbi = [
+  { type: 'function', name: 'initialWeightOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'accumulatedProjectTokens', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'hasDeployedPool', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'bool' }] },
   { type: 'function', name: 'claimableFeeTokens', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
@@ -15069,7 +15070,7 @@ function renderSplitHookCard(project) {
   var a = addressNode(hookAddr, project.chainId); a.classList.add('lp-amm-title-addr'); title.appendChild(a);
   card.appendChild(title);
   var intro = el('div', 'detail-card-body owners-intro');
-  intro.textContent = 'Reserved ' + sym + ' routed here accumulate until anyone seeds a Uniswap V4 LP position with them; the position’s trading fees are then routed back to the project. The actions below are permissionless.';
+  intro.textContent = 'Reserved ' + sym + ' routed here accumulates until the pool is seeded: Deploy pool cashes out part of the accumulated ' + sym + ' for the terminal token and mints a two-sided Uniswap V4 position. Once the pool exists, the other actions are permissionless — Collect fees routes the position’s trading fees into the project’s terminal balance.';
   card.appendChild(intro);
 
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
@@ -15089,6 +15090,7 @@ function renderSplitHookCard(project) {
         rd('accumulatedProjectTokens', [pid]),
         rd('hasDeployedPool', [pid]),
         rd('claimableFeeTokens', [pid]),
+        rd('initialWeightOf', [pid]),
         rd('tokenIdOf', [pid, tok]),
         rd('activeTickLowerOf', [pid, tok]),
         rd('activeTickUpperOf', [pid, tok]),
@@ -15097,8 +15099,13 @@ function renderSplitHookCard(project) {
         var accumulated = r[0] != null ? BigInt(r[0]) : 0n;
         var hasPool = !!r[1];
         var fees = r[2] != null ? BigInt(r[2]) : 0n;
-        var tokenId = r[3] != null ? BigInt(r[3]) : 0n;
-        var tickLo = r[4], tickHi = r[5];
+        var initialWeight = r[3] != null ? BigInt(r[3]) : 0n;
+        var tokenId = r[4] != null ? BigInt(r[4]) : 0n;
+        var tickLo = r[5], tickHi = r[6];
+        // deployPool is permissionless only once the ruleset weight decays to <=10% of the accumulation-time
+        // weight; until then it needs the owner (SET_BUYBACK_POOL). Mirror the contract's gate in the UI.
+        var curWeight = project.ruleset && project.ruleset.weight != null ? BigInt(project.ruleset.weight) : 0n;
+        var deployGated = initialWeight === 0n || curWeight * 10n > initialWeight;
         // Read-only position / balance rows.
         body.appendChild(kvRow('Pool', hasPool ? 'Deployed' : 'Not deployed yet'));
         body.appendChild(kvRow('Accumulated ' + sym, formatBalance(accumulated, 18, sym)));
@@ -15126,6 +15133,12 @@ function renderSplitHookCard(project) {
         }
         if (!hasPool) {
           actBtn('Deploy pool', 'deployPool', function () { return [pid, 0n]; }, 'Seed the Uniswap V4 pool from accumulated tokens (accepts any cash out return)');
+          if (deployGated) {
+            var gateNote = el('div', 'extras-payer-sub');
+            gateNote.textContent = 'Deploying the pool currently requires the project ' + (project.isRevnet ? 'operator' : 'owner')
+              + ' (or SET_BUYBACK_POOL permission). It becomes permissionless for anyone once the issuance rate decays to 10% of what it was when tokens started accumulating.';
+            foot.appendChild(gateNote);
+          }
         } else {
           if (accumulated > 0n) actBtn('Add liquidity', 'addLiquidity', function () { return [pid, tok, 0n]; }, 'Add accumulated ' + sym + ' to the LP position');
           actBtn('Collect fees', 'collectAndRouteLPFees', function () { return [pid, tok]; }, 'Collect LP trading fees and route them to the project');
@@ -15711,8 +15724,17 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
       ensAddr = null; ensHint.style.display = '';
       describeKnownAddress(opts.chainId || 1, v, ensHint, { hintClass: 'splits-edit-hint', projectId: opts.projectId, projectSymbol: opts.projectSymbol || opts.sym });
     } else { ensHint.style.display = 'none'; ensAddr = null; }
-    // The "fund market" chip only belongs on an empty row — once a real recipient is entered, hide it.
-    if (lpChip && !rec.lpHook) { var has = !!(recip.value || '').trim(); lpChip.style.display = has ? 'none' : ''; if (has && lpHint) lpHint.style.display = 'none'; }
+    syncLpChip();
+  }
+  // The "fund market" chip belongs on ONE row: the next open (recipient-less) split — and never once some
+  // row already funds the market. The modal supplies the cross-row rule via opts.lpChipAllowed.
+  function syncLpChip() {
+    if (!lpChip) return;
+    if (rec.lpHook) { lpChip.style.display = ''; return; } // stays visible as the off-toggle
+    var open = !(recip.value || '').trim();
+    var allowed = !opts.lpChipAllowed || opts.lpChipAllowed(rec);
+    lpChip.style.display = (open && allowed) ? '' : 'none';
+    if (lpHint) lpHint.style.display = 'none';
   }
   // "fund market" chip — reserved-token splits only. Routes this split to the shared zero-fee
   // BannyLPSplitHook, which pools the reserved tokens into a Uniswap V4 position for the project's token.
@@ -15720,13 +15742,15 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   if (opts.allowLpHook && opts.lpHookAddr) {
     lpChip = el('button', 'splits-edit-chip'); lpChip.type = 'button'; lpChip.textContent = 'fund market';
     lpChip.title = 'Pool reserved tokens into a Uniswap V4 buyback position for your token';
-    lpHint = el('div', 'splits-edit-hint'); lpHint.style.display = 'none';
+    lpHint = el('div', 'splits-edit-hint splits-edit-hint--prose'); lpHint.style.display = 'none';
     lpHint.textContent = 'Pools splits tokens into a Uniswap V4 position. Trading fees route back to your project.';
     recipBox.appendChild(lpChip); wrap.appendChild(lpHint);
   }
   var rec = {
     pct: pct, leadEl: lead, orig: (opts.prefill && opts.prefill.orig) || null, lpHook: false,
     isEmpty: function () { return !rec.lpHook && !(recip.value || '').trim() && !(pct.value || '').trim(); },
+    recipOpen: function () { return !rec.lpHook && !(recip.value || '').trim(); },
+    syncLpChip: function () { syncLpChip(); },
     hookAddr: function () {
       if (rec.lpHook) return chainValue(function (cid) { return (opts.lpHookAddrForChain && opts.lpHookAddrForChain(cid)) || opts.lpHookAddr || ZERO_ADDRESS; });
       return ((rec.orig && rec.orig.hook && rec.orig.hook !== ZERO_ADDRESS) ? rec.orig.hook : ZERO_ADDRESS);
@@ -15752,7 +15776,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     if (lpHint) lpHint.style.display = on ? '' : 'none';
     if (opts.onChange) opts.onChange();
   }
-  recip.addEventListener('input', refresh);
+  recip.addEventListener('input', function () { refresh(); if (opts.onChange) opts.onChange(); });
   routeSel.addEventListener('change', refresh);
   if (lpChip) lpChip.addEventListener('click', function () { setLp(!rec.lpHook); });
   if (opts.onChange) pct.addEventListener('input', opts.onChange);
@@ -16624,6 +16648,13 @@ function openEditSplitsModal(project, opts) {
     lpHookAddr: lpHookAddr,
     lpHookAddrForChain: function (cid) { return getAddress('BannyLPSplitHook', cid) || ZERO_ADDRESS; },
     ownerAddr: project.owner,
+    // Offer "fund market" once: never when a row already routes to the LP hook, else only on the first
+    // recipient-less row (the next open split).
+    lpChipAllowed: function (rec) {
+      if (rows.some(function (r) { return r.lpHook; })) return false;
+      for (var i = 0; i < rows.length; i++) if (rows[i].recipOpen && rows[i].recipOpen()) return rows[i] === rec;
+      return false;
+    },
     sym: project.tokenSymbol || 'tokens',
     projectSymbol: project.tokenSymbol || 'tokens',
     projectId: project.id,
@@ -16633,7 +16664,7 @@ function openEditSplitsModal(project, opts) {
   function mkRowOpts(extra) { var o = {}; for (var k in rowOpts) o[k] = rowOpts[k]; o.onChange = onRowChange; if (extra) for (var k2 in extra) o[k2] = extra[k2]; return o; }
   var rows = [];
   function updateLeads() { for (var i = 0; i < rows.length; i++) if (rows[i].leadEl) rows[i].leadEl.textContent = i === 0 ? 'Split' : '… and'; }
-  function onRowChange() { recalcTotal(); updateLeads(); }
+  function onRowChange() { recalcTotal(); updateLeads(); rows.forEach(function (r) { if (r.syncLpChip) r.syncLpChip(); }); }
   function recalcTotal() {
     var sum = rows.reduce(function (a, r) { return a + (parseFloat(r.pct.value) || 0); }, 0);
     var rounded = Math.round(sum * 100) / 100;
@@ -18425,10 +18456,22 @@ function buildCashOutModal(project, requestClose) {
         var minOut = quotedOutputFloor(fresh, 10000 - reviewedSlippage); // slippage floor = swap amountOutMinimum
         var statusCb = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
         var outcome = { net: fresh, sym: reviewedAcct.symbol, decimals: reviewedAcct.decimals, approxAmount: true, sold: true };
+        var swapSummary = {
+          action: 'Sell ' + sym + ' into the buyback pool',
+          rows: [
+            ['Selling', formatBalance(route.count, 18, sym)],
+            ['You receive', '≈ ' + formatBalance(fresh, reviewedAcct.decimals, reviewedAcct.symbol) + ' (actual set by the pool)'],
+            ['Minimum', formatBalance(minOut, reviewedAcct.decimals, reviewedAcct.symbol) + ' — reverts below this (' + (reviewedSlippage / 100) + '% max slippage)'],
+            ['Route', 'Uniswap Universal Router — bypasses the terminal (no 2.5% cash out fee)'],
+            ['To', acct],
+          ],
+        };
         buildDirectSwapErc20Tx(cid, route.pool, route.pool.projectToken, route.count, minOut, acct, statusCb)
           .then(function (tx) {
             if (!requireCashInputs()) return;
             executeTransaction(Object.assign({}, tx, {
+              confirmTitle: 'Confirm swap',
+              confirmSummary: swapSummary,
               onStatus: statusCb,
               onSuccess: function (m, meta) { renderCashSuccess(route.count, outcome, meta); },
               onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
