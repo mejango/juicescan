@@ -20231,9 +20231,12 @@ function buildMoveModal(project) {
         bridgeSel.appendChild(o);
       });
       // Default to the native (canonical) bridge when one exists — it's zero-cost (only the registry fee),
-      // whereas CCIP also charges a messaging fee. The user can still switch to CCIP.
+      // whereas CCIP also charges a messaging fee. EXCEPT when the backing token is an ERC-20 (USDC):
+      // native bridges can't deliver it (funds strand in escrow), so CCIP is the only working route.
       var nativeIdx = infras.indexOf('native');
-      var def = nativeIdx >= 0 ? nativeIdx : 0;
+      var erc20Backing = state.backing && state.backing.address && state.backing.address.toLowerCase() !== NATIVE_TOKEN.toLowerCase();
+      var ccipIdx = infras.indexOf('CCIP');
+      var def = erc20Backing ? (ccipIdx >= 0 ? ccipIdx : 0) : (nativeIdx >= 0 ? nativeIdx : 0);
       bridgeSel.value = String(def);
       state._matches = matches;
       state.sucker = matches[def].local;
@@ -20309,6 +20312,11 @@ function buildMoveModal(project) {
         var mapping = checks[1];
         if (!mapping || !mapping.enabled || !mapping.addr || /^0x0+$/.test(mapping.addr)) throw new Error('This backing token is not mapped on the selected bridge.');
         if (checks[5] === 'unknown') throw new Error('The selected bridge type could not be verified. Try again when the source RPC is available.');
+        // Canonical ERC-20s (USDC) over an OP-stack/Arbitrum NATIVE sucker strand in bridge escrow — the
+        // mapping may exist on-chain (the guards are bridge-blind) but the delivery leg can never settle.
+        if (checks[5] === 'native' && termToken.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
+          throw new Error('This pair’s native bridge can’t deliver ' + ((state.backing && state.backing.symbol) || 'this backing token') + ' — canonical tokens sent over a native bridge get stuck in escrow. Pick the CCIP bridge for this move.');
+        }
         if (checks[3] == null) throw new Error('The bridge fee status could not be verified. Nothing was sent.');
         var remoteBacking = checks[6];
         if (!remoteBacking || !remoteBacking.address) throw new Error('The matching backing token is not configured on the destination chain.');

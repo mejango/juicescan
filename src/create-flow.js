@@ -381,12 +381,17 @@ function bridgesForType(suckerType) { return suckerType === 'both' ? ['native', 
 // address → bytes32 (left-padded) for a sucker token mapping's remoteToken.
 function addrToBytes32(a) { return '0x000000000000000000000000' + String(a).slice(2).toLowerCase(); }
 
-// The token mapping for one (local→remote) sucker: bridge the accounting token. Native ETH by default;
-// USDC when the project's accounting token is USDC (uses each chain's own USDC address).
-function tokenMappingFor(localId, remoteId, accepts) {
+// The token mapping for one (local→remote) sucker over one bridge, or null when that bridge can't
+// safely carry the accounting token. Canonical USDC over an OP-stack/Arbitrum NATIVE bridge locks funds
+// in bridge escrow (USDC is not a mintable-pair token; JBOptimismSucker passes the mapping straight into
+// bridgeERC20To, and the Arbitrum gateway delivers USDC.e while leaves reference canonical USDC) — so
+// only CCIP suckers may carry the USDC mapping. Native suckers bridge native ETH only.
+function tokenMappingFor(localId, remoteId, accepts, bridge) {
   if ((accepts && accepts[0]) === 'usdc') {
+    if (bridge !== 'ccip') return null;
     var local = USDC_BY_CHAIN[localId], remote = USDC_BY_CHAIN[remoteId];
     if (local && remote) return { localToken: local, minGas: 200000, remoteToken: addrToBytes32(remote) };
+    return null;
   }
   return { localToken: NATIVE_TOKEN, minGas: 200000, remoteToken: addrToBytes32(NATIVE_TOKEN) };
 }
@@ -398,11 +403,13 @@ function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
     bridgesForType(suckerType).forEach(function (bridge) {
       var deployer = suckerDeployerForBridge(localId, remoteId, bridge);
       if (!deployer) return; // bridge not available for this pair
+      var mapping = tokenMappingFor(localId, remoteId, accepts, bridge);
+      if (!mapping) return; // this bridge can't safely carry the accounting token (USDC over a native bridge)
       covered[remoteId] = true;
       deployerConfigurations.push({
         deployer: deployer,
         peer: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        mappings: [tokenMappingFor(localId, remoteId, accepts)],
+        mappings: [mapping],
       });
     });
   });
@@ -2854,8 +2861,14 @@ function chainBridgeBlock(state, render) {
       wrap.appendChild(bRow);
       var bh = el('div', 'create-hint'); bh.textContent = 'Native bridges connect Ethereum with L2s (strongest guarantees). CCIP (Chainlink) connects any chains. Native and CCIP gives the broadest coverage.'; wrap.appendChild(bh);
     }
+    var usdcAcct = (state.accepts || [])[0] === 'usdc';
+    if (usdcAcct && state.suckerType !== 'ccip') {
+      wrap.appendChild(state.suckerType === 'native'
+        ? warnNote('USDC moves between chains over CCIP only — native bridges can’t carry canonical USDC. Choose CCIP (or Native and CCIP) to link these chains.')
+        : infoNote('USDC moves between chains over CCIP only, so this project links its chains with CCIP suckers.'));
+    }
     var unc = uncoveredPairs(state);
-    if (unc.length) wrap.appendChild(warnNote('' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Native and CCIP to link L2↔L2 pairs.'));
+    if (unc.length && !(usdcAcct && state.suckerType === 'native')) wrap.appendChild(warnNote('' + unc.length + ' chain pair' + (unc.length > 1 ? 's' : '') + ' can’t connect with native bridges (they only link Ethereum↔L2). Choose CCIP or Native and CCIP to link L2↔L2 pairs.'));
   } else {
     wrap.appendChild(infoNote('Deploys on a single chain. ' + (state.projectType === 'revnet'
       ? 'You can add more chains later if they exactly match the configuration you deploy with now.'
@@ -2865,12 +2878,16 @@ function chainBridgeBlock(state, render) {
 }
 
 
-// Selected-chain pairs that won't link under the chosen sucker type (e.g. L2↔L2 under native bridges).
+// Selected-chain pairs that won't link under the chosen sucker type — no deployer for the pair (e.g.
+// L2↔L2 under native bridges), or no bridge that can safely carry the accounting token (USDC needs CCIP).
 function uncoveredPairs(state) {
   var ids = state.chainIds, out = [];
   for (var i = 0; i < ids.length; i++) for (var j = i + 1; j < ids.length; j++) {
-    var ok = bridgesForType(state.suckerType).some(function (br) { return suckerDeployerForBridge(ids[i], ids[j], br); });
-    if (!ok) out.push([ids[i], ids[j]]);
+    var a = ids[i], b = ids[j];
+    var ok = bridgesForType(state.suckerType).some(function (br) {
+      return suckerDeployerForBridge(a, b, br) && tokenMappingFor(a, b, state.accepts, br);
+    });
+    if (!ok) out.push([a, b]);
   }
   return out;
 }
@@ -4490,6 +4507,7 @@ function localTimezoneLabel() {
 
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
+  suckerConfigFor, tokenMappingFor,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
