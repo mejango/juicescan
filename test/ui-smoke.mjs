@@ -326,6 +326,51 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     const lockHidden = await Q(page, '() => document.querySelectorAll(".create-split-lock").length');
     check('split lock shows for fixed duration, hidden for Flexible', lockShown >= 1 && lockHidden === 0, 'shown=' + lockShown + ' hidden=' + lockHidden);
 
+    // 8. Custom accounting-token project invariants (live Base Sepolia — basesep:13 pays/prices in KMAC only).
+    // This is the adversarial fixture for every "assumed ETH-or-USDC" path: header balance symbol, pay-token
+    // list gated on routability, shop price symbol, ruleset base-currency label, and the raw currency-id leak.
+    await page.goto(BASE + '?r=600#basesep:13', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => {
+      const fig = document.querySelector('.detail-head-stats .usd-balance-fig');
+      return fig && fig.textContent.trim() && fig.textContent.trim() !== '…' && fig.textContent.trim() !== '—';
+    }, null, { timeout: 45000 }).catch(() => {});
+    const headerBal = await Q(page, '() => (document.querySelector(".detail-head-stats .usd-balance-fig")||{textContent:""}).textContent.trim()');
+    check('custom-token header balance shows the symbol, not an address', /KMAC/.test(headerBal) && !/0x/i.test(headerBal), 'fig=' + headerBal);
+
+    // Wait for the REFINED token list (the sync default shows ETH/USDC until accounting contexts resolve).
+    // A regression that wrongly offers ETH/USDC still fails below: KMAC would appear alongside them.
+    await page.waitForFunction(() => {
+      const wrap = document.querySelector('.paybox-curr-wrap');
+      return wrap && /KMAC/.test(wrap.textContent);
+    }, null, { timeout: 45000 }).catch(() => {});
+    const payTokens = await Q(page, `() => {
+      const sel = document.querySelector('.paybox-curr-wrap .paybox-select');
+      if (sel) return [...sel.options].map(o => o.textContent.trim());
+      const stat = document.querySelector('.paybox-curr-wrap .paybox-curr-static');
+      return stat ? [stat.textContent.trim()] : [];
+    }`);
+    check('custom-token pay list offers only routable tokens (KMAC, no ETH/USDC)',
+      payTokens.length === 1 && /KMAC/.test(payTokens[0]), JSON.stringify(payTokens));
+
+    await page.waitForFunction(() => document.querySelector('.paybox-shop-price'), null, { timeout: 45000 }).catch(() => {});
+    const shopPrice = await Q(page, '() => (document.querySelector(".paybox-shop-price")||{textContent:""}).textContent.trim()');
+    check('custom-token shop price shows the symbol, not "currency <id>"', /KMAC/.test(shopPrice) && !/currency \d/.test(shopPrice), 'price=' + shopPrice);
+
+    const idLeak = await Q(page, '() => /currency \\d{6,}/.test(document.body.textContent)');
+    check('no raw currency-id string leaks anywhere on the project page', !idLeak);
+
+    await page.goto(BASE + '?r=601#basesep:13/rulesets', { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => [...document.querySelectorAll('*')].some(n => n.children.length === 0 && n.textContent.trim() === 'Base currency'), null, { timeout: 45000 }).catch(() => {});
+    const baseCur = await Q(page, `() => {
+      const key = [...document.querySelectorAll('*')].find(n => n.children.length === 0 && n.textContent.trim() === 'Base currency');
+      const row = key && key.parentElement ? key.parentElement.textContent : '';
+      const issuanceKey = [...document.querySelectorAll('*')].find(n => n.children.length === 0 && n.textContent.trim() === 'Total issuance rate');
+      const issuance = issuanceKey && issuanceKey.parentElement ? issuanceKey.parentElement.textContent : '';
+      return { row, issuance };
+    }`);
+    check('ruleset base currency labels the real currency (KMAC, not ETH)',
+      /KMAC/.test(baseCur.row) && !/ETH/.test(baseCur.row) && /\/ KMAC/.test(baseCur.issuance), JSON.stringify(baseCur));
+
   } catch (e) {
     check('smoke run completed without throwing', false, (e.message || String(e)).split('\n')[0]);
   } finally {
