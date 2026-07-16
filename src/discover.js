@@ -2547,6 +2547,23 @@ function feeWillRoute(chainId, token, decimals) {
   return _feeRouteCache[key];
 }
 
+// Whether the router registry can actually route a pay of `token` into `projectId` right now (direct forward,
+// swap, or cash-out loop). Same fail-soft signal as feeWillRoute: a dead route previews an all-zero ruleset.
+var _payRouteCache = {};
+function routerPayRouteWorks(chainId, projectId, token, decimals) {
+  var registry = routerTerminalFor(chainId);
+  if (!registry) return Promise.resolve(false);
+  var key = Number(chainId) + ':' + String(projectId) + ':' + String(token || '').toLowerCase();
+  if (_payRouteCache[key] === undefined) {
+    _payRouteCache[key] = clientFor(chainId).readContract({
+      address: registry, abi: feePreviewPayAbi, functionName: 'previewPayFor',
+      args: [BigInt(projectId), token, 10n ** BigInt(decimals == null ? 18 : decimals), '0x0000000000000000000000000000000000000001', '0x'],
+    }).then(function (o) { return toBigInt(o[0] && o[0].id) !== 0n; })
+      .catch(function () { return false; });
+  }
+  return _payRouteCache[key];
+}
+
 // `useAllowanceOf` waives its protocol fee when EITHER the project owner or the funds beneficiary is feeless,
 // evaluated against the actual caller. The fee beneficiary does not participate in this decision.
 async function isAllowanceFeeless(chainId, projectId, beneficiary, caller) {
@@ -4052,12 +4069,18 @@ function chainNameOf(cid) {
 // The unit a project's issuance/weight is denominated in — its ruleset baseCurrency (USD or ETH), NOT
 // its accounting token. "625 ART / USD" means 625 tokens per dollar paid.
 function baseUnitLabel(project) {
-  var currency = Number(project && project.metadata && project.metadata.baseCurrency || 1);
-  if (currency === 1) return 'ETH';
-  if (currency === 2) return 'USD';
+  return currencyUnitLabel(project && project.metadata && project.metadata.baseCurrency, project);
+}
+
+// Symbol for any ruleset/pricing currency id: ETH, USD, the project's own accounting token (a custom
+// accounting token's currency is uint32(uint160(token))), or the known-token fallback.
+function currencyUnitLabel(currency, project) {
+  var c = Number(currency || 1);
+  if (c === 1) return 'ETH';
+  if (c === 2) return 'USD';
   var acct = project && project.acctToken;
-  if (acct && acct.currency != null && Number(acct.currency) === currency) return acct.symbol || ('currency ' + currency);
-  return pricingSymbol(currency, 18, project && project.chainId);
+  if (acct && acct.currency != null && Number(acct.currency) === c) return acct.symbol || ('currency ' + c);
+  return pricingSymbol(c, 18, project && project.chainId);
 }
 
 // USD value of a chosen amount of dollars (USDC is $1; ETH needs the live feed).
@@ -5568,24 +5591,32 @@ function renderPayCard(project, cart) {
           return { address: ctx.address, symbol: ctx.symbol, name: ctx.name || '', decimals: Number(ctx.decimals), currency: Number(ctx.currency), viaRouter: false };
         });
         var has = function (a) { return list.some(function (t) { return t.address.toLowerCase() === a.toLowerCase(); }); };
-        // Offer swap currencies only after the Directory verifies the router registry/direct router as one of this
-        // project's terminals. The selected amount still gets a live router preview, which catches missing feeds,
-        // pools, or liquidity before Pay can be submitted.
+        // Offer swap currencies only when the router registry/direct router is one of this project's terminals
+        // AND the router can actually route that token into the project right now. A listed router with no
+        // pool/feed path (e.g. a project accepting only its own custom token) reverts at pay time — offering
+        // ETH/USDC there is a trap, not a convenience.
         if (surface) { state.terminalSurface = surface; state.terminalSurfaceChain = chainId; }
+        var routerCandidates = [];
         if (surface && surface.hasRouter) {
-          if (!has(NATIVE_TOKEN)) list.push({ address: NATIVE_TOKEN, symbol: 'ETH', name: 'Ether', decimals: 18, viaRouter: true });
-          if (usdc && !has(usdc)) list.push({ address: usdc, symbol: 'USDC', name: 'USD Coin', decimals: 6, viaRouter: true });
+          if (!has(NATIVE_TOKEN)) routerCandidates.push({ address: NATIVE_TOKEN, symbol: 'ETH', name: 'Ether', decimals: 18, viaRouter: true });
+          if (usdc && !has(usdc)) routerCandidates.push({ address: usdc, symbol: 'USDC', name: 'USD Coin', decimals: 6, viaRouter: true });
         }
-        _tokenCache[chainId] = list;
-        state.contextsReady = true;
-        state.contextsError = false;
-        state.tokens = list;
-        // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
-        // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
-        state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
-        renderTerminalNotice();
-        if (selectedTierIds().length) refreshNftCheckoutRoutes();
-        else { rebuildCurrency(); schedulePreview(); }
+        return Promise.all(routerCandidates.map(function (cand) {
+          return routerPayRouteWorks(chainId, project.id, cand.address, cand.decimals).then(function (ok) { return ok ? cand : null; });
+        })).then(function (routable) {
+          if (state.chainId !== chainId) return;
+          routable.filter(Boolean).forEach(function (cand) { list.push(cand); });
+          _tokenCache[chainId] = list;
+          state.contextsReady = true;
+          state.contextsError = false;
+          state.tokens = list;
+          // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
+          // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
+          state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
+          renderTerminalNotice();
+          if (selectedTierIds().length) refreshNftCheckoutRoutes();
+          else { rebuildCurrency(); schedulePreview(); }
+        });
       }).catch(function () { if (state.chainId === chainId) { state.contextsError = true; renderTerminalNotice(); } });
   }
 
@@ -8671,17 +8702,18 @@ function activityRowFromEvent(event, project) {
 var WEIGHT_CUT_DEN = 1000000000; // 1e9
 
 // Full decoded ruleset rows grouped by section. r = ruleset tuple, m = decoded metadata tuple.
-function rulesetRows(r, m) {
+function rulesetRows(r, m, project) {
+  var baseUnit = currencyUnitLabel(m.baseCurrency, project);
   return [
     ['CYCLE', 'Duration', Number(r.duration) ? formatDuration(r.duration) : 'Not set'],
     ['CYCLE', 'Start time', formatStartTime(r.start)],
     ['CYCLE', 'Rule change deadline', (r.approvalHook && r.approvalHook !== ZERO_ADDRESS) ? truncAddr(r.approvalHook) : 'No deadline'],
-    ['TOKEN', 'Total issuance rate', (Number(r.weight) === 0 ? '0' : formatAmount(r.weight, 18)) + ' / ' + (Number(m.baseCurrency) === 2 ? 'USD' : 'ETH')],
+    ['TOKEN', 'Total issuance rate', (Number(r.weight) === 0 ? '0' : formatAmount(r.weight, 18)) + ' / ' + baseUnit],
     ['TOKEN', 'Reserved rate', percentFromRuleset(m.reservedPercent)],
     ['TOKEN', 'Issuance cut percent', (Number(r.weightCutPercent) / 1e7).toFixed(2) + '%'],
     ['TOKEN', 'Cash out tax rate', percentFromRuleset(m.cashOutTaxRate)],
     ['TOKEN', 'Cash outs use total surplus', m.useTotalSurplusForCashOuts ? 'Enabled' : 'Disabled'],
-    ['TOKEN', 'Base currency', Number(m.baseCurrency) === 2 ? 'USD' : 'ETH'],
+    ['TOKEN', 'Base currency', baseUnit],
     ['TOKEN', 'Owner token minting', m.allowOwnerMinting ? 'Enabled' : 'Disabled'],
     ['TOKEN', 'Token transfers', m.pauseCreditTransfers ? 'Disabled' : 'Enabled'],
     ['OTHER RULES', 'Payments to this project', m.pausePay ? 'Disabled' : 'Enabled'],
@@ -8732,11 +8764,11 @@ function normalizeUpcomingRuleset(res) {
   return null;
 }
 
-function ruleChangeRows(curR, curM, nextR, nextM) {
+function ruleChangeRows(curR, curM, nextR, nextM, project) {
   if (!curR || !curM || !nextR || !nextM) return [];
   try {
-    var curRows = rulesetRows(curR, curM);
-    var nextRows = rulesetRows(nextR, nextM);
+    var curRows = rulesetRows(curR, curM, project);
+    var nextRows = rulesetRows(nextR, nextM, project);
     var out = [];
     nextRows.forEach(function (row, i) {
       if (!curRows[i] || row[1] === 'Start time') return;
@@ -8750,7 +8782,7 @@ function upcomingRuleChangeInfo(project, res) {
   var up = normalizeUpcomingRuleset(res);
   if (!up || !project || !project.ruleset || !project.metadata) return null;
   if (String(up.r.id) === String(project.ruleset.id)) return null;
-  var changes = ruleChangeRows(project.ruleset, project.metadata, up.r, up.m);
+  var changes = ruleChangeRows(project.ruleset, project.metadata, up.r, up.m, project);
   if (!changes.length) return null;
   return { r: up.r, m: up.m, changes: changes };
 }
@@ -8793,7 +8825,7 @@ function renderRulesetsFundsSection(project) {
   }
   var cur = { r: project.ruleset, m: project.metadata };
   var upcoming = null; // {r, m} once fetched
-  var curRows = rulesetRows(cur.r, cur.m);
+  var curRows = rulesetRows(cur.r, cur.m, project);
 
   // Per-cycle funds-access limits (payout limit + surplus allowance), keyed by ruleset id and cached
   // so stepping back and forth doesn't re-read. Config is per-ruleset, so it tracks the displayed cycle.
@@ -8923,7 +8955,7 @@ function renderRulesetsFundsSection(project) {
 
     // Rules detail (with diff vs current when not the current cycle).
     rulesBox.innerHTML = '';
-    var rows = rulesetRows(v.r, v.m);
+    var rows = rulesetRows(v.r, v.m, project);
     // Group rows by section. Sections are placed into two columns by NAME (not round-robin) so the
     // split sub-sections sit with their parents: RESERVED TOKEN SPLITS under TOKEN, PAYOUT SPLITS under
     // FUNDS ACCESS. A single full-width list would strand each value ~1500px from its label.
@@ -9098,7 +9130,7 @@ function renderRulesetsFundsSection(project) {
         });
         sel.addEventListener('change', function () {
           var cid = Number(sel.value);
-          if (chainRs[cid]) { cur = chainRs[cid]; curRows = rulesetRows(cur.r, cur.m); offset = 0; upcoming = null; render(); }
+          if (chainRs[cid]) { cur = chainRs[cid]; curRows = rulesetRows(cur.r, cur.m, project); offset = 0; upcoming = null; render(); }
         });
         chainCtl.appendChild(sel);
       }
