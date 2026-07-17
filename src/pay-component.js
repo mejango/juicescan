@@ -219,7 +219,7 @@ export function renderPayComponent() {
     var amountRow = el('div', 'pay-amount-row');
 
     var amtInput = el('input', 'pay-amount-input');
-    amtInput.type = 'number';
+    amtInput.type = 'number'; amtInput.step = 'any'; // decimals valid; default step (1) would mark fractional amounts invalid
     amtInput.placeholder = '0';
     amtInput.value = state.amount || '1';
     amtInput.addEventListener('input', function() {

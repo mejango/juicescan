@@ -6430,7 +6430,7 @@ function renderPayCard(project, cart) {
   var amountRow = el('div', 'paybox-amount-row');
   var field = el('div', 'paybox-field');
   var amtInput = el('input', 'paybox-amount');
-  amtInput.type = 'number';
+  amtInput.type = 'number'; amtInput.step = 'any'; // decimals are valid; without step the default (1) marks any fractional amount invalid
   amtInput.placeholder = '0.00';
   amtInput.addEventListener('input', function () { state.amount = amtInput.value.trim(); schedulePreview(); });
   field.appendChild(amtInput);
@@ -12712,7 +12712,7 @@ function buildPayoutsModal(project, acctKind) {
   var amountLabel = el('div', 'modal-label'); amountLabel.textContent = 'Amount'; wrap.appendChild(amountLabel);
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field ops-field--grow');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; amt.disabled = true; field.appendChild(amt);
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.step = 'any'; amt.placeholder = '0.00'; amt.disabled = true; field.appendChild(amt);
   var maxBtn = el('button', 'lp-max'); maxBtn.textContent = 'Max'; field.appendChild(maxBtn);
   var unit = el('span', 'ops-unit'); unit.textContent = '…'; field.appendChild(unit);
   inRow.appendChild(field); wrap.appendChild(inRow);
@@ -12949,7 +12949,7 @@ function buildUseAllowanceModal(project, acctKind) {
   var amountLabel = el('div', 'modal-label'); amountLabel.textContent = 'Amount'; wrap.appendChild(amountLabel);
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field ops-field--grow');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; amt.disabled = true; field.appendChild(amt);
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.step = 'any'; amt.placeholder = '0.00'; amt.disabled = true; field.appendChild(amt);
   var maxBtn = el('button', 'lp-max'); maxBtn.textContent = 'Max'; field.appendChild(maxBtn);
   var unit = el('span', 'ops-unit'); unit.textContent = '…'; field.appendChild(unit);
   inRow.appendChild(field); wrap.appendChild(inRow);
@@ -18834,7 +18834,7 @@ function buildCashOutModal(project, requestClose) {
   var availLine = el('div', 'modal-balance'); wrap.appendChild(availLine);
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; field.appendChild(amt);
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.step = 'any'; amt.placeholder = '0.00'; field.appendChild(amt);
   var unit = el('span', 'ops-unit'); unit.textContent = sym; field.appendChild(unit);
   inRow.appendChild(field);
   wrap.appendChild(inRow);
@@ -19565,7 +19565,7 @@ function buildLoanModal(project, requestClose) {
 
   var inRow = el('div', 'ops-inrow');
   var field = el('div', 'ops-field');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; field.appendChild(amt);
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.step = 'any'; amt.placeholder = '0.00'; field.appendChild(amt);
   var unit = el('span', 'ops-unit'); unit.textContent = sym; field.appendChild(unit);
   inRow.appendChild(field);
   wrap.appendChild(inRow);
@@ -20862,7 +20862,7 @@ function buildMoveModal(project) {
   var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
   var inRow = el('div', 'ops-inrow');
   var amtField = el('div', 'ops-field');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.placeholder = '0.00'; amtField.appendChild(amt);
+  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.step = 'any'; amt.placeholder = '0.00'; amtField.appendChild(amt);
   var unit = el('span', 'ops-unit'); unit.textContent = sym; amtField.appendChild(unit);
   inRow.appendChild(amtField);
   wrap.appendChild(inRow);
@@ -22347,11 +22347,11 @@ function buildAddLiquidityModal(project) {
   var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash out floor to the issuance ceiling.'; wrap.appendChild(rnote);
   var rangeRow = el('div', 'ops-rangerow');
   var minField = el('div', 'ops-field ops-field--grow');
-  var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.placeholder = 'Min'; minField.appendChild(minInput);
+  var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.step = 'any'; minInput.placeholder = 'Min'; minField.appendChild(minInput);
   rangeRow.appendChild(minField);
   var toSpan = el('span', 'ops-between'); toSpan.textContent = 'to'; rangeRow.appendChild(toSpan);
   var maxField = el('div', 'ops-field ops-field--grow');
-  var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.placeholder = 'Max'; maxField.appendChild(maxInput);
+  var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.step = 'any'; maxInput.placeholder = 'Max'; maxField.appendChild(maxInput);
   rangeRow.appendChild(maxField);
   wrap.appendChild(rangeRow);
   minInput.addEventListener('input', onRangeChange);
@@ -22365,7 +22365,7 @@ function buildAddLiquidityModal(project) {
   var lbl1 = el('div', 'modal-label'); lbl1.textContent = sym + ' to add'; tokHead.appendChild(lbl1);
   var tokMax = el('button', 'lp-max'); tokMax.textContent = 'Max'; tokHead.appendChild(tokMax);
   var tokField = el('div', 'ops-field ops-field--grow');
-  var tokAmt = el('input', 'ops-amount'); tokAmt.type = 'number'; tokAmt.placeholder = '0.00'; tokField.appendChild(tokAmt);
+  var tokAmt = el('input', 'ops-amount'); tokAmt.type = 'number'; tokAmt.step = 'any'; tokAmt.placeholder = '0.00'; tokField.appendChild(tokAmt);
   var tu = el('span', 'ops-unit'); tu.textContent = sym; tokField.appendChild(tu); tokCol.appendChild(tokField);
 
   var ethCol = el('div', 'lp-add-col'); addGrid.appendChild(ethCol);
@@ -22373,7 +22373,7 @@ function buildAddLiquidityModal(project) {
   var lbl2 = el('div', 'modal-label'); lbl2.textContent = 'ETH to add'; ethHead.appendChild(lbl2);
   var ethMax = el('button', 'lp-max'); ethMax.textContent = 'Max'; ethHead.appendChild(ethMax);
   var ethField = el('div', 'ops-field ops-field--grow');
-  var ethAmt = el('input', 'ops-amount'); ethAmt.type = 'number'; ethAmt.placeholder = '0.00'; ethField.appendChild(ethAmt);
+  var ethAmt = el('input', 'ops-amount'); ethAmt.type = 'number'; ethAmt.step = 'any'; ethAmt.placeholder = '0.00'; ethField.appendChild(ethAmt);
   var eu = el('span', 'ops-unit'); eu.textContent = 'ETH'; ethField.appendChild(eu); ethCol.appendChild(ethField);
 
   var pairNote = el('div', 'modal-balance'); pairNote.style.marginTop = '6px';
