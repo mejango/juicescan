@@ -15767,32 +15767,76 @@ function renderOwnersSplits(project, opts) {
 // into `rows`; record.parse() -> { projectId: bigint, beneficiary: address } (throws on bad input).
 function addSplitRecipientRow(rowsBox, rows, opts) {
   opts = opts || {};
-  // Row reads like the create flow: "Split [%] to [recipient]" (the lead is "Split"/"… and", set by
-  // the caller's updateLeads). The recipient sits in a column box so its ENS hint + chip align under it.
+  // Same shape as the create flow's split row: "Split [%] to [Address|Project|Hook ▾]", with the chosen
+  // type's fields stacked beneath the dropdown in its column. All three field groups are built once and
+  // shown/hidden by type, so per-chain overrides and resolved ENS survive a type switch and back.
   var row = el('div', 'splits-edit-row');
   var lead = el('span', 'splits-edit-lead');
   var pct = el('input', 'splits-edit-pct'); pct.type = 'number'; pct.placeholder = '10'; pct.step = 'any'; pct.min = '0';
   var sign = el('span', 'splits-edit-pctsign'); sign.textContent = '%';
   var toEl = el('span', 'splits-edit-to'); toEl.textContent = 'to';
-  var recip = el('input', 'splits-edit-addr'); recip.type = 'text'; recip.placeholder = '0x…, name.eth, or project ID';
+  var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
+
+  var col = el('div', 'create-split-picker');
+  var head = el('div', 'create-split-pickerhead');
+  var typeSel = el('select', 'field create-input create-split-typesel');
+  [['address', 'Address'], ['project', 'Project'], ['hook', 'Hook']].forEach(function (o) {
+    var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; typeSel.appendChild(op);
+  });
+  head.appendChild(typeSel);
+  // Project ID: inline beside the dropdown for a Project split, or under a "with project" label for a
+  // custom-hook split — the same two placements the create flow uses. The node MOVES between them so its
+  // value and per-chain state survive a type switch.
+  var pidBox = el('div', 'splits-edit-idcol');
+  var pid = el('input', 'field create-split-idnum'); pid.type = 'number'; pid.min = '1'; pid.placeholder = 'ID';
+  pidBox.appendChild(pid);
+  col.appendChild(head);
+
+  function sub(node) { var d = el('div', 'create-split-sub'); d.appendChild(node); col.appendChild(d); return d; }
+
+  // Address / hook-address field (shared: one is a payee, the other a hook contract).
+  var recip = el('input', 'splits-edit-addr'); recip.type = 'text'; recip.placeholder = '0x… or name.eth';
   var ensHint = el('div', 'splits-edit-hint'); ensHint.style.display = 'none';
   var recipBox = el('div', 'splits-edit-recipbox'); recipBox.appendChild(recip); recipBox.appendChild(ensHint);
-  var rm = el('a', 'splits-edit-rm'); rm.href = '#'; rm.textContent = '✕'; rm.title = 'Remove';
-  row.appendChild(lead); row.appendChild(pct); row.appendChild(sign); row.appendChild(toEl); row.appendChild(recipBox); row.appendChild(rm);
-  var wrap = el('div', 'splits-edit-item'); wrap.appendChild(row);
-  var routeRow = el('div', 'splits-edit-benef'); routeRow.style.display = 'none';
+  var recipSub = sub(recipBox);
+
+  // Fund market / Custom — only for reserved-token splits, where the shared LP hook applies.
+  var fmSel = null;
+  if (opts.allowLpHook && opts.lpHookAddr) {
+    fmSel = el('select', 'field create-input create-split-subsel');
+    [['fundmarket', 'Fund market'], ['custom', 'Custom']].forEach(function (o) {
+      var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; fmSel.appendChild(op);
+    });
+    head.appendChild(fmSel); // sits inline right of "Hook", like the create flow
+  }
+  // "with project" — the project a custom hook acts for (create-flow label + placement).
+  var hookPidRow = el('div', 'create-split-pickerhead');
+  var hookPidLabel = el('span', 'create-split-sublabel'); hookPidLabel.textContent = 'with project';
+  hookPidRow.appendChild(hookPidLabel);
+  col.appendChild(hookPidRow);
+  var lpHint = el('div', 'splits-edit-hint splits-edit-hint--prose'); lpHint.style.display = 'none';
+  lpHint.textContent = 'Pools splits tokens into a Uniswap V4 position. Trading fees route back to your project.';
+  col.appendChild(lpHint);
+
+  // Route (project only): pay the project (mints its tokens) or just add to its balance.
   var routeSel = el('select', 'field create-input');
   [['pay', 'Pay project | mint its tokens'], ['balance', 'Add to project balance | mint none']].forEach(function (o) {
     var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; routeSel.appendChild(op);
   });
-  routeRow.appendChild(routeSel);
-  var benefRow = el('div', 'splits-edit-benef'); benefRow.style.display = 'none';
-  var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… token beneficiary for that project';
-  benefRow.appendChild(benef);
-  var benefHint = el('div', 'splits-edit-hint'); benefRow.appendChild(benefHint);
-  recipBox.appendChild(routeRow); // under the recipient field, in its column
-  recipBox.appendChild(benefRow);
-  var ensAddr = null; // resolved address for the current ENS input
+  var routeSub = sub(routeSel);
+
+  // Beneficiary (project: destination-token beneficiary; hook: passed through to the hook).
+  var benefLabel = el('div', 'create-split-sublabel'); benefLabel.textContent = 'token beneficiary';
+  col.appendChild(benefLabel);
+  var benef = el('input', 'splits-edit-addr'); benef.type = 'text'; benef.placeholder = '0x… or name.eth';
+  var benefHint = el('div', 'splits-edit-hint');
+  var benefBox = el('div', 'splits-edit-recipbox'); benefBox.appendChild(benef); benefBox.appendChild(benefHint);
+  var benefSub = sub(benefBox);
+
+  row.appendChild(lead); row.appendChild(pct); row.appendChild(sign); row.appendChild(toEl); row.appendChild(col); row.appendChild(rm);
+  var wrap = el('div', 'splits-edit-item'); wrap.appendChild(row);
+
+  var ensAddr = null; // resolved address for the current recipient input
   function isEnsName(v) { return v.indexOf('.') !== -1 && !isAddr(v) && !/^[0-9]+$/.test(v); }
   function recipientValueOf() {
     var v = (recip.value || '').trim();
@@ -15801,7 +15845,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
       if (!ensAddr) throw new Error(v + ' hasn’t resolved to an address yet');
       return ensAddr;
     }
-    throw new Error('Enter a 0x address or ENS name');
+    throw new Error(rec.type === 'hook' ? 'Enter the split hook’s 0x address' : 'Enter a 0x address or ENS name');
   }
   var recipPerChain = makePerChainAddressControl(opts.chains || [], recipientValueOf, {
     label: 'Recipient',
@@ -15811,24 +15855,71 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
   });
   recipBox.appendChild(recipPerChain.node);
   var benefValueOf = attachAddressRecognition(benef, benefHint, opts.chainId || 1, {
-    label: 'Project token beneficiary',
+    label: 'Token beneficiary',
     projectId: opts.projectId,
     projectSymbol: opts.projectSymbol || opts.sym,
   });
   var benefPerChain = makePerChainAddressControl(opts.chains || [], benefValueOf, {
-    label: 'Project token beneficiary',
+    label: 'Token beneficiary',
     defaultRaw: function () { return (benef.value || '').trim(); },
     projectId: opts.projectId,
     projectSymbol: opts.projectSymbol || opts.sym,
   });
-  benefRow.appendChild(benefPerChain.node);
+  benefBox.appendChild(benefPerChain.node);
+
+  // Split lock — create-flow parity: only meaningful inside a fixed-duration ruleset.
+  var lockDate = null, lockCb = null, lockWrap = null, lockNote = null;
+  if (opts.lockAllowed) {
+    lockWrap = el('div', 'splits-edit-lockrow');
+    var lockLbl = el('label', 'splits-edit-lockcheck');
+    lockCb = document.createElement('input'); lockCb.type = 'checkbox';
+    lockLbl.appendChild(lockCb);
+    var lockTxt = el('span', ''); lockTxt.textContent = 'Locked'; lockLbl.appendChild(lockTxt);
+    lockWrap.appendChild(lockLbl);
+    lockDate = document.createElement('input'); lockDate.type = 'date'; lockDate.className = 'field splits-edit-lockdate'; lockDate.style.display = 'none';
+    lockDate.min = new Date().toISOString().slice(0, 10); // a lock in the past is meaningless
+    lockWrap.appendChild(lockDate);
+    lockNote = el('div', 'splits-edit-hint splits-edit-hint--prose'); lockNote.style.display = 'none';
+    lockNote.textContent = 'Locked until this date — the split can’t be edited or removed for the rest of this ruleset.';
+    lockWrap.appendChild(lockNote);
+    lockCb.addEventListener('change', function () {
+      if (lockCb.checked) {
+        var span = Math.min(Number(opts.lockSpanSeconds) || 2592000, 315360000); // default to this ruleset's end, capped ~10y
+        rec._lockTs = rec._lockTs || (Math.floor(Date.now() / 1000) + span);
+        lockDate.value = new Date(rec._lockTs * 1000).toISOString().slice(0, 10);
+        lockDate.style.display = ''; lockNote.style.display = '';
+      } else { rec._lockTs = 0; lockDate.style.display = 'none'; lockNote.style.display = 'none'; }
+      if (opts.onChange) opts.onChange();
+    });
+    lockDate.addEventListener('change', function () {
+      rec._lockTs = lockDate.value ? Math.max(0, Math.floor(Date.parse(lockDate.value + 'T00:00:00Z') / 1000)) : 0;
+    });
+    wrap.appendChild(lockWrap);
+  }
+
+  function isFundMarket() { return rec.type === 'hook' && fmSel && fmSel.value === 'fundmarket'; }
   function refresh() {
+    var t = rec.type;
+    var hookCustom = t === 'hook' && !isFundMarket();
+    // Park the shared ID field where this type wants it: inline for Project, under "with project" for Hook.
+    if (t === 'project') { if (pidBox.parentNode !== head) head.appendChild(pidBox); }
+    else if (hookCustom) { if (pidBox.parentNode !== hookPidRow) hookPidRow.appendChild(pidBox); }
+    pidBox.style.display = (t === 'project' || hookCustom) ? '' : 'none';
+    hookPidRow.style.display = hookCustom ? '' : 'none';
+    recipSub.style.display = (t === 'address' || hookCustom) ? '' : 'none';
+    recip.placeholder = t === 'hook' ? '0x… (split hook address)' : '0x… or name.eth';
+    if (fmSel) fmSel.style.display = t === 'hook' ? '' : 'none';
+    lpHint.style.display = isFundMarket() ? '' : 'none';
+    routeSub.style.display = (t === 'project' && opts.allowProjectBalanceMode) ? '' : 'none';
+    var wantsBenef = (t === 'project' && !(opts.allowProjectBalanceMode && routeSel.value === 'balance')) || hookCustom;
+    benefLabel.style.display = wantsBenef ? '' : 'none';
+    benefSub.style.display = wantsBenef ? '' : 'none';
+    benefLabel.textContent = hookCustom ? 'and beneficiary' : 'destination-token beneficiary';
+    rec.lpHook = isFundMarket();
+
     var v = (recip.value || '').trim();
-    var isProject = /^[0-9]+$/.test(v);
-    routeRow.style.display = isProject && opts.allowProjectBalanceMode ? '' : 'none';
-    benefRow.style.display = isProject && !(opts.allowProjectBalanceMode && routeSel.value === 'balance') ? '' : 'none';
-    recipPerChain.node.style.display = (/^[0-9]+$/.test(v) || rec.lpHook) ? 'none' : '';
-    if (isEnsName(v)) {
+    if (recipSub.style.display === 'none') { ensHint.style.display = 'none'; }
+    else if (isEnsName(v)) {
       ensHint.style.display = ''; ensHint.className = 'splits-edit-hint'; ensHint.textContent = 'Resolving ' + v + '…'; ensAddr = null;
       ensAddressOf(v).then(function (addr) {
         if ((recip.value || '').trim() !== v) return;
@@ -15841,75 +15932,113 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     } else { ensHint.style.display = 'none'; ensAddr = null; }
     syncLpChip();
   }
-  // The "fund market" chip belongs on ONE row: the next open (recipient-less) split — and never once some
-  // row already funds the market. The modal supplies the cross-row rule via opts.lpChipAllowed.
+  // "Fund market" belongs to at most ONE split — the shared LP hook pools this project's reserved tokens
+  // once. Disable the option on other rows when one already uses it.
   function syncLpChip() {
-    if (!lpChip) return;
-    if (rec.lpHook) { lpChip.style.display = ''; return; } // stays visible as the off-toggle
-    var open = !(recip.value || '').trim();
-    var allowed = !opts.lpChipAllowed || opts.lpChipAllowed(rec);
-    lpChip.style.display = (open && allowed) ? '' : 'none';
-    if (lpHint) lpHint.style.display = 'none';
+    if (!fmSel) return;
+    var otherFundsMarket = rows.some(function (r) { return r !== rec && r.lpHook; });
+    var fmOpt = fmSel.options[0];
+    fmOpt.disabled = otherFundsMarket && !rec.lpHook;
+    if (fmOpt.disabled && fmSel.value === 'fundmarket') { fmSel.value = 'custom'; rec.lpHook = false; }
   }
-  // "fund market" chip — reserved-token splits only. Routes this split to the shared zero-fee
-  // JBP6FeeLPSplitHook, which pools the reserved tokens into a Uniswap V4 position for the project's token.
-  var lpChip = null, lpHint = null;
-  if (opts.allowLpHook && opts.lpHookAddr) {
-    lpChip = el('button', 'splits-edit-chip'); lpChip.type = 'button'; lpChip.textContent = 'fund market';
-    lpChip.title = 'Pool reserved tokens into a Uniswap V4 buyback position for your token';
-    lpHint = el('div', 'splits-edit-hint splits-edit-hint--prose'); lpHint.style.display = 'none';
-    lpHint.textContent = 'Pools splits tokens into a Uniswap V4 position. Trading fees route back to your project.';
-    recipBox.appendChild(lpChip); wrap.appendChild(lpHint);
-  }
+
   var rec = {
-    pct: pct, leadEl: lead, orig: (opts.prefill && opts.prefill.orig) || null, lpHook: false,
-    isEmpty: function () { return !rec.lpHook && !(recip.value || '').trim() && !(pct.value || '').trim(); },
-    recipOpen: function () { return !rec.lpHook && !(recip.value || '').trim(); },
+    pct: pct, leadEl: lead, orig: (opts.prefill && opts.prefill.orig) || null,
+    type: 'address', lpHook: false, _lockTs: 0, _lockedRow: false, fixedShare: null,
+    isEmpty: function () {
+      if (rec.lpHook) return false;
+      var main = rec.type === 'project' ? (pid.value || '').trim() : (recip.value || '').trim();
+      return !main && !(pct.value || '').trim();
+    },
+    recipOpen: function () { return !rec.lpHook && rec.type === 'address' && !(recip.value || '').trim(); },
     syncLpChip: function () { syncLpChip(); },
+    lockedUntilValue: function () { return rec._lockTs || 0; },
     hookAddr: function () {
       if (rec.lpHook) return chainValue(function (cid) { return (opts.lpHookAddrForChain && opts.lpHookAddrForChain(cid)) || opts.lpHookAddr || ZERO_ADDRESS; });
-      return ((rec.orig && rec.orig.hook && rec.orig.hook !== ZERO_ADDRESS) ? rec.orig.hook : ZERO_ADDRESS);
+      if (rec.type === 'hook') return recipPerChain.snapshot();
+      return ZERO_ADDRESS;
     },
     parse: function () {
-      // Hook split: the hook keys off the distributing project; projectId/beneficiary are pass-through.
+      // Fund market: the hook keys off the distributing project; projectId/beneficiary are pass-through.
       if (rec.lpHook) return { projectId: 0n, beneficiary: opts.ownerAddr || getAccount() || ZERO_ADDRESS };
-      var v = (recip.value || '').trim();
-      if (isAddr(v) || isEnsName(v)) return { projectId: 0n, beneficiary: recipPerChain.snapshot() };
-      if (/^[0-9]+$/.test(v) && Number(v) > 0) {
-        var addToBalance = !!opts.allowProjectBalanceMode && routeSel.value === 'balance';
-        return { projectId: BigInt(v), beneficiary: addToBalance ? ZERO_ADDRESS : benefPerChain.snapshot(), preferAddToBalance: addToBalance };
+      if (rec.type === 'hook') {
+        recipientValueOf(); // validates the hook address (throws with a clear message)
+        var hp = (pid.value || '').trim();
+        return {
+          projectId: hp && Number(hp) > 0 ? BigInt(hp) : 0n,
+          beneficiary: (benef.value || '').trim() ? benefPerChain.snapshot() : ZERO_ADDRESS,
+        };
       }
-      throw new Error('Enter a 0x address, ENS name, or a project ID');
+      if (rec.type === 'project') {
+        var p = (pid.value || '').trim();
+        if (!(/^[0-9]+$/.test(p) && Number(p) > 0)) throw new Error('Enter a project ID');
+        var addToBalance = !!opts.allowProjectBalanceMode && routeSel.value === 'balance';
+        return { projectId: BigInt(p), beneficiary: addToBalance ? ZERO_ADDRESS : benefPerChain.snapshot(), preferAddToBalance: addToBalance };
+      }
+      return { projectId: 0n, beneficiary: recipPerChain.snapshot() };
     },
   };
-  function setLp(on) {
-    rec.lpHook = on;
-    // When funding the market, the recipient IS the shared LP hook — show it (read-only).
-    if (on) { recip.value = opts.lpHookAddr; recip.readOnly = true; ensHint.style.display = 'none'; benefRow.style.display = 'none'; recipPerChain.node.style.display = 'none'; }
-    else { recip.value = ''; recip.readOnly = false; refresh(); }
-    if (lpChip) lpChip.classList.toggle('active', on);
-    if (lpHint) lpHint.style.display = on ? '' : 'none';
+
+  typeSel.addEventListener('change', function () {
+    rec.type = typeSel.value;
+    // Switching type must not carry the old type's identity across — a wallet address left in the field
+    // would silently become a hook address (or vice-versa).
+    recip.value = ''; pid.value = ''; benef.value = ''; ensAddr = null;
+    recipPerChain.reset && recipPerChain.reset(); benefPerChain.reset && benefPerChain.reset();
+    if (fmSel) fmSel.value = opts.allowLpHook ? 'fundmarket' : 'custom';
+    refresh();
     if (opts.onChange) opts.onChange();
-  }
+  });
   recip.addEventListener('input', function () { refresh(); if (opts.onChange) opts.onChange(); });
+  pid.addEventListener('input', function () { if (opts.onChange) opts.onChange(); });
   routeSel.addEventListener('change', refresh);
-  if (lpChip) lpChip.addEventListener('click', function () { setLp(!rec.lpHook); });
+  if (fmSel) fmSel.addEventListener('change', function () { refresh(); if (opts.onChange) opts.onChange(); });
   if (opts.onChange) pct.addEventListener('input', opts.onChange);
   rm.addEventListener('click', function (e) { e.preventDefault(); var i = rows.indexOf(rec); if (i >= 0) rows.splice(i, 1); wrap.remove(); if (opts.onChange) opts.onChange(); });
   rowsBox.appendChild(wrap);
   rows.push(rec);
+
   if (opts.prefill) {
     var pf = opts.prefill;
-    var isLp = lpChip && pf.orig && pf.orig.hook && opts.lpHookAddr && pf.orig.hook.toLowerCase() === opts.lpHookAddr.toLowerCase();
-    if (isLp) { setLp(true); }
-    else if (Number(pf.projectId) > 0) {
-      recip.value = String(pf.projectId); benef.value = pf.beneficiary || '';
+    var hookAddr = pf.orig && pf.orig.hook && pf.orig.hook !== ZERO_ADDRESS ? pf.orig.hook : null;
+    var isLp = hookAddr && opts.lpHookAddr && hookAddr.toLowerCase() === opts.lpHookAddr.toLowerCase();
+    if (isLp) {
+      rec.type = 'hook'; typeSel.value = 'hook';
+      if (fmSel) fmSel.value = 'fundmarket';
+    } else if (hookAddr) {
+      rec.type = 'hook'; typeSel.value = 'hook';
+      if (fmSel) fmSel.value = 'custom';
+      recip.value = hookAddr;
+      if (Number(pf.projectId) > 0) pid.value = String(pf.projectId);
+      if (pf.beneficiary && pf.beneficiary !== ZERO_ADDRESS) benef.value = pf.beneficiary;
+    } else if (Number(pf.projectId) > 0) {
+      rec.type = 'project'; typeSel.value = 'project';
+      pid.value = String(pf.projectId);
+      benef.value = pf.beneficiary && pf.beneficiary !== ZERO_ADDRESS ? pf.beneficiary : '';
       routeSel.value = pf.orig && pf.orig.preferAddToBalance ? 'balance' : 'pay';
+    } else if (pf.beneficiary && pf.beneficiary !== ZERO_ADDRESS) {
+      rec.type = 'address'; typeSel.value = 'address';
+      recip.value = pf.beneficiary;
     }
-    else if (pf.beneficiary && pf.beneficiary !== ZERO_ADDRESS) recip.value = pf.beneficiary;
     if (pf.pct != null) pct.value = pf.pct;
-    if (!isLp) refresh();
+    // An actively locked split must be resubmitted byte-identical (the contract enforces it) — freeze the
+    // row, reuse its exact stored group share, and say why.
+    if (pf.orig && Number(pf.orig.lockedUntil) > Math.floor(Date.now() / 1000)) {
+      rec._lockedRow = true;
+      rec._lockTs = Number(pf.orig.lockedUntil);
+      rec.fixedShare = Number(pf.orig.percent);
+      pct.readOnly = true; recip.readOnly = true; benef.readOnly = true; pid.readOnly = true;
+      routeSel.disabled = true; typeSel.disabled = true; if (fmSel) fmSel.disabled = true;
+      rm.style.display = 'none';
+      if (lockWrap) lockWrap.style.display = 'none';
+      var lockedNote = el('div', 'splits-edit-hint splits-edit-hint--prose');
+      lockedNote.textContent = 'Locked until ' + new Date(rec._lockTs * 1000).toLocaleDateString() + ' — this split can’t be edited or removed for the rest of this ruleset.';
+      wrap.appendChild(lockedNote);
+    }
+  } else if (fmSel) {
+    fmSel.value = 'fundmarket'; // Hook defaults to the fund market where it's offered (create-flow parity)
   }
+  refresh();
   return rec;
 }
 
@@ -16775,6 +16904,10 @@ function openEditSplitsModal(project, opts) {
     projectId: project.id,
     chainId: project.chainId,
     chains: allChains,
+    // Split locks only mean something inside a fixed-duration ruleset (create-flow rule: a Flexible
+    // ruleset's owner could immediately queue new splits anyway).
+    lockAllowed: Number(project.ruleset && project.ruleset.duration) > 0,
+    lockSpanSeconds: Number(project.ruleset && project.ruleset.duration) || 0,
   };
   function mkRowOpts(extra) { var o = {}; for (var k in rowOpts) o[k] = rowOpts[k]; o.onChange = onRowChange; if (extra) for (var k2 in extra) o[k2] = extra[k2]; return o; }
   var rows = [];
@@ -16860,7 +16993,9 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     var parsed;
     try { parsed = rows[i].parse(); } catch (e) { setStatus('Row ' + (i + 1) + ': ' + e.message, 'error'); return; }
     sumPct += pct;
-    var share = Math.round(pct / limitPct * 1e9);
+    // An actively locked split must keep its exact stored group share — recomputing from the displayed
+    // (rounded) issuance % could drift by a unit and fail the contract's identical-split check.
+    var share = rows[i].fixedShare != null ? rows[i].fixedShare : Math.round(pct / limitPct * 1e9);
     if (accShare + share > 1e9) share = 1e9 - accShare;
     if (share < 0) share = 0;
     accShare += share;
@@ -16872,7 +17007,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
       preferAddToBalance: parsed.preferAddToBalance != null
         ? !!parsed.preferAddToBalance
         : (orig ? !!orig.preferAddToBalance : false),
-      lockedUntil: orig && orig.lockedUntil ? Number(orig.lockedUntil) : 0,
+      lockedUntil: rows[i].lockedUntilValue ? rows[i].lockedUntilValue() : (orig && orig.lockedUntil ? Number(orig.lockedUntil) : 0),
       // hookAddr() returns the LP split hook when the row's "fund market" chip is on, else preserves any
       // existing hook. The fund-market hook is resolved per selected chain.
       hook: (rows[i].hookAddr ? rows[i].hookAddr() : ((orig && orig.hook && orig.hook !== ZERO_ADDRESS) ? orig.hook : ZERO_ADDRESS)),

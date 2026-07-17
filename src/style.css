@@ -5715,3 +5715,12 @@ select.create-input-auto { width: auto; max-width: 100%; }
   }
   .shop-checkout-bar.shown:active { background: var(--c-green-light); color: var(--c-black); }
 }
+
+/* Split lock row (create-flow parity): checkbox + date under the split row. */
+.splits-edit-lockrow { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.splits-edit-lockcheck { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.splits-edit-lockdate { width: auto; font-size: 12px; padding: 4px 8px; }
+
+/* Project-ID field inline beside the split row's type dropdown (create-flow parity). */
+.splits-edit-idcol { display: flex; flex-direction: column; flex: 0 0 auto; }
+.splits-edit-idcol .create-split-idnum { width: 90px; }
