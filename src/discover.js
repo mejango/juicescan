@@ -556,7 +556,7 @@ function nftMintsQuery(withBeneficiary) {
     + 'mintNftEvents(where: { projectId: $projectId, chainId: $chainId, version: $version'
     + (withBeneficiary ? ', beneficiary: $beneficiary' : '') + ' }, '
     + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
-    + 'totalCount items { tierId beneficiary from timestamp txHash tokenId chainId } } }';
+    + 'totalCount items { tierId beneficiary from timestamp txHash tokenId chainId hook } } }';
 }
 var NFT_MINTS_PAGE = 200;
 var NFT_MINTS_MAX = 1000;
