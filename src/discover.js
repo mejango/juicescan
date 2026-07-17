@@ -5187,9 +5187,12 @@ function renderProjectCard(project) {
   meta2.appendChild(addressNode(projectAuthorityAddress(project)));
   card.appendChild(meta2);
 
-  var desc = el('div', 'discover-card-desc');
-  desc.textContent = project.tagline || project.description || 'No description set onchain.';
-  card.appendChild(desc);
+  var descText = project.tagline || project.description || '';
+  if (descText) {
+    var desc = el('div', 'discover-card-desc');
+    desc.textContent = descText;
+    card.appendChild(desc);
+  }
 
   var stats = el('div', 'discover-card-stats');
   stats.appendChild(statItem('Balance', mountUsdBalance(project)));
