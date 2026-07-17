@@ -3018,7 +3018,7 @@ function renderDeploy(state, render) {
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
   var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
   var exportRow = el('div', 'create-predeploy-export-row');
-  var exportBeforeDeploy = el('button', 'create-btn ghost create-predeploy-export');
+  var exportBeforeDeploy = el('button', 'create-io-btn create-predeploy-export');
   exportBeforeDeploy.type = 'button'; exportBeforeDeploy.textContent = 'Export your configuration';
   exportBeforeDeploy.title = 'Save this exact editable project draft before deploying';
   exportBeforeDeploy.disabled = !!state.deploying;

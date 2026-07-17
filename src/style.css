@@ -1994,7 +1994,7 @@ input[type="checkbox"].field {
 .create-sheet > .comp-prompt-foot { padding: 0 22px; }
 /* Pre-deploy export: a small right-aligned action above the full-width Launch button. */
 .create-predeploy-export-row { display: flex; justify-content: flex-end; margin: 14px 0 10px; }
-.create-predeploy-export { font-size: 12px; padding: 6px 12px; }
+.create-predeploy-export { font-size: 12px; }
 
 /* "On [Mainnets ▾]" row — the network dropdown sits inline with the label, pay-box style. */
 .create-net-row { display: flex; align-items: baseline; gap: 8px; margin-top: 18px; }
