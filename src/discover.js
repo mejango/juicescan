@@ -560,15 +560,31 @@ function nftMintsQuery(withBeneficiary) {
 }
 var NFT_MINTS_PAGE = 200;
 var NFT_MINTS_MAX = 1000;
+// Per-chain project IDs for a project (linked deployments can have DIFFERENT ids per chain — the detail
+// page's `project.chains` only carries {id,name} and assumes same-id, so resolve the real map from the
+// sucker group). Returns Promise<{chainId: projectId}>, always including the home (chainId,projectId).
+function projectIdByChain(project) {
+  return resolveSplitProject(Number(project.id), Number(project.chainId))
+    .then(function (info) { return (info && info.byChain) || null; })
+    .catch(function () { return null; })
+    .then(function (byChain) {
+      var map = {}; map[Number(project.chainId)] = Number(project.id);
+      if (byChain) Object.keys(byChain).forEach(function (k) { map[Number(k)] = Number(byChain[k]); });
+      return map;
+    });
+}
 // All store-item purchases for a project (optionally filtered to one beneficiary), across its chains.
-// Paginated + capped; returns { rows, total, capped }.
+// Paginated + capped; returns { rows, total, capped }. Uses each chain's OWN project id (see projectIdByChain).
 function fetchNftMints(project, beneficiary) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
   var query = nftMintsQuery(!!beneficiary);
+  return projectIdByChain(project).then(function (idByChain) {
   return Promise.all(chains.map(function (c) {
+    var localId = idByChain[Number(c.id)];
+    if (!localId) return Promise.resolve({ rows: [], total: 0, chainId: c.id }); // project not on this chain
     var rows = [], total = 0, offset = 0;
     function page() {
-      var vars = { projectId: Number(project.id), chainId: Number(c.id), version: BENDYSTRAW_VERSION, limit: NFT_MINTS_PAGE, offset: offset };
+      var vars = { projectId: Number(localId), chainId: Number(c.id), version: BENDYSTRAW_VERSION, limit: NFT_MINTS_PAGE, offset: offset };
       if (beneficiary) vars.beneficiary = String(beneficiary).toLowerCase();
       return bendystrawQuery(query, vars).then(function (data) {
         var res = (data || {}).mintNftEvents || {};
@@ -583,9 +599,10 @@ function fetchNftMints(project, beneficiary) {
     return page().catch(function () { return { rows: [], total: 0, chainId: c.id, error: true }; });
   })).then(function (perChain) {
     var rows = [], total = 0, capped = false;
-    perChain.forEach(function (r) { rows = rows.concat(r.rows.map(function (m) { return Object.assign({ _chainId: r.chainId }, m); })); total += r.total; if (r.rows.length >= NFT_MINTS_MAX) capped = true; });
+    perChain.forEach(function (r) { rows = rows.concat(r.rows.map(function (m) { return Object.assign({ _chainId: r.chainId, _localProjectId: idByChain[Number(r.chainId)] }, m); })); total += r.total; if (r.rows.length >= NFT_MINTS_MAX) capped = true; });
     rows.sort(function (a, b) { return Number(b.timestamp) - Number(a.timestamp); });
     return { rows: rows, total: total, capped: capped };
+  });
   });
 }
 
@@ -18302,7 +18319,8 @@ function feeRevnetIdOf(chainId, dataHook) {
 }
 
 // The connected wallet's currently-owned store items on a chain: mint events give candidate token IDs,
-// then ownerOf() confirms they weren't transferred/burned. Returns [{ tokenId, tierId, hook }].
+// then ownerOf() confirms they weren't transferred/burned. Carries the chain's OWN project id (linked
+// deployments differ per chain). Returns [{ tokenId, tierId, hook, localProjectId }].
 function fetchOwnedItems(project, chainId, wallet) {
   return fetchNftMints(project, wallet).then(function (res) {
     var onChain = res.rows.filter(function (m) { return Number(m._chainId || chainId) === Number(chainId) && m.tokenId; });
@@ -18310,7 +18328,7 @@ function fetchOwnedItems(project, chainId, wallet) {
     var client = clientFor(chainId);
     return Promise.all(onChain.map(function (m) {
       return client.readContract({ address: m.hook, abi: ownerOfAbi, functionName: 'ownerOf', args: [BigInt(m.tokenId)] })
-        .then(function (owner) { return (owner && owner.toLowerCase() === wallet.toLowerCase()) ? { tokenId: String(m.tokenId), tierId: Number(m.tierId), hook: m.hook } : null; })
+        .then(function (owner) { return (owner && owner.toLowerCase() === wallet.toLowerCase()) ? { tokenId: String(m.tokenId), tierId: Number(m.tierId), hook: m.hook, localProjectId: Number(m._localProjectId || project.id) } : null; })
         .catch(function () { return null; });
     })).then(function (arr) { return arr.filter(Boolean); });
   });
@@ -18320,10 +18338,11 @@ function fetchOwnedItems(project, chainId, wallet) {
 // cashOutCount=0 (fungible tokens must NOT be co-redeemed) and metadata carrying the token IDs. No ERC-721
 // approval — the hook burns its own tokens after verifying ownership. See JB721Hook.afterCashOutRecordedWith.
 function buildRedeemItemsModal(project, requestClose) {
-  var pid = BigInt(project.id);
   var wrap = el('div', 'modal-body');
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
-  var state = { chainId: chains[0].id, owned: null, selected: {}, idTarget: null, acct: null, net: null, taxRate: null, feeless: null, feeFree: 0n, hook: null };
+  // localPid = the project's id on the SELECTED chain (linked deployments differ per chain); set from the
+  // owned items' verified `localProjectId` so preview/redeem never target a guessed project on that chain.
+  var state = { chainId: chains[0].id, owned: null, selected: {}, idTarget: null, acct: null, net: null, taxRate: null, feeless: null, feeFree: 0n, hook: null, localPid: null };
 
   var desc = el('div', 'modal-balance'); desc.textContent = 'Redeem your items to burn them for a share of the project’s surplus. A cash out tax may apply.'; wrap.appendChild(desc);
 
@@ -18384,6 +18403,7 @@ function buildRedeemItemsModal(project, requestClose) {
       if (!wrap.isConnected || state.chainId == null) return;
       state.owned = owned;
       state.hook = owned[0] && owned[0].hook;
+      state.localPid = owned[0] ? owned[0].localProjectId : null; // the project's id on THIS chain
       // Default: everything selected.
       state.selected = {}; owned.forEach(function (o) { state.selected[o.tokenId] = true; });
       renderItems(_names);
@@ -18392,7 +18412,7 @@ function buildRedeemItemsModal(project, requestClose) {
   }
 
   function onChainChange() {
-    state.owned = null; state.selected = {}; state.idTarget = null; state.acct = null; state.net = null; state.hook = null;
+    state.owned = null; state.selected = {}; state.idTarget = null; state.acct = null; state.net = null; state.hook = null; state.localPid = null;
     preview.textContent = ''; btn.disabled = true; ++previewSeq;
     loadItems();
   }
@@ -18404,23 +18424,24 @@ function buildRedeemItemsModal(project, requestClose) {
     var acct = getAccount && getAccount();
     var ids = selectedTokenIds();
     state.net = null; btn.disabled = true;
-    if (!acct || !ids.length || !state.hook) { preview.textContent = ids.length ? '' : (state.owned && state.owned.length ? 'Select items to redeem.' : ''); return; }
+    if (!acct || !ids.length || !state.hook || !state.localPid) { preview.textContent = ids.length ? '' : (state.owned && state.owned.length ? 'Select items to redeem.' : ''); return; }
     preview.textContent = 'Estimating…';
     var cid = state.chainId;
+    var localPid = BigInt(state.localPid);
     var terminal = getAddress('JBMultiTerminal', cid);
     if (!terminal) { preview.textContent = 'No terminal on this chain.'; return; }
     // idTarget for THIS chain's hook (a delegatecall clone reads back the shared implementation address).
     var idTargetP = state.idTarget ? Promise.resolve(state.idTarget)
       : clientFor(cid).readContract({ address: state.hook, abi: HOOK_METADATA_ID_TARGET_ABI, functionName: 'METADATA_ID_TARGET', args: [] });
-    Promise.all([idTargetP, resolveAcctToken(cid, pid).catch(function () { return null; })]).then(function (r) {
+    Promise.all([idTargetP, resolveAcctToken(cid, localPid).catch(function () { return null; })]).then(function (r) {
       if (seq !== previewSeq) return null;
       state.idTarget = r[0]; state.acct = r[1];
       if (!state.acct) { preview.textContent = 'Could not resolve the reclaim token.'; return null; }
       var metadata = buildTierCashOutMetadata(state.idTarget, ids);
       return Promise.all([
-        clientFor(cid).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [acct, pid, 0n, state.acct.address, acct, metadata] }).catch(function () { return null; }),
-        isFeelessAddress(cid, acct, project.id),
-        read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, state.acct.address]).then(toBigInt).catch(function () { return 0n; }),
+        clientFor(cid).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [acct, localPid, 0n, state.acct.address, acct, metadata] }).catch(function () { return null; }),
+        isFeelessAddress(cid, acct, state.localPid),
+        read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [localPid, state.acct.address]).then(toBigInt).catch(function () { return 0n; }),
       ]).then(function (res) {
         if (seq !== previewSeq) return;
         var pc = res[0];
@@ -18445,7 +18466,7 @@ function buildRedeemItemsModal(project, requestClose) {
     var ids = selectedTokenIds();
     if (!acct) { status.textContent = 'Connect a wallet.'; return; }
     if (!ids.length) { status.textContent = 'Select at least one item.'; return; }
-    if (state.net == null || state.net <= 0n || !state.acct || !state.idTarget) { status.textContent = 'Preview still loading…'; return; }
+    if (state.net == null || state.net <= 0n || !state.acct || !state.idTarget || !state.localPid) { status.textContent = 'Preview still loading…'; return; }
     var cid = state.chainId;
     var terminal = getAddress('JBMultiTerminal', cid);
     var reclaimToken = state.acct.address;
@@ -18455,7 +18476,7 @@ function buildRedeemItemsModal(project, requestClose) {
     btn.disabled = true; status.textContent = '';
     executeTransaction({
       chainId: cid, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
-      args: [acct, pid, 0n, reclaimToken, minReclaimed, acct, metadata],
+      args: [acct, BigInt(state.localPid), 0n, reclaimToken, minReclaimed, acct, metadata],
       onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
       onSuccess: function () {
         status.classList.remove('pending');
