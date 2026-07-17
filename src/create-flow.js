@@ -3007,19 +3007,7 @@ function renderDeploy(state, render) {
 
   var bad = isRev ? -1 : badStageIndex(state); // revnets have no per-stage durations to validate
 
-  // Mainnet/testnet — chosen here, just before launching. Remaps the selected chains to that network.
-  var netField = el('div', 'create-field'); netField.style.marginTop = '14px';
-  var netLbl = el('label', 'create-label'); netLbl.textContent = 'Deploy to'; netField.appendChild(netLbl);
-  var netSel = el('select', 'field create-input'); netSel.style.width = 'auto'; netSel.style.minWidth = '0';
-  [['mainnet', 'Mainnet'], ['testnet', 'Testnet']].forEach(function (o) { var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (state.network === o[0]) op.selected = true; netSel.appendChild(op); });
-  netSel.addEventListener('change', function () {
-    state.network = netSel.value;
-    state.chainIds = state.chainIds.map(function (id) { return actualChainId(canonChainId(id), state.network); });
-    render();
-  });
-  netField.appendChild(netSel);
-  wrap.appendChild(netField);
-
+  // Network is chosen on the Flavor step's "On [Mainnets ▾]" toggle — no separate picker here.
   var needTicker = isRev && !state.details.ticker;
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
@@ -3029,12 +3017,14 @@ function renderDeploy(state, render) {
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
   var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
-  var exportBeforeDeploy = el('button', 'create-btn ghost big create-predeploy-export');
-  exportBeforeDeploy.type = 'button'; exportBeforeDeploy.textContent = 'Export .jb';
+  var exportRow = el('div', 'create-predeploy-export-row');
+  var exportBeforeDeploy = el('button', 'create-btn ghost create-predeploy-export');
+  exportBeforeDeploy.type = 'button'; exportBeforeDeploy.textContent = 'Export your configuration';
   exportBeforeDeploy.title = 'Save this exact editable project draft before deploying';
   exportBeforeDeploy.disabled = !!state.deploying;
   exportBeforeDeploy.addEventListener('click', function () { exportDraftFile(state); });
-  wrap.appendChild(exportBeforeDeploy);
+  exportRow.appendChild(exportBeforeDeploy);
+  wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
     launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || bad !== -1;

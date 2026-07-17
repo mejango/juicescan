@@ -299,8 +299,8 @@ const Q = (page, fn) => page.evaluate(new Function('return (' + fn + ')()'));
     await freshCreateFlow(page, 505);
     await Q(page, '() => { const d=[...document.querySelectorAll(".create-step-label")].find(x=>/Deploy/i.test(x.textContent||"")); if(d)d.click(); return 1; }');
     await page.waitForTimeout(1100);
-    const deployNotes = await Q(page, '() => { const launch=[...document.querySelectorAll(".create-step button")].find(b=>/^Launch|^Deploy/.test(b.textContent)); const hasExport=[...document.querySelectorAll(".create-step button")].some(b=>b.textContent.trim()==="Export .jb"); const notes=[...document.querySelectorAll(".create-step .create-hint, .create-step .create-banner")].map(h=>h.textContent.trim()).filter(Boolean); return { disabled: launch?launch.disabled:null, hasExport, hasNameReason: notes.some(n=>/project name/i.test(n)), hasTosReason: notes.some(n=>/box above/i.test(n)) }; }');
-    check('deploy launch button disabled with explained reasons + pre-deploy .jb export', deployNotes.disabled === true && deployNotes.hasExport && deployNotes.hasNameReason && deployNotes.hasTosReason, JSON.stringify(deployNotes));
+    const deployNotes = await Q(page, '() => { const launch=[...document.querySelectorAll(".create-step button")].find(b=>/^Launch|^Deploy/.test(b.textContent)); const hasExport=[...document.querySelectorAll(".create-step button")].some(b=>b.textContent.trim()==="Export your configuration"); const notes=[...document.querySelectorAll(".create-step .create-hint, .create-step .create-banner")].map(h=>h.textContent.trim()).filter(Boolean); return { disabled: launch?launch.disabled:null, hasExport, hasNameReason: notes.some(n=>/project name/i.test(n)), hasTosReason: notes.some(n=>/box above/i.test(n)) }; }');
+    check('deploy launch button disabled with explained reasons + pre-deploy configuration export', deployNotes.disabled === true && deployNotes.hasExport && deployNotes.hasNameReason && deployNotes.hasTosReason, JSON.stringify(deployNotes));
 
     // 6. Ruleset approval condition: renamed, offers a Custom address shown inline beside the dropdown.
     await freshCreateFlow(page, 507);
