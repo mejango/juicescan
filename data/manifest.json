@@ -49,20 +49,6 @@
         "11155420": "0x70d28338226e61a442ef516c731d371d13c9c6df"
       }
     },
-    "BannyLPSplitHook": {
-      "singleton": true,
-      "contractName": "JBUniswapV4LPSplitHook",
-      "deploymentName": "BannyLPSplitHook",
-      "addresses": {
-        "1": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "10": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "8453": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "42161": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "84532": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "421614": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "11155111": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62"
-      }
-    },
     "CCIPHelper": {
       "singleton": true,
       "contractName": "CCIPHelper",
@@ -971,6 +957,20 @@
         "11155420": "0x298a775c030adcedb641a89d9047ec9972674e1a"
       }
     },
+    "JBP6FeeLPSplitHook": {
+      "singleton": true,
+      "contractName": "JBUniswapV4LPSplitHook",
+      "deploymentName": "JBP6FeeLPSplitHook",
+      "addresses": {
+        "1": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "10": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "8453": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "42161": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "84532": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "421614": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "11155111": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62"
+      }
+    },
     "JBPayoutSplitGroupLib": {
       "singleton": true,
       "contractName": "JBPayoutSplitGroupLib",
@@ -1229,6 +1229,20 @@
       "contractName": "JBUniswapV4LPSplitHook",
       "deploymentName": "JBUniswapV4LPSplitHook",
       "addresses": {
+        "1": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "10": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "8453": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "42161": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "84532": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "421614": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "11155111": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251"
+      }
+    },
+    "JBUniswapV4LPSplitHook_deprecated2": {
+      "singleton": true,
+      "contractName": "JBUniswapV4LPSplitHook",
+      "deploymentName": "JBUniswapV4LPSplitHook_deprecated2",
+      "addresses": {
         "1": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
         "10": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
         "8453": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
@@ -1242,6 +1256,20 @@
       "singleton": true,
       "contractName": "JBUniswapV4LPSplitHookDeployer",
       "deploymentName": "JBUniswapV4LPSplitHookDeployer",
+      "addresses": {
+        "1": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "10": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "8453": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "42161": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "84532": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "421614": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "11155111": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da"
+      }
+    },
+    "JBUniswapV4LPSplitHookDeployer_deprecated2": {
+      "singleton": true,
+      "contractName": "JBUniswapV4LPSplitHookDeployer",
+      "deploymentName": "JBUniswapV4LPSplitHookDeployer_deprecated2",
       "addresses": {
         "1": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
         "10": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
@@ -1257,13 +1285,13 @@
       "contractName": "JBUniswapV4LPSplitHookMath",
       "deploymentName": "JBUniswapV4LPSplitHookMath",
       "addresses": {
-        "1": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "10": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "8453": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "42161": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "84532": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "421614": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "11155111": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+        "1": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "10": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "8453": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "42161": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "84532": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "421614": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "11155111": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
         "11155420": "0xef2242dc7e8a082ce00c943548e414598896c4f4"
       }
     },

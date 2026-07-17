@@ -4129,7 +4129,7 @@
   "JBSuckerRegistry": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "main",
+    "branch": "agent/native-erc20-mapping-regressions",
     "path": "src/JBSuckerRegistry.sol",
     "startLine": 35,
     "endLine": 1191,
@@ -4568,7 +4568,7 @@
   "JBOptimismSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "main",
+    "branch": "agent/native-erc20-mapping-regressions",
     "path": "src/JBOptimismSucker.sol",
     "startLine": 25,
     "endLine": 169,
@@ -4626,7 +4626,7 @@
   "JBArbitrumSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "main",
+    "branch": "agent/native-erc20-mapping-regressions",
     "path": "src/JBArbitrumSucker.sol",
     "startLine": 33,
     "endLine": 391,
@@ -4743,7 +4743,7 @@
   "JBCCIPSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "main",
+    "branch": "agent/native-erc20-mapping-regressions",
     "path": "src/JBCCIPSucker.sol",
     "startLine": 36,
     "endLine": 399,
@@ -4857,7 +4857,7 @@
   "JBBaseSucker": {
     "repo": "nana-suckers-v6",
     "githubUrl": "https://github.com/Bananapus/nana-suckers-v6",
-    "branch": "main",
+    "branch": "agent/native-erc20-mapping-regressions",
     "path": "src/JBBaseSucker.sol",
     "startLine": 13,
     "endLine": 48,
@@ -10415,7 +10415,7 @@
   "JBUniswapV4LPSplitHook": {
     "repo": "univ4-lp-split-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-    "branch": "main",
+    "branch": "chore/publish-1.3.0-deployment-artifacts",
     "path": "src/JBUniswapV4LPSplitHook.sol",
     "startLine": 68,
     "endLine": 2141,
@@ -11062,7 +11062,7 @@
   "JBUniswapV4LPSplitHookDeployer": {
     "repo": "univ4-lp-split-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-    "branch": "main",
+    "branch": "chore/publish-1.3.0-deployment-artifacts",
     "path": "src/JBUniswapV4LPSplitHookDeployer.sol",
     "startLine": 19,
     "endLine": 178,

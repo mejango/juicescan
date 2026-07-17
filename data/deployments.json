@@ -1,7 +1,7 @@
 {
   "source": "../deploy-all-v6/deployments",
-  "generatedAt": "2026-07-12T01:37:27.843Z",
-  "sourceDigest": "sha256:6b053aee5f34a28cb0886458a70b9757d1a88b576ff6625850f31cd9fbf67ff4",
+  "generatedAt": "2026-07-17T02:47:29.340Z",
+  "sourceDigest": "sha256:899408f69514bf483a93e91f4279f322635c24e0205ea8d62d187667aa6a0941",
   "chains": {
     "1": {
       "id": "1",
@@ -139,86 +139,6 @@
           "transactionHash": "0x140de3aacd4b6fed6ed02c010b032958b1aeda95d476f5bd8f01f3009b59b951",
           "blockNumber": "0x2ad0135",
           "gitCommit": "npm:@bannynet/core-v6@1.0.0",
-          "gitDirty": false
-        }
-      }
-    },
-    "BannyLPSplitHook": {
-      "deploymentName": "BannyLPSplitHook",
-      "contractName": "JBUniswapV4LPSplitHook",
-      "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHook.sol",
-      "abi": "BannyLPSplitHook",
-      "addresses": {
-        "1": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "10": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "8453": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "42161": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "84532": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "421614": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "11155111": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62"
-      },
-      "chains": {
-        "1": {
-          "chain": "ethereum",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-          "file": "../deploy-all-v6/deployments/ethereum/BannyLPSplitHook.json",
-          "transactionHash": "0x742ee3da49a54cbe094aeecb33252f819462df5282ecbf060f9cba3ae0b775e9",
-          "blockNumber": "0x1846527",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
-          "gitDirty": false
-        },
-        "10": {
-          "chain": "optimism",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-          "file": "../deploy-all-v6/deployments/optimism/BannyLPSplitHook.json",
-          "transactionHash": "0x838f995e9be4615597dd647b9d20e7413d10c78683fbfa570df92f381aa03089",
-          "blockNumber": "0x92a1479",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
-          "gitDirty": false
-        },
-        "8453": {
-          "chain": "base",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-          "file": "../deploy-all-v6/deployments/base/BannyLPSplitHook.json",
-          "transactionHash": "0xc686af9908608693e1fadb0b0afee73c5fb8c5982667e11e96dd7366d629b6e6",
-          "blockNumber": "0x2ded2e8",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
-          "gitDirty": false
-        },
-        "42161": {
-          "chain": "arbitrum",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-          "file": "../deploy-all-v6/deployments/arbitrum/BannyLPSplitHook.json",
-          "transactionHash": "0xb6d4cb30b6679319fe5f04ad041c989cae7a488998c57a9d89a3fa79dd26510f",
-          "blockNumber": "0x1c9d0060",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
-          "gitDirty": false
-        },
-        "84532": {
-          "chain": "base_sepolia",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-          "file": "../deploy-all-v6/deployments/base_sepolia/BannyLPSplitHook.json",
-          "transactionHash": "0xcbc923204c4a7c7960fd75fe6746366a81bcb512fc53cc0ebd02b4ef6e2f0e69",
-          "blockNumber": "0x29a5173",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
-          "gitDirty": false
-        },
-        "421614": {
-          "chain": "arbitrum_sepolia",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/BannyLPSplitHook.json",
-          "transactionHash": "0x4652dbb15d7f955b1c0c8b1161cf636f31d1e13997e58e49a3e99c983f77233f",
-          "blockNumber": "0x10ea3950",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
-          "gitDirty": false
-        },
-        "11155111": {
-          "chain": "sepolia",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-          "file": "../deploy-all-v6/deployments/sepolia/BannyLPSplitHook.json",
-          "transactionHash": "0xa6d9e53f53054c81bc03fb0d0a8f59418bdc6056ef29e5f58120e497d39200c7",
-          "blockNumber": "0xaad68f",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
           "gitDirty": false
         }
       }
@@ -5163,6 +5083,86 @@
         }
       }
     },
+    "JBP6FeeLPSplitHook": {
+      "deploymentName": "JBP6FeeLPSplitHook",
+      "contractName": "JBUniswapV4LPSplitHook",
+      "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHook.sol",
+      "abi": "JBP6FeeLPSplitHook",
+      "addresses": {
+        "1": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "10": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "8453": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "42161": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "84532": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "421614": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "11155111": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62"
+      },
+      "chains": {
+        "1": {
+          "chain": "ethereum",
+          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "file": "../deploy-all-v6/deployments/ethereum/JBP6FeeLPSplitHook.json",
+          "transactionHash": "0x742ee3da49a54cbe094aeecb33252f819462df5282ecbf060f9cba3ae0b775e9",
+          "blockNumber": "0x1846527",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "10": {
+          "chain": "optimism",
+          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "file": "../deploy-all-v6/deployments/optimism/JBP6FeeLPSplitHook.json",
+          "transactionHash": "0x838f995e9be4615597dd647b9d20e7413d10c78683fbfa570df92f381aa03089",
+          "blockNumber": "0x92a1479",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "8453": {
+          "chain": "base",
+          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "file": "../deploy-all-v6/deployments/base/JBP6FeeLPSplitHook.json",
+          "transactionHash": "0xc686af9908608693e1fadb0b0afee73c5fb8c5982667e11e96dd7366d629b6e6",
+          "blockNumber": "0x2ded2e8",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "42161": {
+          "chain": "arbitrum",
+          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "file": "../deploy-all-v6/deployments/arbitrum/JBP6FeeLPSplitHook.json",
+          "transactionHash": "0xb6d4cb30b6679319fe5f04ad041c989cae7a488998c57a9d89a3fa79dd26510f",
+          "blockNumber": "0x1c9d0060",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBP6FeeLPSplitHook.json",
+          "transactionHash": "0xcbc923204c4a7c7960fd75fe6746366a81bcb512fc53cc0ebd02b4ef6e2f0e69",
+          "blockNumber": "0x29a5173",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBP6FeeLPSplitHook.json",
+          "transactionHash": "0x4652dbb15d7f955b1c0c8b1161cf636f31d1e13997e58e49a3e99c983f77233f",
+          "blockNumber": "0x10ea3950",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "file": "../deploy-all-v6/deployments/sepolia/JBP6FeeLPSplitHook.json",
+          "transactionHash": "0xa6d9e53f53054c81bc03fb0d0a8f59418bdc6056ef29e5f58120e497d39200c7",
+          "blockNumber": "0xaad68f",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "gitDirty": false
+        }
+      }
+    },
     "JBPayoutSplitGroupLib": {
       "deploymentName": "JBPayoutSplitGroupLib",
       "contractName": "JBPayoutSplitGroupLib",
@@ -6679,6 +6679,86 @@
       "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHook.sol",
       "abi": "JBUniswapV4LPSplitHook",
       "addresses": {
+        "1": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "10": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "8453": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "42161": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "84532": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "421614": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "11155111": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251"
+      },
+      "chains": {
+        "1": {
+          "chain": "ethereum",
+          "address": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+          "file": "../deploy-all-v6/deployments/ethereum/JBUniswapV4LPSplitHook.json",
+          "transactionHash": "0x4324fac64477cf621fb5ed2e518fa6d6b9060da521110f6fd5c029740bd147d2",
+          "blockNumber": "0x185d982",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "10": {
+          "chain": "optimism",
+          "address": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+          "file": "../deploy-all-v6/deployments/optimism/JBUniswapV4LPSplitHook.json",
+          "transactionHash": "0x06b462cea62839ceb6213369daad6d47c0dd6d5ff71a47a026237b55dfa8bdd0",
+          "blockNumber": "0x932d752",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "8453": {
+          "chain": "base",
+          "address": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+          "file": "../deploy-all-v6/deployments/base/JBUniswapV4LPSplitHook.json",
+          "transactionHash": "0xef82a5d3af6ab504712f28b07b64d5e9aefc36dd008571d1cc213b1e9a8579ca",
+          "blockNumber": "0x2e795bd",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "42161": {
+          "chain": "arbitrum",
+          "address": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+          "file": "../deploy-all-v6/deployments/arbitrum/JBUniswapV4LPSplitHook.json",
+          "transactionHash": "0x7af518af72fca35145d9324c6bff58f4974e2a5b0126110c54ad6e0f4f793f7e",
+          "blockNumber": "0x1ce31f1a",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHook.json",
+          "transactionHash": "0xd1eb08d1fb4a31371c1e3229d873001f2a3237a7459cc9954a04300a484b09b7",
+          "blockNumber": "0x2a314a9",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHook.json",
+          "transactionHash": "0x229642f47097052d6db87680ae4cd017b92eec3618cccb290ba874053e82593d",
+          "blockNumber": "0x112e93db",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHook.json",
+          "transactionHash": "0x424462006535f7da47171cf20643df27c64868af93111ab8670af51fd3b41d8b",
+          "blockNumber": "0xac402d",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBUniswapV4LPSplitHook_deprecated2": {
+      "deploymentName": "JBUniswapV4LPSplitHook_deprecated2",
+      "contractName": "JBUniswapV4LPSplitHook",
+      "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHook.sol",
+      "abi": "JBUniswapV4LPSplitHook_deprecated2",
+      "addresses": {
         "1": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
         "10": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
         "8453": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
@@ -6691,7 +6771,7 @@
         "1": {
           "chain": "ethereum",
           "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-          "file": "../deploy-all-v6/deployments/ethereum/JBUniswapV4LPSplitHook.json",
+          "file": "../deploy-all-v6/deployments/ethereum/JBUniswapV4LPSplitHook_deprecated2.json",
           "transactionHash": "0x2231add93558b45c7f8cc08c651e3158bcff32283896895afdae0f5b725c1b2e",
           "blockNumber": "0x1846520",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6700,7 +6780,7 @@
         "10": {
           "chain": "optimism",
           "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-          "file": "../deploy-all-v6/deployments/optimism/JBUniswapV4LPSplitHook.json",
+          "file": "../deploy-all-v6/deployments/optimism/JBUniswapV4LPSplitHook_deprecated2.json",
           "transactionHash": "0xcea16ab7abe62b22aefbe70302ad1574a57831ff2aad867d6b781f7eed7b8337",
           "blockNumber": "0x92a1469",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6709,7 +6789,7 @@
         "8453": {
           "chain": "base",
           "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-          "file": "../deploy-all-v6/deployments/base/JBUniswapV4LPSplitHook.json",
+          "file": "../deploy-all-v6/deployments/base/JBUniswapV4LPSplitHook_deprecated2.json",
           "transactionHash": "0x9a831a25bb6ff1e0a8e69befb35dffb2f92764e14d6175c219f8f5d2542d3d37",
           "blockNumber": "0x2ded2d7",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6718,7 +6798,7 @@
         "42161": {
           "chain": "arbitrum",
           "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-          "file": "../deploy-all-v6/deployments/arbitrum/JBUniswapV4LPSplitHook.json",
+          "file": "../deploy-all-v6/deployments/arbitrum/JBUniswapV4LPSplitHook_deprecated2.json",
           "transactionHash": "0x6309be132870daed4c4b4f2ad82e6f23a6b54eb0d0f1d10fd7ad46a0d1a30606",
           "blockNumber": "0x1c9cffdf",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6727,7 +6807,7 @@
         "84532": {
           "chain": "base_sepolia",
           "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHook.json",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHook_deprecated2.json",
           "transactionHash": "0x79cebc71704143e6a8e47457b124755e55481e8fb04f167bc6e48d240f9faf20",
           "blockNumber": "0x2959240",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6736,7 +6816,7 @@
         "421614": {
           "chain": "arbitrum_sepolia",
           "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHook.json",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHook_deprecated2.json",
           "transactionHash": "0x6aee87db282fba843baef868ea706b76f62ddaad250cc5ebafe0f9b22019d067",
           "blockNumber": "0x10c44e9f",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6745,7 +6825,7 @@
         "11155111": {
           "chain": "sepolia",
           "address": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHook.json",
+          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHook_deprecated2.json",
           "transactionHash": "0x2acb3ebc1498d2f0ae33a8dd353abefec7a3fda4db0a5b4d9224a9419115868a",
           "blockNumber": "0xaa0c7e",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6759,6 +6839,86 @@
       "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHookDeployer.sol",
       "abi": "JBUniswapV4LPSplitHookDeployer",
       "addresses": {
+        "1": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "10": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "8453": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "42161": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "84532": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "421614": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+        "11155111": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da"
+      },
+      "chains": {
+        "1": {
+          "chain": "ethereum",
+          "address": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+          "file": "../deploy-all-v6/deployments/ethereum/JBUniswapV4LPSplitHookDeployer.json",
+          "transactionHash": "0x1f2f5a2a3fc6a1d661493cc08266755669579c6ef17c93e0162f121de9d9edd5",
+          "blockNumber": "0x185d984",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "10": {
+          "chain": "optimism",
+          "address": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+          "file": "../deploy-all-v6/deployments/optimism/JBUniswapV4LPSplitHookDeployer.json",
+          "transactionHash": "0x1cc2072278e0b1abee427705d3704b027b2eb0edbaf50c7716827e16fc90d236",
+          "blockNumber": "0x932d757",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "8453": {
+          "chain": "base",
+          "address": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+          "file": "../deploy-all-v6/deployments/base/JBUniswapV4LPSplitHookDeployer.json",
+          "transactionHash": "0xdb5018db47efc7b6c5e598cc1e0724a78c772bc936058a099492814389cbc563",
+          "blockNumber": "0x2e795c3",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "42161": {
+          "chain": "arbitrum",
+          "address": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+          "file": "../deploy-all-v6/deployments/arbitrum/JBUniswapV4LPSplitHookDeployer.json",
+          "transactionHash": "0x818a4af7b2649ce5f7656502e9a8f043ebc7c76f5eda1f5e6d9e67aee0e2bf4d",
+          "blockNumber": "0x1ce31f45",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHookDeployer.json",
+          "transactionHash": "0x0e5c28c1a0e50f3fe7aff7431940a7d2696a81cf325888af87a534a3b94df48f",
+          "blockNumber": "0x2a314af",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHookDeployer.json",
+          "transactionHash": "0xcc50816afdda6ab9984f96f22e691b7aadb0a67836d3ff14abbd4258a5850e61",
+          "blockNumber": "0x112e9405",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0xee49b9c6938c31c223e49272bb0a3810bc39f3da",
+          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHookDeployer.json",
+          "transactionHash": "0xb5a746b3464cd3d01ddd1f6137b26545387724a716b8ae304ede1f10a7f93697",
+          "blockNumber": "0xac402f",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBUniswapV4LPSplitHookDeployer_deprecated2": {
+      "deploymentName": "JBUniswapV4LPSplitHookDeployer_deprecated2",
+      "contractName": "JBUniswapV4LPSplitHookDeployer",
+      "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHookDeployer.sol",
+      "abi": "JBUniswapV4LPSplitHookDeployer_deprecated2",
+      "addresses": {
         "1": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
         "10": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
         "8453": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
@@ -6771,7 +6931,7 @@
         "1": {
           "chain": "ethereum",
           "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
-          "file": "../deploy-all-v6/deployments/ethereum/JBUniswapV4LPSplitHookDeployer.json",
+          "file": "../deploy-all-v6/deployments/ethereum/JBUniswapV4LPSplitHookDeployer_deprecated2.json",
           "transactionHash": "0xca966ca3562bf1b4ba1534623ab518aa828cf32e9f7c412ef92eb00303238277",
           "blockNumber": "0x1846522",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6780,7 +6940,7 @@
         "10": {
           "chain": "optimism",
           "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
-          "file": "../deploy-all-v6/deployments/optimism/JBUniswapV4LPSplitHookDeployer.json",
+          "file": "../deploy-all-v6/deployments/optimism/JBUniswapV4LPSplitHookDeployer_deprecated2.json",
           "transactionHash": "0xda5d7e06e129e84bd46fa4c22c0850f198bb47aa2ed84d28e2bc1758d8e54b00",
           "blockNumber": "0x92a146e",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6789,7 +6949,7 @@
         "8453": {
           "chain": "base",
           "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
-          "file": "../deploy-all-v6/deployments/base/JBUniswapV4LPSplitHookDeployer.json",
+          "file": "../deploy-all-v6/deployments/base/JBUniswapV4LPSplitHookDeployer_deprecated2.json",
           "transactionHash": "0xcde600e90d8745379610453bcd429a9b6b5a7cee5d43996a0282170516cb6c2a",
           "blockNumber": "0x2ded2dc",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6798,7 +6958,7 @@
         "42161": {
           "chain": "arbitrum",
           "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
-          "file": "../deploy-all-v6/deployments/arbitrum/JBUniswapV4LPSplitHookDeployer.json",
+          "file": "../deploy-all-v6/deployments/arbitrum/JBUniswapV4LPSplitHookDeployer_deprecated2.json",
           "transactionHash": "0x612024c13c8c1842ddec3a6404d8e5f16613c4e57e1b638520a15b5e26883d23",
           "blockNumber": "0x1c9d000a",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6807,7 +6967,7 @@
         "84532": {
           "chain": "base_sepolia",
           "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
-          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHookDeployer.json",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHookDeployer_deprecated2.json",
           "transactionHash": "0x4b52474f802c57340a80b73e535b4bd978f61e7adb162c5b1dbe4d99caa834b3",
           "blockNumber": "0x2959245",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6816,7 +6976,7 @@
         "421614": {
           "chain": "arbitrum_sepolia",
           "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
-          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHookDeployer.json",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHookDeployer_deprecated2.json",
           "transactionHash": "0xd903d96d788ac2d808deddf21751d2882d3817aa2d4c54583b9388647c23ba86",
           "blockNumber": "0x10c44ec9",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6825,7 +6985,7 @@
         "11155111": {
           "chain": "sepolia",
           "address": "0x1b79a25ee77a79469f20c98fa410f85f6027f4cf",
-          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHookDeployer.json",
+          "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHookDeployer_deprecated2.json",
           "transactionHash": "0xf81fae6acedce681f7dac34f5b5336abd43c14b23a457f4dc40ba3e5c96940a7",
           "blockNumber": "0xaa0c80",
           "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
@@ -6839,77 +6999,77 @@
       "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/libraries/JBUniswapV4LPSplitHookMath.sol",
       "abi": "JBUniswapV4LPSplitHookMath",
       "addresses": {
-        "1": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "10": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "8453": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "42161": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "84532": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "421614": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
-        "11155111": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+        "1": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "10": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "8453": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "42161": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "84532": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "421614": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
+        "11155111": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
         "11155420": "0xef2242dc7e8a082ce00c943548e414598896c4f4"
       },
       "chains": {
         "1": {
           "chain": "ethereum",
-          "address": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+          "address": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
           "file": "../deploy-all-v6/deployments/ethereum/JBUniswapV4LPSplitHookMath.json",
-          "transactionHash": "0x36cf0d81fc56097ed03769c3fbabfaddb04d92a4463b924995a07f8983b08c4d",
-          "blockNumber": "0x1827937",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "transactionHash": "0x19f76f6265e15111bc6b9a3a8764505ff48856c275824c921ecc67fd10a18ec2",
+          "blockNumber": "0x185d97f",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "10": {
           "chain": "optimism",
-          "address": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+          "address": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
           "file": "../deploy-all-v6/deployments/optimism/JBUniswapV4LPSplitHookMath.json",
-          "transactionHash": "0xc21f073ccca3576329f9a127bd80ea513de4d94833f0f5d94fcf49d655612792",
-          "blockNumber": "0x91e80e4",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "transactionHash": "0x38a0a4eb8e92a6d1cb7b5ff290b27e48c97a646e089ac8cf890c488a2f1181b3",
+          "blockNumber": "0x932d74c",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "8453": {
           "chain": "base",
-          "address": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+          "address": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
           "file": "../deploy-all-v6/deployments/base/JBUniswapV4LPSplitHookMath.json",
-          "transactionHash": "0xf60fb5ea622815f80893851b47a9e785c848ba7a8ca4e778ad8e9b960ae0cca1",
-          "blockNumber": "0x2d33f53",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "transactionHash": "0xb52409d299daebcb952621a9a317f76df87278cfbac2438cc85348c24d47fcb4",
+          "blockNumber": "0x2e795b7",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "42161": {
           "chain": "arbitrum",
-          "address": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+          "address": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
           "file": "../deploy-all-v6/deployments/arbitrum/JBUniswapV4LPSplitHookMath.json",
-          "transactionHash": "0x6fc1302101d183d9f09f11b20dab7a74e1b3d97b2eb10e839d1e9c6d22fb9ac2",
-          "blockNumber": "0x1c407ab4",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "transactionHash": "0x1c4d1c4414e1d2d87170ddd6e9f275dbbb0f11dac128da7b53c6cf6236d93704",
+          "blockNumber": "0x1ce31eee",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "84532": {
           "chain": "base_sepolia",
-          "address": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+          "address": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
           "file": "../deploy-all-v6/deployments/base_sepolia/JBUniswapV4LPSplitHookMath.json",
-          "transactionHash": "0x0fa00157ba8dfce2c3c77e70632e1ddf741c87f389e425f8156a8a5d4d8032b0",
-          "blockNumber": "0x28ebdce",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "transactionHash": "0x9c3392cbc25b93fdd6c3a7bcd5b2ae99d5d7ff729d4240bb9367f24379a33b3a",
+          "blockNumber": "0x2a314a3",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "421614": {
           "chain": "arbitrum_sepolia",
-          "address": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+          "address": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
           "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBUniswapV4LPSplitHookMath.json",
-          "transactionHash": "0x866e5ab51367a27de0d2d2eaf6c7b3f2f44f3e6c9968893c88b5dcfda4018fb1",
-          "blockNumber": "0x108dba9a",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "transactionHash": "0xc783eae2ab17656b61b57460c3ab7a5ce6413454d3a08d55a1928bfe94966951",
+          "blockNumber": "0x112e93b0",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "11155111": {
           "chain": "sepolia",
-          "address": "0xef2242dc7e8a082ce00c943548e414598896c4f4",
+          "address": "0x734bfc66606dfe7943bcf541cf5dcbc5312e695b",
           "file": "../deploy-all-v6/deployments/sepolia/JBUniswapV4LPSplitHookMath.json",
-          "transactionHash": "0xead3aee5a7e4678f0ee93c6bfa99222ad482b86b50d5d56e52d6c2be270ade29",
-          "blockNumber": "0xa8ec38",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.0.0",
+          "transactionHash": "0x84c7cc5bc95823000cfefd40594455d12db4b9fe2810e9912547e82c6098141e",
+          "blockNumber": "0xac402b",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "11155420": {

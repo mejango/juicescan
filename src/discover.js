@@ -3399,7 +3399,7 @@ var usedSurplusAllowanceAbi = [{
   ],
   outputs: [{ type: 'uint256' }],
 }];
-// BannyLPSplitHook (JBUniswapV4LPSplitHook) — receives reserved project tokens, accumulates them, then
+// JBP6FeeLPSplitHook (JBUniswapV4LPSplitHook) — receives reserved project tokens, accumulates them, then
 // anyone can deploy/seed a Uniswap V4 LP position and route its fees back to the project. Reads + the
 // permissionless keeper actions used by the Market split-hook card.
 var bannyHookAbi = [
@@ -4397,7 +4397,7 @@ function projectOwnerRecipientLabel(project) {
 // Render the "Account" cell for a single JBSplit. Precedence matches the JBSplit struct's own routing:
 //   projectId > 0          → reserved tokens are minted to that project
 //   beneficiary != 0       → tokens go to that address
-//   hook != 0              → tokens are forwarded to a split hook (e.g. BannyLPSplitHook for LP'ing)
+//   hook != 0              → tokens are forwarded to a split hook (e.g. JBP6FeeLPSplitHook for LP'ing)
 //   otherwise              → the project owner / REVOwner
 // The hook check MUST come before the owner fallback: a hook-routed split has beneficiary == 0 by design,
 // so without this the row mislabels the LP split hook as the project owner. Returns a fresh node.
@@ -15166,12 +15166,12 @@ function renderOwnersAmm(project) {
 }
 
 // Split-hook card (Market subtab). Shown only when the project routes a reserved split to the
-// BannyLPSplitHook (JBUniswapV4LPSplitHook). Surfaces, per chain: the hook's accumulated project
+// JBP6FeeLPSplitHook (JBUniswapV4LPSplitHook). Surfaces, per chain: the hook's accumulated project
 // tokens (its "position" before pooling), whether the LP pool is deployed + its active tick range,
 // claimable LP fees, and the permissionless keeper actions anyone can call.
 function renderSplitHookCard(project) {
   var host = el('div');
-  var hookAddr = getAddress('BannyLPSplitHook', project.chainId);
+  var hookAddr = getAddress('JBP6FeeLPSplitHook', project.chainId);
   if (!hookAddr) return host;
   var uses = (project.reservedSplits || []).some(function (s) { return s.hook && s.hook.toLowerCase() === hookAddr.toLowerCase(); });
   if (!uses) return host;
@@ -15190,7 +15190,7 @@ function renderSplitHookCard(project) {
 
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   chains.forEach(function (c) {
-    if (!getAddress('BannyLPSplitHook', c.id)) return;
+    if (!getAddress('JBP6FeeLPSplitHook', c.id)) return;
     var block = el('div', 'splithook-chain');
     var head = el('div', 'splithook-head'); head.appendChild(chainLogo(c.id, c.name));
     var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm);
@@ -15200,7 +15200,7 @@ function renderSplitHookCard(project) {
 
     resolveAcctToken(c.id, pid).then(function (acct) {
       var tok = acct.address;
-      var rd = function (fn, args) { return read(c.id, 'BannyLPSplitHook', bannyHookAbi, fn, args).catch(function () { return null; }); };
+      var rd = function (fn, args) { return read(c.id, 'JBP6FeeLPSplitHook', bannyHookAbi, fn, args).catch(function () { return null; }); };
       return Promise.all([
         rd('accumulatedProjectTokens', [pid]),
         rd('hasDeployedPool', [pid]),
@@ -15237,7 +15237,7 @@ function renderSplitHookCard(project) {
           b.addEventListener('click', function () {
             b.disabled = true;
             executeTransaction({
-              chainId: c.id, address: getAddress('BannyLPSplitHook', c.id), contractName: 'BannyLPSplitHook',
+              chainId: c.id, address: getAddress('JBP6FeeLPSplitHook', c.id), contractName: 'JBP6FeeLPSplitHook',
               abi: bannyHookAbi, functionName: fn, args: args(), label: label,
               onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
               onError: function (m) { status.classList.remove('pending'); status.textContent = lpHookErrorText(m, sym) || m; b.disabled = false; },
@@ -15852,7 +15852,7 @@ function addSplitRecipientRow(rowsBox, rows, opts) {
     if (lpHint) lpHint.style.display = 'none';
   }
   // "fund market" chip — reserved-token splits only. Routes this split to the shared zero-fee
-  // BannyLPSplitHook, which pools the reserved tokens into a Uniswap V4 position for the project's token.
+  // JBP6FeeLPSplitHook, which pools the reserved tokens into a Uniswap V4 position for the project's token.
   var lpChip = null, lpHint = null;
   if (opts.allowLpHook && opts.lpHookAddr) {
     lpChip = el('button', 'splits-edit-chip'); lpChip.type = 'button'; lpChip.textContent = 'fund market';
@@ -16391,7 +16391,7 @@ function openQueueRulesetModal(project) {
           if (!kinds || !kinds.length) throw new Error('No accounting contexts could be verified.');
           await verifyQueueConfigurationAcrossChains(kinds);
           if (kinds.length <= 1 && state.accepts[0] !== 'custom') return;
-          var lpHook = (getAddress('BannyLPSplitHook', project.chainId) || '').toLowerCase();
+          var lpHook = (getAddress('JBP6FeeLPSplitHook', project.chainId) || '').toLowerCase();
           return Promise.all(kinds.map(function (kind) {
             var tok = kind.addrForChain(project.chainId);
             if (!tok) throw new Error('An accounting token is not configured on the home chain.');
@@ -16476,7 +16476,7 @@ function openQueueRulesetModal(project) {
     }
     // Reserved recipients — each row's percent is its share of ISSUANCE = (split share ÷ 1e9) × reserved rate.
     var reservedRate = m ? Number(m.reservedPercent) / 100 : 0; // 0..100
-    var lpHook = (getAddress('BannyLPSplitHook', chainId || project.chainId) || '').toLowerCase();
+    var lpHook = (getAddress('JBP6FeeLPSplitHook', chainId || project.chainId) || '').toLowerCase();
     s.reservedRecipients = (reservedSplits || []).map(function (sp) {
       return recFromSplit(sp, lpHook, reservedRate > 0 ? (Number(sp.percent) / SPLITS_TOTAL) * reservedRate : 0, '');
     });
@@ -16751,7 +16751,7 @@ function openEditSplitsModal(project, opts) {
   var totalLine = el('div', 'splits-edit-total'); content.appendChild(totalLine);
 
   // The shared LP split hook only applies to reserved-token splits (it pools project tokens).
-  var lpHookAddr = (groupId === RESERVED_TOKEN_SPLIT_GROUP) ? getAddress('BannyLPSplitHook', project.chainId) : null;
+  var lpHookAddr = (groupId === RESERVED_TOKEN_SPLIT_GROUP) ? getAddress('JBP6FeeLPSplitHook', project.chainId) : null;
   // Like the create flow, percentages are entered as % OF ISSUANCE and must sum to the split limit:
   //  - reserved group → the ruleset's reserved rate (reservedPercent, basis points /100 = % of issuance);
   //  - any other group (payouts) → 100% (the full distributable amount).
@@ -16761,7 +16761,7 @@ function openEditSplitsModal(project, opts) {
     allowLpHook: !!lpHookAddr,
     allowProjectBalanceMode: String(groupId) !== String(RESERVED_TOKEN_SPLIT_GROUP),
     lpHookAddr: lpHookAddr,
-    lpHookAddrForChain: function (cid) { return getAddress('BannyLPSplitHook', cid) || ZERO_ADDRESS; },
+    lpHookAddrForChain: function (cid) { return getAddress('JBP6FeeLPSplitHook', cid) || ZERO_ADDRESS; },
     ownerAddr: project.owner,
     // Offer "fund market" once: never when a row already routes to the LP hook, else only on the first
     // recipient-less row (the next open split).

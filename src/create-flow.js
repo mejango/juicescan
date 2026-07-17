@@ -4174,10 +4174,10 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   // stale value from a draft/import or a non-lockable (revnet/Flexible) stage must NOT reach the chain.
   // `allowLock === undefined` (e.g. a direct unit-test call) keeps the value, so existing behavior holds.
   var lockTs = (allowLock !== false && rec.lockedUntil) ? Number(rec.lockedUntil) : 0;
-  // "Buyback liquidity" reserved split → routes to the shared BannyLPSplitHook (same address on every
+  // "Buyback liquidity" reserved split → routes to the shared JBP6FeeLPSplitHook (same address on every
   // chain). The hook keys off the distributing project, so projectId/beneficiary are pass-through.
   if (rec.type === 'lphook' && chainId != null) {
-    var hookAddr = getAddress('BannyLPSplitHook', chainId);
+    var hookAddr = getAddress('JBP6FeeLPSplitHook', chainId);
     if (hookAddr) {
       var b = getAccount && getAccount();
       return { preferAddToBalance: false, percent: rawPercent, projectId: 0,
