@@ -541,6 +541,47 @@ export var BENDYSTRAW_NFT_TIERS_QUERY = 'query($projectId: Int!, $chainId: Int!,
   + 'nftTiers(where: { projectId: $projectId, chainId: $chainId, version: $version, hook: $hook }, limit: 500) { '
   + 'items { tierId metadata resolvedUri encodedIpfsUri category votingUnits } } }';
 
+// Store-item purchases: one row per minted NFT (beneficiary = the customer, tierId = the item bought).
+// `beneficiary` filters to "You"; omit it for "All".
+function nftMintsQuery(withBeneficiary) {
+  return 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!'
+    + (withBeneficiary ? ', $beneficiary: String!' : '') + ') { '
+    + 'mintNftEvents(where: { projectId: $projectId, chainId: $chainId, version: $version'
+    + (withBeneficiary ? ', beneficiary: $beneficiary' : '') + ' }, '
+    + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
+    + 'totalCount items { tierId beneficiary from timestamp txHash tokenId chainId } } }';
+}
+var NFT_MINTS_PAGE = 200;
+var NFT_MINTS_MAX = 1000;
+// All store-item purchases for a project (optionally filtered to one beneficiary), across its chains.
+// Paginated + capped; returns { rows, total, capped }.
+function fetchNftMints(project, beneficiary) {
+  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
+  var query = nftMintsQuery(!!beneficiary);
+  return Promise.all(chains.map(function (c) {
+    var rows = [], total = 0, offset = 0;
+    function page() {
+      var vars = { projectId: Number(project.id), chainId: Number(c.id), version: BENDYSTRAW_VERSION, limit: NFT_MINTS_PAGE, offset: offset };
+      if (beneficiary) vars.beneficiary = String(beneficiary).toLowerCase();
+      return bendystrawQuery(query, vars).then(function (data) {
+        var res = (data || {}).mintNftEvents || {};
+        var items = res.items || [];
+        if (res.totalCount != null) total = Number(res.totalCount) || 0;
+        rows = rows.concat(items);
+        offset += items.length;
+        if (items.length && rows.length < total && rows.length < NFT_MINTS_MAX) return page();
+        return { rows: rows, total: total, chainId: c.id };
+      });
+    }
+    return page().catch(function () { return { rows: [], total: 0, chainId: c.id, error: true }; });
+  })).then(function (perChain) {
+    var rows = [], total = 0, capped = false;
+    perChain.forEach(function (r) { rows = rows.concat(r.rows.map(function (m) { return Object.assign({ _chainId: r.chainId }, m); })); total += r.total; if (r.rows.length >= NFT_MINTS_MAX) capped = true; });
+    rows.sort(function (a, b) { return Number(b.timestamp) - Number(a.timestamp); });
+    return { rows: rows, total: total, capped: capped };
+  });
+}
+
 function fetchBendystrawTierMetadata(project, hook) {
   var key = DISCOVER_NETWORK + ':' + project.chainId + ':' + project.id + ':' + String(hook).toLowerCase();
   if (_tierMetadataCache[key]) return _tierMetadataCache[key];
@@ -1179,6 +1220,133 @@ function renderShopSection(project, shop, cart) {
   wrap.appendChild(checkoutBar);
   onWalletChange(function () { if (wrap.isConnected) showCredits(resolvedShop); });
   return wrap;
+}
+
+// Shop tab wrapper: [Inventory | Customers] subtabs. Inventory is the items-for-sale card; Customers
+// shows who has bought what (You = your purchases, All = every customer), from indexed mint events.
+function renderShopTab(project, shopState, cart, initialSubTab) {
+  var section = el('div', 'detail-section owners-section');
+  var subRow = el('div', 'owners-subtabs');
+  var content = el('div', 'owners-subcontent');
+  var order = ['Inventory', 'Customers'];
+  var built = {};
+  var builders = {
+    Inventory: function () { return renderShopSection(project, shopState.loaded ? shopState.shop : null, cart); },
+    Customers: function () { return renderShopCustomers(project, shopState); },
+  };
+  function show(name) {
+    if (!builders[name]) return;
+    if (!built[name]) built[name] = builders[name]();
+    content.innerHTML = ''; content.appendChild(built[name]);
+    Array.prototype.forEach.call(subRow.querySelectorAll('.owners-subtab'), function (b) { b.classList.toggle('active', b.textContent === name); });
+    if (_activeDetail && _activeDetail.current === 'Shop') { _activeDetail.subtab = name; routerSetHash(projectHash(project, 'Shop', name)); }
+  }
+  order.forEach(function (name) {
+    var btn = document.createElement('button'); btn.className = 'owners-subtab'; btn.textContent = name;
+    btn.addEventListener('click', function () { show(name); });
+    subRow.appendChild(btn);
+  });
+  section.appendChild(subRow); section.appendChild(content);
+  if (_activeDetail) _activeDetail.showSubTab = show;
+  var initial = 'Inventory';
+  if (initialSubTab) { for (var i = 0; i < order.length; i++) if (tabSlug(order[i]) === tabSlug(initialSubTab)) { initial = order[i]; break; } }
+  show(initial);
+  return section;
+}
+
+// Customers subtab: what's been bought and by whom. "You" = the connected wallet's purchases; "All" =
+// every customer, ranked by items owned, plus a recent-purchases feed. Backed by indexed mint events.
+// A shared item-name map (tierId → display name) resolves independent of the Inventory subtab.
+function renderShopCustomers(project, shopState) {
+  var namesP = resolveShopItemNames(project);
+  var w = el('div', 'owners-subgroup');
+  w.appendChild(ownersCard('You', renderCustomerYou(project, namesP)));
+  w.appendChild(ownersCard('All', renderCustomerAll(project, namesP)));
+  return w;
+}
+
+// Resolve every store item's display name (tierId → name), via the same media resolver the shop cards use.
+// Cached through fetchProjectTiers. Falls back to no entry (callers render "Item #<id>").
+function resolveShopItemNames(project) {
+  return fetchProjectTiers(project).then(function (shop) {
+    if (!shop || !shop.tiers || !shop.tiers.length) return {};
+    return Promise.all(shop.tiers.map(function (t) {
+      return resolveTierMedia(shop, t, project.chainId).then(function (m) { return { id: Number(t.id), name: m && m.name }; }).catch(function () { return { id: Number(t.id) }; });
+    })).then(function (arr) { var map = {}; arr.forEach(function (x) { if (x.name) map[x.id] = x.name; }); return map; });
+  }).catch(function () { return {}; });
+}
+function itemLabelFrom(names, tierId) { return (names && names[Number(tierId)]) || ('Item #' + tierId); }
+
+// Group a customer's mint rows into "N× Item" tallies, most-owned first.
+function tallyItems(rows, names) {
+  var byTier = {};
+  rows.forEach(function (m) { var k = Number(m.tierId); byTier[k] = (byTier[k] || 0) + 1; });
+  return Object.keys(byTier).map(function (k) { return { tierId: Number(k), count: byTier[k], label: itemLabelFrom(names, k) }; })
+    .sort(function (a, b) { return b.count - a.count; });
+}
+
+function renderCustomerYou(project, namesP) {
+  var box = el('div', 'detail-card-body');
+  function load() {
+    var acct = getAccount && getAccount();
+    box.className = 'detail-card-body';
+    if (!acct) { box.className = 'detail-card-body owners-empty'; box.textContent = 'Connect a wallet to see the items you own.'; return; }
+    box.textContent = 'Loading your items…';
+    Promise.all([fetchNftMints(project, acct), namesP]).then(function (out) {
+      var res = out[0], names = out[1];
+      if (!box.isConnected) return;
+      box.innerHTML = '';
+      if (!res.rows.length) { box.className = 'detail-card-body owners-empty'; box.textContent = 'You don’t own any items from this shop yet.'; return; }
+      var totalLine = el('div', 'shop-cust-total'); totalLine.textContent = res.rows.length + ' item' + (res.rows.length === 1 ? '' : 's') + ' owned'; box.appendChild(totalLine);
+      tallyItems(res.rows, names).forEach(function (t) {
+        var row = el('div', 'rf-perchain-row');
+        var name = el('span', 'rf-perchain-name'); name.textContent = t.label; row.appendChild(name);
+        var val = el('span', 'rf-perchain-val'); val.textContent = '×' + t.count; row.appendChild(val);
+        box.appendChild(row);
+      });
+    }).catch(function () { if (box.isConnected) { box.innerHTML = ''; box.textContent = 'Could not load your items.'; } });
+  }
+  load();
+  onWalletChange(function () { if (box.isConnected) load(); });
+  return box;
+}
+
+function renderCustomerAll(project, namesP) {
+  var box = el('div', 'detail-card-body');
+  box.textContent = 'Loading customers…';
+  Promise.all([fetchNftMints(project), namesP]).then(function (out) {
+    var res = out[0], names = out[1];
+    if (!box.isConnected) return;
+    box.innerHTML = '';
+    if (!res.rows.length) { box.className = 'detail-card-body owners-empty'; box.textContent = 'No items have been bought yet.'; return; }
+    // Summary: distinct customers + total items sold.
+    var byCust = {};
+    res.rows.forEach(function (m) { var k = String(m.beneficiary || '').toLowerCase(); if (!k) return; (byCust[k] = byCust[k] || []).push(m); });
+    var custKeys = Object.keys(byCust).sort(function (a, b) { return byCust[b].length - byCust[a].length; });
+    var summary = el('div', 'shop-cust-total');
+    summary.textContent = custKeys.length + ' customer' + (custKeys.length === 1 ? '' : 's') + ' · ' + res.total + ' item' + (res.total === 1 ? '' : 's') + ' sold' + (res.capped ? ' (showing latest ' + res.rows.length + ')' : '');
+    box.appendChild(summary);
+
+    // Ranked customers — address + their item tally.
+    custKeys.slice(0, 100).forEach(function (k) {
+      var mints = byCust[k];
+      var row = el('div', 'shop-cust-row');
+      var who = el('span', 'shop-cust-who'); who.appendChild(addressNode(mints[0].beneficiary, mints[0]._chainId || project.chainId)); row.appendChild(who);
+      var items = tallyItems(mints, names).map(function (t) { return t.count > 1 ? t.count + '× ' + t.label : t.label; }).join(', ');
+      var what = el('span', 'shop-cust-what'); what.textContent = items; row.appendChild(what);
+      box.appendChild(row);
+    });
+
+    // Recent purchases feed (tx-linked).
+    var feedTitle = el('div', 'detail-subsection-title'); feedTitle.style.marginTop = '14px'; feedTitle.textContent = 'Recent purchases'; box.appendChild(feedTitle);
+    res.rows.slice(0, 25).forEach(function (m) {
+      var row = el('div', 'rf-perchain-row');
+      var left = el('span', 'rf-perchain-name'); left.appendChild(renderExplorerTxLink(m._chainId || project.chainId, m.txHash, timeAgo(Number(m.timestamp)))); row.appendChild(left);
+      var val = el('span', 'rf-perchain-val'); val.textContent = itemLabelFrom(names, m.tierId) + ' → ' + shortAddr6(String(m.beneficiary || '')); row.appendChild(val);
+      box.appendChild(row);
+    });
+  }).catch(function () { if (box.isConnected) { box.innerHTML = ''; box.textContent = 'Could not load customers.'; } });
+  return box;
 }
 
 // Resolve a project (by its id on `chainId`) to a display name + its projectId on each chain in its
@@ -5390,13 +5558,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // tab doesn't pop in late. Once the 721-hook read resolves it's either filled with real content or removed
   // (no hook yet — a custom project can add one via Rulesets → Queue → "Sell NFT items").
   var shopState = { shop: null, loaded: false };
-  builders.Shop = function () {
-    if (shopState.loaded && shopState.shop) return renderShopSection(project, shopState.shop, nftCart);
-    var wrap = el('div', 'detail-section'); var card = el('div', 'detail-card shop-card');
-    var t = el('div', 'detail-card-title'); t.textContent = 'Shop'; card.appendChild(t);
-    var b = el('div', 'shop-body'); b.textContent = 'Loading…'; card.appendChild(b);
-    wrap.appendChild(card); return wrap;
-  };
+  builders.Shop = function () { return renderShopTab(project, shopState, nftCart, initialSubTab); };
   tabs.push('Shop');
   builders.Extras = function () { return renderExtrasSection(project); };
   tabs.push('Extras');
@@ -10027,37 +10189,8 @@ export async function buildProjectCreateDraft(project) {
   return { state: state, warnings: warnings };
 }
 
-function renderProjectDraftExport(project) {
-  var card = el('div', 'detail-card extras-export-card');
-  var title = el('div', 'detail-card-title'); title.textContent = 'Copy this project'; card.appendChild(title);
-  var body = el('div', 'detail-card-body extras-body');
-  var intro = el('div', 'extras-payer-copy');
-  intro.textContent = 'Take the project’s configuration as a .jb file, import it when creating a new project, and make any edits you want before deploying.';
-  body.appendChild(intro);
-  var status = el('div', 'operator-edit-status'); body.appendChild(status);
-  var actions = el('div', 'operator-edit-actions extras-actions');
-  var button = el('a', 'operator-cta operator-edit-submit'); button.href = '#'; button.textContent = 'Export .jb'; actions.appendChild(button);
-  body.appendChild(actions); card.appendChild(body);
-  var busy = false;
-  button.addEventListener('click', function (event) {
-    event.preventDefault(); if (busy) return; busy = true; button.classList.add('disabled');
-    status.className = 'operator-edit-status pending'; status.textContent = 'Verifying live rules, funds, splits, terminals, and shop…';
-    buildProjectCreateDraft(project).then(function (result) {
-      if (result.warnings.length && !window.confirm(result.warnings.join('\n\n') + '\n\nExport this editable .jb anyway?')) {
-        status.className = 'operator-edit-status'; status.textContent = 'Cancelled'; return;
-      }
-      exportDraftFile(result.state);
-      status.className = 'operator-edit-status success'; status.textContent = 'Exported .jb. Import it from New project to review and edit.';
-    }).catch(function (error) {
-      status.className = 'operator-edit-status error'; status.textContent = errMessage(error, 'Could not safely reconstruct this project.');
-    }).finally(function () { busy = false; button.classList.remove('disabled'); });
-  });
-  return card;
-}
-
 function renderExtrasSection(project) {
   var section = el('div', 'detail-section');
-  section.appendChild(renderProjectDraftExport(project));
   var card = el('div', 'detail-card extras-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Payer address'; card.appendChild(title);
 
