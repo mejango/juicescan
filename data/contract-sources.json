@@ -10415,7 +10415,7 @@
   "JBUniswapV4LPSplitHook": {
     "repo": "univ4-lp-split-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-    "branch": "chore/publish-1.3.0-deployment-artifacts",
+    "branch": "chore/lp-split-hook-instance-artifacts",
     "path": "src/JBUniswapV4LPSplitHook.sol",
     "startLine": 68,
     "endLine": 2141,
@@ -11062,7 +11062,7 @@
   "JBUniswapV4LPSplitHookDeployer": {
     "repo": "univ4-lp-split-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-lp-split-hook-v6",
-    "branch": "chore/publish-1.3.0-deployment-artifacts",
+    "branch": "chore/lp-split-hook-instance-artifacts",
     "path": "src/JBUniswapV4LPSplitHookDeployer.sol",
     "startLine": 19,
     "endLine": 178,

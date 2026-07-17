@@ -1,7 +1,7 @@
 {
   "source": "../deploy-all-v6/deployments",
-  "generatedAt": "2026-07-17T20:28:13.578Z",
-  "sourceDigest": "sha256:d09dcb5e401067b2f044b8f048ecf11901b1283479e173ebfa8c5c64af92e9a7",
+  "generatedAt": "2026-07-17T20:45:03.546Z",
+  "sourceDigest": "sha256:443959a5a09616f4b73a0b4046e82674bab5e4e86287380d43642fa4aa898484",
   "chains": {
     "1": {
       "id": "1",
@@ -5089,10 +5089,10 @@
       "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHook.sol",
       "abi": "JBP6FeeLPSplitHook",
       "addresses": {
-        "1": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "10": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "8453": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "42161": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "1": "0xe9493bc776699714a89aa982cf828d843f040d2a",
+        "10": "0xe9493bc776699714a89aa982cf828d843f040d2a",
+        "8453": "0xe9493bc776699714a89aa982cf828d843f040d2a",
+        "42161": "0xe9493bc776699714a89aa982cf828d843f040d2a",
         "84532": "0xe9493bc776699714a89aa982cf828d843f040d2a",
         "421614": "0xe9493bc776699714a89aa982cf828d843f040d2a",
         "11155111": "0xe9493bc776699714a89aa982cf828d843f040d2a"
@@ -5100,38 +5100,38 @@
       "chains": {
         "1": {
           "chain": "ethereum",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "address": "0xe9493bc776699714a89aa982cf828d843f040d2a",
           "file": "../deploy-all-v6/deployments/ethereum/JBP6FeeLPSplitHook.json",
-          "transactionHash": "0x742ee3da49a54cbe094aeecb33252f819462df5282ecbf060f9cba3ae0b775e9",
-          "blockNumber": "0x1846527",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "transactionHash": "0xfeada02f8b2f5f19dea76f169581ebd665671e56bf16e1f17995545b3a5ff7e8",
+          "blockNumber": "0x185ef64",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "10": {
           "chain": "optimism",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "address": "0xe9493bc776699714a89aa982cf828d843f040d2a",
           "file": "../deploy-all-v6/deployments/optimism/JBP6FeeLPSplitHook.json",
-          "transactionHash": "0x838f995e9be4615597dd647b9d20e7413d10c78683fbfa570df92f381aa03089",
-          "blockNumber": "0x92a1479",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "transactionHash": "0xec781ecaf692361a5273df14437ab43f3003fe0d07e37902b01de57906380473",
+          "blockNumber": "0x9335aec",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "8453": {
           "chain": "base",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "address": "0xe9493bc776699714a89aa982cf828d843f040d2a",
           "file": "../deploy-all-v6/deployments/base/JBP6FeeLPSplitHook.json",
-          "transactionHash": "0xc686af9908608693e1fadb0b0afee73c5fb8c5982667e11e96dd7366d629b6e6",
-          "blockNumber": "0x2ded2e8",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "transactionHash": "0x6fb2165e14fa8aa59cd75a606ef3848f952e760d14b9d65826d34941adb09185",
+          "blockNumber": "0x2e8195a",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "42161": {
           "chain": "arbitrum",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "address": "0xe9493bc776699714a89aa982cf828d843f040d2a",
           "file": "../deploy-all-v6/deployments/arbitrum/JBP6FeeLPSplitHook.json",
-          "transactionHash": "0xb6d4cb30b6679319fe5f04ad041c989cae7a488998c57a9d89a3fa79dd26510f",
-          "blockNumber": "0x1c9d0060",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "transactionHash": "0xfbefce4c60673e31e908df13116d7588449b1c3cb67aac5a6374a765424aad84",
+          "blockNumber": "0x1ce73bec",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "84532": {
