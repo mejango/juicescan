@@ -144,7 +144,8 @@ function main() {
       .filter((file) => file.endsWith(".json"))
       .filter((file) => {
         const deploymentName = file.replace(/\.json$/, "");
-        return !deploymentName.endsWith("_deprecated") && !deploymentName.endsWith("__TwapOracleUpgrade");
+        // Skip superseded records: _deprecated, _deprecated2, … and the TWAP upgrade snapshot.
+        return !/_deprecated\d*$/.test(deploymentName) && !deploymentName.endsWith("__TwapOracleUpgrade");
       })
       .sort();
 
