@@ -1,7 +1,7 @@
 // src/component-base.js
 // Shared building blocks for all component widgets
 
-import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders } from './wallet.js';
+import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions } from './wallet.js';
 import { CHAINS, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
@@ -47,7 +47,8 @@ export function abiSignature(abi, functionName) {
   return f.name + '(' + ins + ')' + mut + outs;
 }
 
-export { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders };
+export { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected };
+export { initSafeApp, getSafeInfo } from './wallet.js';
 export { CHAINS, getManifestChains, getChainTokens };
 export { parseAmount, formatAmount };
 export { renderError };
@@ -1154,6 +1155,26 @@ export function executeTransaction(opts) {
   });
 
   function sendNow() {
+  // Safe App: propose to the Safe's queue instead of sending directly. Any ERC-20 approval is batched with
+  // the main call into ONE atomic Safe transaction (the Safe simulates + executes it on its side). There's no
+  // mined tx hash to wait on — the owners sign & execute in Safe{Wallet}.
+  if (isSafeConnected()) {
+    var current0 = getAccount();
+    if (!current0 || current0.toLowerCase() !== account.toLowerCase()) { cbs.onError('Connected account changed. Review the transaction again.'); return; }
+    var txs = [];
+    var isNativeApprovalToken = opts.tokenAddr && (opts.tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || opts.tokenAddr === ZERO_ADDRESS);
+    if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount && !isNativeApprovalToken) {
+      txs.push({ to: opts.tokenAddr, value: '0', data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [opts.spenderAddr, BigInt(opts.approvalAmount)] }) });
+    }
+    txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
+    cbs.onStatus('Proposing to your Safe…', 'pending');
+    proposeSafeTransactions(txs).then(function (safeTxHash) {
+      cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Open Safe{Wallet} to sign & execute it.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
+    }).catch(function (err) {
+      cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'));
+    });
+    return;
+  }
   cbs.onStatus('Checking wallet network…', 'pending');
   var approvalReceipt = null;
 

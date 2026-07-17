@@ -6,7 +6,7 @@ import { contracts, meta, natspec, categories, commonActions, getFunctions, getA
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage } from './component-base.js';
+import { buildEmbedUrl, getAccount, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute, renderAdminTab } from './discover.js';
 import { renderDataTab } from './data-tab.js';
@@ -219,8 +219,9 @@ function initTabs() {
       if (walletMenu) closeWalletMenu(); else openWalletMenu();
     });
   }
-  // Restore a prior wallet connection silently (no prompt) so a refresh keeps the user connected.
-  eagerConnect();
+  // If the site is opened as a Safe App (inside Safe{Wallet}), auto-connect the Safe; otherwise restore a
+  // prior wallet connection silently so a refresh keeps the user connected.
+  initSafeApp().then(function (safe) { if (!safe) eagerConnect(); });
 }
 
 // Parse the hash and apply it: pick the nav tab, and (for discover) open the project route.

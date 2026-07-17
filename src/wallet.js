@@ -5,9 +5,15 @@
 import { createWalletClient, createPublicClient, custom, http } from 'viem';
 import { CHAINS, getCurrentChainId, getCustomRpc, defaultRpcFor } from './chain.js';
 import { isMobileDevice } from './wallet-links.js';
+import { detectSafeApp, makeSafeProvider, proposeSafeTransactions } from './safe-app.js';
+export { proposeSafeTransactions } from './safe-app.js';
 
 let walletClient = null;
 let account = null;
+let safeInfo = null;         // set when the site runs inside a Safe App iframe
+let connectedViaSafe = false; // true once connected through the Safe provider — tx flow proposes to the queue
+export function isSafeConnected() { return connectedViaSafe; }
+export function getSafeInfo() { return safeInfo; }
 const listeners = [];
 const WALLET_FLAG = 'jb-wallet-connected'; // remember a prior connection so we can silently restore it
 const WALLET_RDNS = 'jb-wallet-rdns';      // which wallet (EIP-6963 rdns) to restore on refresh
@@ -68,10 +74,16 @@ function legacyProviders() {
   });
 }
 
-// All detected wallets (EIP-6963), or a single generic entry for a legacy-only injected provider.
+function safeProviderEntry() {
+  if (!safeInfo) return null;
+  var a = safeInfo.safeAddress;
+  return { info: { uuid: 'safe-app', name: 'Safe (' + a.slice(0, 6) + '…' + a.slice(-4) + ')', rdns: 'global.safe', icon: '' }, provider: makeSafeProvider(safeInfo) };
+}
+// All detected wallets: the Safe first when in a Safe App, then EIP-6963 wallets (or a legacy injected entry).
 export function getProviders() {
-  if (_providers.length) return _providers.slice();
-  return legacyProviders();
+  var safe = safeProviderEntry();
+  var rest = _providers.length ? _providers.slice() : legacyProviders();
+  return safe ? [safe].concat(rest) : rest;
 }
 
 export function refreshProviders(waitMs) {
@@ -135,11 +147,27 @@ function notify() {
   });
 }
 
+// Detect the Safe App context and, if present, auto-connect the Safe (a Safe App is already authorized by
+// being opened inside Safe{Wallet}, so no manual connect step). Call once at startup, before eagerConnect.
+export async function initSafeApp() {
+  try { safeInfo = await detectSafeApp(); } catch (_) { safeInfo = null; }
+  if (!safeInfo) return null;
+  var chain = CHAINS[Number(safeInfo.chainId)] || CHAINS[getCurrentChainId()] || CHAINS[11155111];
+  activeProvider = makeSafeProvider(safeInfo);
+  connectedViaSafe = true;
+  setupClients(chain);
+  account = safeInfo.safeAddress;
+  bindEvents(activeProvider);
+  notify();
+  return safeInfo;
+}
+
 export async function connect(chosen) {
   // `chosen` is an entry from getProviders() ({ info, provider }); when the user picks from the wallet
   // list we switch to that provider. Otherwise we use the current/active (legacy injected) provider.
   if (chosen && chosen.provider) {
     activeProvider = chosen.provider;
+    connectedViaSafe = !!chosen.provider.isSafe;
     bindEvents(activeProvider);
     try { localStorage.setItem(WALLET_RDNS, (chosen.info && chosen.info.rdns) || ''); } catch (_) {}
   }
