@@ -1359,8 +1359,10 @@ function renderCustomerYou(project, namesP) {
         var val = el('span', 'rf-perchain-val'); val.textContent = '×' + t.count; row.appendChild(val);
         box.appendChild(row);
       });
-      // Redeem: burn items for a share of surplus — only when the shop is configured for item cash outs.
-      if (project.metadata && project.metadata.useDataHookForCashOut) {
+      // Redeem: burn items for a share of surplus. Custom projects only — a revnet is token-based, its
+      // cash-out data hook is REVOwner (not the 721 hook), so `useDataHookForCashOut` there means TOKEN cash
+      // out, never item redemption. (The create flow only offers "items cash out" to non-revnets.)
+      if (!project.isRevnet && project.metadata && project.metadata.useDataHookForCashOut) {
         var redeem = el('a', 'operator-cta shop-redeem-link'); redeem.href = '#'; redeem.textContent = 'Redeem items for surplus →';
         redeem.addEventListener('click', function (e) {
           e.preventDefault();
