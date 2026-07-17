@@ -511,8 +511,10 @@ function readShopHook(project) {
   var revo = getAddress('REVOwner', project.chainId);
   if (project.isRevnet) {
     if (!revo) return Promise.reject(new Error('REVOwner is unavailable.'));
+    // Revnets are token-based: their cash-out data hook is REVOwner, and item cash out is disabled (the create
+    // flow only offers "items cash out" to non-revnets). itemsCashOut stays false.
     return client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
-      .then(function (h) { return (h && !/^0x0+$/.test(h)) ? { hook: h, authoritative: true } : null; });
+      .then(function (h) { return (h && !/^0x0+$/.test(h)) ? { hook: h, authoritative: true, itemsCashOut: false } : null; });
   }
   return Promise.resolve().then(function () {
     // Custom projects aren't in REVOwner. Read the current ruleset: its dataHook is either the omnichain
@@ -525,10 +527,19 @@ function readShopHook(project) {
       if (!m || !m.useDataHookForPay || !m.dataHook || /^0x0+$/.test(m.dataHook)) return null;
       var omni = getAddress('JBOmnichainDeployer', project.chainId);
       if (omni && rs && m.dataHook.toLowerCase() === omni.toLowerCase()) {
+        // The omnichain deployer is the ruleset data hook; it forwards cash out to the 721 hook only when its
+        // OWN per-ruleset tiered721 config opts in (config.useDataHookForCashOut) — the ruleset's
+        // useDataHookForCashOut only means "consult the deployer". Read the authoritative flag here.
         return client.readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id), BigInt(rs.id)] })
-          .then(function (cfg) { var hk = cfg && (cfg.hook || cfg[0]); return (hk && !/^0x0+$/.test(hk)) ? { hook: hk, authoritative: true } : null; });
+          .then(function (cfg) {
+            var hk = cfg && (cfg.hook || cfg[0]);
+            var itemsCashOut = !!(cfg && (cfg.useDataHookForCashOut != null ? cfg.useDataHookForCashOut : cfg[1]));
+            return (hk && !/^0x0+$/.test(hk)) ? { hook: hk, authoritative: true, itemsCashOut: itemsCashOut } : null;
+          });
       }
-      return { hook: m.dataHook, authoritative: false }; // verified below via STORE()
+      // The 721 hook IS the ruleset data hook (single-chain custom): the ruleset's useDataHookForCashOut is
+      // then the 721 cash-out flag directly.
+      return { hook: m.dataHook, authoritative: false, itemsCashOut: !!m.useDataHookForCashOut }; // verified below via STORE()
     });
     });
   });
@@ -764,7 +775,7 @@ async function fetchProjectTiersUncached(project) {
       flags: t.flags || {}, allowOwnerMint: t.flags && t.flags.allowOwnerMint,
       indexedMetadata: indexedByTier && indexedByTier[Number(t.id)] || null };
   }).filter(function (t) { return t.initial > 0; });
-  return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers };
+  return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers, itemsCashOut: !!hookInfo.itemsCashOut };
 }
 
 // Resolve a tier's display { name, image, category } — prefer the onchain tokenUriResolver (it returns
@@ -1347,8 +1358,11 @@ function renderCustomerYou(project, namesP) {
     box.className = 'detail-card-body';
     if (!acct) { box.className = 'detail-card-body owners-empty'; box.textContent = 'Connect a wallet to see the items you own.'; return; }
     box.textContent = 'Loading your items…';
-    Promise.all([fetchNftMints(project, acct), namesP]).then(function (out) {
-      var res = out[0], names = out[1];
+    // Also resolve the shop (cached) for the AUTHORITATIVE item-cash-out flag: whether cash out is forwarded
+    // to the 721 hook is decided by the deployer's per-ruleset tiered721 config (or, when the 721 hook is the
+    // direct data hook, the ruleset flag) — NOT the bare ruleset useDataHookForCashOut. See readShopHook.
+    Promise.all([fetchNftMints(project, acct), namesP, fetchProjectTiers(project).catch(function () { return null; })]).then(function (out) {
+      var res = out[0], names = out[1], shop = out[2];
       if (!box.isConnected) return;
       box.innerHTML = '';
       if (!res.rows.length) { box.className = 'detail-card-body owners-empty'; box.textContent = 'You don’t own any items from this shop yet.'; return; }
@@ -1359,10 +1373,10 @@ function renderCustomerYou(project, namesP) {
         var val = el('span', 'rf-perchain-val'); val.textContent = '×' + t.count; row.appendChild(val);
         box.appendChild(row);
       });
-      // Redeem: burn items for a share of surplus. Custom projects only — a revnet is token-based, its
-      // cash-out data hook is REVOwner (not the 721 hook), so `useDataHookForCashOut` there means TOKEN cash
-      // out, never item redemption. (The create flow only offers "items cash out" to non-revnets.)
-      if (!project.isRevnet && project.metadata && project.metadata.useDataHookForCashOut) {
+      // Redeem: burn items for a share of surplus. Shown only when the project's cash out actually forwards to
+      // the 721 hook (shop.itemsCashOut). Revnets are token-based → false; a custom shop with item cash out off
+      // → false, even though its ruleset useDataHookForCashOut is true (that just consults the deployer).
+      if (shop && shop.itemsCashOut) {
         var redeem = el('a', 'operator-cta shop-redeem-link'); redeem.href = '#'; redeem.textContent = 'Redeem items for surplus →';
         redeem.addEventListener('click', function (e) {
           e.preventDefault();
