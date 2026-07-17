@@ -573,6 +573,37 @@ function projectIdByChain(project) {
       return map;
     });
 }
+// The project's id on a specific chain. Linked deployments can differ per chain, and the grid groups by
+// matching-id (which can even merge UNRELATED same-id projects), so every per-chain read/tx must use this,
+// not a bare project.id. Falls back to project.id until the sucker-group map (project.idByChain) resolves.
+function pidOn(project, chainId) {
+  var map = project && project.idByChain;
+  var local = map && map[Number(chainId)];
+  return BigInt(local != null ? local : project.id);
+}
+// Resolve a project's AUTHORITATIVE chains from the sucker group (each with its own projectId), replacing
+// the grid's same-id grouping. Attaches { idByChain, chains:[{id,name,projectId}] }. Falls back to the
+// existing (same-id) chains — with projectId defaulted to project.id — if the indexer is unavailable, so
+// a bendystraw outage never strands the detail page.
+function attachProjectChainIds(project) {
+  return projectIdByChain(project).then(function (map) {
+    project.idByChain = map;
+    var home = Number(project.chainId);
+    var ids = Object.keys(map).map(Number);
+    // Only override the same-id chain list once the sucker group is authoritative (it always includes
+    // home; >1 chain means a real group). Home-only (single-chain / unindexed) leaves the list intact.
+    if (ids.length > 1) {
+      var ordered = [home].concat(ids.filter(function (c) { return c !== home; }));
+      project.chains = ordered.map(function (c) {
+        var existing = (project.chains || []).filter(function (x) { return Number(x.id) === c; })[0];
+        return { id: c, name: (existing && existing.name) || chainNameOf(c), projectId: map[c] };
+      });
+    } else if (project.chains) {
+      project.chains.forEach(function (c) { if (c.projectId == null) c.projectId = (map[Number(c.id)] != null ? map[Number(c.id)] : Number(project.id)); });
+    }
+    return project;
+  }).catch(function () { if (project && !project.idByChain) project.idByChain = {}; return project; });
+}
 // All store-item purchases for a project (optionally filtered to one beneficiary), across its chains.
 // Paginated + capped; returns { rows, total, capped }. Uses each chain's OWN project id (see projectIdByChain).
 function fetchNftMints(project, beneficiary) {
@@ -3013,7 +3044,7 @@ var POOLKEY_TUPLE = [{ type: 'tuple', components: [
 // The buyback pool's PAIR (terminal) token for a project on a chain — its Uniswap pool-currency address
 // (native ETH = 0x0, else the ERC-20 e.g. USDC), decimals, and symbol. Mirrors the accounting token.
 function lpPairFor(project, chainId, opts) {
-  return resolveAcctToken(chainId, BigInt(project.id)).then(function (a) {
+  return resolveAcctToken(chainId, pidOn(project, chainId)).then(function (a) {
     var native = a.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     return { addr: native ? ZERO_ADDRESS : a.address.toLowerCase(), decimals: a.decimals, symbol: native ? 'ETH' : a.symbol, isNative: native };
   }).catch(function (e) { if (opts && opts.strict) throw e; return null; });
@@ -3027,7 +3058,7 @@ var _dataHookCache = {};
 function projectDataHook(project, chainId, opts) {
   var k = project.id + ':' + chainId;
   if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, chainId);
   return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
     if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n }; return _dataHookCache[k]; }
     return clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] })
@@ -3049,7 +3080,7 @@ function projectBuybackHook(project, chainId, opts) {
   var revOwner = getAddress('REVOwner', chainId);
   var omni = getAddress('JBOmnichainDeployer', chainId);
   var concrete = getAddress('JBBuybackHook', chainId);
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, chainId);
   var lc = function (a) { return (a || '').toLowerCase(); };
   var fallbackNull = function (e) { if (opts && opts.strict) throw e; return null; };
   // Recognize an already-unwrapped data hook → the buyback hook it implies, or null.
@@ -3082,7 +3113,7 @@ function projectBuybackHook(project, chainId, opts) {
 function projectRouterTerminal(project, chainId) {
   var registry = getAddress('JBRouterTerminalRegistry', chainId);
   var directTerminal = getAddress('JBRouterTerminal', chainId);
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, chainId);
   function isTerm(addr) { return addr ? read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pid, addr]).catch(function () { return false; }) : Promise.resolve(false); }
   return isTerm(registry).then(function (viaRegistry) {
     if (viaRegistry) {
@@ -3492,7 +3523,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
 // Current cash out price (accounting token reclaimed per project token) — the price floor.
 // Null when supply/surplus is 0.
 async function readCashoutPrice(project, chainId) {
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, chainId);
   var terminal = getAddress('JBMultiTerminal', chainId);
   if (!terminal) return null;
   try {
@@ -4349,8 +4380,7 @@ function accountingTokenContextKey(token, chainId) {
 function fetchBalanceBreakdown(project) {
   if (project._balBreakdown) return Promise.resolve(project._balBreakdown);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
-  var pid = BigInt(project.id);
-  return Promise.all(chains.map(function (c) { return readChainBalances(c.id, pid); })).then(function (results) {
+  return Promise.all(chains.map(function (c) { return readChainBalances(c.id, pidOn(project, c.id)); })).then(function (results) {
     var hasContextFailure = results.some(function (result) { return !result.verified; });
     var isEthTok = function (t) { return (t.token || '').toLowerCase() === NATIVE_TOKEN.toLowerCase(); };
     var needEth = results.some(function (cr) { return cr.tokens.some(function (t) { return isEthTok(t) && t.balance != null && BigInt(t.balance) > 0n; }); });
@@ -5226,7 +5256,9 @@ export function applyDiscoverRoute(route) {
     p.then(function (project) {
       project.chains = g.chains;
       project._urlChainId = urlChain;
-      showProjectDetail(project, tab, true, sub);
+      // Resolve the sucker-group-authoritative chains + per-chain ids before rendering so every money-path
+      // read/tx targets the right project on each chain (never a coincidental same-id project).
+      return attachProjectChainIds(project).then(function () { showProjectDetail(project, tab, true, sub); });
     }).catch(function () { showProjectGrid(true); });
   });
 }
@@ -7237,7 +7269,7 @@ function fetchOwnersPerChain(project) {
   var pid = BigInt(project.id);
   var chains = projectChains(project);
   return Promise.all(chains.map(function (c) {
-    return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid])
+    return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pidOn(project, c.id)])
       .then(function (o) { return { chainId: c.id, name: c.name, owner: o }; })
       .catch(function () { return { chainId: c.id, name: c.name, owner: null }; });
   })).then(function (rows) {
@@ -7275,14 +7307,15 @@ function renderOtherInfoPanel(project) {
   idsHead.textContent = idChains.length > 1 ? 'Project IDs' : 'Project ID';
   grid.appendChild(idsHead);
   idChains.forEach(function (ch) {
+    var chPid = Number(pidOn(project, ch.id)); // this chain's own project id (may differ per chain)
     var item = el('div', 'detail-info-chainrow detail-info-chain');
     item.appendChild(chainLogo(ch.id, null));
     var nm = el('span', 'detail-info-chainname'); nm.textContent = ch.name; item.appendChild(nm);
-    var idv = el('span', 'detail-info-chainid'); idv.textContent = '#' + project.id; item.appendChild(idv);
-    item.title = 'Open #' + project.id + ' on ' + ch.name;
+    var idv = el('span', 'detail-info-chainid'); idv.textContent = '#' + chPid; item.appendChild(idv);
+    item.title = 'Open #' + chPid + ' on ' + ch.name;
     item.addEventListener('click', function () {
       var tab = _activeDetail ? _activeDetail.current : null;
-      location.hash = '#' + slugForChain(ch.id) + ':' + project.id + (tab ? '/' + tab.toLowerCase() : '');
+      location.hash = '#' + slugForChain(ch.id) + ':' + chPid + (tab ? '/' + tab.toLowerCase() : '');
     });
     grid.appendChild(item);
   });
@@ -9971,7 +10004,7 @@ async function applyDraftShop(state, project, sources, warnings) {
     var rows = await Promise.all(shop.tiers.map(async function (tier) {
       if (!tier.splitPercent) return [tier.id, []];
       var group = BigInt(shop.hook) | (BigInt(tier.id) << 160n);
-      var splits = await read(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), 0n, group]);
+      var splits = await read(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pidOn(project, source.chainId), 0n, group]);
       return [tier.id, (splits || []).map(draftSplitFingerprint)];
     }));
     return draftFingerprint(rows);
@@ -10043,7 +10076,7 @@ async function applyDraftShop(state, project, sources, warnings) {
     if (tier.splitPercent > 0) {
       var group = BigInt(home.hook) | (BigInt(tier.id) << 160n);
       // 721 tier split groups are permanent shop configuration and are stored under ruleset ID 0.
-      var splits = await read(sources[0].chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), 0n, group]);
+      var splits = await read(sources[0].chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pidOn(project, sources[0].chainId), 0n, group]);
       var splitShare = (splits || []).reduce(function (sum, split) { return sum + Number(split.percent || 0); }, 0);
       if (splitShare !== PROJECT_DRAFT_SPLITS_TOTAL) {
         throw new Error('Shop item #' + tier.id + ' has an implicit split remainder, which the .jb shop editor cannot reproduce.');
@@ -12459,6 +12492,7 @@ function buildPayoutsModal(project, acctKind) {
   // When a funds block opened this for a specific accounting context, resolve that token per chain;
   // otherwise fall back to the project's primary accounting token.
   function resolveAcct(cid) {
+    var pid = pidOn(project, cid);
     if (acctKind) return resolveFundsKindAcct(cid, pid, acctKind);
     return resolveAcctToken(cid, pid);
   }
@@ -12535,6 +12569,7 @@ function buildPayoutsModal(project, acctKind) {
   });
 
   function readPayoutAccess(cid, acct) {
+    var pid = pidOn(project, cid);
     var term = getAddress('JBMultiTerminal', cid);
     var fal = getAddress('JBFundAccessLimits', cid);
     if (!term || !fal) return Promise.reject(new Error('Payout contracts are unavailable on this chain.'));
@@ -12639,6 +12674,7 @@ function buildPayoutsModal(project, acctKind) {
     var term = getAddress('JBMultiTerminal', state.chainId);
     if (!term) { status.textContent = 'No terminal on this chain'; return; }
     var cid = state.chainId, currency = state.currency, acct = state.acct, meta = state.meta, account = getAccount();
+    var pid = pidOn(project, cid);
     function payoutInputsUnchanged() {
       var current;
       try { current = parseAmount(amt.value, meta.decimals); } catch (_) { current = -1n; }
@@ -12694,6 +12730,7 @@ function buildUseAllowanceModal(project, acctKind) {
   var operatorAddr = projectAuthorityAddress(project);
   var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, surplus: null, allowances: [], selected: null, usable: null, currency: null, meta: null };
   function resolveAcct(cid) {
+    var pid = pidOn(project, cid);
     if (acctKind) return resolveFundsKindAcct(cid, pid, acctKind);
     return resolveAcctToken(cid, pid);
   }
@@ -12787,6 +12824,7 @@ function buildUseAllowanceModal(project, acctKind) {
   });
 
   function readAllowanceAccess(cid, acct) {
+    var pid = pidOn(project, cid);
     var term = getAddress('JBMultiTerminal', cid);
     var fal = getAddress('JBFundAccessLimits', cid);
     if (!term || !fal) return Promise.reject(new Error('Allowance contracts are unavailable on this chain.'));
@@ -12897,6 +12935,7 @@ function buildUseAllowanceModal(project, acctKind) {
     var term = getAddress('JBMultiTerminal', state.chainId);
     if (!term) { status.textContent = 'No terminal on this chain'; return; }
     var cid = state.chainId, currency = state.currency, acct = state.acct, meta = state.meta, account = acc;
+    var pid = pidOn(project, cid);
     function allowanceInputsUnchanged() {
       var current;
       try { current = parseAmount(amt.value, meta.decimals); } catch (_) { current = -1n; }
@@ -15025,8 +15064,8 @@ async function fetchBridgeTransactions(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
   var rows = [];
   await Promise.all(chains.map(async function (C) {
-    var sourceContexts = await resolveAcctTokens(C, pid);
-    var pairs = await readAllSuckerPairsOf(pid, C);
+    var sourceContexts = await resolveAcctTokens(C, pidOn(project, C));
+    var pairs = await readAllSuckerPairsOf(pidOn(project, C), C);
     await Promise.all(pairs.map(async function (p) {
       var srcSucker = p.local, R = p.remoteChainId, peerSucker = p.remote;
       var infra = await classifySuckerInfra(C, srcSucker); // verified CCIP/native, or unknown → generic tracking
@@ -15373,6 +15412,7 @@ function renderSplitHookCard(project) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   chains.forEach(function (c) {
     if (!getAddress('JBP6FeeLPSplitHook', c.id)) return;
+    var pid = pidOn(project, c.id);
     var block = el('div', 'splithook-chain');
     var head = el('div', 'splithook-head'); head.appendChild(chainLogo(c.id, c.name));
     var nm = el('span'); nm.textContent = ' ' + c.name; head.appendChild(nm);
@@ -16453,6 +16493,7 @@ function openQueueRulesetModal(project) {
 
   async function loadQueueDataHooksAcrossChains() {
     var rows = await Promise.all(allChains.map(async function (chain) {
+      var pid = pidOn(project, chain.id);
       var controller = await controllerAddressFor(chain.id, pid);
       var live = await Promise.all([
         clientFor(chain.id).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }),
@@ -16528,6 +16569,7 @@ function openQueueRulesetModal(project) {
   }
   async function verifyQueueConfigurationAcrossChains(kinds) {
     var snapshots = await Promise.all(allChains.map(async function (chain) {
+      var pid = pidOn(project, chain.id);
       var base = state.queueBaseByChain[chain.id];
       var term = getAddress('JBMultiTerminal', chain.id);
       var fal = getAddress('JBFundAccessLimits', chain.id);
@@ -17216,14 +17258,15 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     var cid = selectedChains[j].id;
     var localGroup = groupIdForChain(cid);
     if (localGroup == null) throw new Error('Could not resolve the split group on ' + (selectedChains[j].name || cid) + '.');
-    var liveController = await controllerAddressFor(cid, project.id);
-    var rs = await clientFor(cid).readContract({ address: liveController, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(project.id)] });
+    var localPid = pidOn(project, cid);
+    var liveController = await controllerAddressFor(cid, Number(localPid));
+    var rs = await clientFor(cid).readContract({ address: liveController, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [localPid] });
     if (!rs || !rs[0] || !rs[0].id || !rs[1]) throw new Error('No current ruleset on ' + (selectedChains[j].name || cid) + '.');
     if (String(splitGroupId) === String(RESERVED_TOKEN_SPLIT_GROUP)) {
       var liveLimitPct = Number(rs[1].reservedPercent) / 100;
       if (Math.abs(liveLimitPct - limitPct) > 0.000001) throw new Error('The reserved split limit changed while this editor was open. Close it, review the new ruleset, and try again.');
     }
-    var liveSplits = await read(cid, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), toBigInt(rs[0].id), toBigInt(localGroup)]);
+    var liveSplits = await read(cid, 'JBSplits', splitsOfAbi, 'splitsOf', [localPid, toBigInt(rs[0].id), toBigInt(localGroup)]);
     if (splitFingerprint(liveSplits) !== expectedFingerprint) throw new Error('The current splits on ' + (selectedChains[j].name || cid) + ' differ from the verified prefill. Nothing was sent; reopen the editor before replacing them.');
     ridMap[cid] = rs[0].id;
     groupMap[cid] = toBigInt(localGroup);
@@ -17240,7 +17283,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
 
   await runRelayrAcrossChains(selectedChains, account, function (cid) {
     var groups = [{ groupId: groupMap[cid], splits: splitsForChain(cid) }];
-    return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [BigInt(project.id), BigInt(ridMap[cid]), groups] }) };
+    return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [pidOn(project, cid), BigInt(ridMap[cid]), groups] }) };
   }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits' });
 
   setStatus('Splits updated on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '.', 'success');
@@ -17512,6 +17555,7 @@ function fetchYouPosition(project) {
   var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
   return Promise.all(chains.map(function (chain) {
     var cid = chain.id;
+    var pid = pidOn(project, cid);
     if (!acct) return Promise.resolve({ id: cid, name: chain.name, balance: null, cashout: null, maxLoan: null });
     var terminal = getAddress('JBMultiTerminal', cid);
     var revLoans = getAddress('REVLoans', cid);
@@ -18243,7 +18287,7 @@ function readUserBalance(project, chainId) {
   var tokens = getAddress('JBTokens', chainId);
   if (!tokens) return Promise.resolve(null);
   return clientFor(chainId).readContract({
-    address: tokens, abi: totalBalanceOfAbi, functionName: 'totalBalanceOf', args: [acct, BigInt(project.id)],
+    address: tokens, abi: totalBalanceOfAbi, functionName: 'totalBalanceOf', args: [acct, pidOn(project, chainId)],
   }).catch(function () { return null; });
 }
 
@@ -18571,6 +18615,7 @@ function buildCashOutModal(project, requestClose) {
   }
   // The reclaim token for the current chain — the picked accounting kind if any, else the primary token.
   function acctForChain(chainId) {
+    var pid = pidOn(project, chainId); // this chain's own project id
     if (state.kinds && state.reclaimKey) {
       var k = state.kinds.filter(function (x) { return x.key === state.reclaimKey; })[0];
       if (k) return resolveFundsKindAcct(chainId, pid, k).then(function (acct) {
@@ -18604,6 +18649,7 @@ function buildCashOutModal(project, requestClose) {
     acctP.then(function (acct) {
       if (contextSeq !== cashContextSeq || state.chainId !== cid) return null;
       state.acct = acct;
+      var pid = pidOn(project, cid); // this chain's own project id
       return Promise.all([
         // The contract's cash out denominator: total supply plus pending reserved tokens.
         controllerRead(cid, pid, totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }),
@@ -18649,6 +18695,7 @@ function buildCashOutModal(project, requestClose) {
     if (!acct) return;
     var chs = (project.chains && project.chains.length) ? project.chains : [{ id: state.chainId, name: chainNameOf(state.chainId) }];
     function accountingForChain(chainId) {
+      var pid = pidOn(project, chainId); // this chain's own project id
       var kind = state.kinds && state.reclaimKey && state.kinds.filter(function (candidate) { return candidate.key === state.reclaimKey; })[0];
       if (kind) {
         return resolveFundsKindAcct(chainId, pid, kind);
@@ -18656,13 +18703,13 @@ function buildCashOutModal(project, requestClose) {
       return resolveAcctToken(chainId, pid).catch(function () { return null; });
     }
     Promise.all([
-      Promise.all(chs.map(function (c) { return controllerRead(c.id, pid, totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pid]).catch(function () { return null; }); })),
+      Promise.all(chs.map(function (c) { return controllerRead(c.id, pidOn(project, c.id), totalSupplyWithReservedAbi, 'totalTokenSupplyWithReservedTokensOf', [pidOn(project, c.id)]).catch(function () { return null; }); })),
       // Surplus of the RECLAIM token specifically (tokens=[acct], in its own currency) — that's what you can
       // actually reclaim of this token (settlement caps at the token's local surplus), and needs no price feed.
       Promise.all(chs.map(function (c) {
         return accountingForChain(c.id).then(function (chainAcct) {
           return getAddress('JBMultiTerminal', c.id) && chainAcct
-            ? read(c.id, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [chainAcct.address], BigInt(chainAcct.decimals), borrowCurrencyForAccountContext(chainAcct)]).catch(function () { return null; })
+            ? read(c.id, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pidOn(project, c.id), [], [chainAcct.address], BigInt(chainAcct.decimals), borrowCurrencyForAccountContext(chainAcct)]).catch(function () { return null; })
             : null;
         });
       })),
@@ -18681,6 +18728,7 @@ function buildCashOutModal(project, requestClose) {
     if (!count || count === 0n || state.supply == null || state.surplus == null || state.surplus === 0n) { preview.innerHTML = ''; state.reclaim = null; state.net = null; return; }
     var terminal = getAddress('JBMultiTerminal', state.chainId);
     if (!terminal) { preview.innerHTML = ''; return; }
+    var pid = pidOn(project, state.chainId); // this chain's own project id
     var a = state.acct;
     if (!a) { preview.innerHTML = ''; state.reclaim = null; state.net = null; btn.disabled = true; return; }
     var currentAccount = getAccount && getAccount();
@@ -18977,6 +19025,7 @@ function buildCashOutModal(project, requestClose) {
     if (state.net == null || !state.acct) { status.textContent = 'Preview still loading…'; return; }
     if (state.net <= 0n) { status.textContent = 'This cash out currently returns 0 tokens. Nothing was sent.'; return; }
     var cid = state.chainId;
+    var pid = pidOn(project, cid); // this chain's own project id (the redeem/cash-out tx targets it)
     var terminal = getAddress('JBMultiTerminal', cid);
     if (!terminal) { status.textContent = 'No terminal on this chain'; return; }
     var reviewedAcct = state.acct;
@@ -19474,6 +19523,7 @@ function buildLoanModal(project, requestClose) {
   var loanBalanceSeq = 0;
   function refreshBalance() {
     var cid = state.chainId;
+    var pid = pidOn(project, cid);
     var seq = ++loanBalanceSeq;
     var loans = getAddress('REVLoans', cid);
     state.balance = null; state.feeless = null; updateSummary();
@@ -19488,6 +19538,7 @@ function buildLoanModal(project, requestClose) {
   function refreshAccountingTokens() {
     var seq = ++acctSeq;
     var cid = state.chainId;
+    var pid = pidOn(project, cid);
     var previous = state.acct;
     state.accts = [];
     state.acct = null;
@@ -19534,6 +19585,7 @@ function buildLoanModal(project, requestClose) {
     if (currency == null) { preview.textContent = 'Could not resolve this token’s accounting currency.'; state.borrowable = null; state.borrowableLoading = false; state.cashOutNet = null; state.cashOutLoading = false; updateSummary(); return; }
     var seq = ++previewSeq; preview.textContent = 'Calculating…';
     var cid = state.chainId;
+    var pid = pidOn(project, cid);
     var terminal = getAddress('JBMultiTerminal', cid);
     var quoteAccount = (getAccount && getAccount()) || '0x0000000000000000000000000000000000000001';
     var reclaimToken = state.acct.address || NATIVE_TOKEN;
@@ -19596,6 +19648,7 @@ function buildLoanModal(project, requestClose) {
     if (state.borrowableLoading || state.borrowable == null) { status.textContent = 'The live loan quote could not be verified. Try again shortly.'; return; }
     if (state.borrowable === 0n) { status.textContent = 'Nothing borrowable yet — loans are locked until this revnet’s cash out delay passes.'; return; }
     var chainId = state.chainId;
+    var pid = pidOn(project, chainId);
     var prepaidFee = state.prepaidFee;
     var loanToken = borrowLoanTokenForAccountContext(state.acct, state.acctLoading);
     if (!loanToken) { status.textContent = state.acctLoading ? 'Accounting token still loading…' : 'Could not resolve the loan token for this chain.'; return; }
@@ -19937,7 +19990,7 @@ function fetchProjectSuckerInfra(project) {
   // Collect every local sucker across all chains. A chain-pair can carry BOTH a native and a CCIP sucker
   // (the native+CCIP cohort wires both on each L1↔L2 pair for redundancy), so a pair is NOT a unique bridge.
   return Promise.all(chains.map(function (C) {
-    return readSuckerPairsOf(project.id, C)
+    return readSuckerPairsOf(pidOn(project, C), C)
       .then(function (pairs) { return pairs.map(function (p) { return { a: C, b: p.remoteChainId, local: p.local }; }); });
   })).then(function (lists) {
     var all = [];
@@ -20009,7 +20062,7 @@ function fetchCrossChainKnowledge(project) {
     .then(function (d) { var m = {}; ((d && d.accountingSyncEvents && d.accountingSyncEvents.items) || []).forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); return m; })
     .catch(function () { return {}; });
   return Promise.all([sentByKeyP, Promise.all(chains.map(function (C) {
-    return readSuckerPairsOf(project.id, C).then(function (p) { return { chain: C, pairs: p || [] }; });
+    return readSuckerPairsOf(pidOn(project, C), C).then(function (p) { return { chain: C, pairs: p || [] }; });
   }))]).then(function (res2) {
     var sentByKey = res2[0]; var lists = res2[1];
     var pairsByChain = {};
@@ -20018,7 +20071,7 @@ function fetchCrossChainKnowledge(project) {
       var A = x.chain;
       var reg = getAddress('JBSuckerRegistry', A);
       var acctJob = reg
-        ? clientFor(A).readContract({ address: reg, abi: suckerRegistryAccountsAbi, functionName: 'peerChainAccountsOf', args: [BigInt(project.id), BigInt(A)] })
+        ? clientFor(A).readContract({ address: reg, abi: suckerRegistryAccountsAbi, functionName: 'peerChainAccountsOf', args: [pidOn(project, A), BigInt(A)] })
         : Promise.reject(new Error('Sucker registry unavailable.'));
       return acctJob.then(function (accts) {
         // Index the registry's aggregated records by source chain.
@@ -20359,7 +20412,7 @@ function renderGossipSection(project) {
 // keyed by chain: native-bridge suckers share the SAME address on both chains, so a flat map would collide.
 function fetchProjectSuckerMap(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
-  return Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(project.id, C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
+  return Promise.all(chains.map(function (C) { return readAllSuckerPairsOf(pidOn(project, C), C).then(function (pairs) { return { C: C, pairs: pairs }; }); }))
     .then(function (lists) {
       var map = {};
       lists.forEach(function (x) { var m = map[x.C] = map[x.C] || {}; x.pairs.forEach(function (p) { if (p.local) m[p.local.toLowerCase()] = p.remoteChainId; }); });
@@ -20613,7 +20666,7 @@ function buildMoveModal(project) {
     var backingKey = state.backingKey;
     var seq = ++moveBackingSeq;
     state.fromSupply = null; state.fromBacking = null; state.backing = null; updateBacking(); updateMoveBtn();
-    var pid = BigInt(project.id);
+    var pid = pidOn(project, from); // the project's id on the SOURCE chain
     // The chosen backing token (multi-token picker), else the project's primary accounting token.
     var selectedKind = null;
     if (state.kinds && backingKey) selectedKind = state.kinds.filter(function (x) { return x.key === backingKey; })[0];
@@ -20684,7 +20737,7 @@ function buildMoveModal(project) {
     var from = state.from;
     var seq = ++movePairsSeq;
     state.pairs = null; resolveRoute();
-    readSuckerPairsOf(project.id, from).then(function (pairs) {
+    readSuckerPairsOf(pidOn(project, from), from).then(function (pairs) {
       if (seq !== movePairsSeq || state.from !== from) return;
       state.pairs = pairs; resolveRoute();
     }).catch(function () {
@@ -20786,21 +20839,23 @@ function buildMoveModal(project) {
       var selectedKind = state.kinds && state.backingKey
         ? state.kinds.filter(function (kind) { return kind.key === state.backingKey; })[0]
         : null;
+      var fromPid = pidOn(project, from); // project id on the SOURCE chain
+      var toPid = pidOn(project, to);     // project id on the DESTINATION chain (may differ for linked deployments)
       if (selectedKind) {
-        remoteBackingP = resolveFundsKindAcct(to, BigInt(project.id), selectedKind).catch(function () { return null; });
+        remoteBackingP = resolveFundsKindAcct(to, toPid, selectedKind).catch(function () { return null; });
       } else {
-        remoteBackingP = resolveAcctToken(to, BigInt(project.id)).catch(function () { return null; });
+        remoteBackingP = resolveAcctToken(to, toPid).catch(function () { return null; });
       }
       return Promise.all([
         clientFor(from).readContract({ address: sucker, abi: suckerTokenMappingAbi, functionName: 'projectId', args: [] }),
         clientFor(from).readContract({ address: sucker, abi: suckerTokenMappingAbi, functionName: 'remoteTokenFor', args: [termToken] }),
-        clientFor(from).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [sucker, BigInt(project.id), amount, termToken, sucker, '0x'] }),
-        isFeelessAddress(from, sucker, BigInt(project.id)),
-        read(from, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [BigInt(project.id), termToken]).then(toBigInt),
+        clientFor(from).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [sucker, fromPid, amount, termToken, sucker, '0x'] }),
+        isFeelessAddress(from, sucker, Number(fromPid)),
+        read(from, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [fromPid, termToken]).then(toBigInt),
         classifySuckerInfra(from, sucker),
         remoteBackingP,
       ]).then(function (checks) {
-        if (toBigInt(checks[0]) !== BigInt(project.id)) throw new Error('The selected bridge belongs to a different project.');
+        if (toBigInt(checks[0]) !== fromPid) throw new Error('The selected bridge belongs to a different project.');
         var mapping = checks[1];
         if (!mapping || !mapping.enabled || !mapping.addr || /^0x0+$/.test(mapping.addr)) throw new Error('This backing token is not mapped on the selected bridge.');
         if (checks[5] === 'unknown') throw new Error('The selected bridge type could not be verified. Try again when the source RPC is available.');
@@ -22339,10 +22394,10 @@ function readGossipAdjustment(chainId, pid, current) {
 }
 
 function fetchOps(project) {
-  var pid = BigInt(project.id);
   var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
   return Promise.all(chains.map(function (chain) {
     var cid = chain.id;
+    var pid = pidOn(project, cid); // this chain's own project id
     var terminal = getAddress('JBMultiTerminal', cid);
     return Promise.all([
       read(cid, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).catch(function () { return null; }),
