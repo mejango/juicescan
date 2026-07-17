@@ -473,6 +473,13 @@ function buildTierMintMetadata(idTarget, tierIds) {
   var data = encodeAbiParameters([{ type: 'bool' }, { type: 'uint16[]' }], [true, tierIds]);
   return '0x' + '00'.repeat(32) + nftId + '02' + '00'.repeat(27) + data.slice(2);
 }
+// Same envelope for a 721 REDEMPTION: id = getId("cashOut", idTarget); data = abi.encode(uint256[] tokenIds).
+// The 721 hook's beforeCashOutRecordedWith reads these token IDs, sums their cash out weight, and burns them.
+export function buildTierCashOutMetadata(idTarget, tokenIds) {
+  var id = cashOutMetadataId(idTarget); // bytes4(idTarget ^ keccak256("cashOut"))
+  var data = encodeAbiParameters([{ type: 'uint256[]' }], [tokenIds.map(function (t) { return BigInt(t); })]);
+  return '0x' + '00'.repeat(32) + id + '02' + '00'.repeat(27) + data.slice(2);
+}
 
 // Cash out routing metadata: tells the buyback hook to sell into the pool with a slippage floor, skipping the
 // (cold) TWAP. id = getId("cashOut", buybackHook) = bytes4(hook[:4] ^ keccak256("cashOut")[:4]); data =
@@ -1304,6 +1311,16 @@ function renderCustomerYou(project, namesP) {
         var val = el('span', 'rf-perchain-val'); val.textContent = '×' + t.count; row.appendChild(val);
         box.appendChild(row);
       });
+      // Redeem: burn items for a share of surplus — only when the shop is configured for item cash outs.
+      if (project.metadata && project.metadata.useDataHookForCashOut) {
+        var redeem = el('a', 'operator-cta shop-redeem-link'); redeem.href = '#'; redeem.textContent = 'Redeem items for surplus →';
+        redeem.addEventListener('click', function (e) {
+          e.preventDefault();
+          var h = {}; var content = buildRedeemItemsModal(project, function () { if (h.close) h.close(); });
+          h.close = openModal('Redeem items', content).close;
+        });
+        box.appendChild(redeem);
+      }
     }).catch(function () { if (box.isConnected) { box.innerHTML = ''; box.textContent = 'Could not load your items.'; } });
   }
   load();
@@ -18282,6 +18299,177 @@ function feeRevnetIdOf(chainId, dataHook) {
   return clientFor(chainId).readContract({ address: dataHook, abi: feeRevnetIdAbi, functionName: 'FEE_REVNET_ID', args: [] })
     .then(function (id) { _feeRevnetIdCache[key] = toBigInt(id); return _feeRevnetIdCache[key]; })
     .catch(function () { _feeRevnetIdCache[key] = null; return null; });
+}
+
+// The connected wallet's currently-owned store items on a chain: mint events give candidate token IDs,
+// then ownerOf() confirms they weren't transferred/burned. Returns [{ tokenId, tierId, hook }].
+function fetchOwnedItems(project, chainId, wallet) {
+  return fetchNftMints(project, wallet).then(function (res) {
+    var onChain = res.rows.filter(function (m) { return Number(m._chainId || chainId) === Number(chainId) && m.tokenId; });
+    if (!onChain.length) return [];
+    var client = clientFor(chainId);
+    return Promise.all(onChain.map(function (m) {
+      return client.readContract({ address: m.hook, abi: ownerOfAbi, functionName: 'ownerOf', args: [BigInt(m.tokenId)] })
+        .then(function (owner) { return (owner && owner.toLowerCase() === wallet.toLowerCase()) ? { tokenId: String(m.tokenId), tierId: Number(m.tierId), hook: m.hook } : null; })
+        .catch(function () { return null; });
+    })).then(function (arr) { return arr.filter(Boolean); });
+  });
+}
+
+// Redeem store items: burn selected NFTs for a share of the project's surplus. cashOutTokensOf with
+// cashOutCount=0 (fungible tokens must NOT be co-redeemed) and metadata carrying the token IDs. No ERC-721
+// approval — the hook burns its own tokens after verifying ownership. See JB721Hook.afterCashOutRecordedWith.
+function buildRedeemItemsModal(project, requestClose) {
+  var pid = BigInt(project.id);
+  var wrap = el('div', 'modal-body');
+  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
+  var state = { chainId: chains[0].id, owned: null, selected: {}, idTarget: null, acct: null, net: null, taxRate: null, feeless: null, feeFree: 0n, hook: null };
+
+  var desc = el('div', 'modal-balance'); desc.textContent = 'Redeem your items to burn them for a share of the project’s surplus. A cash out tax may apply.'; wrap.appendChild(desc);
+
+  var selRow = el('div', 'cashout-selrow');
+  selRow.appendChild(document.createTextNode('Redeem on'));
+  var chainSel = el('select', 'field create-input'); chainSel.style.width = 'auto'; chainSel.style.minWidth = '0';
+  chains.forEach(function (c) { var o = document.createElement('option'); o.value = String(c.id); o.textContent = c.name || ('Chain ' + c.id); if (c.id === state.chainId) o.selected = true; chainSel.appendChild(o); });
+  chainSel.addEventListener('change', function () { state.chainId = Number(chainSel.value); onChainChange(); });
+  selRow.appendChild(chainSel);
+  if (chains.length < 2) selRow.style.display = 'none';
+  wrap.appendChild(selRow);
+
+  var itemsLbl = el('div', 'modal-label'); itemsLbl.style.marginTop = '12px'; itemsLbl.textContent = 'Your items'; wrap.appendChild(itemsLbl);
+  var itemsBox = el('div', 'redeem-items'); wrap.appendChild(itemsBox);
+  var preview = el('div', 'ops-preview'); wrap.appendChild(preview);
+  var status = el('div', 'modal-status'); wrap.appendChild(status);
+  var foot = el('div', 'modal-foot');
+  var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Redeem'; btn.disabled = true;
+  foot.appendChild(btn); wrap.appendChild(foot);
+
+  function selectedTokenIds() { return Object.keys(state.selected).filter(function (t) { return state.selected[t]; }); }
+
+  var previewSeq = 0;
+  function renderItems(names) {
+    itemsBox.innerHTML = '';
+    if (!state.owned) { itemsBox.textContent = 'Loading your items…'; return; }
+    if (!state.owned.length) { itemsBox.className = 'redeem-items owners-empty'; itemsBox.textContent = 'You own no items on ' + chainNameOf(state.chainId) + '.'; return; }
+    itemsBox.className = 'redeem-items';
+    // Group owned tokens by tier, each token a checkbox row; a per-tier "all" toggles them together.
+    var byTier = {};
+    state.owned.forEach(function (o) { (byTier[o.tierId] = byTier[o.tierId] || []).push(o); });
+    var selAll = el('label', 'redeem-selall');
+    var allCb = document.createElement('input'); allCb.type = 'checkbox'; allCb.checked = selectedTokenIds().length === state.owned.length;
+    allCb.addEventListener('change', function () { state.owned.forEach(function (o) { state.selected[o.tokenId] = allCb.checked; }); renderItems(names); schedulePreview(); });
+    selAll.appendChild(allCb); var allTxt = el('span'); allTxt.textContent = 'Select all (' + state.owned.length + ')'; selAll.appendChild(allTxt);
+    itemsBox.appendChild(selAll);
+    Object.keys(byTier).forEach(function (tid) {
+      var group = byTier[tid];
+      var gh = el('div', 'redeem-tier-head'); gh.textContent = itemLabelFrom(names, tid) + ' (' + group.length + ')'; itemsBox.appendChild(gh);
+      group.forEach(function (o) {
+        var row = el('label', 'redeem-item-row');
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!state.selected[o.tokenId];
+        cb.addEventListener('change', function () { state.selected[o.tokenId] = cb.checked; renderItems(names); schedulePreview(); });
+        row.appendChild(cb);
+        var t = el('span', 'redeem-item-id'); t.textContent = '#' + o.tokenId; row.appendChild(t);
+        itemsBox.appendChild(row);
+      });
+    });
+  }
+
+  var _names = {};
+  function loadItems() {
+    var acct = getAccount && getAccount();
+    if (!acct) { itemsBox.className = 'redeem-items owners-empty'; itemsBox.textContent = 'Connect a wallet to redeem your items.'; btn.disabled = true; return; }
+    state.owned = null; renderItems(_names);
+    resolveShopItemNames(project).then(function (n) { _names = n; renderItems(_names); });
+    fetchOwnedItems(project, state.chainId, acct).then(function (owned) {
+      if (!wrap.isConnected || state.chainId == null) return;
+      state.owned = owned;
+      state.hook = owned[0] && owned[0].hook;
+      // Default: everything selected.
+      state.selected = {}; owned.forEach(function (o) { state.selected[o.tokenId] = true; });
+      renderItems(_names);
+      schedulePreview();
+    }).catch(function () { itemsBox.className = 'redeem-items'; itemsBox.textContent = 'Could not read your items.'; });
+  }
+
+  function onChainChange() {
+    state.owned = null; state.selected = {}; state.idTarget = null; state.acct = null; state.net = null; state.hook = null;
+    preview.textContent = ''; btn.disabled = true; ++previewSeq;
+    loadItems();
+  }
+
+  var previewTimer = null;
+  function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(updatePreview, 250); }
+  function updatePreview() {
+    var seq = ++previewSeq;
+    var acct = getAccount && getAccount();
+    var ids = selectedTokenIds();
+    state.net = null; btn.disabled = true;
+    if (!acct || !ids.length || !state.hook) { preview.textContent = ids.length ? '' : (state.owned && state.owned.length ? 'Select items to redeem.' : ''); return; }
+    preview.textContent = 'Estimating…';
+    var cid = state.chainId;
+    var terminal = getAddress('JBMultiTerminal', cid);
+    if (!terminal) { preview.textContent = 'No terminal on this chain.'; return; }
+    // idTarget for THIS chain's hook (a delegatecall clone reads back the shared implementation address).
+    var idTargetP = state.idTarget ? Promise.resolve(state.idTarget)
+      : clientFor(cid).readContract({ address: state.hook, abi: HOOK_METADATA_ID_TARGET_ABI, functionName: 'METADATA_ID_TARGET', args: [] });
+    Promise.all([idTargetP, resolveAcctToken(cid, pid).catch(function () { return null; })]).then(function (r) {
+      if (seq !== previewSeq) return null;
+      state.idTarget = r[0]; state.acct = r[1];
+      if (!state.acct) { preview.textContent = 'Could not resolve the reclaim token.'; return null; }
+      var metadata = buildTierCashOutMetadata(state.idTarget, ids);
+      return Promise.all([
+        clientFor(cid).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [acct, pid, 0n, state.acct.address, acct, metadata] }).catch(function () { return null; }),
+        isFeelessAddress(cid, acct, project.id),
+        read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, state.acct.address]).then(toBigInt).catch(function () { return 0n; }),
+      ]).then(function (res) {
+        if (seq !== previewSeq) return;
+        var pc = res[0];
+        if (!pc) { preview.textContent = 'This redemption can’t be previewed — the shop may not allow cash outs, or there’s no surplus.'; return; }
+        var reclaim = toBigInt(pc.reclaimAmount != null ? pc.reclaimAmount : pc[1]);
+        var taxRate = Number(pc.cashOutTaxRate != null ? pc.cashOutTaxRate : pc[2]) || 0;
+        var feeless = res[1]; var feeFree = res[2];
+        var net = reclaim - cashOutProtocolFee(reclaim, taxRate, !!feeless, feeFree);
+        state.net = net; state.taxRate = taxRate; state.feeless = feeless; state.feeFree = feeFree;
+        preview.innerHTML = '';
+        var recv = el('div', 'ops-preview-line ops-preview-recv');
+        recv.textContent = 'You’ll receive ~ ' + formatBalance(net, state.acct.decimals, state.acct.symbol) + ' for ' + ids.length + ' item' + (ids.length === 1 ? '' : 's');
+        preview.appendChild(recv);
+        if (net <= 0n) { var z = el('div', 'ops-preview-line ops-preview-feetok'); z.textContent = 'No surplus to redeem against right now.'; preview.appendChild(z); }
+        btn.disabled = net <= 0n;
+      });
+    }).catch(function () { if (seq === previewSeq) preview.textContent = 'Could not estimate the redemption.'; });
+  }
+
+  btn.addEventListener('click', function () {
+    var acct = getAccount && getAccount();
+    var ids = selectedTokenIds();
+    if (!acct) { status.textContent = 'Connect a wallet.'; return; }
+    if (!ids.length) { status.textContent = 'Select at least one item.'; return; }
+    if (state.net == null || state.net <= 0n || !state.acct || !state.idTarget) { status.textContent = 'Preview still loading…'; return; }
+    var cid = state.chainId;
+    var terminal = getAddress('JBMultiTerminal', cid);
+    var reclaimToken = state.acct.address;
+    var reviewedNet = state.net;
+    var metadata = buildTierCashOutMetadata(state.idTarget, ids);
+    var minReclaimed = quotedOutputFloor(reviewedNet, 9900n); // 1% floor under the previewed net
+    btn.disabled = true; status.textContent = '';
+    executeTransaction({
+      chainId: cid, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
+      args: [acct, pid, 0n, reclaimToken, minReclaimed, acct, metadata],
+      onStatus: function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; },
+      onSuccess: function () {
+        status.classList.remove('pending');
+        status.textContent = 'Redeemed ' + ids.length + ' item' + (ids.length === 1 ? '' : 's') + ' for ~' + formatBalance(reviewedNet, state.acct.decimals, state.acct.symbol) + '.';
+        document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+        setTimeout(function () { if (requestClose) requestClose(); }, 1800);
+      },
+      onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
+    });
+  });
+
+  loadItems();
+  onWalletChange(function () { if (wrap.isConnected) onChainChange(); });
+  return wrap;
 }
 
 function buildCashOutModal(project, requestClose) {
