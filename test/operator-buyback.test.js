@@ -8,7 +8,7 @@ const NATIVE = '0x000000000000000000000000000000000000EEEe';
 
 describe('renderBuybackRouterCard', () => {
   it('renders the card + 3 action buttons without throwing', () => {
-    const card = renderBuybackRouterCard({ id: '5', chains: [{ id: 1, name: 'Ethereum' }] });
+    const card = renderBuybackRouterCard({ id: '5', chainId: 1, idByChain: { 1: 5 }, chains: [{ id: 1, name: 'Ethereum', projectId: 5 }] });
     expect(card.querySelector('.detail-card-title').textContent).toMatch(/Buyback . swap router/);
     const btns = [].slice.call(card.querySelectorAll('.powers-act')).map((b) => b.textContent);
     expect(btns).toEqual(['Set buyback hook', 'Set router terminal', 'Initialize buyback pool']);

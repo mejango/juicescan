@@ -17,6 +17,7 @@ describe('project .jb fund snapshots', () => {
     };
     const source = {
       chainId: 84532,
+      projectId: 42n,
       ruleset: { id: 9n },
       contexts: [
         { address: NATIVE_TOKEN, decimals: 18 },
@@ -24,7 +25,7 @@ describe('project .jb fund snapshots', () => {
       ],
     };
 
-    const snapshot = await readDraftFunds({ id: 42 }, source, readContract);
+    const snapshot = await readDraftFunds({ id: 42, chainId: 84532, idByChain: { 84532: 42 } }, source, readContract);
 
     expect(calls).toHaveLength(7); // one reserved-split read + three reads per accounting context
     expect(calls.filter((call) => call.functionName === 'splitsOf')).toHaveLength(3);

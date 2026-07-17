@@ -115,13 +115,6 @@ var ACTIVITY_MAX_ITEMS = 100;
 // Default .activity-feed scroll height (mirrors style.css). sizeActivity() grows the feed to 2x this (or the body
 // height) so loaded activity isn't hidden behind a short scrollbox.
 var ACTIVITY_FEED_BASE_PX = 390;
-var BENDYSTRAW_PARENT_CHAIN_ID = {
-  11155111: 1,
-  11155420: 10,
-  84532: 8453,
-  421614: 42161,
-};
-
 // Inline chain logos (brand marks), keyed by chain family. Testnets reuse their parent chain's mark.
 var CHAIN_LOGO_SVG = {
   eth: '<svg viewBox="0 0 24 24" width="15" height="15"><circle cx="12" cy="12" r="12" fill="#627EEA"/><path d="M12 4v5.9l5 2.25z" fill="#fff" fill-opacity=".6"/><path d="M12 4L7 12.15l5-2.25z" fill="#fff"/><path d="M12 16v3.99l5-6.92z" fill="#fff" fill-opacity=".6"/><path d="M12 19.99V16l-5-3.07z" fill="#fff"/><path d="M12 15.07l5-2.92-5-2.24z" fill="#fff" fill-opacity=".2"/><path d="M7 12.15l5 2.92v-5.16z" fill="#fff" fill-opacity=".6"/></svg>',
@@ -149,12 +142,13 @@ function chainLogo(chainId, titleName) {
 // the project on that chain (works from both the card and the detail header).
 function projectChainLogo(project, chain) {
   var span = chainLogo(chain.id, null);
+  var localProjectId = chain.projectId != null ? BigInt(chain.projectId) : pidOn(project, chain.id);
   span.classList.add('chain-logo-link');
-  span.title = '#' + project.id + ' on ' + chain.name;
+  span.title = '#' + localProjectId.toString() + ' on ' + chain.name;
   span.addEventListener('click', function (e) {
     e.stopPropagation();
     var tab = _activeDetail ? _activeDetail.current : null;
-    location.hash = '#' + slugForChain(chain.id) + ':' + project.id + (tab ? '/' + tab.toLowerCase() : '');
+    location.hash = '#' + slugForChain(chain.id) + ':' + localProjectId.toString() + (tab ? '/' + tab.toLowerCase() : '');
   });
   return span;
 }
@@ -508,20 +502,21 @@ function decodeBuybackCashOutSpec(metaHex) {
 // there is none. RPC failures reject so the UI never turns "could not read" into "no shop".
 function readShopHook(project) {
   var client = clientFor(project.chainId);
+  var homePid = pidOn(project, project.chainId);
   var revo = getAddress('REVOwner', project.chainId);
   if (project.isRevnet) {
     if (!revo) return Promise.reject(new Error('REVOwner is unavailable.'));
     // Revnets are token-based: their cash-out data hook is REVOwner, and item cash out is disabled (the create
     // flow only offers "items cash out" to non-revnets). itemsCashOut stays false.
-    return client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id)] })
+    return client.readContract({ address: revo, abi: REVO_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [homePid] })
       .then(function (h) { return (h && !/^0x0+$/.test(h)) ? { hook: h, authoritative: true, itemsCashOut: false } : null; });
   }
   return Promise.resolve().then(function () {
     // Custom projects aren't in REVOwner. Read the current ruleset: its dataHook is either the omnichain
     // deployer (omnichain — the real 721 hook is in the deployer's tiered721HookOf mapping) or, for a
     // single-chain custom project, the 721 hook itself. fetchProjectTiers then verifies via STORE().
-    return controllerAddressFor(project.chainId, project.id).then(function (jbc) {
-    return client.readContract({ address: jbc, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(project.id)] }).then(function (r) {
+    return controllerAddressFor(project.chainId, homePid).then(function (jbc) {
+    return client.readContract({ address: jbc, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [homePid] }).then(function (r) {
       var rs = r ? (r[0] || r.ruleset) : null;
       var m = r ? (r[1] || r.metadata) : null;
       if (!m || !m.useDataHookForPay || !m.dataHook || /^0x0+$/.test(m.dataHook)) return null;
@@ -530,7 +525,7 @@ function readShopHook(project) {
         // The omnichain deployer is the ruleset data hook; it forwards cash out to the 721 hook only when its
         // OWN per-ruleset tiered721 config opts in (config.useDataHookForCashOut) — the ruleset's
         // useDataHookForCashOut only means "consult the deployer". Read the authoritative flag here.
-        return client.readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id), BigInt(rs.id)] })
+        return client.readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [homePid, BigInt(rs.id)] })
           .then(function (cfg) {
             var hk = cfg && (cfg.hook || cfg[0]);
             var itemsCashOut = !!(cfg && (cfg.useDataHookForCashOut != null ? cfg.useDataHookForCashOut : cfg[1]));
@@ -575,6 +570,9 @@ var NFT_MINTS_MAX = 1000;
 // page's `project.chains` only carries {id,name} and assumes same-id, so resolve the real map from the
 // sucker group). Returns Promise<{chainId: projectId}>, always including the home (chainId,projectId).
 function projectIdByChain(project) {
+  if (project && project.idByChain && Object.keys(project.idByChain).length) {
+    return Promise.resolve(Object.assign({}, project.idByChain));
+  }
   return resolveSplitProject(Number(project.id), Number(project.chainId))
     .then(function (info) { return (info && info.byChain) || null; })
     .catch(function () { return null; })
@@ -586,34 +584,36 @@ function projectIdByChain(project) {
 }
 // The project's id on a specific chain. Linked deployments can differ per chain, and the grid groups by
 // matching-id (which can even merge UNRELATED same-id projects), so every per-chain read/tx must use this,
-// not a bare project.id. Falls back to project.id until the sucker-group map (project.idByChain) resolves.
-function pidOn(project, chainId) {
+// not a bare project.id. Only the route's home deployment may safely fall back to project.id.
+export function pidOn(project, chainId) {
   var map = project && project.idByChain;
   var local = map && map[Number(chainId)];
-  return BigInt(local != null ? local : project.id);
+  if (local != null) return BigInt(local);
+  if (project && Number(chainId) === Number(project.chainId)) return BigInt(project.id);
+  throw new Error('Could not verify this project’s ID on ' + chainNameOf(chainId) + '.');
 }
 // Resolve a project's AUTHORITATIVE chains from the sucker group (each with its own projectId), replacing
-// the grid's same-id grouping. Attaches { idByChain, chains:[{id,name,projectId}] }. Falls back to the
-// existing (same-id) chains — with projectId defaulted to project.id — if the indexer is unavailable, so
-// a bendystraw outage never strands the detail page.
+// the grid's same-id grouping. Attaches { idByChain, chains:[{id,name,projectId}] }. If the group cannot be
+// verified, fail closed to the route's home deployment; showing fewer chains is safer than reading or
+// writing unrelated projects which happen to have the same numeric ID.
 function attachProjectChainIds(project) {
   return projectIdByChain(project).then(function (map) {
     project.idByChain = map;
     var home = Number(project.chainId);
     var ids = Object.keys(map).map(Number);
-    // Only override the same-id chain list once the sucker group is authoritative (it always includes
-    // home; >1 chain means a real group). Home-only (single-chain / unindexed) leaves the list intact.
-    if (ids.length > 1) {
-      var ordered = [home].concat(ids.filter(function (c) { return c !== home; }));
-      project.chains = ordered.map(function (c) {
-        var existing = (project.chains || []).filter(function (x) { return Number(x.id) === c; })[0];
-        return { id: c, name: (existing && existing.name) || chainNameOf(c), projectId: map[c] };
-      });
-    } else if (project.chains) {
-      project.chains.forEach(function (c) { if (c.projectId == null) c.projectId = (map[Number(c.id)] != null ? map[Number(c.id)] : Number(project.id)); });
-    }
+    var ordered = [home].concat(ids.filter(function (c) { return c !== home; }));
+    project.chains = ordered.map(function (c) {
+      var existing = (project.chains || []).filter(function (x) { return Number(x.id) === c; })[0];
+      return { id: c, name: (existing && existing.name) || chainNameOf(c), projectId: map[c] };
+    });
     return project;
-  }).catch(function () { if (project && !project.idByChain) project.idByChain = {}; return project; });
+  }).catch(function () {
+    if (!project) return project;
+    var home = Number(project.chainId);
+    project.idByChain = {}; project.idByChain[home] = Number(project.id);
+    project.chains = [{ id: home, name: chainNameOf(home), projectId: Number(project.id) }];
+    return project;
+  });
 }
 // All store-item purchases for a project (optionally filtered to one beneficiary), across its chains.
 // Paginated + capped; returns { rows, total, capped }. Uses each chain's OWN project id (see projectIdByChain).
@@ -649,10 +649,11 @@ function fetchNftMints(project, beneficiary) {
 }
 
 function fetchBendystrawTierMetadata(project, hook) {
-  var key = DISCOVER_NETWORK + ':' + project.chainId + ':' + project.id + ':' + String(hook).toLowerCase();
+  var localProjectId = Number(pidOn(project, project.chainId));
+  var key = DISCOVER_NETWORK + ':' + project.chainId + ':' + localProjectId + ':' + String(hook).toLowerCase();
   if (_tierMetadataCache[key]) return _tierMetadataCache[key];
   _tierMetadataCache[key] = optionalWithin(bendystrawQuery(BENDYSTRAW_NFT_TIERS_QUERY, {
-    projectId: Number(project.id), chainId: Number(project.chainId), version: BENDYSTRAW_VERSION, hook: String(hook).toLowerCase(),
+    projectId: localProjectId, chainId: Number(project.chainId), version: BENDYSTRAW_VERSION, hook: String(hook).toLowerCase(),
   }).then(function (data) {
     var byId = {};
     (((data || {}).nftTiers || {}).items || []).forEach(function (row) { byId[Number(row.tierId)] = row; });
@@ -662,11 +663,11 @@ function fetchBendystrawTierMetadata(project, hook) {
 }
 
 function fetchProjectTiers(project) {
-  var k = project.chainId + ':' + project.id;
+  var k = project.chainId + ':' + pidOn(project, project.chainId).toString();
   if (_tiersCache[k]) return _tiersCache[k];
   return (_tiersCache[k] = fetchProjectTiersUncached(project));
 }
-function bustTiersCache(project) { delete _tiersCache[project.chainId + ':' + project.id]; }
+function bustTiersCache(project) { delete _tiersCache[project.chainId + ':' + pidOn(project, project.chainId).toString()]; }
 
 // A tier's effective (discounted) price. Mirrors JB721TiersHookStore: effective = price - mulDiv(price,
 // discountPercent, 200), where DISCOUNT_DENOMINATOR = 200 (so discountPercent 200 = 100% off). Integer-floor
@@ -758,7 +759,7 @@ async function fetchProjectTiersUncached(project) {
   // A custom accounting token (a project's own ERC-20) isn't in the known-token list, so pricingSymbol
   // falls back to "currency <uint32(address)>" — resolve the real symbol from the accounting contexts.
   if (/^currency \d+$/.test(pricing.symbol)) {
-    var acctCtxs = await resolveAcctTokens(project.chainId, BigInt(project.id)).catch(function () { return null; });
+    var acctCtxs = await resolveAcctTokens(project.chainId, pidOn(project, project.chainId)).catch(function () { return null; });
     var acctMatch = (acctCtxs || []).filter(function (c) { return Number(c.currency) === pricing.currency; })[0];
     if (acctMatch && acctMatch.symbol) pricing.symbol = acctMatch.symbol;
   }
@@ -1324,22 +1325,76 @@ function renderShopTab(project, shopState, cart, initialSubTab) {
 // every customer, ranked by items owned, plus a recent-purchases feed. Backed by indexed mint events.
 // A shared item-name map (tierId → display name) resolves independent of the Inventory subtab.
 function renderShopCustomers(project, shopState) {
-  var namesP = resolveShopItemNames(project);
+  var mediaP = resolveShopItemMedia(project);
   var w = el('div', 'owners-subgroup');
-  w.appendChild(ownersCard('You', renderCustomerYou(project, namesP)));
-  w.appendChild(ownersCard('All', renderCustomerAll(project, namesP)));
+  w.appendChild(ownersCard('You', renderCustomerYou(project, mediaP)));
+  w.appendChild(ownersCard('All', renderCustomerAll(project, mediaP)));
+  w.appendChild(renderRecentPurchases(project, mediaP));
   return w;
 }
 
-// Resolve every store item's display name (tierId → name), via the same media resolver the shop cards use.
-// Cached through fetchProjectTiers. Falls back to no entry (callers render "Item #<id>").
-function resolveShopItemNames(project) {
+// A holders table for one item: which addresses hold it, by count. Backed by the shop's purchase records.
+function openTierHoldersModal(project, media, tierId, name, mints) {
+  var byCust = {};
+  mints.forEach(function (m) { var k = String(m.beneficiary || '').toLowerCase(); if (!k) return; byCust[k] = (byCust[k] || 0) + 1; });
+  var keys = Object.keys(byCust).sort(function (a, b) { return byCust[b] - byCust[a]; });
+  var content = el('div', 'modal-body');
+  var head = el('div', 'shop-holders-head');
+  head.appendChild(shopItemThumb(media, tierId));
+  var ht = el('span', 'shop-holders-title'); ht.textContent = name + ' — ' + keys.length + ' owner' + (keys.length === 1 ? '' : 's'); head.appendChild(ht);
+  content.appendChild(head);
+  var table = el('div', 'detail-ops-table shop-holders-table');
+  keys.forEach(function (k) {
+    var row = el('div', 'detail-ops-row');
+    var who = el('span', 'detail-ops-cell'); who.appendChild(addressNode(k, project.chainId)); row.appendChild(who);
+    var n = el('span', 'detail-ops-cell'); n.textContent = '×' + byCust[k]; row.appendChild(n);
+    table.appendChild(row);
+  });
+  content.appendChild(table);
+  openModal(name + ' owners', content);
+}
+
+// Everything one address bought from this shop: item thumbnails + counts.
+function openAddressItemsModal(project, meta, address, mints) {
+  var content = el('div', 'modal-body');
+  var head = el('div', 'shop-holders-head');
+  head.appendChild(addressNode(address, project.chainId));
+  content.appendChild(head);
+  var box = el('div', 'detail-card-body');
+  tallyItems(mints, meta.names).forEach(function (t) {
+    var row = el('div', 'shop-cust-item-row');
+    var thumb = shopItemThumb(meta.media, t.tierId); thumb.style.cursor = 'pointer';
+    thumb.addEventListener('click', function () { openTierHoldersModal(project, meta.media, t.tierId, t.label, mints.filter(function (m) { return Number(m.tierId) === t.tierId; })); });
+    row.appendChild(thumb);
+    var name = el('span', 'shop-cust-item-name'); name.textContent = t.label; row.appendChild(name);
+    var val = el('span', 'rf-perchain-val'); val.textContent = '×' + t.count; row.appendChild(val);
+    box.appendChild(row);
+  });
+  content.appendChild(box);
+  openModal('Items owned', content);
+}
+
+// Resolve every store item's display name + media (tierId → name, tierId → media), via the same resolver
+// the shop cards use. Cached through fetchProjectTiers. Falls back to empty maps (callers render "Item #<id>").
+function resolveShopItemMedia(project) {
   return fetchProjectTiers(project).then(function (shop) {
-    if (!shop || !shop.tiers || !shop.tiers.length) return {};
+    if (!shop || !shop.tiers || !shop.tiers.length) return { names: {}, media: {} };
     return Promise.all(shop.tiers.map(function (t) {
-      return resolveTierMedia(shop, t, project.chainId).then(function (m) { return { id: Number(t.id), name: m && m.name }; }).catch(function () { return { id: Number(t.id) }; });
-    })).then(function (arr) { var map = {}; arr.forEach(function (x) { if (x.name) map[x.id] = x.name; }); return map; });
-  }).catch(function () { return {}; });
+      return resolveTierMedia(shop, t, project.chainId).then(function (m) { return { id: Number(t.id), m: m }; }).catch(function () { return { id: Number(t.id), m: null }; });
+    })).then(function (arr) {
+      var names = {}, media = {};
+      arr.forEach(function (x) { if (x.m && x.m.name) names[x.id] = x.m.name; if (x.m) media[x.id] = x.m; });
+      return { names: names, media: media };
+    });
+  }).catch(function () { return { names: {}, media: {} }; });
+}
+
+// Small square item thumbnail for the Customers subtab + redeem list. Placeholder "#id" until the art loads.
+function shopItemThumb(media, tierId) {
+  var wrap = el('div', 'shop-cust-thumb'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tierId; wrap.appendChild(ph);
+  var m = media && media[Number(tierId)];
+  if (m && (m.image || m.animationUrl)) renderTierMediaInto(wrap, m, m.name || ('Item ' + tierId), 'thumb');
+  return wrap;
 }
 function itemLabelFrom(names, tierId) { return (names && names[Number(tierId)]) || ('Item #' + tierId); }
 
@@ -1351,25 +1406,28 @@ function tallyItems(rows, names) {
     .sort(function (a, b) { return b.count - a.count; });
 }
 
-function renderCustomerYou(project, namesP) {
+function renderCustomerYou(project, mediaP) {
   var box = el('div', 'detail-card-body');
   function load() {
     var acct = getAccount && getAccount();
     box.className = 'detail-card-body';
     if (!acct) { box.className = 'detail-card-body owners-empty'; box.textContent = 'Connect a wallet to see the items you own.'; return; }
     box.textContent = 'Loading your items…';
-    // Also resolve the shop (cached) for the AUTHORITATIVE item-cash-out flag: whether cash out is forwarded
-    // to the 721 hook is decided by the deployer's per-ruleset tiered721 config (or, when the 721 hook is the
-    // direct data hook, the ruleset flag) — NOT the bare ruleset useDataHookForCashOut. See readShopHook.
-    Promise.all([fetchNftMints(project, acct), namesP, fetchProjectTiers(project).catch(function () { return null; })]).then(function (out) {
-      var res = out[0], names = out[1], shop = out[2];
+    // Owned = ownerOf-verified holdings (not all-time mints) so burns drop out immediately — mint events never
+    // retract, so counting them would report a stale total after a redemption. Cross-chain: one query, verify
+    // each token on its own chain. Also resolve the shop (cached) for the AUTHORITATIVE item-cash-out flag:
+    // whether cash out forwards to the 721 hook is decided by the deployer's per-ruleset tiered721 config (or,
+    // when the 721 hook is the direct data hook, the ruleset flag) — NOT the bare useDataHookForCashOut.
+    Promise.all([fetchOwnedItemsAcrossChains(project, acct), mediaP, fetchProjectTiers(project).catch(function () { return null; })]).then(function (out) {
+      var owned = out[0], meta = out[1] || { names: {}, media: {} }, shop = out[2];
       if (!box.isConnected) return;
       box.innerHTML = '';
-      if (!res.rows.length) { box.className = 'detail-card-body owners-empty'; box.textContent = 'You don’t own any items from this shop yet.'; return; }
-      var totalLine = el('div', 'shop-cust-total'); totalLine.textContent = res.rows.length + ' item' + (res.rows.length === 1 ? '' : 's') + ' owned'; box.appendChild(totalLine);
-      tallyItems(res.rows, names).forEach(function (t) {
-        var row = el('div', 'rf-perchain-row');
-        var name = el('span', 'rf-perchain-name'); name.textContent = t.label; row.appendChild(name);
+      if (!owned.length) { box.className = 'detail-card-body owners-empty'; box.textContent = 'You don’t own any items from this shop yet.'; return; }
+      var totalLine = el('div', 'shop-cust-total'); totalLine.textContent = owned.length + ' item' + (owned.length === 1 ? '' : 's') + ' owned'; box.appendChild(totalLine);
+      tallyItems(owned, meta.names).forEach(function (t) {
+        var row = el('div', 'shop-cust-item-row');
+        row.appendChild(shopItemThumb(meta.media, t.tierId));
+        var name = el('span', 'shop-cust-item-name'); name.textContent = t.label; row.appendChild(name);
         var val = el('span', 'rf-perchain-val'); val.textContent = '×' + t.count; row.appendChild(val);
         box.appendChild(row);
       });
@@ -1389,14 +1447,17 @@ function renderCustomerYou(project, namesP) {
   }
   load();
   onWalletChange(function () { if (box.isConnected) load(); });
+  // A redemption burns items — reload so the owned count reflects it without a manual refresh.
+  var onBridge = function () { if (box.isConnected) load(); };
+  document.addEventListener('jb:bridge-updated', onBridge);
   return box;
 }
 
-function renderCustomerAll(project, namesP) {
+function renderCustomerAll(project, mediaP) {
   var box = el('div', 'detail-card-body');
   box.textContent = 'Loading customers…';
-  Promise.all([fetchNftMints(project), namesP]).then(function (out) {
-    var res = out[0], names = out[1];
+  Promise.all([fetchNftMints(project), mediaP]).then(function (out) {
+    var res = out[0], meta = out[1] || { names: {}, media: {} }, names = meta.names, media = meta.media;
     if (!box.isConnected) return;
     box.innerHTML = '';
     if (!res.rows.length) { box.className = 'detail-card-body owners-empty'; box.textContent = 'No items have been bought yet.'; return; }
@@ -1404,30 +1465,65 @@ function renderCustomerAll(project, namesP) {
     var byCust = {};
     res.rows.forEach(function (m) { var k = String(m.beneficiary || '').toLowerCase(); if (!k) return; (byCust[k] = byCust[k] || []).push(m); });
     var custKeys = Object.keys(byCust).sort(function (a, b) { return byCust[b].length - byCust[a].length; });
+    // A tier's every purchase row (across customers), for the "owners of this item" modal.
+    var byTier = {};
+    res.rows.forEach(function (m) { (byTier[Number(m.tierId)] = byTier[Number(m.tierId)] || []).push(m); });
     var summary = el('div', 'shop-cust-total');
-    summary.textContent = custKeys.length + ' customer' + (custKeys.length === 1 ? '' : 's') + ' · ' + res.total + ' item' + (res.total === 1 ? '' : 's') + ' sold' + (res.capped ? ' (showing latest ' + res.rows.length + ')' : '');
+    var parts = [custKeys.length + ' customer' + (custKeys.length === 1 ? '' : 's'), res.total + ' item' + (res.total === 1 ? '' : 's') + ' sold'];
+    if (res.capped) parts.push('showing latest ' + res.rows.length);
+    parts.forEach(function (p, i) { if (i) { var sep = el('span', 'shop-sep'); sep.textContent = '|'; summary.appendChild(sep); } summary.appendChild(document.createTextNode(p)); });
     box.appendChild(summary);
 
-    // Ranked customers — address + their item tally.
+    // Ranked customers — address (→ everything they own) + a strip of item thumbnails (→ that item's owners).
     custKeys.slice(0, 100).forEach(function (k) {
       var mints = byCust[k];
       var row = el('div', 'shop-cust-row');
-      var who = el('span', 'shop-cust-who'); who.appendChild(addressNode(mints[0].beneficiary, mints[0]._chainId || project.chainId)); row.appendChild(who);
-      var items = tallyItems(mints, names).map(function (t) { return t.count > 1 ? t.count + '× ' + t.label : t.label; }).join(', ');
-      var what = el('span', 'shop-cust-what'); what.textContent = items; row.appendChild(what);
-      box.appendChild(row);
-    });
-
-    // Recent purchases feed (tx-linked).
-    var feedTitle = el('div', 'detail-subsection-title'); feedTitle.style.marginTop = '14px'; feedTitle.textContent = 'Recent purchases'; box.appendChild(feedTitle);
-    res.rows.slice(0, 25).forEach(function (m) {
-      var row = el('div', 'rf-perchain-row');
-      var left = el('span', 'rf-perchain-name'); left.appendChild(renderExplorerTxLink(m._chainId || project.chainId, m.txHash, timeAgo(Number(m.timestamp)))); row.appendChild(left);
-      var val = el('span', 'rf-perchain-val'); val.textContent = itemLabelFrom(names, m.tierId) + ' → ' + shortAddr6(String(m.beneficiary || '')); row.appendChild(val);
+      var who = el('span', 'shop-cust-who shop-cust-link'); who.appendChild(addressNode(mints[0].beneficiary, mints[0]._chainId || project.chainId));
+      who.addEventListener('click', function (e) { if (e.target.closest('a')) return; openAddressItemsModal(project, meta, mints[0].beneficiary, mints); });
+      row.appendChild(who);
+      var strip = el('span', 'shop-cust-thumbs');
+      tallyItems(mints, names).forEach(function (t) {
+        var cell = el('span', 'shop-cust-thumb-cell shop-cust-link'); cell.title = (t.count > 1 ? t.count + '× ' : '') + t.label + ' — see owners';
+        cell.appendChild(shopItemThumb(media, t.tierId));
+        if (t.count > 1) { var b = el('span', 'shop-cust-thumb-badge'); b.textContent = '×' + t.count; cell.appendChild(b); }
+        cell.addEventListener('click', function () { openTierHoldersModal(project, media, t.tierId, t.label, byTier[t.tierId] || []); });
+        strip.appendChild(cell);
+      });
+      row.appendChild(strip);
       box.appendChild(row);
     });
   }).catch(function () { if (box.isConnected) { box.innerHTML = ''; box.textContent = 'Could not load customers.'; } });
   return box;
+}
+
+// Recent purchases: its own bottom section — a standard bordered table (Item | Owner | When), no card wrapper.
+function renderRecentPurchases(project, mediaP) {
+  var wrap = el('div', 'shop-recent-wrap');
+  var title = el('div', 'detail-card-title'); title.textContent = 'Recent purchases'; wrap.appendChild(title);
+  var box = el('div', 'detail-card-body'); box.textContent = 'Loading purchases…'; wrap.appendChild(box);
+  Promise.all([fetchNftMints(project), mediaP]).then(function (out) {
+    var res = out[0], meta = out[1] || { names: {}, media: {} };
+    if (!box.isConnected) return;
+    box.innerHTML = '';
+    if (!res.rows.length) { box.className = 'detail-card-body owners-empty'; box.textContent = 'No purchases yet.'; return; }
+    box.className = '';
+    var table = el('div', 'detail-ops-table shop-recent-table');
+    var head = el('div', 'detail-ops-row detail-ops-head detail-ops-3 shop-recent-row');
+    ['Item', 'Owner', 'When'].forEach(function (h) { var c = el('span', 'detail-ops-cell'); c.textContent = h; head.appendChild(c); });
+    table.appendChild(head);
+    res.rows.slice(0, 25).forEach(function (m) {
+      var row = el('div', 'detail-ops-row detail-ops-3 shop-recent-row');
+      var item = el('span', 'detail-ops-cell shop-recent-item');
+      item.appendChild(shopItemThumb(meta.media, m.tierId));
+      var nm = el('span', 'shop-cust-item-name'); nm.textContent = itemLabelFrom(meta.names, m.tierId); item.appendChild(nm);
+      row.appendChild(item);
+      var who = el('span', 'detail-ops-cell'); who.appendChild(addressNode(m.beneficiary, m._chainId || project.chainId)); row.appendChild(who);
+      var when = el('span', 'detail-ops-cell'); when.appendChild(renderExplorerTxLink(m._chainId || project.chainId, m.txHash, timeAgo(Number(m.timestamp)))); row.appendChild(when);
+      table.appendChild(row);
+    });
+    box.appendChild(table);
+  }).catch(function () { if (box.isConnected) { box.innerHTML = ''; box.textContent = 'Could not load purchases.'; } });
+  return wrap;
 }
 
 // Resolve a project (by its id on `chainId`) to a display name + its projectId on each chain in its
@@ -1439,13 +1535,28 @@ export var BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY =
 
 export function projectIdsByChainFromSuckerGroup(data, chainId, projectId) {
   var byChain = {};
-  byChain[Number(chainId)] = Number(projectId);
+  var homeChainId = Number(chainId);
+  var homeProjectId = Number(projectId);
+  byChain[homeChainId] = homeProjectId;
+  var conflicted = {};
   var items = data && data.suckerGroup && data.suckerGroup.projects && data.suckerGroup.projects.items;
   if (Array.isArray(items)) {
+    // If the purported group itself identifies a different deployment on the route's chain, it cannot
+    // authorize any remote mapping for this project. Preserve only the exact route deployment.
+    if (items.some(function (project) {
+      return Number(project && project.chainId) === homeChainId && Number(project && project.projectId) !== homeProjectId;
+    })) return byChain;
     items.forEach(function (project) {
       var cid = Number(project && project.chainId);
       var pid = Number(project && project.projectId);
-      if (cid > 0 && pid > 0) byChain[cid] = pid;
+      if (!(cid > 0) || !(pid > 0) || conflicted[cid]) return;
+      if (cid === homeChainId && pid !== homeProjectId) return;
+      if (byChain[cid] != null && byChain[cid] !== pid) {
+        delete byChain[cid];
+        conflicted[cid] = true;
+        return;
+      }
+      byChain[cid] = pid;
     });
   }
   return byChain;
@@ -1606,19 +1717,19 @@ function openAddTierModal(project, shop) {
     var recipPerChain = makePerChainAddressControl(allChains, parseRecipientAddress, {
       label: 'Recipient',
       defaultRaw: function () { return recipEnsAddr || (recip.value || '').trim(); },
-      projectId: project.id,
+      projectId: function (cid) { return Number(pidOn(project, cid)); },
       projectSymbol: project.tokenSymbol,
     });
     row.appendChild(recipPerChain.node);
     var benefDefaultValue = attachAddressRecognition(benef, benefHint, splitRefChain, {
       label: 'Project token beneficiary',
-      projectId: project.id,
+      projectId: Number(pidOn(project, splitRefChain)),
       projectSymbol: project.tokenSymbol,
     });
     var benefPerChain = makePerChainAddressControl(allChains, benefDefaultValue, {
       label: 'Project token beneficiary',
       defaultRaw: function () { return (benef.value || '').trim(); },
-      projectId: project.id,
+      projectId: function (cid) { return Number(pidOn(project, cid)); },
       projectSymbol: project.tokenSymbol,
     });
     benefRow.appendChild(benefPerChain.node);
@@ -1644,7 +1755,7 @@ function openAddTierModal(project, shop) {
             else { recipEnsAddr = null; nameHint.className = 'create-resolve-hint warn'; nameHint.textContent = 'No address set for ' + v; }
           }).catch(function () { if ((recip.value || '').trim() === v) { recipEnsAddr = null; nameHint.className = 'create-resolve-hint warn'; nameHint.textContent = 'Could not resolve ' + v; } });
         } else if (isAddr(v)) {
-          recipEnsAddr = null; nameHint.style.display = ''; describeKnownAddress(splitRefChain, v, nameHint, { hintClass: 'create-resolve-hint', projectId: project.id, projectSymbol: project.tokenSymbol });
+          recipEnsAddr = null; nameHint.style.display = ''; describeKnownAddress(splitRefChain, v, nameHint, { hintClass: 'create-resolve-hint', projectId: Number(pidOn(project, splitRefChain)), projectSymbol: project.tokenSymbol });
         } else { recipEnsAddr = null; nameHint.style.display = 'none'; }
       }
     }
@@ -1804,13 +1915,13 @@ function openAddTierModal(project, shop) {
   var reserveBenefHint = el('div', 'operator-edit-token-name'); reserveWrap.appendChild(reserveBenefHint);
   var reserveBenefValue = attachAddressRecognition(reserveBenefInput, reserveBenefHint, splitRefChain, {
     label: 'Reserve beneficiary',
-    projectId: project.id,
+    projectId: Number(pidOn(project, splitRefChain)),
     projectSymbol: project.tokenSymbol,
   });
   var reserveBenefPerChain = makePerChainAddressControl(allChains, reserveBenefValue, {
     label: 'Reserve beneficiary',
     defaultRaw: function () { return (reserveBenefInput.value || '').trim(); },
-    projectId: project.id,
+    projectId: function (cid) { return Number(pidOn(project, cid)); },
     projectSymbol: project.tokenSymbol,
   });
   reserveWrap.appendChild(reserveBenefPerChain.node);
@@ -2120,9 +2231,9 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   if (!hasPinata()) { setStatus('Add a Pinata JWT below to name categories.', 'error'); return null; }
 
   setStatus('Reading metadata…', 'pending');
-  var controllers = await controllerMapFor(chains, project.id);
+  var controllers = await controllerMapFor(chains, project);
   var pc = (chains[0] && chains[0].id) || project.chainId;
-  var curUri = await clientFor(pc).readContract({ address: controllers[pc], abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] }).catch(function () { return null; });
+  var curUri = await clientFor(pc).readContract({ address: controllers[pc], abi: uriOfAbi, functionName: 'uriOf', args: [pidOn(project, pc)] }).catch(function () { return null; });
   var meta = curUri ? (await fetchMetadata(curUri)) : null;
   meta = meta ? Object.assign({}, meta) : {};
   var cats = (meta.storeCategories && typeof meta.storeCategories === 'object') ? Object.assign({}, meta.storeCategories) : {};
@@ -2134,7 +2245,7 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   setStatus('Pinning categories…', 'pending');
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
   await runRelayrAcrossChains(chains, account, function (cid) {
-    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
+    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [pidOn(project, cid), newUri] }) };
   }, 400000n, setStatus, { label: 'Add store categories', title: 'Confirm categories' });
 
   project.storeCategories = cats;
@@ -3072,9 +3183,9 @@ function lpPairFor(project, chainId, opts) {
 // revnet's stays REVOwner), so this cache stays correct across a swap.
 var _dataHookCache = {};
 function projectDataHook(project, chainId, opts) {
-  var k = project.id + ':' + chainId;
-  if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
   var pid = pidOn(project, chainId);
+  var k = chainId + ':' + pid.toString();
+  if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
   return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
     if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n }; return _dataHookCache[k]; }
     return clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] })
@@ -3225,7 +3336,7 @@ function isKnown721HookClone(address, chainId, projectId) {
 }
 
 function readProjectPaymentSurface(project, chainId) {
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, chainId);
   return read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]).then(function (terminals) {
     terminals = (terminals || []).filter(Boolean);
     var direct = getAddress('JBMultiTerminal', chainId);
@@ -3264,7 +3375,7 @@ function paySurfaceBlockedMessage(surface, terminal, chainId) {
 function inspectProjectContractsOnChain(project, chain) {
   var chainId = chain.id;
   var chainName = chain.name || chainNameOf(chainId);
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, chainId);
   var unknown = [];
   return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
     var controllerAuditP = addUnknownProjectContract(unknown, chainId, chainName, 'Controller', controller, 'Rulesets and token actions are governed by this contract.');
@@ -3363,7 +3474,7 @@ async function readAmmPrice(project, chainId) {
     var client = clientFor(chainId);
     // The buyback hook keys its pool by (projectId, terminalToken) — pass the project's actual pair token,
     // not a hard-coded native 0x0, or a USDC pool is never found.
-    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
+    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] });
     if (!key) return null;
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
     var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
@@ -3397,7 +3508,7 @@ function directSwapPoolFor(project, chainId) {
   return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
     var hook = r[0], pair = r[1];
     if (!hook || !pair) return null;
-    return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] })
+    return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] })
       .then(function (key) {
         var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
         var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
@@ -3432,7 +3543,7 @@ function directSellPoolFor(project, chainId) {
   return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
     var hook = r[0], pair = r[1];
     if (!hook || !pair) return null;
-    return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] })
+    return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] })
       .then(function (key) {
         var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
         var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
@@ -4885,8 +4996,11 @@ async function controllerRead(chainId, projectId, abi, functionName, args) {
   return clientFor(chainId).readContract({ address: controller, abi: abi, functionName: functionName, args: args });
 }
 
-async function controllerMapFor(chains, projectId) {
+async function controllerMapFor(chains, projectOrId) {
   var entries = await Promise.all((chains || []).map(async function (chain) {
+    var projectId = projectOrId && typeof projectOrId === 'object'
+      ? pidOn(projectOrId, chain.id)
+      : BigInt(chain.projectId != null ? chain.projectId : projectOrId);
     return [chain.id, await controllerAddressFor(chain.id, projectId)];
   }));
   var map = {};
@@ -5153,7 +5267,7 @@ var _projectRefreshTimer = null;
 var _projectRefreshSeq = 0;
 
 function scheduleActiveProjectRefresh(project) {
-  if (!_activeDetail || !_activeDetail.project || String(_activeDetail.project.id) !== String(project.id)) return;
+  if (!_activeDetail || !_activeDetail.project || !sameProjectDeployment(_activeDetail.project, project)) return;
   if (_projectRefreshTimer) clearTimeout(_projectRefreshTimer);
   var seq = ++_projectRefreshSeq;
   // Give load-balanced RPCs a short moment to converge after the confirmed receipt, then rebuild the active tab
@@ -5161,17 +5275,22 @@ function scheduleActiveProjectRefresh(project) {
   _projectRefreshTimer = setTimeout(function () {
     _projectRefreshTimer = null;
     var active = _activeDetail;
-    if (!active || !active.project || String(active.project.id) !== String(project.id)) return;
+    if (!active || !active.project || !sameProjectDeployment(active.project, project)) return;
     var tab = active.current, subtab = active.subtab;
     var chains = (active.project.chains || project.chains || []).slice();
+    var idByChain = Object.assign({}, active.project.idByChain || project.idByChain || {});
     var urlChainId = active.project._urlChainId || project._urlChainId || project.chainId;
-    Object.keys(_cache).forEach(function (key) { if (key.endsWith('-' + project.id)) delete _cache[key]; });
+    var urlProjectId;
+    try { urlProjectId = Number(pidOn(active.project, urlChainId)); }
+    catch (_) { return; }
+    delete _cache[urlChainId + '-' + urlProjectId];
     _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {};
-    fetchProject(project.id, urlChainId).then(function (fresh) {
-      if (seq !== _projectRefreshSeq || !_activeDetail || String(_activeDetail.project.id) !== String(project.id)) return;
-      fresh.chains = chains.length ? chains : [{ id: urlChainId, name: chainNameOf(urlChainId) }];
+    fetchProject(urlProjectId, urlChainId).then(function (fresh) {
+      if (seq !== _projectRefreshSeq || !_activeDetail || !sameProjectDeployment(_activeDetail.project, project)) return;
+      fresh.idByChain = idByChain;
+      fresh.chains = chains.length ? chains : [{ id: urlChainId, name: chainNameOf(urlChainId), projectId: Number(fresh.id) }];
       fresh._urlChainId = urlChainId;
-      _cache[urlChainId + '-' + project.id] = fresh;
+      _cache[urlChainId + '-' + urlProjectId] = fresh;
       showProjectDetail(fresh, tab, true, subtab);
     }).catch(function () {});
   }, 700);
@@ -5180,9 +5299,13 @@ function scheduleActiveProjectRefresh(project) {
 function notifyProjectUpdated(project) {
   document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
   var detail = _container && _container.querySelector('.project-detail');
-  if (detail && _activeDetail && String(_activeDetail.project.id) === String(project.id)) {
+  if (detail && _activeDetail && sameProjectDeployment(_activeDetail.project, project)) {
     detail.dispatchEvent(new CustomEvent('jb:project-updated'));
   }
+}
+
+function sameProjectDeployment(a, b) {
+  return !!a && !!b && Number(a.chainId) === Number(b.chainId) && String(a.id) === String(b.id);
 }
 
 export function invalidateDiscoverProjects() {
@@ -5264,13 +5387,16 @@ export function applyDiscoverRoute(route) {
 
   ensureGroups().then(function (groups) {
     var g = null;
-    for (var i = 0; i < groups.length; i++) if (groups[i].id === id) { g = groups[i]; break; }
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].chains.some(function (deployment) { return Number(deployment.id) === Number(chainId) && Number(deployment.projectId) === id; })) { g = groups[i]; break; }
+    }
     if (!g) { showProjectGrid(true); return; }
-    var urlChain = (chainId && g.chains.some(function (c) { return c.id === chainId; })) ? chainId : defaultChainId(g.chains);
+    var urlChain = chainId;
     var fk = urlChain + '-' + id;
     var p = _cache[fk] ? Promise.resolve(_cache[fk]) : fetchProject(id, urlChain).then(function (d) { _cache[fk] = d; return d; });
     p.then(function (project) {
       project.chains = g.chains;
+      project.idByChain = Object.assign({}, g.idByChain);
       project._urlChainId = urlChain;
       // Resolve the sucker-group-authoritative chains + per-chain ids before rendering so every money-path
       // read/tx targets the right project on each chain (never a coincidental same-id project).
@@ -5336,41 +5462,79 @@ function hasDirectoryController(chainId, id) {
     .catch(function () { return false; });
 }
 
-// Enumerate projects across every chain and dedup omnichain copies. JBProjects.count is only the upper
-// bound: a project NFT can exist on a chain before the project has any JBDirectory state there. Treat a
-// chain as live for a project only once JBDirectory.controllerOf(projectId) is set.
+// Group exact deployments by their verified sucker group. Bare numeric project IDs are chain-local and must
+// never be used as cross-chain identity: unrelated projects commonly share the same number on different chains.
+export function groupProjectDeployments(deployments) {
+  var groups = [], byKey = {}, idsByGroupChain = {}, conflictedGroupChains = {};
+  // Detect ambiguity before constructing any group. If one sucker group names
+  // two projects on the same chain, neither can authorize that chain's remote
+  // identity; both remain standalone while the group's unambiguous chains may
+  // still group with one another.
+  (deployments || []).forEach(function (deployment) {
+    var chainId = Number(deployment.chainId), projectId = Number(deployment.projectId);
+    if (!(chainId > 0) || !(projectId > 0) || !deployment.suckerGroupId) return;
+    var pairKey = String(deployment.suckerGroupId) + ':' + chainId;
+    if (idsByGroupChain[pairKey] != null && idsByGroupChain[pairKey] !== projectId) conflictedGroupChains[pairKey] = true;
+    else idsByGroupChain[pairKey] = projectId;
+  });
+  (deployments || []).forEach(function (deployment) {
+    var chainId = Number(deployment.chainId);
+    var projectId = Number(deployment.projectId);
+    if (!(chainId > 0) || !(projectId > 0)) return;
+    var standaloneKey = 'project:' + chainId + ':' + projectId;
+    var groupChainKey = String(deployment.suckerGroupId || '') + ':' + chainId;
+    var key = deployment.suckerGroupId && !conflictedGroupChains[groupChainKey]
+      ? ('sucker:' + deployment.suckerGroupId)
+      : standaloneKey;
+    var existing = byKey[key];
+    if (!existing) {
+      existing = byKey[key] = { key: key, suckerGroupId: key.indexOf('sucker:') === 0 ? deployment.suckerGroupId : null, chains: [], idByChain: {} };
+      groups.push(existing);
+    }
+    if (existing.idByChain[chainId] != null) return;
+    existing.idByChain[chainId] = projectId;
+    existing.chains.push({ id: chainId, name: deployment.name || chainNameOf(chainId), projectId: projectId });
+  });
+  groups.forEach(function (group) {
+    group.chains.sort(function (a, b) { return chainSortIndex(a.id) - chainSortIndex(b.id); });
+    group.primary = group.chains[0];
+    group.id = group.primary.projectId;
+  });
+  return groups;
+}
+
+// Enumerate projects across every chain. JBProjects.count is only the upper bound: a project NFT can exist
+// before the project has any JBDirectory state. Treat it as live only once controllerOf(projectId) is set,
+// then use Bendystraw's suckerGroupId—not the numeric ID—to identify linked deployments.
 function buildGroups() {
   return Promise.all(DISCOVER_CHAINS.map(function (c) {
     return read(c.id, 'JBProjects', countAbi, 'count', [])
       .then(function (n) { return { chain: c, count: Number(n) }; })
       .catch(function () { return { chain: c, count: 0 }; });
   })).then(async function (counts) {
-    var max = 0;
-    counts.forEach(function (x) { if (x.count > max) max = x.count; });
-    var groups = await Promise.all(Array.from({ length: max }, async function (_, i) {
-      var id = i + 1;
-      var candidates = counts.filter(function (x) { return id <= x.count; });
-      var live = await Promise.all(candidates.map(function (x) {
-        return hasDirectoryController(x.chain.id, id).then(function (ok) {
-          return ok ? x.chain : null;
-        });
-      }));
-      var chains = live.filter(Boolean);
-      return chains.length ? { id: id, chains: chains, primary: chains[0] } : null;
-    }));
-    groups = groups.filter(Boolean);
-    return groups;
+    var candidates = [];
+    counts.forEach(function (entry) {
+      for (var id = 1; id <= entry.count; id++) candidates.push({ chain: entry.chain, projectId: id });
+    });
+    var live = (await Promise.all(candidates.map(async function (candidate) {
+      var ok = await hasDirectoryController(candidate.chain.id, candidate.projectId);
+      if (!ok) return null;
+      var record = await fetchBendystrawProjectRecord(candidate.projectId, candidate.chain.id);
+      return { chainId: candidate.chain.id, name: candidate.chain.name, projectId: candidate.projectId, suckerGroupId: record && record.suckerGroupId || null };
+    }))).filter(Boolean);
+    return groupProjectDeployments(live);
   });
 }
 
 function loadGroupCard(g, skeleton, grid) {
-  var key = g.primary.id + '-' + g.id;
-  var promise = _cache[key] ? Promise.resolve(_cache[key]) : fetchProject(g.id, g.primary.id).then(function (data) {
+  var key = g.primary.id + '-' + g.primary.projectId;
+  var promise = _cache[key] ? Promise.resolve(_cache[key]) : fetchProject(g.primary.projectId, g.primary.id).then(function (data) {
     _cache[key] = data;
     return data;
   });
   promise.then(function (project) {
     project.chains = g.chains;
+    project.idByChain = Object.assign({}, g.idByChain);
     if (skeleton.parentNode !== grid) return;
     grid.replaceChild(renderProjectCard(project), skeleton);
   }).catch(function () {
@@ -5503,7 +5667,8 @@ function statItem(label, value) {
 function tabSlug(name) { return String(name).toLowerCase().replace(/[^a-z0-9]+/g, ''); }
 
 function projectHash(project, tabName, subTab) {
-  var h = '#' + slugForChain(project._urlChainId) + ':' + project.id;
+  var routeChainId = project._urlChainId == null ? project.chainId : project._urlChainId;
+  var h = '#' + slugForChain(routeChainId) + ':' + pidOn(project, routeChainId).toString();
   if (tabName) { h += '/' + tabSlug(tabName); if (subTab) h += '/' + tabSlug(subTab); }
   return h;
 }
@@ -5552,7 +5717,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // pay/cash out/distribute flows. `activityCardEl` is assigned just below, before any tx can fire.
   var activityCardEl = null;
   wrap.addEventListener('jb:project-updated', function () {
-    var pid = BigInt(project.id);
+    var pid = pidOn(project, project.chainId);
     var terminal = getAddress('JBMultiTerminal', project.chainId);
     var acctAddr = (project.acctToken && project.acctToken.address) || NATIVE_TOKEN;
     Promise.all([
@@ -5656,7 +5821,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   if (initialTab) {
     for (var k = 0; k < tabs.length; k++) if (tabSlug(tabs[k]) === tabSlug(initialTab)) { startTab = tabs[k]; break; }
   }
-  var detailKey = slugForChain(project._urlChainId) + ':' + project.id;
+  var detailKey = slugForChain(project._urlChainId) + ':' + pidOn(project, project._urlChainId).toString();
   function showTab(tabName) {
     // Accept slugified route names too (e.g. "rulesetsfunds").
     for (var t = 0; t < tabs.length; t++) if (tabSlug(tabs[t]) === tabSlug(tabName)) { tabName = tabs[t]; break; }
@@ -5831,7 +5996,7 @@ function renderPayCard(project, cart) {
     state.contextsError = false;
     if (!term) { state.contextsError = true; return; }
     Promise.all([
-      resolveAcctTokens(chainId, BigInt(project.id)),
+      resolveAcctTokens(chainId, pidOn(project, chainId)),
       readProjectPaymentSurface(project, chainId).catch(function () { return null; }),
     ]).then(function (loaded) {
         var ctxs = loaded[0], surface = loaded[1];
@@ -5853,7 +6018,7 @@ function renderPayCard(project, cart) {
           if (usdc && !has(usdc)) routerCandidates.push({ address: usdc, symbol: 'USDC', name: 'USD Coin', decimals: 6, viaRouter: true });
         }
         return Promise.all(routerCandidates.map(function (cand) {
-          return routerPayRouteWorks(chainId, project.id, cand.address, cand.decimals).then(function (ok) { return ok ? cand : null; });
+          return routerPayRouteWorks(chainId, pidOn(project, chainId), cand.address, cand.decimals).then(function (ok) { return ok ? cand : null; });
         })).then(function (routable) {
           if (state.chainId !== chainId) return;
           routable.filter(Boolean).forEach(function (cand) { list.push(cand); });
@@ -5976,7 +6141,7 @@ function renderPayCard(project, cart) {
     var key = chainId + ':' + acc.address.toLowerCase();
     if (_rateCache[key]) return Promise.resolve(_rateCache[key]);
     var unit = 10n ** BigInt(acc.decimals == null ? 18 : acc.decimals);
-    return computePayPreview({ chainId: chainId, projectId: project.id, token: acc.address, amount: unit, beneficiary: getAccount() || undefined })
+    return computePayPreview({ chainId: chainId, projectId: pidOn(project, chainId), token: acc.address, amount: unit, beneficiary: getAccount() || undefined })
       .then(function (r) {
         if (r && !r.unavailable && r.received != null) {
           var per = (r.received || 0n) + (r.reserved || 0n);
@@ -6030,7 +6195,7 @@ function renderPayCard(project, cart) {
       if (nftSameCurrency(token, pricing)) {
         return Promise.resolve([key, { supported: true, pricePerUnit: 10n ** BigInt(decimals) }]);
       }
-      return read(chainId, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [BigInt(project.id), BigInt(tokenCurrency(token)), BigInt(pricing.currency), BigInt(decimals)])
+      return read(chainId, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [pidOn(project, chainId), BigInt(tokenCurrency(token)), BigInt(pricing.currency), BigInt(decimals)])
         .then(toBigInt)
         .then(function (price) {
           return [key, price > 0n
@@ -6579,7 +6744,7 @@ function renderPayCard(project, cart) {
     var gen = ++previewGen;
     computePayPreview({
       chainId: state.chainId,
-      projectId: project.id,
+      projectId: pidOn(project, state.chainId),
       token: state.token.address,
       amount: amt,
       beneficiary: getAccount() || undefined,
@@ -6819,9 +6984,10 @@ function renderPayCard(project, cart) {
     // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
     var fnName = addBalance ? 'addToBalanceOf' : 'pay';
     var fnAbi = addBalance ? addToBalanceAbi : payAbi;
+    var reviewedProjectId = pidOn(project, reviewedChainId);
     var args = addBalance
-      ? [BigInt(project.id), reviewedToken.address, amt, false, reviewedMemo, metadata]
-      : [BigInt(project.id), reviewedToken.address, amt, beneficiary, minTokens, reviewedMemo, metadata];
+      ? [reviewedProjectId, reviewedToken.address, amt, false, reviewedMemo, metadata]
+      : [reviewedProjectId, reviewedToken.address, amt, beneficiary, minTokens, reviewedMemo, metadata];
     var metaIdx = addBalance ? 5 : 6;
     var txParams = {
       chainId: reviewedChainId,
@@ -6843,7 +7009,7 @@ function renderPayCard(project, cart) {
     // Human-readable summary of the NFTs this pay will mint (the raw `metadata` hex below is unreadable),
     // surfaced near the top of the args so the NFT purchase is clearly visible in the confirm preview.
     // selectedTierIds() repeats each id by qty, so tierIds.length is the total NFT count.
-    var confirmArgs = { projectId: project.id, token: reviewedToken.address };
+    var confirmArgs = { projectId: reviewedProjectId.toString(), token: reviewedToken.address };
     if (tierIds.length) {
       confirmArgs.mints = reviewedNfts.map(function (s) { return s.name + ' ×' + s.qty; }).join(', ')
         + ' — ' + tierIds.length + ' NFT' + (tierIds.length > 1 ? 's' : '') + ' minted by the 721 hook';
@@ -7172,9 +7338,9 @@ async function accountCanManageProjectToken(project, account, permissionId) {
 
   // Delegated operators call the controller directly. Verify the relevant permission against the live owner on
   // every project chain because the token edit/deploy flow deliberately fans the same change across all chains.
-  var pid = BigInt(project.id);
   var chains = projectChains(project);
   var allowed = await Promise.all(chains.map(function (chain) {
+    var pid = pidOn(project, chain.id);
     return read(chain.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).then(function (owner) {
       if (owner && owner.toLowerCase() === accountKey) return true;
       if (!owner) return false;
@@ -7276,13 +7442,12 @@ export function authorityRowsDiverged(rows) {
 
 function projectChains(project) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
-  return chains.map(function (c) { return { id: c.id, name: c.name || chainNameOf(c.id) }; });
+  return chains.map(function (c) { return { id: c.id, name: c.name || chainNameOf(c.id), projectId: Number(pidOn(project, c.id)) }; });
 }
 
 // Read JBProjects.ownerOf(projectId) on every chain and report whether the owner diverges.
 // { rows:[{chainId,name,owner}], diverged }.
 function fetchOwnersPerChain(project) {
-  var pid = BigInt(project.id);
   var chains = projectChains(project);
   return Promise.all(chains.map(function (c) {
     return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pidOn(project, c.id)])
@@ -7298,7 +7463,7 @@ function fetchOwnersPerChain(project) {
 function fetchOperatorsPerChain(project) {
   var chains = projectChains(project);
   return Promise.all(chains.map(function (c) {
-    return revnetOperatorOf(project.id, c.id)
+    return revnetOperatorOf(Number(pidOn(project, c.id)), c.id)
       .then(function (o) { return { chainId: c.id, name: c.name, owner: o }; })
       .catch(function () { return { chainId: c.id, name: c.name, owner: null }; });
   })).then(function (rows) {
@@ -7447,8 +7612,8 @@ function openTransferAuthorityModal(project, opts) {
       try { to = authorityValueOf(); }
       catch (err0) { setStatus(err0.message || String(err0), 'error'); busy = false; return; }
       var buildCall = isRev
-        ? function (cid) { var revOwner = getAddress('REVOwner', cid); if (!revOwner) throw new Error('No REVOwner on ' + chainNameOf(cid)); return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [BigInt(project.id), to] }) }; }
-        : function (cid) { var jbp = getAddress('JBProjects', cid); if (!jbp) throw new Error('No JBProjects on ' + chainNameOf(cid)); return { to: jbp, data: encodeFunctionData({ abi: jbProjectsTransferAbi, functionName: 'transferFrom', args: [authorityAddr, to, BigInt(project.id)] }) }; };
+        ? function (cid) { var revOwner = getAddress('REVOwner', cid); if (!revOwner) throw new Error('No REVOwner on ' + chainNameOf(cid)); return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [pidOn(project, cid), to] }) }; }
+        : function (cid) { var jbp = getAddress('JBProjects', cid); if (!jbp) throw new Error('No JBProjects on ' + chainNameOf(cid)); return { to: jbp, data: encodeFunctionData({ abi: jbProjectsTransferAbi, functionName: 'transferFrom', args: [authorityAddr, to, pidOn(project, cid)] }) }; };
       var res = await runAuthorityActionAcrossChains(project, chains, authorityAddr, buildCall, { label: isRev ? 'Transfer operator' : 'Transfer ownership', title: isRev ? 'Transfer operator' : 'Transfer ownership' }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Could not complete the transfer.'), 'error'); return null; });
       busy = false;
@@ -7537,8 +7702,8 @@ function openEditProjectModal(project) {
   var loadedMeta = null;
   (function () {
     var pc = (chains[0] && chains[0].id) || project.chainId;
-    controllerAddressFor(pc, project.id).then(function (controller) {
-      return clientFor(pc).readContract({ address: controller, abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)] });
+    controllerAddressFor(pc, pidOn(project, pc)).then(function (controller) {
+      return clientFor(pc).readContract({ address: controller, abi: uriOfAbi, functionName: 'uriOf', args: [pidOn(project, pc)] });
     })
       .then(function (uri) { return uri ? fetchMetadata(uri) : null; })
       .then(function (m) {
@@ -7690,12 +7855,12 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
 
   // Start from the live metadata so every field we don't edit (tags, payDisclosure, version, …) is preserved.
   var primaryChain = (chains[0] && chains[0].id) || project.chainId;
-  var controllers = await controllerMapFor(chains, project.id);
+  var controllers = await controllerMapFor(chains, project);
   var meta = form.preloadedMeta;
   if (!meta) {
     setStatus('Reading current metadata…', 'pending');
     var curUri = await clientFor(primaryChain).readContract({
-      address: controllers[primaryChain], abi: uriOfAbi, functionName: 'uriOf', args: [BigInt(project.id)],
+      address: controllers[primaryChain], abi: uriOfAbi, functionName: 'uriOf', args: [pidOn(project, primaryChain)],
     }).catch(function () { return null; });
     meta = curUri ? (await fetchMetadata(curUri)) : null;
   }
@@ -7722,7 +7887,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
 
   await runRelayrAcrossChains(chains, account, function (cid) {
-    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [BigInt(project.id), newUri] }) };
+    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [pidOn(project, cid), newUri] }) };
   }, 400000n, setStatus, { label: 'Edit project details', title: 'Confirm edit' });
 
   setStatus('Project updated across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.', 'success');
@@ -7814,14 +7979,14 @@ async function submitTokenEdit(project, chains, operatorAddr, deployed, name, sy
   name = (name || '').trim(); symbol = (symbol || '').trim();
   if (!name || !symbol) { setStatus('Enter a token name and symbol', 'error'); return; }
   setStatus('Verifying project controllers…', 'pending');
-  var controllers = await controllerMapFor(chains, project.id);
+  var controllers = await controllerMapFor(chains, project);
 
   // The deterministic salt makes the ERC-20 deploy to the same address on every chain.
-  var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [BigInt(project.id), symbol]));
+  var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [pidOn(project, project.chainId), symbol]));
   var buildCall = function (cid) {
     return deployed
-      ? { to: controllers[cid], data: encodeFunctionData({ abi: setTokenMetadataAbi, functionName: 'setTokenMetadataOf', args: [BigInt(project.id), name, symbol] }) }
-      : { to: controllers[cid], data: encodeFunctionData({ abi: deployErc20Abi, functionName: 'deployERC20For', args: [BigInt(project.id), name, symbol, salt] }) };
+      ? { to: controllers[cid], data: encodeFunctionData({ abi: setTokenMetadataAbi, functionName: 'setTokenMetadataOf', args: [pidOn(project, cid), name, symbol] }) }
+      : { to: controllers[cid], data: encodeFunctionData({ abi: deployErc20Abi, functionName: 'deployERC20For', args: [pidOn(project, cid), name, symbol, salt] }) };
   };
 
   // If the owner is a Safe, Relayr can't sign for it — propose the call to each chain's Safe queue instead.
@@ -8735,7 +8900,7 @@ function activityRowFromEvent(event, project) {
       timestamp: Number(pay.timestamp || event.timestamp),
       account: pay.beneficiary || event.from || pay.from,
       from: pay.from || event.from,
-      baseAmount: indexedActivityAmount(pay.amountUsd),
+      baseAmount: activityFlowAmount(project, pay.amount, pay.amountUsd),
       tokenAmount: minted > 0n ? formatCompactTokenAmount(minted) : '',
       action: minted > 0n ? 'got' : 'paid into ' + sym,
       memo: pay.memo || '',
@@ -8772,7 +8937,7 @@ function activityRowFromEvent(event, project) {
       timestamp: Number(cash.timestamp || event.timestamp),
       account: cash.beneficiary || cash.holder || cash.from || event.from,
       from: cash.from || event.from,
-      baseAmount: indexedActivityAmount(cash.reclaimAmountUsd),
+      baseAmount: activityFlowAmount(project, cash.reclaimAmount, cash.reclaimAmountUsd),
       tokenAmount: formatCompactTokenAmount(toBigInt(cash.cashOutCount)),
       action: 'cashed out',
       memo: '',
@@ -8800,9 +8965,9 @@ function activityRowFromEvent(event, project) {
       type: 'payout', direction: 'out', chainId: chainId,
       txHash: po.txHash || event.txHash, timestamp: Number(po.timestamp || event.timestamp),
       account: po.caller || po.from || event.from, from: po.from || event.from,
-      // The event does not identify its source token. Bendystraw's indexed USD value is the only exact
-      // common denomination, so never label the raw amount with the project's primary accounting token.
-      baseAmount: indexedActivityAmount(po.amountPaidOutUsd),
+      // The event does not identify its source token, so only label the raw amount when the project has a
+      // single accounting token (activityFlowAmount); otherwise fall back to the indexed USD value.
+      baseAmount: activityFlowAmount(project, po.amountPaidOut, po.amountPaidOutUsd),
       tokenAmount: '', action: 'paid out', memo: '',
     };
   }
@@ -8895,7 +9060,7 @@ function activityRowFromEvent(event, project) {
       type: 'add_to_balance', direction: 'in', chainId: chainId,
       txHash: atb.txHash || event.txHash, timestamp: Number(atb.timestamp || event.timestamp),
       account: atb.from || event.from, from: atb.from || event.from,
-      baseAmount: '',
+      baseAmount: activityFlowAmount(project, atb.amount, null),
       tokenAmount: '', action: 'added to balance', memo: atb.memo || '',
     };
   }
@@ -9053,7 +9218,8 @@ function upcomingRuleChangeInfo(project, res) {
 
 function fetchUpcomingRuleChangeInfo(project) {
   if (!project || !project.ruleset || !project.metadata || !project.chainId || project.id == null) return Promise.resolve(null);
-  return controllerRead(project.chainId, project.id, upcomingRulesetAbi, 'upcomingRulesetOf', [BigInt(project.id)])
+  var homePid = pidOn(project, project.chainId);
+  return controllerRead(project.chainId, homePid, upcomingRulesetAbi, 'upcomingRulesetOf', [homePid])
     .then(function (res) { return upcomingRuleChangeInfo(project, res); })
     .catch(function () { return null; });
 }
@@ -9093,7 +9259,7 @@ function renderRulesetsFundsSection(project) {
 
   // Per-cycle funds-access limits (payout limit + surplus allowance), keyed by ruleset id and cached
   // so stepping back and forth doesn't re-read. Config is per-ruleset, so it tracks the displayed cycle.
-  var faPid = BigInt(project.id);
+  var faPid = pidOn(project, project.chainId);
   var faTerminal = getAddress('JBMultiTerminal', project.chainId);
   var faLimits = getAddress('JBFundAccessLimits', project.chainId);
   var faSplits = getAddress('JBSplits', project.chainId);
@@ -9354,7 +9520,7 @@ function renderRulesetsFundsSection(project) {
 
   function ensureUpcoming(cb) {
     if (upcoming !== null) { cb(); return; }
-    controllerRead(project.chainId, project.id, upcomingRulesetAbi, 'upcomingRulesetOf', [BigInt(project.id)])
+    controllerRead(project.chainId, pidOn(project, project.chainId), upcomingRulesetAbi, 'upcomingRulesetOf', [pidOn(project, project.chainId)])
       .then(function (res) {
         // res = [ruleset, metadata]; treat a zero-id as "no distinct upcoming".
         if (res && res[0] && Number(res[0].id) !== 0) upcoming = { r: res[0], m: res[1] };
@@ -9377,7 +9543,8 @@ function renderRulesetsFundsSection(project) {
     chainRs[project.chainId] = cur;
     Promise.all(pchains.map(function (c) {
       if (chainRs[c.id]) return Promise.resolve();
-      return controllerRead(c.id, project.id, currentRulesetAbi, 'currentRulesetOf', [BigInt(project.id)])
+      var localPid = pidOn(project, c.id);
+      return controllerRead(c.id, localPid, currentRulesetAbi, 'currentRulesetOf', [localPid])
         .then(function (res) { if (res && res[0]) chainRs[c.id] = { r: res[0], m: res[1] }; }).catch(function () {});
     })).then(function () {
       var sigs = pchains.map(function (c) { return chainRs[c.id] ? rulesetSignature(chainRs[c.id].r, chainRs[c.id].m) : null; }).filter(Boolean);
@@ -9669,7 +9836,7 @@ function draftPayoutState(limit, splits, decimals, owner) {
 }
 
 async function draftLiveProjectChain(project, chain) {
-  var chainId = Number(chain.id), pid = BigInt(project.id);
+  var chainId = Number(chain.id), pid = pidOn(project, chainId);
   var controller = await controllerAddressFor(chainId, pid);
   var canonicalController = getAddress('JBController', chainId);
   if (!canonicalController || !sameAddr(controller, canonicalController)) {
@@ -9683,13 +9850,13 @@ async function draftLiveProjectChain(project, chain) {
   var contexts = await resolveAcctTokens(chainId, pid);
   var terminals = await read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]);
   var owner = project.isRevnet
-    ? await revnetOperatorOf(project.id, chainId)
+    ? await revnetOperatorOf(Number(pid), chainId)
     : await read(chainId, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]);
-  return { chain: chain, chainId: chainId, controller: controller, ruleset: current[0], metadata: current[1], contexts: contexts, terminals: terminals || [], owner: owner };
+  return { chain: chain, chainId: chainId, projectId: pid, controller: controller, ruleset: current[0], metadata: current[1], contexts: contexts, terminals: terminals || [], owner: owner };
 }
 
 async function draftUpcomingProjectChain(source, project) {
-  var upcoming = await clientFor(source.chainId).readContract({ address: source.controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [BigInt(project.id)] });
+  var upcoming = await clientFor(source.chainId).readContract({ address: source.controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [source.projectId] });
   if (!upcoming || !upcoming[0] || toBigInt(upcoming[0].id || 0) === 0n || String(upcoming[0].id) === String(source.ruleset.id)) return null;
   return Object.assign({}, source, { ruleset: upcoming[0], metadata: upcoming[1] });
 }
@@ -9732,7 +9899,7 @@ function draftSplitFingerprint(split) {
 // comparison and draft construction, avoiding a second identical batch of splits/limits RPC calls.
 export async function readDraftFunds(project, source, readContract) {
   readContract = readContract || read;
-  var pid = BigInt(project.id), rid = toBigInt(source.ruleset.id), terminal = getAddress('JBMultiTerminal', source.chainId);
+  var pid = source.projectId != null ? BigInt(source.projectId) : pidOn(project, source.chainId), rid = toBigInt(source.ruleset.id), terminal = getAddress('JBMultiTerminal', source.chainId);
   var reserved = await readContract(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]);
   var funds = await Promise.all(source.contexts.map(async function (context) {
     var values = await Promise.all([
@@ -9831,7 +9998,7 @@ async function applyDraftAccountingAndTerminals(state, project, sources) {
     if (unknown.length) throw new Error('The project uses a custom terminal on ' + (source.chain.name || chainNameOf(source.chainId)) + ', which the .jb editor cannot reproduce.');
     var usesRouter = !!(router && lower.indexOf(router.toLowerCase()) !== -1);
     if (usesRouter) {
-      var target = await read(source.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [BigInt(project.id)]);
+      var target = await read(source.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [source.projectId]);
       var canonicalTarget = getAddress('JBRouterTerminal', source.chainId);
       if (!canonicalTarget || !sameAddr(target, canonicalTarget)) throw new Error('The project uses a custom router-terminal target on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
     }
@@ -9864,11 +10031,11 @@ function draftSuckerDeployer(chainId, remoteChainId, type) {
 }
 
 async function applyDraftSuckers(state, project, sources, warnings) {
-  var pid = BigInt(project.id), sourceIds = sources.map(function (source) { return source.chainId; });
+  var sourceIds = sources.map(function (source) { return source.chainId; });
   var rows = await Promise.all(sources.map(async function (source) {
     var registry = getAddress('JBSuckerRegistry', source.chainId);
     if (!registry) return { source: source, pairs: [] };
-    var pairs = await clientFor(source.chainId).readContract({ address: registry, abi: PROJECT_DRAFT_SUCKER_PAIRS_ABI, functionName: 'suckerPairsOf', args: [pid] });
+    var pairs = await clientFor(source.chainId).readContract({ address: registry, abi: PROJECT_DRAFT_SUCKER_PAIRS_ABI, functionName: 'suckerPairsOf', args: [source.projectId] });
     var classified = await Promise.all((pairs || []).map(async function (pair) {
       var remoteId = Number(pair.remoteChainId);
       if (sourceIds.indexOf(remoteId) === -1) throw new Error('An active bridge points outside the project’s exported chain set.');
@@ -9981,7 +10148,7 @@ function draftTierFingerprint(tier) {
 }
 
 async function applyDraftShop(state, project, sources, warnings) {
-  var chainProjects = sources.map(function (source) { return Object.assign({}, project, { chainId: source.chainId }); });
+  var chainProjects = sources.map(function (source) { return Object.assign({}, project, { id: Number(source.projectId), chainId: source.chainId }); });
   var shops = await Promise.all(chainProjects.map(function (p) { return fetchProjectTiers(p); }));
   var any = shops.some(Boolean);
   if (!any) {
@@ -9991,7 +10158,7 @@ async function applyDraftShop(state, project, sources, warnings) {
   if (shops.some(function (shop) { return !shop; })) throw new Error('The shop is not present on every project chain.');
   var home = shops[0];
   var knownShops = await Promise.all(shops.map(function (shop, index) {
-    return isKnown721HookClone(shop.hook, sources[index].chainId, project.id);
+    return isKnown721HookClone(shop.hook, sources[index].chainId, sources[index].projectId);
   }));
   if (knownShops.some(function (known) { return !known; })) {
     throw new Error('A shop hook is not a verified 721 instance from a known deployer in the Address Registry.');
@@ -10036,7 +10203,7 @@ async function applyDraftShop(state, project, sources, warnings) {
     });
     var permissionRows = await Promise.all(sources.map(function (source) {
       var revOwner = getAddress('REVOwner', source.chainId);
-      return read(source.chainId, 'JBPermissions', jbPermissionsOfAbi, 'permissionsOf', [source.owner || ZERO_ADDRESS, revOwner, BigInt(project.id)]);
+      return read(source.chainId, 'JBPermissions', jbPermissionsOfAbi, 'permissionsOf', [source.owner || ZERO_ADDRESS, revOwner, source.projectId]);
     }));
     var permissionFingerprint = permissionRows.map(function (packed) {
       var bits = toBigInt(packed || 0); return [24, 25, 26, 27].map(function (id) { return ((bits >> BigInt(id)) & 1n) === 1n; });
@@ -10052,10 +10219,10 @@ async function applyDraftShop(state, project, sources, warnings) {
     var redemptionModes = await Promise.all(sources.map(async function (source, index) {
       var dataHook = source.metadata.dataHook, omni = getAddress('JBOmnichainDeployer', source.chainId), shop = shops[index];
       if (omni && sameAddr(dataHook, omni)) {
-        var extra = await clientFor(source.chainId).readContract({ address: omni, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [BigInt(project.id), toBigInt(source.ruleset.id)] });
+        var extra = await clientFor(source.chainId).readContract({ address: omni, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [source.projectId, toBigInt(source.ruleset.id)] });
         var extraHook = extra && (extra.dataHook || extra[0]);
         if (!isZeroishAddress(extraHook)) throw new Error('This shop is composed with another custom data hook, which the .jb editor cannot reproduce.');
-        var tierCfg = await clientFor(source.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id), toBigInt(source.ruleset.id)] });
+        var tierCfg = await clientFor(source.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [source.projectId, toBigInt(source.ruleset.id)] });
         var configuredHook = tierCfg && (tierCfg.hook || tierCfg[0]);
         if (!sameAddr(configuredHook, shop.hook)) throw new Error('The omnichain wrapper’s shop hook could not be verified.');
         return !!(tierCfg && (tierCfg.useDataHookForCashOut != null ? tierCfg.useDataHookForCashOut : tierCfg[1]));
@@ -10228,9 +10395,9 @@ export async function buildProjectCreateDraft(project) {
         if (!omni || !sameAddr(nextSource.metadata.dataHook, omni)) return;
         var currentSource = sources[index];
         var configs = await Promise.all([
-          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [BigInt(project.id), toBigInt(nextSource.ruleset.id)] }),
-          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id), toBigInt(currentSource.ruleset.id)] }),
-          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [BigInt(project.id), toBigInt(nextSource.ruleset.id)] }),
+          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [nextSource.projectId, toBigInt(nextSource.ruleset.id)] }),
+          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [currentSource.projectId, toBigInt(currentSource.ruleset.id)] }),
+          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [nextSource.projectId, toBigInt(nextSource.ruleset.id)] }),
         ]);
         var extraHook = configs[0] && (configs[0].dataHook || configs[0][0]);
         var currentHook = configs[1] && (configs[1].hook || configs[1][0]);
@@ -10317,7 +10484,7 @@ function renderExtrasSection(project) {
   beneficiaryFields.appendChild(beneficiaryShared);
   var beneficiaryValueOf = attachAddressRecognition(beneficiaryInput, beneficiaryHint, project.chainId, {
     label: 'Default beneficiary',
-    projectId: project.id,
+    projectId: Number(pidOn(project, project.chainId)),
     projectSymbol: project.tokenSymbol,
     zeroLabel: 'Original payer receives tokens',
     unknownLabel: function (addr) { return 'Custom beneficiary ' + truncAddr(addr); },
@@ -10328,7 +10495,7 @@ function renderExtrasSection(project) {
   var beneficiaryPerChain = makePerChainAddressControl(chains, beneficiaryValueOf, {
     label: 'Default beneficiary',
     placeholder: '0x… or name.eth',
-    projectId: project.id,
+    projectId: function (chainId) { return Number(pidOn(project, chainId)); },
     projectSymbol: project.tokenSymbol,
     zeroLabel: 'Original payer receives tokens',
     defaultRaw: function () { return beneficiaryInput.value || ''; },
@@ -10517,7 +10684,7 @@ function renderExtrasSection(project) {
         if (editableCb.checked && String(own).toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
           throw new Error('Editable payer addresses need a nonzero address admin on ' + (chain.name || chainNameOf(cid)) + '.');
         }
-        return buildProjectPayerDeployCall(cid, project.id, ben, memoInput.value, metadata, addToBalance, own);
+        return buildProjectPayerDeployCall(cid, pidOn(project, cid), ben, memoInput.value, metadata, addToBalance, own);
       });
       if (calls.length === 1 && !forceRelayr) {
         await new Promise(function (resolve, reject) {
@@ -10639,7 +10806,6 @@ function renderAccountCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Account'; card.appendChild(title);
   var body = el('div'); body.appendChild(skel('100%', '60px')); card.appendChild(body);
-  var pid = BigInt(project.id);
   var ids = orderedProjectChainIds(project);
   var chains = ids.length ? ids.map(function (id) { return { id: id, name: chainNameOf(id) }; }) : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   // For a revnet, the JBProjects owner is the REVDeployer — the controlling account is the OPERATOR; show
@@ -10653,7 +10819,7 @@ function renderAccountCard(project) {
       return chains.map(function (c) { return { c: c, owner: byChain[c.id] || null }; });
     })
     : Promise.all(chains.map(function (c) {
-      return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid])
+      return read(c.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pidOn(project, c.id)])
         .then(function (owner) { return { c: c, owner: owner }; })
         .catch(function () { return { c: c, owner: null }; });
     }));
@@ -11597,7 +11763,7 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
       var hint = el('div', 'operator-edit-token-name');
       var valueOf = attachAddressRecognition(input, hint, c.id, {
         label: (opts.label || 'Address') + ' on ' + (c.name || chainNameOf(c.id)),
-        projectId: opts.projectId,
+        projectId: typeof opts.projectId === 'function' ? opts.projectId(c.id) : opts.projectId,
         projectSymbol: opts.projectSymbol,
         normalizeNativeToZero: !!opts.normalizeNativeToZero,
         zeroLabel: opts.zeroLabel,
@@ -11698,12 +11864,17 @@ export function renderBuybackRouterCard(project) {
 // ENUMERATE operators — only to check a known one). Stale empty grants (permissions cleared but row kept) are
 // dropped. Returns [{ operator, account, isRevnetOperator, chains:[id], permsUnion:[ids] }].
 async function fetchPermissionOperators(project) {
-  var chainIds = projectBendystrawChainIds(project);
-  if (!chainIds.length) return [];
-  var data = await bendystrawQuery(BENDYSTRAW_PERMISSION_HOLDERS_QUERY, {
-    projectId: Number(project.id), version: BENDYSTRAW_VERSION, chainIds: chainIds,
-  }).catch(function () { return null; });
-  var items = (data && data.permissionHolders && data.permissionHolders.items) || [];
+  var deployments = projectDeployments(project);
+  if (!deployments.length) return [];
+  var pages = await Promise.all(deployments.map(function (deployment) {
+    return bendystrawQuery(BENDYSTRAW_PERMISSION_HOLDERS_QUERY, {
+      projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
+    }).catch(function () { return null; });
+  }));
+  var items = [];
+  pages.forEach(function (data) {
+    items = items.concat((data && data.permissionHolders && data.permissionHolders.items) || []);
+  });
   var byOp = {}, order = [];
   items.forEach(function (it) {
     var perms = (it.permissions || []).map(Number).filter(function (n) { return n > 0; });
@@ -11780,7 +11951,6 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Owner').toLowerCase();
   var account = projectAuthorityAddress(project); // the grantor — for a custom project this is the owner
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
-  var pid = BigInt(project.id);
   var editing = !!existingOperator;
 
   var content = el('div', 'modal-body operator-edit');
@@ -11846,7 +12016,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
       var buildCall = function (cid) {
         var to = getAddress('JBPermissions', cid);
         if (!to) throw new Error('No JBPermissions on ' + chainNameOf(cid));
-        return { to: to, data: encodeFunctionData({ abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor', args: [account, { operator: operator, projectId: pid, permissionIds: ids }] }) };
+        return { to: to, data: encodeFunctionData({ abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor', args: [account, { operator: operator, projectId: pidOn(project, cid), permissionIds: ids }] }) };
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, account, buildCall, { label: 'Set permissions', title: editing ? 'Edit permissions' : 'Add operator', gas: 200000n }, setStatus)
@@ -11951,12 +12121,13 @@ export var POWER_INIT_BUYBACK_POOL = {
   // Per-chain current-pool summary for the card. No scalar getter for the PoolKey (internal), so we resolve the
   // project's hook and read twapWindowOf for the native + USDC pairs — non-zero = a pool is initialized there.
   poolStateRead: function (project, chainId) {
-    return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [BigInt(project.id)]).then(function (hook) {
+    var pid = pidOn(project, chainId);
+    return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid]).then(function (hook) {
       if (!hook || hook === ZERO_ADDRESS) return 'no hook set';
       var probes = [{ label: 'native', token: ZERO_ADDRESS }];
       var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ label: 'USDC', token: usdc });
       return Promise.all(probes.map(function (p) {
-        return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [BigInt(project.id), p.token] })
+        return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, p.token] })
           .then(function (w) { return { label: p.label, twap: Number(w) }; }).catch(function () { return { label: p.label, twap: 0 }; });
       })).then(function (rows) {
         var init = rows.filter(function (r) { return r.twap > 0; });
@@ -11998,7 +12169,6 @@ function openPowerModal(project, action) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Owner').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
-  var pid = BigInt(project.id);
 
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to ' + action.title.toLowerCase() + '.', project.chainId));
@@ -12055,7 +12225,7 @@ function openPowerModal(project, action) {
         var name = el('div', 'operator-edit-token-name');
         var valueOf = attachAddressRecognition(input, name, c.id, {
           label: f.label + ' on ' + (c.name || chainNameOf(c.id)),
-          projectId: project.id,
+          projectId: Number(pidOn(project, c.id)),
           projectSymbol: project.tokenSymbol,
           normalizeNativeToZero: !!f.normalizeNativeToZero,
           zeroLabel: f.zeroLabel || 'Zero address',
@@ -12135,7 +12305,7 @@ function openPowerModal(project, action) {
     var scalarAddressValue = null;
     if (f.kind === 'address') {
       var ah = el('div', 'operator-edit-token-name'); content.appendChild(ah);
-      scalarAddressValue = attachAddressRecognition(inp, ah, project.chainId, { label: f.label, projectId: project.id, projectSymbol: project.tokenSymbol, normalizeNativeToZero: !!f.normalizeNativeToZero, zeroLabel: f.zeroLabel, nativeLabel: f.nativeLabel, unknownLabel: f.unknownLabel });
+      scalarAddressValue = attachAddressRecognition(inp, ah, project.chainId, { label: f.label, projectId: Number(pidOn(project, project.chainId)), projectSymbol: project.tokenSymbol, normalizeNativeToZero: !!f.normalizeNativeToZero, zeroLabel: f.zeroLabel, nativeLabel: f.nativeLabel, unknownLabel: f.unknownLabel });
     }
     if (f.help) { var h = el('div', 'operator-edit-cur'); h.textContent = f.help; content.appendChild(h); }
     // Cross-chain consistency: read this value's CURRENT setting on every AMM-available chain the project spans and
@@ -12208,13 +12378,13 @@ function openPowerModal(project, action) {
       catch (err) { setStatus(err.message || String(err), 'error'); busy = false; return; }
       var liveControllers = null;
       if (action.contract === 'JBController') {
-        try { liveControllers = await controllerMapFor(selected, pid); }
+        try { liveControllers = await controllerMapFor(selected, project); }
         catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); busy = false; return; }
       }
       var buildCall = function (cid) {
         var to = liveControllers ? liveControllers[cid] : getAddress(action.contract, cid);
         if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
-        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid, pid) }) };
+        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)) }) };
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal }, setStatus)
@@ -12235,7 +12405,7 @@ function openAddAccountingContextModal(project) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Owner').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
-  var pid = BigInt(project.id);
+  var homePid = pidOn(project, project.chainId);
 
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to add an accounting token.', project.chainId));
@@ -12245,7 +12415,7 @@ function openAddAccountingContextModal(project) {
 
   // Show what's already accepted on the primary chain (read-only reference).
   var cur = el('div', 'operator-edit-cur'); cur.textContent = 'Reading current accounting tokens…'; content.appendChild(cur);
-  read(project.chainId, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [pid]).then(function (ctxs) {
+  read(project.chainId, 'JBMultiTerminal', TERMINAL_CONTEXTS_ABI, 'accountingContextsOf', [homePid]).then(function (ctxs) {
     return Promise.all((ctxs || []).map(function (c) {
       return Promise.resolve().then(function () { return resolveAccountingContextMetadata(project.chainId, c); })
         .then(function (meta) { return (meta && meta.symbol) || acctTokenLabel(c.token); })
@@ -12279,7 +12449,7 @@ function openAddAccountingContextModal(project) {
       var input = el('input', 'operator-edit-jwt operator-chain-address-input');
       input.type = 'text'; input.placeholder = '0x… ERC-20 address';
       var hint = el('div', 'operator-edit-token-name');
-      var valueOf = attachAddressRecognition(input, hint, c.id, { label: 'Token on ' + (c.name || chainNameOf(c.id)), projectId: project.id, projectSymbol: project.tokenSymbol, unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); } });
+      var valueOf = attachAddressRecognition(input, hint, c.id, { label: 'Token on ' + (c.name || chainNameOf(c.id)), projectId: Number(pidOn(project, c.id)), projectSymbol: project.tokenSymbol, unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); } });
       input.addEventListener('change', function () { maybeReadCustomDecimals(c.id, input.value); });
       field.appendChild(input); field.appendChild(hint); row.appendChild(field); tokenWrap.appendChild(row);
       tokenRows[c.id] = { input: input, valueOf: valueOf };
@@ -12288,7 +12458,7 @@ function openAddAccountingContextModal(project) {
   } else {
     tokenInput = el('input', 'operator-edit-jwt'); tokenInput.type = 'text'; tokenInput.placeholder = '0x… ERC-20 address'; content.appendChild(tokenInput);
     tokenHint = el('div', 'operator-edit-token-name'); content.appendChild(tokenHint);
-    tokenValueOf = attachAddressRecognition(tokenInput, tokenHint, project.chainId, { label: 'Token', projectId: project.id, projectSymbol: project.tokenSymbol, unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); } });
+    tokenValueOf = attachAddressRecognition(tokenInput, tokenHint, project.chainId, { label: 'Token', projectId: Number(homePid), projectSymbol: project.tokenSymbol, unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); } });
     tokenInput.addEventListener('change', function () { maybeReadCustomDecimals(project.chainId, tokenInput.value); });
   }
   // Presets — fill the correct per-chain address at submit (Native ETH = same address on every chain; USDC differs).
@@ -12387,7 +12557,7 @@ function openAddAccountingContextModal(project) {
       var buildCall = function (cid) {
         var token = tokenForChain(cid);
         var currency = Number(BigInt(token) & 0xffffffffn);
-        return { to: getAddress('JBMultiTerminal', cid), data: encodeFunctionData({ abi: addAccountingContextsAbi, functionName: 'addAccountingContextsFor', args: [pid, [{ token: token, decimals: dec, currency: currency }]] }) };
+        return { to: getAddress('JBMultiTerminal', cid), data: encodeFunctionData({ abi: addAccountingContextsAbi, functionName: 'addAccountingContextsFor', args: [pidOn(project, cid), [{ token: token, decimals: dec, currency: currency }]] }) };
       };
       var shim = Object.assign({}, project, { chains: usable });
       var res = await runAuthorityActionAcrossChains(shim, usable, operatorAddr, buildCall, { label: 'Add accounting token', title: 'Add accounting token', gas: 300000n }, setStatus)
@@ -12503,7 +12673,6 @@ export function quotedOutputFloor(quoted, bps) {
 // Permissionless — anyone can trigger it. Amount is in the payout limit's currency (usually the accounting token).
 function buildPayoutsModal(project, acctKind) {
   var wrap = el('div', 'modal-body');
-  var pid = BigInt(project.id);
   var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, balance: null, limits: [], selected: null, currency: null, meta: null, maxAmount: null };
   // When a funds block opened this for a specific accounting context, resolve that token per chain;
   // otherwise fall back to the project's primary accounting token.
@@ -12741,7 +12910,6 @@ function buildPayoutsModal(project, acctKind) {
 // the ruleset's surplus allowance, on one chain. Owner-gated (needs USE_ALLOWANCE permission).
 function buildUseAllowanceModal(project, acctKind) {
   var wrap = el('div', 'modal-body');
-  var pid = BigInt(project.id);
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
   var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, surplus: null, allowances: [], selected: null, usable: null, currency: null, meta: null };
@@ -12914,7 +13082,7 @@ function buildUseAllowanceModal(project, acctKind) {
       });
       var allowanceCaller = getAccount && getAccount();
       var allowanceChain = state.chainId;
-      isAllowanceFeeless(allowanceChain, pid, allowanceCaller, allowanceCaller).then(function (f) {
+      isAllowanceFeeless(allowanceChain, pidOn(project, allowanceChain), allowanceCaller, allowanceCaller).then(function (f) {
         var current = getAccount && getAccount();
         if (seq === loadSeq && state.chainId === allowanceChain && current && allowanceCaller && current.toLowerCase() === allowanceCaller.toLowerCase()) {
           state.feeless = f; updateAllowancePreview();
@@ -13022,10 +13190,9 @@ function resolveFundsKindAcct(chainId, pid, kind) {
 
 // All accounting contexts a project accepts (read from the home chain), classified into funds kinds.
 function acctKindsForFunds(project) {
-  var pid = BigInt(project.id);
   var home = project.chainId;
   if (!getAddress('JBMultiTerminal', home)) return Promise.reject(new Error('No terminal on this chain.'));
-  return resolveAcctTokens(home, pid).then(function (ctxs) {
+  return resolveAcctTokens(home, pidOn(project, home)).then(function (ctxs) {
     var usdcHome = (USDC_BY_CHAIN[home] || '').toLowerCase();
     return ctxs.map(function (c) {
       var verified = c;
@@ -13039,12 +13206,11 @@ function acctKindsForFunds(project) {
 
 // Total balance for an accounting kind across all the project's chains (for the at-a-glance tab label).
 function totalBalanceForKind(project, kind) {
-  var pid = BigInt(project.id);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
   return Promise.all(chains.map(function (c) {
     var term = getAddress('JBMultiTerminal', c.id); var tok = kind.addrForChain(c.id);
     if (!term || !tok) return Promise.resolve(null);
-    return read(c.id, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, tok])
+    return read(c.id, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pidOn(project, c.id), tok])
       .then(function (b) { return b != null ? BigInt(b) : null; }).catch(function () { return null; });
   })).then(function (bs) {
     if (bs.some(function (v) { return v == null; })) return null;
@@ -13055,7 +13221,7 @@ function totalBalanceForKind(project, kind) {
 // Live, cycle-aware fund access for one accounting token on one chain. Configured limits alone are not
 // "available": payout usage is tracked by ruleset cycle and surplus-allowance usage by ruleset ID.
 async function readFundsAccessSnapshot(project, kind, chainId) {
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, chainId);
   var term = getAddress('JBMultiTerminal', chainId);
   var fal = getAddress('JBFundAccessLimits', chainId);
   var token = kind.addrForChain(chainId);
@@ -13138,9 +13304,9 @@ function renderFundsCard(project) {
 
 // One accounting-context block. `showHead` adds a token-symbol heading (when the project has >1 context).
 function buildFundsTokenBlock(project, kind, showHead) {
-  var pid = BigInt(project.id);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: 'This chain' }];
   var home = project.chainId;
+  var homePid = pidOn(project, home);
   var splitsAddr = getAddress('JBSplits', home);
   var homeToken = kind.addrForChain(home);
   var fmt = function (v) { return v == null ? '—' : formatBalance(v, kind.decimals, kind.symbol); };
@@ -13217,7 +13383,7 @@ function buildFundsTokenBlock(project, kind, showHead) {
     var homeRow = rows.filter(function (x) { return x.c.id === home; })[0];
     if (!homeRow || !homeRow.snapshot || !splitsAddr || !homeToken) throw new Error('Home-chain fund access is unavailable.');
     var snapshot = homeRow.snapshot;
-    return read(home, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, toBigInt(snapshot.ruleset.id), BigInt(homeToken)])
+    return read(home, 'JBSplits', splitsOfAbi, 'splitsOf', [homePid, toBigInt(snapshot.ruleset.id), BigInt(homeToken)])
       .then(function (splits) { return { snapshot: snapshot, splits: splits || [] }; });
   }).then(function (res) {
     var snapshot = res.snapshot;
@@ -13255,7 +13421,7 @@ function buildFundsTokenBlock(project, kind, showHead) {
       var ownerName = el('span'); ownerName.textContent = 'Project’s owner';
       var setOwner = function (a) { if (a) { ownerName.innerHTML = ''; ownerName.appendChild(addressNode(a, home)); } };
       if (project.owner) setOwner(project.owner);
-      else read(home, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).then(function (o) { project.owner = o; setOwner(o); }).catch(function () {});
+      else read(home, 'JBProjects', ownerOfAbi, 'ownerOf', [homePid]).then(function (o) { project.owner = o; setOwner(o); }).catch(function () {});
       addRow(ownerPct, ownerName, distributable - sumAmt);
     }
     payBox.appendChild(table);
@@ -13380,7 +13546,6 @@ function formatCutPercent(weightCutPercent) {
 
 // Total auto-issuance per stage (index-aligned to `stages`), summed across chains + beneficiaries.
 async function loadStageAutoIssuanceTotals(project, stages) {
-  var pid = BigInt(project.id);
   var chains = (project.chains && project.chains.length)
     ? project.chains
     : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
@@ -13391,7 +13556,7 @@ async function loadStageAutoIssuanceTotals(project, stages) {
       stageCache[chainId] = Promise.resolve(stages);
       return stageCache[chainId];
     }
-    stageCache[chainId] = readAllRulesets(chainId, pid)
+    stageCache[chainId] = readAllRulesets(chainId, pidOn(project, chainId))
       .then(function (rs) { return (rs || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); }); });
     return stageCache[chainId];
   }
@@ -13966,6 +14131,16 @@ export function indexedActivityAmount(scaledUsd) {
   return usd > 0 ? formatUsd(usd) : '';
 }
 
+// The amount that moved, in the flow's OWN currency. When the project has a single accounting token we know
+// the pay/cash-out/payout token exactly (project._flowToken, resolved once in fetchProjectActivity), so label
+// the raw amount with it. Otherwise the event only indexes a USD value — multiple accepted tokens can't be
+// told apart from the raw amount — so fall back to that.
+function activityFlowAmount(project, raw, scaledUsd) {
+  var ft = project && project._flowToken;
+  if (ft && toBigInt(raw) > 0n) return formatActivityAmount(raw, ft.symbol, ft.decimals);
+  return indexedActivityAmount(scaledUsd);
+}
+
 function renderExplorerTxLink(chainId, txHash, label) {
   var url = txUrl(chainId, txHash);
   if (!url) {
@@ -14007,7 +14182,6 @@ function renderAutoIssuance(project, stages) {
   desc.textContent = 'Tokens auto-issued to specific accounts, unlocking per stage across every chain.';
   card.appendChild(desc);
 
-  var pid = BigInt(project.id);
   var sym = project.tokenSymbol ? ' ' + project.tokenSymbol : '';
   var chains = (project.chains && project.chains.length)
     ? project.chains
@@ -14026,7 +14200,7 @@ function renderAutoIssuance(project, stages) {
       stageCache[chainId] = Promise.resolve(stages);
       return stageCache[chainId];
     }
-    stageCache[chainId] = readAllRulesets(chainId, pid)
+    stageCache[chainId] = readAllRulesets(chainId, pidOn(project, chainId))
       .then(function (rs) {
         return (rs || []).slice().sort(function (a, b) { return Number(a.start) - Number(b.start); });
       });
@@ -14051,7 +14225,8 @@ function renderAutoIssuance(project, stages) {
 
   function distribute(row, btn) {
     var stageId = BigInt(row.stage.id);
-    var args = [pid, stageId, row.beneficiary];
+    var localPid = pidOn(project, row.chain.id);
+    var args = [localPid, stageId, row.beneficiary];
     var chainName = row.chain && row.chain.name ? row.chain.name : ('Chain ' + row.chain.id);
     var amount = row.remaining != null && row.remaining > 0n ? row.remaining : row.count;
     var data = encodeCalldata(autoIssueForAbi, 'autoIssueFor', args);
@@ -14065,7 +14240,7 @@ function renderAutoIssuance(project, stages) {
       data: data,
       rawArgs: args,
       args: {
-        revnetId: String(project.id),
+        revnetId: localPid.toString(),
         stageId: stageId.toString(),
         beneficiary: row.beneficiary,
       },
@@ -14280,11 +14455,11 @@ var BENDYSTRAW_PROJECT_OPERATOR_QUERY = 'query($chainId: Int!, $projectId: Int!,
   + 'permissionHolders(where: { chainId: $chainId, projectId: $projectId, version: $version, isRevnetOperator: true }, limit: 10) { '
   + 'items { operator permissions } } }';
 // Every operator that holds permissions on this project, across all chains (drives the Permissions card).
-var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!]) { '
-  + 'permissionHolders(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, limit: 100) { '
+var BENDYSTRAW_PERMISSION_HOLDERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) { '
+  + 'permissionHolders(where: { projectId: $projectId, version: $version, chainId: $chainId }, limit: 100) { '
   + 'items { chainId account operator permissions isRevnetOperator } } }';
-var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'projectPayers(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
+var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'projectPayers(where: { projectId: $projectId, version: $version, chainId: $chainId }, '
   + 'orderBy: "totalFacilitatedUsd", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { chainId address defaultAddToBalance defaultBeneficiary paymentsCount addToBalanceCount totalFacilitated totalFacilitatedUsd lastUsedAt createdAt } totalCount } }';
 // Buyback-hook AMM trades (V6 swapEvent model). Each buy/sell is a realized
@@ -14297,8 +14472,8 @@ var BENDYSTRAW_PARTICIPANTS_BY_GROUP_QUERY = 'query($suckerGroupId: String!, $ch
   + 'participants(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds, version: $version, balance_gt: "0" }, '
   + 'orderBy: "balance", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { address balance volume volumeUsd chainId projectId version suckerGroupId } totalCount } }';
-var BENDYSTRAW_PARTICIPANTS_BY_PROJECT_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!, $limit: Int!, $offset: Int!) { '
-  + 'participants(where: { projectId: $projectId, chainId_in: $chainIds, version: $version, balance_gt: "0" }, '
+var BENDYSTRAW_PARTICIPANTS_BY_PROJECT_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'participants(where: { projectId: $projectId, chainId: $chainId, version: $version, balance_gt: "0" }, '
   + 'orderBy: "balance", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { address balance volume volumeUsd chainId projectId version suckerGroupId } totalCount } }';
 var BENDYSTRAW_STORE_AUTO_ISSUANCE_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
@@ -14353,17 +14528,17 @@ var BENDYSTRAW_ACTIVITY_EVENTS_QUERY = 'query($suckerGroupId: String!, $version:
   + 'activityEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds, ' + BENDYSTRAW_ACTIVITY_OR + ' }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + BENDYSTRAW_ACTIVITY_ITEM_FIELDS + ' } }';
-var BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'activityEvents(where: { projectId: $projectId, version: $version, chainId_in: $chainIds, ' + BENDYSTRAW_ACTIVITY_OR + ' }, '
+var BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'activityEvents(where: { projectId: $projectId, version: $version, chainId: $chainId, ' + BENDYSTRAW_ACTIVITY_OR + ' }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + BENDYSTRAW_ACTIVITY_ITEM_FIELDS + ' } }';
 // History lists (Bendystraw): payout distributions, reserved-token distributions, and loans.
-var BENDYSTRAW_RESERVED_DIST_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'sendReservedTokensToSplitsEvents(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
+var BENDYSTRAW_RESERVED_DIST_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'sendReservedTokensToSplitsEvents(where: { projectId: $projectId, version: $version, chainId: $chainId }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { tokenCount timestamp txHash chainId } totalCount } }';
-var BENDYSTRAW_LOANS_QUERY = 'query($projectId: Int!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
-  + 'loans(where: { projectId: $projectId, version: $version, chainId_in: $chainIds }, '
+var BENDYSTRAW_LOANS_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'loans(where: { projectId: $projectId, version: $version, chainId: $chainId }, '
   + 'orderBy: "createdAt", orderDirection: "desc", limit: $limit, offset: $offset) { '
   + 'items { id borrowAmount collateral beneficiary owner createdAt chainId prepaidFeePercent prepaidDuration sourceFeeAmount token } totalCount } }';
 
@@ -14447,18 +14622,19 @@ async function fetchBendystrawCollectionPages(query, path, variables, pageSize, 
 
 async function fetchIndexedAutoIssuanceRows(project, chainIds) {
   var pages = await Promise.all(chainIds.map(async function (chainId) {
+    var localProjectId = pidOn(project, chainId);
     // Main allocations query is strict — if Bendystraw fails, let it throw so the section hides rather
     // than showing fabricated data. The distributed-status lookup stays tolerant (best-effort enrichment).
     var stored = await fetchBendystrawAutoIssuePages(
       BENDYSTRAW_STORE_AUTO_ISSUANCE_QUERY,
       'storeAutoIssuanceAmountEvents',
-      project.id,
+      localProjectId,
       chainId
     );
     var issued = await fetchBendystrawAutoIssuePages(
       BENDYSTRAW_AUTO_ISSUE_EVENTS_QUERY,
       'autoIssueEvents',
-      project.id,
+      localProjectId,
       chainId
     ).catch(function () { return []; });
     return { stored: stored, issued: issued };
@@ -14521,7 +14697,7 @@ async function enrichAutoIssuanceRow(project, row, stagesForChain) {
     address: revOwnerAddr,
     abi: amountToAutoIssueAbi,
     functionName: 'amountToAutoIssue',
-    args: [BigInt(project.id), BigInt(match.stage.id), row.beneficiary],
+    args: [pidOn(project, chain.id), BigInt(match.stage.id), row.beneficiary],
   }).catch(function () { return null; });
 
   return Object.assign({}, row, {
@@ -14677,22 +14853,23 @@ function projectChainIds(project) {
   });
 }
 
-function projectBendystrawChainIds(project) {
-  var source = projectChainIds(project);
-  if (!source.length && project.chainId) source = [Number(project.chainId)];
+// Every verified deployment in the omnichain project, as an exact (chainId, projectId) pair. A numeric
+// project ID has no cross-chain identity by itself, so callers must fan out over these pairs instead of
+// combining one projectId with chainId_in.
+export function projectDeployments(project) {
   var seen = {};
-  var out = [];
-  function add(chainId) {
-    var cid = Number(chainId);
-    if (!cid || seen[cid]) return;
-    seen[cid] = true;
-    out.push(cid);
-  }
-  source.forEach(function (chainId) {
-    add(chainId);
-    if (BENDYSTRAW_PARENT_CHAIN_ID[chainId]) add(BENDYSTRAW_PARENT_CHAIN_ID[chainId]);
-  });
-  return out;
+  return projectChainIds(project).map(function (chainId) {
+    var projectId;
+    try { projectId = Number(pidOn(project, chainId)); } catch (_) { return null; }
+    var key = chainId + ':' + projectId;
+    if (seen[key]) return null;
+    seen[key] = true;
+    return { chainId: Number(chainId), projectId: projectId };
+  }).filter(Boolean);
+}
+
+function projectBendystrawChainIds(project) {
+  return projectDeployments(project).map(function (deployment) { return deployment.chainId; });
 }
 
 function chainSortIndex(chainId) {
@@ -14706,26 +14883,19 @@ function toBigInt(value) {
 }
 
 async function resolveBendystrawSuckerGroupId(project, chainIds) {
-  var seen = {};
-  var queryChainIds = [];
-  function addChain(chainId) {
-    var cid = Number(chainId);
-    if (!cid || seen[cid]) return;
-    seen[cid] = true;
-    queryChainIds.push(cid);
-    if (BENDYSTRAW_PARENT_CHAIN_ID[cid] && !seen[BENDYSTRAW_PARENT_CHAIN_ID[cid]]) {
-      seen[BENDYSTRAW_PARENT_CHAIN_ID[cid]] = true;
-      queryChainIds.push(BENDYSTRAW_PARENT_CHAIN_ID[cid]);
-    }
-  }
-  chainIds.forEach(addChain);
-  var rows = await Promise.all(queryChainIds.map(function (chainId) {
-    return fetchBendystrawProjectRecord(project.id, chainId);
+  var wanted = {};
+  (chainIds || []).forEach(function (chainId) { wanted[Number(chainId)] = true; });
+  var deployments = projectDeployments(project).filter(function (deployment) {
+    return !chainIds || !chainIds.length || wanted[deployment.chainId];
+  });
+  var rows = await Promise.all(deployments.map(function (deployment) {
+    return fetchBendystrawProjectRecord(deployment.projectId, deployment.chainId);
   }));
-  for (var i = 0; i < rows.length; i++) {
-    if (rows[i] && rows[i].suckerGroupId) return rows[i].suckerGroupId;
-  }
-  return null;
+  var groups = [];
+  rows.forEach(function (row) {
+    if (row && row.suckerGroupId && groups.indexOf(row.suckerGroupId) === -1) groups.push(row.suckerGroupId);
+  });
+  return groups.length === 1 ? groups[0] : null;
 }
 
 async function fetchPriceFloorHistory(project, stages) {
@@ -14850,35 +15020,46 @@ async function fetchProjectIndexedStats(id, chainId) {
 // Fetch a recent slice of a per-project Bendystraw event collection (across the project's chains).
 // Returns [] on any failure — never throws.
 async function fetchProjectEventRows(query, path, project, maxItems) {
-  var chainIds = projectBendystrawChainIds(project);
-  if (!chainIds.length) return [];
+  var deployments = projectDeployments(project);
+  if (!deployments.length) return [];
   try {
-    var res = await fetchBendystrawCollectionPages(query, path, {
-      projectId: Number(project.id),
-      version: BENDYSTRAW_VERSION,
-      chainIds: chainIds,
-    }, maxItems, maxItems);
-    return res.items || [];
+    var pages = await Promise.all(deployments.map(function (deployment) {
+      return fetchBendystrawCollectionPages(query, path, {
+        projectId: deployment.projectId,
+        chainId: deployment.chainId,
+        version: BENDYSTRAW_VERSION,
+      }, maxItems, maxItems);
+    }));
+    var rows = [];
+    pages.forEach(function (page) { rows = rows.concat(page.items || []); });
+    rows.sort(function (a, b) {
+      return Number(b.timestamp || b.createdAt || 0) - Number(a.timestamp || a.createdAt || 0);
+    });
+    return rows.slice(0, maxItems);
   } catch (e) {
     return [];
   }
 }
 
 async function fetchProjectPayerRows(project) {
-  var chainIds = projectBendystrawChainIds(project);
-  if (!chainIds.length) return [];
-  var res = await fetchBendystrawCollectionPages(BENDYSTRAW_PROJECT_PAYERS_QUERY, 'projectPayers', {
-    projectId: Number(project.id),
-    version: BENDYSTRAW_VERSION,
-    chainIds: chainIds,
-  }, 50, 250);
-  return (res.items || []).sort(function (a, b) {
+  var deployments = projectDeployments(project);
+  if (!deployments.length) return [];
+  var pages = await Promise.all(deployments.map(function (deployment) {
+    return fetchBendystrawCollectionPages(BENDYSTRAW_PROJECT_PAYERS_QUERY, 'projectPayers', {
+      projectId: deployment.projectId,
+      chainId: deployment.chainId,
+      version: BENDYSTRAW_VERSION,
+    }, 50, 250);
+  }));
+  var rows = [];
+  pages.forEach(function (page) { rows = rows.concat(page.items || []); });
+  return rows.sort(function (a, b) {
     var ausd = toBigInt(a.totalFacilitatedUsd);
     var busd = toBigInt(b.totalFacilitatedUsd);
     if (ausd !== busd) return ausd < busd ? 1 : -1;
     // Raw totals can mix token units and are not a valid tie-breaker.
     return Number(b.lastUsedAt || b.createdAt || 0) - Number(a.lastUsedAt || a.createdAt || 0);
-  });
+  }).slice(0, 250);
 }
 
 // Fill a box with a lazily-loaded history list. rowFn(row) -> DOM node. Handles loading/empty/error.
@@ -14942,25 +15123,36 @@ export function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDec
 }
 
 async function fetchProjectActivity(project) {
-  var chainIds = projectBendystrawChainIds(project);
-  if (!chainIds.length) return [];
+  var deployments = projectDeployments(project);
+  var chainIds = deployments.map(function (deployment) { return deployment.chainId; });
+  if (!deployments.length) return [];
+  // Resolve the flow currency ONCE: if the project accounts in a single token, every pay/cash-out/payout
+  // amount is in that token, so we can label it natively (the events don't index their token). Multiple
+  // tokens → leave it unset and fall back to the indexed USD value.
+  if (project._flowToken === undefined) {
+    project._flowToken = null;
+    try {
+      var homePid = pidOn(project, project.chainId);
+      var ctxs = await resolveAcctTokens(project.chainId, homePid);
+      if (ctxs && ctxs.length === 1) project._flowToken = { symbol: ctxs[0].symbol, decimals: ctxs[0].decimals };
+    } catch (_) {}
+  }
   var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
 
-  // Query by BOTH the current sucker group AND the (omnichain-consistent) projectId, then merge.
-  // Why both: an activityEvent's `suckerGroupId` is the group AS OF that event. Sucker groups merge
-  // over time as chains link up, so the earliest events (project creation, ERC20 deploy) on each chain
-  // carry a stale per-chain group id and the by-group query misses them — they only show on the one
-  // chain whose early event happens to match the current group. The by-projectId query recovers the
-  // rest (projectId is deterministic and identical across an omnichain deploy). Dedup by event id.
+  // Query by BOTH the current sucker group and each exact deployment, then merge. Early events may carry
+  // a pre-merge sucker group, while project IDs are chain-local and therefore must never be queried with
+  // one ID plus chainId_in.
   var queries = [];
   if (groupId) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
       suckerGroupId: groupId, version: BENDYSTRAW_VERSION, chainIds: chainIds,
     }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS));
   }
-  queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
-    projectId: Number(project.id), version: BENDYSTRAW_VERSION, chainIds: chainIds,
-  }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS));
+  deployments.forEach(function (deployment) {
+    queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
+      projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
+    }, ACTIVITY_PAGE_SIZE, ACTIVITY_MAX_ITEMS));
+  });
 
   var results = await Promise.all(queries);
   var seen = {}, merged = [];
@@ -14991,22 +15183,34 @@ async function fetchProjectActivity(project) {
 // remaining ruleset we recover the queuer (`caller`) and tx from the index's `rulesetQueuedEvent` (PR #14) —
 // this replaced a per-ruleset block-estimate + ±25k eth_getLogs scan per chain (RPC-capped, slow). Found →
 // attributed row (actor + tx link); not indexed → a `system` fallback row (no actor/tx), same as before.
-var RULESET_QUEUED_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
-  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 200) {'
+var RULESET_QUEUED_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 200) {'
   + ' items { chainId rulesetId from txHash } } }';
 // Fully-indexed variant (bendystraw PR #15: basedOnId + cycleNumber on the event) — lets us drop the allOf read.
-var RULESET_QUEUED_FULL_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
-  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 200) {'
+var RULESET_QUEUED_FULL_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) {'
+  + ' rulesetQueuedEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 200) {'
   + ' items { chainId rulesetId from txHash basedOnId cycleNumber } } }';
+async function fetchRulesetQueuedEvents(query, deployments) {
+  var pages = await Promise.all(deployments.map(function (deployment) {
+    return bendystrawQuery(query, {
+      projectId: deployment.projectId,
+      chainId: deployment.chainId,
+      version: BENDYSTRAW_VERSION,
+    });
+  }));
+  var items = [];
+  pages.forEach(function (data) {
+    items = items.concat((data && data.rulesetQueuedEvents && data.rulesetQueuedEvents.items) || []);
+  });
+  return items;
+}
 async function fetchRulesetQueueRows(project) {
-  var pid = BigInt(project.id);
-  var chainIds = projectBendystrawChainIds(project);
-  if (!chainIds.length) return [];
+  var deployments = projectDeployments(project);
+  if (!deployments.length) return [];
   // Preferred path — fully indexed (PR #15: rulesetQueuedEvent carries basedOnId + cycleNumber): build rows with
   // NO onchain read. Auto-activates when those fields land; until then the query throws and we fall through.
   try {
-    var fd = await bendystrawQuery(RULESET_QUEUED_FULL_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
-    var fitems = (fd && fd.rulesetQueuedEvents && fd.rulesetQueuedEvents.items) || [];
+    var fitems = await fetchRulesetQueuedEvents(RULESET_QUEUED_FULL_QUERY, deployments);
     // Trust the index ONLY when basedOnId + cycleNumber are actually populated — a migrated-but-not-yet-backfilled
     // schema returns the fields as null, and skipping every null-basedOnId row would silently drop ruleset rows
     // instead of falling back to allOf. Any null → fall through to the onchain path.
@@ -15026,14 +15230,15 @@ async function fetchRulesetQueueRows(project) {
   // Fallback: caller + tx from the index, keyed by chainId|rulesetId; basedOnId + cycleNumber from a cheap allOf.
   var callerByKey = {};
   try {
-    var qd = await bendystrawQuery(RULESET_QUEUED_QUERY, { projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION });
-    ((qd && qd.rulesetQueuedEvents && qd.rulesetQueuedEvents.items) || []).forEach(function (e) {
+    var queuedItems = await fetchRulesetQueuedEvents(RULESET_QUEUED_QUERY, deployments);
+    queuedItems.forEach(function (e) {
       if (e.from) callerByKey[e.chainId + '|' + String(e.rulesetId)] = { caller: e.from, txHash: e.txHash };
     });
   } catch (_) {}
   var rows = [];
-  await Promise.all(chainIds.map(async function (cid) {
-    var rs = await readAllRulesets(cid, pid);
+  await Promise.all(deployments.map(async function (deployment) {
+    var cid = deployment.chainId;
+    var rs = await readAllRulesets(cid, BigInt(deployment.projectId));
     if (!rs || !rs.length) return;
     var queued = rs.filter(function (r) { return Number(r.basedOnId) !== 0 && Number(r.id) > 0; });
     if (!queued.length) return;
@@ -15076,7 +15281,6 @@ async function fetchRulesetQueueRows(project) {
 // destination inbox (delivered? claimed?). Claimable rows carry a locally-verified merkle proof.
 var BRIDGE_LEAF_CACHE = {};
 async function fetchBridgeTransactions(project) {
-  var pid = BigInt(project.id);
   var chains = (project.chains || []).map(function (c) { return c.id; });
   var rows = [];
   await Promise.all(chains.map(async function (C) {
@@ -15085,7 +15289,7 @@ async function fetchBridgeTransactions(project) {
     await Promise.all(pairs.map(async function (p) {
       var srcSucker = p.local, R = p.remoteChainId, peerSucker = p.remote;
       var infra = await classifySuckerInfra(C, srcSucker); // verified CCIP/native, or unknown → generic tracking
-      var remoteContexts = await resolveAcctTokens(R, pid);
+      var remoteContexts = await resolveAcctTokens(R, pidOn(project, R));
       await Promise.all(sourceContexts.map(async function (acct) {
         var TOKEN = acct.address;
         var ob = await clientFor(C).readContract({ address: srcSucker, abi: suckerClaimAbi, functionName: 'outboxOf', args: [TOKEN] });
@@ -15220,6 +15424,23 @@ async function fetchBendystrawParticipantPages(query, variables) {
   return { items: items, totalCount: totalCount || items.length };
 }
 
+async function fetchParticipantsByDeployments(project) {
+  var deployments = projectDeployments(project);
+  var pages = await Promise.all(deployments.map(function (deployment) {
+    return fetchBendystrawParticipantPages(BENDYSTRAW_PARTICIPANTS_BY_PROJECT_QUERY, {
+      projectId: deployment.projectId,
+      chainId: deployment.chainId,
+      version: BENDYSTRAW_VERSION,
+    });
+  }));
+  var items = [], totalCount = 0;
+  pages.forEach(function (page) {
+    items = items.concat(page.items || []);
+    totalCount += Number(page.totalCount || 0);
+  });
+  return { items: items, totalCount: totalCount };
+}
+
 function aggregateParticipants(items) {
   var byAddress = {};
   items.forEach(function (p) {
@@ -15251,9 +15472,8 @@ function aggregateParticipants(items) {
 }
 
 async function readTotalSupplyAcrossChains(project, chainIds) {
-  var pid = BigInt(project.id);
   var supplies = await Promise.all(chainIds.map(function (chainId) {
-    return read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; });
+    return read(chainId, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pidOn(project, chainId)]).catch(function () { return null; });
   }));
   if (supplies.some(function (value) { return value == null; })) return null;
   return supplies.reduce(function (sum, value) { return sum + toBigInt(value); }, 0n);
@@ -15272,9 +15492,7 @@ async function fetchOwnersCount(project) {
       });
     }
     if (!result || !result.items.length) {
-      result = await fetchBendystrawParticipantPages(BENDYSTRAW_PARTICIPANTS_BY_PROJECT_QUERY, {
-        projectId: Number(project.id), chainIds: chainIds, version: BENDYSTRAW_VERSION,
-      });
+      result = await fetchParticipantsByDeployments(project);
     }
     return aggregateParticipants(result.items).length;
   } catch (e) {
@@ -15298,11 +15516,7 @@ async function fetchOwnersDistribution(project) {
     }).catch(function () { return null; });
   }
   if (!result || !result.items.length) {
-    result = await fetchBendystrawParticipantPages(BENDYSTRAW_PARTICIPANTS_BY_PROJECT_QUERY, {
-      projectId: Number(project.id),
-      chainIds: chainIds,
-      version: BENDYSTRAW_VERSION,
-    });
+    result = await fetchParticipantsByDeployments(project);
   }
 
   var participants = aggregateParticipants(result.items);
@@ -15414,7 +15628,6 @@ function renderSplitHookCard(project) {
   if (!uses) return host;
 
   var sym = project.tokenSymbol || 'tokens';
-  var pid = BigInt(project.id);
   var card = el('div', 'detail-card'); host.appendChild(card);
   var title = el('div', 'lp-amm-title');
   var tp = el('span'); tp.textContent = 'Split hook'; title.appendChild(tp);
@@ -15877,9 +16090,9 @@ function renderLoansTable(project, loans, opts) {
 // Pending reserved tokens accrue per chain (each chain mints its own issuance). Read the pending balance
 // on every chain the project lives on, so the splits table can show the per-chain spread.
 function fetchPendingReservedPerChain(project) {
-  var pid = BigInt(project.id);
-  var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
+  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   return Promise.all(chains.map(function (chain) {
+    var pid = pidOn(project, chain.id);
     return controllerRead(chain.id, pid, pendingReservedAbi, 'pendingReservedTokenBalanceOf', [pid])
       .then(function (v) { return { id: chain.id, name: chain.name, pending: v }; })
       .catch(function () { return { id: chain.id, name: chain.name, pending: null }; });
@@ -15935,7 +16148,7 @@ function renderOwnersSplits(project, opts) {
     tableWrap.appendChild(skWrap);
     var key = String(s.id);
     var p = splitsCache[key] !== undefined ? Promise.resolve(splitsCache[key])
-      : read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), BigInt(s.id), RESERVED_TOKEN_SPLIT_GROUP])
+      : read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pidOn(project, project.chainId), BigInt(s.id), RESERVED_TOKEN_SPLIT_GROUP])
         .then(function (x) { splitsCache[key] = x || []; return splitsCache[key]; })
         .catch(function () { splitsCache[key] = null; return null; });
     p.then(function (splits) {
@@ -16294,7 +16507,7 @@ function ensureNewShopState(state, allChains) {
 }
 
 function openQueueRulesetModal(project) {
-  var pid = BigInt(project.id);
+  var pid = pidOn(project, project.chainId);
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
   var allChains = (project.chains && project.chains.length) ? project.chains
@@ -16487,7 +16700,7 @@ function openQueueRulesetModal(project) {
         seen[key] = true;
         var omni = getAddress('JBOmnichainDeployer', chainId);
         if (omni && sameAddr(hook, omni)) continue;
-        if (!await isKnown721HookClone(hook, chainId, project.id)) continue;
+        if (!await isKnown721HookClone(hook, chainId, pid)) continue;
         var names = await Promise.all([
           clientFor(chainId).readContract({ address: hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'name', args: [] }).catch(function () { return ''; }),
           clientFor(chainId).readContract({ address: hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'symbol', args: [] }).catch(function () { return ''; }),
@@ -16950,7 +17163,6 @@ function openQueueRulesetModal(project) {
 }
 
 async function submitQueueRuleset(project, state, selected, operatorAddr, setStatus) {
-  var pid = BigInt(project.id);
   var memo = '';
   if (state.queueSourceLoading || !state.queueSourceVerified || state.queueSourceError || state.unsupportedMultiCurrencyAccess) {
     throw new Error('The live source configuration is not fully verified or cannot be preserved by this editor.');
@@ -16982,19 +17194,20 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // Multi-chain revnets use REVOwner, so they must queue directly through each JBController; routing them through
   // the generic omnichain wrapper would replace REVOwner and break revnet pay/cash out/fee semantics.
   var buildCall = function (cid) {
+    var localPid = pidOn(project, cid);
     var liveController = state.controllerByChain && state.controllerByChain[cid];
     if (!liveController) throw new Error('The project controller is not verified on ' + chainNameOf(cid) + '.');
     var cfgs = buildQueueRulesetConfigs(state, cid, immediateStart, newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
     if (newShop) {
-      var nc = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
+      var nc = buildNewShopQueueCall({ projectId: localPid, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
         useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
         controller: liveController, projectDeployer: getAddress('JB721TiersHookProjectDeployer', cid),
         omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: usesOmnichainWrapper, memo: memo });
       return { to: nc.to, data: encodeFunctionData({ abi: nc.abi, functionName: nc.functionName, args: nc.args }) };
     }
     return usesOmnichainWrapper
-      ? { to: getAddress('JBOmnichainDeployer', cid), data: encodeFunctionData({ abi: omnichainQueueAbi, functionName: 'queueRulesetsOf', args: [pid, cfgs, memo] }) }
-      : { to: liveController, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, cfgs, memo] }) };
+      ? { to: getAddress('JBOmnichainDeployer', cid), data: encodeFunctionData({ abi: omnichainQueueAbi, functionName: 'queueRulesetsOf', args: [localPid, cfgs, memo] }) }
+      : { to: liveController, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid, cfgs, memo] }) };
   };
 
   // Safe-owned project → Relayr can't sign for the Safe; propose the call to each selected chain's Safe queue.
@@ -17033,6 +17246,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   if (!multi) {
     // One selected chain still uses the wrapper when the live ruleset does; otherwise queue on JBController.
     var cid0 = selected[0].id;
+    var localPid0 = pidOn(project, cid0);
     var liveController0 = state.controllerByChain && state.controllerByChain[cid0];
     if (!liveController0) { setStatus('The project controller is not verified on this chain.', 'error'); return; }
     var configs;
@@ -17041,12 +17255,12 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     if (newShop) {
       var dep = getAddress('JB721TiersHookProjectDeployer', cid0);
       if (!usesOmnichainWrapper && !dep) { setStatus('No 721 deployer on this chain', 'error'); return; }
-      var nc1 = buildNewShopQueueCall({ projectId: project.id, deployConfig: build721Config(state, projUri, cid0), cfgs: configs, controller: liveController0, projectDeployer: dep, omnichainDeployer: getAddress('JBOmnichainDeployer', cid0), salt: newShopSalt, isOmnichain: usesOmnichainWrapper });
+      var nc1 = buildNewShopQueueCall({ projectId: localPid0, deployConfig: build721Config(state, projUri, cid0), cfgs: configs, controller: liveController0, projectDeployer: dep, omnichainDeployer: getAddress('JBOmnichainDeployer', cid0), salt: newShopSalt, isOmnichain: usesOmnichainWrapper });
       exec = { address: nc1.to, abi: nc1.abi, functionName: nc1.functionName, args: nc1.args, contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JB721TiersHookProjectDeployer', label: 'Start a new shop' };
     } else {
       var target = usesOmnichainWrapper ? getAddress('JBOmnichainDeployer', cid0) : liveController0;
       if (!target) { setStatus('No compatible ruleset queue contract on this chain', 'error'); return; }
-      exec = { address: target, abi: usesOmnichainWrapper ? omnichainQueueAbi : queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [pid, configs, memo], contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JBController', label: 'Queue ruleset' };
+      exec = { address: target, abi: usesOmnichainWrapper ? omnichainQueueAbi : queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid0, configs, memo], contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JBController', label: 'Queue ruleset' };
     }
     await new Promise(function (resolve, reject) {
       executeTransaction({
@@ -17080,9 +17294,10 @@ function openEditSplitsModal(project, opts) {
     var loadingModal = openModal(modalTitle, loadingBody);
     var homeGroup = groupIdForChain(project.chainId);
     if (homeGroup == null) { loadingBody.textContent = 'Could not resolve this split group on the home chain.'; return; }
-    controllerRead(project.chainId, project.id, currentRulesetAbi, 'currentRulesetOf', [BigInt(project.id)]).then(function (current) {
+    var homePid = pidOn(project, project.chainId);
+    controllerRead(project.chainId, homePid, currentRulesetAbi, 'currentRulesetOf', [homePid]).then(function (current) {
       if (!current || !current[0] || !current[0].id || !current[1]) throw new Error('No current ruleset.');
-      return read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), toBigInt(current[0].id), toBigInt(homeGroup)]).then(function (liveSplits) {
+      return read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [homePid, toBigInt(current[0].id), toBigInt(homeGroup)]).then(function (liveSplits) {
         var verifiedLimit = String(groupId) === String(RESERVED_TOKEN_SPLIT_GROUP) ? Number(current[1].reservedPercent) / 100 : 100;
         loadingModal.close();
         openEditSplitsModal(project, Object.assign({}, opts, { _verifiedPrefill: true, prefill: liveSplits || [], verifiedLimitPct: verifiedLimit }));
@@ -17141,7 +17356,7 @@ function openEditSplitsModal(project, opts) {
     },
     sym: project.tokenSymbol || 'tokens',
     projectSymbol: project.tokenSymbol || 'tokens',
-    projectId: project.id,
+    projectId: Number(pidOn(project, project.chainId)),
     chainId: project.chainId,
     chains: allChains,
     // Split locks only mean something inside a fixed-duration ruleset (create-flow rule: a Flexible
@@ -17369,9 +17584,10 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
       return;
     }
     btn.disabled = true; btn.textContent = 'Distributing…';
-    controllerAddressFor(pc.id, project.id).then(function (ctrl) {
+    var localPid = pidOn(project, pc.id);
+    controllerAddressFor(pc.id, localPid).then(function (ctrl) {
     executeTransaction({
-      chainId: pc.id, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf', args: [BigInt(project.id)],
+      chainId: pc.id, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf', args: [localPid],
       onStatus: function (m, kind) { status.className = 'modal-status splits-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m || ''; },
       onSuccess: function () { btn.textContent = 'Distributed'; status.className = 'modal-status splits-status success'; status.textContent = 'Pending splits distributed on ' + pc.name + '.'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
       onError: function (m) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = m; },
@@ -17566,9 +17782,8 @@ function renderOpsActions(project) {
 // Per chain: the connected wallet's token balance, its cash out value (reclaimable ETH), and its max
 // loan (borrowable ETH against that balance via REVLoans). Null fields where unavailable on a chain.
 function fetchYouPosition(project) {
-  var pid = BigInt(project.id);
   var acct = getAccount && getAccount();
-  var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
+  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   return Promise.all(chains.map(function (chain) {
     var cid = chain.id;
     var pid = pidOn(project, cid);
@@ -17613,7 +17828,6 @@ function fetchYouPosition(project) {
 // chain that has credits (each is a JBController.claimTokensFor tx on that chain). `creditRows` is the
 // held rows carrying a positive `credit`.
 function buildClaimModal(project, creditRows) {
-  var pid = BigInt(project.id);
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
   var intro = el('div', 'detail-card-body');
@@ -17636,8 +17850,9 @@ function buildClaimModal(project, creditRows) {
       if (!holder) { connect(); return; }
       btn.disabled = true;
       status.textContent = 'Verifying controller…';
-      controllerAddressFor(r.id, pid).then(function (ctrl) {
-      executeTransaction(Object.assign(buildClaimTokensArgs({ chainId: r.id, controllerAddr: ctrl, holder: holder, projectId: pid, tokenCount: r.credit, beneficiary: holder }), {
+      var localPid = pidOn(project, r.id);
+      controllerAddressFor(r.id, localPid).then(function (ctrl) {
+      executeTransaction(Object.assign(buildClaimTokensArgs({ chainId: r.id, controllerAddr: ctrl, holder: holder, projectId: localPid, tokenCount: r.credit, beneficiary: holder }), {
         label: 'Claim credits',
         onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
         onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
@@ -17663,7 +17878,7 @@ function readCashOutDelay(project) {
   var dh = project.metadata && project.metadata.dataHook;
   if (!dh || dh === ZERO_ADDRESS) return Promise.resolve(null);
   return clientFor(project.chainId).readContract({
-    address: dh, abi: cashOutDelayAbi, functionName: 'cashOutDelayOf', args: [BigInt(project.id)],
+    address: dh, abi: cashOutDelayAbi, functionName: 'cashOutDelayOf', args: [pidOn(project, project.chainId)],
   }).then(function (d) { return toBigInt(d); }).catch(function () { return null; });
 }
 
@@ -18388,9 +18603,23 @@ function fetchOwnedItems(project, chainId, wallet) {
     var client = clientFor(chainId);
     return Promise.all(onChain.map(function (m) {
       return client.readContract({ address: m.hook, abi: ownerOfAbi, functionName: 'ownerOf', args: [BigInt(m.tokenId)] })
-        .then(function (owner) { return (owner && owner.toLowerCase() === wallet.toLowerCase()) ? { tokenId: String(m.tokenId), tierId: Number(m.tierId), hook: m.hook, localProjectId: Number(m._localProjectId || project.id) } : null; })
+        .then(function (owner) { return (owner && owner.toLowerCase() === wallet.toLowerCase()) ? { tokenId: String(m.tokenId), tierId: Number(m.tierId), hook: m.hook, localProjectId: Number(m._localProjectId || pidOn(project, chainId)) } : null; })
         .catch(function () { return null; });
     })).then(function (arr) { return arr.filter(Boolean); });
+  });
+}
+
+// Every item the wallet currently holds across all of the project's chains, ownerOf-verified so burned/moved
+// tokens drop out (mint events never retract). One indexer query, then verify each token on its own chain.
+function fetchOwnedItemsAcrossChains(project, wallet) {
+  return fetchNftMints(project, wallet).then(function (res) {
+    var withToken = res.rows.filter(function (m) { return m.tokenId && m.hook; });
+    return Promise.all(withToken.map(function (m) {
+      var cid = Number(m._chainId || project.chainId);
+      return clientFor(cid).readContract({ address: m.hook, abi: ownerOfAbi, functionName: 'ownerOf', args: [BigInt(m.tokenId)] })
+        .then(function (owner) { return (owner && owner.toLowerCase() === wallet.toLowerCase()) ? { tokenId: String(m.tokenId), tierId: Number(m.tierId), hook: m.hook, chainId: cid } : null; })
+        .catch(function () { return null; });
+    })).then(function (a) { return a.filter(Boolean); });
   });
 }
 
@@ -18426,7 +18655,8 @@ function buildRedeemItemsModal(project, requestClose) {
   function selectedTokenIds() { return Object.keys(state.selected).filter(function (t) { return state.selected[t]; }); }
 
   var previewSeq = 0;
-  function renderItems(names) {
+  function renderItems(meta) {
+    var names = (meta && meta.names) || {}, media = (meta && meta.media) || {};
     itemsBox.innerHTML = '';
     if (!state.owned) { itemsBox.textContent = 'Loading your items…'; return; }
     if (!state.owned.length) { itemsBox.className = 'redeem-items owners-empty'; itemsBox.textContent = 'You own no items on ' + chainNameOf(state.chainId) + '.'; return; }
@@ -18436,29 +18666,37 @@ function buildRedeemItemsModal(project, requestClose) {
     state.owned.forEach(function (o) { (byTier[o.tierId] = byTier[o.tierId] || []).push(o); });
     var selAll = el('label', 'redeem-selall');
     var allCb = document.createElement('input'); allCb.type = 'checkbox'; allCb.checked = selectedTokenIds().length === state.owned.length;
-    allCb.addEventListener('change', function () { state.owned.forEach(function (o) { state.selected[o.tokenId] = allCb.checked; }); renderItems(names); schedulePreview(); });
+    allCb.addEventListener('change', function () { state.owned.forEach(function (o) { state.selected[o.tokenId] = allCb.checked; }); renderItems(meta); schedulePreview(); });
     selAll.appendChild(allCb); var allTxt = el('span'); allTxt.textContent = 'Select all (' + state.owned.length + ')'; selAll.appendChild(allTxt);
     itemsBox.appendChild(selAll);
-    Object.keys(byTier).forEach(function (tid) {
-      var group = byTier[tid];
-      var gh = el('div', 'redeem-tier-head'); gh.textContent = itemLabelFrom(names, tid) + ' (' + group.length + ')'; itemsBox.appendChild(gh);
+    // Tiers then token IDs ascending — low numbers first (people often treat them as higher status).
+    Object.keys(byTier).map(Number).sort(function (a, b) { return a - b; }).forEach(function (tid) {
+      var group = byTier[tid].slice().sort(function (a, b) { return (BigInt(a.tokenId) < BigInt(b.tokenId)) ? -1 : (BigInt(a.tokenId) > BigInt(b.tokenId)) ? 1 : 0; });
+      var gh = el('div', 'redeem-tier-head');
+      gh.appendChild(shopItemThumb(media, tid));
+      var ght = el('span', 'redeem-tier-head-name'); ght.textContent = itemLabelFrom(names, tid) + ' (' + group.length + ')'; gh.appendChild(ght);
+      itemsBox.appendChild(gh);
       group.forEach(function (o) {
         var row = el('label', 'redeem-item-row');
         var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!state.selected[o.tokenId];
-        cb.addEventListener('change', function () { state.selected[o.tokenId] = cb.checked; renderItems(names); schedulePreview(); });
+        cb.addEventListener('change', function () { state.selected[o.tokenId] = cb.checked; renderItems(meta); schedulePreview(); });
         row.appendChild(cb);
         var t = el('span', 'redeem-item-id'); t.textContent = '#' + o.tokenId; row.appendChild(t);
         itemsBox.appendChild(row);
       });
     });
+    updateFade();
   }
+  // Show the bottom scroll-fade only while more rows sit below the fold.
+  function updateFade() { itemsBox.classList.toggle('has-more', itemsBox.scrollTop + itemsBox.clientHeight < itemsBox.scrollHeight - 2); }
+  itemsBox.addEventListener('scroll', updateFade);
 
-  var _names = {};
+  var _meta = { names: {}, media: {} };
   function loadItems() {
     var acct = getAccount && getAccount();
     if (!acct) { itemsBox.className = 'redeem-items owners-empty'; itemsBox.textContent = 'Connect a wallet to redeem your items.'; btn.disabled = true; return; }
-    state.owned = null; renderItems(_names);
-    resolveShopItemNames(project).then(function (n) { _names = n; renderItems(_names); });
+    state.owned = null; renderItems(_meta);
+    resolveShopItemMedia(project).then(function (n) { _meta = n; renderItems(_meta); });
     fetchOwnedItems(project, state.chainId, acct).then(function (owned) {
       if (!wrap.isConnected || state.chainId == null) return;
       state.owned = owned;
@@ -18466,7 +18704,7 @@ function buildRedeemItemsModal(project, requestClose) {
       state.localPid = owned[0] ? owned[0].localProjectId : null; // the project's id on THIS chain
       // Default: everything selected.
       state.selected = {}; owned.forEach(function (o) { state.selected[o.tokenId] = true; });
-      renderItems(_names);
+      renderItems(_meta);
       schedulePreview();
     }).catch(function () { itemsBox.className = 'redeem-items'; itemsBox.textContent = 'Could not read your items.'; });
   }
@@ -18556,7 +18794,6 @@ function buildRedeemItemsModal(project, requestClose) {
 function buildCashOutModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
-  var pid = BigInt(project.id);
   var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, balance: null, supply: null, surplus: null, reclaim: null, net: null, cashOutTaxRate: null, feeless: null, contextAccount: null, locked: false, exact: true, kinds: null, reclaimKey: null, slippageBps: 100, lastF: null };
 
   // Your BREADFRUIT balance on each chain (so you can see where you can cash out from).
@@ -19506,7 +19743,7 @@ function buildLoanModal(project, requestClose) {
         // the collateral — mirror the wallet, which shows a single net `−(collateral − sourceMint)` change.
         if (sourceFee > 0n) {
           srcTok.textContent = '• minting ' + sym + ' back to you…';
-          feeTokenEstimate(cid, BigInt(project.id), NATIVE_TOKEN, sourceFee, who).then(function (got) {
+          feeTokenEstimate(cid, pidOn(project, cid), NATIVE_TOKEN, sourceFee, who).then(function (got) {
             if (seq !== feeTokSeq) return;
             if (got && got > 0n) {
               var netColl = collateral > got ? collateral - got : 0n;
@@ -19535,7 +19772,6 @@ function buildLoanModal(project, requestClose) {
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Open loan';
   foot.appendChild(btn); wrap.appendChild(foot);
 
-  var pid = BigInt(project.id);
   var loanBalanceSeq = 0;
   function refreshBalance() {
     var cid = state.chainId;
@@ -19797,8 +20033,8 @@ function buildLoanModal(project, requestClose) {
 // arg `maxRepayBorrowAmount` is ignored for native, so a small buffer over the fee covers per-second drift.
 function buildRepayModal(project, loanRow, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
-  var pid = BigInt(project.id);
   var chainId = Number(loanRow.chainId) || project.chainId;
+  var pid = pidOn(project, chainId);
   var loanId = BigInt(loanRow.id);
   var wrap = el('div', 'modal-body');
   var info = el('div', 'detail-card-body'); info.textContent = 'Reading loan…'; wrap.appendChild(info);
@@ -20065,8 +20301,8 @@ function snapshotAge(ts) {
 // view (`peerChainAccountsOf`) — NOT individual suckers — because a transitively-gossiped record can live on
 // a different sucker than the direct A↔B one (e.g. Ethereum gossiped to Arbitrum lands on Arbitrum's Base
 // sucker). The registry folds every sucker's direct + virtually-known records, so it sees the full picture.
-var ACCOUNTING_SYNC_QUERY = 'query($projectId: Int!, $chainIds: [Int!], $version: Int!) {'
-  + ' accountingSyncEvents(where: { projectId: $projectId, chainId_in: $chainIds, version: $version }, limit: 100, orderBy: "timestamp", orderDirection: "desc") {'
+var ACCOUNTING_SYNC_QUERY = 'query($projectId: Int!, $chainId: Int!, $version: Int!) {'
+  + ' accountingSyncEvents(where: { projectId: $projectId, chainId: $chainId, version: $version }, limit: 100, orderBy: "timestamp", orderDirection: "desc") {'
   + ' items { chainId peerChainId sourceTimestampSeconds } } }';
 function fetchCrossChainKnowledge(project) {
   var chains = (project.chains || []).map(function (c) { return c.id; });
@@ -20074,8 +20310,13 @@ function fetchCrossChainKnowledge(project) {
   function unpackTs(raw) { var v = toBigInt(raw || 0); return Number(v >> 128n); } // packed (ts<<128|seq) → seconds
   // In-flight sync pushes from the index (bendystraw PR #11): destChain|srcChain → latest SENT unix seconds. Lets
   // a row show "Syncing…" for a push ANY user triggered (the localStorage marker only covers this user's own).
-  var sentByKeyP = bendystrawQuery(ACCOUNTING_SYNC_QUERY, { projectId: Number(project.id), chainIds: chains, version: BENDYSTRAW_VERSION })
-    .then(function (d) { var m = {}; ((d && d.accountingSyncEvents && d.accountingSyncEvents.items) || []).forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); return m; })
+  var sentByKeyP = Promise.all(projectDeployments(project).map(function (deployment) {
+    return bendystrawQuery(ACCOUNTING_SYNC_QUERY, { projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION });
+  })).then(function (pages) {
+    var m = {};
+    pages.forEach(function (d) { ((d && d.accountingSyncEvents && d.accountingSyncEvents.items) || []).forEach(function (e) { var k = e.peerChainId + '|' + e.chainId, ts = Number(e.sourceTimestampSeconds); if (!(m[k] >= ts)) m[k] = ts; }); });
+    return m;
+  })
     .catch(function () { return {}; });
   return Promise.all([sentByKeyP, Promise.all(chains.map(function (C) {
     return readSuckerPairsOf(pidOn(project, C), C).then(function (p) { return { chain: C, pairs: p || [] }; });
@@ -20350,7 +20591,7 @@ function renderGossipSection(project) {
           var balStr = p.balances.length ? p.balances.map(function (b) { return formatBalance(b.balance, b.decimals, b.symbol); }).join(' | ') : '0';
 
           // In-flight sync: a push was sent and the fresher snapshot hasn't landed yet.
-          var key = project.id + ':' + d.chainId + ':' + p.peerChainId;
+          var key = pidOn(project, d.chainId).toString() + ':' + d.chainId + ':' + p.peerChainId;
           var syncedAt = _gossipSyncAt[key];
           if (syncedAt && p.snapshot && p.snapshot >= syncedAt) { delete _gossipSyncAt[key]; saveGossipSyncAt(_gossipSyncAt); syncedAt = null; }
           // Universal in-flight from the index (any user/device): a push SENT after the accepted snapshot landed.
@@ -20444,7 +20685,7 @@ function readBridgeableBalance(project, chainId) {
   var tokens = getAddress('JBTokens', chainId);
   if (!acct || !tokens) return Promise.resolve({ verified: false, token: null, balance: null });
   var client = clientFor(chainId);
-  return client.readContract({ address: tokens, abi: tokenOfAbi, functionName: 'tokenOf', args: [BigInt(project.id)] })
+  return client.readContract({ address: tokens, abi: tokenOfAbi, functionName: 'tokenOf', args: [pidOn(project, chainId)] })
     .then(function (erc20) {
       if (!erc20 || erc20 === ZERO_ADDRESS) return { verified: true, token: null, balance: 0n };
       return client.readContract({ address: erc20, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] })
@@ -21162,7 +21403,7 @@ async function readPoolState(project, chainId, opts) {
     var pair = await lpPairFor(project, chainId, opts);
     if (!pair) return null;
     var client = clientFor(chainId);
-    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
+    var key = await client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] });
     if (!key) return null;
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase(), c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
     if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null;
@@ -21880,7 +22121,7 @@ async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
     if (!posm || !pm || !hookAddr || hookAddr === ZERO_ADDRESS) return [];
     var client = clientFor(chainId);
     var pair = await lpPairFor(project, chainId, { strict: true });
-    var key = await client.readContract({ address: hookAddr, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [BigInt(project.id), pair.addr] });
+    var key = await client.readContract({ address: hookAddr, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] });
     if (!key || !key.currency0) return [];
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase(), c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
     if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return [];
@@ -22410,7 +22651,9 @@ function readGossipAdjustment(chainId, pid, current) {
 }
 
 function fetchOps(project) {
-  var chains = (project.chains && project.chains.length) ? project.chains : DISCOVER_CHAINS;
+  // Home-only fallback (like every other per-chain helper) — never the global chain list, whose foreign chain
+  // ids would make the synchronous pidOn below throw fail-closed and break card construction before .then.
+  var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   return Promise.all(chains.map(function (chain) {
     var cid = chain.id;
     var pid = pidOn(project, cid); // this chain's own project id

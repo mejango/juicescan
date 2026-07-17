@@ -197,7 +197,8 @@ describe('source-of-truth data guards', () => {
     const data = { suckerGroup: { projects: { items: [
       { chainId: 1, projectId: 7 }, { chainId: 10, projectId: 9 },
     ] } } };
-    expect(projectIdsByChainFromSuckerGroup(data, 10, 99)).toEqual({ 1: 7, 10: 9 });
+    // A group which claims a different project on the route's own chain is not authoritative for this route.
+    expect(projectIdsByChainFromSuckerGroup(data, 10, 99)).toEqual({ 10: 99 });
     expect(projectIdsByChainFromSuckerGroup(null, 10, 99)).toEqual({ 10: 99 });
     expect(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY).toMatch(/projects\(limit: 100\).*items/s);
   });
