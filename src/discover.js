@@ -6207,6 +6207,18 @@ function renderPayCard(project, cart) {
       return;
     }
 
+    // "You get" only appears once the user enters an amount that yields tokens — a bare "0.00 MARKEE" on an
+    // empty field is noise. While a preview is computing we still show it (the amount is entered).
+    var enteredPay = null;
+    try { if (state.token && state.amount !== '') enteredPay = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) {}
+    var hasEnteredPay = enteredPay != null && enteredPay > 0n;
+    var receivedNonZero = p && p.received != null && toBigInt(p.received) > 0n;
+    if (!hasEnteredPay || (state.phase !== 'previewing' && !receivedNonZero && !(p && p.unavailable))) {
+      var idleNfts = nftBlock();
+      if (idleNfts) feedback.appendChild(idleNfts);
+      return;
+    }
+
     var label = el('div', 'paybox-yg-label');
     label.textContent = isAmm ? 'You get at least' : 'You get';
     feedback.appendChild(label);
