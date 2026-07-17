@@ -45,8 +45,9 @@ async function build() {
   fs.writeFileSync(path.join(DIST, 'app.js'), js);
   fs.copyFileSync(path.join(SRC, 'style.css'), path.join(DIST, 'style.css'));
 
-  // Copy static assets
-  for (const asset of ['jblogo.gif', 'favicon.svg']) {
+  // Copy static assets. manifest.json makes the site a recognizable Safe App (Safe fetches <root>/manifest.json
+  // for name/description/icon before it will add a custom app).
+  for (const asset of ['jblogo.gif', 'favicon.svg', 'manifest.json']) {
     const src = path.join(SRC, asset);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(DIST, asset));
   }
