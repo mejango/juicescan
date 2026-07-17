@@ -962,27 +962,13 @@
       "contractName": "JBUniswapV4LPSplitHook",
       "deploymentName": "JBP6FeeLPSplitHook",
       "addresses": {
-        "1": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
-        "10": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
-        "8453": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
-        "42161": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
-        "84532": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
-        "421614": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
-        "11155111": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251"
-      }
-    },
-    "JBP6FeeLPSplitHook_deprecated2": {
-      "singleton": true,
-      "contractName": "JBUniswapV4LPSplitHook",
-      "deploymentName": "JBP6FeeLPSplitHook_deprecated2",
-      "addresses": {
-        "1": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-        "10": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-        "8453": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-        "42161": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-        "84532": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-        "421614": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
-        "11155111": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0"
+        "1": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "10": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "8453": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "42161": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "84532": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "421614": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+        "11155111": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62"
       }
     },
     "JBPayoutSplitGroupLib": {
@@ -1236,6 +1222,34 @@
         "84532": "0xf7ce556c8c10cff2c8da6ea521c6232598f7d5c8",
         "421614": "0xd27bd395dfb5741a7cc66df836e3039c563955c8",
         "11155111": "0x7494930fbfa2fdd06549526c805d48b4f22a15c8"
+      }
+    },
+    "JBUniswapV4LPSplitHook": {
+      "singleton": true,
+      "contractName": "JBUniswapV4LPSplitHook",
+      "deploymentName": "JBUniswapV4LPSplitHook",
+      "addresses": {
+        "1": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "10": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "8453": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "42161": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "84532": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "421614": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251",
+        "11155111": "0xfcdbabd7b8de07c6e4ca7d79790e235848edc251"
+      }
+    },
+    "JBUniswapV4LPSplitHook_deprecated2": {
+      "singleton": true,
+      "contractName": "JBUniswapV4LPSplitHook",
+      "deploymentName": "JBUniswapV4LPSplitHook_deprecated2",
+      "addresses": {
+        "1": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "10": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "8453": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "42161": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "84532": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "421614": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0",
+        "11155111": "0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0"
       }
     },
     "JBUniswapV4LPSplitHookDeployer": {
