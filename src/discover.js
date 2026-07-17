@@ -1509,7 +1509,7 @@ function renderRecentPurchases(project, mediaP) {
     box.className = '';
     var table = el('div', 'detail-ops-table shop-recent-table');
     var head = el('div', 'detail-ops-row detail-ops-head detail-ops-3 shop-recent-row');
-    ['Item', 'Owner', 'When'].forEach(function (h) { var c = el('span', 'detail-ops-cell'); c.textContent = h; head.appendChild(c); });
+    ['Item', 'Owner', ''].forEach(function (h) { var c = el('span', 'detail-ops-cell'); c.textContent = h; head.appendChild(c); });
     table.appendChild(head);
     res.rows.slice(0, 25).forEach(function (m) {
       var row = el('div', 'detail-ops-row detail-ops-3 shop-recent-row');
