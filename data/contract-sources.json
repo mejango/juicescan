@@ -3916,7 +3916,7 @@
   "JBBuybackHookRegistry": {
     "repo": "nana-buyback-hook-v6",
     "githubUrl": "https://github.com/Bananapus/nana-buyback-hook-v6",
-    "branch": "main",
+    "branch": "chore/consolidate-deployment-tree",
     "path": "src/JBBuybackHookRegistry.sol",
     "startLine": 32,
     "endLine": 577,
@@ -5904,7 +5904,7 @@
   "JBRouterTerminal": {
     "repo": "nana-router-terminal-v6",
     "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-    "branch": "main",
+    "branch": "chore/consolidate-deployment-tree",
     "path": "src/JBRouterTerminal.sol",
     "startLine": 58,
     "endLine": 2881,
@@ -6961,7 +6961,7 @@
   "JBRouterTerminalRegistry": {
     "repo": "nana-router-terminal-v6",
     "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-    "branch": "main",
+    "branch": "chore/consolidate-deployment-tree",
     "path": "src/JBRouterTerminalRegistry.sol",
     "startLine": 35,
     "endLine": 827,
@@ -7323,7 +7323,7 @@
   "JBPayRouteResolver": {
     "repo": "nana-router-terminal-v6",
     "githubUrl": "https://github.com/Bananapus/nana-router-terminal-v6",
-    "branch": "main",
+    "branch": "chore/consolidate-deployment-tree",
     "path": "src/JBPayRouteResolver.sol",
     "startLine": 21,
     "endLine": 1230,
@@ -11108,7 +11108,7 @@
   "JBUniswapV4Hook": {
     "repo": "univ4-router-v6",
     "githubUrl": "https://github.com/Bananapus/nana-univ4-router-v6",
-    "branch": "main",
+    "branch": "chore/consolidate-deployment-tree",
     "path": "src/JBUniswapV4Hook.sol",
     "startLine": 60,
     "endLine": 1506,
