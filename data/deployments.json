@@ -1,7 +1,7 @@
 {
   "source": "../deploy-all-v6/deployments",
-  "generatedAt": "2026-07-17T03:34:54.725Z",
-  "sourceDigest": "sha256:1b1a53fc228f7a9a26bce8d219bd90cf2f6ffcfbd0b3dcc30e3300900034067e",
+  "generatedAt": "2026-07-17T20:28:13.578Z",
+  "sourceDigest": "sha256:d09dcb5e401067b2f044b8f048ecf11901b1283479e173ebfa8c5c64af92e9a7",
   "chains": {
     "1": {
       "id": "1",
@@ -5093,9 +5093,9 @@
         "10": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
         "8453": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
         "42161": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "84532": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "421614": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
-        "11155111": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62"
+        "84532": "0xe9493bc776699714a89aa982cf828d843f040d2a",
+        "421614": "0xe9493bc776699714a89aa982cf828d843f040d2a",
+        "11155111": "0xe9493bc776699714a89aa982cf828d843f040d2a"
       },
       "chains": {
         "1": {
@@ -5136,29 +5136,29 @@
         },
         "84532": {
           "chain": "base_sepolia",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "address": "0xe9493bc776699714a89aa982cf828d843f040d2a",
           "file": "../deploy-all-v6/deployments/base_sepolia/JBP6FeeLPSplitHook.json",
-          "transactionHash": "0xcbc923204c4a7c7960fd75fe6746366a81bcb512fc53cc0ebd02b4ef6e2f0e69",
-          "blockNumber": "0x29a5173",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "transactionHash": "0x7742dd4f9c23f7046e48cc7906b83d441e9d5c1b1160708dd1ca49d4459d20d8",
+          "blockNumber": "0x2a3983b",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "421614": {
           "chain": "arbitrum_sepolia",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "address": "0xe9493bc776699714a89aa982cf828d843f040d2a",
           "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBP6FeeLPSplitHook.json",
-          "transactionHash": "0x4652dbb15d7f955b1c0c8b1161cf636f31d1e13997e58e49a3e99c983f77233f",
-          "blockNumber": "0x10ea3950",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "transactionHash": "0x5e2ef9808ac4dbbe4e4cec4e503ea610bf4b6f625f57f0e410969604a51c144b",
+          "blockNumber": "0x1132ab12",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         },
         "11155111": {
           "chain": "sepolia",
-          "address": "0xae6705c33c8b46f56878a1d4f1ce4d75fcfb6f62",
+          "address": "0xe9493bc776699714a89aa982cf828d843f040d2a",
           "file": "../deploy-all-v6/deployments/sepolia/JBP6FeeLPSplitHook.json",
-          "transactionHash": "0xa6d9e53f53054c81bc03fb0d0a8f59418bdc6056ef29e5f58120e497d39200c7",
-          "blockNumber": "0xaad68f",
-          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.1.1",
+          "transactionHash": "0xbd449b93cdc63fa73eda35f370d8a0b64e2e22b8db4db0ff126d15f30f03b21a",
+          "blockNumber": "0xac558e",
+          "gitCommit": "npm:@bananapus/univ4-lp-split-hook-v6@1.3.0",
           "gitDirty": false
         }
       }

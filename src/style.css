@@ -5015,6 +5015,7 @@ a.tier-media-badge:hover .tier-media-badge-ext { color: var(--c-teal); border-co
 .discover-top-ctrls { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .discover-net-select {
   font-family: inherit; font-size: 13px; cursor: pointer;
+  min-width: 5.5em; /* floor so the label never collapses to a sliver if JS width-measure races the font */
   padding: 0 13px 0 0; color: var(--c-black-light);
   border: none; outline: none; box-shadow: none;
   -webkit-appearance: none; appearance: none;

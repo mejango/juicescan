@@ -3670,10 +3670,17 @@ async function readCashoutPrice(project, chainId) {
     var bal = res[1] != null ? toBigInt(res[1]) : null;
     if (!supply || supply === 0n) return null;
     if (bal == null || bal === 0n) return null;
-    var reclaim = await read(chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, bal]);
+    // Sample the reclaim with a slice of supply, not a single token, then divide back to a per-token price.
+    // For a few-decimal accounting token (USDC = 6dp) against a large supply, ONE token's reclaim floors to
+    // 0 raw units even when the per-token floor is a real (sub-cent) value — so the chip showed "—" for e.g.
+    // a 959M-supply revnet holding $100. 0.1% of supply keeps the bonding-curve share term negligible while
+    // giving the integer reclaim enough magnitude to divide precisely.
+    var sample = supply / 1000n;
+    if (sample < ONE_TOKEN) sample = supply < ONE_TOKEN ? supply : ONE_TOKEN;
+    var reclaim = await read(chainId, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, sample, supply, bal]);
     if (!reclaim) return null;
-    var price = Number(formatAmount(reclaim, dec));
-    return isFinite(price) ? price : null;
+    var price = Number(formatAmount(reclaim, dec)) / Number(formatAmount(sample, 18));
+    return isFinite(price) && price > 0 ? price : null;
   } catch (e) { return null; }
 }
 var RULESET_OUTPUTS = [
@@ -5419,7 +5426,10 @@ function renderGrid() {
   netSel.title = 'Switch between mainnet and testnet deployments';
   netSel.addEventListener('change', function () { setDiscoverNetwork(netSel.value); });
   topRow.appendChild(netSel);
+  // Measure now AND after the monospace webfont loads — a one-shot measure races font loading and can size
+  // the select to a fallback-font width, clipping "Mainnets" to a sliver. CSS min-width is the final floor.
   setTimeout(function () { fitSelectWidth(netSel); }, 0);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { fitSelectWidth(netSel); });
   var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
   createBtn.title = 'Create — in tuning before launch';
@@ -7061,7 +7071,7 @@ function renderPayCard(project, cart) {
           sendPay(p, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0 });
         })
         .catch(function (e) { status.className = 'paybox-status error'; status.textContent = errMessage(e, 'Could not authorize the payment.'); });
-    });
+    }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : null);
     } // proceed()
   }
 
@@ -18466,10 +18476,11 @@ function openTxConfirm(payload, onConfirm, opts) {
   });
 }
 
-function openPayConfirm(payload, onConfirm) {
+function openPayConfirm(payload, onConfirm, opts) {
+  opts = opts || {};
   openTxConfirm(payload, onConfirm, {
-    title: 'Confirm payment',
-    confirmText: 'Confirm & Pay',
+    title: opts.title || 'Confirm payment',
+    confirmText: opts.confirmText || 'Confirm & Pay',
   });
 }
 
