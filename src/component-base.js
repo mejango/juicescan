@@ -1039,7 +1039,6 @@ export function renderConfirmBody(content, payload, opts) {
   } else {
     content.appendChild(pre);
   }
-  appendTxLinkCopy(content, payload);
   appendAuditPromptLink(content, payload);
 }
 

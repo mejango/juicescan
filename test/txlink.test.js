@@ -51,14 +51,9 @@ describe('txlink confirmation sharing', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(entries.map(entry => entry.url).join('\n'));
   });
 
-  it('keeps Copy tx visible but disabled when wallet-bound calldata does not exist yet', () => {
-    const payload = { txlinkUnavailableReason: 'Permit2 signature required.' };
+  it('does not render a Copy tx button in the confirm modal', () => {
     const content = document.createElement('div');
-    renderConfirmBody(content, payload);
-    const button = content.querySelector('.tx-copy-btn');
-    expect(button).not.toBeNull();
-    expect(button.textContent).toBe('Copy tx');
-    expect(button.disabled).toBe(true);
-    expect(button.title).toBe('Permit2 signature required.');
+    renderConfirmBody(content, { txlinkUnavailableReason: 'Permit2 signature required.' });
+    expect(content.querySelector('.tx-copy-btn')).toBeNull();
   });
 });
