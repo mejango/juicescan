@@ -26,7 +26,7 @@ import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } fro
 import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
-import { build721TierConfig, build721TierMetadata, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2618,6 +2618,9 @@ function itemSummary(state, nft) {
 function itemMediaPicker(state, nft, render) {
   var w = el('div', 'operator-edit-logo');
   if (nft.imageUri && (nft.mediaType || '').indexOf('image') === 0) { var prev = el('img', 'operator-edit-logo-prev'); prev.src = ipfsHttp(nft.imageUri); w.appendChild(prev); }
+  else if (nft.imageUri && (nft.mediaType || '').indexOf('audio') === 0) {
+    var audioPrev = el('span', 'operator-edit-logo-prev operator-edit-audio-prev'); audioPrev.setAttribute('role', 'img'); audioPrev.setAttribute('aria-label', 'Audio preview'); audioPrev.textContent = '♪'; w.appendChild(audioPrev);
+  }
   else if (nft.imageUri) { var hint = el('span', 'operator-edit-hint'); hint.textContent = (nft.mediaType || 'file') + ' | pinned'; w.appendChild(hint); }
   var file = el('input', 'operator-edit-logo-file'); file.type = 'file';
   file.accept = 'image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown';
@@ -2632,7 +2635,7 @@ function itemMediaPicker(state, nft, render) {
     }
     nft._mediaBusy = true; nft._mediaError = ''; render();
     pinFile(f, nft.name || f.name).then(function (uri) {
-      nft.imageUri = uri; nft.mediaType = (f.type || '').toLowerCase(); nft._mediaBusy = false; nft._mediaError = ''; render();
+      nft.imageUri = uri; nft.mediaType = mediaTypeForFile(f); nft._mediaBusy = false; nft._mediaError = ''; render();
     }).catch(function (e) {
       nft._mediaBusy = false; nft._mediaError = 'Could not upload: ' + (e && e.message || e); render(); alert(nft._mediaError);
     });

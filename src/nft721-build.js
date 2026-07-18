@@ -2,6 +2,23 @@ import { addrOrZero, isAddr, ZERO_ADDRESS as ZERO } from './component-base.js';
 
 export var TIER_UNLIMITED_SUPPLY = 999999999;
 
+var MEDIA_TYPE_BY_EXTENSION = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', avif: 'image/avif', bmp: 'image/bmp',
+  mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v', ogv: 'video/ogg',
+  mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', oga: 'audio/ogg', flac: 'audio/flac', m4a: 'audio/mp4', aac: 'audio/aac',
+  pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', markdown: 'text/markdown', csv: 'text/csv', json: 'application/json',
+};
+
+// File.type can be empty for otherwise ordinary audio/video files on some browsers and operating systems. Preserve
+// an extension-derived MIME in metadata so a raw IPFS CID (which has no filename) still renders with the right player.
+export function mediaTypeForFile(file) {
+  var explicit = String(file && file.type || '').trim().toLowerCase().split(';')[0];
+  if (explicit && explicit !== 'application/octet-stream' && explicit !== 'binary/octet-stream') return explicit;
+  var name = String(file && file.name || '').toLowerCase();
+  var match = /\.([a-z0-9]+)$/.exec(name);
+  return match ? (MEDIA_TYPE_BY_EXTENSION[match[1]] || '') : '';
+}
+
 // Canonical metadata for a 721 shop item. Images use the NFT `image` field; every other attached file
 // (video/audio/PDF/text) uses `animation_url`, with its MIME retained so the storefront can render a real
 // preview even though an IPFS CID has no filename extension.

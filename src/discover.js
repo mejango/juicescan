@@ -16,7 +16,7 @@ import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
-import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
@@ -364,6 +364,18 @@ function base58Encode(bytes) {
   for (var z = 0; z < bytes.length && bytes[z] === 0; z++) out += '1';
   for (var k = digits.length - 1; k >= 0; k--) out += B58[digits[k]];
   return out;
+}
+function base58Decode(value) {
+  var bytes = [0];
+  for (var i = 0; i < value.length; i++) {
+    var digit = B58.indexOf(value[i]);
+    if (digit < 0) return null;
+    var carry = digit;
+    for (var j = 0; j < bytes.length; j++) { carry += bytes[j] * 58; bytes[j] = carry & 0xff; carry >>= 8; }
+    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  for (var z = 0; z < value.length && value[z] === '1'; z++) bytes.push(0);
+  return bytes.reverse();
 }
 function base32Encode(bytes) {
   var out = '', bits = 0, value = 0;
@@ -862,13 +874,20 @@ function tierMediaBadge(label, alt, url) {
   node.title = alt || '';
   return node;
 }
-function setMediaSource(node, url, onExhausted) {
+function setMediaSource(node, url, onExhausted, options) {
   var safe = safeMediaUrl(url);
   if (!safe) return;
-  var candidates = ipfsPath(safe) ? ipfsGatewayUrls(safe) : [safe];
+  options = options || {};
+  var candidates = ipfsPath(safe)
+    ? (options.preferMediaGateway ? ipfsMediaGatewayUrls(safe) : ipfsGatewayUrls(safe))
+    : [safe];
   var i = 0;
   function next() {
-    if (i >= candidates.length) { if (onExhausted) onExhausted(); return; }
+    if (i >= candidates.length) {
+      node.removeEventListener('error', next);
+      if (onExhausted) onExhausted();
+      return;
+    }
     node.src = candidates[i++];
   }
   node.addEventListener('error', next);
@@ -1046,8 +1065,50 @@ function attachPdfPreview(container, media, mode) {
   }).catch(function () {}); // keep the badge
 }
 
-// Render a tier's media (any file type) into `container`. mode 'full' (card) or 'thumb' (small preview).
-function renderTierMediaInto(container, m, alt, mode) {
+function tierAudioNote(alt) {
+  var note = el('div', 'tier-media-audio-note');
+  note.setAttribute('role', 'img');
+  note.setAttribute('aria-label', (alt ? alt + ': ' : '') + 'audio');
+  var glyph = el('span', 'tier-media-audio-note-glyph'); glyph.setAttribute('aria-hidden', 'true'); glyph.textContent = '♪';
+  note.appendChild(glyph);
+  return note;
+}
+
+function shouldAutoplayTierVideo() {
+  try { if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false; } catch (_) {}
+  try { if (navigator.connection && navigator.connection.saveData) return false; } catch (_) {}
+  return true;
+}
+
+// Attach card videos only when they are close to the viewport, then pause them once they leave it. This keeps a
+// shop with many video tiers from opening many IPFS streams at once while retaining muted, inline previews for the
+// item the visitor can actually see. Detail media is intentional navigation, so it starts immediately.
+function activateTierVideo(video, media, mode) {
+  var attached = false;
+  var canAutoplay = shouldAutoplayTierVideo();
+  function attach() {
+    if (attached) return;
+    attached = true;
+    setMediaSource(video, media, null, { preferMediaGateway: true });
+  }
+  function play() {
+    attach();
+    if (!canAutoplay) return;
+    try { var pending = video.play(); if (pending && pending.catch) pending.catch(function () {}); } catch (_) {}
+  }
+  if (mode === 'detail' || typeof IntersectionObserver !== 'function') { play(); return; }
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.target !== video) return;
+      if (entry.isIntersecting) play();
+      else { try { video.pause(); } catch (_) {} }
+    });
+  }, { rootMargin: '240px 0px' });
+  observer.observe(video);
+}
+
+// Render a tier's media (any file type) into `container`. mode 'full' (card), 'detail', or 'thumb'.
+export function renderTierMediaInto(container, m, alt, mode) {
   container.innerHTML = '';
   var kind = tierMediaKind(m);
   if (!kind) return false;
@@ -1057,18 +1118,19 @@ function renderTierMediaInto(container, m, alt, mode) {
   }
   if (kind === 'video') {
     var v = document.createElement('video');
-    v.muted = true; v.defaultMuted = true; v.loop = true; v.autoplay = true; v.setAttribute('playsinline', '');
-    v.preload = mode === 'thumb' ? 'auto' : 'metadata';
+    v.muted = true; v.defaultMuted = true; v.loop = true; v.autoplay = shouldAutoplayTierVideo(); v.setAttribute('playsinline', '');
+    v.preload = 'metadata'; v.setAttribute('aria-label', alt || 'Video preview');
     if (m.image) { var poster = safeMediaUrl(m.image); if (poster) v.poster = poster; }
     if (mode === 'full' || mode === 'detail') v.controls = true;
-    setMediaSource(v, media);
-    container.appendChild(v); return true;
+    container.appendChild(v); activateTierVideo(v, media, mode); return true;
   }
   if (kind === 'audio') {
-    if (mode === 'thumb') { container.appendChild(tierMediaBadge('AUDIO', alt, media)); return true; }
+    if (mode === 'thumb') { container.appendChild(tierAudioNote(alt)); return true; }
     var wrapA = el('div', 'tier-media-audio');
     if (m.image) { var ai = document.createElement('img'); ai.loading = 'lazy'; setMediaSource(ai, m.image); ai.alt = alt || ''; wrapA.appendChild(ai); }
-    var au = document.createElement('audio'); setMediaSource(au, media); au.controls = true; wrapA.appendChild(au);
+    else wrapA.appendChild(tierAudioNote(alt));
+    var au = document.createElement('audio'); au.preload = 'none'; au.controls = true; au.setAttribute('aria-label', alt || 'Audio player');
+    setMediaSource(au, media, null, { preferMediaGateway: true }); wrapA.appendChild(au);
     container.appendChild(wrapA); return true;
   }
   if (kind === 'pdf') {
@@ -1625,6 +1687,7 @@ function openAddTierModal(project, shop) {
   var imgPrev = document.createElement('img'); imgPrev.className = 'operator-edit-logo-prev'; imgPrev.style.display = 'none'; imgRow.appendChild(imgPrev);
   var videoPrev = document.createElement('video'); videoPrev.className = 'operator-edit-logo-prev'; videoPrev.style.display = 'none';
   videoPrev.muted = true; videoPrev.defaultMuted = true; videoPrev.loop = true; videoPrev.autoplay = true; videoPrev.setAttribute('playsinline', ''); imgRow.appendChild(videoPrev);
+  var audioPrev = el('div', 'operator-edit-logo-prev operator-edit-audio-prev'); audioPrev.style.display = 'none'; audioPrev.setAttribute('role', 'img'); audioPrev.setAttribute('aria-label', 'Audio preview'); audioPrev.textContent = '♪'; imgRow.appendChild(audioPrev);
   var mediaHint = el('span', 'operator-edit-hint'); mediaHint.style.display = 'none'; imgRow.appendChild(mediaHint);
   var imgFile = document.createElement('input'); imgFile.type = 'file'; imgFile.className = 'operator-edit-logo-file';
   // Any file type: image / gif / video / audio / pdf / markdown / text …
@@ -1632,13 +1695,19 @@ function openAddTierModal(project, shop) {
   var mediaClear = el('a', 'operator-edit-logo-clear'); mediaClear.href = '#'; mediaClear.textContent = '✕'; mediaClear.title = 'Remove file'; mediaClear.style.display = 'none';
   var mediaMsg = el('div', 'operator-edit-mediamsg'); mediaMsg.style.display = 'none';
   var selectedMedia = null;
+  var previewObjectUrl = '';
+  function releasePreviewObjectUrl() { if (previewObjectUrl) { URL.revokeObjectURL(previewObjectUrl); previewObjectUrl = ''; } }
   function showPreview(f) {
-    var mediaType = (f.type || '').toLowerCase();
-    imgPrev.style.display = 'none'; videoPrev.style.display = 'none'; videoPrev.removeAttribute('src'); videoPrev.load();
+    var mediaType = mediaTypeForFile(f);
+    releasePreviewObjectUrl();
+    imgPrev.style.display = 'none'; videoPrev.style.display = 'none'; videoPrev.removeAttribute('src'); videoPrev.load(); audioPrev.style.display = 'none';
     if (mediaType.indexOf('image/') === 0) {
-      imgPrev.style.display = ''; imgPrev.src = URL.createObjectURL(f); mediaHint.style.display = 'none';
+      previewObjectUrl = URL.createObjectURL(f); imgPrev.style.display = ''; imgPrev.src = previewObjectUrl; mediaHint.style.display = 'none';
     } else if (mediaType.indexOf('video/') === 0) {
-      videoPrev.style.display = ''; videoPrev.src = URL.createObjectURL(f); videoPrev.load();
+      previewObjectUrl = URL.createObjectURL(f); videoPrev.style.display = ''; videoPrev.src = previewObjectUrl; videoPrev.load();
+      mediaHint.style.display = ''; mediaHint.textContent = mediaType + ' | ' + formatFileSize(f.size);
+    } else if (mediaType.indexOf('audio/') === 0) {
+      audioPrev.style.display = '';
       mediaHint.style.display = ''; mediaHint.textContent = mediaType + ' | ' + formatFileSize(f.size);
     } else {
       mediaHint.style.display = ''; mediaHint.textContent = (mediaType || 'file') + ' | ' + formatFileSize(f.size);
@@ -1648,8 +1717,10 @@ function openAddTierModal(project, shop) {
   function setMedia(f) { selectedMedia = f; showPreview(f); }
   function clearMedia() {
     selectedMedia = null;
+    releasePreviewObjectUrl();
     imgPrev.style.display = 'none'; imgPrev.removeAttribute('src');
     videoPrev.style.display = 'none'; videoPrev.removeAttribute('src'); videoPrev.load();
+    audioPrev.style.display = 'none';
     mediaHint.style.display = 'none'; mediaHint.textContent = '';
     mediaMsg.style.display = 'none';
     mediaClear.style.display = 'none';
@@ -1660,7 +1731,7 @@ function openAddTierModal(project, shop) {
     mediaMsg.style.display = ''; mediaMsg.className = 'operator-edit-mediamsg warn'; mediaMsg.innerHTML = '';
     var over = document.createTextNode('This file is ' + formatFileSize(f.size) + ' — over the ' + MAX_MEDIA_MB + ' MB max. ');
     mediaMsg.appendChild(over);
-    if ((f.type || '').indexOf('image') === 0) {
+    if (mediaTypeForFile(f).indexOf('image') === 0) {
       var comp = el('a', 'operator-cta'); comp.href = '#'; comp.textContent = 'Compress to fit';
       comp.addEventListener('click', function (e) {
         e.preventDefault();
@@ -2181,7 +2252,7 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     if (form.imageFile) {
       setStatus(label + 'pinning media…', 'pending');
       mediaUri = await pinFile(form.imageFile, name);
-      mediaType = (form.imageFile.type || '').toLowerCase();
+      mediaType = mediaTypeForFile(form.imageFile);
     }
     var tierMeta = build721TierMetadata({
       name: name, description: form.description,
@@ -4132,6 +4203,34 @@ function ethSucksGatewayUrl(path) {
   // Subdomain gateways are DNS names: base32 CIDv1 works, CIDv0 (Qm...) does not.
   if (h.cid !== h.cid.toLowerCase() || !/^[a-z0-9-]+$/.test(h.cid)) return '';
   return 'https://' + h.cid + '.' + ETH_SUCKS_GATEWAY_HOST + (h.rest || '/');
+}
+
+function ethSucksMediaGatewayUrl(path) {
+  var h = ipfsPathHead(path);
+  if (!h) return '';
+  var cid = h.cid;
+  // Legacy UnixFS media is often CIDv0 (`Qm…`). Convert that same DAG-PB CID to CIDv1/base32 so it becomes a
+  // DNS-safe subdomain without changing the addressed content.
+  if (/^Qm/.test(cid)) {
+    var multihash = base58Decode(cid);
+    if (!multihash || multihash.length !== 34 || multihash[0] !== 0x12 || multihash[1] !== 0x20) return '';
+    cid = 'b' + base32Encode([0x01, 0x70].concat(multihash));
+  }
+  if (cid !== cid.toLowerCase() || !/^[a-z0-9-]+$/.test(cid)) return '';
+  return 'https://' + cid + '.' + ETH_SUCKS_GATEWAY_HOST + (h.rest || '/');
+}
+
+// Video/audio players benefit from eth.sucks' CDN and byte-range behavior, so CIDv1 media prefers it while keeping
+// the same path gateways as automatic fallbacks. Metadata and images intentionally retain their existing order —
+// a transient eth.sucks 502 should not delay the rest of the UI.
+export function ipfsMediaGatewayUrls(uri) {
+  var path = ipfsPath(uri);
+  if (!path) return uri ? [uri] : [];
+  var urls = [];
+  var ethSucks = ethSucksMediaGatewayUrl(path);
+  if (ethSucks) urls.push(ethSucks);
+  IPFS_PATH_GATEWAYS.forEach(function (gw) { urls.push(gw + path); });
+  return urls;
 }
 
 export function ipfsGatewayUrls(uri) {

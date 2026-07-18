@@ -6,6 +6,7 @@ import {
   encodedIpfsCandidates,
   fetchMetadata,
   ipfsGatewayUrls,
+  ipfsMediaGatewayUrls,
   ipfsToHttp,
   projectMetadataFromBendystraw,
 } from '../src/discover.js';
@@ -34,6 +35,21 @@ describe('IPFS metadata fetches', () => {
     const urls = ipfsGatewayUrls('ipfs://QmNotDnsSafe/meta.json');
     expect(urls[0]).toBe('https://gateway.pinata.cloud/ipfs/QmNotDnsSafe/meta.json');
     expect(urls.some((url) => url.includes('.eth.sucks'))).toBe(false);
+  });
+
+  it('prefers the range-friendly eth.sucks CID subdomain for media with path-gateway fallbacks', () => {
+    expect(ipfsMediaGatewayUrls('ipfs://bafyvideo/movie.mp4')).toEqual([
+      'https://bafyvideo.eth.sucks/movie.mp4',
+      'https://gateway.pinata.cloud/ipfs/bafyvideo/movie.mp4',
+      'https://dweb.link/ipfs/bafyvideo/movie.mp4',
+      'https://ipfs.io/ipfs/bafyvideo/movie.mp4',
+    ]);
+    expect(ipfsMediaGatewayUrls('ipfs://QmNotDnsSafe/song.mp3')[0]).toBe(
+      'https://gateway.pinata.cloud/ipfs/QmNotDnsSafe/song.mp3',
+    );
+    expect(ipfsMediaGatewayUrls('ipfs://QmNpmC2rbp7NrkvrUFApUM6JFkgHgvLtd3d6d8Vh9XuYgm/song.mp3')[0]).toBe(
+      'https://bafybeiahgolv57kxe6fc6yoo5hrfpgydp7h2cqcbxjqzqlmtqpv2n6cily.eth.sucks/song.mp3',
+    );
   });
 
   it('normalizes gateway URLs to the same immutable cache key', async () => {

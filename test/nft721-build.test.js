@@ -3,6 +3,7 @@ import {
   TIER_UNLIMITED_SUPPLY,
   build721TierConfig,
   build721TierMetadata,
+  mediaTypeForFile,
   sortTierEntriesByCategory,
   tierDiscountPercentFromPct,
 } from '../src/nft721-build.js';
@@ -58,5 +59,12 @@ describe('nft721-build shared tier helpers', () => {
     expect(build721TierMetadata({
       name: 'Poster', mediaUri: 'ipfs://image', mediaType: 'image/png',
     })).toEqual({ name: 'Poster', mediaType: 'image/png', image: 'ipfs://image' });
+  });
+
+  it('infers media MIME from filenames when the browser leaves File.type empty', () => {
+    expect(mediaTypeForFile({ name: 'theme.MP3', type: '' })).toBe('audio/mpeg');
+    expect(mediaTypeForFile({ name: 'trailer.webm', type: '' })).toBe('video/webm');
+    expect(mediaTypeForFile({ name: 'field-recording.flac', type: 'application/octet-stream' })).toBe('audio/flac');
+    expect(mediaTypeForFile({ name: 'cover.png', type: 'image/custom; charset=binary' })).toBe('image/custom');
   });
 });
