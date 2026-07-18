@@ -16008,9 +16008,13 @@ function renderOwnersPieChart(participants, totalBalance, totalSupply, sym) {
   panel.appendChild(svg);
   attachPieHover(panel, svg);
   var total = el('div', 'owners-chart-total');
-  total.textContent = formatCompactTokenAmount(totalBalance) + ' ' + sym;
+  total.textContent = ownersChartTotalLabel(totalBalance, sym);
   panel.appendChild(total);
   return panel;
+}
+
+export function ownersChartTotalLabel(totalBalance, sym) {
+  return 'Total: ' + formatCompactTokenAmount(totalBalance) + ' ' + sym;
 }
 
 // The tooltip suffix (after the address/ENS name) for an owners-distribution slice.
