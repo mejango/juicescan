@@ -21306,14 +21306,15 @@ function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
 // --- Uniswap V4 mint (Add liquidity) — exact encoding per v4-periphery PositionManager ---
 var PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 var LP_Q96 = 1n << 96n;
-// The site's default RPCs (e.g. thirdweb on Sepolia) don't serve eth_getLogs; use CORS-friendly
-// publicnode endpoints for the LP-position log scan only (reads still go through clientFor).
+// The site's default RPCs (e.g. thirdweb on Sepolia) don't serve eth_getLogs; use a getLogs-capable endpoint
+// for the LP-position log scan only (reads still go through clientFor). publicnode now 403s the archive
+// getLogs scan on EVERY chain ("Archive requests require a personal token"), which stranded the LP column on
+// "Unavailable" — so mainnets use Tenderly's public gateways too, the same ones the testnets already use.
+// They serve the address-filtered Initialize/ModifyLiquidity scan the LP-position table needs. Override per
+// chain via localStorage['jb-lp-logs-rpc:<id>'] (e.g. an archive endpoint of your own).
 var LP_LOGS_RPC = {
-  1: 'https://ethereum-rpc.publicnode.com', 10: 'https://optimism-rpc.publicnode.com',
-  8453: 'https://base-rpc.publicnode.com', 42161: 'https://arbitrum-rpc.publicnode.com',
-  // Testnet publicnode endpoints reject the archive getLogs scan (403 / "Archive requires a personal token"); Tenderly's
-  // public gateways serve the address-filtered ModifyLiquidity scan the LP-position table needs. Override per chain via
-  // localStorage['jb-lp-logs-rpc:<id>'] (e.g. an archive endpoint of your own).
+  1: 'https://mainnet.gateway.tenderly.co', 10: 'https://optimism.gateway.tenderly.co',
+  8453: 'https://base.gateway.tenderly.co', 42161: 'https://arbitrum.gateway.tenderly.co',
   11155111: 'https://sepolia.gateway.tenderly.co', 11155420: 'https://optimism-sepolia.gateway.tenderly.co',
   84532: 'https://base-sepolia.gateway.tenderly.co', 421614: 'https://arbitrum-sepolia.gateway.tenderly.co',
 };
