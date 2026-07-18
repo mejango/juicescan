@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TIER_UNLIMITED_SUPPLY,
   build721TierConfig,
+  build721TierMetadata,
   sortTierEntriesByCategory,
   tierDiscountPercentFromPct,
 } from '../src/nft721-build.js';
@@ -46,5 +47,16 @@ describe('nft721-build shared tier helpers', () => {
       { order: 2, tier: { category: 3, initialSupply: 30 } },
     ];
     expect(sortTierEntriesByCategory(entries).map((e) => e.tier.initialSupply)).toEqual([20, 10, 30]);
+  });
+
+  it('keeps video attachments in animation_url metadata and images in image', () => {
+    expect(build721TierMetadata({
+      name: 'Mission', categoryName: 'Collectables', mediaUri: 'ipfs://video', mediaType: 'video/mp4',
+    })).toEqual({
+      name: 'Mission', categoryName: 'Collectables', mediaType: 'video/mp4', animation_url: 'ipfs://video',
+    });
+    expect(build721TierMetadata({
+      name: 'Poster', mediaUri: 'ipfs://image', mediaType: 'image/png',
+    })).toEqual({ name: 'Poster', mediaType: 'image/png', image: 'ipfs://image' });
   });
 });

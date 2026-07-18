@@ -16,7 +16,7 @@ import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
-import { TIER_UNLIMITED_SUPPLY, build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
@@ -1056,8 +1056,12 @@ function renderTierMediaInto(container, m, alt, mode) {
     var img = document.createElement('img'); img.loading = 'lazy'; img.addEventListener('load', function () { removeLightEdgeMatteFromImage(img); }); setMediaSource(img, m.image || media); img.alt = alt || ''; container.appendChild(img); return true;
   }
   if (kind === 'video') {
-    var v = document.createElement('video'); setMediaSource(v, media); v.muted = true; v.loop = true; v.setAttribute('playsinline', ''); v.preload = 'metadata';
-    if (mode === 'full' || mode === 'detail') { v.controls = true; v.autoplay = true; } else { v.autoplay = true; }
+    var v = document.createElement('video');
+    v.muted = true; v.defaultMuted = true; v.loop = true; v.autoplay = true; v.setAttribute('playsinline', '');
+    v.preload = mode === 'thumb' ? 'auto' : 'metadata';
+    if (m.image) { var poster = safeMediaUrl(m.image); if (poster) v.poster = poster; }
+    if (mode === 'full' || mode === 'detail') v.controls = true;
+    setMediaSource(v, media);
     container.appendChild(v); return true;
   }
   if (kind === 'audio') {
@@ -1619,6 +1623,8 @@ function openAddTierModal(project, shop) {
   var isub = el('div', 'operator-edit-sub'); isub.textContent = 'Image, gif, video, audio, PDF, text… up to ' + MAX_MEDIA_MB + ' MB.'; content.appendChild(isub);
   var imgRow = el('div', 'operator-edit-logo');
   var imgPrev = document.createElement('img'); imgPrev.className = 'operator-edit-logo-prev'; imgPrev.style.display = 'none'; imgRow.appendChild(imgPrev);
+  var videoPrev = document.createElement('video'); videoPrev.className = 'operator-edit-logo-prev'; videoPrev.style.display = 'none';
+  videoPrev.muted = true; videoPrev.defaultMuted = true; videoPrev.loop = true; videoPrev.autoplay = true; videoPrev.setAttribute('playsinline', ''); imgRow.appendChild(videoPrev);
   var mediaHint = el('span', 'operator-edit-hint'); mediaHint.style.display = 'none'; imgRow.appendChild(mediaHint);
   var imgFile = document.createElement('input'); imgFile.type = 'file'; imgFile.className = 'operator-edit-logo-file';
   // Any file type: image / gif / video / audio / pdf / markdown / text …
@@ -1627,14 +1633,23 @@ function openAddTierModal(project, shop) {
   var mediaMsg = el('div', 'operator-edit-mediamsg'); mediaMsg.style.display = 'none';
   var selectedMedia = null;
   function showPreview(f) {
-    if ((f.type || '').indexOf('image') === 0) { imgPrev.style.display = ''; imgPrev.src = URL.createObjectURL(f); mediaHint.style.display = 'none'; }
-    else { imgPrev.style.display = 'none'; mediaHint.style.display = ''; mediaHint.textContent = (f.type || 'file') + ' | ' + formatFileSize(f.size); }
+    var mediaType = (f.type || '').toLowerCase();
+    imgPrev.style.display = 'none'; videoPrev.style.display = 'none'; videoPrev.removeAttribute('src'); videoPrev.load();
+    if (mediaType.indexOf('image/') === 0) {
+      imgPrev.style.display = ''; imgPrev.src = URL.createObjectURL(f); mediaHint.style.display = 'none';
+    } else if (mediaType.indexOf('video/') === 0) {
+      videoPrev.style.display = ''; videoPrev.src = URL.createObjectURL(f); videoPrev.load();
+      mediaHint.style.display = ''; mediaHint.textContent = mediaType + ' | ' + formatFileSize(f.size);
+    } else {
+      mediaHint.style.display = ''; mediaHint.textContent = (mediaType || 'file') + ' | ' + formatFileSize(f.size);
+    }
     mediaClear.style.display = '';
   }
   function setMedia(f) { selectedMedia = f; showPreview(f); }
   function clearMedia() {
     selectedMedia = null;
     imgPrev.style.display = 'none'; imgPrev.removeAttribute('src');
+    videoPrev.style.display = 'none'; videoPrev.removeAttribute('src'); videoPrev.load();
     mediaHint.style.display = 'none'; mediaHint.textContent = '';
     mediaMsg.style.display = 'none';
     mediaClear.style.display = 'none';
@@ -2162,16 +2177,17 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
       }
     }
     if (form.imageFile && form.imageFile.size > MAX_MEDIA_BYTES) { setStatus(label + 'media is over the ' + MAX_MEDIA_MB + ' MB max', 'error'); return; }
-    var tierMeta = { name: name };
-    if (form.description) tierMeta.description = form.description;
-    if (category > 0 && project.storeCategories && project.storeCategories[category]) tierMeta.categoryName = project.storeCategories[category];
+    var mediaUri = '', mediaType = '';
     if (form.imageFile) {
       setStatus(label + 'pinning media…', 'pending');
-      var mediaUri = await pinFile(form.imageFile, name);
-      var mt = (form.imageFile.type || '').toLowerCase();
-      tierMeta.mediaType = mt;
-      if (mt.indexOf('image') === 0) tierMeta.image = mediaUri; else tierMeta.animation_url = mediaUri;
+      mediaUri = await pinFile(form.imageFile, name);
+      mediaType = (form.imageFile.type || '').toLowerCase();
     }
+    var tierMeta = build721TierMetadata({
+      name: name, description: form.description,
+      categoryName: category > 0 && project.storeCategories && project.storeCategories[category],
+      mediaUri: mediaUri, mediaType: mediaType,
+    });
     setStatus(label + 'pinning metadata…', 'pending');
     var metaUri = await pinJson(tierMeta, name + '-tier');
     built.push({
@@ -13284,26 +13300,33 @@ function renderFundsCard(project) {
     // Total balance — the same USD total shown on the project's header card (all tokens, all chains).
     var totLbl = el('div', 'rf-funds-label'); totLbl.textContent = 'Total balance'; holder.appendChild(totLbl);
     var totBig = el('div', 'rf-funds-big'); totBig.style.marginBottom = '14px'; totBig.appendChild(mountUsdBalance(project)); holder.appendChild(totBig);
-    // Multiple accounting contexts → one tab per token; blocks built lazily + cached. Inactive tabs show the
-    // balance at a glance (e.g. "0 ETH"); the SELECTED tab shows just the token (its balance is right below).
+    // Multiple accounting contexts → one tab per token; blocks built lazily + cached. Every tab keeps its
+    // balance visible after the token symbol so the contexts can be compared without switching panes.
     var subRow = el('div', 'owners-subtabs'); subRow.style.marginBottom = '18px';
-    var pane = el('div'); var built = {}; var btns = []; var bals = []; var activeIdx = 0;
-    function labelFor(i) {
-      if (i === activeIdx) return kinds[i].symbol;
-      return bals[i] != null ? formatBalance(bals[i], kinds[i].decimals, kinds[i].symbol) : kinds[i].symbol;
+    var pane = el('div'); var built = {}; var btns = []; var bals = [];
+    function renderLabel(i) {
+      var btn = btns[i];
+      if (!btn) return;
+      var balance = bals[i];
+      var balanceText = balance === undefined ? '…' : (balance === null ? '—' : formatRawAdaptive(balance, kinds[i].decimals));
+      btn.innerHTML = '';
+      var symbol = el('span', 'funds-token-tab-symbol'); symbol.textContent = kinds[i].symbol; btn.appendChild(symbol);
+      var amount = el('span', 'funds-token-tab-balance'); amount.textContent = balanceText; btn.appendChild(amount);
+      btn.setAttribute('aria-label', kinds[i].symbol + ' balance ' + (balance === undefined ? 'loading' : balanceText));
     }
     function show(i) {
-      activeIdx = i;
-      btns.forEach(function (b, bi) { b.classList.toggle('active', bi === i); b.textContent = labelFor(bi); });
+      btns.forEach(function (b, bi) { b.classList.toggle('active', bi === i); renderLabel(bi); });
       pane.innerHTML = '';
       if (!built[i]) built[i] = buildFundsTokenBlock(project, kinds[i], false);
       pane.appendChild(built[i]);
     }
     kinds.forEach(function (kind, i) {
-      var btn = el('button', 'owners-subtab'); btn.textContent = kind.symbol; btn.title = fundsKindAuditLabel(kind, project.chainId); btns.push(btn);
+      var btn = el('button', 'owners-subtab funds-token-tab'); btn.title = fundsKindAuditLabel(kind, project.chainId); btns.push(btn); renderLabel(i);
       btn.addEventListener('click', function () { show(i); });
       subRow.appendChild(btn);
-      totalBalanceForKind(project, kind).then(function (t) { bals[i] = t; btns[i].textContent = labelFor(i); }).catch(function () {});
+      totalBalanceForKind(project, kind)
+        .then(function (t) { bals[i] = t; renderLabel(i); })
+        .catch(function () { bals[i] = null; renderLabel(i); });
     });
     holder.appendChild(subRow); holder.appendChild(pane);
     show(0);

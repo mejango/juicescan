@@ -3621,6 +3621,10 @@ input[type="checkbox"].field {
 .owners-subtab:hover { color: var(--c-teal); }
 /* Active = teal text + teal underline (matching the main tabs). The full-width container line stays removed. */
 .owners-subtab.active { color: var(--c-teal); border-bottom-color: var(--c-teal); }
+.funds-token-tab { display: inline-flex; align-items: baseline; gap: 8px; }
+.funds-token-tab-balance {
+  color: var(--muted-2); font-weight: normal; letter-spacing: 0; text-transform: none;
+}
 .owners-subgroup { display: flex; flex-direction: column; gap: 16px; }
 
 /* Content area */

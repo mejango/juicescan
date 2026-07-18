@@ -2,6 +2,25 @@ import { addrOrZero, isAddr, ZERO_ADDRESS as ZERO } from './component-base.js';
 
 export var TIER_UNLIMITED_SUPPLY = 999999999;
 
+// Canonical metadata for a 721 shop item. Images use the NFT `image` field; every other attached file
+// (video/audio/PDF/text) uses `animation_url`, with its MIME retained so the storefront can render a real
+// preview even though an IPFS CID has no filename extension.
+export function build721TierMetadata(o) {
+  o = o || {};
+  var name = String(o.name || o.fallbackName || 'Item').trim() || 'Item';
+  var meta = { name: name };
+  if (o.description) meta.description = String(o.description);
+  if (o.categoryName) meta.categoryName = String(o.categoryName);
+  var mediaUri = String(o.mediaUri || o.imageUri || '').trim();
+  var mediaType = String(o.mediaType || '').trim().toLowerCase();
+  if (mediaUri) {
+    if (mediaType) meta.mediaType = mediaType;
+    if (mediaType.indexOf('image/') === 0) meta.image = mediaUri;
+    else meta.animation_url = mediaUri;
+  }
+  return meta;
+}
+
 export function tierDiscountPercentFromPct(value) {
   if (value == null || String(value).trim() === '') return 0;
   var pct = Number(value);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDraftObject, newCreateDraftState, parseCreateDraftJson } from '../src/create-flow.js';
+import { createDraftObject, newCreateDraftState, parseCreateDraftJson, shopMediaUploadIssue } from '../src/create-flow.js';
 
 describe('.jb draft interchange', () => {
   it('round-trips the existing plain .jb state into an editable, unconfirmed draft', () => {
@@ -62,5 +62,12 @@ describe('.jb draft interchange', () => {
     expect(() => parseCreateDraftJson(JSON.stringify({
       action: 'Launch project', transactions: [{ address: '0x1111111111111111111111111111111111111111', calldata: '0x1234' }],
     }))).toThrow(/\.jb draft/);
+  });
+
+  it('blocks deployment while shop media is uploading or after its upload fails', () => {
+    expect(shopMediaUploadIssue({ shopEnabled: true, nfts: [{ _mediaBusy: true }] })).toMatch(/still uploading/i);
+    expect(shopMediaUploadIssue({ shopEnabled: true, nfts: [{ _mediaError: 'network failed' }] })).toMatch(/upload failed/i);
+    expect(shopMediaUploadIssue({ shopEnabled: true, nfts: [{ imageUri: 'ipfs://video', mediaType: 'video/mp4' }] })).toBe('');
+    expect(shopMediaUploadIssue({ shopEnabled: false, nfts: [{ _mediaError: 'stale error' }] })).toBe('');
   });
 });

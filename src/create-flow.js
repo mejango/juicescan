@@ -26,7 +26,7 @@ import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } fro
 import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
-import { build721TierConfig, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { build721TierConfig, build721TierMetadata, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2624,15 +2624,23 @@ function itemMediaPicker(state, nft, render) {
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
     if (!f) return;
-    if (!hasPinata()) { alert('Add a Pinata JWT in the Store config section to upload media.'); return; }
-    if (f.size > ITEM_MAX_MEDIA_BYTES) { alert('That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
-    nft._mediaBusy = true; render();
-    pinFile(f, nft.name || f.name).then(function (uri) { nft.imageUri = uri; nft.mediaType = (f.type || '').toLowerCase(); nft._mediaBusy = false; render(); })
-      .catch(function (e) { nft._mediaBusy = false; render(); alert('Could not upload: ' + (e && e.message || e)); });
+    if (!hasPinata()) {
+      nft._mediaError = 'Add a Pinata JWT in the Store config section to upload media.'; render(); alert(nft._mediaError); return;
+    }
+    if (f.size > ITEM_MAX_MEDIA_BYTES) {
+      nft._mediaError = 'That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'; render(); alert(nft._mediaError); return;
+    }
+    nft._mediaBusy = true; nft._mediaError = ''; render();
+    pinFile(f, nft.name || f.name).then(function (uri) {
+      nft.imageUri = uri; nft.mediaType = (f.type || '').toLowerCase(); nft._mediaBusy = false; nft._mediaError = ''; render();
+    }).catch(function (e) {
+      nft._mediaBusy = false; nft._mediaError = 'Could not upload: ' + (e && e.message || e); render(); alert(nft._mediaError);
+    });
   });
   w.appendChild(file);
   if (nft._mediaBusy) { var b = el('span', 'operator-edit-hint'); b.textContent = 'Pinning…'; w.appendChild(b); }
-  if (nft.imageUri) { var clr = el('a', 'operator-edit-logo-clear'); clr.href = '#'; clr.textContent = '✕'; clr.title = 'Remove'; clr.addEventListener('click', function (e) { e.preventDefault(); nft.imageUri = ''; nft.mediaType = ''; render(); }); w.appendChild(clr); }
+  if (nft._mediaError) { var er = el('span', 'operator-edit-hint warn'); er.textContent = nft._mediaError; w.appendChild(er); }
+  if (nft.imageUri) { var clr = el('a', 'operator-edit-logo-clear'); clr.href = '#'; clr.textContent = '✕'; clr.title = 'Remove'; clr.addEventListener('click', function (e) { e.preventDefault(); nft.imageUri = ''; nft.mediaType = ''; nft._mediaError = ''; render(); }); w.appendChild(clr); }
   return w;
 }
 
@@ -3017,6 +3025,7 @@ function renderDeploy(state, render) {
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
   var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
+  var mediaBad = shopMediaUploadIssue(state); // never launch while an item attachment is pending/failed
   var exportRow = el('div', 'create-predeploy-export-row');
   var exportBeforeDeploy = el('button', 'create-io-btn create-predeploy-export');
   exportBeforeDeploy.type = 'button'; exportBeforeDeploy.textContent = 'Export your configuration';
@@ -3027,7 +3036,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!mediaBad || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3042,6 +3051,7 @@ function renderDeploy(state, render) {
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying — otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
   if (approvalBad) wrap.appendChild(warnNote(approvalBad + ' Without it the approval condition silently becomes “none” (no review window for edits).'));
+  if (mediaBad) wrap.appendChild(warnNote(mediaBad));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
   if (!state.tos) wrap.appendChild(infoNote('Check the box above to confirm you accept the risks before ' + (isRev ? 'deploying.' : 'launching.')));
@@ -3347,7 +3357,7 @@ var ITEM_MAX_MEDIA_BYTES = ITEM_MAX_MEDIA_MB * 1024 * 1024;
 
 function itemDraft() {
   return {
-    expanded: true, advOpen: false, _mediaBusy: false, _catAdding: false,
+    expanded: true, advOpen: false, _mediaBusy: false, _mediaError: '', _catAdding: false,
     name: '', description: '',
     imageUri: '', mediaType: '', metaUri: '', encodedIpfsUri: '',
     price: '', limited: false, supply: '',
@@ -3358,6 +3368,18 @@ function itemDraft() {
     votingOn: false, votingUnits: '',
     flags: { allowOwnerMint: false, transfersPausable: false, cantBeRemoved: false, allowCredits: true, ownerCanEditDiscount: true },
   };
+}
+
+// A pending/failed async media upload must never silently become a name-only onchain tier. The transient
+// flags are intentionally excluded from .jb drafts; after a reload, an unpinned file must be selected again.
+export function shopMediaUploadIssue(state) {
+  if (!state || state.shopEnabled === false) return '';
+  var items = (state && state.nfts) || [];
+  for (var i = 0; i < items.length; i++) {
+    if (items[i]._mediaBusy) return 'Item ' + (i + 1) + ' media is still uploading.';
+    if (items[i]._mediaError) return 'Item ' + (i + 1) + ' media upload failed. Choose the file again before continuing.';
+  }
+  return '';
 }
 
 function itemFileSize(bytes) {
@@ -3462,6 +3484,8 @@ function deploy(state, render) {
   if (!state.tos || !(state.chainIds || []).length || !state.details.name) {
     state.statusLines.push({ text: 'Complete the required deploy fields and risk confirmation before launching.', err: true }); render(); return;
   }
+  var mediaIssue = shopMediaUploadIssue(state);
+  if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
@@ -3511,11 +3535,11 @@ async function runDeploy(state, owner) {
     for (var n = 0; n < state.nfts.length; n++) {
       var it = state.nfts[n];
       push('Pinning item “' + (it.name || ('#' + (n + 1))) + '” metadata…');
-      var meta = { name: it.name || ('Item #' + (n + 1)) };
-      if (it.description) meta.description = it.description;
       var categoryName = storeCategoryName(state, it.category);
-      if (categoryName) meta.categoryName = categoryName;
-      if (it.imageUri) { if ((it.mediaType || '').indexOf('image') === 0) meta.image = it.imageUri; else meta.animation_url = it.imageUri; meta.mediaType = it.mediaType; }
+      var meta = build721TierMetadata({
+        name: it.name || ('Item #' + (n + 1)), description: it.description,
+        categoryName: categoryName, mediaUri: it.imageUri, mediaType: it.mediaType,
+      });
       try {
         it.metaUri = await pinJson(meta, (it.name || 'item') + '-item');
         it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri);
@@ -4258,19 +4282,22 @@ export function build721Config(state, projectUri, chainId) {
   };
 }
 
-// Pin each store item's metadata JSON (name + already-pinned media) so its tier resolves to {name, image}.
+// Pin each store item's metadata JSON (name + already-pinned media) so its tier resolves to
+// {name, image/animation_url}.
 // Sets it.metaUri + it.encodedIpfsUri in place. Standalone (mirrors the launch deploy flow) so the queue
 // "start a new shop" path can pin before build721Config without touching the launch sequence.
 export async function pinShopItemsMetadata(state) {
   if (!(state.nfts && state.nfts.length && hasPinata())) return;
+  var mediaIssue = shopMediaUploadIssue(state);
+  if (mediaIssue) throw new Error(mediaIssue);
   for (var n = 0; n < state.nfts.length; n++) {
     var it = state.nfts[n];
     if (it.encodedIpfsUri) continue; // already pinned this submit
-    var meta = { name: it.name || ('Item #' + (n + 1)) };
-    if (it.description) meta.description = it.description;
     var categoryName = storeCategoryName(state, it.category);
-    if (categoryName) meta.categoryName = categoryName;
-    if (it.imageUri) { if ((it.mediaType || '').indexOf('image') === 0) meta.image = it.imageUri; else meta.animation_url = it.imageUri; meta.mediaType = it.mediaType; }
+    var meta = build721TierMetadata({
+      name: it.name || ('Item #' + (n + 1)), description: it.description,
+      categoryName: categoryName, mediaUri: it.imageUri, mediaType: it.mediaType,
+    });
     try { it.metaUri = await pinJson(meta, (it.name || 'item') + '-item'); it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri); }
     catch (e) { throw new Error('Could not pin metadata for “' + (it.name || ('Item #' + (n + 1))) + '”: ' + (e && e.message || e)); }
   }
