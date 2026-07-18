@@ -4574,15 +4574,20 @@ function formatUsd(n) {
 }
 
 // ETH/USD spot from the protocol's own Chainlink feed (cached per chain). currentUnitPrice(18) returns
-// USD-per-ETH scaled to 18 decimals; null when the feed is absent/reverting (testnet gaps).
+// USD-per-ETH scaled to 18 decimals; null when the feed is absent/reverting (testnet gaps). Failed reads are
+// intentionally not cached: a brief RPC/oracle outage must not pin a project to its raw-token fallback.
 var ETH_USD_CACHE = {};
 var ETH_USD_FEED_ABI = [{ type: 'function', name: 'currentUnitPrice', stateMutability: 'view', inputs: [{ type: 'uint256' }], outputs: [{ type: 'uint256' }] }];
 function fetchEthUsd(chainId) {
-  if (ETH_USD_CACHE[chainId] !== undefined) return Promise.resolve(ETH_USD_CACHE[chainId]);
-  if (!getAddress('JBChainlinkV3PriceFeed__ETH_USD', chainId)) { ETH_USD_CACHE[chainId] = null; return Promise.resolve(null); }
+  if (ETH_USD_CACHE[chainId] != null) return Promise.resolve(ETH_USD_CACHE[chainId]);
+  if (!getAddress('JBChainlinkV3PriceFeed__ETH_USD', chainId)) return Promise.resolve(null);
   return read(chainId, 'JBChainlinkV3PriceFeed__ETH_USD', ETH_USD_FEED_ABI, 'currentUnitPrice', [18n])
-    .then(function (p) { var v = Number(p) / 1e18; ETH_USD_CACHE[chainId] = (isFinite(v) && v > 0) ? v : null; return ETH_USD_CACHE[chainId]; })
-    .catch(function () { ETH_USD_CACHE[chainId] = null; return null; });
+    .then(function (p) {
+      var v = Number(p) / 1e18;
+      if (isFinite(v) && v > 0) ETH_USD_CACHE[chainId] = v;
+      return (isFinite(v) && v > 0) ? v : null;
+    })
+    .catch(function () { return null; });
 }
 
 // One chain's balances across EVERY accounting token the terminal accepts (a project can hold
@@ -4598,7 +4603,13 @@ function readChainBalances(chainId, pid) {
       var metaP = Promise.resolve().then(function () { return resolveAccountingContextMetadata(chainId, ctx); }).catch(function () { return null; });
       var balP = read(chainId, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, ctx.token]).catch(function () { return null; });
       return Promise.all([balP, metaP]).then(function (r) {
-        return { token: ctx.token, balance: r[0], decimals: Number(ctx.decimals), symbol: (r[1] && r[1].symbol) || acctTokenLabel(ctx.token) };
+        return {
+          token: ctx.token,
+          balance: r[0],
+          decimals: Number(ctx.decimals),
+          currency: ctx.currency != null ? BigInt(ctx.currency) : tokenCurrencyIdForAccounting(ctx.token),
+          symbol: (r[1] && r[1].symbol) || acctTokenLabel(ctx.token),
+        };
       });
     })).then(function (toks) { return { chainId: chainId, tokens: toks, verified: true }; });
   }).catch(function () { return { chainId: chainId, tokens: [], verified: false }; });
@@ -4616,6 +4627,57 @@ export function accountingTokenUsdValue(balance, decimals, token, chainId, ethUs
   return null; // A custom accounting token has no trustworthy USD price merely because it is an ERC-20.
 }
 
+// Convert a raw accounting-token balance using a verified USD price for one whole token. Keeping the token
+// decimals and quote precision separate avoids the common 6-decimal USDC / 18-decimal feed scaling bug.
+export function accountingTokenUsdValueAtPrice(balance, decimals, unitUsd, priceDecimals) {
+  if (balance == null || unitUsd == null) return null;
+  decimals = decimals == null ? 18 : Number(decimals);
+  priceDecimals = priceDecimals == null ? 18 : Number(priceDecimals);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36 || !Number.isInteger(priceDecimals) || priceDecimals < 0 || priceDecimals > 36) return null;
+  var amount, price;
+  try {
+    amount = Number(formatAmount(BigInt(balance), decimals));
+    price = Number(formatAmount(BigInt(unitUsd), priceDecimals));
+  } catch (_) { return null; }
+  var value = amount * price;
+  return isFinite(value) && value >= 0 ? value : null;
+}
+
+// Resolve USD-per-token through JBPrices so the aggregate honors protocol defaults, L2 sequencer-aware feeds,
+// and project-specific custom-token feeds. Canonical USDC and the direct ETH wrapper remain safe fallbacks.
+var ACCOUNTING_USD_PRICE_CACHE = {};
+function fetchAccountingTokenUsdPrice(chainId, pid, token) {
+  var address = String(token && token.token || '').toLowerCase();
+  var currency;
+  try { currency = BigInt(token.currency); } catch (_) { return Promise.resolve(null); }
+  if (currency === 2n) return Promise.resolve(1000000000000000000n);
+  var key = [chainId, String(pid), String(currency)].join(':');
+  if (ACCOUNTING_USD_PRICE_CACHE[key] != null) return Promise.resolve(ACCOUNTING_USD_PRICE_CACHE[key]);
+
+  var fromPrices = getAddress('JBPrices', chainId)
+    ? read(chainId, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [BigInt(pid), 2n, currency, 18n])
+      .then(function (quoted) {
+        var value = BigInt(quoted);
+        if (value <= 0n) throw new Error('Invalid USD quote.');
+        ACCOUNTING_USD_PRICE_CACHE[key] = value;
+        return value;
+      })
+    : Promise.reject(new Error('JBPrices is unavailable.'));
+
+  return fromPrices.catch(function () {
+    var usdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase();
+    if (usdc && address === usdc) return 1000000000000000000n;
+    if (address === NATIVE_TOKEN.toLowerCase()) {
+      return fetchEthUsd(chainId).then(function (value) {
+        // The direct helper returns a Number for legacy callers. Preserve the feed's practical 8-decimal
+        // precision while converting it back into the 18-decimal quote used by the aggregate math.
+        return value == null ? null : BigInt(Math.round(value * 1e8)) * 10000000000n;
+      });
+    }
+    return null;
+  });
+}
+
 function accountingTokenContextKey(token, chainId) {
   var address = String(token || '').toLowerCase();
   if (address === NATIVE_TOKEN.toLowerCase()) return 'native';
@@ -4624,16 +4686,40 @@ function accountingTokenContextKey(token, chainId) {
   return address || 'unknown';
 }
 
+// If one held token has no trustworthy USD feed, the headline cannot be summed honestly. Preserve usefulness by
+// grouping the verified raw balances per token across chains ("0.01 ETH + 12 KMAC") instead of guessing a rate.
+export function rawAccountingBalanceSummary(rows, readable) {
+  if (readable === false) return '—';
+  var groups = {}, order = [];
+  (rows || []).filter(function (row) { return row && row.balance != null && BigInt(row.balance) > 0n; }).forEach(function (row) {
+    var key = row.contextKey || (String(row.token || '').toLowerCase() + '@' + Number(row.decimals == null ? 18 : row.decimals));
+    if (!groups[key]) {
+      groups[key] = { amount: 0n, decimals: Number(row.decimals == null ? 18 : row.decimals), symbol: row.symbol || '' };
+      order.push(key);
+    }
+    groups[key].amount += BigInt(row.balance);
+  });
+  return order.length
+    ? order.map(function (key) { var total = groups[key]; return formatBalance(total.amount, total.decimals, total.symbol); }).join(' + ')
+    : '—';
+}
+
 // Cross-chain balance breakdown across ALL accounting tokens + a USD total only when every non-zero token is
-// actually priced. ETH converts through the protocol feed; canonical USDC is $1; custom tokens stay unpriced.
+// actually priced. Quotes come through JBPrices; raw per-token amounts remain the truthful fallback.
 function fetchBalanceBreakdown(project) {
   if (project._balBreakdown) return Promise.resolve(project._balBreakdown);
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
   return Promise.all(chains.map(function (c) { return readChainBalances(c.id, pidOn(project, c.id)); })).then(function (results) {
     var hasContextFailure = results.some(function (result) { return !result.verified; });
-    var isEthTok = function (t) { return (t.token || '').toLowerCase() === NATIVE_TOKEN.toLowerCase(); };
-    var needEth = results.some(function (cr) { return cr.tokens.some(function (t) { return isEthTok(t) && t.balance != null && BigInt(t.balance) > 0n; }); });
-    return (needEth ? fetchEthUsd(project.chainId) : Promise.resolve(1)).then(function (ethUsd) {
+    var quoteReads = [];
+    results.forEach(function (cr) {
+      cr.tokens.forEach(function (token) {
+        if (token.balance == null || BigInt(token.balance) <= 0n) { token.unitUsd = null; return; }
+        quoteReads.push(fetchAccountingTokenUsdPrice(cr.chainId, pidOn(project, cr.chainId), token)
+          .then(function (price) { token.unitUsd = price; }));
+      });
+    });
+    return Promise.all(quoteReads).then(function () {
       var rows = [], total = 0, hasUnpricedBalance = false, hasUnreadable = hasContextFailure, contextKeys = {}, chainVerified = {};
       results.forEach(function (cr) {
         chainVerified[cr.chainId] = !!cr.verified;
@@ -4641,7 +4727,9 @@ function fetchBalanceBreakdown(project) {
           var dec = t.decimals == null ? 18 : t.decimals;
           var raw = t.balance != null ? BigInt(t.balance) : null;
           var hasBalance = raw != null && raw > 0n;
-          var usd = accountingTokenUsdValue(raw, dec, t.token, cr.chainId, ethUsd);
+          var usd = hasBalance && t.unitUsd != null
+            ? accountingTokenUsdValueAtPrice(raw, dec, t.unitUsd, 18)
+            : (raw === 0n ? 0 : null);
           var contextKey = accountingTokenContextKey(t.token, cr.chainId) + '@' + dec;
           contextKeys[contextKey] = true;
           if (t.balance == null) hasUnreadable = true;
@@ -4665,13 +4753,15 @@ function fetchBalanceBreakdown(project) {
       var bd = {
         rows: rows,
         totalUsd: total,
-        priced: !hasContextFailure && !hasUnreadable && !hasUnpricedBalance && (!needEth || ethUsd != null),
+        priced: !hasContextFailure && !hasUnreadable && !hasUnpricedBalance,
         singleTokenTotal: singleTokenTotal,
         contextHomogeneous: !hasContextFailure && Object.keys(contextKeys).length <= 1,
         chainVerified: chainVerified,
       };
-      // Cache only a complete read. A transient RPC failure must be retryable on the next render/open.
-      if (!hasContextFailure && !hasUnreadable) project._balBreakdown = bd;
+      bd.rawSummary = rawAccountingBalanceSummary(rows, !hasUnreadable);
+      // Cache only a complete, fully priced read. A transient RPC/oracle failure must be retryable on the next
+      // render; a genuinely unpriced custom token continues to use the raw-token summary.
+      if (!hasContextFailure && !hasUnreadable && !hasUnpricedBalance) project._balBreakdown = bd;
       return bd;
     });
   });
@@ -4688,8 +4778,7 @@ function mountUsdBalance(project, opts) {
   if (opts.suffix) wrap.appendChild(document.createTextNode(opts.suffix));
 
   fetchBalanceBreakdown(project).then(function (bd) {
-    fig.textContent = bd.priced ? formatUsd(bd.totalUsd)
-      : (bd.singleTokenTotal ? formatBalance(bd.singleTokenTotal.amount, bd.singleTokenTotal.decimals, bd.singleTokenTotal.symbol) : '—');
+    fig.textContent = bd.priced ? formatUsd(bd.totalUsd) : bd.rawSummary;
     if (!bd.rows.length) return;
 
     var pop = el('div', 'usd-balance-pop');
@@ -4700,10 +4789,7 @@ function mountUsdBalance(project, opts) {
       row.appendChild(name); row.appendChild(val);
       pop.appendChild(row);
     });
-    // When every chain holds the same token, total in that token (the breakdown is "actual tokens",
-    // so a single-currency project reads cleaner as "3 USDC" than "$3.00"). Mixed tokens → USD.
-    var totalText = bd.priced ? formatUsd(bd.totalUsd)
-      : (bd.singleTokenTotal ? formatBalance(bd.singleTokenTotal.amount, bd.singleTokenTotal.decimals, bd.singleTokenTotal.symbol) : '—');
+    var totalText = bd.priced ? formatUsd(bd.totalUsd) : bd.rawSummary;
     var totalRow = el('div', 'usd-balance-pop-row usd-balance-pop-total');
     var tName = el('span', 'usd-balance-pop-chain'); tName.textContent = 'All chains';
     var tVal = el('span', 'usd-balance-pop-amt'); tVal.textContent = totalText;
@@ -5842,6 +5928,10 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // pay/cash out/distribute flows. `activityCardEl` is assigned just below, before any tx can fire.
   var activityCardEl = null;
   wrap.addEventListener('jb:project-updated', function () {
+    // The aggregate is cached on the project object so the header + Funds card share one result. A confirmed
+    // balance-changing transaction invalidates it before either surface remounts; otherwise the native panel can
+    // refresh while the USD headline keeps the pre-transaction total until a full page reload.
+    delete project._balBreakdown;
     var pid = pidOn(project, project.chainId);
     var terminal = getAddress('JBMultiTerminal', project.chainId);
     var acctAddr = (project.acctToken && project.acctToken.address) || NATIVE_TOKEN;
@@ -13343,6 +13433,15 @@ function totalBalanceForKind(project, kind) {
   });
 }
 
+// Reconcile the lightweight tab probe with the full panel snapshot. The panel read includes the per-chain rows
+// rendered beneath it and therefore wins permanently for this mount, even if an older probe resolves afterward.
+export function updateFundsTabBalance(balances, snapshotSeen, index, balance, fromSnapshot) {
+  if (!fromSnapshot && snapshotSeen[index]) return false;
+  if (fromSnapshot) snapshotSeen[index] = true;
+  balances[index] = balance;
+  return true;
+}
+
 // Live, cycle-aware fund access for one accounting token on one chain. Configured limits alone are not
 // "available": payout usage is tracked by ruleset cycle and surplus-allowance usage by ruleset ID.
 async function readFundsAccessSnapshot(project, kind, chainId) {
@@ -13402,7 +13501,7 @@ function renderFundsCard(project) {
     // Multiple accounting contexts → one tab per token; blocks built lazily + cached. Every tab keeps its
     // balance visible after the token symbol so the contexts can be compared without switching panes.
     var subRow = el('div', 'owners-subtabs'); subRow.style.marginBottom = '18px';
-    var pane = el('div'); var built = {}; var btns = []; var bals = [];
+    var pane = el('div'); var built = {}; var btns = []; var bals = []; var snapshotBalanceSeen = [];
     function renderLabel(i) {
       var btn = btns[i];
       if (!btn) return;
@@ -13416,7 +13515,11 @@ function renderFundsCard(project) {
     function show(i) {
       btns.forEach(function (b, bi) { b.classList.toggle('active', bi === i); renderLabel(bi); });
       pane.innerHTML = '';
-      if (!built[i]) built[i] = buildFundsTokenBlock(project, kinds[i], false);
+      if (!built[i]) built[i] = buildFundsTokenBlock(project, kinds[i], false, function (total) {
+        // The panel and tab must use the SAME snapshot. Separate RPC reads can straddle a just-confirmed
+        // transaction (panel=2 BEN, tab=1 BEN); once the richer panel resolves, it is authoritative here.
+        if (updateFundsTabBalance(bals, snapshotBalanceSeen, i, total, true)) renderLabel(i);
+      });
       pane.appendChild(built[i]);
     }
     kinds.forEach(function (kind, i) {
@@ -13424,8 +13527,8 @@ function renderFundsCard(project) {
       btn.addEventListener('click', function () { show(i); });
       subRow.appendChild(btn);
       totalBalanceForKind(project, kind)
-        .then(function (t) { bals[i] = t; renderLabel(i); })
-        .catch(function () { bals[i] = null; renderLabel(i); });
+        .then(function (t) { if (updateFundsTabBalance(bals, snapshotBalanceSeen, i, t, false)) renderLabel(i); })
+        .catch(function () { if (updateFundsTabBalance(bals, snapshotBalanceSeen, i, null, false)) renderLabel(i); });
     });
     holder.appendChild(subRow); holder.appendChild(pane);
     show(0);
@@ -13435,7 +13538,8 @@ function renderFundsCard(project) {
 }
 
 // One accounting-context block. `showHead` adds a token-symbol heading (when the project has >1 context).
-function buildFundsTokenBlock(project, kind, showHead) {
+// `onBalance` receives the exact aggregate used by the panel so a parent tab never races it with another read.
+function buildFundsTokenBlock(project, kind, showHead, onBalance) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: 'This chain' }];
   var home = project.chainId;
   var homePid = pidOn(project, home);
@@ -13503,6 +13607,7 @@ function buildFundsTokenBlock(project, kind, showHead) {
       chainTable.appendChild(row);
     });
     balTotal.textContent = fmt(total);
+    if (onBalance) onBalance(total);
     var homeRow = rows.filter(function (x) { return x.c.id === home; })[0];
     limitVal.textContent = homeRow && homeRow.snapshot ? formatAccessRows(homeRow.snapshot.payouts, homeRow.snapshot.acct) : '—';
     saV.textContent = homeRow && homeRow.snapshot ? formatAccessRows(homeRow.snapshot.allowances, homeRow.snapshot.acct) : '—';

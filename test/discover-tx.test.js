@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValue, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValue, accountingTokenUsdValueAtPrice, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -209,6 +209,29 @@ describe('source-of-truth data guards', () => {
     expect(accountingTokenUsdValue(2500000n, 6, usdc, 1, 3000)).toBe(2.5);
     expect(accountingTokenUsdValue(10n ** 18n, 18, NATIVE_TOKEN, 1, 3000)).toBe(3000);
     expect(accountingTokenUsdValue(10n ** 18n, 18, custom, 1, 3000)).toBeNull();
+  });
+
+  it('normalizes any accounting token with its verified USD quote and preserves raw mixed-token fallbacks', () => {
+    expect(accountingTokenUsdValueAtPrice(2500000n, 6, 999500000000000000n, 18)).toBeCloseTo(2.49875);
+    expect(accountingTokenUsdValueAtPrice(2n * 10n ** 18n, 18, 4250000000000000000n, 18)).toBe(8.5);
+
+    const rows = [
+      { token: NATIVE_TOKEN, balance: 10n ** 18n, decimals: 18, symbol: 'ETH', contextKey: 'native@18' },
+      { token: NATIVE_TOKEN, balance: 5n * 10n ** 17n, decimals: 18, symbol: 'ETH', contextKey: 'native@18' },
+      { token: USDC, balance: 2500000n, decimals: 6, symbol: 'USDC', contextKey: 'usdc@6' },
+    ];
+    expect(rawAccountingBalanceSummary(rows, true)).toBe('1.50 ETH + 2.50 USDC');
+    expect(rawAccountingBalanceSummary(rows, false)).toBe('—');
+  });
+
+  it('keeps a funds tab on the panel snapshot when an older balance probe resolves late', () => {
+    const balances = [], snapshotSeen = [];
+    expect(updateFundsTabBalance(balances, snapshotSeen, 1, 1n, false)).toBe(true);
+    expect(balances[1]).toBe(1n);
+    expect(updateFundsTabBalance(balances, snapshotSeen, 1, 2n, true)).toBe(true);
+    expect(balances[1]).toBe(2n);
+    expect(updateFundsTabBalance(balances, snapshotSeen, 1, 1n, false)).toBe(false);
+    expect(balances[1]).toBe(2n);
   });
 
   it('never guesses an activity token and saturates remaining access', () => {
