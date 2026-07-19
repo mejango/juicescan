@@ -4284,9 +4284,25 @@ input[type="checkbox"].field {
 .data-row-content .input-group:last-child {
   margin-bottom: 0;
 }
+.data-row-content .project-chain-pair {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--muted-4);
+  margin-bottom: 10px;
+}
+.data-row-content .data-project-chain-label {
+  margin-top: 8px;
+}
+.data-row-content .data-field-help {
+  margin-top: 4px;
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.4;
+}
 .data-row-content .fn-actions {
   padding: 0;
   margin-top: 8px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 /* Chain selector sits inline inside an .input-group, not between sections like
@@ -4304,6 +4320,15 @@ input[type="checkbox"].field {
 }
 .data-card-status.error {
   color: var(--error);
+}
+.data-query-copy-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.data-query-copy-link {
+  flex: 0 0 auto;
 }
 
 .data-card-result {

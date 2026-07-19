@@ -124,12 +124,21 @@ function buildContent(q) {
 
     const label = document.createElement('label');
     label.className = 'input-label';
-    // Type names like int/chain/chains aren't useful in the data tab — variable
-    // names are self-explanatory. Only surface "optional" when relevant.
-    const showOptional = v.optional && v.type !== 'chain_multi';
-    label.innerHTML = showOptional
-      ? `${v.name} <span class="type-hint">optional</span>`
-      : v.name;
+    // `chainIds` is a result filter, not the chain which scopes projectId. Give
+    // both controls explicit human labels and selection semantics so they cannot
+    // be mistaken for one another.
+    const isResultChains = v.type === 'chain_multi' && v.name === 'chainIds';
+    const showOptional = v.optional && !isResultChains;
+    const labelText = isResultChains ? 'Result chains' : v.name;
+    const labelHint = isResultChains ? 'select one or more' : (showOptional ? 'optional' : '');
+    label.textContent = labelText;
+    if (labelHint) {
+      const hint = document.createElement('span');
+      hint.className = 'type-hint';
+      hint.textContent = labelHint;
+      label.appendChild(document.createTextNode(' '));
+      label.appendChild(hint);
+    }
     group.appendChild(label);
 
     let input;
@@ -145,6 +154,12 @@ function buildContent(q) {
       if (v.default != null) input.value = String(v.default);
     }
     group.appendChild(input);
+    if (isResultChains) {
+      const help = document.createElement('div');
+      help.className = 'data-field-help';
+      help.textContent = 'Filter which chains are included in the results. Choose one or more, or All.';
+      group.appendChild(help);
+    }
     fields[v.name] = { input, def: v };
     inputContainer.appendChild(group);
   }
@@ -162,6 +177,12 @@ function buildContent(q) {
   const status = document.createElement('span');
   status.className = 'data-card-status';
   actions.appendChild(status);
+
+  const copyActions = document.createElement('div');
+  copyActions.className = 'data-query-copy-actions';
+  copyActions.appendChild(dataCopyLink('[copy query]', 'Copy this GraphQL query', () => String(q.query || '').trim()));
+  copyActions.appendChild(dataCopyLink('[copy build prompt]', 'Copy an LLM prompt to build this query', () => buildDataQueryPrompt(q)));
+  actions.appendChild(copyActions);
 
   wrap.appendChild(actions);
 
@@ -335,14 +356,14 @@ function buildContent(q) {
 }
 
 // Multi-select chain picker. Pills toggle on/off independently.
-// `.getValue()` returns a comma-separated list of chain IDs, or "" when none.
-// Empty selection means "all chains in the active network" — no chainId_in filter.
+// `.getValue()` returns selected IDs, or every active-network ID when All is selected.
 function renderChainMultiPills(varDef) {
   const wrapper = document.createElement('div');
   wrapper.className = 'fn-chain-selector data-chain-selector data-chain-multi';
+  wrapper.dataset.selection = 'multiple';
 
   const chainEntries = bendystrawChains();
-  const allTestnetChainIds = chainEntries.map(entry => Number(entry.id));
+  const allNetworkChainIds = chainEntries.map(entry => Number(entry.id));
   const selected = new Set();
 
   function render() {
@@ -350,6 +371,8 @@ function renderChainMultiPills(varDef) {
 
     const pillsRow = document.createElement('div');
     pillsRow.className = 'chain-pills-row';
+    pillsRow.setAttribute('role', 'group');
+    pillsRow.setAttribute('aria-label', 'Result chains, select one or more');
     for (const { id: cid, chain: ch } of chainEntries) {
       const idNum = Number(cid);
       const pill = document.createElement('button');
@@ -357,6 +380,7 @@ function renderChainMultiPills(varDef) {
       pill.className = 'chain-pill' + (ch.testnet ? ' testnet' : '') + (selected.has(idNum) ? ' selected' : '');
       pill.textContent = ch.name;
       pill.dataset.chainId = cid;
+      pill.setAttribute('aria-pressed', selected.has(idNum) ? 'true' : 'false');
       pill.addEventListener('click', () => {
         if (selected.has(idNum)) selected.delete(idNum); else selected.add(idNum);
         render();
@@ -368,8 +392,9 @@ function renderChainMultiPills(varDef) {
     const allBtn = document.createElement('button');
     allBtn.type = 'button';
     allBtn.className = 'chain-pill' + (selected.size === 0 ? ' selected' : '');
-    allBtn.textContent = 'all';
+    allBtn.textContent = 'All';
     allBtn.title = 'search all chains in the active network';
+    allBtn.setAttribute('aria-pressed', selected.size === 0 ? 'true' : 'false');
     allBtn.addEventListener('click', () => { selected.clear(); render(); });
     pillsRow.appendChild(allBtn);
 
@@ -377,85 +402,24 @@ function renderChainMultiPills(varDef) {
   }
 
   render();
-  wrapper.getValue = () => (selected.size ? Array.from(selected) : allTestnetChainIds).join(',');
-  Object.defineProperty(wrapper, 'value', { get() { return (selected.size ? Array.from(selected) : allTestnetChainIds).join(','); } });
+  wrapper.getValue = () => (selected.size ? Array.from(selected) : allNetworkChainIds).join(',');
+  Object.defineProperty(wrapper, 'value', { get() { return (selected.size ? Array.from(selected) : allNetworkChainIds).join(','); } });
   return wrapper;
 }
 
-// Paired (projectId + chainId) widget mirroring the COMPONENTS-tab pattern:
-// the chain summary sits ABOVE the projectId input as a collapsed "▸ on <chain>"
-// link that expands into a full chain picker on click.
+// Paired (projectId + chainId) widget. The chain choice stays visible and uses
+// the same pills as every other DATA-tab chain control. It is a single-select
+// project scope; a separate chainIds control, when present, filters results.
 // Side effect: registers `projectId` and `chainId` entries in `fields` so the
 // outer collectVars() can read them.
 function renderProjectAndChainPair(projectVar, chainVar, fields) {
   const section = document.createElement('div');
   section.className = 'input-group project-chain-pair project-chain-section';
 
-  const label = document.createElement('label');
-  label.className = 'input-label';
-  label.textContent = projectVar.name;
-  section.appendChild(label);
-
-  const chains = getManifestChains();
-  const chainEntries = bendystrawChains();
-  const defaultChain = chainVar.default != null ? Number(chainVar.default) : null;
-  let selectedChain = defaultChain != null && inActiveNetwork(chains[String(defaultChain)])
-    ? defaultChain
-    : defaultBendystrawChainId();
-  let showPicker = false;
-
-  const chainWrap = document.createElement('div');
-  chainWrap.className = 'project-chain-wrap';
-
-  const summary = document.createElement('a');
-  summary.className = 'project-chain-summary';
-  summary.href = '#';
-  chainWrap.appendChild(summary);
-
-  const picker = document.createElement('div');
-  picker.className = 'project-chain-picker';
-  chainWrap.appendChild(picker);
-
-  function renderPicker() {
-    picker.innerHTML = '';
-    picker.style.display = showPicker ? '' : 'none';
-    if (!showPicker) return;
-
-    const pillsRow = document.createElement('div');
-    pillsRow.className = 'chain-pills-row';
-    for (const { id: cid, chain: ch } of chainEntries) {
-      const pill = document.createElement('button');
-      pill.type = 'button';
-      pill.className = 'chain-pill' + (ch.testnet ? ' testnet' : '') + (Number(cid) === selectedChain ? ' selected' : '');
-      pill.textContent = ch.name;
-      pill.dataset.chainId = cid;
-      pill.addEventListener('click', (e) => {
-        selectedChain = Number(e.currentTarget.dataset.chainId);
-        showPicker = false;
-        renderSummary();
-        renderPicker();
-      });
-      pillsRow.appendChild(pill);
-    }
-    picker.appendChild(pillsRow);
-  }
-
-  function renderSummary() {
-    const ch = chains[String(selectedChain)];
-    const name = ch ? ch.name : 'select chain';
-    summary.textContent = (showPicker ? '▾' : '▸') + ' on ' + name;
-  }
-
-  summary.addEventListener('click', (e) => {
-    e.preventDefault();
-    showPicker = !showPicker;
-    renderSummary();
-    renderPicker();
-  });
-
-  renderSummary();
-  renderPicker();
-  section.appendChild(chainWrap);
+  const idLabel = document.createElement('label');
+  idLabel.className = 'input-label';
+  idLabel.textContent = 'Project ID';
+  section.appendChild(idLabel);
 
   const idInput = document.createElement('input');
   idInput.type = 'text';
@@ -464,11 +428,27 @@ function renderProjectAndChainPair(projectVar, chainVar, fields) {
   if (projectVar.default != null) idInput.value = String(projectVar.default);
   section.appendChild(idInput);
 
-  // Expose the chain value to collectVars via a stub element with getValue().
-  const chainProxy = { getValue: () => String(selectedChain), get value() { return String(selectedChain); } };
+  const chainLabel = document.createElement('label');
+  chainLabel.className = 'input-label data-project-chain-label';
+  chainLabel.textContent = 'Project chain';
+  const chainHint = document.createElement('span');
+  chainHint.className = 'type-hint';
+  chainHint.textContent = 'select one';
+  chainLabel.appendChild(document.createTextNode(' '));
+  chainLabel.appendChild(chainHint);
+  section.appendChild(chainLabel);
+
+  const chainInput = renderChainPills(chainVar);
+  chainInput.classList.add('project-chain-picker');
+  section.appendChild(chainInput);
+
+  const help = document.createElement('div');
+  help.className = 'data-field-help';
+  help.textContent = 'Project ID and project chain together identify the deployment to query.';
+  section.appendChild(help);
 
   fields[projectVar.name] = { input: idInput, def: projectVar };
-  fields[chainVar.name] = { input: chainProxy, def: chainVar };
+  fields[chainVar.name] = { input: chainInput, def: chainVar };
 
   return section;
 }
@@ -478,25 +458,29 @@ function renderProjectAndChainPair(projectVar, chainVar, fields) {
 function renderChainPills(varDef) {
   const wrapper = document.createElement('div');
   wrapper.className = 'fn-chain-selector data-chain-selector';
+  wrapper.dataset.selection = 'single';
 
   const chains = getManifestChains();
   const chainEntries = bendystrawChains();
   const defaultVal = varDef.default != null ? Number(varDef.default) : null;
   let selectedChain = defaultVal != null && inActiveNetwork(chains[String(defaultVal)])
     ? defaultVal
-    : null;
+    : (varDef.optional ? null : defaultBendystrawChainId());
 
   function render() {
     wrapper.innerHTML = '';
 
     const pillsRow = document.createElement('div');
     pillsRow.className = 'chain-pills-row';
+    pillsRow.setAttribute('role', 'group');
+    pillsRow.setAttribute('aria-label', 'Project chain, select one');
     for (const { id: cid, chain: ch } of chainEntries) {
       const pill = document.createElement('button');
       pill.type = 'button';
       pill.className = 'chain-pill' + (ch.testnet ? ' testnet' : '') + (Number(cid) === selectedChain ? ' selected' : '');
       pill.textContent = ch.name;
       pill.dataset.chainId = cid;
+      pill.setAttribute('aria-pressed', Number(cid) === selectedChain ? 'true' : 'false');
       pill.addEventListener('click', (e) => {
         selectedChain = Number(e.currentTarget.dataset.chainId);
         render();
@@ -509,6 +493,7 @@ function renderChainPills(varDef) {
       clearBtn.type = 'button';
       clearBtn.className = 'chain-pill' + (selectedChain == null ? ' selected' : '');
       clearBtn.textContent = 'any';
+      clearBtn.setAttribute('aria-pressed', selectedChain == null ? 'true' : 'false');
       clearBtn.addEventListener('click', () => { selectedChain = null; render(); });
       pillsRow.appendChild(clearBtn);
     }
@@ -520,6 +505,95 @@ function renderChainPills(varDef) {
   wrapper.getValue = () => (selectedChain != null ? String(selectedChain) : '');
   Object.defineProperty(wrapper, 'value', { get() { return selectedChain != null ? String(selectedChain) : ''; } });
   return wrapper;
+}
+
+function copyDataText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+  return new Promise(function (resolve, reject) {
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const copied = document.execCommand('copy');
+      area.remove();
+      copied ? resolve() : reject(new Error('copy failed'));
+    } catch (error) { reject(error); }
+  });
+}
+
+function dataCopyLink(label, title, buildText) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'comp-prompt-link data-query-copy-link';
+  button.textContent = label;
+  button.title = title;
+  button.addEventListener('click', function (event) {
+    event.preventDefault();
+    event.stopPropagation();
+    copyDataText(buildText()).then(function () {
+      button.classList.add('comp-prompt-link--ok');
+      button.textContent = '[copied]';
+      setTimeout(function () {
+        button.classList.remove('comp-prompt-link--ok');
+        button.textContent = label;
+      }, 1400);
+    }).catch(function () {
+      button.textContent = '[copy failed]';
+      setTimeout(function () { button.textContent = label; }, 1800);
+    });
+  });
+  return button;
+}
+
+export function buildDataQueryPrompt(query) {
+  const q = query || {};
+  const variableNames = new Set((q.variables || []).map(function (variable) { return variable.name; }));
+  const variables = (q.variables || []).map(function (variable) {
+    return {
+      name: variable.name,
+      type: variable.type,
+      optional: !!variable.optional,
+      hidden: !!variable.hidden,
+      default: variable.default != null ? String(variable.default) : null,
+    };
+  });
+  const columns = (q.columns || []).map(function (column) {
+    return { key: column.key, label: column.label, format: column.format || 'text' };
+  });
+  const lines = [
+    'Build a client-only, read-only Juicebox V6 data view for “' + (q.title || q.id || 'Bendystraw query') + '”.',
+  ];
+  if (q.hint) lines.push('Purpose: ' + q.hint);
+  lines.push('', 'Use the Bendystraw GraphQL API. Follow the selected network: https://bendystraw.xyz on mainnet and https://testnet.bendystraw.xyz on testnet. Read the endpoint/key handling from the reference implementation rather than hardcoding credentials.');
+  if (q.resolveSuckerGroup) {
+    lines.push('', 'This query is sucker-group scoped. First resolve projectId + its single Project chain to project(version: 6, projectId, chainId) { suckerGroupId }, then pass that suckerGroupId into the query below. A separate multi-select Result chains control filters chainIds; it must not change which chain scopes projectId.');
+  }
+  lines.push('', 'GraphQL query:', '```graphql', String(q.query || '').trim(), '```');
+  lines.push('', 'Variables:', '```json', JSON.stringify(variables, null, 2), '```');
+  lines.push('', 'Response path: ' + (q.path || '(use the query root field)'));
+  lines.push('Table columns:', '```json', JSON.stringify(columns, null, 2), '```');
+  const requirements = [
+    '- Preserve bigint values exactly; do not coerce token counts or IDs through unsafe JavaScript numbers.',
+    '- Include loading, empty, GraphQL error, and HTTP error states.',
+    '- Support limit/offset pagination when those variables exist.',
+    '- Render addresses, timestamps, chain names, transaction hashes, and amounts according to each column format.',
+  ];
+  if (variableNames.has('projectId') && variableNames.has('chainId')) {
+    requirements.push('- Keep Project ID beside a visible, single-select Project chain control.');
+  }
+  if (variableNames.has('chainIds')) {
+    requirements.push('- Label chainIds as Result chains and render it as a multi-select control with an All option.');
+  }
+  lines.push('', 'Requirements:');
+  lines.push.apply(lines, requirements);
+  lines.push('',
+    'Reference implementation: https://github.com/mejango/juicebox-v6-website — read src/data-tab.js, src/bendystraw-client.js, src/bendystraw-format.js, and data/bendystraw-queries.json.',
+    'Bendystraw schema: https://bendystraw-dev.up.railway.app/schema');
+  return lines.join('\n');
 }
 
 export function coerce(value, type) {
