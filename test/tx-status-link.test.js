@@ -1,6 +1,6 @@
 // The "Confirming onchain | 0x…" status must link the tx hash to the right chain's block explorer.
 import { describe, it, expect } from 'vitest';
-import { setStatusContent, txExplorerUrl, truncAddr } from '../src/component-base.js';
+import { makeStatusSetter, setStatusContent, txExplorerUrl, truncAddr } from '../src/component-base.js';
 
 const HASH = '0x4d56' + 'a'.repeat(56) + 'f3d4';
 
@@ -25,5 +25,12 @@ describe('tx status hash → block-explorer link', () => {
     setStatusContent(el, 'Awaiting wallet confirmation…', undefined);
     expect(el.querySelector('a')).toBeNull();
     expect(el.textContent).toBe('Awaiting wallet confirmation…');
+  });
+  it('exposes its status element for adjacent recovery controls', () => {
+    const el = document.createElement('div');
+    const setStatus = makeStatusSetter(el, 'operator-edit-status');
+    expect(setStatus.element).toBe(el);
+    setStatus('Checking Relayr…', 'pending');
+    expect(el.className).toBe('operator-edit-status pending');
   });
 });

@@ -8,7 +8,7 @@
 //   1. buildForwardedTx(chainId, from, to, data)  -> signs ForwardRequest, returns {chain, target, data, value}
 //   2. relayrPostBundle(transactions)             -> POST /v1/bundle/prepaid -> { bundle_uuid, payment_info }
 //   3. relayrPay(payment)                         -> one onchain payment funds all chains
-//   4. relayrPoll(uuid, onUpdate)                 -> GET /v1/bundle/{uuid} until every tx is "Success"
+//   4. relayrPoll(uuid, onUpdate)                 -> GET /v1/bundle/{uuid} until every tx is complete
 //
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
 
@@ -17,6 +17,35 @@ import { getWalletClient, getAccount, createPublicClientForChain, getAddress, sw
 import { CHAINS } from './chain.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
+var RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:';
+var RELAYR_QUOTE_TIMEOUT_MS = 45 * 1000;
+var RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15 * 1000;
+
+// A backend fetch can stall without ever rejecting, which used to leave the UI frozen forever. Bound each
+// HTTP attempt; status polling will retry the same bundle, while quote requests fail before any payment.
+function relayrFetch(url, options, timeoutMs) {
+  return new Promise(function (resolve, reject) {
+    var settled = false;
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var requestOptions = Object.assign({}, options || {});
+    if (controller) requestOptions.signal = controller.signal;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      if (controller) controller.abort();
+      var error = new Error('Relayr request timed out.');
+      error.code = 'RELAYR_HTTP_TIMEOUT';
+      reject(error);
+    }, Math.max(1, Number(timeoutMs) || RELAYR_STATUS_REQUEST_TIMEOUT_MS));
+    fetch(url, requestOptions).then(function (value) {
+      if (settled) return;
+      settled = true; clearTimeout(timer); resolve(value);
+    }, function (error) {
+      if (settled) return;
+      settled = true; clearTimeout(timer); reject(error);
+    });
+  });
+}
 
 // Minimal OpenZeppelin ERC2771Forwarder surface.
 var FORWARDER_ABI = [
@@ -96,10 +125,20 @@ export async function relayrPostBundle(transactions) {
     var vn = perChain[t.chain] || 0; perChain[t.chain] = vn + 1;
     return Object.assign({}, t, { virtual_nonce: vn });
   });
-  var res = await fetch(RELAYR_API + '/v1/bundle/prepaid', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transactions: ordered, virtual_nonce_mode: 'ChainIndependent' }),
-  });
+  var res;
+  try {
+    res = await relayrFetch(RELAYR_API + '/v1/bundle/prepaid', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactions: ordered, virtual_nonce_mode: 'ChainIndependent' }),
+    }, RELAYR_QUOTE_TIMEOUT_MS);
+  } catch (error) {
+    if (error && error.code === 'RELAYR_HTTP_TIMEOUT') {
+      var timeout = new Error('Relayr did not return a quote in time. Nothing was paid; it is safe to try again.');
+      timeout.code = 'RELAYR_QUOTE_TIMEOUT'; timeout.retryable = true;
+      throw timeout;
+    }
+    throw error;
+  }
   if (!res.ok) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
     throw new Error('Relayr HTTP ' + res.status + (detail ? ': ' + detail.slice(0, 240) : ''));
@@ -140,26 +179,124 @@ export async function relayrPay(payment, expectedAccount) {
   return hash;
 }
 
-// Poll GET /v1/bundle/{uuid} every `intervalMs` until every transaction reports state "Success".
-// Calls onUpdate(transactions[]) each tick. Resolves with the final transactions; rejects on a "Failed"
-// transaction or timeout. Each transaction's dest hash lives at status.data.hash (Success) or
-// status.data.transaction.hash (other states).
+// Relayr has returned both Success and Completed for terminal successful records. Keep that protocol
+// detail in one place so progress counters cannot sit at 0/N after the destination already confirmed.
+export function relayrStateIsSuccess(state) {
+  state = String(state || '').toLowerCase();
+  return state === 'success' || state === 'completed';
+}
+
+export function relayrProgress(records, expectedCount) {
+  records = Array.isArray(records) ? records : [];
+  var confirmed = records.filter(function (t) { return relayrStateIsSuccess(t && t.status && t.status.state); }).length;
+  var failed = records.filter(function (t) { return String(t && t.status && t.status.state || '').toLowerCase() === 'failed'; }).length;
+  var expected = Number(expectedCount);
+  var total = Number.isSafeInteger(expected) && expected > 0 ? Math.max(expected, records.length) : records.length;
+  return { confirmed: confirmed, failed: failed, pending: Math.max(0, total - confirmed - failed), total: total };
+}
+
+function relayrExecutionError(message, code, uuid, records, retryable) {
+  var error = new Error(message);
+  error.name = 'RelayrExecutionError';
+  error.code = code;
+  error.bundleUuid = uuid;
+  error.records = Array.isArray(records) ? records : [];
+  error.retryable = !!retryable;
+  return error;
+}
+
+export function relayrErrorIsUncertain(error) {
+  return !!(error && error.code === 'RELAYR_TIMEOUT');
+}
+
+// Persist only the small, non-sensitive receipt needed to resume status checks. In particular, never put
+// signed forward requests or calldata in localStorage. `scope` is supplied by the feature (for example a
+// project-specific "add shop items" key).
+function relayrPendingStorageKey(scope) { return RELAYR_PENDING_PREFIX + String(scope || ''); }
+
+function relayrRecordSnapshot(record) {
+  return {
+    status: {
+      state: String(record && record.status && record.status.state || ''),
+      data: { hash: relayrDestinationHash(record) || null },
+    },
+  };
+}
+
+export function saveRelayrPendingSession(scope, session) {
+  if (!scope || !session || !session.bundleUuid) return null;
+  var snapshot = {
+    bundleUuid: String(session.bundleUuid),
+    paymentHash: session.paymentHash ? String(session.paymentHash) : null,
+    paymentChainId: Number(session.paymentChainId) || null,
+    expectedCount: Math.max(0, Number(session.expectedCount) || 0),
+    chains: (session.chains || []).map(function (chain) {
+      return { id: Number(chain.id || chain.cid), name: String(chain.name || '') };
+    }).filter(function (chain) { return Number.isSafeInteger(chain.id) && chain.id > 0; }),
+    records: (session.records || []).map(relayrRecordSnapshot),
+    itemCount: Math.max(0, Number(session.itemCount) || 0),
+    account: session.account ? String(session.account) : null,
+    createdAt: Number(session.createdAt) || Date.now(),
+    persisted: true,
+  };
+  try { localStorage.setItem(relayrPendingStorageKey(scope), JSON.stringify(snapshot)); } catch (_) { snapshot.persisted = false; }
+  return snapshot;
+}
+
+export function loadRelayrPendingSession(scope) {
+  if (!scope) return null;
+  try {
+    var raw = localStorage.getItem(relayrPendingStorageKey(scope));
+    if (!raw) return null;
+    var session = JSON.parse(raw);
+    if (!session || typeof session.bundleUuid !== 'string' || !session.bundleUuid) throw new Error('Invalid Relayr session');
+    session.records = Array.isArray(session.records) ? session.records : [];
+    session.chains = Array.isArray(session.chains) ? session.chains : [];
+    session.expectedCount = Math.max(0, Number(session.expectedCount) || session.chains.length || 0);
+    return session;
+  } catch (_) {
+    try { localStorage.removeItem(relayrPendingStorageKey(scope)); } catch (_) {}
+    return null;
+  }
+}
+
+export function clearRelayrPendingSession(scope) {
+  try { localStorage.removeItem(relayrPendingStorageKey(scope)); } catch (_) {}
+}
+
+// Poll GET /v1/bundle/{uuid} every `intervalMs` until every transaction reports Success/Completed.
+// Calls onUpdate(transactions[]) each tick. Resolves with the final transactions; rejects with a structured
+// RelayrExecutionError on a terminal Failed record or timeout. A timeout means outcome unknown, not failed.
+// Each transaction's destination hash lives at status.data.hash or status.data.transaction.hash.
 export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
   intervalMs = intervalMs || 2500;
   timeoutMs = timeoutMs || 5 * 60 * 1000;
   var start = Date.now();
+  var lastRecords = [];
   return new Promise(function (resolve, reject) {
+    function timedOut() { return Date.now() - start >= timeoutMs; }
+    function timeout() {
+      return relayrExecutionError('Relayr is still processing paid bundle ' + uuid + '. Do not submit this action again; check the original bundle later.', 'RELAYR_TIMEOUT', uuid, lastRecords, true);
+    }
     function tick() {
-      fetch(RELAYR_API + '/v1/bundle/' + uuid).then(function (r) { return r.json(); }).then(function (body) {
+      var remaining = Math.max(1, timeoutMs - (Date.now() - start));
+      relayrFetch(RELAYR_API + '/v1/bundle/' + uuid, null, Math.min(RELAYR_STATUS_REQUEST_TIMEOUT_MS, remaining)).then(function (r) {
+        if (!r.ok) throw new Error('Relayr status HTTP ' + r.status);
+        return r.json();
+      }).then(function (body) {
         var txs = (body && body.transactions) || [];
+        lastRecords = txs;
         if (onUpdate) onUpdate(txs, body);
-        if (txs.length && txs.every(function (t) { return t.status && t.status.state === 'Success'; })) return resolve(txs);
-        var failed = txs.filter(function (t) { return t.status && t.status.state === 'Failed'; });
-        if (failed.length) return reject(new Error('Could not execute on ' + failed.length + ' chain' + (failed.length > 1 ? 's' : '') + '.'));
-        if (Date.now() - start > timeoutMs) return reject(new Error('Timed out waiting for Relayr execution.'));
+        if (txs.length && txs.every(function (t) { return relayrStateIsSuccess(t && t.status && t.status.state); })) return resolve(txs);
+        var failed = txs.filter(function (t) { return String(t && t.status && t.status.state || '').toLowerCase() === 'failed'; });
+        if (failed.length) return reject(relayrExecutionError(
+          'Relayr bundle ' + uuid + ' failed on ' + failed.length + ' chain' + (failed.length > 1 ? 's' : '') + '. Nothing was resubmitted; check confirmed chains before trying again.',
+          'RELAYR_FAILED', uuid, txs, false
+        ));
+        if (timedOut()) return reject(timeout());
         setTimeout(tick, intervalMs);
       }).catch(function () {
-        if (Date.now() - start > timeoutMs) return reject(new Error('Timed out waiting for Relayr execution.'));
+        if (timedOut()) return reject(timeout());
         setTimeout(tick, intervalMs);
       });
     }

@@ -2813,6 +2813,24 @@ input[type="checkbox"].field {
 .operator-edit-status.error { color: var(--c-pink); }
 .operator-edit-status.success { color: var(--c-green); }
 .operator-edit-actions { display: flex; justify-content: flex-end; gap: 16px; align-items: center; margin-top: 12px; }
+.relayr-pending-panel { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--c-teal); background: color-mix(in srgb, var(--c-teal) 5%, transparent); font-size: 11px; }
+.relayr-pending-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; color: var(--text); }
+.relayr-pending-count { color: var(--c-teal); white-space: nowrap; }
+.relayr-pending-count.err { color: var(--c-pink); }
+.relayr-pending-meta { margin-top: 5px; color: var(--muted-2); overflow-wrap: anywhere; }
+.relayr-pending-meta code { color: var(--text); font-family: inherit; }
+.relayr-pending-chains { margin-top: 8px; border-top: 1px solid var(--c-orange-light); }
+.relayr-pending-chain { display: flex; justify-content: space-between; gap: 12px; padding-top: 6px; }
+.relayr-pending-chain-state { text-align: right; }
+.relayr-pending-chain-state.ok { color: var(--c-green); }
+.relayr-pending-chain-state.err { color: var(--c-pink); }
+.relayr-pending-chain-state.pending { color: var(--c-teal); }
+.relayr-pending-note { margin-top: 9px; color: var(--muted-2); line-height: 1.4; }
+.relayr-pending-action, .relayr-pending-clear { font: inherit; cursor: pointer; }
+.relayr-pending-action { border: 0; padding: 0; background: none; }
+.relayr-pending-action:disabled { cursor: wait; opacity: 0.6; }
+.relayr-pending-clear { border: 0; padding: 0; background: none; color: var(--muted-2); text-decoration: underline; }
+.relayr-pending-panel .relayr-pending-clear { display: inline-block; margin-top: 10px; }
 /* Staged multi-item list in the "Add items for sale" modal. */
 .tier-staged { border: 1px solid var(--c-orange-light); padding: 10px 14px; margin-top: 16px; }
 .tier-staged-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; font-size: 13px; }
@@ -2822,6 +2840,7 @@ input[type="checkbox"].field {
   text-decoration: none; display: inline-block;
 }
 .operator-edit-submit:hover { color: var(--c-black); opacity: 0.9; }
+.operator-edit-submit.disabled { opacity: 0.55; cursor: wait; }
 .extras-body { max-width: 760px; }
 .extras-payer-copy { color: var(--muted-2); margin-bottom: 10px; max-width: 68ch; }
 .extras-label { margin-top: 12px; }

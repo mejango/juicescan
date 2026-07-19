@@ -186,10 +186,14 @@ export function setStatusContent(elem, msg, meta) {
 
 export function makeStatusSetter(elem, baseClass) {
   baseClass = baseClass || 'modal-status';
-  return function (msg, kind, meta) {
+  var set = function (msg, kind, meta) {
     elem.className = baseClass + (kind ? ' ' + kind : '');
     setStatusContent(elem, msg, meta);
   };
+  // Relayr's shared recovery UI uses this to place a durable receipt + same-bundle status action beside
+  // whichever status line a feature already owns. Keeping it on the function avoids widening every caller.
+  set.element = elem;
+  return set;
 }
 
 // --- URL hash helpers ---

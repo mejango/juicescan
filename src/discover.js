@@ -2,13 +2,13 @@
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
-import { createPublicClient, http, keccak256, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval } from './component-base.js';
+import { createPublicClient, http, keccak256, stringToHex, encodeAbiParameters, encodeFunctionData, formatEther, toEventSelector } from 'viem';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onWalletChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, waitForErc20Approval, txExplorerUrl } from './component-base.js';
 import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll } from './relayr.js';
+import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrDestinationHash, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
@@ -1663,6 +1663,8 @@ function resolveSplitProject(projectId, chainId) {
 function openAddTierModal(project, shop) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
+  var relayScope = 'shop-add-items:' + Number(project.chainId) + ':' + String(project.id);
+  var pendingSession = loadRelayrPendingSession(relayScope);
   var allChains = (project.chains && project.chains.length)
     ? project.chains
     : [{ id: project.chainId, name: (CHAINS[project.chainId] && CHAINS[project.chainId].name) || ('Chain ' + project.chainId) }];
@@ -2121,12 +2123,107 @@ function openAddTierModal(project, shop) {
   }
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
+  var relayPanel = el('div', 'relayr-pending-panel'); relayPanel.style.display = 'none'; content.appendChild(relayPanel);
   var actions = el('div', 'operator-edit-actions');
+  var retryRelayr = document.createElement('button'); retryRelayr.type = 'button'; retryRelayr.className = 'operator-cta relayr-pending-action'; retryRelayr.textContent = 'Check Relayr status'; retryRelayr.style.display = 'none'; actions.appendChild(retryRelayr);
+  var clearRelayr = document.createElement('button'); clearRelayr.type = 'button'; clearRelayr.className = 'relayr-pending-clear'; clearRelayr.textContent = 'Clear saved receipt'; clearRelayr.style.display = 'none'; actions.appendChild(clearRelayr);
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = 'Add items for sale'; actions.appendChild(submit);
   content.appendChild(actions);
 
   var modal = openModal('Add items for sale', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
+
+  function pendingProgress(session) {
+    return relayrProgress(session && session.records, session && session.expectedCount);
+  }
+  function pendingHasFailure(session) { return pendingProgress(session).failed > 0; }
+  function relayrStateLabel(record) {
+    var state = String(record && record.status && record.status.state || '');
+    if (relayrStateIsSuccess(state)) return { text: 'Confirmed', kind: 'ok' };
+    if (state.toLowerCase() === 'failed') return { text: 'Failed', kind: 'err' };
+    return { text: state || 'Waiting for Relayr', kind: 'pending' };
+  }
+  function renderPendingSession(session, checking) {
+    if (!session) { relayPanel.style.display = 'none'; return; }
+    relayPanel.style.display = '';
+    relayPanel.innerHTML = '';
+    var progress = pendingProgress(session);
+    var head = el('div', 'relayr-pending-head');
+    var title = el('strong'); title.textContent = 'Paid Relayr request'; head.appendChild(title);
+    var count = el('span', 'relayr-pending-count' + (progress.failed ? ' err' : '')); count.textContent = progress.confirmed + '/' + progress.total + ' confirmed'; head.appendChild(count);
+    relayPanel.appendChild(head);
+
+    var bundleLine = el('div', 'relayr-pending-meta'); bundleLine.appendChild(document.createTextNode('Bundle '));
+    var bundleId = document.createElement('code'); bundleId.textContent = session.bundleUuid; bundleLine.appendChild(bundleId); relayPanel.appendChild(bundleLine);
+    if (session.paymentHash) {
+      var paymentLine = el('div', 'relayr-pending-meta'); paymentLine.appendChild(document.createTextNode('Payment '));
+      var explorer = txExplorerUrl(session.paymentChainId, session.paymentHash);
+      if (explorer) {
+        var paymentLink = document.createElement('a'); paymentLink.href = explorer; paymentLink.target = '_blank'; paymentLink.rel = 'noopener'; paymentLink.textContent = truncAddr(session.paymentHash); paymentLine.appendChild(paymentLink);
+      } else paymentLine.appendChild(document.createTextNode(truncAddr(session.paymentHash)));
+      relayPanel.appendChild(paymentLine);
+    }
+
+    var chains = session.chains || [];
+    var records = session.records || [];
+    var rowCount = Math.max(Number(session.expectedCount) || 0, chains.length, records.length);
+    var rows = el('div', 'relayr-pending-chains');
+    for (var ri = 0; ri < rowCount; ri++) {
+      var row = el('div', 'relayr-pending-chain');
+      var chain = chains[ri]; var chainName = el('span'); chainName.textContent = chain && chain.name || ('Chain ' + (ri + 1)); row.appendChild(chainName);
+      var state = relayrStateLabel(records[ri]); var destinationHash = relayrDestinationHash(records[ri]); var destinationHref = destinationHash && chain && txExplorerUrl(chain.id, destinationHash);
+      var stateNode = destinationHref ? document.createElement('a') : document.createElement('span'); stateNode.className = 'relayr-pending-chain-state ' + state.kind; stateNode.textContent = state.text;
+      if (destinationHref) { stateNode.href = destinationHref; stateNode.target = '_blank'; stateNode.rel = 'noopener'; }
+      row.appendChild(stateNode);
+      rows.appendChild(row);
+    }
+    relayPanel.appendChild(rows);
+    var note = el('div', 'relayr-pending-note');
+    note.textContent = progress.failed
+      ? 'Nothing was automatically resubmitted. Review the Shop before retrying; some chains may already have confirmed.'
+      : (session.persisted === false
+        ? 'This request is already paid. Keep this window open or copy the bundle ID—this browser could not save the receipt. Do not submit these items again.'
+        : 'This request is already paid. It is safe to close this window—the receipt is saved here. Do not submit these items again while it is unresolved.');
+    relayPanel.appendChild(note);
+
+    submit.style.display = 'none';
+    retryRelayr.style.display = '';
+    retryRelayr.disabled = !!checking;
+    retryRelayr.textContent = checking ? 'Checking…' : 'Check Relayr status';
+    clearRelayr.style.display = progress.failed ? '' : 'none';
+  }
+  function rememberPendingSession(session, records) {
+    if (!session) return null;
+    if (records) session.records = records;
+    pendingSession = saveRelayrPendingSession(relayScope, session) || session;
+    renderPendingSession(pendingSession, true);
+    return pendingSession;
+  }
+  function finishAddItems(session) {
+    var n = Math.max(1, Number(session && session.itemCount) || 1);
+    var chainCount = Math.max(1, Number(session && session.expectedCount) || 1);
+    clearRelayrPendingSession(relayScope);
+    pendingSession = null;
+    retryRelayr.style.display = 'none'; clearRelayr.style.display = 'none'; submit.style.display = 'none';
+    relayPanel.style.display = 'none';
+    bustTiersCache(project);
+    setStatus(n + ' item' + (n > 1 ? 's' : '') + ' added on ' + chainCount + ' chain' + (chainCount > 1 ? 's' : ''), 'success');
+    setTimeout(function () { modal.close(); }, 1400);
+  }
+  function handleRelayrIssue(error) {
+    var session = error && error.relayrSession || pendingSession;
+    if (!session) return false;
+    if (error && error.records) session.records = error.records;
+    rememberPendingSession(session);
+    var progress = pendingProgress(pendingSession);
+    if (progress.failed) {
+      setStatus('Relayr confirmed ' + progress.confirmed + '/' + progress.total + ' chains and reported ' + progress.failed + ' failed. Nothing was resubmitted.', 'error');
+    } else {
+      setStatus('Relayr has not finished yet — ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (pendingSession.persisted === false ? 'Keep this window open and copy the bundle ID; the receipt could not be saved.' : 'Your paid request is saved; use “Check Relayr status” instead of submitting again.'), 'pending');
+    }
+    renderPendingSession(pendingSession, false);
+    return true;
+  }
 
   addAnother.addEventListener('click', function (e) {
     e.preventDefault();
@@ -2139,6 +2236,42 @@ function openAddTierModal(project, shop) {
   });
 
   var busy = false;
+  function setSubmitBusy(value) {
+    busy = !!value;
+    submit.classList.toggle('disabled', busy);
+    submit.setAttribute('aria-disabled', busy ? 'true' : 'false');
+    if (!pendingSession) submit.textContent = busy ? 'Preparing items…' : 'Add items for sale';
+  }
+  function checkPendingRelayr(timeoutMs) {
+    if (busy || !pendingSession) return;
+    busy = true;
+    renderPendingSession(pendingSession, true);
+    setStatus('Checking the saved Relayr bundle…', 'pending');
+    relayrPoll(pendingSession.bundleUuid, function (records) {
+      rememberPendingSession(pendingSession, records);
+      var progress = pendingProgress(pendingSession);
+      setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (pendingSession.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'This paid request is saved.'), 'pending');
+    }, 2500, timeoutMs || 60 * 1000).then(function (records) {
+      pendingSession.records = records;
+      finishAddItems(pendingSession);
+    }).catch(function (error) {
+      if (error && typeof error === 'object') error.relayrSession = pendingSession;
+      handleRelayrIssue(error);
+    }).finally(function () {
+      busy = false;
+      if (pendingSession) renderPendingSession(pendingSession, false);
+    });
+  }
+
+  retryRelayr.addEventListener('click', function () { checkPendingRelayr(60 * 1000); });
+  clearRelayr.addEventListener('click', function () {
+    if (!pendingSession || !pendingHasFailure(pendingSession)) return;
+    if (!window.confirm('Clear this saved receipt? This does not undo chains that already confirmed. Refresh the Shop and retry only the chains that still need the items.')) return;
+    clearRelayrPendingSession(relayScope); pendingSession = null; relayPanel.style.display = 'none';
+    retryRelayr.style.display = 'none'; clearRelayr.style.display = 'none'; submit.style.display = '';
+    setStatus('Saved receipt cleared. Refresh the Shop before submitting again so confirmed items are not duplicated.', '');
+  });
+
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     if (busy) return;
@@ -2149,11 +2282,25 @@ function openAddTierModal(project, shop) {
     try { cur = collectForm(); } catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
     if (!formIsEmpty(cur)) forms.push(cur);
     if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
-    busy = true;
-    submitAddTiers(project, selected, operatorAddr, forms, setStatus, modal).catch(function (err) {
-      busy = false; setStatus(errMessage(err, 'Could not add the items.'), 'error');
+    setSubmitBusy(true);
+    submitAddTiers(project, selected, operatorAddr, forms, setStatus, {
+      onSession: function (session) { rememberPendingSession(session); },
+      onProgress: function (session, records) { rememberPendingSession(session, records); },
+    }).then(function (session) {
+      if (!session) { setSubmitBusy(false); return; }
+      finishAddItems(session);
+    }).catch(function (err) {
+      setSubmitBusy(false);
+      if (!handleRelayrIssue(err)) setStatus(errMessage(err, 'Could not add the items.'), 'error');
     });
   });
+
+  if (pendingSession) {
+    renderPendingSession(pendingSession, false);
+    var restored = pendingProgress(pendingSession);
+    setStatus('A paid Relayr request is still saved — ' + restored.confirmed + '/' + restored.total + ' chains confirmed. Checking it now…', 'pending');
+    setTimeout(function () { if (content.isConnected) checkPendingRelayr(15 * 1000); }, 0);
+  }
 }
 
 // Parse a plain split row ({recip, benef}) → {projectId, beneficiary}. Mirrors the live-row parse().
@@ -2171,7 +2318,8 @@ function parsePlainSplit(s) {
 
 // Add one or more NFT items (tiers) in a single adjustTiers tx per chain. `forms` is an array of plain
 // form snapshots (see collectForm in openAddTierModal).
-async function submitAddTiers(project, selectedChains, operatorAddr, forms, setStatus, modal) {
+async function submitAddTiers(project, selectedChains, operatorAddr, forms, setStatus, relayOptions) {
+  relayOptions = relayOptions || {};
   if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
   if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
   if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin item media + metadata.', 'error'); return; }
@@ -2298,13 +2446,18 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
   }
 
   var n = built.length;
-  await runRelayrAcrossChains(selectedChains, account, function (cid) {
+  var session = await runRelayrAcrossChains(selectedChains, account, function (cid) {
     return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [tiersFor(cid), []] }) };
-  }, (400000n + BigInt(n) * 400000n), setStatus, { label: 'Add items for sale', title: 'Confirm add items' });
-
-  bustTiersCache(project);
-  setStatus(n + ' item' + (n > 1 ? 's' : '') + ' added on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '', 'success');
-  setTimeout(function () { modal.close(); }, 1400);
+  }, (400000n + BigInt(n) * 400000n), setStatus, {
+    label: 'Add items for sale', title: 'Confirm add items', manualRecovery: true,
+    onSession: function (relaySession) {
+      relaySession.itemCount = n;
+      if (relayOptions.onSession) relayOptions.onSession(relaySession);
+    },
+    onProgress: relayOptions.onProgress,
+  });
+  session.itemCount = n;
+  return session;
 }
 
 // Operator-only: append one or more named store categories to the project metadata (projectUri) on every
@@ -2331,9 +2484,15 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
 
   setStatus('Pinning categories…', 'pending');
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
-  await runRelayrAcrossChains(chains, account, function (cid) {
+  var relaySession = await runRelayrAcrossChains(chains, account, function (cid) {
     return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [pidOn(project, cid), newUri] }) };
-  }, 400000n, setStatus, { label: 'Add store categories', title: 'Confirm categories' });
+  }, 400000n, setStatus, { label: 'Add store categories', title: 'Confirm categories', pendingScope: relayrActionScope(project, 'add-store-categories') });
+
+  if (relaySession && relaySession.resumed) {
+    setStatus(relayrRecoveredMessage(relaySession), 'success');
+    notifyProjectUpdated(project);
+    return null;
+  }
 
   project.storeCategories = cats;
   setStatus(names.length + ' categor' + (names.length > 1 ? 'ies' : 'y') + ' added', 'success');
@@ -2549,7 +2708,9 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
 }
 
 function shopOpSetStatus(statusEl) {
-  return function (m, kind) { statusEl.style.display = m ? '' : 'none'; statusEl.className = 'modal-status' + (kind ? ' ' + kind : ''); statusEl.textContent = m || ''; };
+  var set = function (m, kind) { statusEl.style.display = m ? '' : 'none'; statusEl.className = 'modal-status' + (kind ? ' ' + kind : ''); statusEl.textContent = m || ''; };
+  set.element = statusEl;
+  return set;
 }
 async function resolveHookMap(project, chains, tierId) {
   var hookMap = {}, tierMap = {};
@@ -2587,10 +2748,11 @@ async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
       throw new Error('Item #' + tier.id + ' cannot increase its discount on ' + (chain.name || chain.id) + '.');
     }
   });
-  await runRelayrAcrossChains(avail, account, function (cid) {
+  var relaySession = await runRelayrAcrossChains(avail, account, function (cid) {
     return { to: hookMap[cid], data: encodeFunctionData({ abi: setDiscountPercentsOfAbi, functionName: 'setDiscountPercentsOf', args: [[cfg]] }) };
-  }, 300000n, setStatus, { label: 'Set discount', title: 'Confirm discount' });
+  }, 300000n, setStatus, { label: 'Set discount', title: 'Confirm discount', pendingScope: relayrActionScope(project, 'set-discount', tier.id) });
   bustTiersCache(project);
+  if (relaySession && relaySession.resumed) { setStatus(relayrRecoveredMessage(relaySession), 'success'); return; }
   setStatus('Discount set on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : '') + '.', 'success');
 }
 // Operator: remove a tier from the shop on every chain (JB721TiersHook.adjustTiers with tierIdsToRemove).
@@ -2602,10 +2764,11 @@ async function submitRemoveTier(project, tier, statusEl) {
   avail.forEach(function (chain) {
     if (resolved.tiers[chain.id].flags && resolved.tiers[chain.id].flags.cantBeRemoved) throw new Error('Item #' + tier.id + ' cannot be removed on ' + (chain.name || chain.id) + '.');
   });
-  await runRelayrAcrossChains(avail, account, function (cid) {
+  var relaySession = await runRelayrAcrossChains(avail, account, function (cid) {
     return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[], [BigInt(tier.id)]] }) };
-  }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove' });
+  }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove', pendingScope: relayrActionScope(project, 'remove-item', tier.id) });
   bustTiersCache(project);
+  if (relaySession && relaySession.resumed) { setStatus(relayrRecoveredMessage(relaySession), 'success'); return; }
   setStatus('Removed on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : '') + '.', 'success');
 }
 
@@ -7788,8 +7951,11 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
-  await runRelayrAcrossChains(chains, account, buildCall, opts.gas || 500000n, setStatus, { label: opts.label, title: opts.title });
-  return { relayr: true };
+  var relaySession = await runRelayrAcrossChains(chains, account, buildCall, opts.gas || 500000n, setStatus, {
+    label: opts.label, title: opts.title,
+    pendingScope: opts.pendingScope || relayrActionScope(project, opts.label || opts.title),
+  });
+  return { relayr: true, resumed: !!(relaySession && relaySession.resumed), session: relaySession };
 }
 
 // Transfer operator (revnet) / ownership (custom) across the requested chain group, routed by authority type.
@@ -7819,6 +7985,7 @@ function openTransferAuthorityModal(project, opts) {
   actions.appendChild(submit); content.appendChild(actions);
   var modal = openModal(isRev ? 'Transfer operator' : 'Transfer ownership', content);
   function setStatus(m, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m; }
+  setStatus.element = status;
   var busy = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault(); if (busy) return; busy = true;
@@ -7835,8 +8002,9 @@ function openTransferAuthorityModal(project, opts) {
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
       if (res.relayr) {
-        setStatus((isRev ? 'Operator' : 'Ownership') + ' transferred on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.', 'success');
-        if (isRev && chains.some(function (c) { return Number(c.id) === Number(project.chainId); })) project.operator = to;
+        setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((isRev ? 'Operator' : 'Ownership') + ' transferred on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.'), 'success');
+        if (!res.resumed && isRev && chains.some(function (c) { return Number(c.id) === Number(project.chainId); })) project.operator = to;
+        if (res.resumed) notifyProjectUpdated(project);
         setTimeout(function () { modal.close(); }, 1400); return;
       }
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + ' — confirm + execute in the ' + (isRev ? 'Operator' : 'Owner') + ' tab.', 'success');
@@ -8020,10 +8188,193 @@ async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   return account;
 }
 
-// Shared: sign one ERC-2771 call per chain, quote the relayr bundle, take one payment, poll to completion.
-// buildCall(chainId) -> { to, data }. Resolves when every chain reports Success.
+function relayrActionScope(project, action, suffix) {
+  project = project || {};
+  var identity = project.id != null ? project.id
+    : (project.projectId != null ? project.projectId : (project.owner || project.operator || 'global'));
+  var cleanAction = String(action || 'action').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return 'action:' + Number(project.chainId || 0) + ':' + String(identity).toLowerCase() + ':' + cleanAction + (suffix ? ':' + suffix : '');
+}
+
+function relayrRecoveredMessage(session) {
+  var count = Math.max(1, Number(session && session.expectedCount) || (session && session.chains && session.chains.length) || 1);
+  return 'The previously paid Relayr request is confirmed on ' + count + ' chain' + (count === 1 ? '' : 's') + '. Refresh the affected data to review exactly what it changed.';
+}
+
+function relayrBundleScope(entries) {
+  var stable = (entries || []).map(function (entry) {
+    return [Number(entry.chain), String(entry.target || '').toLowerCase(), String(entry.data || ''), String(entry.value || '0')];
+  });
+  return 'bundle:' + keccak256(stringToHex(JSON.stringify(stable)));
+}
+
+function removeRelayrRecoveryPanel(setStatus) {
+  var statusEl = setStatus && setStatus.element;
+  var panel = statusEl && statusEl._relayrRecoveryPanel;
+  if (panel) panel.remove();
+  if (statusEl) statusEl._relayrRecoveryPanel = null;
+}
+
+// One recovery card for every Discover Relayr surface. It is intentionally status-only: retry means checking
+// the already-paid bundle, never creating another quote/payment. The feature's original promise stays pending
+// while this card is shown, so its normal success continuation still runs when the bundle eventually confirms.
+function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, allowNewAttempt, onClear) {
+  var statusEl = setStatus && setStatus.element;
+  if (!statusEl || !statusEl.parentNode) return false;
+  var panel = statusEl._relayrRecoveryPanel;
+  if (!panel) {
+    panel = el('div', 'relayr-pending-panel relayr-recovery-panel');
+    statusEl.parentNode.insertBefore(panel, statusEl.nextSibling);
+    statusEl._relayrRecoveryPanel = panel;
+  }
+  panel.innerHTML = '';
+  var progress = relayrProgress(session.records, session.expectedCount);
+  var head = el('div', 'relayr-pending-head');
+  var title = el('strong'); title.textContent = 'Paid Relayr request'; head.appendChild(title);
+  var count = el('span', 'relayr-pending-count' + (progress.failed ? ' err' : '')); count.textContent = progress.confirmed + '/' + progress.total + ' confirmed'; head.appendChild(count);
+  panel.appendChild(head);
+  var bundle = el('div', 'relayr-pending-meta'); bundle.appendChild(document.createTextNode('Bundle '));
+  var bundleId = document.createElement('code'); bundleId.textContent = session.bundleUuid; bundle.appendChild(bundleId); panel.appendChild(bundle);
+  if (session.paymentHash) {
+    var payment = el('div', 'relayr-pending-meta'); payment.appendChild(document.createTextNode('Payment '));
+    var href = txExplorerUrl(session.paymentChainId, session.paymentHash);
+    if (href) {
+      var link = document.createElement('a'); link.href = href; link.target = '_blank'; link.rel = 'noopener'; link.textContent = truncAddr(session.paymentHash); payment.appendChild(link);
+    } else payment.appendChild(document.createTextNode(truncAddr(session.paymentHash)));
+    panel.appendChild(payment);
+  }
+  var rows = el('div', 'relayr-pending-chains');
+  var chains = session.chains || [], records = session.records || [];
+  var countRows = Math.max(Number(session.expectedCount) || 0, chains.length, records.length);
+  for (var i = 0; i < countRows; i++) {
+    var row = el('div', 'relayr-pending-chain');
+    var chain = chains[i]; var chainLabel = el('span'); chainLabel.textContent = chain && chain.name || ('Chain ' + (i + 1)); row.appendChild(chainLabel);
+    var rawState = String(records[i] && records[i].status && records[i].status.state || '');
+    var success = relayrStateIsSuccess(rawState), failed = rawState.toLowerCase() === 'failed';
+    var destinationHash = relayrDestinationHash(records[i]); var destinationHref = destinationHash && chain && txExplorerUrl(chain.id, destinationHash);
+    var state = destinationHref ? document.createElement('a') : document.createElement('span'); state.className = 'relayr-pending-chain-state ' + (success ? 'ok' : (failed ? 'err' : 'pending'));
+    state.textContent = success ? 'Confirmed' : (failed ? 'Failed' : (rawState || 'Waiting for Relayr'));
+    if (destinationHref) { state.href = destinationHref; state.target = '_blank'; state.rel = 'noopener'; }
+    row.appendChild(state); rows.appendChild(row);
+  }
+  panel.appendChild(rows);
+  var note = el('div', 'relayr-pending-note');
+  if (mode === 'failed') {
+    note.textContent = allowNewAttempt
+      ? 'Relayr failed before any chain confirmed. This receipt is kept here for reference; review the error, then the action can be tried again.'
+      : 'Some chain outcomes may differ. Nothing was resubmitted—review the affected feature before attempting only the missing work.';
+  } else {
+    note.textContent = session.persisted === false
+      ? 'This request is already paid, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never creates another transaction.'
+      : 'This request is already paid. It is safe to close this window; the receipt is saved. Checking status never creates another transaction.';
+  }
+  panel.appendChild(note);
+  if (onCheck) {
+    var action = document.createElement('button'); action.type = 'button'; action.className = 'operator-cta relayr-pending-action';
+    action.disabled = mode === 'checking'; action.textContent = mode === 'checking' ? 'Checking…' : 'Check Relayr status';
+    action.addEventListener('click', onCheck); panel.appendChild(action);
+  }
+  if (onClear) {
+    var clear = document.createElement('button'); clear.type = 'button'; clear.className = 'relayr-pending-clear'; clear.textContent = 'Clear saved receipt';
+    clear.addEventListener('click', onClear); panel.appendChild(clear);
+  }
+  return true;
+}
+
+async function monitorRelayrSession(session, setStatus, opts) {
+  opts = opts || {};
+  var scope = opts.pendingScope;
+  var expected = Math.max(1, Number(session.expectedCount) || (session.chains && session.chains.length) || 1);
+  session.expectedCount = expected;
+  function persist(records) {
+    if (records) session.records = records;
+    if (scope) session = saveRelayrPendingSession(scope, session) || session;
+  }
+  function progressUpdate(records) {
+    persist(records);
+    var progress = relayrProgress(records, expected);
+    setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (session.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'This paid request is saved.'), 'pending');
+    renderRelayrRecoveryPanel(setStatus, session, 'checking');
+    if (opts.onProgress) { try { opts.onProgress(session, records, progress); } catch (_) {} }
+  }
+  async function poll(timeoutMs) {
+    renderRelayrRecoveryPanel(setStatus, session, 'checking');
+    try {
+      var records = await relayrPoll(session.bundleUuid, progressUpdate, 2500, timeoutMs);
+      session.records = records;
+      if (scope) clearRelayrPendingSession(scope);
+      removeRelayrRecoveryPanel(setStatus);
+      return session;
+    } catch (error) {
+      if (error && error.records) persist(error.records); else persist();
+      if (error && typeof error === 'object') error.relayrSession = session;
+      throw error;
+    }
+  }
+
+  persist();
+  setStatus('Payment confirmed — Relayr is executing on ' + expected + ' chain' + (expected === 1 ? '' : 's') + '. Do not submit again.', 'pending');
+  try {
+    return await poll(opts.initialTimeoutMs);
+  } catch (initialError) {
+    if (!initialError || initialError.code !== 'RELAYR_TIMEOUT') {
+      var failedProgress = relayrProgress(session.records, expected);
+      var allFailed = failedProgress.total > 0 && failedProgress.confirmed === 0 && failedProgress.failed >= failedProgress.total;
+      if (allFailed && scope) clearRelayrPendingSession(scope);
+      renderRelayrRecoveryPanel(setStatus, session, 'failed', null, allFailed, !allFailed && scope ? function () {
+        if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already confirmed. Review the affected feature and retry only missing work.')) return;
+        clearRelayrPendingSession(scope); removeRelayrRecoveryPanel(setStatus);
+        setStatus('Saved receipt cleared. Review confirmed chains before submitting any missing work again.', '');
+      } : null);
+      throw initialError;
+    }
+    if (!renderRelayrRecoveryPanel(setStatus, session, 'waiting')) {
+      initialError.message += ' Run this action again to check the saved receipt; no new bundle will be created.';
+      throw initialError;
+    }
+    return await new Promise(function (resolve, reject) {
+      function waitAgain(error) {
+        var progress = relayrProgress(session.records, expected);
+        setStatus('Relayr is taking longer than usual — ' + progress.confirmed + '/' + progress.total + ' chains confirmed. Use “Check Relayr status”; do not submit again.', 'pending');
+        renderRelayrRecoveryPanel(setStatus, session, 'waiting', check);
+        if (error && typeof error === 'object') error.relayrSession = session;
+      }
+      function check() {
+        setStatus('Checking the saved Relayr bundle…', 'pending');
+        renderRelayrRecoveryPanel(setStatus, session, 'checking', check);
+        poll(60 * 1000).then(resolve).catch(function (error) {
+          if (error && error.code === 'RELAYR_TIMEOUT') { waitAgain(error); return; }
+          var failedProgress = relayrProgress(session.records, expected);
+          var allFailed = failedProgress.total > 0 && failedProgress.confirmed === 0 && failedProgress.failed >= failedProgress.total;
+          if (allFailed && scope) clearRelayrPendingSession(scope);
+          renderRelayrRecoveryPanel(setStatus, session, 'failed', null, allFailed, !allFailed && scope ? function () {
+            if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already confirmed. Review the affected feature and retry only missing work.')) return;
+            clearRelayrPendingSession(scope); removeRelayrRecoveryPanel(setStatus);
+            setStatus('Saved receipt cleared. Review confirmed chains before submitting any missing work again.', '');
+          } : null);
+          reject(error);
+        });
+      }
+      waitAgain(initialError);
+    });
+  }
+}
+
+// Shared: sign one ERC-2771 call per chain, quote the Relayr bundle, take one payment, poll to completion.
+// buildCall(chainId) -> { to, data }. Once payment confirms, `onSession` receives the durable receipt callers
+// can use to resume polling the SAME bundle. A post-payment error carries that receipt as `.relayrSession` so
+// callers never have to guess whether it is safe to create a second bundle.
 async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus, confirmOpts) {
   confirmOpts = confirmOpts || {};
+  if (confirmOpts.pendingScope && !confirmOpts.manualRecovery) {
+    var restored = loadRelayrPendingSession(confirmOpts.pendingScope);
+    if (restored) {
+      setStatus('Found a paid Relayr request for this action. Checking it instead of submitting again…', 'pending');
+      var resumed = await monitorRelayrSession(restored, setStatus, Object.assign({}, confirmOpts, { initialTimeoutMs: 60 * 1000 }));
+      resumed.resumed = true;
+      return resumed;
+    }
+  }
   // Build each chain's call first so we can show the exact onchain target + calldata before anything is signed.
   var calls = [];
   for (var i = 0; i < chains.length; i++) {
@@ -8046,6 +8397,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
   }
   setStatus('Requesting Relayr quote…', 'pending');
   var bundle = await relayrPostBundle(txs);
+  if (!bundle || !bundle.bundle_uuid) throw new Error('Relayr returned no bundle ID. Nothing was paid.');
   var payments = bundle.payment_info || [];
   if (!payments.length) throw new Error('Relayr returned no payment option.');
   var connectedChainId = await getWalletClient().getChainId().catch(function () { return null; });
@@ -8055,12 +8407,34 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     await switchChain(payment.chain);
   }
   setStatus('Confirm the Relayr payment…', 'pending');
-  await relayrPay(payment, account);
-  setStatus('Payment sent — relaying to ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
-  await relayrPoll(bundle.bundle_uuid, function (records) {
-    var done = records.filter(function (t) { return t.status && t.status.state === 'Success'; }).length;
-    setStatus('Relaying… ' + done + '/' + records.length + ' chains confirmed', 'pending');
-  });
+  var paymentHash = await relayrPay(payment, account);
+  var session = {
+    bundleUuid: bundle.bundle_uuid,
+    paymentHash: paymentHash,
+    paymentChainId: Number(payment.chain),
+    expectedCount: chains.length,
+    chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
+    records: [],
+    account: account,
+    createdAt: Date.now(),
+    resumed: false,
+  };
+  if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
+  if (!confirmOpts.manualRecovery) return monitorRelayrSession(session, setStatus, confirmOpts);
+  setStatus('Payment confirmed — Relayr is executing on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '. Do not submit again.', 'pending');
+  try {
+    session.records = await relayrPoll(bundle.bundle_uuid, function (records) {
+      session.records = records;
+      var progress = relayrProgress(records, chains.length);
+      setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (confirmOpts.manualRecovery ? 'Do not submit it again.' : 'This paid request is saved.'), 'pending');
+      if (confirmOpts.onProgress) { try { confirmOpts.onProgress(session, records, progress); } catch (_) {} }
+    });
+  } catch (error) {
+    if (error && error.records) session.records = error.records;
+    if (error && typeof error === 'object') error.relayrSession = session;
+    throw error;
+  }
+  return session;
 }
 
 async function submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal) {
@@ -8101,9 +8475,16 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   setStatus('Pinning updated metadata…', 'pending');
   var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
 
-  await runRelayrAcrossChains(chains, account, function (cid) {
+  var relaySession = await runRelayrAcrossChains(chains, account, function (cid) {
     return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [pidOn(project, cid), newUri] }) };
-  }, 400000n, setStatus, { label: 'Edit project details', title: 'Confirm edit' });
+  }, 400000n, setStatus, { label: 'Edit project details', title: 'Confirm edit', pendingScope: relayrActionScope(project, 'edit-project-details') });
+
+  if (relaySession && relaySession.resumed) {
+    setStatus(relayrRecoveredMessage(relaySession), 'success');
+    notifyProjectUpdated(project);
+    setTimeout(function () { modal.close(); }, 1800);
+    return;
+  }
 
   setStatus('Project updated across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '.', 'success');
   // Reflect changes in memory + the live card without a reload.
@@ -8228,8 +8609,15 @@ async function submitTokenEdit(project, chains, operatorAddr, deployed, name, sy
   // EOA owner → the existing Relayr cross-chain path (the wallet itself is the owner).
   var account = await ensureProjectTokenManager(project, deployed ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20, setStatus);
   if (!account) return;
-  await runRelayrAcrossChains(chains, account, buildCall, deployed ? 300000n : 1500000n, setStatus,
-    { label: deployed ? 'Rename token' : 'Deploy ERC-20 token', title: deployed ? 'Confirm token rename' : 'Confirm token deploy' });
+  var relaySession = await runRelayrAcrossChains(chains, account, buildCall, deployed ? 300000n : 1500000n, setStatus,
+    { label: deployed ? 'Rename token' : 'Deploy ERC-20 token', title: deployed ? 'Confirm token rename' : 'Confirm token deploy', pendingScope: relayrActionScope(project, deployed ? 'rename-token' : 'deploy-token') });
+
+  if (relaySession && relaySession.resumed) {
+    setStatus(relayrRecoveredMessage(relaySession), 'success');
+    notifyProjectUpdated(project);
+    setTimeout(function () { modal.close(); }, 1800);
+    return;
+  }
 
   setStatus((deployed ? 'Token renamed on ' : 'Token deployed across ') + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '', 'success');
   project.tokenName = name; project.tokenSymbol = symbol;
@@ -8280,6 +8668,7 @@ function runRelayrBundle(entries, opts) {
       wrap.appendChild(pv);
     }
     var status = el('div', 'modal-status pending'); status.textContent = 'Requesting a Relayr quote…'; wrap.appendChild(status);
+    var setStatus = makeStatusSetter(status, 'modal-status');
     var choiceWrap = el('div', 'relayr-choice'); choiceWrap.style.display = 'none'; wrap.appendChild(choiceWrap);
     var foot = el('div', 'modal-foot');
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel'; foot.appendChild(cancel);
@@ -8288,7 +8677,40 @@ function runRelayrBundle(entries, opts) {
     var done = false; function finish(r) { if (done) return; done = true; modal.close(); resolve(r); }
     cancel.addEventListener('click', function () { finish({ done: false, cancelled: true }); });
 
+    var pendingScope = opts.pendingScope || relayrBundleScope(entries);
+    function updatePreview(txList) {
+      // Relayr returns results in submission order → index maps to our preview rows.
+      (txList || []).forEach(function (t, i) {
+        if (!pvStatus[i]) return;
+        var s = t.status && t.status.state;
+        if (relayrStateIsSuccess(s)) { pvStatus[i].textContent = 'done'; pvStatus[i].className = 'relayr-preview-status ok'; }
+        else if (String(s || '').toLowerCase() === 'failed') { pvStatus[i].textContent = 'failed'; pvStatus[i].className = 'relayr-preview-status err'; }
+        else { pvStatus[i].textContent = 'executing…'; pvStatus[i].className = 'relayr-preview-status pending'; }
+      });
+    }
+    function waitForBundle(session) {
+      return monitorRelayrSession(session, setStatus, { pendingScope: pendingScope, initialTimeoutMs: session === restored ? 60 * 1000 : undefined, onProgress: function (_session, txList) { updatePreview(txList); } })
+        .then(function () {
+          setStatus('Executed on ' + entries.length + ' chains.', 'success');
+          document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+          setTimeout(function () { finish({ done: true }); }, 1600);
+        })
+        .catch(function (error) {
+          cancel.disabled = false; cancel.textContent = 'Close';
+          setStatus(errMessage(error, 'Could not execute the Relayr bundle.'), 'error');
+        });
+    }
+
+    var restored = loadRelayrPendingSession(pendingScope);
+    if (restored) {
+      setStatus('Found a paid Relayr request. Checking it instead of creating another payment…', 'pending');
+      updatePreview(restored.records);
+      waitForBundle(restored);
+      return;
+    }
+
     relayrPostBundle(entries).then(function (quote) {
+      if (!quote || !quote.bundle_uuid) { setStatus('Relayr returned no bundle ID. Nothing was paid.', 'error'); return; }
       var options = (quote.payment_info || []).slice().sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : 1; });
       if (!options.length) { status.className = 'modal-status'; status.textContent = 'Relayr returned no payment option.'; return; }
       status.className = 'modal-status';
@@ -8308,26 +8730,20 @@ function runRelayrBundle(entries, opts) {
             if (cur !== o.chain) { status.textContent = 'Switching to ' + chainNameOf(o.chain) + '…'; await switchChain(o.chain); }
             status.textContent = 'Confirm the payment in your wallet…';
             var payHash = await relayrPay(o);
-            status.textContent = 'Paid | ' + truncAddr(payHash) + ' — relayers executing on each chain…';
-            await relayrPoll(quote.bundle_uuid, function (txList) {
-              // Relayr returns results in submission order → index maps to our preview rows.
-              (txList || []).forEach(function (t, i) {
-                if (!pvStatus[i]) return;
-                var s = t.status && t.status.state;
-                if (s === 'Success' || s === 'Completed') { pvStatus[i].textContent = 'done'; pvStatus[i].className = 'relayr-preview-status ok'; }
-                else if (s === 'Failed') { pvStatus[i].textContent = 'failed'; pvStatus[i].className = 'relayr-preview-status err'; }
-                else { pvStatus[i].textContent = 'executing…'; pvStatus[i].className = 'relayr-preview-status pending'; }
-              });
-              var n = (txList || []).filter(function (t) { return t.status && (t.status.state === 'Success' || t.status.state === 'Completed'); }).length;
-              status.textContent = 'Executing… ' + n + '/' + entries.length;
+            pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
+            await waitForBundle({
+              bundleUuid: quote.bundle_uuid, paymentHash: payHash, paymentChainId: Number(o.chain),
+              expectedCount: entries.length,
+              chains: (opts.preview || entries).map(function (entry) { return { id: Number(entry.cid || entry.chain), name: entry.chain || chainNameOf(entry.cid || entry.chain) }; }),
+              records: [], createdAt: Date.now(),
             });
-            status.className = 'modal-status success'; status.textContent = 'Executed on ' + entries.length + ' chains.';
-            document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
-            setTimeout(function () { finish({ done: true }); }, 1600);
-          } catch (e) { pay.disabled = false; cancel.disabled = false; sel.disabled = false; status.className = 'modal-status'; status.textContent = (e && (e.shortMessage || e.message)) || String(e); }
+          } catch (e) {
+            pay.disabled = false; cancel.disabled = false; sel.disabled = false;
+            setStatus(errMessage(e, 'Could not pay the Relayr bundle.'), 'error');
+          }
         })();
       });
-    }).catch(function (e) { status.className = 'modal-status'; status.textContent = 'Could not get a Relayr quote: ' + ((e && e.message) || e); });
+    }).catch(function (e) { setStatus('Could not get a Relayr quote: ' + ((e && e.message) || e), 'error'); });
   });
 }
 
@@ -8495,6 +8911,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     }
 
     function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
+    setStatus.element = status;
     cancel.addEventListener('click', function () { finish(lastResult || { queued: 0, skipped: [], cancelled: true }); });
     // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; onchain chains get
     // approveHash, then execTransaction automatically once the threshold is met. Chains that still need more
@@ -9892,7 +10309,14 @@ function renderProjectPayerAddresses(project) {
   return wrap;
 }
 
-async function runProjectPayerRelayrDeploys(calls, setStatus) {
+async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
+  var restored = pendingScope && loadRelayrPendingSession(pendingScope);
+  if (restored) {
+    setStatus('Found a paid Relayr request for these payer addresses. Checking it instead of submitting again…', 'pending');
+    var resumed = await monitorRelayrSession(restored, setStatus, { pendingScope: pendingScope, initialTimeoutMs: 60 * 1000 });
+    resumed.resumed = true;
+    return resumed;
+  }
   var ok = await confirmTransactionModal({
     via: 'Relayr — one prepaid payment calls the permissionless project-payer deployer on each chain below',
     action: 'Deploy payer address',
@@ -9907,6 +10331,7 @@ async function runProjectPayerRelayrDeploys(calls, setStatus) {
 
   setStatus('Requesting Relayr quote…', 'pending');
   var bundle = await relayrPostBundle(calls.map(projectPayerRelayrEntry));
+  if (!bundle || !bundle.bundle_uuid) throw new Error('Relayr returned no bundle ID. Nothing was paid.');
   var payments = bundle.payment_info || [];
   if (!payments.length) throw new Error('Relayr returned no payment option');
   var wallet = getWalletClient();
@@ -9917,12 +10342,15 @@ async function runProjectPayerRelayrDeploys(calls, setStatus) {
     await switchChain(payment.chain);
   }
   setStatus('Confirm the Relayr payment…', 'pending');
-  await relayrPay(payment);
-  setStatus('Payment sent — relaying to ' + calls.length + ' chain' + (calls.length === 1 ? '' : 's') + '...', 'pending');
-  await relayrPoll(bundle.bundle_uuid, function (records) {
-    var done = records.filter(function (t) { return t.status && t.status.state === 'Success'; }).length;
-    setStatus('Relaying… ' + done + '/' + records.length + ' chains confirmed', 'pending');
-  });
+  var paymentHash = await relayrPay(payment);
+  return monitorRelayrSession({
+    bundleUuid: bundle.bundle_uuid,
+    paymentHash: paymentHash,
+    paymentChainId: Number(payment.chain),
+    expectedCount: calls.length,
+    chains: calls.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; }),
+    records: [], createdAt: Date.now(),
+  }, setStatus, { pendingScope: pendingScope });
 }
 
 // ---------------------------------------------------------------------------
@@ -10919,7 +11347,12 @@ function renderExtrasSection(project) {
           });
         });
       } else {
-        await runProjectPayerRelayrDeploys(calls, setStatus);
+        var relaySession = await runProjectPayerRelayrDeploys(calls, setStatus, relayrActionScope(project, 'deploy-payer-address'));
+        if (relaySession && relaySession.resumed) {
+          setStatus(relayrRecoveredMessage(relaySession), 'success');
+          if (payerList && payerList._refresh) payerList._refresh();
+          return;
+        }
       }
       setStatus('Payer address deployment complete on ' + selected.length + ' chain' + (selected.length === 1 ? '' : 's') + '.', 'success');
       if (payerList && payerList._refresh) payerList._refresh();
@@ -11713,6 +12146,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
   content.appendChild(actions);
   var modal = openModal(action.title, content);
   function setStatus(m, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m; }
+  setStatus.element = status;
 
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -11736,7 +12170,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
-      if (res.relayr) { setStatus((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.', 'success'); setTimeout(function () { modal.close(); }, 1600); return; }
+      if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.'), 'success'); setTimeout(function () { modal.close(); }, 1600); return; }
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + ' — confirm + execute in the queue above.', 'success');
       setTimeout(function () { modal.close(); }, 2600);
     })();
@@ -12215,6 +12649,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   content.appendChild(actions);
   var modal = openModal(editing ? 'Edit permissions' : 'Add operator', content);
   function setStatus(m, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m; }
+  setStatus.element = status;
 
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -12239,7 +12674,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
-      if (res.relayr) { setStatus('Permissions set on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.', 'success'); setTimeout(function () { modal.close(); }, 1600); return; }
+      if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ('Permissions set on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.'), 'success'); setTimeout(function () { modal.close(); }, 1600); return; }
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
       setTimeout(function () { modal.close(); }, 2600);
     })();
@@ -12579,6 +13014,7 @@ function openPowerModal(project, action) {
   content.appendChild(actions);
   var modal = openModal(action.title, content);
   function setStatus(m2, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m2; }
+  setStatus.element = status;
 
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -12607,7 +13043,7 @@ function openPowerModal(project, action) {
       busy = false;
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
-      if (res.relayr) { setStatus((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
+      if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.'), 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
       setTimeout(function () { modal.close(); }, 2600);
     })();
@@ -12749,6 +13185,7 @@ function openAddAccountingContextModal(project) {
   content.appendChild(actions);
   var modal = openModal('Add accounting token', content);
   function setStatus(m2, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m2; }
+  setStatus.element = status;
 
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -12781,7 +13218,7 @@ function openAddAccountingContextModal(project) {
       if (!res) return;
       if (res.cancelled) { setStatus('Cancelled', ''); return; }
       var skipNote = skippedNoUsdc.length ? ' (skipped ' + skippedNoUsdc.join(', ') + ' — no USDC)' : '';
-      if (res.relayr) { setStatus('Accounting token added on ' + usable.length + ' chain' + (usable.length > 1 ? 's' : '') + skipNote + '.', 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
+      if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ('Accounting token added on ' + usable.length + ' chain' + (usable.length > 1 ? 's' : '') + skipNote + '.'), 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
       setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + skipNote + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
       setTimeout(function () { modal.close(); }, 2600);
     })();
@@ -17515,7 +17952,12 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   }
 
   // Multiple selected chains → one Relayr bundle, with each entry targeting its verified wrapper/controller.
-  await runRelayrAcrossChains(selected, account, buildCall, 1500000n, setStatus, { label: 'Queue ruleset', title: 'Confirm queue ruleset' });
+  var relaySession = await runRelayrAcrossChains(selected, account, buildCall, 1500000n, setStatus, { label: 'Queue ruleset', title: 'Confirm queue ruleset', pendingScope: relayrActionScope(project, 'queue-ruleset') });
+  if (relaySession && relaySession.resumed) {
+    setStatus(relayrRecoveredMessage(relaySession), 'success');
+    notifyProjectUpdated(project);
+    return { executed: true, recovered: true };
+  }
   setStatus('Ruleset queued on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.', 'success');
   notifyProjectUpdated(project);
   return { executed: true };
@@ -17753,12 +18195,12 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     });
   }
 
-  await runRelayrAcrossChains(selectedChains, account, function (cid) {
+  var relaySession = await runRelayrAcrossChains(selectedChains, account, function (cid) {
     var groups = [{ groupId: groupMap[cid], splits: splitsForChain(cid) }];
     return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [pidOn(project, cid), BigInt(ridMap[cid]), groups] }) };
-  }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits' });
+  }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits', pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)) });
 
-  setStatus('Splits updated on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '.', 'success');
+  setStatus(relaySession && relaySession.resumed ? relayrRecoveredMessage(relaySession) : ('Splits updated on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '.'), 'success');
   setTimeout(function () { modal.close(); }, 1400);
   return true;
 }
