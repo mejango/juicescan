@@ -25,24 +25,19 @@ var RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15 * 1000;
 // HTTP attempt; status polling will retry the same bundle, while quote requests fail before any payment.
 function relayrFetch(url, options, timeoutMs) {
   return new Promise(function (resolve, reject) {
-    var settled = false;
     var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var requestOptions = Object.assign({}, options || {});
     if (controller) requestOptions.signal = controller.signal;
     var timer = setTimeout(function () {
-      if (settled) return;
-      settled = true;
       if (controller) controller.abort();
       var error = new Error('Relayr request timed out.');
       error.code = 'RELAYR_HTTP_TIMEOUT';
       reject(error);
     }, Math.max(1, Number(timeoutMs) || RELAYR_STATUS_REQUEST_TIMEOUT_MS));
     fetch(url, requestOptions).then(function (value) {
-      if (settled) return;
-      settled = true; clearTimeout(timer); resolve(value);
+      clearTimeout(timer); resolve(value);
     }, function (error) {
-      if (settled) return;
-      settled = true; clearTimeout(timer); reject(error);
+      clearTimeout(timer); reject(error);
     });
   });
 }
@@ -143,7 +138,9 @@ export async function relayrPostBundle(transactions) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
     throw new Error('Relayr HTTP ' + res.status + (detail ? ': ' + detail.slice(0, 240) : ''));
   }
-  return await res.json();
+  var body = await res.json();
+  if (!body || !body.bundle_uuid) throw new Error('Relayr returned no bundle ID. Nothing was paid.');
+  return body;
 }
 
 // Send the single prepaid payment that funds execution on every chain. Caller ensures the wallet is on
@@ -186,13 +183,21 @@ export function relayrStateIsSuccess(state) {
   return state === 'success' || state === 'completed';
 }
 
+export function relayrStateIsFailed(state) {
+  return String(state || '').toLowerCase() === 'failed';
+}
+
 export function relayrProgress(records, expectedCount) {
   records = Array.isArray(records) ? records : [];
   var confirmed = records.filter(function (t) { return relayrStateIsSuccess(t && t.status && t.status.state); }).length;
-  var failed = records.filter(function (t) { return String(t && t.status && t.status.state || '').toLowerCase() === 'failed'; }).length;
+  var failed = records.filter(function (t) { return relayrStateIsFailed(t && t.status && t.status.state); }).length;
   var expected = Number(expectedCount);
   var total = Number.isSafeInteger(expected) && expected > 0 ? Math.max(expected, records.length) : records.length;
-  return { confirmed: confirmed, failed: failed, pending: Math.max(0, total - confirmed - failed), total: total };
+  return {
+    confirmed: confirmed, failed: failed, pending: Math.max(0, total - confirmed - failed), total: total,
+    // The rule that decides whether a paid receipt may be auto-discarded; keep it in one place.
+    allFailed: total > 0 && confirmed === 0 && failed >= total,
+  };
 }
 
 function relayrExecutionError(message, code, uuid, records, retryable) {
@@ -213,6 +218,9 @@ export function relayrErrorIsUncertain(error) {
 // signed forward requests or calldata in localStorage. `scope` is supplied by the feature (for example a
 // project-specific "add shop items" key).
 function relayrPendingStorageKey(scope) { return RELAYR_PENDING_PREFIX + String(scope || ''); }
+
+// Status polling persists after every tick; skip the synchronous localStorage write when nothing changed.
+var RELAYR_LAST_SAVED = {};
 
 function relayrRecordSnapshot(record) {
   return {
@@ -235,11 +243,12 @@ export function saveRelayrPendingSession(scope, session) {
     }).filter(function (chain) { return Number.isSafeInteger(chain.id) && chain.id > 0; }),
     records: (session.records || []).map(relayrRecordSnapshot),
     itemCount: Math.max(0, Number(session.itemCount) || 0),
-    account: session.account ? String(session.account) : null,
-    createdAt: Number(session.createdAt) || Date.now(),
     persisted: true,
   };
-  try { localStorage.setItem(relayrPendingStorageKey(scope), JSON.stringify(snapshot)); } catch (_) { snapshot.persisted = false; }
+  var key = relayrPendingStorageKey(scope);
+  var serialized = JSON.stringify(snapshot);
+  if (RELAYR_LAST_SAVED[key] === serialized) return snapshot;
+  try { localStorage.setItem(key, serialized); RELAYR_LAST_SAVED[key] = serialized; } catch (_) { snapshot.persisted = false; }
   return snapshot;
 }
 
@@ -261,6 +270,7 @@ export function loadRelayrPendingSession(scope) {
 }
 
 export function clearRelayrPendingSession(scope) {
+  delete RELAYR_LAST_SAVED[relayrPendingStorageKey(scope)];
   try { localStorage.removeItem(relayrPendingStorageKey(scope)); } catch (_) {}
 }
 
@@ -288,7 +298,7 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs) {
         lastRecords = txs;
         if (onUpdate) onUpdate(txs, body);
         if (txs.length && txs.every(function (t) { return relayrStateIsSuccess(t && t.status && t.status.state); })) return resolve(txs);
-        var failed = txs.filter(function (t) { return String(t && t.status && t.status.state || '').toLowerCase() === 'failed'; });
+        var failed = txs.filter(function (t) { return relayrStateIsFailed(t && t.status && t.status.state); });
         if (failed.length) return reject(relayrExecutionError(
           'Relayr bundle ' + uuid + ' failed on ' + failed.length + ' chain' + (failed.length > 1 ? 's' : '') + '. Nothing was resubmitted; check confirmed chains before trying again.',
           'RELAYR_FAILED', uuid, txs, false

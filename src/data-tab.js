@@ -7,6 +7,7 @@ import { bendystrawQuery, getBendystrawNetwork, renderBendystrawSettings } from 
 import { FORMATTERS } from './bendystraw-format.js';
 import { getManifestChains } from './chain.js';
 import { setDiscoverNetwork } from './discover.js';
+import { copyPlainText } from './component-base.js';
 import { isAddress } from 'viem';
 
 // DATA-tab chain picker follows the Discover network toggle (jb-network), like the rest of the app.
@@ -507,24 +508,6 @@ function renderChainPills(varDef) {
   return wrapper;
 }
 
-function copyDataText(text) {
-  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
-  return new Promise(function (resolve, reject) {
-    try {
-      const area = document.createElement('textarea');
-      area.value = text;
-      area.setAttribute('readonly', '');
-      area.style.position = 'fixed';
-      area.style.opacity = '0';
-      document.body.appendChild(area);
-      area.select();
-      const copied = document.execCommand('copy');
-      area.remove();
-      copied ? resolve() : reject(new Error('copy failed'));
-    } catch (error) { reject(error); }
-  });
-}
-
 function dataCopyLink(label, title, buildText) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -534,7 +517,7 @@ function dataCopyLink(label, title, buildText) {
   button.addEventListener('click', function (event) {
     event.preventDefault();
     event.stopPropagation();
-    copyDataText(buildText()).then(function () {
+    copyPlainText(buildText()).then(function () {
       button.classList.add('comp-prompt-link--ok');
       button.textContent = '[copied]';
       setTimeout(function () {

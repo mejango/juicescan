@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValue, accountingTokenUsdValueAtPrice, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValueAtPrice, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -205,14 +205,6 @@ describe('source-of-truth data guards', () => {
     expect(projectIdsByChainFromSuckerGroup(data, 10, 99)).toEqual({ 10: 99 });
     expect(projectIdsByChainFromSuckerGroup(null, 10, 99)).toEqual({ 10: 99 });
     expect(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY).toMatch(/projects\(limit: 100\).*items/s);
-  });
-
-  it('prices only authoritative ETH/canonical-USDC balances', () => {
-    const usdc = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
-    const custom = '0x1111111111111111111111111111111111111111';
-    expect(accountingTokenUsdValue(2500000n, 6, usdc, 1, 3000)).toBe(2.5);
-    expect(accountingTokenUsdValue(10n ** 18n, 18, NATIVE_TOKEN, 1, 3000)).toBe(3000);
-    expect(accountingTokenUsdValue(10n ** 18n, 18, custom, 1, 3000)).toBeNull();
   });
 
   it('normalizes any accounting token with its verified USD quote and preserves raw mixed-token fallbacks', () => {

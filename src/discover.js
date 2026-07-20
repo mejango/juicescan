@@ -8,9 +8,10 @@ import { CHAINS, getChainTokens } from './chain.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrDestinationHash, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress } from './safe.js';
-import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
+import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
@@ -364,18 +365,6 @@ function base58Encode(bytes) {
   for (var z = 0; z < bytes.length && bytes[z] === 0; z++) out += '1';
   for (var k = digits.length - 1; k >= 0; k--) out += B58[digits[k]];
   return out;
-}
-function base58Decode(value) {
-  var bytes = [0];
-  for (var i = 0; i < value.length; i++) {
-    var digit = B58.indexOf(value[i]);
-    if (digit < 0) return null;
-    var carry = digit;
-    for (var j = 0; j < bytes.length; j++) { carry += bytes[j] * 58; bytes[j] = carry & 0xff; carry >>= 8; }
-    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
-  }
-  for (var z = 0; z < value.length && value[z] === '1'; z++) bytes.push(0);
-  return bytes.reverse();
 }
 function base32Encode(bytes) {
   var out = '', bits = 0, value = 0;
@@ -2136,55 +2125,17 @@ function openAddTierModal(project, shop) {
   function pendingProgress(session) {
     return relayrProgress(session && session.records, session && session.expectedCount);
   }
-  function pendingHasFailure(session) { return pendingProgress(session).failed > 0; }
-  function relayrStateLabel(record) {
-    var state = String(record && record.status && record.status.state || '');
-    if (relayrStateIsSuccess(state)) return { text: 'Confirmed', kind: 'ok' };
-    if (state.toLowerCase() === 'failed') return { text: 'Failed', kind: 'err' };
-    return { text: state || 'Waiting for Relayr', kind: 'pending' };
-  }
   function renderPendingSession(session, checking) {
     if (!session) { relayPanel.style.display = 'none'; return; }
     relayPanel.style.display = '';
-    relayPanel.innerHTML = '';
     var progress = pendingProgress(session);
-    var head = el('div', 'relayr-pending-head');
-    var title = el('strong'); title.textContent = 'Paid Relayr request'; head.appendChild(title);
-    var count = el('span', 'relayr-pending-count' + (progress.failed ? ' err' : '')); count.textContent = progress.confirmed + '/' + progress.total + ' confirmed'; head.appendChild(count);
-    relayPanel.appendChild(head);
-
-    var bundleLine = el('div', 'relayr-pending-meta'); bundleLine.appendChild(document.createTextNode('Bundle '));
-    var bundleId = document.createElement('code'); bundleId.textContent = session.bundleUuid; bundleLine.appendChild(bundleId); relayPanel.appendChild(bundleLine);
-    if (session.paymentHash) {
-      var paymentLine = el('div', 'relayr-pending-meta'); paymentLine.appendChild(document.createTextNode('Payment '));
-      var explorer = txExplorerUrl(session.paymentChainId, session.paymentHash);
-      if (explorer) {
-        var paymentLink = document.createElement('a'); paymentLink.href = explorer; paymentLink.target = '_blank'; paymentLink.rel = 'noopener'; paymentLink.textContent = truncAddr(session.paymentHash); paymentLine.appendChild(paymentLink);
-      } else paymentLine.appendChild(document.createTextNode(truncAddr(session.paymentHash)));
-      relayPanel.appendChild(paymentLine);
-    }
-
-    var chains = session.chains || [];
-    var records = session.records || [];
-    var rowCount = Math.max(Number(session.expectedCount) || 0, chains.length, records.length);
-    var rows = el('div', 'relayr-pending-chains');
-    for (var ri = 0; ri < rowCount; ri++) {
-      var row = el('div', 'relayr-pending-chain');
-      var chain = chains[ri]; var chainName = el('span'); chainName.textContent = chain && chain.name || ('Chain ' + (ri + 1)); row.appendChild(chainName);
-      var state = relayrStateLabel(records[ri]); var destinationHash = relayrDestinationHash(records[ri]); var destinationHref = destinationHash && chain && txExplorerUrl(chain.id, destinationHash);
-      var stateNode = destinationHref ? document.createElement('a') : document.createElement('span'); stateNode.className = 'relayr-pending-chain-state ' + state.kind; stateNode.textContent = state.text;
-      if (destinationHref) { stateNode.href = destinationHref; stateNode.target = '_blank'; stateNode.rel = 'noopener'; }
-      row.appendChild(stateNode);
-      rows.appendChild(row);
-    }
-    relayPanel.appendChild(rows);
-    var note = el('div', 'relayr-pending-note');
-    note.textContent = progress.failed
-      ? 'Nothing was automatically resubmitted. Review the Shop before retrying; some chains may already have confirmed.'
-      : (session.persisted === false
-        ? 'This request is already paid. Keep this window open or copy the bundle ID—this browser could not save the receipt. Do not submit these items again.'
-        : 'This request is already paid. It is safe to close this window—the receipt is saved here. Do not submit these items again while it is unresolved.');
-    relayPanel.appendChild(note);
+    renderRelayrReceiptInto(relayPanel, session, {
+      noteText: progress.failed
+        ? 'Nothing was automatically resubmitted. Review the Shop before retrying; some chains may already have confirmed.'
+        : (session.persisted === false
+          ? 'This request is already paid. Keep this window open or copy the bundle ID—this browser could not save the receipt. Do not submit these items again.'
+          : 'This request is already paid. It is safe to close this window—the receipt is saved here. Do not submit these items again while it is unresolved.'),
+    });
 
     submit.style.display = 'none';
     retryRelayr.style.display = '';
@@ -2265,7 +2216,7 @@ function openAddTierModal(project, shop) {
 
   retryRelayr.addEventListener('click', function () { checkPendingRelayr(60 * 1000); });
   clearRelayr.addEventListener('click', function () {
-    if (!pendingSession || !pendingHasFailure(pendingSession)) return;
+    if (!pendingSession || !pendingProgress(pendingSession).failed) return;
     if (!window.confirm('Clear this saved receipt? This does not undo chains that already confirmed. Refresh the Shop and retry only the chains that still need the items.')) return;
     clearRelayrPendingSession(relayScope); pendingSession = null; relayPanel.style.display = 'none';
     retryRelayr.style.display = 'none'; clearRelayr.style.display = 'none'; submit.style.display = '';
@@ -4375,8 +4326,9 @@ function ethSucksMediaGatewayUrl(path) {
   // Legacy UnixFS media is often CIDv0 (`Qm…`). Convert that same DAG-PB CID to CIDv1/base32 so it becomes a
   // DNS-safe subdomain without changing the addressed content.
   if (/^Qm/.test(cid)) {
-    var multihash = base58Decode(cid);
-    if (!multihash || multihash.length !== 34 || multihash[0] !== 0x12 || multihash[1] !== 0x20) return '';
+    var multihash;
+    try { multihash = Array.from(base58Decode(cid)); } catch (_) { return ''; }
+    if (multihash.length !== 34 || multihash[0] !== 0x12 || multihash[1] !== 0x20) return '';
     cid = 'b' + base32Encode([0x01, 0x70].concat(multihash));
   }
   if (cid !== cid.toLowerCase() || !/^[a-z0-9-]+$/.test(cid)) return '';
@@ -4778,18 +4730,6 @@ function readChainBalances(chainId, pid) {
   }).catch(function () { return { chainId: chainId, tokens: [], verified: false }; });
 }
 
-export function accountingTokenUsdValue(balance, decimals, token, chainId, ethUsd) {
-  if (balance == null) return null;
-  var amount;
-  try { amount = Number(formatAmount(BigInt(balance), decimals == null ? 18 : Number(decimals))); } catch (_) { return null; }
-  if (!isFinite(amount)) return null;
-  var address = String(token || '').toLowerCase();
-  if (address === NATIVE_TOKEN.toLowerCase()) return ethUsd == null ? null : amount * ethUsd;
-  var usdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase();
-  if (usdc && address === usdc) return amount;
-  return null; // A custom accounting token has no trustworthy USD price merely because it is an ERC-20.
-}
-
 // Convert a raw accounting-token balance using a verified USD price for one whole token. Keeping the token
 // decimals and quote precision separate avoids the common 6-decimal USDC / 18-decimal feed scaling bug.
 export function accountingTokenUsdValueAtPrice(balance, decimals, unitUsd, priceDecimals) {
@@ -4808,6 +4748,9 @@ export function accountingTokenUsdValueAtPrice(balance, decimals, unitUsd, price
 
 // Resolve USD-per-token through JBPrices so the aggregate honors protocol defaults, L2 sequencer-aware feeds,
 // and project-specific custom-token feeds. Canonical USDC and the direct ETH wrapper remain safe fallbacks.
+// Caches the in-flight promise so concurrent mounts (header + Funds card + grid in one render pass) share
+// one RPC read per (chain, project, currency). A null resolution is evicted so transient failures stay
+// retryable on the next render, matching the old cache-successes-only behavior.
 var ACCOUNTING_USD_PRICE_CACHE = {};
 function fetchAccountingTokenUsdPrice(chainId, pid, token) {
   var address = String(token && token.token || '').toLowerCase();
@@ -4815,19 +4758,18 @@ function fetchAccountingTokenUsdPrice(chainId, pid, token) {
   try { currency = BigInt(token.currency); } catch (_) { return Promise.resolve(null); }
   if (currency === 2n) return Promise.resolve(1000000000000000000n);
   var key = [chainId, String(pid), String(currency)].join(':');
-  if (ACCOUNTING_USD_PRICE_CACHE[key] != null) return Promise.resolve(ACCOUNTING_USD_PRICE_CACHE[key]);
+  if (ACCOUNTING_USD_PRICE_CACHE[key]) return ACCOUNTING_USD_PRICE_CACHE[key];
 
   var fromPrices = getAddress('JBPrices', chainId)
     ? read(chainId, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [BigInt(pid), 2n, currency, 18n])
       .then(function (quoted) {
         var value = BigInt(quoted);
         if (value <= 0n) throw new Error('Invalid USD quote.');
-        ACCOUNTING_USD_PRICE_CACHE[key] = value;
         return value;
       })
     : Promise.reject(new Error('JBPrices is unavailable.'));
 
-  return fromPrices.catch(function () {
+  var quote = fromPrices.catch(function () {
     var usdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase();
     if (usdc && address === usdc) return 1000000000000000000n;
     if (address === NATIVE_TOKEN.toLowerCase()) {
@@ -4838,7 +4780,12 @@ function fetchAccountingTokenUsdPrice(chainId, pid, token) {
       });
     }
     return null;
+  }).then(function (value) {
+    if (value == null) delete ACCOUNTING_USD_PRICE_CACHE[key];
+    return value;
   });
+  ACCOUNTING_USD_PRICE_CACHE[key] = quote;
+  return quote;
 }
 
 function accountingTokenContextKey(token, chainId) {
@@ -4871,8 +4818,10 @@ export function rawAccountingBalanceSummary(rows, readable) {
 // actually priced. Quotes come through JBPrices; raw per-token amounts remain the truthful fallback.
 function fetchBalanceBreakdown(project) {
   if (project._balBreakdown) return Promise.resolve(project._balBreakdown);
+  // Several surfaces (header, Funds card, grid card) mount in the same render pass; share one fan-out.
+  if (project._balBreakdownP) return project._balBreakdownP;
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
-  return Promise.all(chains.map(function (c) { return readChainBalances(c.id, pidOn(project, c.id)); })).then(function (results) {
+  project._balBreakdownP = Promise.all(chains.map(function (c) { return readChainBalances(c.id, pidOn(project, c.id)); })).then(function (results) {
     var hasContextFailure = results.some(function (result) { return !result.verified; });
     var quoteReads = [];
     results.forEach(function (cr) {
@@ -4902,22 +4851,10 @@ function fetchBalanceBreakdown(project) {
         });
       });
       rows.sort(function (a, b) { return (b.usd || 0) - (a.usd || 0); });
-      var active = rows.filter(function (r) { return r.hasBalance; });
-      var totalRows = active.length ? active : rows;
-      var activeKeys = {}; totalRows.forEach(function (r) { activeKeys[r.contextKey] = true; });
-      var singleTokenTotal = null;
-      if (!hasUnreadable && Object.keys(activeKeys).length === 1 && totalRows.length) {
-        singleTokenTotal = {
-          amount: totalRows.reduce(function (sum, r) { return sum + BigInt(r.balance || 0); }, 0n),
-          decimals: totalRows[0].decimals,
-          symbol: totalRows[0].symbol,
-        };
-      }
       var bd = {
         rows: rows,
         totalUsd: total,
         priced: !hasContextFailure && !hasUnreadable && !hasUnpricedBalance,
-        singleTokenTotal: singleTokenTotal,
         contextHomogeneous: !hasContextFailure && Object.keys(contextKeys).length <= 1,
         chainVerified: chainVerified,
       };
@@ -4927,7 +4864,8 @@ function fetchBalanceBreakdown(project) {
       if (!hasContextFailure && !hasUnreadable && !hasUnpricedBalance) project._balBreakdown = bd;
       return bd;
     });
-  });
+  }).finally(function () { project._balBreakdownP = null; });
+  return project._balBreakdownP;
 }
 
 // A balance shown as a USD total with a hover popup breaking it down per chain. Renders a loading
@@ -7984,8 +7922,7 @@ function openTransferAuthorityModal(project, opts) {
   var submit = el('a', 'operator-cta operator-edit-submit'); submit.href = '#'; submit.textContent = isRev ? 'Transfer operator' : 'Transfer ownership';
   actions.appendChild(submit); content.appendChild(actions);
   var modal = openModal(isRev ? 'Transfer operator' : 'Transfer ownership', content);
-  function setStatus(m, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m; }
-  setStatus.element = status;
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
     e.preventDefault(); if (busy) return; busy = true;
@@ -8227,48 +8164,17 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, allowNewAt
     statusEl.parentNode.insertBefore(panel, statusEl.nextSibling);
     statusEl._relayrRecoveryPanel = panel;
   }
-  panel.innerHTML = '';
-  var progress = relayrProgress(session.records, session.expectedCount);
-  var head = el('div', 'relayr-pending-head');
-  var title = el('strong'); title.textContent = 'Paid Relayr request'; head.appendChild(title);
-  var count = el('span', 'relayr-pending-count' + (progress.failed ? ' err' : '')); count.textContent = progress.confirmed + '/' + progress.total + ' confirmed'; head.appendChild(count);
-  panel.appendChild(head);
-  var bundle = el('div', 'relayr-pending-meta'); bundle.appendChild(document.createTextNode('Bundle '));
-  var bundleId = document.createElement('code'); bundleId.textContent = session.bundleUuid; bundle.appendChild(bundleId); panel.appendChild(bundle);
-  if (session.paymentHash) {
-    var payment = el('div', 'relayr-pending-meta'); payment.appendChild(document.createTextNode('Payment '));
-    var href = txExplorerUrl(session.paymentChainId, session.paymentHash);
-    if (href) {
-      var link = document.createElement('a'); link.href = href; link.target = '_blank'; link.rel = 'noopener'; link.textContent = truncAddr(session.paymentHash); payment.appendChild(link);
-    } else payment.appendChild(document.createTextNode(truncAddr(session.paymentHash)));
-    panel.appendChild(payment);
-  }
-  var rows = el('div', 'relayr-pending-chains');
-  var chains = session.chains || [], records = session.records || [];
-  var countRows = Math.max(Number(session.expectedCount) || 0, chains.length, records.length);
-  for (var i = 0; i < countRows; i++) {
-    var row = el('div', 'relayr-pending-chain');
-    var chain = chains[i]; var chainLabel = el('span'); chainLabel.textContent = chain && chain.name || ('Chain ' + (i + 1)); row.appendChild(chainLabel);
-    var rawState = String(records[i] && records[i].status && records[i].status.state || '');
-    var success = relayrStateIsSuccess(rawState), failed = rawState.toLowerCase() === 'failed';
-    var destinationHash = relayrDestinationHash(records[i]); var destinationHref = destinationHash && chain && txExplorerUrl(chain.id, destinationHash);
-    var state = destinationHref ? document.createElement('a') : document.createElement('span'); state.className = 'relayr-pending-chain-state ' + (success ? 'ok' : (failed ? 'err' : 'pending'));
-    state.textContent = success ? 'Confirmed' : (failed ? 'Failed' : (rawState || 'Waiting for Relayr'));
-    if (destinationHref) { state.href = destinationHref; state.target = '_blank'; state.rel = 'noopener'; }
-    row.appendChild(state); rows.appendChild(row);
-  }
-  panel.appendChild(rows);
-  var note = el('div', 'relayr-pending-note');
+  var noteText;
   if (mode === 'failed') {
-    note.textContent = allowNewAttempt
+    noteText = allowNewAttempt
       ? 'Relayr failed before any chain confirmed. This receipt is kept here for reference; review the error, then the action can be tried again.'
       : 'Some chain outcomes may differ. Nothing was resubmitted—review the affected feature before attempting only the missing work.';
   } else {
-    note.textContent = session.persisted === false
+    noteText = session.persisted === false
       ? 'This request is already paid, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never creates another transaction.'
       : 'This request is already paid. It is safe to close this window; the receipt is saved. Checking status never creates another transaction.';
   }
-  panel.appendChild(note);
+  renderRelayrReceiptInto(panel, session, { noteText: noteText });
   if (onCheck) {
     var action = document.createElement('button'); action.type = 'button'; action.className = 'operator-cta relayr-pending-action';
     action.disabled = mode === 'checking'; action.textContent = mode === 'checking' ? 'Checking…' : 'Check Relayr status';
@@ -8312,20 +8218,25 @@ async function monitorRelayrSession(session, setStatus, opts) {
     }
   }
 
+  // Terminal (non-timeout) failure: decide whether the paid receipt may be auto-discarded, then show the
+  // failed-state card. This rule guards "when may the user pay again" — keep it in this one helper.
+  function showFailurePanel() {
+    var allFailed = relayrProgress(session.records, expected).allFailed;
+    if (allFailed && scope) clearRelayrPendingSession(scope);
+    renderRelayrRecoveryPanel(setStatus, session, 'failed', null, allFailed, !allFailed && scope ? function () {
+      if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already confirmed. Review the affected feature and retry only missing work.')) return;
+      clearRelayrPendingSession(scope); removeRelayrRecoveryPanel(setStatus);
+      setStatus('Saved receipt cleared. Review confirmed chains before submitting any missing work again.', '');
+    } : null);
+  }
+
   persist();
   setStatus('Payment confirmed — Relayr is executing on ' + expected + ' chain' + (expected === 1 ? '' : 's') + '. Do not submit again.', 'pending');
   try {
     return await poll(opts.initialTimeoutMs);
   } catch (initialError) {
-    if (!initialError || initialError.code !== 'RELAYR_TIMEOUT') {
-      var failedProgress = relayrProgress(session.records, expected);
-      var allFailed = failedProgress.total > 0 && failedProgress.confirmed === 0 && failedProgress.failed >= failedProgress.total;
-      if (allFailed && scope) clearRelayrPendingSession(scope);
-      renderRelayrRecoveryPanel(setStatus, session, 'failed', null, allFailed, !allFailed && scope ? function () {
-        if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already confirmed. Review the affected feature and retry only missing work.')) return;
-        clearRelayrPendingSession(scope); removeRelayrRecoveryPanel(setStatus);
-        setStatus('Saved receipt cleared. Review confirmed chains before submitting any missing work again.', '');
-      } : null);
+    if (!relayrErrorIsUncertain(initialError)) {
+      showFailurePanel();
       throw initialError;
     }
     if (!renderRelayrRecoveryPanel(setStatus, session, 'waiting')) {
@@ -8343,15 +8254,8 @@ async function monitorRelayrSession(session, setStatus, opts) {
         setStatus('Checking the saved Relayr bundle…', 'pending');
         renderRelayrRecoveryPanel(setStatus, session, 'checking', check);
         poll(60 * 1000).then(resolve).catch(function (error) {
-          if (error && error.code === 'RELAYR_TIMEOUT') { waitAgain(error); return; }
-          var failedProgress = relayrProgress(session.records, expected);
-          var allFailed = failedProgress.total > 0 && failedProgress.confirmed === 0 && failedProgress.failed >= failedProgress.total;
-          if (allFailed && scope) clearRelayrPendingSession(scope);
-          renderRelayrRecoveryPanel(setStatus, session, 'failed', null, allFailed, !allFailed && scope ? function () {
-            if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already confirmed. Review the affected feature and retry only missing work.')) return;
-            clearRelayrPendingSession(scope); removeRelayrRecoveryPanel(setStatus);
-            setStatus('Saved receipt cleared. Review confirmed chains before submitting any missing work again.', '');
-          } : null);
+          if (relayrErrorIsUncertain(error)) { waitAgain(error); return; }
+          showFailurePanel();
           reject(error);
         });
       }
@@ -8397,7 +8301,6 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
   }
   setStatus('Requesting Relayr quote…', 'pending');
   var bundle = await relayrPostBundle(txs);
-  if (!bundle || !bundle.bundle_uuid) throw new Error('Relayr returned no bundle ID. Nothing was paid.');
   var payments = bundle.payment_info || [];
   if (!payments.length) throw new Error('Relayr returned no payment option.');
   var connectedChainId = await getWalletClient().getChainId().catch(function () { return null; });
@@ -8415,9 +8318,6 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     expectedCount: chains.length,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
     records: [],
-    account: account,
-    createdAt: Date.now(),
-    resumed: false,
   };
   if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
   if (!confirmOpts.manualRecovery) return monitorRelayrSession(session, setStatus, confirmOpts);
@@ -8426,7 +8326,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
     session.records = await relayrPoll(bundle.bundle_uuid, function (records) {
       session.records = records;
       var progress = relayrProgress(records, chains.length);
-      setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. ' + (confirmOpts.manualRecovery ? 'Do not submit it again.' : 'This paid request is saved.'), 'pending');
+      setStatus('Relaying… ' + progress.confirmed + '/' + progress.total + ' chains confirmed. Do not submit it again.', 'pending');
       if (confirmOpts.onProgress) { try { confirmOpts.onProgress(session, records, progress); } catch (_) {} }
     });
   } catch (error) {
@@ -8684,7 +8584,7 @@ function runRelayrBundle(entries, opts) {
         if (!pvStatus[i]) return;
         var s = t.status && t.status.state;
         if (relayrStateIsSuccess(s)) { pvStatus[i].textContent = 'done'; pvStatus[i].className = 'relayr-preview-status ok'; }
-        else if (String(s || '').toLowerCase() === 'failed') { pvStatus[i].textContent = 'failed'; pvStatus[i].className = 'relayr-preview-status err'; }
+        else if (relayrStateIsFailed(s)) { pvStatus[i].textContent = 'failed'; pvStatus[i].className = 'relayr-preview-status err'; }
         else { pvStatus[i].textContent = 'executing…'; pvStatus[i].className = 'relayr-preview-status pending'; }
       });
     }
@@ -8710,7 +8610,6 @@ function runRelayrBundle(entries, opts) {
     }
 
     relayrPostBundle(entries).then(function (quote) {
-      if (!quote || !quote.bundle_uuid) { setStatus('Relayr returned no bundle ID. Nothing was paid.', 'error'); return; }
       var options = (quote.payment_info || []).slice().sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : 1; });
       if (!options.length) { status.className = 'modal-status'; status.textContent = 'Relayr returned no payment option.'; return; }
       status.className = 'modal-status';
@@ -8735,7 +8634,7 @@ function runRelayrBundle(entries, opts) {
               bundleUuid: quote.bundle_uuid, paymentHash: payHash, paymentChainId: Number(o.chain),
               expectedCount: entries.length,
               chains: (opts.preview || entries).map(function (entry) { return { id: Number(entry.cid || entry.chain), name: entry.chain || chainNameOf(entry.cid || entry.chain) }; }),
-              records: [], createdAt: Date.now(),
+              records: [],
             });
           } catch (e) {
             pay.disabled = false; cancel.disabled = false; sel.disabled = false;
@@ -8910,8 +8809,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       });
     }
 
-    function setStatus(m, k) { status.className = 'modal-status' + (k ? ' ' + k : ''); status.textContent = m; }
-    setStatus.element = status;
+    var setStatus = makeStatusSetter(status);
     cancel.addEventListener('click', function () { finish(lastResult || { queued: 0, skipped: [], cancelled: true }); });
     // One CTA does the connected signer's part on EVERY chain: service chains get sign+queue; onchain chains get
     // approveHash, then execTransaction automatically once the threshold is met. Chains that still need more
@@ -10331,7 +10229,6 @@ async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
 
   setStatus('Requesting Relayr quote…', 'pending');
   var bundle = await relayrPostBundle(calls.map(projectPayerRelayrEntry));
-  if (!bundle || !bundle.bundle_uuid) throw new Error('Relayr returned no bundle ID. Nothing was paid.');
   var payments = bundle.payment_info || [];
   if (!payments.length) throw new Error('Relayr returned no payment option');
   var wallet = getWalletClient();
@@ -10349,7 +10246,7 @@ async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
     paymentChainId: Number(payment.chain),
     expectedCount: calls.length,
     chains: calls.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; }),
-    records: [], createdAt: Date.now(),
+    records: [],
   }, setStatus, { pendingScope: pendingScope });
 }
 
@@ -12145,8 +12042,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
   var gate = action.danger ? appendDangerGate(content, action.danger, submit, 'I’ve verified the values above and want to propose this admin action.') : null;
   content.appendChild(actions);
   var modal = openModal(action.title, content);
-  function setStatus(m, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m; }
-  setStatus.element = status;
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -12648,8 +12544,7 @@ function openSetPermissionsModal(project, existingOperator, existingPermIds) {
   var gate = appendDangerGate(content, 'Granting permissions lets the operator act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious operator can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the operator address and the permissions I’m granting.');
   content.appendChild(actions);
   var modal = openModal(editing ? 'Edit permissions' : 'Add operator', content);
-  function setStatus(m, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m; }
-  setStatus.element = status;
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -13013,8 +12908,7 @@ function openPowerModal(project, action) {
   var gate = action.danger ? appendDangerGate(content, action.danger, submit) : null;
   content.appendChild(actions);
   var modal = openModal(action.title, content);
-  function setStatus(m2, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m2; }
-  setStatus.element = status;
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   var busy = false;
   submit.addEventListener('click', function (e) {
@@ -13184,8 +13078,7 @@ function openAddAccountingContextModal(project) {
   var gate = appendDangerGate(content, 'Irreversible: once added, the terminal accepts this token forever — accounting tokens cannot be removed. Verify the token, decimals, and chains carefully before proceeding.', submit);
   content.appendChild(actions);
   var modal = openModal('Add accounting token', content);
-  function setStatus(m2, k) { status.className = 'operator-edit-status' + (k ? ' ' + k : ''); status.textContent = m2; }
-  setStatus.element = status;
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   var busy = false;
   submit.addEventListener('click', function (e) {

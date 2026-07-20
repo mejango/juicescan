@@ -24,7 +24,8 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 
@@ -2627,17 +2628,14 @@ function itemMediaPicker(state, nft, render) {
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
     if (!f) return;
-    if (!hasPinata()) {
-      nft._mediaError = 'Add a Pinata JWT in the Store config section to upload media.'; render(); alert(nft._mediaError); return;
-    }
-    if (f.size > ITEM_MAX_MEDIA_BYTES) {
-      nft._mediaError = 'That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'; render(); alert(nft._mediaError); return;
-    }
+    function fail(msg) { nft._mediaBusy = false; nft._mediaError = msg; render(); alert(msg); }
+    if (!hasPinata()) { fail('Add a Pinata JWT in the Store config section to upload media.'); return; }
+    if (f.size > ITEM_MAX_MEDIA_BYTES) { fail('That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
     nft._mediaBusy = true; nft._mediaError = ''; render();
     pinFile(f, nft.name || f.name).then(function (uri) {
       nft.imageUri = uri; nft.mediaType = mediaTypeForFile(f); nft._mediaBusy = false; nft._mediaError = ''; render();
     }).catch(function (e) {
-      nft._mediaBusy = false; nft._mediaError = 'Could not upload: ' + (e && e.message || e); render(); alert(nft._mediaError);
+      fail('Could not upload: ' + (e && e.message || e));
     });
   });
   w.appendChild(file);
@@ -2996,9 +2994,9 @@ function renderDeploy(state, render) {
   }
 
   // A Relayr payment may outlive this polling window or even the page. Restore its receipt before showing
-  // Launch again, and make the only available action re-check that SAME bundle.
-  var savedRelayr = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
-  if (savedRelayr) state._relayrPending = savedRelayr;
+  // Launch again, and make the only available action re-check that SAME bundle. Only hit localStorage when
+  // there is no live session — during active polling this renders every tick.
+  if (!state._relayrPending) state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
   if (state._relayrPending) {
     wrap.appendChild(createRelayrReceiptNode(state._relayrPending, state.deploying, function () { deploy(state, render); }, function () {
       state._relayrPending = null; state.deployProgress = null;
@@ -3472,7 +3470,7 @@ function friendlyDeployError(err) {
 function relayrChainStatus(t) {
   var s = (t && t.status && t.status.state) || '';
   if (relayrStateIsSuccess(s)) return { label: 'Deployed', kind: 'ok' };
-  if (String(s).toLowerCase() === 'failed') return { label: 'Failed', kind: 'err' };
+  if (relayrStateIsFailed(s)) return { label: 'Failed', kind: 'err' };
   return { label: 'Deploying…', kind: 'pending' };
 }
 
@@ -3504,9 +3502,7 @@ async function monitorCreateRelayr(state, session, resumed) {
     return records;
   } catch (error) {
     if (error && error.records) persist(error.records);
-    var progress = relayrProgress(session.records, expected);
-    var allFailed = progress.total > 0 && progress.confirmed === 0 && progress.failed >= progress.total;
-    if (allFailed) {
+    if (relayrProgress(session.records, expected).allFailed) {
       clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
       state._relayrPending = null;
       state.deployProgress = null;
@@ -3521,40 +3517,15 @@ async function monitorCreateRelayr(state, session, resumed) {
 function createRelayrReceiptNode(session, checking, onCheck, onClear) {
   var panel = el('div', 'relayr-pending-panel create-relayr-receipt');
   var progress = relayrProgress(session.records, session.expectedCount);
-  var head = el('div', 'relayr-pending-head');
-  var title = el('strong'); title.textContent = 'Paid Relayr request'; head.appendChild(title);
-  var count = el('span', 'relayr-pending-count' + (progress.failed ? ' err' : '')); count.textContent = progress.confirmed + '/' + progress.total + ' confirmed'; head.appendChild(count); panel.appendChild(head);
-  var bundle = el('div', 'relayr-pending-meta'); bundle.appendChild(document.createTextNode('Bundle '));
-  var bundleId = document.createElement('code'); bundleId.textContent = session.bundleUuid; bundle.appendChild(bundleId); panel.appendChild(bundle);
-  if (session.paymentHash) {
-    var payment = el('div', 'relayr-pending-meta'); payment.appendChild(document.createTextNode('Payment '));
-    var href = txExplorerUrl(session.paymentChainId, session.paymentHash);
-    if (href) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = truncAddr(session.paymentHash); payment.appendChild(a); }
-    else payment.appendChild(document.createTextNode(truncAddr(session.paymentHash)));
-    panel.appendChild(payment);
-  }
-  var rows = el('div', 'relayr-pending-chains');
-  var chains = session.chains || [], records = session.records || [];
-  var rowCount = Math.max(Number(session.expectedCount) || 0, chains.length, records.length);
-  for (var i = 0; i < rowCount; i++) {
-    var row = el('div', 'relayr-pending-chain');
-    var chain = chains[i]; var name = el('span'); name.textContent = chain && (chain.name || chainName(chain.id)) || ('Chain ' + (i + 1)); row.appendChild(name);
-    var state = relayrChainStatus(records[i]);
-    var destinationHash = relayrDestinationHash(records[i]);
-    var destinationHref = destinationHash && chain && txExplorerUrl(chain.id, destinationHash);
-    var value = destinationHref ? document.createElement('a') : document.createElement('span');
-    value.className = 'relayr-pending-chain-state ' + state.kind; value.textContent = state.label;
-    if (destinationHref) { value.href = destinationHref; value.target = '_blank'; value.rel = 'noopener'; }
-    row.appendChild(value); rows.appendChild(row);
-  }
-  panel.appendChild(rows);
-  var note = el('div', 'relayr-pending-note');
-  note.textContent = progress.failed
-    ? 'Some chain outcomes may differ. Nothing was resubmitted—review the project state before clearing this receipt or retrying missing work.'
-    : (session.persisted === false
-      ? 'The deployment is already paid, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never signs or pays again.'
-      : 'The deployment is already paid. It is safe to close this window; checking status never signs, pays, or creates another bundle.');
-  panel.appendChild(note);
+  renderRelayrReceiptInto(panel, session, {
+    stateLabel: function (record) { var s = relayrChainStatus(record); return { text: s.label, kind: s.kind }; },
+    chainNameOf: chainName,
+    noteText: progress.failed
+      ? 'Some chain outcomes may differ. Nothing was resubmitted—review the project state before clearing this receipt or retrying missing work.'
+      : (session.persisted === false
+        ? 'The deployment is already paid, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never signs or pays again.'
+        : 'The deployment is already paid. It is safe to close this window; checking status never signs, pays, or creates another bundle.'),
+  });
   var action = el('button', 'create-btn ghost'); action.type = 'button'; action.style.marginTop = '10px';
   if (progress.failed) {
     action.textContent = 'Clear saved receipt';
@@ -3638,9 +3609,9 @@ function beginDeployRun(state, render, owner) {
 
 async function runDeploy(state, owner) {
   var push = state._push;
-  var restoredRelayr = state._relayrPending || loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  // deploy() has already resolved any persisted session into state._relayrPending before reaching here.
+  var restoredRelayr = state._relayrPending;
   if (restoredRelayr) {
-    state._relayrPending = restoredRelayr;
     push('Checking the saved paid Relayr bundle — no new transaction will be created.');
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
@@ -3769,7 +3740,6 @@ async function runDeploy(state, owner) {
   }
   push('Sending to Relayr to simulate + quote…');
   var quote = await relayrPostBundle(txs);
-  if (!quote || !quote.bundle_uuid) throw new Error('Relayr returned no bundle ID. Nothing was paid.');
   var options = (quote.payment_info || []).slice().sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : 1; });
   if (!options.length) throw new Error('Relayr returned no payment options.');
   // Step 2: let the user pick a pay option from the quote (cheapest first), then pay it.
@@ -3796,7 +3766,7 @@ async function runDeploy(state, owner) {
     paymentChainId: Number(pay.chain),
     expectedCount: plans.length,
     chains: plans.map(function (p) { return { id: p.chainId, name: chainName(p.chainId) }; }),
-    records: [], account: signer, createdAt: Date.now(),
+    records: [],
   }, false);
   push('Reading the new project…');
   await captureDeployed(state, plans[0].chainId, relayrDestinationHash(finalRelayrTxs[0]));

@@ -25,11 +25,17 @@ describe('Relayr execution state', () => {
     expect(relayrStateIsSuccess('Success')).toBe(true);
     expect(relayrStateIsSuccess('Completed')).toBe(true);
     expect(relayrStateIsSuccess('Pending')).toBe(false);
-    expect(relayrProgress([], 1)).toEqual({ confirmed: 0, failed: 0, pending: 1, total: 1 });
+    expect(relayrProgress([], 1)).toEqual({ confirmed: 0, failed: 0, pending: 1, total: 1, allFailed: false });
     expect(relayrProgress([
       { status: { state: 'Completed' } },
       { status: { state: 'Failed' } },
-    ], 2)).toEqual({ confirmed: 1, failed: 1, pending: 0, total: 2 });
+    ], 2)).toEqual({ confirmed: 1, failed: 1, pending: 0, total: 2, allFailed: false });
+    // allFailed is the receipt auto-discard rule: only when every expected chain terminally failed.
+    expect(relayrProgress([
+      { status: { state: 'Failed' } },
+      { status: { state: 'Failed' } },
+    ], 2).allFailed).toBe(true);
+    expect(relayrProgress([{ status: { state: 'Failed' } }], 2).allFailed).toBe(false);
   });
 
   it('resolves when Relayr reports Completed', async () => {

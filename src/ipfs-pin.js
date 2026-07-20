@@ -119,8 +119,8 @@ export function unixFsFileBlock(content) {
   return concatBytes([new Uint8Array([0x0a]), varintBytes(unixFs.length), unixFs]); // PBNode field 1 (Data)
 }
 
-// Decode a base58 (Bitcoin alphabet) string to a Uint8Array.
-function base58Decode(str) {
+// Decode a base58 (Bitcoin alphabet) string to a Uint8Array. Throws on a non-alphabet character.
+export function base58Decode(str) {
   var bytes = [0];
   for (var i = 0; i < str.length; i++) {
     var value = B58_ALPHABET.indexOf(str[i]);

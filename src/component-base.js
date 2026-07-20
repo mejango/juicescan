@@ -806,7 +806,7 @@ export function buildTxLinkEntries(payload) {
   return entries;
 }
 
-function copyPlainText(text) {
+export function copyPlainText(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
   return new Promise(function (resolve, reject) {
     try {
