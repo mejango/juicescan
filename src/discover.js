@@ -5728,10 +5728,9 @@ function renderGrid() {
   netSel.title = 'Switch between mainnet and testnet deployments';
   netSel.addEventListener('change', function () { setDiscoverNetwork(netSel.value); });
   topRow.appendChild(netSel);
-  // Measure now AND after the monospace webfont loads — a one-shot measure races font loading and can size
-  // the select to a fallback-font width, clipping "Mainnets" to a sliver. CSS min-width is the final floor.
-  setTimeout(function () { fitSelectWidth(netSel); }, 0);
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { fitSelectWidth(netSel); });
+  // Size in ch so the width tracks the monospace font itself — a measured pixel width races font loading
+  // and drifts under iframe zoom (the Safe app clipped the trailing glyph). 15px covers the caret padding.
+  netSel.style.width = 'calc(' + (netSel.options[netSel.selectedIndex] || { text: 'Mainnets' }).text.length + 'ch + 15px)';
   var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
   createBtn.title = 'Create — in tuning before launch';
@@ -9086,23 +9085,6 @@ var ACTIVITY_TYPE_LABELS = {
   swap: 'Buyback swaps', buyback_pool: 'Buyback pools', bridge_claim: 'Bridge claims',
 };
 function activityTypeLabel(t) { return ACTIVITY_TYPE_LABELS[t] || String(t || 'activity').replace(/_/g, ' '); }
-
-// A native <select> sizes to its WIDEST option, so a short selected label leaves a big gap before the
-// caret. Shrink the select to fit just the selected option's text (+ room for the custom caret).
-function fitSelectWidth(sel) {
-  var opt = sel.options[sel.selectedIndex];
-  if (!opt) return;
-  var cs = getComputedStyle(sel);
-  var meas = document.createElement('span');
-  meas.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;';
-  meas.style.fontFamily = cs.fontFamily; meas.style.fontSize = cs.fontSize;
-  meas.style.fontWeight = cs.fontWeight; meas.style.letterSpacing = cs.letterSpacing;
-  meas.textContent = opt.text;
-  document.body.appendChild(meas);
-  var w = meas.getBoundingClientRect().width;
-  document.body.removeChild(meas);
-  sel.style.width = (Math.ceil(w) + 15) + 'px';
-}
 
 // Multi-select chain filter for the activity feed: a caret trigger that opens a checkbox popover, one
 // row per chain the project is deployed on. `selected()` returns null when all (or none) are checked
