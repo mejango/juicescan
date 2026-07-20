@@ -22560,10 +22560,9 @@ async function prepareAddLiquidity(opts) {
   var c1Native = !pairIsC0 && pair.isNative;
 
   // Contract wallets (Safes) can take a day+ per signing round, so allowances set on an earlier visit must
-  // survive a return trip. EIP-7702-delegated EOAs (code 0xef0100…) still sign like EOAs.
+  // survive a return trip.
   var client = clientFor(chainId);
-  var acctCode = await client.getCode({ address: acct }).catch(function () { return null; });
-  var smartWallet = !!(acctCode && acctCode !== '0x' && !String(acctCode).toLowerCase().startsWith('0xef0100'));
+  var smartWallet = await lpIsSmartWallet(chainId, acct);
   // An allowance must outlive the queue: a Safe's mint tx can execute a day+ after it's proposed.
   var p2Fresh = Math.floor(Date.now() / 1000) + (smartWallet ? 86400 : 0);
 
@@ -22606,6 +22605,14 @@ async function prepareAddLiquidity(opts) {
     unlockData: unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20, smartWallet: smartWallet,
     pa: opts.pa, pb: opts.pb, deadlineSecs: opts.deadlineSecs || null,
   };
+}
+
+// Contract wallet (Safe) detection — those queue txs for days, so LP deadlines/allowances must outlive the
+// signing rounds. EIP-7702-delegated EOAs (code 0xef0100…) still sign like EOAs. Unreadable code → EOA.
+function lpIsSmartWallet(chainId, acct) {
+  return clientFor(chainId).getCode({ address: acct }).then(function (code) {
+    return !!(code && code !== '0x' && !String(code).toLowerCase().startsWith('0xef0100'));
+  }).catch(function () { return false; });
 }
 
 // The chosen (or auto) mint-deadline window: EOAs sign immediately; a multisig queue needs weeks.
@@ -22857,9 +22864,8 @@ async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
   var reads = await Promise.all([
     lpReadPositionDetails(client, posm, [BigInt(pos.tokenId)], pos.poolId),
     client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] }),
-    client.getCode({ address: expectedAccount }).catch(function () { return null; }),
+    lpIsSmartWallet(chainId, expectedAccount),
   ]);
-  var acctCode = reads[2];
   var detail = reads[0][0];
   if (!detail.owner || detail.owner.toLowerCase() !== expectedAccount.toLowerCase()) throw new Error('This wallet no longer owns the position');
   if (detail.info === 0n || detail.liquidity <= 0n) throw new Error('This position no longer has liquidity');
@@ -22876,7 +22882,7 @@ async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
     tickUpper: tickUpper,
     pairAmt: pos.pairIsC0 ? amounts.amount0 : amounts.amount1,
     tokAmt: pos.pairIsC0 ? amounts.amount1 : amounts.amount0,
-    smartWallet: !!(acctCode && acctCode !== '0x' && !String(acctCode).toLowerCase().startsWith('0xef0100')),
+    smartWallet: reads[2],
   });
 }
 
@@ -23081,6 +23087,15 @@ function buildAddLiquidityModal(project) {
   dlSel.title = 'The mint reverts if executed after this. Price protection comes from the bounded max amounts, not the deadline.';
   dlRow.appendChild(dlLab); dlRow.appendChild(dlSel);
   wrap.appendChild(dlRow);
+  // Resolve the Auto label to what it will actually pick for the connected account (EOA vs multisig).
+  function updateDlAuto() {
+    var acct = getAccount && getAccount(), cid = state.chainId;
+    if (!acct) { dlSel.options[0].textContent = 'Auto — 20 min (30 days from a multisig)'; return; }
+    lpIsSmartWallet(cid, acct).then(function (smart) {
+      if (state.chainId !== cid || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) return;
+      dlSel.options[0].textContent = smart ? 'Auto — 30 days (multisig connected)' : 'Auto — 20 minutes';
+    });
+  }
 
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
@@ -23169,6 +23184,7 @@ function buildAddLiquidityModal(project) {
     if (!state.pair) return;
     var cid = state.chainId, pair = state.pair, seq = ++lpBalanceSeq;
     var acct = getAccount && getAccount();
+    updateDlAuto();
     if (!acct) { balLine.textContent = ''; state.revBal = null; state.ethBal = null; return; }
     balLine.textContent = 'Your ' + pairSym() + ': …';
     var pairTokenAddr = pair.isNative ? NATIVE_TOKEN : pair.addr;

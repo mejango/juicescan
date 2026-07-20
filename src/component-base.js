@@ -995,9 +995,18 @@ function txRawJson(tx) {
   return formatPayloadJson(obj);
 }
 // Plain-language confirm summary: an action line + labeled rows, for calls whose ABI decode is unreadable.
-function renderFriendlySummary(summary) {
+// Housed in the same bordered box as the decoded tree (chain eyebrow + contract | address) so every confirm
+// modal shares one anatomy, whether its pretty view is decoded args or prose rows.
+function renderFriendlySummary(summary, tx) {
   if (!summary) return null;
-  var wrap = el('div', 'tx-friendly');
+  var wrap = el('div', 'tx-decoded tx-friendly');
+  if (tx && tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; wrap.appendChild(ch); }
+  if (tx && (tx.contract || tx.address || tx.to)) {
+    var who = el('div', 'tx-decoded-target');
+    var nm = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : null;
+    who.textContent = (nm ? nm + ' | ' : '') + (tx.address || tx.to || '');
+    wrap.appendChild(who);
+  }
   if (summary.action) { var a = el('div', 'tx-friendly-action'); a.textContent = summary.action; wrap.appendChild(a); }
   (summary.rows || []).forEach(function (row) {
     var r = el('div', 'tx-friendly-row');
@@ -1030,7 +1039,7 @@ export function renderConfirmBody(content, payload, opts) {
   // A plain-language summary (payload.summary = { action, rows: [[label, value], …] }) reads first for calls
   // whose raw decode is opaque (e.g. the Universal Router's `execute(commands, inputs[], deadline)`); the exact
   // decoded call + raw payload move into "Show raw data" so nothing is hidden.
-  var friendly = payload.summary ? renderFriendlySummary(payload.summary) : null;
+  var friendly = payload.summary ? renderFriendlySummary(payload.summary, payload) : null;
   if (friendly) content.appendChild(friendly);
   var decoded = renderDecodedSummary(payload);
   if (decoded && !friendly) content.appendChild(decoded);
