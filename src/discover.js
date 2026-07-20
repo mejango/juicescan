@@ -21991,7 +21991,18 @@ async function lpSendTx(chainId, p) {
   var simulation = await client.simulateContract({ account: acct, address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
   if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId] }));
-  await client.waitForTransactionReceipt({ hash: hash });
+  try {
+    await client.waitForTransactionReceipt({ hash: hash, timeout: p.smartWallet ? 180000 : undefined });
+  } catch (e) {
+    // A multisig executes when its co-signers get to it — possibly days after the proposal. The receipt wait
+    // giving up is expected there, not a failure: stop gracefully and tell the user how the flow resumes.
+    if (p.smartWallet && /timed? ?out/i.test(String(e && e.message || ''))) {
+      var pending = new Error('Proposed to your multisig — the site stopped waiting for co-signers. Execute it in your Safe, then confirm here again; completed steps are skipped.');
+      pending.txStatusKind = 'pending';
+      throw pending;
+    }
+    throw e;
+  }
   return hash;
 }
 
@@ -22678,7 +22689,7 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     if (BigInt(erc20Allow) < side.max) {
       await guardQueued(side.currency, lpErc20ApprovePrefix(PERMIT2_ADDRESS), 'The token approval');
       onStatus(prep.smartWallet ? proposeMsg('the token approval') : 'Approving token for Permit2…', 'pending');
-      await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max] });
+      await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max], smartWallet: prep.smartWallet });
     }
     // 2. Permit2 → PositionManager allowance. Reuse if still valid; else sign one (gasless) and fold it
     //    into the mint multicall — no separate onchain approval tx.
@@ -22691,7 +22702,7 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
         // survive a multisig round anyway) — set the same allowance with an onchain Permit2.approve tx instead.
         await guardQueued(PERMIT2_ADDRESS, LP_SEL_PERMIT2_APPROVE, 'The Permit2 approval');
         onStatus(proposeMsg('the Permit2 approval'), 'pending');
-        await lpSendTx(chainId, { account: prep.acct, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve', args: [side.currency, posm, side.max, BigInt(now + Math.max(30 * 24 * 3600, dlSecs + 86400))] });
+        await lpSendTx(chainId, { account: prep.acct, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve', args: [side.currency, posm, side.max, BigInt(now + Math.max(30 * 24 * 3600, dlSecs + 86400))], smartWallet: true });
         continue;
       }
       onStatus('Sign token approval…', 'pending');
@@ -22717,9 +22728,9 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
   if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
-    return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value });
+    return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value, smartWallet: prep.smartWallet });
   }
-  return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline], value: prep.value });
+  return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline], value: prep.value, smartWallet: prep.smartWallet });
 }
 
 // Build the "exact transaction" preview payload (mirrors the Pay confirm), for openTxConfirm.
@@ -22937,13 +22948,14 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
             args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days — survives a multisig signing queue' : '20 min') + ')' },
           }, function (ctx) {
             ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Removing liquidity…', 'pending');
-            lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n }).then(function (hash) {
+            lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet }).then(function (hash) {
               ctx.modal.close();
               var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Removed | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
               row.innerHTML = ''; row.appendChild(ok);
               if (onDone) onDone();
             }).catch(function (e) {
               ctx.confirm.disabled = false; ctx.cancel.disabled = false;
+              if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
               var msg = errMessage(e, 'Remove failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
             });
           }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove', closeOnConfirm: false });
@@ -23259,6 +23271,7 @@ function buildAddLiquidityModal(project) {
           refreshBalances(); refreshPrice();
         }).catch(function (e) {
           ctx.confirm.disabled = false; ctx.cancel.disabled = false;
+          if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
           var msg = errMessage(e, 'Add liquidity failed');
           ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
         });
