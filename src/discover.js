@@ -22620,6 +22620,17 @@ function renderLpCompositionBar(lp, sym) {
 }
 
 // Full V4 mint: derive ticks/liquidity from the range + amounts, do Permit2 approvals, then
+// Reuse a still-sufficient allowance from an earlier visit: when the existing ERC20→Permit2 (erc20Allow) or
+// Permit2→posm (p2Amount, null when expired/absent) allowance covers the exact need but not the fresh 1%-headroom
+// max, clamp the pull cap down to it instead of re-asking. The headroom only pads against price drift between
+// prepare and mint; an exact-need cap just means the mint reverts (harmlessly, retry) if the price moved, instead
+// of burning a multi-day multisig approval round.
+export function lpClampToAllowances(max, need, erc20Allow, p2Amount) {
+  if (erc20Allow >= need && erc20Allow < max) max = erc20Allow;
+  if (p2Amount != null && p2Amount >= need && p2Amount < max) max = p2Amount;
+  return { max: max, approved: erc20Allow >= max, permitReady: p2Amount != null && p2Amount >= max };
+}
+
 // PositionManager.modifyLiquidities (MINT_POSITION, CLOSE c0, CLOSE c1, SWEEP native refund).
 // Read-only: derive ticks, liquidity, required amounts, and the encoded modifyLiquidities calldata.
 // No wallet/txs — used to build the preview before the user signs.
@@ -22672,10 +22683,25 @@ async function prepareAddLiquidity(opts) {
   // The native side (only ever the pair, when it's ETH) is sent as msg.value; ERC-20 sides go via Permit2.
   var c0Native = pairIsC0 && pair.isNative;
   var c1Native = !pairIsC0 && pair.isNative;
-  var value = c0Native ? amount0Max : (c1Native ? amount1Max : 0n);
+
+  // Contract wallets (Safes) can take a day+ per signing round, so allowances set on an earlier visit must
+  // survive a return trip. EIP-7702-delegated EOAs (code 0xef0100…) still sign like EOAs.
+  var client = clientFor(chainId);
+  var acctCode = await client.getCode({ address: acct }).catch(function () { return null; });
+  var smartWallet = !!(acctCode && acctCode !== '0x' && !String(acctCode).toLowerCase().startsWith('0xef0100'));
+  // An allowance must outlive the queue: a Safe's mint tx can execute a day+ after it's proposed.
+  var p2Fresh = Math.floor(Date.now() / 1000) + (smartWallet ? 86400 : 0);
+
+  async function sideWithAllowances(currency, max, need) {
+    var erc20Allow = BigInt(await client.readContract({ address: currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] }));
+    var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, currency, posm] });
+    var p2Amount = Number(p2[1]) > p2Fresh ? BigInt(p2[0]) : null;
+    return Object.assign({ currency: currency }, lpClampToAllowances(max, need, erc20Allow, p2Amount));
+  }
   var erc20 = [];
-  if (!c0Native && amount0Max > 1n) erc20.push({ currency: key.currency0, max: amount0Max });
-  if (!c1Native && amount1Max > 1n) erc20.push({ currency: key.currency1, max: amount1Max });
+  if (!c0Native && amount0Max > 1n) { var s0 = await sideWithAllowances(key.currency0, amount0Max, need.amount0); amount0Max = s0.max; erc20.push(s0); }
+  if (!c1Native && amount1Max > 1n) { var s1 = await sideWithAllowances(key.currency1, amount1Max, need.amount1); amount1Max = s1.max; erc20.push(s1); }
+  var value = c0Native ? amount0Max : (c1Native ? amount1Max : 0n);
 
   var mintParams = encodeAbiParameters(
     [
@@ -22702,13 +22728,39 @@ async function prepareAddLiquidity(opts) {
   return {
     posm: posm, key: key, acct: acct, tickLower: tickLower, tickUpper: tickUpper,
     liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max, value: value,
-    unlockData: unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20,
+    unlockData: unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20, smartWallet: smartWallet,
+    pa: opts.pa, pb: opts.pb, deadlineSecs: opts.deadlineSecs || null,
   };
+}
+
+// The chosen (or auto) mint-deadline window: EOAs sign immediately; a multisig queue needs weeks.
+function lpDeadlineSecs(prep) { return prep.deadlineSecs || (prep.smartWallet ? 30 * 24 * 3600 : 1200); }
+function lpFmtDuration(secs) {
+  if (secs % 86400 === 0) return (secs / 86400) + (secs === 86400 ? ' day' : ' days');
+  if (secs % 3600 === 0) return (secs / 3600) + (secs === 3600 ? ' hour' : ' hours');
+  return Math.round(secs / 60) + ' minutes';
+}
+
+// LP step calldata prefixes, for spotting an already-queued (unexecuted) duplicate in a Safe's queue.
+var LP_SEL_PERMIT2_APPROVE = '0x87517c45'; // approve(address,address,uint160,uint48)
+var LP_SEL_MODIFY_LIQUIDITIES = '0xdd46508f'; // modifyLiquidities(bytes,uint256)
+export function lpErc20ApprovePrefix(spender) { return '0x095ea7b3' + '00'.repeat(12) + String(spender).slice(2).toLowerCase(); }
+
+// A returning multisig visit must not re-propose a step that's still awaiting signatures in the Safe queue —
+// a duplicate mint burns a whole signing round (the second reverts once the first spends the allowance).
+// Best-effort: chains without a Safe service (or a failed read) return null and the step proposes normally.
+async function lpQueuedSafeStep(chainId, safe, to, dataPrefix) {
+  if (!hasSafeService(chainId)) return null;
+  var rows = await listPendingSafeTxs(chainId, safe).catch(function () { return []; });
+  return rows.filter(function (t) {
+    return String(t.to || '').toLowerCase() === String(to).toLowerCase() && String(t.data || '').toLowerCase().indexOf(dataPrefix.toLowerCase()) === 0;
+  })[0] || null;
 }
 
 // Execute: a one-time exact ERC20→Permit2 approval (if needed), then a GASLESS Permit2 signature batched
 // with the mint via PositionManager.multicall — so it's 2 txs + 1 instant signature instead of 3 txs.
-// Returns the mint tx hash.
+// Smart wallets (Safes) instead get plain sequential txs (approve → Permit2.approve → mint), each guarded
+// against re-proposing a step that's already queued. Returns the mint tx hash.
 async function runAddLiquidityTxs(chainId, prep, onStatus) {
   var acct = getAccount();
   if (!acct) throw new Error('Connect a wallet');
@@ -22719,9 +22771,22 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
   var wc = await wallet.getChainId();
   if (wc !== chainId) { onStatus('Switching network…', 'pending'); await switchChain(chainId); }
 
-  var deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  // A Safe queues each tx for days: its mint needs a deadline (default 30 days; user-selectable) that outlives
+  // the signing rounds, where an EOA's 20 minutes would expire before the co-signers get to it. Slippage is
+  // still bounded by amountMax regardless of the window.
+  var dlSecs = lpDeadlineSecs(prep);
+  var deadline = BigInt(Math.floor(Date.now() / 1000) + dlSecs);
   var permitDatas = [];
   var now = Math.floor(Date.now() / 1000);
+
+  // Multisig execution is async from this page: a step proposed here sits in the Safe queue until co-signers
+  // execute it. Refuse to double-queue, and say what to do when the wallet round-trip outlives the page.
+  async function guardQueued(to, dataPrefix, label) {
+    if (!prep.smartWallet) return;
+    var queued = await lpQueuedSafeStep(chainId, prep.acct, to, dataPrefix);
+    if (queued) throw new Error(label + ' is already queued in your Safe (nonce ' + queued.nonce + '). Execute (or reject) it there, then confirm here again — completed steps are skipped.');
+  }
+  function proposeMsg(label) { return 'Proposing ' + label + ' to your multisig — sign & execute it in your Safe. Keep this page open to continue automatically, or come back and confirm again later; completed and queued steps are skipped.'; }
 
   // Each ERC-20 side (the project token always; the pair too when it's USDC) needs a Permit2 allowance.
   for (var i = 0; i < (prep.erc20 || []).length; i++) {
@@ -22729,14 +22794,24 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     // 1. ERC20 → Permit2 (exact, bounded; only when the current allowance is short).
     var erc20Allow = await clientFor(chainId).readContract({ address: side.currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] });
     if (BigInt(erc20Allow) < side.max) {
-      onStatus('Approving token for Permit2…', 'pending');
+      await guardQueued(side.currency, lpErc20ApprovePrefix(PERMIT2_ADDRESS), 'The token approval');
+      onStatus(prep.smartWallet ? proposeMsg('the token approval') : 'Approving token for Permit2…', 'pending');
       await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max] });
     }
     // 2. Permit2 → PositionManager allowance. Reuse if still valid; else sign one (gasless) and fold it
     //    into the mint multicall — no separate onchain approval tx.
     var p2 = await clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, side.currency, posm] });
     var p2amount = BigInt(p2[0]), p2exp = Number(p2[1]), p2nonce = Number(p2[2]);
-    if (!(p2amount >= side.max && p2exp > now)) {
+    // Require the allowance to outlive a Safe's multi-day queue, not just this moment.
+    if (!(p2amount >= side.max && p2exp > now + (prep.smartWallet ? 86400 : 0))) {
+      if (prep.smartWallet) {
+        // Contract wallets can't produce the gasless Permit2 signature (and its 30-min sigDeadline could never
+        // survive a multisig round anyway) — set the same allowance with an onchain Permit2.approve tx instead.
+        await guardQueued(PERMIT2_ADDRESS, LP_SEL_PERMIT2_APPROVE, 'The Permit2 approval');
+        onStatus(proposeMsg('the Permit2 approval'), 'pending');
+        await lpSendTx(chainId, { account: prep.acct, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve', args: [side.currency, posm, side.max, BigInt(now + Math.max(30 * 24 * 3600, dlSecs + 86400))] });
+        continue;
+      }
       onStatus('Sign token approval…', 'pending');
       var permitMessage = {
         details: { token: side.currency, amount: side.max, expiration: BigInt(now + 30 * 24 * 3600), nonce: BigInt(p2nonce) },
@@ -22755,7 +22830,8 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     }
   }
 
-  onStatus('Adding liquidity…', 'pending');
+  await guardQueued(posm, LP_SEL_MODIFY_LIQUIDITIES, 'The liquidity mint');
+  onStatus(prep.smartWallet ? proposeMsg('the liquidity mint') : 'Adding liquidity…', 'pending');
   if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
@@ -22770,7 +22846,27 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
   // amount0Max/amount1Max are currency-ordered; map back to pair vs project token for display.
   var pairMax = prep.pairIsC0 ? prep.amount0Max : prep.amount1Max;
   var tokenMax = prep.pairIsC0 ? prep.amount1Max : prep.amount0Max;
+  // Plain-language summary shown first; the decoded call + raw unlockData hex move behind "Show raw data".
+  var deposit = [];
+  if (tokenMax > 1n) deposit.push(formatTokens(tokenMax) + ' ' + sym);
+  if (pairMax > 1n) deposit.push(formatBalance(pairMax, pair.decimals, pair.symbol));
+  var approvalRows = (prep.erc20 || []).map(function (s) {
+    var label = (s.currency || '').toLowerCase() === (pair.addr || '').toLowerCase() ? pair.symbol : sym;
+    return [label + ' approval', s.approved && s.permitReady ? 'already set — no approval step will run'
+      : s.approved ? 'token allowance reused — only the Permit2 step remains'
+      : 'runs before the mint'];
+  });
   return {
+    summary: {
+      action: 'Add liquidity to the ' + sym + '/' + pair.symbol + ' pool',
+      rows: [
+        ['Chain', chainName],
+        ['Deposit up to', deposit.join(' + ') + ' — the mint pulls only what the position needs'],
+        prep.pa > 0 && prep.pb > prep.pa ? ['Price range', formatPrice(prep.pa) + ' – ' + formatPrice(prep.pb) + ' ' + pair.symbol + ' per ' + sym] : null,
+        ['Position NFT to', prep.acct],
+        ['Mint deadline', lpFmtDuration(lpDeadlineSecs(prep)) + (prep.smartWallet ? ' — survives a multisig signing queue' : '')],
+      ].concat(approvalRows).filter(Boolean),
+    },
     chain: chainName,
     chainId: chainId,
     contract: 'Uniswap V4 PositionManager',
@@ -22779,7 +22875,10 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
     txlinkUnavailableReason: 'The final liquidity calldata may include Permit2 signatures bound to the connected wallet, so it does not exist before confirmation.',
     value: prep.value > 0n ? (prep.value.toString() + ' wei (' + formatEth(prep.value) + ')') : '0',
     erc20Approvals: (prep.erc20 || []).map(function (s) {
-      return { token: s.currency, via: 'Permit2', spender: prep.posm, amount: s.max.toString() };
+      return { token: s.currency, via: 'Permit2', spender: prep.posm, amount: s.max.toString(),
+        status: s.approved && s.permitReady ? 'already approved — no approval step will run'
+          : s.approved ? 'token allowance already set (reused) — only the Permit2 approval step remains'
+          : 'approval will run first' };
     }),
     position: {
       actions: pair.isNative ? 'MINT_POSITION, CLOSE, CLOSE, SWEEP (0x02121214)' : 'MINT_POSITION, CLOSE, CLOSE (0x021212)',
@@ -22792,7 +22891,7 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
       maxToken: formatTokens(tokenMax) + ' ' + sym,
       recipient: prep.acct,
     },
-    args: { unlockData: prep.unlockData, deadline: 'set at signing (~20 min)' },
+    args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + lpFmtDuration(lpDeadlineSecs(prep)) + ')' },
   };
 }
 
@@ -22863,7 +22962,9 @@ function prepareRemoveLiquidity(chainId, pos, acct) {
   var burnParams = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }], [BigInt(pos.tokenId), amount0Min, amount1Min, '0x']);
   var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [pos.key.currency0, pos.key.currency1, acct]);
   var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x0311', [burnParams, takeParams]]); // BURN_POSITION(0x03), TAKE_PAIR(0x11)
-  return { posm: posm, unlockData: unlockData, deadline: BigInt(Math.floor(Date.now() / 1000) + 1200), value: 0n, pairMin: pairMin, tokenMin: tokenMin };
+  // A multisig's tx sits in its queue past any 20-minute deadline; the 95% output floors still bound slippage.
+  var deadline = BigInt(Math.floor(Date.now() / 1000) + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
+  return { posm: posm, unlockData: unlockData, deadline: deadline, value: 0n, pairMin: pairMin, tokenMin: tokenMin, smartWallet: !!pos.smartWallet };
 }
 
 // Re-read ownership, liquidity, ticks, and pool price immediately before presenting the exact removal transaction.
@@ -22881,7 +22982,9 @@ async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
   var reads = await Promise.all([
     lpReadPositionDetails(client, posm, [BigInt(pos.tokenId)], pos.poolId),
     client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] }),
+    client.getCode({ address: expectedAccount }).catch(function () { return null; }),
   ]);
+  var acctCode = reads[2];
   var detail = reads[0][0];
   if (!detail.owner || detail.owner.toLowerCase() !== expectedAccount.toLowerCase()) throw new Error('This wallet no longer owns the position');
   if (detail.info === 0n || detail.liquidity <= 0n) throw new Error('This position no longer has liquidity');
@@ -22898,6 +23001,7 @@ async function refreshLpPositionForRemoval(chainId, pos, expectedAccount) {
     tickUpper: tickUpper,
     pairAmt: pos.pairIsC0 ? amounts.amount0 : amounts.amount1,
     tokAmt: pos.pairIsC0 ? amounts.amount1 : amounts.amount0,
+    smartWallet: !!(acctCode && acctCode !== '0x' && !String(acctCode).toLowerCase().startsWith('0xef0100')),
   });
 }
 
@@ -22935,12 +23039,22 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
           var prep = prepareRemoveLiquidity(chainId, pos, acct);
           rm.disabled = false; rm.textContent = 'Remove';
           openTxConfirm({
+            summary: {
+              action: 'Remove liquidity from the ' + sym + '/' + pos.pair.symbol + ' pool',
+              rows: [
+                ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
+                ['You receive', '≈ ' + tokH + ' + ' + pairH + ' (set by the pool at execution)'],
+                ['Minimum', formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol) + ' — reverts below this'],
+                ['To', acct],
+                ['Deadline', prep.smartWallet ? '30 days — survives a multisig signing queue' : '~20 minutes'],
+              ],
+            },
             chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
             'function': 'modifyLiquidities', value: '0',
             calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
             position: { actions: 'BURN_POSITION, TAKE_PAIR (0x0311)', tokenId: pos.tokenId.toString(), expectedReturns: tokH + ' + ' + pairH,
               minimumReturns: formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol), recipient: acct },
-            args: { unlockData: prep.unlockData, deadline: 'set at signing (~20 min)' },
+            args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days — survives a multisig signing queue' : '20 min') + ')' },
           }, function (ctx) {
             ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Removing liquidity…', 'pending');
             lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n }).then(function (hash) {
@@ -23081,6 +23195,18 @@ function buildAddLiquidityModal(project) {
     ethAmt.value = formatAmount(v, pairDec()); state.driver = 'eth'; autofill();
   });
 
+  // Execution deadline: how long the signed/queued mint stays executable before it reverts as stale. Price
+  // protection comes from the bounded max amounts, not from this — a long deadline only lets a queued tx wait.
+  var dlRow = el('div', 'ops-chainrow'); dlRow.style.marginTop = '8px';
+  var dlLab = el('span', 'modal-balance'); dlLab.textContent = 'Execution deadline';
+  var dlSel = el('select', 'field create-input'); dlSel.style.width = 'auto'; dlSel.style.minWidth = '0';
+  [['', 'Auto — 20 min (30 days from a multisig)'], ['1200', '20 minutes'], ['3600', '1 hour'], ['86400', '1 day'], ['604800', '7 days'], ['2592000', '30 days']].forEach(function (o) {
+    var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; dlSel.appendChild(op);
+  });
+  dlSel.title = 'The mint reverts if executed after this. Price protection comes from the bounded max amounts, not the deadline.';
+  dlRow.appendChild(dlLab); dlRow.appendChild(dlSel);
+  wrap.appendChild(dlRow);
+
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Add liquidity';
@@ -23212,7 +23338,7 @@ function buildAddLiquidityModal(project) {
     if (!(getAccount && getAccount())) { connect(); return; }
     if (!state.pair) { status.className = 'modal-status error'; status.textContent = 'Could not verify the project’s accounting token.'; return; }
     var cid = state.chainId;
-    var inputSnapshot = [minInput.value, maxInput.value, tokAmt.value, ethAmt.value].join('|');
+    var inputSnapshot = [minInput.value, maxInput.value, tokAmt.value, ethAmt.value, dlSel.value].join('|');
     var pairAmount, tokenAmount;
     try { pairAmount = ethAmt.value ? parseAmount(ethAmt.value, pairDec()) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + pairSym() + ' amount'; return; }
     try { tokenAmount = tokAmt.value ? parseAmount(tokAmt.value, 18) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + sym + ' amount'; return; }
@@ -23224,9 +23350,9 @@ function buildAddLiquidityModal(project) {
     if (!(r.pa > 0) || !(r.pb > r.pa)) { status.className = 'modal-status error'; status.textContent = 'Set a valid price range'; return; }
     btn.disabled = true;
     status.className = 'modal-status'; status.textContent = 'Preparing…';
-    var lpOpts = { project: project, chainId: cid, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb };
+    var lpOpts = { project: project, chainId: cid, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb, deadlineSecs: dlSel.value ? Number(dlSel.value) : null };
     prepareAddLiquidity(lpOpts).then(function (prep) {
-      if (state.chainId !== cid || inputSnapshot !== [minInput.value, maxInput.value, tokAmt.value, ethAmt.value].join('|')
+      if (state.chainId !== cid || inputSnapshot !== [minInput.value, maxInput.value, tokAmt.value, ethAmt.value, dlSel.value].join('|')
         || !state.pair || state.pair.addr !== prep.pair.addr || !getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Liquidity inputs or the connected account changed while the transaction was being prepared. Review and try again.');
       btn.disabled = false;
       status.textContent = '';
@@ -23246,7 +23372,12 @@ function buildAddLiquidityModal(project) {
           var msg = errMessage(e, 'Add liquidity failed');
           ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
         });
-      }, { title: 'Confirm add liquidity', confirmText: 'Confirm & add liquidity', closeOnConfirm: false });
+      }, {
+        title: 'Confirm add liquidity', confirmText: 'Confirm & add liquidity', closeOnConfirm: false,
+        description: prep.smartWallet
+          ? 'Multisig detected: this runs as up to 3 sequential Safe transactions (token approval → Permit2 approval → mint), each proposed here and executed from your Safe queue. If you leave while one is pending, come back and confirm again — completed and already-queued steps are detected and skipped. Execute the mint within days of queueing it: its price-drift headroom and 30-day approvals are finite.'
+          : undefined,
+      });
     }).catch(function (e) {
       btn.disabled = false;
       status.className = 'modal-status error';
