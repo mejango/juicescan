@@ -995,11 +995,11 @@ function txRawJson(tx) {
   return formatPayloadJson(obj);
 }
 // Plain-language confirm summary: an action line + labeled rows, for calls whose ABI decode is unreadable.
-// Housed in the same bordered box as the decoded tree (chain eyebrow + contract | address) so every confirm
-// modal shares one anatomy, whether its pretty view is decoded args or prose rows.
+// Rendered with the SAME box + row classes as the decoded tree (chain eyebrow, contract | address, bold
+// title, indented `label: value` lines) so every confirm modal's pretty view looks identical.
 function renderFriendlySummary(summary, tx) {
   if (!summary) return null;
-  var wrap = el('div', 'tx-decoded tx-friendly');
+  var wrap = el('div', 'tx-decoded');
   if (tx && tx.chain) { var ch = el('div', 'tx-decoded-chain'); ch.textContent = tx.chain; wrap.appendChild(ch); }
   if (tx && (tx.contract || tx.address || tx.to)) {
     var who = el('div', 'tx-decoded-target');
@@ -1007,13 +1007,15 @@ function renderFriendlySummary(summary, tx) {
     who.textContent = (nm ? nm + ' | ' : '') + (tx.address || tx.to || '');
     wrap.appendChild(who);
   }
-  if (summary.action) { var a = el('div', 'tx-friendly-action'); a.textContent = summary.action; wrap.appendChild(a); }
+  var call = el('div', 'tx-decoded-call');
+  if (summary.action) { var a = el('div', 'tx-decoded-fn'); a.textContent = summary.action; call.appendChild(a); }
   (summary.rows || []).forEach(function (row) {
-    var r = el('div', 'tx-friendly-row');
-    var k = el('span', 'tx-friendly-k'); k.textContent = row[0]; r.appendChild(k);
-    var v = el('span', 'tx-friendly-v'); v.textContent = row[1]; r.appendChild(v);
-    wrap.appendChild(r);
+    var r = el('div', 'tx-decoded-arg');
+    var k = el('span', 'tx-decoded-argname'); k.textContent = row[0] + ': '; r.appendChild(k);
+    r.appendChild(document.createTextNode(row[1]));
+    call.appendChild(r);
   });
+  wrap.appendChild(call);
   return wrap;
 }
 

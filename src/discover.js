@@ -22742,7 +22742,6 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
     summary: {
       action: 'Add liquidity to the ' + sym + '/' + pair.symbol + ' pool',
       rows: [
-        ['Chain', chainName],
         ['Deposit up to', deposit.join(' + ') + ' — the mint pulls only what the position needs'],
         prep.pa > 0 && prep.pb > prep.pa ? ['Price range', formatPrice(prep.pa) + ' – ' + formatPrice(prep.pb) + ' ' + pair.symbol + ' per ' + sym] : null,
         ['Position NFT to', prep.acct],

@@ -5502,12 +5502,6 @@ select.create-input-auto { width: auto; max-width: 100%; }
 /* Confirm modal — legible decoded calldata */
 .tx-decoded-list { margin: 8px 0; display: flex; flex-direction: column; gap: 10px; }
 .tx-decoded-action { font-size: 13px; font-weight: bold; color: var(--c-black); }
-/* Plain-language confirm summary (opaque calls like the Universal Router execute). */
-.tx-friendly { margin: 8px 0 2px; }
-.tx-friendly-action { font-size: 13px; font-weight: bold; color: var(--c-black); margin-bottom: 4px; }
-.tx-friendly-row { display: flex; gap: 10px; font-size: 12px; padding: 1px 0; }
-.tx-friendly-k { color: var(--muted-2); min-width: 120px; }
-.tx-friendly-v { color: var(--c-black); word-break: break-word; }
 .tx-decoded { border: 1px solid var(--c-orange-light); background: var(--card-bg); padding: 10px 12px; }
 .tx-decoded-chain { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted-2); margin-bottom: 4px; }
 .tx-decoded-target { font-size: 11px; color: var(--muted-2); overflow-wrap: anywhere; margin-bottom: 6px; }
