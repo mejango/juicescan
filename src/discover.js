@@ -22680,6 +22680,14 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     if (queued) throw new Error(label + ' is already queued in your Safe (nonce ' + queued.nonce + '). Execute (or reject) it there, then confirm here again — completed steps are skipped.');
   }
   function proposeMsg(label) { return 'Proposing ' + label + ' to your multisig — sign & execute it in your Safe. Keep this page open to continue automatically, or come back and confirm again later; completed and queued steps are skipped.'; }
+  // Attach an on-chain effect probe to a pending stop, so the modal can watch for the Safe executing the
+  // step and prompt the user to continue (the proposal hash itself never gets a receipt).
+  function withRecheck(side, probe) {
+    return function (e) {
+      if (e && e.txStatusKind === 'pending') e.recheck = function () { return probe(side); };
+      throw e;
+    };
+  }
 
   // Each ERC-20 side (the project token always; the pair too when it's USDC) needs a Permit2 allowance.
   for (var i = 0; i < (prep.erc20 || []).length; i++) {
@@ -22689,7 +22697,13 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     if (BigInt(erc20Allow) < side.max) {
       await guardQueued(side.currency, lpErc20ApprovePrefix(PERMIT2_ADDRESS), 'The token approval');
       onStatus(prep.smartWallet ? proposeMsg('the token approval') : 'Approving token for Permit2…', 'pending');
-      await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max], smartWallet: prep.smartWallet });
+      await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max], smartWallet: prep.smartWallet })
+        .catch(withRecheck(side, function (s) {
+          // The Safe's proposal hash never gets a receipt (execution is a different tx) — watch the step's
+          // EFFECT instead: the ERC20→Permit2 allowance reaching the requested cap.
+          return clientFor(chainId).readContract({ address: s.currency, abi: lpErc20Abi, functionName: 'allowance', args: [prep.acct, PERMIT2_ADDRESS] })
+            .then(function (a) { return BigInt(a) >= s.max; });
+        }));
     }
     // 2. Permit2 → PositionManager allowance. Reuse if still valid; else sign one (gasless) and fold it
     //    into the mint multicall — no separate onchain approval tx.
@@ -22702,7 +22716,11 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
         // survive a multisig round anyway) — set the same allowance with an onchain Permit2.approve tx instead.
         await guardQueued(PERMIT2_ADDRESS, LP_SEL_PERMIT2_APPROVE, 'The Permit2 approval');
         onStatus(proposeMsg('the Permit2 approval'), 'pending');
-        await lpSendTx(chainId, { account: prep.acct, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve', args: [side.currency, posm, side.max, BigInt(now + Math.max(30 * 24 * 3600, dlSecs + 86400))], smartWallet: true });
+        await lpSendTx(chainId, { account: prep.acct, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve', args: [side.currency, posm, side.max, BigInt(now + Math.max(30 * 24 * 3600, dlSecs + 86400))], smartWallet: true })
+          .catch(withRecheck(side, function (s) {
+            return clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [prep.acct, s.currency, posm] })
+              .then(function (p) { return BigInt(p[0]) >= s.max && Number(p[1]) > Math.floor(Date.now() / 1000); });
+          }));
         continue;
       }
       onStatus('Sign token approval…', 'pending');
@@ -23271,7 +23289,21 @@ function buildAddLiquidityModal(project) {
           refreshBalances(); refreshPrice();
         }).catch(function (e) {
           ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-          if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
+          if (e && e.txStatusKind === 'pending') {
+            ctx.showStatus(e.message, 'pending');
+            // Watch the step's on-chain effect for up to ~10 min so an executed Safe tx flips the stale
+            // "waiting for co-signers" state into a clear "continue" prompt.
+            if (e.recheck) (function watch(tries) {
+              if (tries > 40) return;
+              setTimeout(function () {
+                e.recheck().then(function (ok) {
+                  if (ok) ctx.showStatus('Your multisig executed this step — click Confirm & add liquidity to continue.', 'success');
+                  else watch(tries + 1);
+                }, function () { watch(tries + 1); });
+              }, 15000);
+            })(1);
+            return;
+          }
           var msg = errMessage(e, 'Add liquidity failed');
           ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
         });
