@@ -147,6 +147,14 @@ function nextGeneratedAt(previous, sourceDigest) {
   return new Date().toISOString();
 }
 
+function deploymentArtifactFile(logicalSource, deploymentsDir, artifactPath) {
+  const relativeArtifactPath = path.relative(deploymentsDir, artifactPath);
+  return path.posix.join(
+    logicalSource.split(path.sep).join(path.posix.sep),
+    relativeArtifactPath.split(path.sep).join(path.posix.sep)
+  );
+}
+
 function main() {
   if (!fs.existsSync(DEPLOYMENTS_DIR)) {
     throw new Error(`Deployments directory not found: ${DEPLOYMENTS_DIR}`);
@@ -188,7 +196,11 @@ function main() {
 
       const chainId = parseChainId(artifact.chainId);
       const contractName = artifact.contractName || deploymentName.split("__")[0];
-      const relativeFile = path.relative(ROOT, artifactPath);
+      const relativeFile = deploymentArtifactFile(
+        deployments.source,
+        DEPLOYMENTS_DIR,
+        artifactPath
+      );
 
       chains[chainId] = chains[chainId] || {
         name: chainNameFor(chainSlug, chainId),
@@ -278,4 +290,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { deploymentSourceDigest, nextGeneratedAt };
+module.exports = { deploymentArtifactFile, deploymentSourceDigest, nextGeneratedAt };

@@ -5,7 +5,26 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { deploymentSourceDigest, nextGeneratedAt } = require('../build/sync-deployments.js');
+const { deploymentArtifactFile, deploymentSourceDigest, nextGeneratedAt } = require(
+  '../build/sync-deployments.js',
+);
+
+describe('deployment snapshot paths', () => {
+  it('maps alternate physical roots to the stable logical source', () => {
+    const logicalSource = '../deploy-all-v6/deployments';
+    const artifactSegments = ['ethereum', 'JBController.json'];
+    const physicalRoots = [
+      join(tmpdir(), 'workspace', 'deploy-all-v6', 'deployments'),
+      join(tmpdir(), 'workspace', 'website', '.contract-source', 'deploy-all-v6', 'deployments'),
+    ];
+
+    for (const physicalRoot of physicalRoots) {
+      expect(
+        deploymentArtifactFile(logicalSource, physicalRoot, join(physicalRoot, ...artifactSegments)),
+      ).toBe('../deploy-all-v6/deployments/ethereum/JBController.json');
+    }
+  });
+});
 
 describe('deployment snapshot timestamps', () => {
   let originalSourceDateEpoch;
