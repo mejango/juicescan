@@ -6056,18 +6056,17 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
   // On phones, Activity becomes the first detail subtab (added below, and default) instead of a tall
   // always-on card wedged between Pay and the tabs; on wider screens it stays in the left column.
   var activityAsTab = !!(window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
-  // Activity panel height: at least as tall as the body (right column), and twice its own content when populated
-  // — so the feed isn't clipped to a short body and stays a substantial panel.
+  // Give long histories a roomy scroll viewport, but let shorter histories keep their natural height so the
+  // prompt footer follows the final activity row instead of being pushed to the bottom of an empty panel.
   function sizeActivity() {
     if (activityAsTab || !activityCardEl || !activityCardEl.isConnected) return;
     var feed = activityCardEl.querySelector('.activity-feed');
     if (!feed) return;
     if (!feed.querySelector('.activity-row')) { feed.style.minHeight = ''; feed.style.maxHeight = ''; return; }
-    // A tall panel: twice the default 390px feed, and at least most of the viewport (a proxy for the body
-    // content height — measuring the body column directly feeds back through the equal-height column stretch).
-    // Content shorter than this shows in full; longer histories scroll within the panel.
+    // A tall ceiling: twice the default 390px feed, and at least most of the viewport. Content shorter than
+    // this shows at its natural height; longer histories scroll within the panel.
     var target = Math.max(2 * ACTIVITY_FEED_BASE_PX, Math.round(0.82 * (window.innerHeight || 900)));
-    feed.style.minHeight = target + 'px';
+    feed.style.minHeight = '';
     feed.style.maxHeight = target + 'px';
   }
   activityCardEl = renderActivityCard(project, { asTab: activityAsTab, onContent: function () { requestAnimationFrame(sizeActivity); } });
@@ -14476,7 +14475,7 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
   var nowLine = nowShow
     ? '<line x1="' + nowX.toFixed(1) + '" y1="' + padT + '" x2="' + nowX.toFixed(1) + '" y2="' + (H - padB) + '" stroke="#1a8a8a" stroke-width="1.5" stroke-dasharray="4 3"/>'
     : '';
-  // AMM gets a Bendystraw historical trade line (swapEvents) when indexed; otherwise the
+  // AMM gets Bendystraw's registration + post-trade spot line when indexed; otherwise the
   // current pool price is a flat reference line.
   var ammLine = '';
   if (ammSeries.length) {
@@ -15542,6 +15541,8 @@ async function fetchSwapHistory(project) {
     fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
       PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS)
       .catch(function () {
+        // Keep existing realized-average history visible during a coordinated
+        // Bendystraw/frontend rollout where the new fields are not live yet.
         return fetchBendystrawCollectionPages(BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY, 'swapEvents', variables,
           PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS);
       }),
