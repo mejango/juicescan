@@ -14141,11 +14141,26 @@ function formatRate(n) {
 }
 
 // Price for the y-axis: base/pair token per project token, trimmed for small numbers.
-function formatPrice(n) {
+export function formatPrice(n) {
   if (!isFinite(n) || n <= 0) return '0';
   if (n >= 1) return n.toFixed(2);
   if (n >= 0.001) return n.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
-  return n.toPrecision(2);
+  return n.toPrecision(5);
+}
+
+// Convert Uniswap V4's raw currency1/currency0 sqrt price into terminal-token
+// units per project token. V6 project tokens use 18 decimals.
+export function ammPriceFromSqrtPriceX96(sqrtPriceX96, projectTokenIsCurrency0, terminalDecimals) {
+  var sqrt = Number(toBigInt(sqrtPriceX96));
+  terminalDecimals = Number(terminalDecimals);
+  if (!Number.isFinite(sqrt) || sqrt <= 0 || !Number.isFinite(terminalDecimals)) return null;
+  var ratio = sqrt / Math.pow(2, 96);
+  var currency1PerCurrency0 = ratio * ratio;
+  var raw = projectTokenIsCurrency0
+    ? currency1PerCurrency0
+    : (currency1PerCurrency0 > 0 ? 1 / currency1PerCurrency0 : 0);
+  var price = raw * Math.pow(10, 18 - terminalDecimals);
+  return Number.isFinite(price) && price > 0 ? price : null;
 }
 
 // "Token issuance" card: current rate, next scheduled cut + countdown, % to splits, and an SVG
@@ -14191,7 +14206,7 @@ function renderPriceChart(project, stages) {
   var amm = null;        // current AMM price (pair token/project token), filled in lazily
   var cashout = null;    // current cash out floor (pair token/project token), filled in lazily
   var cashoutHistory = [];
-  var ammHistory = [];   // realized AMM trade prices from Bendystraw swapEvents
+  var ammHistory = [];   // initial + exact post-trade AMM spot prices from Bendystraw
   var curYears = 1;
   // Order: Issuance, Cash out, then AMM price.
   var issChip = chip('Issuance price', 'pc-issuance', true,
@@ -14246,7 +14261,7 @@ function renderPriceChart(project, stages) {
     var pair = swaps.pair || (lp && lp.pair) || null;
     var pairSym = pair ? pair.symbol : 'terminal tokens';
     var pairScale = pair ? Math.pow(10, Number(pair.decimals)) : null;
-    // Plot realized AMM trade prices as a time series; extend it to the live pool price.
+    // Plot indexed AMM spot prices as a time series; extend it to the live pool price.
     if (swaps.series && swaps.series.length) {
       ammHistory = swaps.series.slice();
     }
@@ -15016,7 +15031,15 @@ var BENDYSTRAW_PROJECT_PAYERS_QUERY = 'query($projectId: Int!, $chainId: Int!, $
 var BENDYSTRAW_SWAP_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'swapEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash sqrtPriceX96 projectTokenIsCurrency0 } totalCount } }';
+var BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
+  + 'swapEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp direction terminalTokenAmount projectTokenAmount poolId chainId txHash } totalCount } }';
+var BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
+  + 'buybackPoolEvents(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { timestamp poolId chainId initialSqrtPriceX96 projectTokenIsCurrency0 } totalCount } }';
 var BENDYSTRAW_PARTICIPANTS_BY_GROUP_QUERY = 'query($suckerGroupId: String!, $chainIds: [Int!], $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'participants(where: { suckerGroupId: $suckerGroupId, chainId_in: $chainIds, version: $version, balance_gt: "0" }, '
   + 'orderBy: "balance", orderDirection: "desc", limit: $limit, offset: $offset) { '
@@ -15493,8 +15516,9 @@ async function fetchPriceFloorHistory(project, stages) {
   return out.sort(function (a, b) { return a.timestamp - b.timestamp; });
 }
 
-// Historical AMM trade prices + buy/sell volume from the buyback hook's swapEvents.
-// Realized price = terminal-token units / project-token units.
+// Historical AMM spot prices + buy/sell volume. PoolAdded seeds the series at
+// its registration price; each swap contributes its exact post-trade V4 spot.
+// Older rows without sqrtPriceX96 retain the realized average-price fallback.
 // Returns the empty shape if the model isn't indexed yet — never fabricates.
 async function fetchSwapHistory(project) {
   var empty = { series: [], buyVolume: 0, sellVolume: 0, count: 0, pair: null };
@@ -15509,15 +15533,32 @@ async function fetchSwapHistory(project) {
   if (!pool || !pool.poolId) return empty;
   var pair = pool.pair;
   var pairScale = Math.pow(10, Number(pair && pair.decimals != null ? pair.decimals : 18));
-  var res = await fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', {
+  var variables = {
     suckerGroupId: groupId,
     version: BENDYSTRAW_VERSION,
     chainIds: [chainId],
-  }, PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS);
+  };
+  var pages = await Promise.all([
+    fetchBendystrawCollectionPages(BENDYSTRAW_SWAP_EVENTS_QUERY, 'swapEvents', variables,
+      PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS)
+      .catch(function () {
+        return fetchBendystrawCollectionPages(BENDYSTRAW_LEGACY_SWAP_EVENTS_QUERY, 'swapEvents', variables,
+          PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS);
+      }),
+    fetchBendystrawCollectionPages(BENDYSTRAW_BUYBACK_POOL_EVENTS_QUERY, 'buybackPoolEvents', variables,
+      PRICE_HISTORY_PAGE_SIZE, PRICE_HISTORY_MAX_POINTS)
+      .catch(function () { return { items: [], totalCount: 0 }; }),
+  ]);
 
-  var items = res.items || [];
+  var items = pages[0].items || [];
   var series = [];
   var buyVolume = 0, sellVolume = 0, count = 0;
+  (pages[1].items || []).forEach(function (registered) {
+    if (Number(registered.chainId) !== chainId || String(registered.poolId || '').toLowerCase() !== String(pool.poolId).toLowerCase()) return;
+    if (!registered.initialSqrtPriceX96 || typeof registered.projectTokenIsCurrency0 !== 'boolean') return;
+    var price = ammPriceFromSqrtPriceX96(registered.initialSqrtPriceX96, registered.projectTokenIsCurrency0, pair.decimals);
+    if (price) series.push({ timestamp: Number(registered.timestamp), value: price });
+  });
   items.forEach(function (sw) {
     if (Number(sw.chainId) !== chainId || String(sw.poolId || '').toLowerCase() !== String(pool.poolId).toLowerCase()) return;
     if (sw.direction === 'mint') return; // mint is the issuance route, not a market trade
@@ -15525,11 +15566,14 @@ async function fetchSwapHistory(project) {
     if (sw.direction === 'buy') buyVolume += terminalUnits;
     else if (sw.direction === 'sell') sellVolume += terminalUnits;
     count++;
-    var tokens = Number(toBigInt(sw.projectTokenAmount)) / 1e18;
-    if (tokens > 0) {
-      var price = terminalUnits / tokens;
-      if (price > 0) series.push({ timestamp: Number(sw.timestamp), value: price });
+    var price = sw.sqrtPriceX96 && typeof sw.projectTokenIsCurrency0 === 'boolean'
+      ? ammPriceFromSqrtPriceX96(sw.sqrtPriceX96, sw.projectTokenIsCurrency0, pair.decimals)
+      : null;
+    if (!price) {
+      var tokens = Number(toBigInt(sw.projectTokenAmount)) / 1e18;
+      if (tokens > 0) price = terminalUnits / tokens;
     }
+    if (price && price > 0) series.push({ timestamp: Number(sw.timestamp), value: price });
   });
   series.sort(function (a, b) { return a.timestamp - b.timestamp; });
   return { series: series, buyVolume: buyVolume, sellVolume: sellVolume, count: count, pair: pair };
