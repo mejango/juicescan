@@ -1,8 +1,11 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { nextGeneratedAt } = require('../build/sync-deployments.js');
+const { deploymentSourceDigest, nextGeneratedAt } = require('../build/sync-deployments.js');
 
 describe('deployment snapshot timestamps', () => {
   let originalSourceDateEpoch;
@@ -37,4 +40,28 @@ describe('deployment snapshot timestamps', () => {
       expect(() => nextGeneratedAt({}, 'sha256:new')).toThrow(/non-negative integer seconds/);
     },
   );
+});
+
+describe('deployment source digest', () => {
+  const directories = [];
+
+  afterEach(() => {
+    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('is deterministic and ignores only the generator\'s superseded artifacts', () => {
+    const root = mkdtempSync(join(tmpdir(), 'jb-deployments-'));
+    directories.push(root);
+    const chain = join(root, 'ethereum');
+    mkdirSync(chain);
+    writeFileSync(join(chain, 'JBController.json'), '{"address":"0x1"}\n');
+    writeFileSync(join(chain, 'Old_deprecated2.json'), '{"address":"0xold"}\n');
+
+    const initial = deploymentSourceDigest(root);
+    writeFileSync(join(chain, 'Old_deprecated2.json'), '{"address":"0xchanged"}\n');
+    expect(deploymentSourceDigest(root)).toBe(initial);
+
+    writeFileSync(join(chain, 'JBController.json'), '{"address":"0x2"}\n');
+    expect(deploymentSourceDigest(root)).not.toBe(initial);
+  });
 });

@@ -36,7 +36,7 @@ async function build() {
   // Fill build metadata. JS and CSS are emitted as same-origin files so IPFS
   // gateways with default-src 'self' CSP can still run the app.
   const final = html
-    .replace('__BUILD_DATE__', new Date().toISOString().split('T')[0])
+    .replace('__BUILD_DATE__', getBuildDate())
     .replace('__GIT_HASH__', getGitHash())
     .replace('__IPFS_CID__', process.env.IPFS_CID || 'not pinned');
 
@@ -79,6 +79,22 @@ function loadEnvFile(file) {
 function getGitHash() {
   try {
     return require('child_process').execSync('git rev-parse --short HEAD').toString().trim();
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+// Rebuilding the same commit must produce the same HTML. Prefer an explicit
+// reproducible-build input, then the commit date; never use the runner's clock.
+function getBuildDate() {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(process.env.BUILD_DATE || '')) {
+    return process.env.BUILD_DATE;
+  }
+  if (/^\d+$/.test(process.env.SOURCE_DATE_EPOCH || '')) {
+    return new Date(Number(process.env.SOURCE_DATE_EPOCH) * 1000).toISOString().slice(0, 10);
+  }
+  try {
+    return require('child_process').execSync('git log -1 --format=%cs').toString().trim();
   } catch (_) {
     return 'unknown';
   }

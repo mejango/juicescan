@@ -3,11 +3,11 @@
 
 :root {
   /* ── Brand Palette ── */
-  --c-teal: #1a8a8a;
-  --c-green: #3d7a5a;
-  --c-pink: #c43550;
+  --c-teal: #0b6262;
+  --c-green: #2a6144;
+  --c-pink: #88152d;
   --c-black: #2c2018;
-  --c-orange: #b8602e;
+  --c-orange: #88401d;
   --c-teal-light: #6ec4c4;
   --c-green-light: #82b89e;
   --c-pink-light: #eda3b0;
@@ -19,9 +19,9 @@
   --card-bg: #fcd0c2;
   --input-bg: #fcd0c2;
   --text: var(--c-black);
-  --muted: var(--c-black-light);
-  --muted-2: #7d5a4e;
-  --muted-3: #a88878;
+  --muted: #684f40;
+  --muted-2: #735145;
+  --muted-3: #765246;
   --muted-4: #e8bfae;
   --write: var(--c-green);
   --read: var(--c-orange);
@@ -61,8 +61,7 @@
   background: var(--card-bg);
   border: 1px solid var(--c-pink-light);
   border-radius: 5px;
-  opacity: 0.6;
-  transition: opacity 0.15s ease;
+  opacity: 1;
 }
 .font-selector:hover { opacity: 1; }
 .font-selector-label { font-size: 11px; font-weight: bold; color: var(--muted-2); }
@@ -108,8 +107,9 @@ a:hover { color: var(--c-teal); }
 
 /* Focus ring — accessibility */
 :focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  /* Override component-level :focus resets so keyboard focus never disappears. */
+  outline: 3px solid var(--focus-ring) !important;
+  outline-offset: 2px;
 }
 
 /* Header */
@@ -404,7 +404,7 @@ a:hover { color: var(--c-teal); }
 }
 
 .fn-contract-hint {
-  color: var(--muted-4);
+  color: var(--muted-3);
   font-size: 9px;
   margin-left: auto;
 }
@@ -456,7 +456,7 @@ a:hover { color: var(--c-teal); }
 }
 
 .fn-contract {
-  color: var(--muted-4);
+  color: var(--muted-3);
   font-size: 9px;
 }
 
@@ -1921,7 +1921,9 @@ input[type="checkbox"].field {
   color: var(--c-pink);
   text-decoration: none;
   font-size: 13px;
-  padding: 2px 0;
+  /* WCAG 2.2 target-size floor without changing the compact guide rhythm. */
+  min-height: 24px;
+  padding: 3px 0;
   cursor: pointer;
 }
 
@@ -1985,7 +1987,7 @@ input[type="checkbox"].field {
 /* "[copy build prompt]" text link, tight in the card's bottom-right corner (no padding of its own). */
 .comp-prompt-foot { display: flex; justify-content: flex-end; box-sizing: border-box; width: 100%; margin-left: auto; padding: 0; margin-top: 12px; }
 .comp-prompt-foot--left { justify-content: flex-start; }
-.comp-prompt-link { font-family: inherit; font-size: 11px; color: var(--muted-2); background: none; border: none; cursor: pointer; padding: 0; opacity: 0.55; white-space: nowrap; }
+.comp-prompt-link { font-family: inherit; font-size: 11px; color: var(--muted-2); background: none; border: none; cursor: pointer; padding: 0; opacity: 1; white-space: nowrap; }
 .comp-prompt-link:hover { opacity: 1; color: var(--c-teal); }
 .comp-prompt-link--ok { opacity: 1; color: var(--c-teal); }
 /* In a modal/form the tag sits right under the submit button — give it room to breathe. */
@@ -3674,7 +3676,13 @@ input[type="checkbox"].field {
   animation: skel-shimmer 1.5s ease-in-out infinite;
 }
 @keyframes skel-shimmer { 100% { transform: translateX(100%); } }
-@media (prefers-reduced-motion: reduce) { .skel::after { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+}
 .skel-circle { border-radius: 50%; }
 .skel-table .detail-ops-row { align-items: center; }
 
@@ -4316,6 +4324,17 @@ input[type="checkbox"].field {
   color: var(--muted-2);
   font-size: 10px;
   line-height: 1.4;
+}
+.data-query-notes {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--c-teal);
+  color: var(--muted-2);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.data-query-notes > div + div {
+  margin-top: 4px;
 }
 .data-row-content .fn-actions {
   padding: 0;

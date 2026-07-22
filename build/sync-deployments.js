@@ -95,6 +95,42 @@ function writeJSON(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function deploymentJsonFiles(chainDir) {
+  return fs
+    .readdirSync(chainDir)
+    .filter((file) => file.endsWith(".json"))
+    .filter((file) => {
+      const deploymentName = file.replace(/\.json$/, "");
+      // Skip superseded records: _deprecated, _deprecated2, … and the TWAP upgrade snapshot.
+      return !/_deprecated\d*$/.test(deploymentName) && !deploymentName.endsWith("__TwapOracleUpgrade");
+    })
+    .sort();
+}
+
+// Hash the exact deployment bytes consumed by the generator. Exported so the
+// read-only CI parity check cannot drift from snapshot generation semantics.
+function deploymentSourceDigest(deploymentsDir) {
+  const sourceHash = crypto.createHash("sha256");
+  const chainSlugs = fs
+    .readdirSync(deploymentsDir)
+    .filter((entry) => fs.statSync(path.join(deploymentsDir, entry)).isDirectory())
+    .sort();
+
+  for (const chainSlug of chainSlugs) {
+    const chainDir = path.join(deploymentsDir, chainSlug);
+    for (const file of deploymentJsonFiles(chainDir)) {
+      sourceHash
+        .update(chainSlug)
+        .update("\0")
+        .update(file)
+        .update("\0")
+        .update(fs.readFileSync(path.join(chainDir, file), "utf8"))
+        .update("\0");
+    }
+  }
+  return `sha256:${sourceHash.digest("hex")}`;
+}
+
 // Preserve the timestamp when the deployment inputs are byte-for-byte identical. This makes `npm run build`
 // reproducible (and keeps a clean worktree clean) while still recording when a changed snapshot was generated.
 // SOURCE_DATE_EPOCH gives CI/release builds a standard deterministic timestamp when accepting new inputs.
@@ -121,9 +157,11 @@ function main() {
   const chains = {};
   const contracts = {};
   const previousDeployments = loadJSON(DEPLOYMENTS_FILE, {});
-  const sourceHash = crypto.createHash("sha256");
   const deployments = {
-    source: path.relative(ROOT, DEPLOYMENTS_DIR),
+    // Keep this informational path stable when CI regenerates from its pinned
+    // sparse checkout at a different filesystem location. Content identity is
+    // enforced by sourceDigest and the separately pinned git commit.
+    source: previousDeployments.source || path.relative(ROOT, DEPLOYMENTS_DIR),
     generatedAt: null,
     sourceDigest: null,
     chains: {},
@@ -139,21 +177,12 @@ function main() {
 
   for (const chainSlug of chainSlugs) {
     const chainDir = path.join(DEPLOYMENTS_DIR, chainSlug);
-    const files = fs
-      .readdirSync(chainDir)
-      .filter((file) => file.endsWith(".json"))
-      .filter((file) => {
-        const deploymentName = file.replace(/\.json$/, "");
-        // Skip superseded records: _deprecated, _deprecated2, … and the TWAP upgrade snapshot.
-        return !/_deprecated\d*$/.test(deploymentName) && !deploymentName.endsWith("__TwapOracleUpgrade");
-      })
-      .sort();
+    const files = deploymentJsonFiles(chainDir);
 
     for (const file of files) {
       const deploymentName = file.replace(/\.json$/, "");
       const artifactPath = path.join(chainDir, file);
       const artifactJson = fs.readFileSync(artifactPath, "utf8");
-      sourceHash.update(chainSlug).update("\0").update(file).update("\0").update(artifactJson).update("\0");
       const artifact = JSON.parse(artifactJson);
       if (!artifact.abi || !artifact.address || !artifact.chainId) continue;
 
@@ -231,7 +260,7 @@ function main() {
     chains: sortedObject(chains),
     contracts: sortedObject(contracts),
   };
-  deployments.sourceDigest = `sha256:${sourceHash.digest("hex")}`;
+  deployments.sourceDigest = deploymentSourceDigest(DEPLOYMENTS_DIR);
   deployments.generatedAt = nextGeneratedAt(previousDeployments, deployments.sourceDigest);
   deployments.chains = sortedObject(deployments.chains);
   deployments.deployments = sortedObject(deployments.deployments);
@@ -249,4 +278,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { nextGeneratedAt };
+module.exports = { deploymentSourceDigest, nextGeneratedAt };

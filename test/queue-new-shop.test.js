@@ -3,9 +3,9 @@
 // ruleset with no shop. These are pure encoder/routing tests (the design's highest-risk surface). The on-chain
 // deploy-fresh branch requires tiers.length > 0, so that's asserted too.
 import { describe, it, expect } from 'vitest';
-import { encodeFunctionData, decodeFunctionData } from 'viem';
+import { encodeFunctionData, decodeFunctionData, toFunctionSelector } from 'viem';
 import { build721Config, buildQueueRulesetConfigs, __test } from '../src/create-flow.js';
-import { buildNewShopQueueCall, newShopDeploymentSalt } from '../src/discover.js';
+import { buildNewShopQueueCall, buildOmnichainQueueArgs, newShopDeploymentSalt } from '../src/discover.js';
 import { getABI } from '../src/abi-registry.js';
 
 const { initState, storeUnit } = __test;
@@ -121,5 +121,49 @@ describe('buildNewShopQueueCall — routes "new shop" to the right deployer + en
     expect(dec.functionName).toBe('queueRulesetsOf');
     expect(dec.args[1].useDataHookForCashOut).toBe(true);
     expect(dec.args[1].deployTiersHookConfig.tiersConfig.tiers.length).toBe(1);
+
+    const canonicalAbi = getABI('JBOmnichainDeployer');
+    const canonicalFunction = canonicalAbi.find((item) => item.type === 'function' && item.name === 'queueRulesetsOf' && item.inputs.length === 4);
+    expect(data.slice(0, 10)).toBe(toFunctionSelector(canonicalFunction));
+    const canonical = decodeFunctionData({ abi: canonicalAbi, data });
+    expect(canonical.args[0]).toBe(5n);
+    expect(canonical.args[1].useDataHookForCashOut).toBe(true);
+    expect(canonical.args[1].deployTiersHookConfig.tiersConfig.tiers).toHaveLength(1);
+    expect(canonical.args[2]).toHaveLength(cfgs.length);
+    expect(canonical.args[3]).toBe('');
+  });
+});
+
+describe('buildOmnichainQueueArgs — existing-shop JBOmnichainDeployer overload', () => {
+  it('pins target, chain, value, selector, project, rulesets, and memo through the generated ABI', () => {
+    const s = newShopState();
+    const cfgs = buildQueueRulesetConfigs(s, 1, 0);
+    const tx = buildOmnichainQueueArgs({
+      chainId: 1,
+      omnichainDeployer: ODEPLOYER,
+      projectId: 23,
+      rulesetConfigs: cfgs,
+      memo: 'next stage',
+    });
+    expect(tx).toMatchObject({
+      chainId: 1,
+      address: ODEPLOYER,
+      contractName: 'JBOmnichainDeployer',
+      functionName: 'queueRulesetsOf',
+      value: 0n,
+    });
+
+    const data = encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args });
+    const canonicalAbi = getABI('JBOmnichainDeployer');
+    const canonicalFunction = canonicalAbi.find((item) => item.type === 'function' && item.name === 'queueRulesetsOf' && item.inputs.length === 3);
+    expect(data.slice(0, 10)).toBe(toFunctionSelector(canonicalFunction));
+    const canonical = decodeFunctionData({ abi: canonicalAbi, data });
+    expect(canonical.functionName).toBe('queueRulesetsOf');
+    expect(canonical.args[0]).toBe(23n);
+    expect(canonical.args[1]).toHaveLength(cfgs.length);
+    expect(canonical.args[1][0].duration).toBe(cfgs[0].duration);
+    expect(canonical.args[1][0].weight).toBe(cfgs[0].weight);
+    expect(canonical.args[1][0].metadata.baseCurrency).toBe(cfgs[0].metadata.baseCurrency);
+    expect(canonical.args[2]).toBe('next stage');
   });
 });

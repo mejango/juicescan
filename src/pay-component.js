@@ -94,7 +94,9 @@ function payRouteCandidates(chainId) {
   return routes;
 }
 
-function resolveBestPayRoute(opts) {
+// Exported for regression tests: this resolver is the fail-closed boundary
+// between an RPC quote and the calldata's minReturnedTokens floor.
+export function resolveBestPayRoute(opts) {
   var routes = payRouteCandidates(opts.chainId);
   if (!routes.length) return Promise.resolve(null);
 

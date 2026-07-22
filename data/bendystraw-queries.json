@@ -1936,6 +1936,178 @@
       ]
     },
     {
+      "title": "Buyback AMM",
+      "queries": [
+        {
+          "id": "buyback-pool-events",
+          "title": "Buyback pool registrations",
+          "hint": "Initial Uniswap V4 spot and token ordering for each registered buyback pool.",
+          "notes": [
+            "initialSqrtPriceX96 is the pool's raw Uniswap V4 sqrt(currency1/currency0) × 2^96 price at registration; projectTokenIsCurrency0 tells which side is the 18-decimal project token.",
+            "Both price-order fields are nullable on legacy rows. Filter results to the exact chainId and poolId before using a registration as the first point in a price series."
+          ],
+          "kind": "list",
+          "path": "buybackPoolEvents",
+          "resolveSuckerGroup": true,
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { buybackPoolEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash terminalToken poolId currency0 currency1 projectTokenIsCurrency0 initialSqrtPriceX96 } totalCount } }",
+          "variables": [
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
+          ],
+          "columns": [
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "terminalToken",
+              "label": "Terminal token",
+              "format": "address"
+            },
+            {
+              "key": "poolId",
+              "label": "Pool",
+              "format": "text"
+            },
+            {
+              "key": "projectTokenIsCurrency0",
+              "label": "Project = currency0",
+              "format": "bool"
+            },
+            {
+              "key": "initialSqrtPriceX96",
+              "label": "Initial sqrtPriceX96",
+              "format": "bigint"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
+          ]
+        },
+        {
+          "id": "amm-swap-events",
+          "title": "AMM swap price history",
+          "hint": "Exact post-trade Uniswap V4 spot prices and realized buy/sell amounts.",
+          "notes": [
+            "sqrtPriceX96 is the exact post-swap V4 spot. Let r = (sqrtPriceX96 / 2^96)^2; terminal raw units per project-token raw unit are r when projectTokenIsCurrency0, otherwise 1/r, then multiply by 10^(18 − terminalDecimals). V6 project tokens use 18 decimals; read terminalDecimals from the project's accounting context.",
+            "sqrtPriceX96 and projectTokenIsCurrency0 are nullable for legacy rows and mint routes. A terminalTokenAmount/projectTokenAmount fallback is a realized average price, not an exact spot; direction mint does not touch the pool.",
+            "A sucker group can contain several chains and superseded pools. Resolve the current onchain pool and filter rows to its exact chainId and poolId before building one price series."
+          ],
+          "kind": "list",
+          "path": "swapEvents",
+          "resolveSuckerGroup": true,
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { swapEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash direction poolId terminalTokenAmount projectTokenAmount sqrtPriceX96 projectTokenIsCurrency0 } totalCount } }",
+          "variables": [
+            {
+              "name": "projectId",
+              "type": "int",
+              "default": "1"
+            },
+            {
+              "name": "chainId",
+              "type": "chain",
+              "default": "11155111"
+            },
+            {
+              "name": "chainIds",
+              "type": "chain_multi",
+              "optional": true
+            },
+            {
+              "name": "limit",
+              "type": "int",
+              "default": "25"
+            },
+            {
+              "name": "offset",
+              "type": "int",
+              "default": "0",
+              "hidden": true
+            }
+          ],
+          "columns": [
+            {
+              "key": "timestamp",
+              "label": "When",
+              "format": "timestamp"
+            },
+            {
+              "key": "chainId",
+              "label": "Chain",
+              "format": "chainName"
+            },
+            {
+              "key": "direction",
+              "label": "Direction",
+              "format": "text"
+            },
+            {
+              "key": "poolId",
+              "label": "Pool",
+              "format": "text"
+            },
+            {
+              "key": "terminalTokenAmount",
+              "label": "Terminal raw",
+              "format": "bigint"
+            },
+            {
+              "key": "projectTokenAmount",
+              "label": "Project raw",
+              "format": "bigint"
+            },
+            {
+              "key": "sqrtPriceX96",
+              "label": "Post-swap sqrtPriceX96",
+              "format": "bigint"
+            },
+            {
+              "key": "projectTokenIsCurrency0",
+              "label": "Project = currency0",
+              "format": "bool"
+            },
+            {
+              "key": "txHash",
+              "label": "Tx",
+              "format": "txHash"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "title": "Token mints / burns",
       "queries": [
         {

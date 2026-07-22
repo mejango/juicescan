@@ -135,7 +135,7 @@ export function renderFunctionForm(fn, contractName, getContractAddr, abi, fnNat
         return;
       }
       var addr = getContractAddr(formChainId);
-      executeWrite(fn, inputs, valueInput, addr, abi, outputArea, formChainId);
+      executeWrite(fn, contractName, inputs, valueInput, addr, abi, outputArea, formChainId);
     });
     actions.appendChild(txBtn);
 
@@ -306,7 +306,7 @@ function executeRead(fn, inputs, contractAddress, abi, outputArea, chainId) {
   });
 }
 
-function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, chainId) {
+function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi, outputArea, chainId) {
   outputArea.innerHTML = '';
   var wallet = getWalletClient();
   var pub = createPublicClientForChain(chainId);
@@ -366,6 +366,7 @@ function executeWrite(fn, inputs, valueInput, contractAddress, abi, outputArea, 
         setOutputMessage(outputArea, 'tx-success', 'TX submitted: ' + hash);
         return pub.waitForTransactionReceipt({ hash: hash });
       }).then(function(receipt) {
+        if (!receipt || receipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
         setOutputMessage(outputArea, 'tx-success', 'Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash));
       }).catch(function(err) {
         outputArea.innerHTML = '';

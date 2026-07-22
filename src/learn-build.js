@@ -1042,7 +1042,7 @@ function guideSection(id, title, paragraphs, extras) {
   section.className = 'guide-section';
   section.id = id;
 
-  var h = document.createElement('div');
+  var h = document.createElement('h2');
   h.className = 'guide-section-title';
   var titleSpan = document.createElement('span');
   titleSpan.textContent = title;
@@ -1071,6 +1071,9 @@ function guideSection(id, title, paragraphs, extras) {
 function diagram(label, lines) {
   var el = document.createElement('div');
   el.className = 'guide-diagram';
+  // Diagrams scroll horizontally on narrow screens. Make that viewport
+  // keyboard-reachable instead of trapping the content behind touch input.
+  el.tabIndex = 0;
   var title = document.createElement('div');
   title.className = 'guide-diagram-title';
   title.textContent = label;
@@ -1135,6 +1138,9 @@ function fnRefTable(label, rows) {
 function codeBlock(label, code) {
   var el = document.createElement('div');
   el.className = 'guide-code';
+  // Long examples scroll horizontally at phone widths; expose that scroll
+  // region to keyboard and assistive-technology users as well.
+  el.tabIndex = 0;
   if (label) {
     var title = document.createElement('div');
     title.className = 'guide-code-title';

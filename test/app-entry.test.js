@@ -1,0 +1,181 @@
+import { describe, expect, it, vi } from 'vitest';
+
+const entry = vi.hoisted(() => ({
+  account: null,
+  applyDiscoverRoute: vi.fn(),
+  applySavedFont: vi.fn(),
+  eagerConnect: vi.fn(),
+  initSafeApp: vi.fn().mockResolvedValue(false),
+  mountFontSelector: vi.fn(),
+  renderAdminTab: vi.fn(),
+  renderBuildTab: vi.fn(),
+  renderDataTab: vi.fn(),
+  renderDiscoverTab: vi.fn(),
+  renderFunctionForm: vi.fn(() => {
+    const form = document.createElement('div');
+    form.className = 'function-form';
+    return form;
+  }),
+  renderLearnTab: vi.fn(),
+  renderWhyTab: vi.fn(),
+}));
+
+const readThing = {
+  type: 'function',
+  name: 'readThing',
+  stateMutability: 'view',
+  inputs: [{ name: 'id', type: 'uint256' }],
+  outputs: [{ name: 'value', type: 'uint256' }],
+};
+
+vi.mock('../src/abi-registry.js', () => ({
+  contracts: { JBExample: [readThing] },
+  meta: { JBExample: { singleton: true, notice: 'Canonical example contract.' } },
+  natspec: { JBExample: { readThing: { notice: 'Reads canonical state.', params: { id: 'Identifier.' } } } },
+  categories: { Core: ['JBExample'], Empty: [] },
+  commonActions: [{
+    title: 'Read actions',
+    className: 'read-actions',
+    entries: [{ contract: 'JBExample', function: 'readThing', label: 'READ THING', hint: 'from the contract' }],
+  }],
+  getFunctions: name => name === 'JBExample' ? [readThing] : [],
+  getAddress: () => '0x1111111111111111111111111111111111111111',
+  getFunctionSource: () => ({ source: 'function readThing(uint256 id) external view returns (uint256);', startLine: 10, endLine: 12 }),
+  getGithubUrl: (_name, fn) => fn ? 'https://github.com/example/contracts/blob/main/JBExample.sol#L10' : 'https://github.com/example/contracts',
+}));
+
+vi.mock('../src/form.js', () => ({ renderFunctionForm: entry.renderFunctionForm }));
+vi.mock('../src/prompts.js', () => ({
+  getAuditPrompt: () => 'audit the canonical V6 call',
+  getComponentAuditPrompt: () => 'audit this component',
+}));
+vi.mock('../src/components.js', () => ({ renderStyleEditor: vi.fn() }));
+vi.mock('../src/component-base.js', () => ({
+  buildEmbedUrl: () => 'https://example.invalid/embed',
+  getAccount: () => entry.account,
+  connect: vi.fn().mockResolvedValue(undefined),
+  disconnect: vi.fn().mockResolvedValue(undefined),
+  onWalletChange: vi.fn(),
+  eagerConnect: entry.eagerConnect,
+  truncAddr: value => value,
+  getProviders: () => [],
+  refreshProviders: vi.fn().mockResolvedValue([]),
+  errMessage: error => error.message,
+  initSafeApp: entry.initSafeApp,
+}));
+vi.mock('../src/learn-build.js', () => ({
+  renderLearnTab: entry.renderLearnTab,
+  renderBuildTab: entry.renderBuildTab,
+  renderWhyTab: entry.renderWhyTab,
+}));
+vi.mock('../src/discover.js', () => ({
+  renderDiscoverTab: entry.renderDiscoverTab,
+  applyDiscoverRoute: entry.applyDiscoverRoute,
+  renderAdminTab: entry.renderAdminTab,
+}));
+vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
+vi.mock('../src/font-selector.js', () => ({
+  mountFontSelector: entry.mountFontSelector,
+  applySavedFont: entry.applySavedFont,
+}));
+vi.mock('../src/wallet-links.js', () => ({
+  isMobileDevice: () => false,
+  mobileWalletLinks: () => [],
+  walletDappUrl: value => value,
+}));
+
+vi.mock('../src/pay-component.js', () => ({ renderPayComponent: vi.fn() }));
+vi.mock('../src/cashout-component.js', () => ({ renderCashOutComponent: vi.fn() }));
+vi.mock('../src/payouts-component.js', () => ({ renderPayoutsComponent: vi.fn() }));
+vi.mock('../src/mint-component.js', () => ({ renderMintComponent: vi.fn() }));
+vi.mock('../src/reserved-component.js', () => ({ renderReservedComponent: vi.fn() }));
+vi.mock('../src/deploy-erc20-component.js', () => ({ renderDeployERC20Component: vi.fn() }));
+vi.mock('../src/burn-component.js', () => ({ renderBurnComponent: vi.fn() }));
+vi.mock('../src/launch-component.js', () => ({ renderLaunchComponent: vi.fn() }));
+vi.mock('../src/queue-ruleset-component.js', () => ({ renderQueueRulesetComponent: vi.fn() }));
+vi.mock('../src/permissions-component.js', () => ({ renderPermissionsComponent: vi.fn() }));
+
+const tabs = [
+  ['DISCOVER', 'discover'],
+  ['ACTIONS', 'common'],
+  ['LEARN', 'learn'],
+  ['BUILD', 'build'],
+  ['API', 'directory'],
+  ['DATA', 'data'],
+  ['ADMIN', 'admin'],
+  ['WHY?', 'why'],
+];
+
+function shell() {
+  return `
+    <header id="header"><button id="connect-btn"></button></header>
+    <nav id="tabs">${tabs.map(([label, tab]) => `<button class="tab" data-tab="${tab}">${label}</button>`).join('')}</nav>
+    <a id="audit-prompt-link" href="#">audit</a>
+    <main>${tabs.map(([, tab]) => `<section id="tab-${tab}" class="tab-content"></section>`).join('')}</main>
+    <footer><span id="ipfs-cid-meta"></span></footer>`;
+}
+
+describe('production app entry point', () => {
+  it('initializes every surface, routes hashes, and lazily builds contract forms', async () => {
+    document.body.innerHTML = shell();
+    history.replaceState(null, '', '/index.html#learn');
+    Object.defineProperty(document, 'readyState', { configurable: true, value: 'complete' });
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await import('../src/app.js');
+    await vi.waitFor(() => expect(entry.eagerConnect).toHaveBeenCalledOnce());
+
+    expect(entry.applySavedFont).toHaveBeenCalledOnce();
+    expect(entry.mountFontSelector).toHaveBeenCalledOnce();
+    expect(entry.renderDiscoverTab).toHaveBeenCalledOnce();
+    expect(entry.renderDataTab).toHaveBeenCalledOnce();
+    expect(entry.renderLearnTab).toHaveBeenCalledOnce();
+    expect(entry.renderBuildTab).toHaveBeenCalledOnce();
+    expect(entry.renderAdminTab).toHaveBeenCalledOnce();
+    expect(entry.renderWhyTab).toHaveBeenCalledOnce();
+    expect(document.querySelector('.tab[data-tab="learn"]').classList.contains('active')).toBe(true);
+    expect(document.getElementById('tab-learn').classList.contains('active')).toBe(true);
+
+    const common = document.getElementById('tab-common');
+    expect(common.textContent).toMatch(/Work in progress/);
+    expect(common.textContent).toMatch(/READ THING/);
+    common.querySelector('.fn-summary').click();
+    expect(entry.renderFunctionForm).toHaveBeenCalledWith(
+      readThing,
+      'JBExample',
+      expect.any(Function),
+      [readThing],
+      expect.objectContaining({ notice: 'Reads canonical state.' }),
+    );
+
+    const contract = document.querySelector('.contract-section');
+    expect(contract.textContent).toMatch(/Canonical example contract/);
+    contract.querySelector('.contract-summary').click();
+    contract.querySelector('.fn-summary').click();
+    expect(contract.textContent).toMatch(/readThing\(uint256 id\).*view.*returns \(uint256 value\)/s);
+    const sourceSection = [...contract.querySelectorAll('.fn-section')]
+      .find(section => section.querySelector('.fn-section-label')?.textContent === 'source');
+    sourceSection.querySelector('.fn-section-header').click();
+    expect(contract.querySelector('.fn-source-code').textContent).toMatch(/function readThing/);
+    const useSection = [...contract.querySelectorAll('.fn-section')]
+      .find(section => section.querySelector('.fn-section-label')?.textContent === 'use');
+    useSection.querySelector('.fn-section-header').click();
+    expect(useSection.querySelector('.function-form')).not.toBeNull();
+
+    document.querySelector('.tab[data-tab="data"]').click();
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(location.hash).toBe('#data');
+    expect(document.getElementById('tab-data').classList.contains('active')).toBe(true);
+
+    document.getElementById('audit-prompt-link').click();
+    await vi.waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('audit the canonical V6 call'));
+    expect(document.getElementById('audit-prompt-link').textContent).toBe('COPIED TO CLIPBOARD');
+
+    document.getElementById('connect-btn').click();
+    await vi.waitFor(() => expect(document.querySelector('.wallet-menu-error')?.textContent).toMatch(/No wallet detected/));
+    expect(entry.applyDiscoverRoute).not.toHaveBeenCalledWith(expect.any(String));
+  });
+});

@@ -11,20 +11,41 @@ Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg a
 | App action | Contract function | Builder | Test |
 |---|---|---|---|
 | Pay | `JBMultiTerminal.pay` | `buildPayArgs` | **U** (+ slippage-floor regression) |
+| Add to balance | `JBMultiTerminal.addToBalanceOf` / `JBRouterTerminalRegistry.addToBalanceOf` | `buildAddToBalanceArgs` | **U** (both canonical ABIs; exact native/ERC-20 value + approval semantics) |
 | Cash out | `JBMultiTerminal.cashOutTokensOf` | `buildCashOutArgs` / `cashOutMinReclaimed` | **U** |
 | Send payouts | `JBMultiTerminal.sendPayoutsOf` | `buildSendPayoutsArgs` | **U** |
 | Launch project | `JBController.launchProjectFor` / omnichain | `buildLaunchArgs` | **U** + **S** |
 | Deploy revnet | `REVDeployer.deployFor` | `buildRevnetArgs` | **U** + **S** |
 | Queue rulesets | `JBController.queueRulesetsOf` | `buildQueueRulesetsArgs` | **U** |
+| Queue omnichain rulesets / start shop | `JBOmnichainDeployer.queueRulesetsOf` overloads | `buildOmnichainQueueArgs` / `buildNewShopQueueCall` | **U** (canonical overload selectors + nested args) |
 | Mint | `JBController.mintTokensOf` | `buildMintArgs` | **U** |
 | Burn | `JBController.burnTokensOf` | `buildBurnArgs` | **U** |
 | Deploy ERC-20 | `JBController.deployERC20For` | `buildDeployErc20Args` | **U** |
 | Send reserved | `JBController.sendReservedTokensToSplitsOf` | `buildSendReservedArgs` | **U** |
 | Claim credits | `JBController.claimTokensFor` | `buildClaimTokensArgs` | **U** |
+| Distribute auto issuance | `REVOwner.autoIssueFor` | `buildAutoIssueArgs` | **U** |
+| Add / remove shop items | `JB721TiersHook.adjustTiers` | `buildAdjustTiersArgs` | **U** (all tier fields + remove ids) |
 | Set permissions | `JBPermissions.setPermissionsFor` | `buildSetPermissionsArgs` | **U** (ids vs JBPermissionIds.sol) |
 | Borrow | `REVLoans.borrowFrom` | `buildBorrowArgs` | **U** (+ slippage floor wired) |
 | Repay | `REVLoans.repayLoan` | `buildRepayArgs` | **U** |
 | Move between chains | `JBSucker.prepare` → `toRemote` | `buildSuckerPrepareArgs` / `buildSuckerToRemoteArgs` | **U** |
+
+## Structural wallet boundary inventory
+
+These rows describe shared or deliberately generic signing boundaries rather
+than one ABI builder. `npm run transaction:check` counts every production
+occurrence, including the boundary definitions, so adding, moving, or bypassing
+one cannot silently enter the app.
+
+| Action | Boundary | Safety coverage |
+|---|---|---|
+| Reviewed direct write boundary | `executeTransaction` | Exact review payload, account/chain rechecks, simulation, receipt status, approval ordering, and Safe routing are unit-tested. |
+| Generic ABI contract write | `form.js` reviewed write | Displays target/function/arguments/calldata/value, rechecks account and chain, simulates, then requires a successful receipt. |
+| Relayr forwarded bundle / payment | `relayrPostBundle` / `relayrPay` | Canonical forward request, signer/account identity, quote/payment state, persistence, polling, and partial-chain failure are unit-tested. |
+| Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; exact `execTransaction` tuples, signatures, nonce, confirmation, and receipt status are tested. |
+| Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, and post-receipt allowances are tested. |
+| Project management actions | `discover.js` reviewed action handlers | Individual ABI builders are tracked above; all submission paths must remain behind the shared review, Safe, or Relayr boundaries. |
+| Wallet connection / network request | EIP-1193 provider requests | Only account permission, account enumeration, and chain switching are allowed here; all write/sign APIs are inventoried separately. |
 
 Plus create-flow encoding invariants (**U**): custom-token currency id consistency, `splitState` per recipient
 type, split-group sums, the approval-hook (preset/custom/per-chain) + split-lock encoding, the deploy preflight
@@ -38,11 +59,10 @@ gates (recipient / over-100% / custom-token / approval), `parseAmount`/`addrOrZe
 | create-flow steps, accounting pills, approval condition, split lock, deploy gating | **S** (`ui-smoke.mjs`) |
 
 ## Not yet under unit test
-- **autoIssueFor**, **adjustTiers (721)**, **queue via omnichain** — built as pre-encoded `data` for the
-  relayr/Safe payload path (`encodeFunctionData` is runtime-validated; a wrong arg throws at build time).
-- **Safe `execTransaction`** (`safe.js`) — the Safe-owner flow; encoded via the Safe SDK shape.
-- **addToBalanceOf** — ABI present, no active call site.
 - Broader view rendering (discover cards, project-detail tabs) — covered by UI smoke + manual CDP, not unit.
+
+Safe `execTransaction` encoding is covered in `components-tx.test.js`, including
+the exact outer tuple assembled from the queued Safe transaction and signatures.
 
 ## Adherence
 `verify-tx-builders-vs-contracts` (workflow, 5 agents) confirmed **every builder encodes correctly** against the

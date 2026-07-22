@@ -166,6 +166,17 @@ function buildContent(q) {
   }
   wrap.appendChild(inputContainer);
 
+  if (q.notes && q.notes.length) {
+    const notes = document.createElement('div');
+    notes.className = 'data-query-notes';
+    for (const text of q.notes) {
+      const note = document.createElement('div');
+      note.textContent = text;
+      notes.appendChild(note);
+    }
+    wrap.appendChild(notes);
+  }
+
   // Actions row (mirrors form.js .fn-actions).
   const actions = document.createElement('div');
   actions.className = 'fn-actions';
@@ -551,6 +562,10 @@ export function buildDataQueryPrompt(query) {
     'Build a client-only, read-only Juicebox V6 data view for “' + (q.title || q.id || 'Bendystraw query') + '”.',
   ];
   if (q.hint) lines.push('Purpose: ' + q.hint);
+  if (q.notes && q.notes.length) {
+    lines.push('', 'Indexed-data semantics:');
+    for (const note of q.notes) lines.push('- ' + note);
+  }
   lines.push('', 'Use the Bendystraw GraphQL API. Follow the selected network: https://bendystraw.xyz on mainnet and https://testnet.bendystraw.xyz on testnet. Read the endpoint/key handling from the reference implementation rather than hardcoding credentials.');
   if (q.resolveSuckerGroup) {
     lines.push('', 'This query is sucker-group scoped. First resolve projectId + its single Project chain to project(version: 6, projectId, chainId) { suckerGroupId }, then pass that suckerGroupId into the query below. A separate multi-select Result chains control filters chainIds; it must not change which chain scopes projectId.');

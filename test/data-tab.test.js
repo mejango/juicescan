@@ -105,4 +105,35 @@ describe('Data tab variable coercion', () => {
     expect(prompt).toContain('multi-select Result chains');
     expect(prompt).toContain('suckerGroupId');
   });
+
+  it('exposes Bendystraw pool registration and exact post-swap AMM history', async () => {
+    renderDataTab();
+
+    const poolRow = expandQuery('Buyback pool registrations');
+    expect(poolRow.textContent).toContain('initialSqrtPriceX96');
+    expect(poolRow.textContent).toContain('projectTokenIsCurrency0');
+    expect(poolRow.textContent).toContain('nullable on legacy rows');
+    const poolButtons = poolRow.querySelectorAll('.data-query-copy-link');
+    poolButtons[1].click();
+    await Promise.resolve();
+    const poolPrompt = navigator.clipboard.writeText.mock.calls.at(-1)[0];
+    expect(poolPrompt).toContain('buybackPoolEvents');
+    expect(poolPrompt).toContain('version: 6');
+    expect(poolPrompt).toContain('exact chainId and poolId');
+
+    const swapRow = expandQuery('AMM swap price history');
+    expect(swapRow.textContent).toContain('exact post-swap V4 spot');
+    expect(swapRow.textContent).toContain('realized average price, not an exact spot');
+    const swapButtons = swapRow.querySelectorAll('.data-query-copy-link');
+    swapButtons[1].click();
+    await Promise.resolve();
+    const swapPrompt = navigator.clipboard.writeText.mock.calls.at(-1)[0];
+    expect(swapPrompt).toContain('swapEvents');
+    expect(swapPrompt).toContain('sqrtPriceX96');
+    expect(swapPrompt).toContain('projectTokenIsCurrency0');
+    expect(swapPrompt).toContain('10^(18 − terminalDecimals)');
+    expect(swapPrompt).toContain("read terminalDecimals from the project's accounting context");
+    expect(swapPrompt).toContain('direction mint does not touch the pool');
+    expect(swapPrompt).toContain('exact chainId and poolId');
+  });
 });

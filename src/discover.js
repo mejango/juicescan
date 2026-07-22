@@ -275,6 +275,23 @@ var addToBalanceAbi = [{
   outputs: [],
 }];
 
+// Pure builder for the pay panel's top-up mode. The function shape is shared by JBMultiTerminal and
+// JBRouterTerminalRegistry; `viaRouter` only selects the reviewed target name and approval route.
+export function buildAddToBalanceArgs(o) {
+  var amount = BigInt(o.amount);
+  var isNative = sameAddr(o.token, NATIVE_TOKEN);
+  var viaRouter = !!o.viaRouter;
+  return {
+    chainId: o.chainId, address: o.terminalAddr, abi: addToBalanceAbi, functionName: 'addToBalanceOf',
+    contractName: viaRouter ? 'JBRouterTerminalRegistry' : 'JBMultiTerminal',
+    args: [BigInt(o.projectId), o.token, amount, false, o.memo == null ? '' : o.memo, o.metadata == null ? '0x' : o.metadata],
+    value: isNative ? amount : 0n,
+    tokenAddr: (isNative || viaRouter) ? null : o.token,
+    spenderAddr: (isNative || viaRouter) ? null : o.terminalAddr,
+    approvalAmount: (isNative || viaRouter) ? null : amount,
+  };
+}
+
 // What tokens a project's terminal accepts DIRECTLY (its accounting contexts). USD-based revnets accept
 // USDC (token-keyed currency, 6 decimals) directly; ETH-based ones accept native ETH. Anything not
 // accepted directly is offered as a swap-via-router currency instead.
@@ -2398,7 +2415,8 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
 
   var n = built.length;
   var session = await runRelayrAcrossChains(selectedChains, account, function (cid) {
-    return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [tiersFor(cid), []] }) };
+    var tx = buildAdjustTiersArgs({ chainId: cid, hookAddr: hookMap[cid], tiersToAdd: tiersFor(cid), tierIdsToRemove: [] });
+    return { to: tx.address, data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }) };
   }, (400000n + BigInt(n) * 400000n), setStatus, {
     label: 'Add items for sale', title: 'Confirm add items', manualRecovery: true,
     onSession: function (relaySession) {
@@ -2716,7 +2734,8 @@ async function submitRemoveTier(project, tier, statusEl) {
     if (resolved.tiers[chain.id].flags && resolved.tiers[chain.id].flags.cantBeRemoved) throw new Error('Item #' + tier.id + ' cannot be removed on ' + (chain.name || chain.id) + '.');
   });
   var relaySession = await runRelayrAcrossChains(avail, account, function (cid) {
-    return { to: hookMap[cid], data: encodeFunctionData({ abi: adjustTiersAbi, functionName: 'adjustTiers', args: [[], [BigInt(tier.id)]] }) };
+    var tx = buildAdjustTiersArgs({ chainId: cid, hookAddr: hookMap[cid], tiersToAdd: [], tierIdsToRemove: [tier.id] });
+    return { to: tx.address, data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }) };
   }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove', pendingScope: relayrActionScope(project, 'remove-item', tier.id) });
   bustTiersCache(project);
   if (relaySession && relaySession.resumed) { setStatus(relayrRecoveredMessage(relaySession), 'success'); return; }
@@ -2852,6 +2871,15 @@ var adjustTiersAbi = [{
   type: 'function', name: 'adjustTiers', stateMutability: 'nonpayable', outputs: [],
   inputs: [JB721_TIER_CONFIG, { name: 'tierIdsToRemove', type: 'uint256[]' }],
 }];
+// Pure builder shared by the add-item and remove-item Relayr paths.
+export function buildAdjustTiersArgs(o) {
+  return {
+    chainId: o.chainId, address: o.hookAddr, abi: adjustTiersAbi, functionName: 'adjustTiers',
+    contractName: 'JB721TiersHook',
+    args: [o.tiersToAdd || [], (o.tierIdsToRemove || []).map(function (id) { return BigInt(id); })],
+    value: 0n,
+  };
+}
 // JB721TiersHook.setDiscountPercentsOf — operator-only (SET_721_DISCOUNT_PERCENT). discountPercent is out of
 // 200 (DISCOUNT_DENOMINATOR); see buildSetDiscountConfig. The only price-related field editable after a tier
 // is added (price/supply/etc. are immutable — any other change is remove + re-add).
@@ -4085,6 +4113,16 @@ var omnichainQueueAbi = [{
   inputs: [{ name: 'projectId', type: 'uint256' }, RULESET_CFG_COMPONENT, { name: 'memo', type: 'string' }],
   outputs: [{ name: 'rulesetId', type: 'uint256' }, { name: 'hook', type: 'address' }],
 }];
+// Pure builder for the existing-shop JBOmnichainDeployer overload. Keeping this distinct from the
+// deploy-fresh overload below makes overload selection and the exact selector independently testable.
+export function buildOmnichainQueueArgs(o) {
+  return {
+    chainId: o.chainId, address: o.omnichainDeployer, abi: omnichainQueueAbi, functionName: 'queueRulesetsOf',
+    contractName: 'JBOmnichainDeployer',
+    args: [BigInt(o.projectId), o.rulesetConfigs || [], o.memo == null ? '' : o.memo],
+    value: 0n,
+  };
+}
 // "Start a new shop" at queue time. Both overloads deploy a fresh 721 hook, transfer its ownership to the
 // PROJECT, and queue a ruleset wired to it — in one owner-signed tx (no stranded-ownership EOA path).
 // Single-chain: JB721TiersHookProjectDeployer.queueRulesetsOf(projectId, deployTiersHookConfig,
@@ -4208,6 +4246,15 @@ var autoIssueForAbi = [{
   ],
   outputs: [],
 }];
+
+// Pure builder for the REVOwner auto-issuance distribution transaction.
+export function buildAutoIssueArgs(o) {
+  return {
+    chainId: o.chainId, address: o.revOwnerAddr, abi: autoIssueForAbi, functionName: 'autoIssueFor',
+    contractName: 'REVOwner',
+    args: [BigInt(o.revnetId), BigInt(o.stageId), o.beneficiary], value: 0n,
+  };
+}
 
 // Decode reserved %, cash out tax, and base currency from a ruleset's packed metadata uint.
 // Layout per JBRulesetMetadataResolver: reservedPercent << 4, cashOutTaxRate << 20, baseCurrency << 36.
@@ -7296,25 +7343,26 @@ function renderPayCard(project, cart) {
 
     // pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) — metadata at index 6.
     // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
-    var fnName = addBalance ? 'addToBalanceOf' : 'pay';
-    var fnAbi = addBalance ? addToBalanceAbi : payAbi;
     var reviewedProjectId = pidOn(project, reviewedChainId);
-    var args = addBalance
-      ? [reviewedProjectId, reviewedToken.address, amt, false, reviewedMemo, metadata]
-      : [reviewedProjectId, reviewedToken.address, amt, beneficiary, minTokens, reviewedMemo, metadata];
+    var txParams = addBalance
+      ? buildAddToBalanceArgs({ chainId: reviewedChainId, terminalAddr: terminal, projectId: reviewedProjectId,
+        token: reviewedToken.address, amount: amt, memo: reviewedMemo, metadata: metadata, viaRouter: viaRouter })
+      : {
+        chainId: reviewedChainId,
+        address: terminal,
+        abi: payAbi,
+        functionName: 'pay',
+        args: [reviewedProjectId, reviewedToken.address, amt, beneficiary, minTokens, reviewedMemo, metadata],
+        value: isNative ? amt : 0n,
+        // Direct ERC20 pays approve the terminal inline; swap-via-router pays authorize through Permit2 (below).
+        tokenAddr: (isNative || viaRouter) ? null : reviewedToken.address,
+        spenderAddr: (isNative || viaRouter) ? null : terminal,
+        approvalAmount: (isNative || viaRouter) ? null : amt,
+      };
+    var fnName = txParams.functionName;
+    var fnAbi = txParams.abi;
+    var args = txParams.args;
     var metaIdx = addBalance ? 5 : 6;
-    var txParams = {
-      chainId: reviewedChainId,
-      address: terminal,
-      abi: fnAbi,
-      functionName: fnName,
-      args: args,
-      value: isNative ? amt : 0n,
-      // Direct ERC20 pays approve the terminal inline; swap-via-router pays authorize through Permit2 (below).
-      tokenAddr: (isNative || viaRouter) ? null : reviewedToken.address,
-      spenderAddr: (isNative || viaRouter) ? null : terminal,
-      approvalAmount: (isNative || viaRouter) ? null : amt,
-    };
 
     // Confirm the exact data before signing.
     var chainName = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
@@ -14173,6 +14221,7 @@ function renderPriceChart(project, stages) {
   var now = Math.floor(Date.now() / 1000);
 
   var card = el('div', 'detail-card price-hero');
+  card.dataset.promptTitle = 'Issuance, cash out, and AMM price history';
   var top = el('div', 'price-top');
 
   var legend = el('div', 'price-legend');
@@ -14789,7 +14838,9 @@ function renderAutoIssuance(project, stages) {
   function distribute(row, btn) {
     var stageId = BigInt(row.stage.id);
     var localPid = pidOn(project, row.chain.id);
-    var args = [localPid, stageId, row.beneficiary];
+    var tx = buildAutoIssueArgs({ chainId: row.chain.id, revOwnerAddr: row.revOwnerAddr,
+      revnetId: localPid, stageId: stageId, beneficiary: row.beneficiary });
+    var args = tx.args;
     var chainName = row.chain && row.chain.name ? row.chain.name : ('Chain ' + row.chain.id);
     var amount = row.remaining != null && row.remaining > 0n ? row.remaining : row.count;
     var data = encodeCalldata(autoIssueForAbi, 'autoIssueFor', args);
@@ -14817,7 +14868,7 @@ function renderAutoIssuance(project, stages) {
       abiFragment: autoIssueForAbi[0],
     };
     openTxConfirm(payload, function (ctx) {
-      sendAutoIssue(row, btn, args, ctx);
+      sendAutoIssue(row, btn, tx, ctx);
     }, {
       title: 'Confirm auto issue',
       confirmText: 'Confirm & Distribute',
@@ -14837,14 +14888,14 @@ function renderAutoIssuance(project, stages) {
     if (ctx && ctx.cancel) ctx.cancel.disabled = !!busy;
   }
 
-  function sendAutoIssue(row, btn, args, ctx) {
+  function sendAutoIssue(row, btn, tx, ctx) {
     if (!(getAccount && getAccount())) {
       btn.disabled = true;
       btn.textContent = 'Connecting…';
       setConfirmBusy(ctx, true);
       setConfirmStatus(ctx, 'Connecting wallet…');
       connect().then(function () {
-        sendAutoIssue(row, btn, args, ctx);
+        sendAutoIssue(row, btn, tx, ctx);
       }).catch(function (err) {
         btn.disabled = false;
         btn.textContent = 'Distribute';
@@ -14856,13 +14907,8 @@ function renderAutoIssuance(project, stages) {
     btn.disabled = true;
     btn.textContent = 'Distributing…';
     setConfirmBusy(ctx, true);
-    executeTransaction({
+    executeTransaction(Object.assign({}, tx, {
       skipConfirm: true, // already confirmed via openTxConfirm
-      chainId: row.chain.id,
-      address: row.revOwnerAddr,
-      abi: autoIssueForAbi,
-      functionName: 'autoIssueFor',
-      args: args,
       onStatus: function (m, kind) { setConfirmStatus(ctx, m, kind); },
       onSuccess: function () {
         row.remaining = 0n;
@@ -14877,7 +14923,7 @@ function renderAutoIssuance(project, stages) {
         setConfirmBusy(ctx, false);
         setConfirmStatus(ctx, m, 'error');
       },
-    });
+    }));
   }
 
   return card;
@@ -17803,9 +17849,12 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
         omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: usesOmnichainWrapper, memo: memo });
       return { to: nc.to, data: encodeFunctionData({ abi: nc.abi, functionName: nc.functionName, args: nc.args }) };
     }
-    return usesOmnichainWrapper
-      ? { to: getAddress('JBOmnichainDeployer', cid), data: encodeFunctionData({ abi: omnichainQueueAbi, functionName: 'queueRulesetsOf', args: [localPid, cfgs, memo] }) }
-      : { to: liveController, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid, cfgs, memo] }) };
+    if (usesOmnichainWrapper) {
+      var omni = buildOmnichainQueueArgs({ chainId: cid, omnichainDeployer: getAddress('JBOmnichainDeployer', cid),
+        projectId: localPid, rulesetConfigs: cfgs, memo: memo });
+      return { to: omni.address, data: encodeFunctionData({ abi: omni.abi, functionName: omni.functionName, args: omni.args }) };
+    }
+    return { to: liveController, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid, cfgs, memo] }) };
   };
 
   // Safe-owned project → Relayr can't sign for the Safe; propose the call to each selected chain's Safe queue.
@@ -17858,7 +17907,10 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     } else {
       var target = usesOmnichainWrapper ? getAddress('JBOmnichainDeployer', cid0) : liveController0;
       if (!target) { setStatus('No compatible ruleset queue contract on this chain', 'error'); return; }
-      exec = { address: target, abi: usesOmnichainWrapper ? omnichainQueueAbi : queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid0, configs, memo], contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JBController', label: 'Queue ruleset' };
+      exec = usesOmnichainWrapper
+        ? Object.assign(buildOmnichainQueueArgs({ chainId: cid0, omnichainDeployer: target, projectId: localPid0,
+          rulesetConfigs: configs, memo: memo }), { label: 'Queue ruleset' })
+        : { address: target, abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid0, configs, memo], contractName: 'JBController', label: 'Queue ruleset' };
     }
     await new Promise(function (resolve, reject) {
       executeTransaction({
@@ -18947,6 +18999,7 @@ function renderBridgeTransactionsTable(rows, project) {
 // Map a modal/card title to a known component concept, so the prompt carries that concept's contract + the
 // gotchas that make it correct and safe (defined once in COMPONENT_SPECS).
 var TITLE_CONCEPT = {
+  'issuance, cash out, and amm price history': 'price-history',
   'cash out': 'cashout', 'get a loan': 'loan', 'repay loan': 'loan', 'move between chains': 'move',
   'distribute payouts': 'payouts', 'use surplus allowance': 'payouts', 'queue ruleset': 'queue-ruleset',
   'add operator': 'permissions', 'edit permissions': 'permissions',
@@ -18989,8 +19042,8 @@ function attachCardPromptLinks(contentArea) {
     if (card.dataset.promptLinked) return; // idempotent: never add a second link to the same card
     card.dataset.promptLinked = '1';
     var t = card.querySelector('.detail-card-title');
-    var title = t ? (t.textContent || '').trim().split('\n')[0]
-      : (card.classList.contains('you-card') ? 'Your holdings & actions' : 'this section');
+    var title = card.dataset.promptTitle || (t ? (t.textContent || '').trim().split('\n')[0]
+      : (card.classList.contains('you-card') ? 'Your holdings & actions' : 'this section'));
     // Put the footer inside the card's content box when it has one. That keeps the prompt's right edge aligned
     // with inputs, tables, and action rows instead of the outer card edge on wide/max-width layouts.
     var cardBody = Array.prototype.find.call(card.children, function (child) {
