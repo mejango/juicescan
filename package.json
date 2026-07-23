@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "pdfjs-dist": "^6.1.200",
-    "viem": "^2.55.7"
+    "viem": "^2.55.8"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",

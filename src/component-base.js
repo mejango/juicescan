@@ -1405,7 +1405,7 @@ export function componentReproPrompt(title, prefix, fileHint) {
   return 'Reproduce the Juicebox V6 "' + (title || prefix) + '" component from this open-source explorer.\n'
     + (s && s.fn ? 'It builds a ' + s.fn + ' transaction.\n' : '')
     + (s && s.desc ? '\nWhat it does, and the gotchas that make it correct + safe:\n' + s.desc + '\n' : '')
-    + '\nReference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicebox-v6-website'
+    + '\nReference implementation (vanilla JS, client-only, no backend): https://github.com/mejango/juicescan'
     + (file ? ' — read src/' + file + '. Transactions are built in-browser; the README maps every action to its contract function.' : '.') + '\n'
     + 'V6 contracts (Juicebox version 6): https://github.com/Bananapus/version-6.\n'
     + 'Build it COMPLETELY — handle the loading, empty, error, multi-chain, and permission-preflight states, not just the happy path. Before trusting this summary, READ the builder function named above and its round-trip/encoding test in the reference repo: the builder is the source of truth for arg order, decimals, currency ids, and any hardcoded value. Cross-check every arg against the onchain ABI in the V6 contracts repo and match the tuple order, integer widths, and 4-byte selector EXACTLY (a uint32-vs-uint256 swap or a reordered tuple changes the selector and reverts every tx).\n'

@@ -946,7 +946,7 @@ export function renderBuildTab() {
       var box = document.createElement('p'); box.className = 'guide-text';
       box.appendChild(document.createTextNode('Reference: '));
       var lk = function (href, text) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
-      box.appendChild(lk('https://github.com/mejango/juicebox-v6-website', 'this site’s repo (README + tests)'));
+      box.appendChild(lk('https://github.com/mejango/juicescan', 'this site’s repo (README + tests)'));
       box.appendChild(document.createTextNode(' and '));
       box.appendChild(lk('https://github.com/Bananapus/version-6', 'V6 contracts (version-6)'));
       box.appendChild(document.createTextNode('.'));

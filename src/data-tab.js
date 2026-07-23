@@ -589,7 +589,7 @@ export function buildDataQueryPrompt(query) {
   lines.push('', 'Requirements:');
   lines.push.apply(lines, requirements);
   lines.push('',
-    'Reference implementation: https://github.com/mejango/juicebox-v6-website — read src/data-tab.js, src/bendystraw-client.js, src/bendystraw-format.js, and data/bendystraw-queries.json.',
+    'Reference implementation: https://github.com/mejango/juicescan — read src/data-tab.js, src/bendystraw-client.js, src/bendystraw-format.js, and data/bendystraw-queries.json.',
     'Bendystraw schema: https://bendystraw-dev.up.railway.app/schema');
   return lines.join('\n');
 }
