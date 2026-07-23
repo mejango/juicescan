@@ -4,30 +4,58 @@ updates:
     directory: /
     schedule:
       interval: weekly
-      day: monday
+      day: friday
       time: "09:00"
-      timezone: Etc/UTC
-    open-pull-requests-limit: 10
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 7
+      semver-minor-days: 14
+      semver-patch-days: 7
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
-      npm-minor-patch:
+      routine:
+        applies-to: version-updates
         patterns:
           - "*"
         update-types:
           - minor
           - patch
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-      day: monday
+      day: friday
       time: "09:00"
-      timezone: Etc/UTC
-    open-pull-requests-limit: 10
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 7
+      semver-minor-days: 14
+      semver-patch-days: 7
+    allow:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
-      actions-minor-patch:
+      routine:
+        applies-to: version-updates
         patterns:
           - "*"
         update-types:
           - minor
           - patch
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"

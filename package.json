@@ -2,7 +2,7 @@
   "name": "jb-directory",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "npm@10.9.2",
+  "packageManager": "npm@10.9.8",
   "engines": {
     "node": "22.x",
     "npm": "10.9.x"
@@ -33,15 +33,15 @@
     "test:ci": "npm run check:source && npm run check:deployments && npm run check:generated && npm run transaction:check && npm run bundle && npm run test:coverage && npm run check:bundle && npm run test:browser"
   },
   "dependencies": {
-    "pdfjs-dist": "^5.6.205",
-    "viem": "^2.21.0"
+    "pdfjs-dist": "^6.1.200",
+    "viem": "^2.55.7"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.61.1",
-    "@vitest/coverage-v8": "^4.1.9",
-    "esbuild": "^0.24.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.28.1",
     "jsdom": "^29.1.1",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   }
 }
