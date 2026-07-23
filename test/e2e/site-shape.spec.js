@@ -59,7 +59,7 @@ async function openStaticTab(page, hash, section = hash) {
 
 test('static guide keeps the site shell usable and inside every viewport', async ({ page }) => {
   const { pageErrors, externalAttempts } = await openStaticTab(page, 'learn');
-  await expect(page.getByRole('heading', { name: 'JUICEBOX MONEY ENGINE' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'JUICE SCAN' })).toBeVisible();
   await expect(page.getByRole('navigation').filter({ has: page.getByRole('button', { name: 'LEARN' }) })).toBeVisible();
   await expect(page.getByRole('heading', { name: '1. WHAT IS JUICEBOX?' })).toBeVisible();
 
