@@ -93,14 +93,14 @@ a:hover { color: var(--c-teal); }
 .palette {
   display: flex;
   justify-content: center;
-  gap: 12px;
-  margin-top: 19px;
-  margin-bottom: 29px;
+  gap: 6px;
+  margin-top: 6px;
+  margin-bottom: 12px;
 }
 
 .palette-dot {
-  width: 24px;
-  height: 24px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   border: 1px solid rgba(44,32,24,0.15);
 }
@@ -116,7 +116,7 @@ a:hover { color: var(--c-teal); }
 #header {
   position: relative;
   text-align: center;
-  padding: 20px 16px 21px;
+  padding: 24px 16px 12px;
   border-bottom: 1px solid var(--c-orange-light);
 }
 
@@ -133,20 +133,18 @@ a:hover { color: var(--c-teal); }
 }
 
 #header h1 {
-  font-size: clamp(32px, 4vw, 44px);
+  font-size: 22px;
   font-weight: bold;
-  line-height: 1.35;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
   color: var(--c-black);
   margin: 0;
 }
 
 
 .subtitle {
-  font-size: clamp(18px, 2.45vw, 28px);
-  line-height: 1.8;
+  font-size: 14px;
   color: var(--muted);
-  margin: 0 auto;
+  margin-top: 4px;
 }
 
 .subtitle span {
@@ -154,10 +152,9 @@ a:hover { color: var(--c-teal); }
 }
 
 .risk-notice {
-  font-size: clamp(12px, 1.7vw, 20px);
-  line-height: 1.5;
+  font-size: 10px;
   color: var(--muted-2);
-  margin: 10px auto 0;
+  margin-top: 6px;
 }
 
 .audit-link {
@@ -5710,13 +5707,10 @@ select.create-input-auto { width: auto; max-width: 100%; }
 @media (max-width: 600px) {
   /* Header — connect button drops into flow (centered) instead of being
      absolutely positioned top-right where it overlaps the wrapped title. */
-  #header { padding: 16px 12px 20px; }
+  #header { padding: 16px 12px 10px; }
   #header > #connect-btn { position: static; display: block; margin: 0 auto 10px; width: fit-content; }
-  #header h1 { font-size: clamp(28px, 10vw, 38px); letter-spacing: 1px; }
-  .palette { gap: 8px; margin-top: 8px; margin-bottom: 14px; }
-  .palette-dot { width: 18px; height: 18px; }
-  .subtitle { font-size: clamp(16px, 5vw, 20px); line-height: 1.55; }
-  .risk-notice { max-width: 34em; font-size: 12px; line-height: 1.5; margin-top: 10px; }
+  #header h1 { font-size: 18px; letter-spacing: 0.5px; }
+  .subtitle { font-size: 13px; }
 
   /* Split-recipient rows: the "0x… or project ID" field collapses to a couple chars when the whole row
      (Split [%] to [field] ✕) is forced onto one phone line. Wrap it to its own full-width line; keep the
