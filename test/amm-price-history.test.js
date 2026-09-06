@@ -101,8 +101,15 @@ describe('Uniswap V4 AMM price history', () => {
     expect(points[4].tokenAmount).toBeCloseTo(1, 6);
     expect(points[4].pairAmount).toBeCloseTo(1, 6);
 
-    const buckets = bucketPoolReserves(points, 0, 400, 4);
-    expect(buckets.map(bucket => bucket.timestamp)).toEqual([150, 250, 350]);
-    expect(buckets.map(bucket => bucket.pairValue)).toEqual([points[0].pairValue, points[2].pairValue, points[3].pairValue]);
+    // Each bar holds the last observation at its close, including the change at 400.
+    // The bucket closing at 0 has no observation yet and is omitted.
+    const buckets = bucketPoolReserves(points, -100, 400, 5);
+    expect(buckets.map(bucket => bucket.timestamp)).toEqual([50, 150, 250, 350]);
+    expect(buckets.map(bucket => bucket.pairValue)).toEqual([
+      points[0].pairValue,
+      points[2].pairValue,
+      points[3].pairValue,
+      points[4].pairValue,
+    ]);
   });
 });
