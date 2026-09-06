@@ -12842,7 +12842,8 @@ var ACTIVITY_TYPE_LABELS = {
   deploy_erc20: 'Token deploys', create: 'Project creation', add_to_balance: 'Add to balance',
   queue_ruleset: 'Ruleset changes', set_uri: 'Info updates', transfer: 'Ownership transfers',
   operator_perms: 'Permission changes', add_tier: 'Shop items added', remove_tier: 'Shop items removed',
-  swap: 'Buyback swaps', buyback_pool: 'Buyback pools', bridge_claim: 'Bridge claims',
+  swap: 'Buyback swaps', sell: 'Buyback sales', issuance: 'Token issuance',
+  buyback_pool: 'Buyback pools', bridge_claim: 'Bridge claims',
 };
 function activityTypeLabel(t) { return ACTIVITY_TYPE_LABELS[t] || String(t || 'activity').replace(/_/g, ' '); }
 
@@ -13099,7 +13100,7 @@ export function reservePercentLabel(swapRaw, mintRaw) {
 
 // Reading order for a same-tx group: the first type present becomes the merged row's
 // primary (actor, amount, in/out tag, memo); the others fold into the sentence.
-var SAME_TX_ORDER = ['create', 'pay', 'add_to_balance', 'mint_nft', 'cash_out', 'swap', 'issuance', 'auto_issue', 'bridge_claim', 'reserved', 'reserved_split'];
+var SAME_TX_ORDER = ['create', 'pay', 'add_to_balance', 'mint_nft', 'cash_out', 'swap', 'sell', 'issuance', 'auto_issue', 'bridge_claim', 'reserved', 'reserved_split'];
 function sameTxRank(type) { var i = SAME_TX_ORDER.indexOf(type); return i === -1 ? SAME_TX_ORDER.length : i; }
 
 // The sentence fragment a row contributes, mirroring renderActivityRow's action + tokenAmount layout.
@@ -13562,22 +13563,28 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
   }
   if (event.swapEvent) {
     var sw = event.swapEvent;
-    // A same-tx mint is the reserved-rate remint of this swap's output — the payer's
-    // actual receipt. Fold it into the sentence instead of leaving a bare gross amount.
-    // Mints and swaps pair up by position within the tx: the Nth swap's remint is the Nth mint.
+    // The indexer distinguishes real pool buys/sells from leftover payment
+    // issuance. Older rows without direction retain their original buy meaning.
+    var swapDirection = String(sw.direction || 'buy').toLowerCase();
+    var isBuy = swapDirection === 'buy';
+    var isSell = swapDirection === 'sell';
+    var isMint = swapDirection === 'mint';
+    // For buy-only transactions, pair swaps and beneficiary remints by amount
+    // rank to show the receipt after reserves. Mixed routes are excluded by
+    // projectFeedRowsFromEvents because their internal mints are ambiguous.
     var swapKey = chainId + ':' + (sw.txHash || event.txHash);
-    var remints = project._remintByTx ? project._remintByTx[swapKey] : null;
+    var remints = isBuy && project._remintByTx ? project._remintByTx[swapKey] : null;
     var remint = remints ? remints[swapOrdinal || 0] : null;
-    var remintPayees = project._remintPayeeByTx ? project._remintPayeeByTx[swapKey] : null;
+    var remintPayees = isBuy && project._remintPayeeByTx ? project._remintPayeeByTx[swapKey] : null;
     var reservePct = remint ? reservePercentLabel(sw.projectTokenAmount, remint) : '';
-    return { type: 'swap', direction: 'in', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
+    return { type: isSell ? 'sell' : isMint ? 'issuance' : 'swap', direction: isSell ? 'out' : isBuy || isMint ? 'in' : '', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
       account: sw.from || sw.caller || event.from, from: sw.from || event.from,
       baseAmount: activityFlowAmount(project, sw.terminalTokenAmount, null),
       tokenAmount: '',
       // Who the paired remint went to, and what it was: a fan-out row phrases the swap as their receipt.
       payee: remintPayees ? remintPayees[swapOrdinal || 0] || '' : '',
       received: remint ? formatCompactTokenAmount(toBigInt(remint)) + ' ' + sym + (reservePct ? ' after the ' + reservePct + '% reserve' : '') : '',
-      action: 'bought ' + (sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) + ' ' : '') + sym + ' via the buyback pool'
+      action: (isSell ? 'sold ' : isBuy || isMint ? 'bought ' : 'swapped ') + (sw.projectTokenAmount ? formatCompactTokenAmount(toBigInt(sw.projectTokenAmount)) + ' ' : '') + sym + (isMint ? ' from issuance' : ' via the buyback pool')
         + (reservePct ? ', receiving ' + formatCompactTokenAmount(toBigInt(remint)) + ' ' + sym + ' after the ' + reservePct + '% reserve' : ''), memo: '' };
   }
   if (event.buybackPoolEvent) {
@@ -21556,17 +21563,25 @@ export function calculateFloorPrice(balance, tokenSupply, cashOutTax, balanceDec
 // them; one reserve rate applies to every pay in a tx, so amount rank can.
 function descendingBigInt(a, b) { a = toBigInt(a); b = toBigInt(b); return a < b ? 1 : a > b ? -1 : 0; }
 export function projectFeedRowsFromEvents(events, project) {
-  var remintByTx = {}, remintPayeeByTx = {}, swapAmountsByTx = {};
+  var remintByTx = {}, remintPayeeByTx = {}, swapAmountsByTx = {}, ambiguousRemintTxs = {};
   events.forEach(function (ev) {
-    if (ev.swapEvent && String(ev.swapEvent.direction || 'buy').toLowerCase() !== 'sell') {
+    if (ev.swapEvent) {
       var swapKey = ev.chainId + ':' + (ev.swapEvent.txHash || ev.txHash);
-      (swapAmountsByTx[swapKey] || (swapAmountsByTx[swapKey] = [])).push(ev.swapEvent.projectTokenAmount || '0');
+      if (String(ev.swapEvent.direction || 'buy').toLowerCase() === 'buy') {
+        (swapAmountsByTx[swapKey] || (swapAmountsByTx[swapKey] = [])).push(ev.swapEvent.projectTokenAmount || '0');
+      } else {
+        // A leftover issuance shares one final remint with the pool output;
+        // sells can mint tokens internally too. Amount ranking cannot identify
+        // a buy's net receipt in these transactions, so do not infer a reserve.
+        ambiguousRemintTxs[swapKey] = true;
+      }
     }
     if (!ev.mintTokensEvent) return;
     var key = ev.chainId + ':' + (ev.mintTokensEvent.txHash || ev.txHash);
     (remintByTx[key] || (remintByTx[key] = [])).push({ count: ev.mintTokensEvent.beneficiaryTokenCount, payee: ev.mintTokensEvent.beneficiary || '' });
   });
   Object.keys(remintByTx).forEach(function (key) {
+    if (ambiguousRemintTxs[key]) { delete remintByTx[key]; return; }
     remintByTx[key].sort(function (a, b) { return descendingBigInt(a.count, b.count); });
     remintPayeeByTx[key] = remintByTx[key].map(function (r) { return r.payee; });
     remintByTx[key] = remintByTx[key].map(function (r) { return r.count; });
