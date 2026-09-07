@@ -54,22 +54,32 @@ export function requireUnpaidRelayrSession(scope, bundleUuid) {
 // Relayr's prepaid-native payment endpoint is deliberately pinned client-side. A quote is an untrusted HTTP
 // response: accepting an arbitrary `target` + `calldata` here would turn a compromised API into a wallet
 // transaction oracle (for example, an ERC-20 approve disguised as "Pay & execute"). The same immutable runtime
-// is deployed at this address on Relayr's four supported payment chains. Its sole entry point receives the
+// is deployed at this address on all eight supported mainnet/Sepolia payment chains. Its sole entry point receives the
 // quote's bytes16 bundle UUID and uint40 deadline, forwards msg.value to Relayr's fixed receiver, and emits the
 // payment event. Keep the code hash, address, selector, and exact two-word calldata schema frozen together.
 export var RELAYR_PAYMENT_ADDRESS = '0x1c05f7841379d4393574c0ffa17908ec40ffd97d';
 export var RELAYR_PAYMENT_SELECTOR = '0x103903a7';
 export var RELAYR_PAYMENT_CODE_HASH = '0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6';
 export var RELAYR_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-var RELAYR_PAYMENT_CHAINS = new Set([1, 10, 8453, 42161]);
+var RELAYR_MAINNET_CHAINS = new Set([1, 10, 8453, 42161]);
+var RELAYR_TESTNET_CHAINS = new Set([11155111, 11155420, 84532, 421614]);
+// Payment deployments are authenticated independently by the frozen runtime above on every send.
+var RELAYR_PAYMENT_CHAINS = new Set([...RELAYR_MAINNET_CHAINS, ...RELAYR_TESTNET_CHAINS]);
 export function relayrSupportsChain(chainId) {
-  return Number.isSafeInteger(Number(chainId)) && RELAYR_PAYMENT_CHAINS.has(Number(chainId));
+  return Number.isSafeInteger(Number(chainId)) && (RELAYR_MAINNET_CHAINS.has(Number(chainId)) || RELAYR_TESTNET_CHAINS.has(Number(chainId)));
+}
+
+function relayrNetworkFamily(chainIds) {
+  if (!Array.isArray(chainIds) || !chainIds.length || !chainIds.every(relayrSupportsChain)) return null;
+  if (chainIds.every(function (id) { return RELAYR_MAINNET_CHAINS.has(Number(id)); })) return 'mainnet';
+  if (chainIds.every(function (id) { return RELAYR_TESTNET_CHAINS.has(Number(id)); })) return 'testnet';
+  return null;
 }
 
 // Ordinary forwarded bundles have one independent request per supported destination. Multiple requests
 // for the same sender on one chain would otherwise sign the same live forwarder nonce.
 export function relayrSupportsChains(chainIds) {
-  return Array.isArray(chainIds) && chainIds.length > 0 && chainIds.every(relayrSupportsChain)
+  return !!relayrNetworkFamily(chainIds)
     && new Set(chainIds.map(Number)).size === chainIds.length;
 }
 var RELAYR_PAYMENT_GAS = 150000n;
@@ -130,11 +140,27 @@ export function relayrPaymentDetails(payment, expectedBundleUuid, nowSeconds) {
 // Authenticate and snapshot every displayed option before a user chooses where to fund the bundle.
 export function relayrPaymentOptions(quote) {
   if (!quote || !Array.isArray(quote.payment_info) || !quote.payment_info.length) throw new Error('Relayr returned no payment option.');
-  return quote.payment_info.map(function (payment) {
+  var bound = RELAYR_QUOTED_REQUESTS.get(quote.bundle_uuid);
+  var destinations = bound ? bound.transactions : quote.expected_transactions;
+  var family = relayrNetworkFamily((destinations || []).map(function (request) { return request.chain; }));
+  if (!family) throw new Error('The Relayr quote must identify destinations in one supported network family.');
+  var options = quote.payment_info.map(function (payment) {
     var details = relayrPaymentDetails(payment, quote.bundle_uuid);
     return Object.freeze({ chain: details.chainId, target: details.target, token: RELAYR_NATIVE_TOKEN,
       amount: details.amount.toString(), calldata: details.calldata, payment_deadline: details.deadline.toString() });
-  }).sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : BigInt(a.amount) > BigInt(b.amount) ? 1 : a.chain - b.chain; });
+  }).filter(function (payment) { return relayrNetworkFamily([payment.chain]) === family; });
+  if (!options.length) throw new Error('Relayr returned no payment option in the destination network family.');
+  return options.sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : BigInt(a.amount) > BigInt(b.amount) ? 1 : a.chain - b.chain; });
+}
+
+function relayrBoundPaymentDetails(payment, bundleUuid) {
+  var bound = RELAYR_QUOTED_REQUESTS.get(bundleUuid);
+  if (!bound) throw new Error('The original Relayr destination quote is unavailable. Resume its saved request before paying.');
+  var details = relayrPaymentDetails(payment, bundleUuid);
+  if (relayrNetworkFamily(bound.transactions.map(function (request) { return request.chain; })) !== relayrNetworkFamily([details.chainId])) {
+    throw new Error('Relayr funding must use the same network family as its destinations. No payment was sent.');
+  }
+  return details;
 }
 
 async function requireRelayrPaymentRuntime(client) {
@@ -367,8 +393,8 @@ async function reserveForwardedPublication(proofs) {
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.
 export async function relayrPostBundle(transactions, journal, locked) {
-  if (!Array.isArray(transactions) || !transactions.length || transactions.some(function (tx) { return !relayrSupportsChain(tx && tx.chain); })) {
-    throw new Error('Relayr supports Ethereum, Optimism, Base, and Arbitrum mainnet destinations. Use direct wallet transactions for other chains.');
+  if (!Array.isArray(transactions) || !relayrNetworkFamily(transactions.map(function (tx) { return tx && tx.chain; }))) {
+    throw new Error('Relayr destinations must use one supported network family: Ethereum, Optimism, Base, and Arbitrum mainnets or their Sepolia testnets.');
   }
   var forwarded = forwardedPublicationProofs(transactions, journal);
   if (locked !== RELAYR_PUBLICATION_LOCK && forwarded.length) {
@@ -549,7 +575,7 @@ export function relayrRequestFingerprint(request) {
 // the wallet opens. Returns the payment tx hash.
 export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
-  var details = relayrPaymentDetails(payment, expectedBundleUuid);
+  var details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
   var chainId = details.chainId;
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
@@ -582,7 +608,7 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   if (!approved) throw new Error('Cancelled');
   // A review can remain open past the quote deadline or an authority change. Re-decode the same immutable
   // quote and repeat caller-specific freshness checks after it closes, before any simulation or wallet call.
-  details = relayrPaymentDetails(payment, expectedBundleUuid);
+  details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
   if (reverify) await reverify();
   await verifyRelayrQuotedRequests(expectedBundleUuid, account);
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
@@ -591,17 +617,17 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   if (!wallet || !getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   await requireRelayrPaymentRuntime(pub);
   await simulateRelayrPayment(pub, account, details);
-  details = relayrPaymentDetails(payment, expectedBundleUuid);
+  details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
   if (reverify) await reverify();
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   async function sendPayment() {
     // Another tab can have opened its own quote while this tab was reviewing. Serialize the final journal
     // check and wallet submission where Web Locks are available; the journal rejects a competing bundle.
-    details = relayrPaymentDetails(payment, expectedBundleUuid);
+    details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
     if (reverify) await reverify();
     await verifyRelayrQuotedRequests(expectedBundleUuid, account);
-    details = relayrPaymentDetails(payment, expectedBundleUuid);
+    details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
     if (onSending) await onSending();
     try {

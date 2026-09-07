@@ -5,7 +5,7 @@ import { relayrPaymentOptions, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELA
 function paymentQuote() {
   const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef';
   const deadline = Math.floor(Date.now() / 1000) + 3600;
-  return { bundle_uuid: bundleUuid, payment_info: [
+  return { bundle_uuid: bundleUuid, expected_transactions: [{ chain: 1 }, { chain: 8453 }], payment_info: [
     { chain: 8453, amount: '2000000000000000' },
     { chain: 1, amount: '1000000000000000' },
     { chain: 10, amount: '1000000000000000' },
@@ -53,6 +53,33 @@ describe('Relayr funding-chain choice', () => {
     expect(() => relayrPaymentOptions(null)).toThrow(/no payment option/);
     const quote = paymentQuote(); quote.payment_info[0].target = '0x3333333333333333333333333333333333333333';
     expect(() => chooseRelayrPayment(quote)).toThrow(/unrecognized payment contract/);
+    expect(document.querySelector('dialog')).toBeNull();
+  });
+
+  it.each([
+    [[11155111, 84532], [11155111, 84532]],
+    [[1, 8453], [1]],
+  ])('offers only funding in the destination network family %j', async (destinations, expected) => {
+    const quote = paymentQuote();
+    quote.expected_transactions = destinations.map(chain => ({ chain }));
+    quote.payment_info = [1, 11155111, 84532].map((chain, index) => ({ ...quote.payment_info[0], chain, amount: String(index + 1) }));
+    expect(relayrPaymentOptions(quote).map(payment => payment.chain)).toEqual(expected);
+    const chosen = chooseRelayrPayment(quote);
+    const select = document.querySelector('select[aria-label="Payment chain"]');
+    expect(select.options).toHaveLength(expected.length + 1);
+    expect(select.value).toBe('');
+    document.querySelector('.create-btn.ghost').click();
+    await expect(chosen).resolves.toBeNull();
+  });
+
+  it('rejects missing or mixed destinations and a testnet quote offering only real mainnet ETH', () => {
+    const quote = paymentQuote();
+    quote.expected_transactions = [{ chain: 11155111 }, { chain: 84532 }];
+    expect(() => chooseRelayrPayment(quote)).toThrow(/no payment option in the destination network family/);
+    quote.expected_transactions = [{ chain: 1 }, { chain: 84532 }];
+    expect(() => chooseRelayrPayment(quote)).toThrow(/one supported network family/);
+    delete quote.expected_transactions;
+    expect(() => chooseRelayrPayment(quote)).toThrow(/identify destinations/);
     expect(document.querySelector('dialog')).toBeNull();
   });
 });

@@ -14,7 +14,7 @@ import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
-import { runDirectBatch } from './direct-batch.js';
+import { runDirectBatch, hasDirectBatch, directBatchStatus } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } from './action-plan.js';
 import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
 import { CREDIT_CLAIM_ABI, prepareCreditClaims, verifyCreditClaims, verifySavedCreditClaims } from './credit-claims.js';
@@ -11906,11 +11906,12 @@ export function shouldUseRelayrForChains(chains) {
 // buildCall(chainId) -> { to, data }. Once payment confirms, `onSession` receives the durable receipt callers
 // can use to resume polling the SAME bundle. A post-payment error carries that receipt as `.relayrSession` so
 // callers never have to guess whether it is safe to create a second bundle.
-async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus, confirmOpts) {
+export async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus, confirmOpts) {
   confirmOpts = confirmOpts || {};
   if (confirmOpts.pendingScope) {
     var restored = loadRelayrPendingSession(confirmOpts.pendingScope);
     if (restored) {
+      if (directBatchStatus(confirmOpts.pendingScope, account) === 'pending') throw new Error('Both direct transaction receipts and a Relayr request are saved for this action. Verify the original transactions before submitting either request again.');
       var quoted = restored.paymentState === 'quoted' && relayrResumeQuotedBundle(confirmOpts.pendingScope);
       setStatus(quoted ? 'Resuming funding for the previously reviewed Relayr request.' : 'Checking the saved Relayr request for this action…', 'pending');
       var resumed = quoted
@@ -11934,7 +11935,7 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
       args: Array.isArray(call.args) ? call.args : null,
     });
   }
-  var useRelayr = shouldUseRelayrForChains(chains);
+  var useRelayr = !hasDirectBatch(confirmOpts.pendingScope, account, calls) && shouldUseRelayrForChains(chains);
   if (useRelayr) {
     var trustedTargets = await Promise.all(calls.map(function (call) { return relayrSupportsForwarding(call.cid, call.to); }));
     useRelayr = trustedTargets.every(function (trusted) { return trusted; });
@@ -12988,7 +12989,7 @@ async function executeReadySafeTransactions(readyExecs, opts) {
   var expectedSnapshots = {};
   initialReady.forEach(function (item) { expectedSnapshots[readySafeExecutionKey(item.ready)] = readySafeExecutionSnapshot(item); });
   var chainIds = Array.from(new Set(readyExecs.map(function (r) { return Number(r.cid); })));
-  if (readyExecs.length && (chainIds.length === 1 || !chainIds.every(relayrSupportsChain))) {
+  if (readyExecs.length && (chainIds.length === 1 || !relayrSupportsChains(chainIds))) {
     var ordered = readyExecs.slice().sort(function (a, b) { return Number(a.cid) - Number(b.cid) || Number(a.tx.nonce) - Number(b.tx.nonce); });
     var directOk = await confirmTransactionModal({
       via: 'Direct wallet transactions',
@@ -15147,6 +15148,7 @@ function renderProjectPayerAddresses(project) {
 export async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
   var restored = pendingScope && loadRelayrPendingSession(pendingScope);
   if (restored) {
+    if (directBatchStatus(pendingScope, getAccount()) === 'pending') throw new Error('Both direct payer receipts and a Relayr request are saved. Verify the original deployments before submitting either request again.');
     var quoted = restored.paymentState === 'quoted' && relayrResumeQuotedBundle(pendingScope);
     setStatus(quoted ? 'Resuming funding for the previously reviewed payer deployment.' : 'Checking the saved Relayr request for these payer addresses…', 'pending');
     var resumed = quoted
@@ -15157,6 +15159,11 @@ export async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScop
   }
   var account = getAccount();
   if (!account) throw new Error('Connect a wallet to deploy payer addresses.');
+  if (hasDirectBatch(pendingScope, account, calls)) {
+    return runRelayrAcrossChains(calls.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; }), account,
+      function (chainId) { return calls.find(function (call) { return Number(call.chainId) === Number(chainId); }); }, 1500000n, setStatus,
+      { pendingScope: pendingScope, label: 'Deploy payer address', title: 'Resume direct payer deployment' });
+  }
   // Preserve the exact permissionless calls shown in review, even if the originating form changes while open.
   calls = calls.map(function (call) { return { chainId: Number(call.chainId), to: call.to, data: call.data }; });
   var ok = await confirmTransactionModal({
@@ -16231,7 +16238,7 @@ export function renderExtrasSection(project) {
         }
         return buildProjectPayerDeployCall(cid, pidOn(project, cid), ben, memoInput.value, metadata, addToBalance, own);
       });
-      if (!shouldUseRelayrForChains(selected)) {
+      if (hasDirectBatch(pendingScope, account, calls) || !shouldUseRelayrForChains(selected)) {
         if (isSafeConnected()) {
           if (calls.length !== 1) throw new Error('Open the Safe on each destination chain and propose its payer deployment separately.');
           var safeCall = calls[0];

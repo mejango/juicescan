@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runDirectBatch } from '../src/direct-batch.js';
+import { runDirectBatch, hasDirectBatch } from '../src/direct-batch.js';
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const CALLS = [84532, 11155420].map(cid => ({ cid, to: '0x2222222222222222222222222222222222222222', data: '0x12345678' }));
@@ -26,6 +26,7 @@ describe('sequential direct transaction recovery', () => {
     const options = { account: ACCOUNT, scope: 'direct-storage-denied', verifySubmitted: vi.fn(async () => { throw new Error('Still pending'); }),
       execute: vi.fn(async (_call, _index, submitted) => { submitted('0xunknown'); throw new Error('Receipt unavailable'); }) };
     await expect(runDirectBatch(CALLS, options)).rejects.toThrow('Receipt unavailable');
+    expect(hasDirectBatch(options.scope, ACCOUNT)).toBe(true);
     options.execute.mockClear();
     await expect(runDirectBatch(CALLS, options)).rejects.toThrow('Still pending');
     expect(options.execute).not.toHaveBeenCalled();
@@ -42,6 +43,37 @@ describe('sequential direct transaction recovery', () => {
     await expect(runDirectBatch(CALLS, options)).resolves.toEqual([receipt('0xconfirmed'), receipt('0xretry')]);
     expect(options.execute).toHaveBeenCalledTimes(1);
     expect(options.execute.mock.calls[0][1]).toBe(1);
+  });
+});
+
+describe('direct transport recovery routing', () => {
+  it('detects account-scoped journals independently of changed call data', async () => {
+    const scope = 'routing-existing-direct';
+    const options = { account: ACCOUNT, scope, execute: async (_call, _index, submitted) => { submitted('0xpending'); throw new Error('Pending'); } };
+    expect(hasDirectBatch(scope, ACCOUNT)).toBe(false);
+    await expect(runDirectBatch(CALLS, options)).rejects.toThrow('Pending');
+    expect(hasDirectBatch(scope, ACCOUNT, [{ ...CALLS[0], data: '0xabcd' }])).toBe(true);
+    expect(hasDirectBatch(scope, '0x3333333333333333333333333333333333333333')).toBe(false);
+  });
+
+  it('finds legacy identity-keyed journals with chainId or cid descriptors', async () => {
+    const options = { account: ACCOUNT, execute: async (_call, _index, submitted) => { submitted('0xpending'); throw new Error('Pending'); } };
+    await expect(runDirectBatch(CALLS, options)).rejects.toThrow('Pending');
+    expect(hasDirectBatch(null, ACCOUNT, CALLS.map(({ cid, ...call }) => ({ ...call, chainId: cid })))).toBe(true);
+  });
+
+  it.each(['null', 'false', '0', '', '{broken'])('retains malformed journal %j and prevents wallet execution', async raw => {
+    const scope = 'malformed-direct'; localStorage.setItem(`jb-direct-batch-v1:${ACCOUNT}:${scope}`, raw);
+    const execute = vi.fn(); expect(hasDirectBatch(scope, ACCOUNT)).toBe(true);
+    await expect(runDirectBatch(CALLS, { scope, account: ACCOUNT, execute })).rejects.toThrow(/cannot be read/);
+    expect(execute).not.toHaveBeenCalled(); expect(localStorage.getItem(`jb-direct-batch-v1:${ACCOUNT}:${scope}`)).toBe(raw);
+  });
+
+  it('cannot turn an unreadable journal into a new Relayr or direct request', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Read denied'); });
+    const execute = vi.fn(); expect(hasDirectBatch('unreadable-direct', ACCOUNT)).toBe(true);
+    await expect(runDirectBatch(CALLS, { scope: 'unreadable-direct', account: ACCOUNT, execute })).rejects.toThrow(/Enable browser storage/);
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 

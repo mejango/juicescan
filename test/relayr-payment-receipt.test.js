@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { keccak256 } from 'viem';
 
 const state = vi.hoisted(() => ({
@@ -21,7 +21,7 @@ vi.mock('../src/component-base.js', () => ({
 }));
 
 vi.mock('../src/chain.js', () => ({
-  CHAINS: { 1: { id: 1, name: 'Ethereum' } },
+  CHAINS: Object.fromEntries([1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(id => [id, { id }])),
   chainNameFor: id => (id === 1 ? 'Ethereum' : `chain ${id}`),
 }));
 
@@ -32,6 +32,7 @@ import {
   RELAYR_PAYMENT_SELECTOR,
   relayrPay,
   relayrPostBundle,
+  relayrPaymentOptions,
   relayrPaymentDetails,
 } from '../src/relayr.js';
 
@@ -60,6 +61,15 @@ function paymentFor(overrides = {}) {
     payment_deadline: String(deadline),
     ...overrides,
   };
+}
+
+async function publishFor(chainIds, payments = [paymentFor()]) {
+  const uuid = BUNDLE_UUID;
+  vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({
+    bundle_uuid: uuid, payment_info: payments,
+    tx_uuids: chainIds.map((_, index) => '11234567-89ab-cdef-0123-' + String(index + 1).padStart(12, '0')),
+  }) })));
+  return relayrPostBundle(chainIds.map(chain => ({ chain, target: '0x3333333333333333333333333333333333333333', data: '0x1234', value: '0' })));
 }
 
 describe('Relayr payment quote authentication', () => {
@@ -98,7 +108,8 @@ describe('Relayr payment quote authentication', () => {
 });
 
 describe('Relayr payment receipt tracking', () => {
-  beforeEach(() => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+  beforeEach(async () => {
     state.account = '0x1111111111111111111111111111111111111111';
     state.review = vi.fn().mockResolvedValue(true);
     state.wallet = {
@@ -115,6 +126,46 @@ describe('Relayr payment receipt tracking', () => {
       simulateContract: vi.fn(),
       track: vi.fn().mockResolvedValue({ status: 'success' }),
     };
+    await publishFor([1]);
+  });
+
+  it.each([11155111, 11155420, 84532, 421614])('funds testnet %s only after exact runtime, review, and destination verification', async chain => {
+    const payment = paymentFor({ chain });
+    await publishFor([11155111, 84532], [payment]);
+    await expect(relayrPay(payment, state.account, null, BUNDLE_UUID)).resolves.toBe(HASH);
+    expect(state.wallet.sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ chain: { id: chain }, to: RELAYR_PAYMENT_ADDRESS, value: 1n }));
+    expect(state.client.request).toHaveBeenCalledWith({ method: 'eth_getCode', params: [RELAYR_PAYMENT_ADDRESS, 'latest'] });
+    expect(state.review).toHaveBeenCalledWith(expect.objectContaining({ chainId: chain }), expect.anything());
+  });
+
+  it.each([
+    [[11155111, 84532], 1],
+    [[1, 8453], 84532],
+  ])('rejects bypassing the chooser to fund %j on wrong-family chain %s', async (destinations, chain) => {
+    const quote = await publishFor(destinations, [paymentFor({ chain })]);
+    // Even a changed caller-visible binding cannot override the original published destinations.
+    quote.expected_transactions = [{ chain }];
+    await expect(relayrPay(paymentFor({ chain }), state.account, null, BUNDLE_UUID)).rejects.toThrow(/same network family/);
+    expect(state.client.request).not.toHaveBeenCalled();
+    expect(state.review).not.toHaveBeenCalled();
+    expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+    expect(() => relayrPaymentOptions(quote)).toThrow(/no payment option in the destination network family/);
+  });
+
+  it('rejects a payment without its original published destination quote', async () => {
+    const uuid = '00000000-1111-2222-3333-444444444444';
+    await expect(relayrPay(paymentFor({ calldata: paymentCalldata(uuid) }), state.account, null, uuid)).rejects.toThrow(/original Relayr destination quote is unavailable/);
+    expect(state.client.request).not.toHaveBeenCalled();
+    expect(state.review).not.toHaveBeenCalled();
+    expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it('checks network family again if the selected payment changes during review', async () => {
+    await publishFor([11155111, 84532]);
+    const payment = paymentFor({ chain: 84532 });
+    state.review.mockImplementation(async () => { payment.chain = 1; return true; });
+    await expect(relayrPay(payment, state.account, null, BUNDLE_UUID)).rejects.toThrow(/same network family/);
+    expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
   });
 
   it('requires exact runtime authentication, mandatory review, and a raw no-CCIP simulation', async () => {

@@ -68,11 +68,26 @@ describe('Relayr preserves the original wallet identity', () => {
     state.client.readContract.mockRejectedValue(new Error('Unavailable'));
     await expect(relayrSupportsForwarding(8453, TARGET)).resolves.toBe(false);
     state.client.readContract.mockClear();
-    await expect(relayrSupportsForwarding(84532, TARGET)).resolves.toBe(false);
+    await expect(relayrSupportsForwarding(137, TARGET)).resolves.toBe(false);
     expect(state.client.readContract).not.toHaveBeenCalled();
   });
 
-  it.each([11155111, 11155420, 84532, 421614, 137])('rejects unsupported destination %s before any wallet or RPC request', async chainId => {
+  it.each([11155111, 11155420, 84532, 421614])('signs a supported testnet %s using its exact live domain and trusted forwarder', async chainId => {
+    domain[3] = BigInt(chainId);
+    state.wallet.getChainId.mockResolvedValue(chainId);
+    await expect(relayrSupportsForwarding(chainId, TARGET)).resolves.toBe(true);
+    const tx = await buildForwardedTx(chainId, state.account, TARGET, DATA, 400000n, 123n);
+    expect(tx).toMatchObject({ chain: chainId, target: state.forwarder, value: '123' });
+    expect(state.wallet.signTypedData).toHaveBeenCalledWith(expect.objectContaining({
+      domain: expect.objectContaining({ chainId: BigInt(chainId), verifyingContract: state.forwarder }),
+      message: expect.objectContaining({ from: state.account, to: TARGET, nonce: 7n, data: DATA, value: 123n }),
+    }));
+    domain[3] = 1n;
+    await expect(buildForwardedTx(chainId, state.account, TARGET, DATA)).rejects.toThrow(/domain does not match/);
+    expect(state.wallet.signTypedData).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([137, 0, NaN, 8453.5])('rejects unsupported destination %s before any wallet or RPC request', async chainId => {
     await expect(buildForwardedTx(chainId, state.account, TARGET, DATA)).rejects.toThrow(/does not support this destination/);
     expect(state.client.readContract).not.toHaveBeenCalled();
     expect(state.wallet.signTypedData).not.toHaveBeenCalled();

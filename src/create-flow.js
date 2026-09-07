@@ -4196,7 +4196,7 @@ function deploy(state, render) {
     state.statusLines.push({ text: 'Select each destination chain only once.', err: true }); render(); return;
   }
   if (state.chainIds.length > 1 && !relayrSupportsChains(state.chainIds) && isSafeConnected()) {
-    state.statusLines.push({ text: 'Multichain testnet launches require a wallet that can confirm each chain’s transaction. A Safe can launch one chain at a time.', err: true }); render(); return;
+    state.statusLines.push({ text: 'Multichain direct launches require a wallet that can confirm each chain’s transaction. A Safe can launch one chain at a time.', err: true }); render(); return;
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
@@ -4233,8 +4233,10 @@ function beginDeployRun(state, render, owner) {
 
 async function runDeploy(state, owner) {
   var push = state._push;
-  // deploy() has already resolved any persisted session into state._relayrPending before reaching here.
-  var restoredRelayr = state._relayrPending;
+  // Recovery precedes fresh configuration and routing. Expanded Relayr support must never convert an
+  // interrupted direct launch into newly signed calls or recompute its original shared start and salt.
+  var restoredRelayr = state._relayrPending || loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  if (restoredRelayr) state._relayrPending = restoredRelayr;
   if (restoredRelayr) {
     if (restoredRelayr.paymentState === 'quoted') {
       var restoredQuote = relayrResumeQuotedBundle(CREATE_RELAYR_SCOPE);
@@ -4251,7 +4253,11 @@ async function runDeploy(state, owner) {
     state._relayrPending = null;
     return;
   }
-  if (state._directPending) return runCreateDirectSession(state, state._directPending, true);
+  var restoredDirect = state._directPending || loadCreateDirectSession();
+  if (restoredDirect) {
+    state._directPending = restoredDirect;
+    return runCreateDirectSession(state, restoredDirect, true);
+  }
   // 1) Pin metadata (best-effort).
   var projectUri = '';
   if (hasPinata()) {

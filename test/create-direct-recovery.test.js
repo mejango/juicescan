@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   execute: vi.fn(), simulate: vi.fn(), review: vi.fn(), client: vi.fn(), safe: vi.fn(),
   resumeQuote: vi.fn(), paymentOptions: vi.fn(), postBundle: vi.fn(),
+  forward: vi.fn(),
 }));
 vi.mock('../src/component-base.js', async (original) => ({
   ...await original(),
@@ -18,6 +19,7 @@ vi.mock('../src/wallet.js', async (original) => ({ ...await original(), isSafeCo
 vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), hasPinata: () => false }));
 vi.mock('../src/relayr.js', async (original) => ({ ...await original(),
   relayrResumeQuotedBundle: mocks.resumeQuote, relayrPaymentOptions: mocks.paymentOptions, relayrPostBundle: mocks.postBundle,
+  buildForwardedTx: mocks.forward,
 }));
 
 import { __test } from '../src/create-flow.js';
@@ -66,11 +68,13 @@ beforeEach(() => {
   mocks.simulate.mockResolvedValue({});
   mocks.resumeQuote.mockReturnValue(null);
   mocks.paymentOptions.mockImplementation((quote) => quote.payment_info);
+  mocks.forward.mockImplementation(async (chain, from, target, data, gas, value) => ({ chain, target, data, value: String(value) }));
 });
 
 describe('direct multichain creation recovery', () => {
-  it('routes testnet creation through independent direct calls and preserves the shared launch start', async () => {
+  it('keeps mixed-network creation direct and preserves the shared launch start', async () => {
     const draft = state();
+    draft.chainIds = [11155111, 8453];
     draft.projectType = 'custom';
     draft.details.name = 'Testnet launch';
     draft.details.owner = ALICE;
@@ -85,11 +89,42 @@ describe('direct multichain creation recovery', () => {
     }));
     mocks.execute.mockImplementation((opts) => { sent.set(opts.chainId, opts); confirmSend(opts, opts.chainId === 11155111 ? HASH1 : HASH2); });
     await __test.runDeploy(draft, ALICE);
-    expect(mocks.execute.mock.calls.map(([opts]) => opts.chainId)).toEqual([11155111, 84532]);
+    expect(mocks.execute.mock.calls.map(([opts]) => opts.chainId)).toEqual([11155111, 8453]);
     expect(mocks.review.mock.calls[0][1].title).toBe('Review the transactions');
     expect(mocks.review.mock.calls[0][1].note).toContain('in sequence');
     const [first, second] = mocks.execute.mock.calls.map(([opts]) => opts);
     expect(first.args[3][0].mustStartAtOrAfter).toBe(second.args[3][0].mustStartAtOrAfter);
+    expect(mocks.forward).not.toHaveBeenCalled();
+    expect(mocks.postBundle).not.toHaveBeenCalled();
+  });
+
+  it('restores an old direct testnet launch before expanded Relayr eligibility or changed form values', async () => {
+    const original = state(), session = { account: ALICE, plans: plans() };
+    session.plans[0].hash = HASH1; session.plans[0].status = 'confirmed';
+    __test.saveCreateDirectSession(original, session);
+    const stored = localStorage.getItem(KEY);
+    __test.clearCreateDirectSession(original);
+    localStorage.setItem(KEY, stored);
+    const fresh = state(); fresh.chainIds = [1, 10]; fresh.details.name = 'Changed form';
+    mocks.client.mockImplementation(clientFor(session));
+    mocks.execute.mockImplementationOnce(opts => confirmSend(opts, HASH2));
+
+    await __test.runDeploy(fresh, TARGET);
+
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.execute.mock.calls[0][0]).toMatchObject({ chainId: 84532, address: TARGET, args: [1999999999n], value: 7n });
+    expect(mocks.review.mock.calls[0][1].title).toBe('Review remaining launch transactions');
+    expect(fresh._deployedChains).toEqual([11155111, 84532]);
+    expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled();
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('keeps an old direct testnet request with an unknown wallet result blocked instead of switching to Relayr', async () => {
+    const original = state(), session = { account: ALICE, plans: plans() };
+    session.plans[0].status = 'awaiting-wallet';
+    __test.saveCreateDirectSession(original, session);
+    await expect(__test.runDeploy(state(), ALICE)).rejects.toThrow(/interrupted before its transaction hash/);
+    expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled();
   });
 
   it('resumes only the rejected remaining leg using the original shared start and exact calldata', async () => {
@@ -246,6 +281,61 @@ describe('direct multichain creation recovery', () => {
     expect(session.plans[0].failedHashes).toEqual([HASH1]);
     expect(mocks.review.mock.calls[0][0].transactions).toHaveLength(2);
     expect(mocks.execute).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('new creation network routing', () => {
+  it.each([
+    ['mainnet', [1, 10, 8453, 42161]],
+    ['testnet', [11155111, 11155420, 84532, 421614]],
+  ])('bundles all four %s launches through Relayr with one shared start and explicit funding choice', async (network, chainIds) => {
+    const draft = state();
+    draft.projectType = 'custom'; draft.chainIds = chainIds; draft.network = network;
+    draft.details.name = 'Multichain launch'; draft.details.owner = ALICE;
+    mocks.client.mockImplementation(() => ({ readContract: vi.fn(async () => 7n), estimateContractGas: vi.fn(async () => 2500000n) }));
+    const quote = { bundle_uuid: 'test-' + network, payment_info: [{ chain: chainIds[0], amount: '1' }] };
+    mocks.postBundle.mockResolvedValue(quote);
+
+    const deploying = __test.runDeploy(draft, ALICE);
+    await vi.waitFor(() => expect(draft.quoteChoice).toBeTruthy());
+
+    expect(mocks.forward.mock.calls.map(args => args[0])).toEqual(chainIds);
+    expect(mocks.postBundle).toHaveBeenCalledTimes(1);
+    expect(mocks.postBundle.mock.calls[0][1]).toMatchObject({ scope: 'create-project', account: ALICE,
+      chains: chainIds.map(id => ({ id, name: expect.any(String) })) });
+    const [review, options] = mocks.review.mock.calls[0];
+    expect(options.title).toBe('Review the raw data sent to Relayr');
+    expect(options.steps).toHaveLength(5);
+    expect(options.steps[4]).toBe('Pay the relay fee once');
+    expect(new Set(review.transactions.map(call => String(call.args[3][0].mustStartAtOrAfter))).size).toBe(1);
+    review.transactions.forEach((call, index) => {
+      expect(mocks.forward.mock.calls[index]).toEqual([call.chainId, ALICE, call.address, call.calldata, 5000000n, 7n]);
+    });
+    expect(draft.quoteChoice.options[0]).toMatchObject({ eth: '0.000000000000000001', opt: quote.payment_info[0] });
+    expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.simulate).not.toHaveBeenCalled();
+    draft.quoteChoice.resolve(null);
+    await expect(deploying).resolves.toBe(false);
+  });
+
+  it('keeps single-chain testnet creation as one direct wallet launch', async () => {
+    const draft = state();
+    draft.projectType = 'custom'; draft.chainIds = [84532]; draft.details.name = 'One testnet'; draft.details.owner = ALICE;
+    mocks.client.mockImplementation(() => ({ readContract: vi.fn(async () => 7n),
+      getTransactionReceipt: vi.fn(async () => ({ transactionHash: HASH1, status: 'success', logs: [] })) }));
+    mocks.execute.mockImplementationOnce(opts => confirmSend(opts, HASH1));
+    await __test.runDeploy(draft, ALICE);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.execute.mock.calls[0][0].chainId).toBe(84532);
+    expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled();
+  });
+
+  it('does not sign or publish a testnet bundle when its exact launch review is cancelled', async () => {
+    const draft = state();
+    draft.projectType = 'custom'; draft.details.name = 'Cancelled'; draft.details.owner = ALICE;
+    mocks.client.mockImplementation(() => ({ readContract: vi.fn(async () => 7n) }));
+    mocks.review.mockResolvedValueOnce(false);
+    await expect(__test.runDeploy(draft, ALICE)).resolves.toBe(false);
+    expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled(); expect(mocks.execute).not.toHaveBeenCalled();
   });
 });
 

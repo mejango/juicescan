@@ -5,10 +5,25 @@ import { keccak256, stringToHex } from 'viem';
 var memory = new Map();
 var PREFIX = 'jb-direct-batch-v1:';
 
-export async function runDirectBatch(calls, options, locked) {
-  var identity = keccak256(stringToHex(JSON.stringify(calls.map(function (call) {
-    return [Number(call.cid), String(call.to).toLowerCase(), String(call.data).toLowerCase(), String(call.value || '0')];
+function directBatchIdentity(calls) {
+  return keccak256(stringToHex(JSON.stringify(calls.map(function (call) {
+    return [Number(call.cid == null ? call.chainId : call.cid), String(call.to).toLowerCase(), String(call.data).toLowerCase(), String(call.value || '0')];
   }))));
+}
+
+// Route recovery before reevaluating Relayr support. A scope deliberately ignores new form values: the
+// direct runner will compare them with the original identity and refuse to replay a changed request.
+export function directBatchStatus(scope, account, calls) {
+  if (!account || (!scope && !Array.isArray(calls))) return null;
+  var key = PREFIX + String(account).toLowerCase() + ':' + (scope || directBatchIdentity(calls));
+  if (memory.has(key)) return 'pending';
+  try { return localStorage.getItem(key) != null ? 'pending' : null; } catch (_) { return 'unavailable'; }
+}
+
+export function hasDirectBatch(scope, account, calls) { return !!directBatchStatus(scope, account, calls); }
+
+export async function runDirectBatch(calls, options, locked) {
+  var identity = directBatchIdentity(calls);
   var key = PREFIX + String(options.account).toLowerCase() + ':' + (options.scope || identity);
   if (!locked && typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
     return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
@@ -19,9 +34,12 @@ export async function runDirectBatch(calls, options, locked) {
   var session = memory.get(key);
   if (!session) {
     var raw;
-    try { raw = localStorage.getItem(key); } catch (_) {}
-    if (raw) {
-      try { session = JSON.parse(raw); } catch (_) { throw new Error('The saved direct transaction receipt cannot be read. Verify the previous transactions before submitting again.'); }
+    try { raw = localStorage.getItem(key); } catch (_) { throw new Error('Enable browser storage to check the original direct transaction batch before submitting again.'); }
+    if (raw != null) {
+      try {
+        session = JSON.parse(raw);
+        if (!session || typeof session !== 'object' || Array.isArray(session)) throw new Error();
+      } catch (_) { throw new Error('The saved direct transaction receipt cannot be read. Verify the previous transactions before submitting again.'); }
     }
   }
   if (session && (session.identity !== identity || !Array.isArray(session.hashes) || session.hashes.length !== calls.length)) {

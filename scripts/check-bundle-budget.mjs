@@ -19,8 +19,10 @@ const budgets = {
   // Six operational groups + frozen rounds, cross-action nonce guards, and exact external Safe reconciliation:
   // 9,000,252 B raw / 1,322,865 B gzip (+119,772 / +28,519 versus the previous setters build).
   // Total delta versus same-dependency/env HEAD: +163,036 B raw / +42,670 B gzip.
-  // Reviewed narrow caps leave 748 B raw and 135 B gzip; existing non-app caps remain unchanged.
-  'dist/app.js': { raw: 9_001_000, gzip: 1_323_000 },
+  // Testnet Relayr, same-family funding, and preservation of prior direct journals:
+  // 9,004,301 B raw / 1,323,697 B gzip (+4,049 / +832 versus the six-group build).
+  // Reviewed narrow caps leave 699 B raw and 303 B gzip; existing non-app caps remain unchanged.
+  'dist/app.js': { raw: 9_005_000, gzip: 1_324_000 },
   'dist/style.css': { raw: 243_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },
@@ -50,7 +52,7 @@ const distributionFiles = await filesBelow('dist');
 const totalGzip = (await Promise.all(distributionFiles.map(async file =>
   gzipSync(await readFile(file), { level: 9 }).byteLength
 ))).reduce((sum, size) => sum + size, 0);
-// Measured 2,068,905 B after the six-group recovery work; 1,095 B headroom.
+// Measured 2,069,739 B after testnet funding/recovery support; 261 B headroom.
 const totalGzipBudget = 2_070_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {

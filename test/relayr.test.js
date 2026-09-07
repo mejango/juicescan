@@ -257,7 +257,8 @@ describe('Relayr routing boundary', () => {
     expect(shouldUseRelayrForChains([{ id: 8453 }, { id: 10 }])).toBe(true);
     expect(shouldUseRelayrForChains([1, 10, 8453, 42161])).toBe(true);
     expect(shouldUseRelayrForChains([8453, 10, 8453])).toBe(false);
-    expect(shouldUseRelayrForChains([84532, 11155420])).toBe(false);
+    expect(shouldUseRelayrForChains([84532, 11155420])).toBe(true);
+    expect(shouldUseRelayrForChains([11155111, 11155420, 84532, 421614])).toBe(true);
     expect(shouldUseRelayrForChains([8453, 84532])).toBe(false);
     expect(shouldUseRelayrForChains([8453, 137])).toBe(false);
     expect(shouldUseRelayrForChains([8453, NaN])).toBe(false);
@@ -269,7 +270,7 @@ describe('Relayr routing boundary', () => {
       await expect(relayrPostBundle([
         { chain: 8453, target: RELAY_TARGET, data: '0x', value: '0' },
         { chain: 84532, target: RELAY_TARGET, data: '0x', value: '0' },
-      ])).rejects.toThrow(/mainnet destinations/);
+      ])).rejects.toThrow(/one supported network family/);
       expect(fetch).not.toHaveBeenCalled();
     } finally { vi.unstubAllGlobals(); }
   });
