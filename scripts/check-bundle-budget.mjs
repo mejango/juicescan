@@ -12,8 +12,15 @@ const budgets = {
   // amounts-first LP sizing — range solver + mode toggle in the add-liquidity modal: 8,700,528 B raw;
   // later-ruleset start control (N cycles / date) + JBDeadline launch-queue gate: 8,761,482 B raw / 1,266,105 B gzip;
   // queue-editor follow-on rulesets + JB Center read-RPC fallback: 8,564 KB raw / 1,268,292 B gzip;
-  // Pay-style stepped confirm for every write — step lists, showNext sessions, friendly rows: 8,799,344 B raw / 1,275,448 B gzip).
-  'dist/app.js': { raw: 8_820_000, gzip: 1_280_000 },
+  // Pay-style stepped confirm for every write — step lists, showNext sessions, friendly rows: 8,799,344 B raw / 1,275,448 B gzip;
+  // Relayr funding choice, exact final simulation, and durable sequential recovery: 8,854,367 B raw / 1,290,323 B gzip.
+  // Local metadata preservation and destination-safe setters: 8,880,480 B raw / 1,294,346 B gzip (+26,113 / +4,023).
+  // Same-dependency/env HEAD checkout: 8,837,216 B raw / 1,280,195 B gzip; total feature delta +43,264 B raw / +14,151 B gzip).
+  // Six operational groups + frozen rounds, cross-action nonce guards, and exact external Safe reconciliation:
+  // 9,000,252 B raw / 1,322,865 B gzip (+119,772 / +28,519 versus the previous setters build).
+  // Total delta versus same-dependency/env HEAD: +163,036 B raw / +42,670 B gzip.
+  // Reviewed narrow caps leave 748 B raw and 135 B gzip; existing non-app caps remain unchanged.
+  'dist/app.js': { raw: 9_001_000, gzip: 1_323_000 },
   'dist/style.css': { raw: 243_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },
@@ -43,7 +50,8 @@ const distributionFiles = await filesBelow('dist');
 const totalGzip = (await Promise.all(distributionFiles.map(async file =>
   gzipSync(await readFile(file), { level: 9 }).byteLength
 ))).reduce((sum, size) => sum + size, 0);
-const totalGzipBudget = 2_050_000;
+// Measured 2,068,905 B after the six-group recovery work; 1,095 B headroom.
+const totalGzipBudget = 2_070_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

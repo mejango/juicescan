@@ -31,6 +31,7 @@ import {
   RELAYR_PAYMENT_CODE_HASH,
   RELAYR_PAYMENT_SELECTOR,
   relayrPay,
+  relayrPostBundle,
   relayrPaymentDetails,
 } from '../src/relayr.js';
 
@@ -175,5 +176,47 @@ describe('Relayr payment receipt tracking', () => {
       chainId: 1,
     });
     expect(submitted).toHaveBeenCalledWith(HASH);
+  });
+
+  it('journals before opening the wallet and preserves an uncertain submission without a hash', async () => {
+    const sending = vi.fn();
+    const submitted = vi.fn();
+    state.wallet.sendTransaction.mockRejectedValue(new Error('Provider disconnected after broadcast'));
+    await expect(relayrPay(paymentFor(), state.account, submitted, BUNDLE_UUID, null, sending))
+      .rejects.toMatchObject({ code: 'RELAYR_PAYMENT_UNCERTAIN', bundleUuid: BUNDLE_UUID, chainId: 1 });
+    expect(sending).toHaveBeenCalledOnce();
+    expect(sending.mock.invocationCallOrder[0]).toBeLessThan(state.wallet.sendTransaction.mock.invocationCallOrder[0]);
+    expect(submitted).not.toHaveBeenCalled();
+    expect(state.client.track).not.toHaveBeenCalled();
+  });
+
+  it('does not open the wallet when another pending bundle prevents journaling', async () => {
+    const conflict = Object.assign(new Error('A bundle is already pending'), { code: 'RELAYR_PENDING_CONFLICT' });
+    await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, () => { throw conflict; }))
+      .rejects.toBe(conflict);
+    expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  it('checks the exact signed request again inside the final payment lock and blocks stale nonce execution', async () => {
+    const target = '0x3333333333333333333333333333333333333333';
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({
+      bundle_uuid: OTHER_UUID, tx_uuids: ['11234567-89ab-cdef-0123-456789abcdef'], payment_info: [],
+    }) })));
+    try {
+      await relayrPostBundle([{ chain: 1, target, data: '0x12345678', value: '12' }]);
+      let destinationCalls = 0;
+      state.client.request.mockImplementation(async ({ method, params }) => {
+        if (method === 'eth_getCode') return PAYMENT_RUNTIME;
+        if (method === 'eth_call' && params[0].to === target && ++destinationCalls === 2) throw new Error('Forwarder nonce advanced after review');
+        return '0x';
+      });
+      const sending = vi.fn();
+      await expect(relayrPay(paymentFor({ calldata: paymentCalldata(OTHER_UUID) }), state.account, null, OTHER_UUID, null, sending))
+        .rejects.toThrow(/no longer simulates/);
+      expect(state.review).toHaveBeenCalledOnce();
+      expect(destinationCalls).toBe(2);
+      expect(sending).not.toHaveBeenCalled();
+      expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
   });
 });

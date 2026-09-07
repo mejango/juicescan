@@ -3,7 +3,7 @@
 // transaction amount (wrong decimals) or mis-routes funds, so they get their own guard.
 import { describe, it, expect } from 'vitest';
 import { parseAmount, formatAmount } from '../src/encoding.js';
-import { isAddr, addrOrZero, friendlyTransactionError, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, ZERO_ADDRESS } from '../src/component-base.js';
+import { isAddr, addrOrZero, friendlyTransactionError, shouldKeepSubmittedTransactionPending, isWalletUserRejection, waitForErc20Approval, waitForTrackedTransactionReceipt, ZERO_ADDRESS } from '../src/component-base.js';
 import { parseEther, parseUnits } from 'viem';
 
 const GOOD = '0x1111111111111111111111111111111111111111';
@@ -40,6 +40,12 @@ describe('addrOrZero / isAddr — recipient safety coercion', () => {
 });
 
 describe('raw transaction error messages', () => {
+  it('recognizes only structured user rejection, including nested viem errors', () => {
+    expect(isWalletUserRejection({ code: 4001 })).toBe(true);
+    expect(isWalletUserRejection({ cause: { cause: { code: 4001 } } })).toBe(true);
+    expect(isWalletUserRejection(new Error('RPC rejected the broadcast response'))).toBe(false);
+    expect(isWalletUserRejection({ code: -32000, message: 'User rejected transaction' })).toBe(false);
+  });
   it('turns expired Permit2 and under-min selectors into useful recovery steps', () => {
     expect(friendlyTransactionError('reverted with signature: 0xd81b2f2e')).toMatch(/permit2 token authorization is missing or expired.*try again.*permit2\.approve\(token, terminal/i);
     expect(friendlyTransactionError('0x6b2bb382')).toMatch(/below the minimum.*refresh/i);

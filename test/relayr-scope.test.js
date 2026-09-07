@@ -100,4 +100,109 @@ describe('account-keyed Relayr pending scopes', () => {
     // Disconnected browsing lists nothing account-scoped.
     expect(listRelayrPendingScopes()).toEqual([]);
   });
+
+  it('keeps submission, later polling, and clearing bound to the original wallet', () => {
+    h.account = B;
+    saveRelayrPendingSession('switch-during-payment', session('bundle-b'));
+    // The payment captured A before opening the wallet, which switched to B before returning its hash.
+    const paidByA = { ...session('bundle-a'), account: A };
+    saveRelayrPendingSession('switch-during-payment', paidByA);
+    expect(loadRelayrPendingSession('switch-during-payment').bundleUuid).toBe('bundle-b');
+
+    paidByA.records = [{ status: { state: 'Pending' } }];
+    saveRelayrPendingSession('switch-during-payment', paidByA);
+    clearRelayrPendingSession('switch-during-payment', paidByA);
+    expect(loadRelayrPendingSession('switch-during-payment').bundleUuid).toBe('bundle-b');
+    h.account = A;
+    expect(loadRelayrPendingSession('switch-during-payment')).toBeNull();
+  });
+
+  it('pins older account-keyed receipts when loading before an account change', () => {
+    localStorage.setItem(PREFIX + A.toLowerCase() + ':older-receipt', JSON.stringify(session('bundle-old')));
+    h.account = A;
+    const restored = loadRelayrPendingSession('older-receipt');
+    expect(restored.account).toBe(A.toLowerCase());
+    h.account = B;
+    saveRelayrPendingSession('older-receipt', restored);
+    expect(loadRelayrPendingSession('older-receipt')).toBeNull();
+    h.account = A;
+    expect(loadRelayrPendingSession('older-receipt').bundleUuid).toBe('bundle-old');
+  });
+
+  it('retains an account-local receipt in memory when storage reads and writes are denied', () => {
+    h.account = A;
+    const writes = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage denied'); });
+    const reads = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Storage denied'); });
+    try {
+      expect(saveRelayrPendingSession('storage-denied', session('bundle-paid')).persisted).toBe(false);
+      expect(loadRelayrPendingSession('storage-denied')).toMatchObject({ bundleUuid: 'bundle-paid', persisted: false });
+      expect(listRelayrPendingScopes()).toContain('storage-denied');
+      h.account = B;
+      expect(loadRelayrPendingSession('storage-denied')).toBeNull();
+      expect(listRelayrPendingScopes()).not.toContain('storage-denied');
+      h.account = A;
+      clearRelayrPendingSession('storage-denied');
+      expect(loadRelayrPendingSession('storage-denied')).toBeNull();
+    } finally {
+      writes.mockRestore(); reads.mockRestore();
+    }
+  });
+
+  it('drops its memory fallback after persistence succeeds and respects a later external clear', () => {
+    h.account = A;
+    const writes = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Quota exceeded'); });
+    const paid = saveRelayrPendingSession('storage-recovers', session('bundle-paid'));
+    writes.mockRestore();
+    expect(saveRelayrPendingSession('storage-recovers', paid).persisted).toBe(true);
+    localStorage.removeItem(PREFIX + A.toLowerCase() + ':storage-recovers');
+    expect(loadRelayrPendingSession('storage-recovers')).toBeNull();
+  });
+
+  it('preserves a pre-hash payment journal and rejects another bundle in the same action scope', () => {
+    h.account = A;
+    const sending = { ...session('bundle-sending'), paymentState: 'sending' };
+    saveRelayrPendingSession('same-action', sending);
+    expect(loadRelayrPendingSession('same-action')).toMatchObject({ paymentState: 'sending', paymentHash: null });
+    expect(() => saveRelayrPendingSession('same-action', session('bundle-new')))
+      .toThrow(/different Relayr bundle is already saved/i);
+    clearRelayrPendingSession('same-action', { ...session('bundle-new'), account: A });
+    expect(loadRelayrPendingSession('same-action').bundleUuid).toBe('bundle-sending');
+  });
+
+  it('never overwrites sending or submitted state with a stale copy of the same quote', () => {
+    h.account = A;
+    const quoted = { ...session('bundle-monotonic'), paymentState: 'quoted' };
+    saveRelayrPendingSession('monotonic', { ...quoted, paymentState: 'sending' });
+    expect(saveRelayrPendingSession('monotonic', quoted)).toMatchObject({ paymentState: 'sending' });
+    const hash = `0x${'ab'.repeat(32)}`;
+    saveRelayrPendingSession('monotonic', { ...quoted, paymentState: null, paymentHash: hash });
+    expect(saveRelayrPendingSession('monotonic', quoted)).toMatchObject({ paymentState: null, paymentHash: hash });
+    expect(loadRelayrPendingSession('monotonic').paymentHash).toBe(hash);
+  });
+
+  it('prefers a newer durable payment over a failed-write quoted memory snapshot', () => {
+    h.account = A;
+    const quoted = { ...session('bundle-cross-tab'), paymentState: 'quoted' };
+    saveRelayrPendingSession('cross-tab', quoted);
+    const writes = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Quota exceeded'); });
+    expect(saveRelayrPendingSession('cross-tab', { ...quoted, itemCount: 2 }).persisted).toBe(false);
+    writes.mockRestore();
+    // Another tab writes its sending journal while this tab still holds the failed quoted snapshot.
+    localStorage.setItem(PREFIX + A.toLowerCase() + ':cross-tab', JSON.stringify({ ...quoted, paymentState: 'sending', persisted: true }));
+    expect(loadRelayrPendingSession('cross-tab')).toMatchObject({ paymentState: 'sending', persisted: true });
+    expect(saveRelayrPendingSession('cross-tab', quoted).paymentState).toBe('sending');
+    clearRelayrPendingSession('cross-tab');
+  });
+
+  it('keeps a newer submitted memory receipt when readable storage only has the earlier sending marker', () => {
+    h.account = A;
+    const sending = { ...session('bundle-memory-newer'), paymentState: 'sending' };
+    saveRelayrPendingSession('memory-newer', sending);
+    const writes = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Quota exceeded'); });
+    const hash = `0x${'cd'.repeat(32)}`;
+    saveRelayrPendingSession('memory-newer', { ...sending, paymentState: null, paymentHash: hash });
+    writes.mockRestore();
+    expect(loadRelayrPendingSession('memory-newer')).toMatchObject({ paymentHash: hash, persisted: false });
+    clearRelayrPendingSession('memory-newer');
+  });
 });

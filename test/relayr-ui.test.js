@@ -1,5 +1,61 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { relayrReceiptStateLabel, renderRelayrReceiptInto } from '../src/relayr-ui.js';
+import { chooseRelayrPayment, relayrReceiptStateLabel, renderRelayrReceiptInto } from '../src/relayr-ui.js';
+import { relayrPaymentOptions, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR } from '../src/relayr.js';
+
+function paymentQuote() {
+  const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef';
+  const deadline = Math.floor(Date.now() / 1000) + 3600;
+  return { bundle_uuid: bundleUuid, payment_info: [
+    { chain: 8453, amount: '2000000000000000' },
+    { chain: 1, amount: '1000000000000000' },
+    { chain: 10, amount: '1000000000000000' },
+  ].map(payment => ({ ...payment, target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN,
+    payment_deadline: String(deadline),
+    calldata: RELAYR_PAYMENT_SELECTOR + bundleUuid.replace(/-/g, '').padEnd(64, '0') + BigInt(deadline).toString(16).padStart(64, '0'),
+  })) };
+}
+
+describe('Relayr funding-chain choice', () => {
+  beforeEach(() => { document.body.innerHTML = ''; });
+
+  it('requires an explicit choice and preserves the selected exact quote independently of its input object', async () => {
+    const quote = paymentQuote();
+    const chosen = chooseRelayrPayment(quote);
+    const select = document.querySelector('select[aria-label="Payment chain"]');
+    const next = document.querySelector('.create-btn.primary');
+    expect(next.disabled).toBe(true);
+    expect(select.value).toBe('');
+    expect([...select.options].map(option => option.textContent)).toEqual([
+      'Choose a chain', 'Ethereum — 0.001 ETH', 'Optimism — 0.001 ETH', 'Base — 0.002 ETH',
+    ]);
+    next.dispatchEvent(new Event('click'));
+    expect(document.querySelector('dialog')).not.toBeNull();
+    select.value = '2'; select.dispatchEvent(new Event('change'));
+    expect(next.disabled).toBe(false);
+    quote.payment_info[0].amount = '999999999999999999';
+    next.click();
+    const payment = await chosen;
+    expect(payment).toMatchObject({ chain: 8453, amount: '2000000000000000' });
+    expect(Object.isFrozen(payment)).toBe(true);
+    expect(document.querySelector('dialog')).toBeNull();
+  });
+
+  it.each(['Cancel', 'Close', 'Escape'])('cancels without choosing a payment through %s', async method => {
+    const chosen = chooseRelayrPayment(paymentQuote());
+    if (method === 'Escape') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    else if (method === 'Close') document.querySelector('[aria-label="Close"]').click();
+    else document.querySelector('.create-btn.ghost').click();
+    await expect(chosen).resolves.toBeNull();
+  });
+
+  it('rejects invalid or absent options before showing a choice', () => {
+    expect(() => chooseRelayrPayment({ payment_info: [] })).toThrow(/no payment option/);
+    expect(() => relayrPaymentOptions(null)).toThrow(/no payment option/);
+    const quote = paymentQuote(); quote.payment_info[0].target = '0x3333333333333333333333333333333333333333';
+    expect(() => chooseRelayrPayment(quote)).toThrow(/unrecognized payment contract/);
+    expect(document.querySelector('dialog')).toBeNull();
+  });
+});
 
 describe('Relayr paid-receipt UI', () => {
   beforeEach(() => {

@@ -14,6 +14,7 @@ import { hashTypedData, getAddress as checksumAddress, encodeFunctionData, decod
 import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt } from './component-base.js';
 import { CHAINS, chainList, chainNameFor, isTestnetChain } from './chain.js';
 import { contractGasWithinCap } from './gas.js';
+import { verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
 function cs(a) { try { return checksumAddress(a); } catch (_) { return a; } }
@@ -65,10 +66,16 @@ function headers(json) {
 var SAFE_MAX_CONCURRENT = 3;
 var _safeActive = 0;
 var _safeWaiters = [];
-function safeFetch(url, opts) {
+function safeFetch(url, opts, beforeSend) {
   return new Promise(function (resolve, reject) {
     function release() { _safeActive--; var next = _safeWaiters.shift(); if (next) next(); }
-    function run() { _safeActive++; fetch(url, opts).then(function (r) { release(); resolve(r); }, function (e) { release(); reject(e); }); }
+    function run() {
+      _safeActive++;
+      Promise.resolve().then(async function () {
+        if (beforeSend) await beforeSend();
+        return fetch(url, opts);
+      }).then(function (r) { release(); resolve(r); }, function (e) { release(); reject(e); });
+    }
     if (_safeActive < SAFE_MAX_CONCURRENT) run(); else _safeWaiters.push(run);
   });
 }
@@ -115,6 +122,24 @@ function safeTxHashOf(chainId, safe, fields) {
     types: SAFE_TX_TYPES, primaryType: 'SafeTx', message: safeTxMessage(fields),
   });
 }
+
+// Only structured wallet rejection codes prove a signature/write was refused. A transport error or
+// a submitted hash remains uncertain even if some surrounding message happens to say “rejected”.
+function safeRequestRejected(error) {
+  var rejected = false;
+  for (var depth = 0, current = error; current && depth < 8; depth++, current = current.cause) {
+    if (/^0x[0-9a-f]{64}$/i.test(current.hash || current.transactionHash || '')) return false;
+    if (current.code === 4001 || current.code === 'ACTION_REJECTED') rejected = true;
+  }
+  return rejected;
+}
+function safeUnsubmittedRejection(error) {
+  if (!safeRequestRejected(error)) return error;
+  try { error.safeRequestNotSubmitted = true; if (error.safeRequestNotSubmitted === true) return error; } catch (_) {}
+  var wrapped = new Error(error && error.message || 'The wallet request was rejected.');
+  wrapped.cause = error; wrapped.code = error && error.code; wrapped.safeRequestNotSubmitted = true;
+  return wrapped;
+}
 // Sign the SafeTx with the connected wallet. MetaMask/Ledger require the active chain to equal the EIP-712
 // domain chainId, so switch first.
 async function signSafeTx(chainId, safe, fields, signer) {
@@ -125,14 +150,17 @@ async function signSafeTx(chainId, safe, fields, signer) {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) {
-    if (e && e.code === 4001) throw e;
+    if (safeRequestRejected(e)) throw safeUnsubmittedRejection(e);
     throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to sign.');
   }
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
-  var signature = await wallet.signTypedData({
-    account: signer, domain: { chainId: Number(chainId), verifyingContract: safe },
-    types: SAFE_TX_TYPES, primaryType: 'SafeTx', message: safeTxMessage(fields),
-  });
+  var signature;
+  try {
+    signature = await wallet.signTypedData({
+      account: signer, domain: { chainId: Number(chainId), verifyingContract: safe },
+      types: SAFE_TX_TYPES, primaryType: 'SafeTx', message: safeTxMessage(fields),
+    });
+  } catch (error) { throw safeUnsubmittedRejection(error); }
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   return signature;
 }
@@ -167,7 +195,7 @@ export function getSafeNextNonce(chainId, safe) {
 
 // Propose a transaction to the Safe's queue on `chainId`. Returns { safeTxHash, nonce }.
 export async function proposeSafeTx(opts) {
-  // opts: { chainId, safe, to, data, value, signer, reverify? }. `reverify` runs after the wallet
+  // opts: { chainId, safe, to, data, value, signer, reverify?, onPublishing? }. `reverify` runs after the wallet
   // signature and immediately before the service write so a Safe owner/threshold rotation while the wallet
   // prompt is open cannot post a signature authorized only by stale governance.
   var base = txBase(opts.chainId);
@@ -188,6 +216,9 @@ export async function proposeSafeTx(opts) {
   };
   var res = await safeFetch(base + '/api/v1/safes/' + cs(opts.safe) + '/multisig-transactions/', {
     method: 'POST', headers: headers(true), body: JSON.stringify(body),
+  }, async function () {
+    if (!getAccount() || getAccount().toLowerCase() !== opts.signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
+    if (opts.onPublishing) await opts.onPublishing();
   });
   if (!res.ok && res.status !== 201) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
@@ -245,7 +276,7 @@ export async function listPendingSafeTxs(chainId, safe) {
 }
 
 // Add the connected signer's confirmation to an already-queued tx (sign here instead of in the Safe app).
-export async function confirmSafeTx(chainId, safe, tx, signer, reverify) {
+export async function confirmSafeTx(chainId, safe, tx, signer, reverify, onPublishing) {
   var base = txBase(chainId);
   if (!base) throw new Error('No Safe Transaction Service for this chain');
   // Reconstruct the SafeTx from the queued record and re-sign its hash.
@@ -259,6 +290,9 @@ export async function confirmSafeTx(chainId, safe, tx, signer, reverify) {
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   var res = await safeFetch(base + '/api/v1/multisig-transactions/' + tx.safeTxHash + '/confirmations/', {
     method: 'POST', headers: headers(true), body: JSON.stringify({ signature: signature }),
+  }, async function () {
+    if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
+    if (onPublishing) await onPublishing();
   });
   if (!res.ok && res.status !== 201) {
     var detail = ''; try { detail = await res.text(); } catch (_) {}
@@ -350,7 +384,7 @@ async function feeOverrides(chainId) {
 
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an onchain revert surfaces as
 // an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
-async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt) {
+async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var account = getAccount();
   if (!account) throw new Error('Connect a wallet first');
@@ -394,7 +428,11 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   var sendGas = await contractGasWithinCap(pub, Object.assign({}, params, { account: account }), gas);
   if (reverify) await reverify();
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-  var hash = await wallet.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees));
+  var hash;
+  try {
+    if (onSending) await onSending();
+    hash = await wallet.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees));
+  } catch (error) { throw safeUnsubmittedRejection(error); }
   try {
     var rcpt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
     if (!rcpt) throw new Error('Receipt unavailable.');
@@ -412,25 +450,29 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   return hash;
 }
 
-export async function executeSafeTx(chainId, safe, tx, reverify) {
+export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, onSending) {
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
-  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to execute.'); }
+  } catch (e) { if (safeRequestRejected(e)) throw safeUnsubmittedRejection(e); throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to execute.'); }
   // Safe requires signatures concatenated in ascending owner-address order.
   var confs = sortedUsableConfirmations(tx);
   if (!confs.length) throw new Error('No confirmations to execute with.');
   var signatures = '0x' + confs.map(sigBytesFor).join('');
   var expectedSafeTxHash = safeTxHashForQueuedTx(chainId, safe, tx);
-  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: safeExecArgs(tx, signatures) }, 'execTransaction', null, reverify, function (receipt) {
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: safeExecArgs(tx, signatures) }, 'execTransaction', null, reverify, async function (receipt) {
     if (!hasExactSafeExecutionSuccess(receipt.logs, safe, expectedSafeTxHash)) {
       var failure = new Error('Safe execTransaction mined without ExecutionSuccess for the reviewed transaction (tx ' + receipt.transactionHash + ').');
       failure.code = 'SAFE_EXECUTION_NOT_CONFIRMED';
       throw failure;
     }
-  });
+    await verifyQueuedDistributionReceipt(tx, safe, receipt, function (controller) {
+      return readDistributionTokens(createPublicClientForChain(chainId), controller);
+    });
+    if (verifyReceipt) await verifyReceipt(receipt);
+  }, onSending);
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.
@@ -487,6 +529,138 @@ export function hasExactSafeExecutionSuccess(logs, safe, safeTxHash) {
     if (topics.length === 2 && data === '0x' + '0'.repeat(64)) return topics[1] === expectedHash;
     return topics.length === 1 && data === expectedHash + '0'.repeat(64);
   });
+}
+
+var SAFE_RECOVERY_MAX_LOG_QUERIES = 32;
+var SAFE_RECOVERY_MAX_LOGS = 512;
+var SAFE_RECOVERY_SUCCESS_EVENT = { type: 'event', name: 'ExecutionSuccess', inputs: [
+  { name: 'txHash', type: 'bytes32', indexed: false }, { name: 'payment', type: 'uint256', indexed: false },
+] };
+
+function safeRecoveryPending(message, cause) {
+  var error = new Error(message + ' Keep the saved Safe proposal and check its execution again.');
+  error.code = 'SAFE_EXECUTION_RECOVERY_PENDING';
+  if (cause) error.cause = cause;
+  return error;
+}
+function safeRecoveryUint(value, label) {
+  try {
+    if (value == null || typeof value === 'boolean') throw new Error();
+    var number = BigInt(value);
+    if (number < 0n || number >= 1n << 256n) throw new Error();
+    return number;
+  } catch (_) { throw safeRecoveryPending('The saved Safe ' + label + ' is invalid.'); }
+}
+function safeRecoveryRangeLimit(error) {
+  for (var depth = 0; error && depth < 8; depth++, error = error.cause) {
+    if (error.code === -32005 || /block range|too many (?:results|logs)|query returned more than|response size|limited to .{0,40}blocks/i.test(String(error.shortMessage || error.message || ''))) return true;
+  }
+  return false;
+}
+
+// Reconcile a known proposal that was executed in another tab, wallet or Safe UI. A nonce advance alone
+// never proves this call: require its exact Safe success event and canonical mined execTransaction calldata.
+// Native Safe Apps only return a SafeTx hash; their saved inner call can be matched without inventing a nonce.
+export async function findSavedSafeExecution(saved, client) {
+  var chainId = Number(saved && saved.chainId);
+  var safe = String(saved && saved.safe || '').toLowerCase();
+  var expectedHash = String(saved && saved.safeTxHash || '').toLowerCase();
+  var tx = saved && saved.tx;
+  if (!Number.isSafeInteger(chainId) || !CHAINS[chainId] || !/^0x[0-9a-f]{40}$/.test(safe) || safe === ZERO
+      || !/^0x[0-9a-f]{64}$/.test(expectedHash) || !tx || !/^0x[0-9a-f]{40}$/i.test(tx.to || '')
+      || typeof tx.data !== 'string' || !/^0x(?:[0-9a-f]{2})*$/i.test(tx.data) || tx.data.length > 262146) {
+    throw safeRecoveryPending('The saved Safe proposal is missing its exact identity or inner call.');
+  }
+  var fromBlock = safeRecoveryUint(saved.fromBlock, 'proposal block');
+  var expectedValue = safeRecoveryUint(tx.value, 'inner value');
+  var expectedOperation = safeRecoveryUint(tx.operation, 'operation');
+  if (expectedOperation !== 0n) throw safeRecoveryPending('This saved project action is not a direct Safe call.');
+  var hashOnly = saved.hashOnly === true;
+  var nonce = hashOnly ? 0n : safeRecoveryUint(saved.nonce, 'nonce');
+  if (!hashOnly) {
+    if (nonce > BigInt(Number.MAX_SAFE_INTEGER) || (tx.nonce != null && safeRecoveryUint(tx.nonce, 'transaction nonce') !== nonce)) {
+      throw safeRecoveryPending('The saved Safe nonce does not match its transaction.');
+    }
+    var recomputed;
+    try { recomputed = safeTxHashForQueuedTx(chainId, safe, Object.assign({}, tx, { nonce: nonce })); }
+    catch (cause) { throw safeRecoveryPending('The saved Safe transaction could not be hashed.', cause); }
+    if (recomputed.toLowerCase() !== expectedHash) throw safeRecoveryPending('The saved Safe hash does not match its exact transaction.');
+  }
+  client = client || createPublicClientForChain(chainId);
+  if (!client || !['getBlockNumber', 'getLogs', 'getTransaction', 'getTransactionReceipt', 'getBlock'].every(function (name) { return typeof client[name] === 'function'; })) {
+    throw safeRecoveryPending('The destination RPC cannot verify a saved Safe execution.');
+  }
+  var latest;
+  try { latest = safeRecoveryUint(await client.getBlockNumber(), 'latest block'); }
+  catch (cause) { throw safeRecoveryPending('The current chain block could not be read.', cause); }
+  if (fromBlock > latest) throw safeRecoveryPending('The RPC has not reached the saved proposal block.');
+  var ranges = [[fromBlock, latest]], queries = 0;
+  function splitRange(range) {
+    if (range[0] === range[1] || queries >= SAFE_RECOVERY_MAX_LOG_QUERIES) {
+      throw safeRecoveryPending('The Safe execution search exceeded this RPC’s bounded log range.');
+    }
+    var middle = (range[0] + range[1]) / 2n;
+    ranges.unshift([middle + 1n, range[1]]);
+    ranges.unshift([range[0], middle]);
+  }
+  while (ranges.length) {
+    if (++queries > SAFE_RECOVERY_MAX_LOG_QUERIES) throw safeRecoveryPending('The Safe execution search reached its bounded request limit.');
+    var range = ranges.shift(), logs;
+    try {
+      // Filter topic0 only: Safe versions index txHash differently. Non-strict decoding preserves both raw
+      // layouts; hasExactSafeExecutionSuccess below checks the canonical bytes and exact saved hash.
+      logs = await client.getLogs({ address: safe, event: SAFE_RECOVERY_SUCCESS_EVENT,
+        fromBlock: range[0], toBlock: range[1], strict: false });
+    } catch (cause) {
+      if (safeRecoveryRangeLimit(cause)) { splitRange(range); continue; }
+      throw safeRecoveryPending('The Safe execution logs could not be read.', cause);
+    }
+    if (!Array.isArray(logs)) throw safeRecoveryPending('The RPC returned malformed Safe execution logs.');
+    if (logs.length > SAFE_RECOVERY_MAX_LOGS) { splitRange(range); continue; }
+    var matches = logs.filter(function (log) { return log && log.removed !== true && hasExactSafeExecutionSuccess([log], safe, expectedHash); });
+    if (!matches.length) continue;
+    var hashes = new Set(matches.map(function (log) { return String(log.transactionHash || '').toLowerCase(); }));
+    if (hashes.size !== 1) throw safeRecoveryPending('The RPC reported conflicting transactions for this Safe proposal.');
+    var found = matches[0], hash = String(found.transactionHash || '').toLowerCase();
+    if (!/^0x[0-9a-f]{64}$/.test(hash) || !/^0x[0-9a-f]{64}$/i.test(found.blockHash || '')) throw safeRecoveryPending('The matching Safe log is missing its mined transaction identity.');
+    var blockNumber = safeRecoveryUint(found.blockNumber, 'execution block');
+    if (blockNumber < range[0] || blockNumber > range[1]) throw safeRecoveryPending('The matching Safe log falls outside its requested block range.');
+    var transaction, receipt, block;
+    try {
+      var mined = await Promise.all([client.getTransaction({ hash: hash }), client.getTransactionReceipt({ hash: hash }), client.getBlock({ blockNumber: blockNumber })]);
+      transaction = mined[0]; receipt = mined[1]; block = mined[2];
+    } catch (cause) { throw safeRecoveryPending('The matching Safe execution could not be read from its canonical block.', cause); }
+    if (!transaction || !receipt || !block || receipt.status !== 'success'
+        || String(transaction.hash || '').toLowerCase() !== hash || String(receipt.transactionHash || '').toLowerCase() !== hash
+        || String(transaction.to || '').toLowerCase() !== safe
+        || String(transaction.blockHash || '').toLowerCase() !== found.blockHash.toLowerCase()
+        || String(receipt.blockHash || '').toLowerCase() !== found.blockHash.toLowerCase()
+        || String(block.hash || '').toLowerCase() !== found.blockHash.toLowerCase()
+        || safeRecoveryUint(transaction.blockNumber, 'transaction block') !== blockNumber
+        || safeRecoveryUint(receipt.blockNumber, 'receipt block') !== blockNumber
+        || safeRecoveryUint(block.number, 'canonical block') !== blockNumber
+        || !hasExactSafeExecutionSuccess(receipt.logs, safe, expectedHash)) {
+      throw safeRecoveryPending('The Safe execution is not proven by its canonical transaction and successful receipt.');
+    }
+    var decoded;
+    try { decoded = decodeSafeExecRelayrTx(chainId, safe, transaction.input || transaction.data, nonce); }
+    catch (cause) { throw safeRecoveryPending('The mined call is not the canonical reviewed Safe execution.', cause); }
+    if ((!hashOnly && decoded.safeTxHash.toLowerCase() !== expectedHash)
+        || String(decoded.tx.to).toLowerCase() !== tx.to.toLowerCase() || decoded.tx.data.toLowerCase() !== tx.data.toLowerCase()
+        || BigInt(decoded.tx.value) !== expectedValue || BigInt(decoded.tx.operation) !== expectedOperation) {
+      throw safeRecoveryPending('The mined Safe execution does not match the saved inner call and transaction hash.');
+    }
+    ['safeTxGas', 'baseGas', 'gasPrice', 'gasToken', 'refundReceiver'].forEach(function (field) {
+      if (tx[field] == null) return;
+      var matches = field === 'gasToken' || field === 'refundReceiver'
+        ? String(tx[field]).toLowerCase() === String(decoded.tx[field]).toLowerCase()
+        : safeRecoveryUint(tx[field], field) === BigInt(decoded.tx[field]);
+      if (!matches) throw safeRecoveryPending('The mined Safe execution changed its saved ' + field + '.');
+    });
+    await verifyQueuedDistributionReceipt(decoded.tx, safe, receipt, function (controller) { return readDistributionTokens(client, controller); });
+    return receipt;
+  }
+  return null;
 }
 
 // ── Onchain Safe path (no Transaction Service) ─────────────────────────────────────────────────────
@@ -1140,14 +1314,14 @@ export async function safeApprovalsOf(chainId, safe, hash, owners) {
 
 // Approve a SafeTx hash onchain from the connected signer (records approvedHashes[signer][hash] = 1). The wallet
 // must be on `chainId` and be a Safe owner. Returns the approveHash tx hash.
-export async function approveSafeHashOnChain(chainId, safe, hash, reverify) {
+export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSending) {
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
-  } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to approve.'); }
-  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash', null, reverify);
+  } catch (e) { if (safeRequestRejected(e)) throw safeUnsubmittedRejection(e); throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to approve.'); }
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash', null, reverify, null, onSending);
 }
 
 export { SAFE_PREFIX };

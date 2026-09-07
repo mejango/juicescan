@@ -1,6 +1,14 @@
 {
   "version": 1,
   "sites": {
+    "src/action-plan.js": {
+      "counts": {
+        "providerRequest": 1
+      },
+      "actions": [
+        "Selected project action recovery"
+      ]
+    },
     "src/burn-component.js": {
       "counts": {
         "executeTransaction": 1
@@ -34,7 +42,8 @@
       "counts": {
         "executeTransaction": 1,
         "relayrPay": 1,
-        "relayrPostBundle": 1
+        "relayrPostBundle": 1,
+        "providerRequest": 2
       },
       "actions": [
         "Launch project",
@@ -50,15 +59,23 @@
         "Deploy ERC-20"
       ]
     },
+    "src/direct-batch.js": {
+      "counts": {
+        "providerRequest": 1
+      },
+      "actions": [
+        "Sequential direct batch recovery"
+      ]
+    },
     "src/discover.js": {
       "counts": {
         "approveSafeHashOnChain": 1,
         "confirmSafeTx": 2,
         "executeSafeTx": 3,
-        "executeTransaction": 22,
+        "executeTransaction": 20,
         "proposeSafeTx": 1,
-        "providerRequest": 5,
-        "relayrPay": 3,
+        "providerRequest": 6,
+        "relayrPay": 2,
         "relayrPostBundle": 3,
         "sendTransaction": 1,
         "signTypedData": 3,
@@ -71,7 +88,16 @@
         "Safe proposal / confirmation / execution",
         "Permit2 and direct approvals",
         "Set ENS project record",
-        "Publish project handle"
+        "Publish project handle",
+        "Bounded shop item identity reads"
+      ]
+    },
+    "src/distribution-plan.js": {
+      "counts": {
+        "providerRequest": 1
+      },
+      "actions": [
+        "Distribution receipt semantics"
       ]
     },
     "src/form.js": {
@@ -140,9 +166,9 @@
     },
     "src/relayr.js": {
       "counts": {
-        "providerRequest": 2,
+        "providerRequest": 6,
         "relayrPay": 2,
-        "relayrPostBundle": 2,
+        "relayrPostBundle": 4,
         "sendTransaction": 1,
         "signTypedData": 1
       },

@@ -4,8 +4,41 @@
 // only their note wording, state labels, and action buttons differ, so those stay at the call sites.
 // relayr.js stays DOM-free; this module owns the shared presentation.
 
-import { el, truncAddr, txExplorerUrl } from './component-base.js';
-import { relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrDestinationHash } from './relayr.js';
+import { formatEther } from 'viem';
+import { el, openDialog, truncAddr, txExplorerUrl } from './component-base.js';
+import { chainNameFor } from './chain.js';
+import { relayrPaymentOptions, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrDestinationHash } from './relayr.js';
+
+// Choosing a funding chain never signs or pays. The shared payment boundary still reviews the exact quote.
+export function chooseRelayrPayment(quote) {
+  var options = relayrPaymentOptions(quote);
+  return new Promise(function (resolve) {
+    var modal = openDialog('Choose where to pay', { onClose: function () { resolve(null); } });
+    var body = el('div', 'modal-body');
+    var note = el('p'); note.textContent = 'One payment funds this bundle on every destination chain. Choose the chain holding the ETH you want to use.';
+    body.appendChild(note);
+    var label = el('label'); label.textContent = 'Payment chain';
+    var select = el('select', 'field create-input'); select.setAttribute('aria-label', 'Payment chain');
+    var placeholder = el('option'); placeholder.value = ''; placeholder.textContent = 'Choose a chain'; select.appendChild(placeholder);
+    options.forEach(function (payment, index) {
+      var option = el('option'); option.value = String(index);
+      option.textContent = chainNameFor(payment.chain) + ' — ' + formatEther(BigInt(payment.amount)) + ' ETH';
+      select.appendChild(option);
+    });
+    label.appendChild(select); body.appendChild(label);
+    var foot = el('div', 'create-modal-foot');
+    var cancel = el('button', 'create-btn ghost'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+    var next = el('button', 'create-btn primary'); next.type = 'button'; next.textContent = 'Review payment'; next.disabled = true;
+    select.addEventListener('change', function () { next.disabled = select.value === ''; });
+    cancel.addEventListener('click', modal.close);
+    next.addEventListener('click', function () {
+      if (select.value === '') return;
+      var payment = options[Number(select.value)];
+      resolve(payment); modal.close();
+    });
+    foot.appendChild(cancel); foot.appendChild(next); body.appendChild(foot); modal.panel.appendChild(body);
+  });
+}
 
 // Default per-chain state label: Confirmed / Failed / the raw Relayr state while pending.
 export function relayrReceiptStateLabel(record, verifiedOnchain) {

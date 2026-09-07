@@ -7,13 +7,18 @@ import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAc
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
+import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
-import { renderRelayrReceiptInto } from './relayr-ui.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded } from './safe.js';
+import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
+import { runDirectBatch } from './direct-batch.js';
+import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } from './action-plan.js';
+import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
+import { CREDIT_CLAIM_ABI, prepareCreditClaims, verifyCreditClaims, verifySavedCreditClaims } from './credit-claims.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded, findSavedSafeExecution } from './safe.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel, noticeClashIssue, stageStartOk } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -21,6 +26,7 @@ import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-componen
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
 import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { SHOP_MEDIA_METADATA_ABI, shopMediaMetadataArgs, shopMetadataName, prepareShopMediaMetadata } from './shop-media.js';
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
@@ -2527,7 +2533,13 @@ function openAddTierModal(project, shop) {
     relayPanel.style.display = '';
     var progress = pendingProgress(session);
     renderRelayrReceiptInto(relayPanel, session, {
-      noteText: progress.failed
+      noteText: session.paymentState === 'quoted'
+        ? 'The previously reviewed bundle is saved. Resume its funding options in this window; do not sign a new request.'
+        : session.paymentState === 'publication'
+        ? 'Signed requests may have reached Relayr, but the quote response was lost. Keep this publication record and review the destination chains before signing again.'
+        : session.paymentState === 'sending'
+        ? 'Whether the wallet submitted this payment is unknown. Check this bundle and wallet activity before paying again.'
+        : progress.failed
         ? 'Nothing was automatically resubmitted. Review the Shop before retrying; some chains may already have confirmed.'
         : (session.persisted === false
           ? 'This request is already paid. Keep this window open or copy the bundle ID—this browser could not save the receipt. Do not submit these items again.'
@@ -2537,7 +2549,7 @@ function openAddTierModal(project, shop) {
     submit.style.display = 'none';
     retryRelayr.style.display = '';
     retryRelayr.disabled = !!checking;
-    retryRelayr.textContent = checking ? 'Checking…' : 'Check Relayr status';
+    retryRelayr.textContent = checking ? 'Checking…' : session.paymentState === 'quoted' && relayrResumeQuotedBundle(relayScope) ? 'Choose funding chain' : 'Check Relayr status';
     clearRelayr.style.display = progress.failed ? '' : 'none';
   }
   function rememberPendingSession(session, records) {
@@ -2550,21 +2562,31 @@ function openAddTierModal(project, shop) {
   function finishAddItems(session) {
     var n = Math.max(1, Number(session && session.itemCount) || 1);
     var chainCount = Math.max(1, Number(session && session.expectedCount) || 1);
-    clearRelayrPendingSession(relayScope);
+    clearRelayrPendingSession(relayScope, session);
     pendingSession = null;
     retryRelayr.style.display = 'none'; clearRelayr.style.display = 'none'; submit.style.display = 'none';
     relayPanel.style.display = 'none';
     bustTiersCache(project);
     setStatus(n + ' item' + (n > 1 ? 's' : '') + ' added on ' + chainCount + ' chain' + (chainCount > 1 ? 's' : ''), 'success');
+    if (session && session.selectedActionScope) acknowledgeSelectedProjectAction(session.selectedActionScope);
     setTimeout(function () { modal.close(); }, 1400);
   }
   function handleRelayrIssue(error) {
+    // Selected plans own their round receipts. Copying a child into the legacy scope bypasses
+    // its durable completion checkpoint on resume.
+    if (error && error.selectedActionScope) {
+      submit.style.display = ''; submit.textContent = 'Resume saved item additions';
+      setStatus(errMessage(error, 'Resume the saved item batch to verify its original calls.'), 'pending');
+      return true;
+    }
     var session = error && error.relayrSession || pendingSession;
     if (!session) return false;
     if (error && error.records) session.records = error.records;
     rememberPendingSession(session);
     var progress = pendingProgress(pendingSession);
-    if (progress.failed) {
+    if (pendingSession.paymentState === 'quoted' || pendingSession.paymentState === 'publication' || pendingSession.paymentState === 'sending') {
+      setStatus((error && error.message) || 'This Relayr request is saved. Resume it before submitting anything again.', 'pending');
+    } else if (progress.failed) {
       setStatus('Relayr confirmed ' + progress.confirmed + '/' + progress.total + ' chains and reported ' + progress.failed + ' failed. Nothing was resubmitted.', 'error');
     } else {
       setStatus('Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact onchain verification is still pending. ' + (pendingSession.persisted === false ? 'Keep this window open and copy the bundle ID; the receipt could not be saved.' : 'Your paid request is saved; use “Check Relayr status” instead of submitting again.'), 'pending');
@@ -2595,13 +2617,25 @@ function openAddTierModal(project, shop) {
     busy = true;
     renderPendingSession(pendingSession, true);
     setStatus('Checking the saved Relayr bundle…', 'pending');
-    relayrPoll(pendingSession.bundleUuid, function (records) {
+    var quoted = pendingSession.paymentState === 'quoted' && relayrResumeQuotedBundle(relayScope);
+    var checking;
+    if (quoted) {
+      checking = fundRelayrQuotedSession(quoted, pendingSession, setStatus, {
+        pendingScope: relayScope, resumeQuoted: true, manualRecovery: true,
+        onProgress: function (session, records) { rememberPendingSession(session, records); },
+      }).then(function (session) { pendingSession = session; return session.records; });
+    } else if (pendingSession.paymentState === 'publication' || pendingSession.paymentState === 'quoted') {
+      checking = monitorRelayrSession(pendingSession, setStatus, { pendingScope: relayScope }).then(function (session) { return session.records; });
+    } else checking = relayrPoll(pendingSession.bundleUuid, function (records) {
       rememberPendingSession(pendingSession, records);
       var progress = pendingProgress(pendingSession);
       setStatus('Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact onchain verification is still pending. ' + (pendingSession.persisted === false ? 'Keep this window open; the receipt could not be saved.' : 'This paid request is saved.'), 'pending');
-    }, 2500, timeoutMs || 60 * 1000, pendingSession.expectedCount, pendingSession.expectedTransactions).then(async function (records) {
-      await verifyRelayrDestinationRecords(pendingSession.expectedTransactions, records);
-      await verifyPersistedRelayrHandlePostconditions(pendingSession.expectedTransactions, records);
+    }, 2500, timeoutMs || 60 * 1000, pendingSession.expectedCount, pendingSession.expectedTransactions);
+    checking.then(async function (records) {
+      if (!quoted) {
+        await verifyRelayrDestinationRecords(pendingSession.expectedTransactions, records);
+        await verifyPersistedRelayrHandlePostconditions(pendingSession.expectedTransactions, records);
+      }
       pendingSession.records = records;
       finishAddItems(pendingSession);
     }).catch(function (error) {
@@ -2617,7 +2651,7 @@ function openAddTierModal(project, shop) {
   clearRelayr.addEventListener('click', function () {
     if (!pendingSession || !pendingProgress(pendingSession).failed) return;
     if (!window.confirm('Clear this saved receipt? This does not undo chains that already confirmed. Refresh the Shop and retry only the chains that still need the items.')) return;
-    clearRelayrPendingSession(relayScope); pendingSession = null; relayPanel.style.display = 'none';
+    clearRelayrPendingSession(relayScope, pendingSession); pendingSession = null; relayPanel.style.display = 'none';
     retryRelayr.style.display = 'none'; clearRelayr.style.display = 'none'; submit.style.display = '';
     setStatus('Saved receipt cleared. Refresh the Shop before submitting again so confirmed items are not duplicated.', '');
   });
@@ -2628,16 +2662,21 @@ function openAddTierModal(project, shop) {
     if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     var forms = staged.slice();
-    var cur;
-    try { cur = collectForm(); } catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
-    if (!formIsEmpty(cur)) forms.push(cur);
-    if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
+    if (!hasSelectedProjectAction(relayScope)) {
+      var cur;
+      try { cur = collectForm(); } catch (err0) { setStatus(err0.message || String(err0), 'error'); return; }
+      if (!formIsEmpty(cur)) forms.push(cur);
+    }
+    if (!forms.length && !hasSelectedProjectAction(relayScope)) { setStatus('Add at least one item', 'error'); return; }
     setSubmitBusy(true);
     submitAddTiers(project, selected, operatorAddr, forms, setStatus, {
+      pendingScope: relayScope,
       onSession: function (session) { rememberPendingSession(session); },
       onProgress: function (session, records) { rememberPendingSession(session, records); },
     }).then(function (session) {
       if (!session) { setSubmitBusy(false); return; }
+      if (session.safePending) { setSubmitBusy(false); setStatus('Item additions are queued for the Safe. Execute the original proposals before adding these items again.', 'pending'); return; }
+      if (session.executedReady) { setSubmitBusy(false); bustTiersCache(project); setStatus('Item additions executed on ' + session.executedReady + ' chains.', 'success'); if (session.completed) acknowledgeSelectedProjectAction(session.selectedActionScope); return; }
       finishAddItems(session);
     }).catch(function (err) {
       setSubmitBusy(false);
@@ -2645,6 +2684,7 @@ function openAddTierModal(project, shop) {
     });
   });
 
+  if (!pendingSession && hasSelectedProjectAction(relayScope)) { submit.textContent = 'Resume saved item additions'; setStatus('A saved item batch is available. Resume it to verify or finish the original calls.', 'pending'); }
   if (pendingSession) {
     renderPendingSession(pendingSession, false);
     var restored = pendingProgress(pendingSession);
@@ -2676,17 +2716,19 @@ export function tierSplitShares(splitDefs, splitTotalPct) {
   return fillSplits((splitDefs || []).map(function (d) { return Math.round(d.pct / splitTotalPct * 1e9); }));
 }
 
-async function submitAddTiers(project, selectedChains, operatorAddr, forms, setStatus, relayOptions) {
-  relayOptions = relayOptions || {};
-  if (!forms.length) { setStatus('Add at least one item', 'error'); return; }
-  if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
-  if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin item media + metadata.', 'error'); return; }
+async function prepareAddTiers(project, selectedChains, operatorAddr, forms, setStatus, sender) {
+  if (!forms.length) { throw new Error('Add at least one item'); }
+  if (!selectedChains.length) { throw new Error('Select at least one chain'); }
+  if (!hasPinata()) { throw new Error('Enter a Pinata JWT above to pin item media + metadata.'); }
   // Authorize against the live hook permission table. The indexed revnet operator is useful as a
   // display hint, but may lag behind REVOwner/JBPermissions or be unavailable with the indexer.
   setStatus('Reading 721 hooks and permissions…', 'pending');
   var hookMap = (await resolveHookMap(project, selectedChains)).hooks;
-  var account = await ensureShopManagerAccount(project, selectedChains, hookMap, operatorAddr, setStatus);
-  if (!account) return;
+  var allowed = await Promise.all(selectedChains.map(function (chain) { return accountCanShopPermissionOn(project, chain.id, hookMap[chain.id], sender, 24n); }));
+  if (!allowed.every(Boolean)) throw new Error('The execution account needs ADJUST_721_TIERS permission on every selected shop.');
+  var targets = await readAddShopTargets(project, selectedChains, hookMap);
+  if (targets.some(function (target) { return target.pricing.currency !== targets[0].pricing.currency || target.pricing.decimals !== targets[0].pricing.decimals; })) throw new Error('Shop pricing differs across the selected chains. Add items to each pricing group separately.');
+  if (forms.some(function (form) { return Number(form.priceDecimals) !== targets[0].pricing.decimals; })) throw new Error('The shop price decimals changed. Reopen the item editor.');
 
   // Validate + pin + build a tier for each form.
   var built = [];
@@ -2694,36 +2736,36 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
     var form = forms[fi];
     var label = forms.length > 1 ? ('Item ' + (fi + 1) + ': ') : '';
     var name = (form.name || '').trim();
-    if (!name) { setStatus(label + 'enter a name', 'error'); return; }
+    if (!name) { throw new Error(label + 'enter a name'); }
     var price;
-    try { price = parseAmount(form.price, form.priceDecimals); } catch (_) { setStatus(label + 'enter a valid price', 'error'); return; }
-    if (price < 0n || price > (1n << 104n) - 1n) { setStatus(label + 'price must fit uint104', 'error'); return; }
+    try { price = parseAmount(form.price, form.priceDecimals); } catch (_) { throw new Error(label + 'enter a valid price'); }
+    if (price < 0n || price > (1n << 104n) - 1n) { throw new Error(label + 'price must fit uint104'); }
     var supplyStr = (form.supply || '').trim();
-    if (supplyStr !== '' && !/^\d+$/.test(supplyStr)) { setStatus(label + 'supply must be a whole number', 'error'); return; }
+    if (supplyStr !== '' && !/^\d+$/.test(supplyStr)) { throw new Error(label + 'supply must be a whole number'); }
     var supplyRaw = supplyStr === '' ? BigInt(TIER_UNLIMITED_SUPPLY) : BigInt(supplyStr);
-    if (supplyRaw <= 0n || supplyRaw > BigInt(TIER_UNLIMITED_SUPPLY)) { setStatus(label + 'supply must be between 1 and ' + TIER_UNLIMITED_SUPPLY + ', or left empty for unlimited', 'error'); return; }
+    if (supplyRaw <= 0n || supplyRaw > BigInt(TIER_UNLIMITED_SUPPLY)) { throw new Error(label + 'supply must be between 1 and ' + TIER_UNLIMITED_SUPPLY + ', or left empty for unlimited'); }
     var supply = Number(supplyRaw);
     var category = Number(form.category || 0);
-    if (!Number.isSafeInteger(category) || category < 0 || category > 0xffffff) { setStatus(label + 'category must fit uint24', 'error'); return; }
+    if (!Number.isSafeInteger(category) || category < 0 || category > 0xffffff) { throw new Error(label + 'category must fit uint24'); }
     var reserveRaw = String(form.reserveFreq || '0').trim() || '0';
-    if (!/^\d+$/.test(reserveRaw) || BigInt(reserveRaw) > 0xffffn) { setStatus(label + 'reserve frequency must fit uint16', 'error'); return; }
+    if (!/^\d+$/.test(reserveRaw) || BigInt(reserveRaw) > 0xffffn) { throw new Error(label + 'reserve frequency must fit uint16'); }
     var reserveFreq = Number(reserveRaw);
     var reserveBenef = form.reserveBenef || '';
     var votingRaw = String(form.votingUnits || '0').trim() || '0';
-    if (!/^\d+$/.test(votingRaw) || BigInt(votingRaw) > 0xffffffffn) { setStatus(label + 'voting units must fit uint32', 'error'); return; }
+    if (!/^\d+$/.test(votingRaw) || BigInt(votingRaw) > 0xffffffffn) { throw new Error(label + 'voting units must fit uint32'); }
     var votingUnits = Number(votingRaw);
     var discountPercent = 0;
     var discountStr = (form.discountPct || '').trim();
     if (discountStr !== '') {
       var dpct = parseFloat(discountStr);
-      if (!(dpct >= 0) || dpct > 100) { setStatus(label + 'discount must be between 0 and 100%', 'error'); return; }
+      if (!(dpct >= 0) || dpct > 100) { throw new Error(label + 'discount must be between 0 and 100%'); }
       discountPercent = tierDiscountPercentFromPct(dpct);
     }
     if (reserveFreq > 0) {
-      if (supply === 1) { setStatus(label + 'a reserved item needs a supply of at least 2 (or unlimited)', 'error'); return; }
+      if (supply === 1) { throw new Error(label + 'a reserved item needs a supply of at least 2 (or unlimited)'); }
       for (var rci = 0; rci < selectedChains.length; rci++) {
         var rb = materializeChainValue(reserveBenef, selectedChains[rci].id);
-        if (!isAddr(rb)) { setStatus(label + 'enter a reserve beneficiary address on ' + (selectedChains[rci].name || selectedChains[rci].id), 'error'); return; }
+        if (!isAddr(rb)) { throw new Error(label + 'enter a reserve beneficiary address on ' + (selectedChains[rci].name || selectedChains[rci].id)); }
       }
     }
     // Split sales — plain split data; resolve project recipients across chains.
@@ -2732,32 +2774,32 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
       var sr = form.splits || [];
       for (var si = 0; si < sr.length; si++) {
         var sp = parseFloat(sr[si].pct);
-        if (!(sp > 0)) { setStatus(label + 'recipient ' + (si + 1) + ': enter a percentage above 0', 'error'); return; }
+        if (!(sp > 0)) { throw new Error(label + 'recipient ' + (si + 1) + ': enter a percentage above 0'); }
         var parsedS;
-        try { parsedS = parsePlainSplit(sr[si]); } catch (e) { setStatus(label + 'recipient ' + (si + 1) + ': ' + e.message, 'error'); return; }
+        try { parsedS = parsePlainSplit(sr[si]); } catch (e) { throw new Error(label + 'recipient ' + (si + 1) + ': ' + e.message); }
         splitTotalPct += sp;
         for (var sbi = 0; sbi < selectedChains.length; sbi++) {
           var sb = materializeChainValue(parsedS.beneficiary, selectedChains[sbi].id);
-          if (!isAddr(sb)) { setStatus(label + 'recipient ' + (si + 1) + ': enter a valid beneficiary on ' + (selectedChains[sbi].name || selectedChains[sbi].id), 'error'); return; }
+          if (!isAddr(sb)) { throw new Error(label + 'recipient ' + (si + 1) + ': enter a valid beneficiary on ' + (selectedChains[sbi].name || selectedChains[sbi].id)); }
         }
         splitDefs.push({ pct: sp, projectId: parsedS.projectId, beneficiary: parsedS.beneficiary });
       }
-      if (!splitDefs.length) { setStatus(label + 'add a recipient, or turn off Split sales', 'error'); return; }
-      if (splitTotalPct > 100.0001) { setStatus(label + 'recipients add up to ' + (Math.round(splitTotalPct * 100) / 100) + '% — must be 100% or less', 'error'); return; }
+      if (!splitDefs.length) { throw new Error(label + 'add a recipient, or turn off Split sales'); }
+      if (splitTotalPct > 100.0001) { throw new Error(label + 'recipients add up to ' + (Math.round(splitTotalPct * 100) / 100) + '% — must be 100% or less'); }
     }
     for (var di = 0; di < splitDefs.length; di++) {
       if (splitDefs[di].projectId > 0) {
         setStatus(label + 'resolving project #' + splitDefs[di].projectId + '…', 'pending');
         var info = await resolveSplitProject(splitDefs[di].projectId, form.splitRefChain);
-        if (!info) { setStatus(label + 'couldn’t find project #' + splitDefs[di].projectId, 'error'); return; }
+        if (!info) { throw new Error(label + 'couldn’t find project #' + splitDefs[di].projectId); }
         for (var ci = 0; ci < selectedChains.length; ci++) {
           var scid = selectedChains[ci].id;
-          if (!info.byChain[scid]) { setStatus(label + 'project #' + splitDefs[di].projectId + ' isn’t on ' + (selectedChains[ci].name || scid), 'error'); return; }
+          if (!info.byChain[scid]) { throw new Error(label + 'project #' + splitDefs[di].projectId + ' isn’t on ' + (selectedChains[ci].name || scid)); }
         }
         splitDefs[di].byChain = info.byChain;
       }
     }
-    if (form.imageFile && form.imageFile.size > MAX_MEDIA_BYTES) { setStatus(label + 'media is over the ' + MAX_MEDIA_MB + ' MB max', 'error'); return; }
+    if (form.imageFile && form.imageFile.size > MAX_MEDIA_BYTES) { throw new Error(label + 'media is over the ' + MAX_MEDIA_MB + ' MB max'); }
     var mediaUri = '', mediaType = '';
     if (form.imageFile) {
       setStatus(label + 'pinning media…', 'pending');
@@ -2806,26 +2848,56 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
   }
 
   var n = built.length;
-  var session = await runRelayrAcrossChains(selectedChains, account, function (cid) {
-    var tx = buildAdjustTiersArgs({ chainId: cid, hookAddr: hookMap[cid], tiersToAdd: tiersFor(cid), tierIdsToRemove: [] });
-    return {
-      to: tx.address,
-      data: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }),
-      contract: tx.contractName,
-      abi: tx.abi,
-      functionName: tx.functionName,
-      args: tx.args,
-    };
-  }, (400000n + BigInt(n) * 400000n), setStatus, {
-    label: 'Add items for sale', title: 'Confirm add items', manualRecovery: true,
+  return { gas: 400000n + BigInt(n) * 400000n,
     summary: { rows: [['Adds', n + ' item' + (n === 1 ? '' : 's') + ' for sale']] },
-    onSession: function (relaySession) {
-      relaySession.itemCount = n;
-      if (relayOptions.onSession) relayOptions.onSession(relaySession);
-    },
-    onProgress: relayOptions.onProgress,
-  });
-  session.itemCount = n;
+    calls: selectedChains.map(function (chain) {
+      var cid = chain.id, tx = buildAdjustTiersArgs({ chainId: cid, hookAddr: hookMap[cid], tiersToAdd: tiersFor(cid), tierIdsToRemove: [] });
+      return Object.assign(reviewableContractCall(tx.address, tx.abi, tx.functionName, tx.args), {
+        chainId: cid, contract: tx.contractName, itemCount: n,
+        shopAddValidation: targets.find(function (target) { return Number(target.chainId) === Number(cid); }),
+      });
+    }),
+  };
+}
+
+async function readAddShopTargets(project, chains, hookMap) {
+  return Promise.all(chains.map(async function (chain) {
+    var hook = hookMap[chain.id], client = clientFor(chain.id);
+    var values = await Promise.all([
+      client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }),
+      client.readContract({ address: hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] }),
+    ]);
+    var pricing = values[1];
+    return { chainId: chain.id, projectId: pidOn(project, chain.id), hook: hook, store: values[0],
+      pricing: { currency: Number(pricing.currency == null ? pricing[0] : pricing.currency), decimals: Number(pricing.decimals == null ? pricing[1] : pricing.decimals) } };
+  }));
+}
+async function reverifyShopAddCalls(project, calls, chainId, sender) {
+  var selected = calls.filter(function (call) { return chainId == null || Number(call.chainId) === Number(chainId); });
+  var chains = selected.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; });
+  var hooks = (await resolveHookMap(project, chains)).hooks;
+  var fresh = await readAddShopTargets(project, chains, hooks);
+  await Promise.all(selected.map(async function (call, index) {
+    var old = call.shopAddValidation, live = fresh[index];
+    if (!old || BigInt(old.projectId) !== pidOn(project, call.chainId) || !sameAddr(old.hook, live.hook) || !sameAddr(old.store, live.store)
+        || old.pricing.currency !== live.pricing.currency || old.pricing.decimals !== live.pricing.decimals) throw new Error('A selected shop changed. Resume only after verifying the original target and pricing.');
+    if (!await accountCanShopPermissionOn(project, call.chainId, call.to, sender, 24n)) throw new Error('The execution account no longer has ADJUST_721_TIERS permission.');
+  }));
+}
+export async function submitAddTiers(project, selectedChains, operatorAddr, forms, setStatus, relayOptions) {
+  relayOptions = relayOptions || {};
+  var scope = relayOptions.pendingScope || relayrActionScope(project, 'add-shop-items');
+  var result;
+  try { result = await runSelectedProjectCalls(project, selectedChains, function (sender) {
+    return prepareAddTiers(project, selectedChains, operatorAddr, forms, setStatus, sender);
+  }, { prepare: true, pendingScope: scope, label: 'Add items for sale', title: 'Confirm add items', authorityAddr: await shopActionAuthority(project),
+    reverifySaved: function (calls, chainId, sender) { return reverifyShopAddCalls(project, calls, chainId, sender); } }, setStatus);
+  } catch (error) { if (hasSavedActionPlan(scope, getAccount())) error.selectedActionScope = scope; throw error; }
+  if (!result || result.cancelled) return null;
+  if (!result.relayr) return { safePending: !result.completed, completed: result.completed, selectedActionScope: scope, queued: result.queued, executedReady: result.executedReady };
+  var session = result.session;
+  session.itemCount = session.itemCount || forms.length || 1;
+  session.selectedActionScope = scope;
   return session;
 }
 
@@ -2835,30 +2907,34 @@ async function submitAddTiers(project, selectedChains, operatorAddr, forms, setS
 async function addStoreCategories(project, chains, operatorAddr, names, setStatus) {
   names = (names || []).map(function (n) { return (n || '').trim(); }).filter(Boolean);
   if (!names.length) { setStatus('Enter at least one category name', 'error'); return null; }
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  var account = await ensureMetadataEditorAccount(project, chains, operatorAddr, setStatus);
   if (!account) return null;
   if (!hasPinata()) { setStatus('Add a Pinata JWT below to name categories.', 'error'); return null; }
 
-  setStatus('Reading metadata…', 'pending');
-  var controllers = await controllerMapFor(chains, project);
-  var pc = (chains[0] && chains[0].id) || project.chainId;
-  // Fail closed like the project editor: rebuilding projectUri without its live JSON would erase every
-  // field this flow doesn't manage.
-  var loaded = await loadLiveProjectMetadata(pc, controllers[pc], pidOn(project, pc));
-  if (loaded.error) { setStatus(loaded.error, 'error'); return null; }
-  var meta = Object.assign({}, loaded.meta);
-  var cats = (meta.storeCategories && typeof meta.storeCategories === 'object') ? Object.assign({}, meta.storeCategories) : {};
-  var nextId = 1; Object.keys(cats).map(Number).forEach(function (n) { if (n >= nextId) nextId = n + 1; });
-  var newIds = [];
-  names.forEach(function (nm) { cats[nextId] = nm; newIds.push(nextId); nextId++; });
-  meta.storeCategories = cats;
-
-  setStatus('Pinning categories…', 'pending');
-  var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
-  var relaySession = await runRelayrAcrossChains(chains, account, function (cid) {
-    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [pidOn(project, cid), newUri] }) };
-  }, 400000n, setStatus, { label: 'Add store categories', title: 'Confirm categories', pendingScope: relayrActionScope(project, 'add-store-categories'),
-    summary: { rows: [['Adds', names.join(', ')], ['Metadata', newUri]] } });
+  setStatus('Reading metadata on every selected chain…', 'pending');
+  var newIds;
+  var plan = await prepareProjectMetadataUpdates(project, chains, function (metadata) {
+    var appended = appendProjectCategoriesAcrossChains(metadata, names);
+    newIds = appended.ids;
+    return appended.metadata;
+  });
+  var local = plan.entries.find(function (entry) { return Number(entry.chainId) === Number(project.chainId); }) || plan.entries[0];
+  var cats = local.metadata.storeCategories;
+  var actionResult = await runAuthorityActionAcrossChains(project, chains, operatorAddr, plan.buildCall, {
+    gas: 400000n,
+    label: 'Add store categories', title: 'Confirm categories', pendingScope: relayrActionScope(project, 'add-store-categories'),
+    reverify: plan.reverify,
+    summary: { rows: [['Adds', names.join(', ')], ['Metadata', 'Existing properties and category labels stay local to each chain']] },
+  }, setStatus);
+  if (!actionResult) return null;
+  if (!actionResult.relayr) {
+    if (actionResult.cancelled) { setStatus('Cancelled', ''); return null; }
+    setStatus('Category metadata proposed to the Safe. Execute it before assigning items to the new categories.', 'pending');
+    document.dispatchEvent(new CustomEvent('jb:safe-queued'));
+    if (actionResult.executedReady) notifyProjectUpdated(project);
+    return null;
+  }
+  var relaySession = actionResult.session;
 
   if (relaySession && relaySession.resumed) {
     setStatus(relayrRecoveredMessage(relaySession), 'success');
@@ -3052,15 +3128,30 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     content.appendChild(flagsBox);
   }
 
-  // Operator controls — the project owner/operator can edit the discount or remove the tier. Per the contract
-  // these are the ONLY mutable bits (price/supply/category/flags are immutable; any other change is remove +
-  // re-add as a new id). Shown only when the connected wallet is the authority; gated again on submit.
+  // Item metadata and discounts are mutable. Inventory terms remain fixed; each mutation verifies its live permission before submission.
   var authority = projectAuthorityAddress(project);
   var acct = getEffectiveAccount();
-  if (acct && authority && acct.toLowerCase() === authority.toLowerCase()) {
+  if (acct && authority) {
     var opH = el('div', 'tier-detail-section-h'); opH.textContent = projectAuthorityLabel(project) || 'Project owner'; content.appendChild(opH);
     var opBox = el('div', 'tier-detail-op');
     var opStatus = el('div', 'modal-status'); opStatus.style.display = 'none';
+    var mediaEdit = el('button', 'create-btn small tier-detail-edit-media');
+    mediaEdit.textContent = hasSelectedProjectAction(relayrActionScope(project, 'shop-media', tier.id)) ? 'Resume media update' : 'Edit media';
+    mediaEdit.addEventListener('click', function () { openShopMediaEditor(project, tier); });
+    opBox.appendChild(mediaEdit);
+    var editChains = shopChainsOf(project);
+    var chainChoice = document.createElement('select'); chainChoice.className = 'field create-input';
+    chainChoice.setAttribute('aria-label', 'Chains for item changes');
+    if (editChains.length > 1) {
+      var allChainsOption = document.createElement('option'); allChainsOption.value = 'all';
+      allChainsOption.textContent = 'All chains — matching items only'; chainChoice.appendChild(allChainsOption);
+    }
+    var localChainOption = document.createElement('option'); localChainOption.value = 'local';
+    localChainOption.textContent = chainNameOf(project.chainId) + ' only'; chainChoice.appendChild(localChainOption);
+    if (editChains.length > 1) opBox.appendChild(chainChoice);
+    function selectedEditChains() {
+      return chainChoice.value === 'all' ? editChains : [{ id: Number(project.chainId), name: chainNameOf(project.chainId) }];
+    }
     if (fl.allowOwnerMint && tier.remaining > 0) {
       var mintBlock = el('div', 'tier-detail-op-action');
       var mintBtn = el('button', 'create-btn small tier-detail-mint'); mintBtn.textContent = 'Mint to beneficiary';
@@ -3081,15 +3172,16 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     var dBtn = el('button', 'create-btn small'); dBtn.textContent = 'Set';
     if (fl.cantIncreaseDiscountPercent) dBtn.title = 'This item is discount-capped — you can only lower it.';
     dBtn.addEventListener('click', function () {
-      submitSetTierDiscount(project, tier, Number(dInput.value), opStatus)
+      submitSetTierDiscount(project, tier, Number(dInput.value), opStatus, selectedEditChains())
         .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely update the discount.'), 'error'); });
     });
     dRow.appendChild(dBtn); dField.appendChild(dRow); opBox.appendChild(dField);
     var rmBtn = el('button', 'create-btn ghost tier-detail-remove'); rmBtn.textContent = fl.cantBeRemoved ? 'Cannot be removed' : 'Remove item';
     rmBtn.disabled = !!fl.cantBeRemoved;
     if (!fl.cantBeRemoved) rmBtn.addEventListener('click', function () {
-      if (window.confirm('Remove item #' + tier.id + ' from the shop on every chain? Buyers can no longer mint it, and re-adding creates a NEW id (supply resets). Continue?')) {
-        submitRemoveTier(project, tier, opStatus)
+      var selected = selectedEditChains();
+      if (window.confirm('Remove item #' + tier.id + ' from the shop on ' + selected.map(function (chain) { return chain.name || chainNameOf(chain.id); }).join(', ') + '? Buyers can no longer mint it, and re-adding creates a NEW id (supply resets). Continue?')) {
+        submitRemoveTier(project, tier, opStatus, selected)
           .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely remove the item.'), 'error'); });
       }
     });
@@ -3099,6 +3191,184 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   }
 
   openModal('Shop item #' + tier.id, content);
+}
+
+function shopMediaTerms(tier) {
+  return shopTierIdentityFingerprint(Object.assign({}, tier, { encodedIpfsUri: '0x' + '0'.repeat(64) }));
+}
+
+async function readShopMediaIdentity(project, chain, tierId) {
+  var resolved = await resolveHookMap(project, [chain], tierId, { includeResolvedUri: false });
+  var hook = resolved.hooks[chain.id], store = resolved.stores[chain.id];
+  var values = await Promise.all([
+    clientFor(chain.id).readContract({ address: hook, abi: HOOK_PROJECT_ID_ABI, functionName: 'projectId', args: [] }),
+    clientFor(chain.id).readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] }),
+  ]);
+  if (BigInt(values[0]) !== pidOn(project, chain.id)) throw new Error('The shop hook belongs to a different project on ' + chainNameOf(chain.id) + '.');
+  if (!sameAddr(values[1], ZERO_ADDRESS)) throw new Error(chainNameOf(chain.id) + ' uses a custom token URI resolver. Changing its encoded URI cannot be assumed to replace visible media; use the resolver’s controls.');
+  var pricing = resolved.pricing[chain.id];
+  if (!pricing || !Number.isSafeInteger(pricing.currency) || pricing.currency <= 0
+      || !Number.isInteger(pricing.decimals) || pricing.decimals < 0 || pricing.decimals > 77) {
+    throw new Error('The item pricing identity could not be verified on ' + chainNameOf(chain.id) + '.');
+  }
+  var live = resolved.tiers[chain.id];
+  return { chainId: Number(chain.id), chainName: chain.name || chainNameOf(chain.id), projectId: String(values[0]),
+    hook: hook, store: store, resolver: values[1], tierId: Number(tierId), terms: shopMediaTerms(live),
+    pricing: pricing, oldEncodedUri: live.encodedIpfsUri };
+}
+
+export async function readShopMediaState(project, chain, tierId) {
+  var row = await readShopMediaIdentity(project, chain, tierId);
+  var candidates = encodedIpfsCandidates(row.oldEncodedUri);
+  if (!candidates || !candidates.length) throw new Error('The current item has no encoded IPFS metadata to preserve on ' + row.chainName + '.');
+  var urls = candidates.flatMap(function (uri) { return ipfsGatewayUrls(uri); });
+  var metadata = await fetchFirstJson(urls, METADATA_FETCH_TIMEOUT_MS, METADATA_FETCH_STAGGER_MS);
+  shopMetadataName(metadata);
+  return Object.assign(row, { oldUri: candidates[0], metadata: metadata });
+}
+
+export function assertShopMediaSelection(rows, displayedTier) {
+  if (!rows.length) throw new Error('Select at least one chain.');
+  var terms = displayedTier ? shopMediaTerms(displayedTier) : rows[0].terms;
+  var name = shopMetadataName(rows[0].metadata), pricing = JSON.stringify(rows[0].pricing);
+  rows.forEach(function (row) {
+    if (row.terms !== terms || JSON.stringify(row.pricing) !== pricing || shopMetadataName(row.metadata) !== name) {
+      throw new Error('The selected tier is a different item or has different terms on ' + row.chainName + '. Select that chain separately to review its item.');
+    }
+  });
+}
+
+export async function reverifyShopMediaCalls(project, calls, chainId, sender) {
+  for (var call of calls) {
+    if (chainId != null && Number(call.chainId) !== Number(chainId)) continue;
+    var saved = call.validation;
+    if (!saved || saved.kind !== 'shop-media') throw new Error('The saved media update is missing its original item identity.');
+    var live = await readShopMediaIdentity(project, { id: Number(call.chainId) }, saved.tierId);
+    if (!sameAddr(live.hook, saved.hook) || !sameAddr(live.store, saved.store) || live.projectId !== saved.projectId
+        || live.terms !== saved.terms || JSON.stringify(live.pricing) !== JSON.stringify(saved.pricing)
+        || String(live.oldEncodedUri).toLowerCase() !== String(saved.oldEncodedUri).toLowerCase()
+        || !sameAddr(call.to, saved.hook) || String(call.args[6]).toLowerCase() !== String(saved.newEncodedUri).toLowerCase()
+        || encodeFunctionData({ abi: SHOP_MEDIA_METADATA_ABI, functionName: 'setMetadata', args: shopMediaMetadataArgs(saved.hook, saved.tierId, saved.newEncodedUri) }).toLowerCase() !== String(call.data).toLowerCase()) {
+      throw new Error('The reviewed media update no longer matches the live item on ' + live.chainName + '.');
+    }
+    if (!await accountCanShopPermissionOn(project, call.chainId, live.hook, sender, 25n)) throw new Error('SET_721_METADATA permission is missing on ' + live.chainName + '.');
+  }
+}
+
+export function openShopMediaEditor(project, tier) {
+  var scope = relayrActionScope(project, 'shop-media', tier.id);
+  var content = el('div', 'modal-body operator-edit shop-media-editor');
+  var intro = el('p'); intro.textContent = 'Replace this item’s media on the chains you select. Each chain keeps its other metadata fields.'; content.appendChild(intro);
+  var previews = el('div', 'shop-media-current'); content.appendChild(previews);
+  var status = el('div', 'operator-edit-status');
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
+  var rows = shopChainsOf(project).map(function (chain) {
+    var box = el('div', 'create-field shop-media-chain');
+    var label = el('label', 'create-label');
+    var check = document.createElement('input'); check.type = 'checkbox'; check.checked = true;
+    check.setAttribute('aria-label', 'Update media on ' + (chain.name || chainNameOf(chain.id)));
+    label.appendChild(check); label.appendChild(document.createTextNode(' ' + (chain.name || chainNameOf(chain.id)))); box.appendChild(label);
+    var preview = el('div', 'tier-detail-art'); preview.style.maxHeight = '160px'; box.appendChild(preview);
+    var previous = el('div', 'operator-edit-note'); previous.style.overflowWrap = 'anywhere'; previous.textContent = 'Loading current metadata…'; box.appendChild(previous);
+    previews.appendChild(box);
+    return { chain: chain, check: check, preview: preview, previous: previous };
+  });
+  function field(labelText, type) {
+    var wrap = el('label', 'create-field'); var label = el('span', 'create-label'); label.textContent = labelText; wrap.appendChild(label);
+    var input = document.createElement(type === 'textarea' ? 'textarea' : 'input');
+    if (type !== 'textarea') input.type = type;
+    input.className = 'field create-input'; input.setAttribute('aria-label', labelText); wrap.appendChild(input); content.appendChild(wrap); return input;
+  }
+  var file = field('Replacement file (up to 25 MB)', 'file');
+  var imageUri = field('Or replacement image URI', 'text'); imageUri.placeholder = 'ipfs://… or https://…';
+  var replacementPreview = el('div', 'tier-detail-art shop-media-replacement-preview'); replacementPreview.style.display = 'none'; content.appendChild(replacementPreview);
+  var previewUrl;
+  function showReplacement() {
+    if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+    replacementPreview.replaceChildren();
+    var selected = file.files && file.files[0];
+    if (selected && selected.size <= MAX_MEDIA_BYTES) {
+      previewUrl = URL.createObjectURL(selected);
+      var type = mediaTypeForFile(selected) || 'application/octet-stream';
+      // These object URLs are created from this local file selection. The remote-media renderer deliberately
+      // rejects arbitrary blob URLs, so keep this preview confined to native media elements here.
+      var tag = type.indexOf('image/') === 0 ? 'img' : type.indexOf('video/') === 0 ? 'video' : type.indexOf('audio/') === 0 ? 'audio' : null;
+      if (tag) {
+        var localPreview = document.createElement(tag); localPreview.src = previewUrl;
+        if (tag === 'img') localPreview.alt = 'Replacement media'; else localPreview.controls = true;
+        replacementPreview.appendChild(localPreview);
+      } else replacementPreview.textContent = selected.name;
+    } else if (/^(https:\/\/|ipfs:\/\/)[^\s]+$/i.test(imageUri.value.trim())) {
+      renderTierMediaInto(replacementPreview, { image: imageUri.value.trim(), mediaType: 'image' }, 'Replacement image', 'thumb');
+    }
+    replacementPreview.style.display = replacementPreview.childNodes.length ? '' : 'none';
+  }
+  file.addEventListener('change', showReplacement); imageUri.addEventListener('change', showReplacement);
+  var changeName = field('Change item name', 'checkbox');
+  var name = field('New item name', 'text'); name.disabled = true;
+  changeName.addEventListener('change', function () { name.disabled = !changeName.checked; });
+  var changeDescription = field('Change item description', 'checkbox');
+  var description = field('New item description', 'textarea'); description.disabled = true;
+  changeDescription.addEventListener('change', function () { description.disabled = !changeDescription.checked; });
+  var jwt;
+  if (!hasPinata()) { jwt = field('Pinata JWT for metadata upload', 'password'); jwt.autocomplete = 'off'; }
+  content.appendChild(status);
+  var submit = el('button', 'operator-cta'); content.appendChild(submit);
+  var busy = false;
+  function sync() {
+    submit.disabled = busy; submit.textContent = hasSelectedProjectAction(scope) ? 'Resume saved media update' : 'Review media update';
+    [file, imageUri, changeName, changeDescription, jwt].filter(Boolean).forEach(function (input) { input.disabled = busy; });
+    rows.forEach(function (row) { row.check.disabled = busy; });
+    name.disabled = busy || !changeName.checked; description.disabled = busy || !changeDescription.checked;
+  }
+  var modal = openModal('Edit media — item #' + tier.id, content, { canClose: function () { return !busy; }, onClose: function () { if (previewUrl) URL.revokeObjectURL(previewUrl); } });
+  if (!hasSelectedProjectAction(scope)) rows.forEach(function (row) {
+    readShopMediaState(project, row.chain, tier.id).then(function (live) {
+      row.previous.textContent = 'Current metadata: ' + live.oldUri;
+      renderTierMediaInto(row.preview, { image: live.metadata.image || live.metadata.imageUri || '',
+        animationUrl: live.metadata.animation_url || live.metadata.animationUrl || '', mediaType: live.metadata.mediaType || '' }, shopMetadataName(live.metadata), 'thumb');
+    }).catch(function (error) { row.previous.textContent = errMessage(error, 'Could not read this item.'); });
+  });
+  else rows.forEach(function (row) { row.previous.textContent = 'The saved plan will restore its original chains, metadata URIs, and calls.'; });
+  submit.addEventListener('click', async function () {
+    if (busy) return; busy = true; sync();
+    try {
+      if (jwt && jwt.value.trim()) setPinataJwt(jwt.value.trim());
+      var selected = rows.filter(function (row) { return row.check.checked; }).map(function (row) { return row.chain; });
+      var result = await runSelectedProjectCalls(project, selected, async function (sender) {
+        var current = await Promise.all(selected.map(function (chain) { return readShopMediaState(project, chain, tier.id); }));
+        assertShopMediaSelection(current, tier);
+        for (var row of current) if (!await accountCanShopPermissionOn(project, row.chainId, row.hook, sender, 25n)) throw new Error('SET_721_METADATA permission is missing on ' + row.chainName + '.');
+        var edits = { file: file.files && file.files[0], mediaUri: imageUri.value.trim() };
+        if (edits.file) edits.mediaType = mediaTypeForFile(edits.file) || 'application/octet-stream';
+        else if (edits.mediaUri) edits.mediaType = 'image';
+        if (changeName.checked) edits.name = name.value;
+        if (changeDescription.checked) edits.description = description.value;
+        setStatus('Preserving each chain’s metadata and uploading the replacement…', 'pending');
+        var updates = await prepareShopMediaMetadata(current, edits, { pinFile: pinFile, pinJson: pinJson, encodeUri: encodeIpfsUriToBytes32 });
+        var calls = updates.map(function (update) {
+          var args = shopMediaMetadataArgs(update.hook, update.tierId, update.encodedUri);
+          return { chainId: update.chainId, chainName: update.chainName, to: update.hook, abi: SHOP_MEDIA_METADATA_ABI,
+            functionName: 'setMetadata', args: args, data: encodeFunctionData({ abi: SHOP_MEDIA_METADATA_ABI, functionName: 'setMetadata', args: args }),
+            contract: 'JB721TiersHook', validation: { kind: 'shop-media', hook: update.hook, store: update.store,
+              projectId: update.projectId, tierId: update.tierId, terms: update.terms, pricing: update.pricing,
+              oldEncodedUri: update.oldEncodedUri, newEncodedUri: update.encodedUri, name: shopMetadataName(update.metadata) } };
+        });
+        return { calls: calls, gas: 400000n, summary: { rows: updates.map(function (update) { return [update.chainName,
+          shopMetadataName(update.metadata) + ': ' + update.oldUri + ' → ' + update.uri]; }) } };
+      }, { prepare: true, pendingScope: scope, label: 'Edit item media', title: 'Review selected item media', gas: 400000n,
+        authorityAddr: await shopActionAuthority(project), reverifySaved: function (calls, cid, sender) { return reverifyShopMediaCalls(project, calls, cid, sender); } }, setStatus);
+      if (!result || result.cancelled) { setStatus('Cancelled. Any saved media update can be resumed.', ''); return; }
+      if (result.completed) {
+        shopChainsOf(project).forEach(function (chain) { bustTiersCache(Object.assign({}, project, { chainId: chain.id })); });
+        acknowledgeSelectedProjectAction(scope);
+        setStatus(result.resumed ? 'The saved media update is confirmed.' : 'Media updated on the selected chains.', 'success');
+      } else setStatus('Media update proposed to the Safe. Execute its saved calls from the Safe queue.', 'pending');
+    } catch (error) { setStatus(errMessage(error, 'Could not update the item media.'), 'error'); }
+    finally { busy = false; sync(); }
+  });
+  sync();
+  return { content: content, close: modal.close };
 }
 
 // Safe, single-chain owner/operator mint. Inventory is per chain, so the user
@@ -3234,8 +3504,75 @@ function shopOpSetStatus(statusEl) {
   set.element = statusEl;
   return set;
 }
-async function resolveHookMap(project, chains, tierId) {
-  var hookMap = {}, tierMap = {};
+export async function readBoundedShopTier(client, store, hook, tierId, includeResolvedUri) {
+  var id = Number(tierId);
+  if (!Number.isSafeInteger(id) || id < 1 || id > 0xffffffff || !isAddr(store) || !isAddr(hook)) throw new Error('The shop item identity is invalid.');
+  var result = await client.request({ method: 'eth_call', params: [{
+    to: store, gas: '0x7a120',
+    data: encodeFunctionData({ abi: TIER721_STORE_ABI, functionName: 'tiersOf', args: [hook, [], !!includeResolvedUri, BigInt(id), 1n] }),
+  }, 'latest'] });
+  // One tier plus its optional resolver output; never fetch or follow an offchain URI for mutation authority.
+  if (typeof result !== 'string' || !/^0x(?:[0-9a-f]{2})*$/i.test(result) || result.length > 65538) {
+    throw new Error('The live item identity is malformed or too large. Choose one chain to edit its item separately.');
+  }
+  var rows = decodeFunctionResult({ abi: TIER721_STORE_ABI, functionName: 'tiersOf', data: result });
+  if (!Array.isArray(rows) || rows.length !== 1 || Number(rows[0].id) !== id || BigInt(rows[0].initialSupply) === 0n) {
+    throw new Error('Item #' + id + ' is not live in the verified shop.');
+  }
+  return rows[0];
+}
+
+function shopTierIdentityFingerprint(tier) {
+  function uint(value, bits) {
+    var number;
+    try { number = BigInt(value); } catch (_) { throw new Error('The item is missing its live identity fields. Reload the Shop.'); }
+    if (number < 0n || number >= 1n << BigInt(bits)) throw new Error('The item identity contains an invalid quantity.');
+    return number.toString();
+  }
+  if (!tier || !/^0x[0-9a-f]{64}$/i.test(String(tier.encodedIpfsUri || '')) || !isAddr(tier.reserveBeneficiary)) {
+    throw new Error('The item is missing its live content identity. Reload the Shop.');
+  }
+  var flags = ['allowOwnerMint', 'transfersPausable', 'cantBeRemoved', 'cantIncreaseDiscountPercent', 'cantBuyWithCredits'].map(function (name) {
+    if (!tier.flags || typeof tier.flags[name] !== 'boolean') throw new Error('The item flags could not be verified. Reload the Shop.');
+    return tier.flags[name];
+  });
+  return JSON.stringify([
+    uint(tier.id, 32), String(tier.encodedIpfsUri).toLowerCase(), uint(tier.price, 104),
+    uint(tier.initialSupply == null ? tier.initial : tier.initialSupply, 32), uint(tier.votingUnits, 104),
+    uint(tier.reserveFrequency, 16), tier.reserveBeneficiary.toLowerCase(), uint(tier.category, 24),
+    uint(tier.splitPercent, 32), flags,
+  ]);
+}
+
+export function assertShopTierIdentity(displayedTier, sourceChainId, chains, resolved) {
+  var source = resolved.tiers[sourceChainId];
+  if (!source || shopTierIdentityFingerprint(source) !== shopTierIdentityFingerprint(displayedTier)) {
+    throw new Error('The item on the displayed chain changed. Reload the Shop before changing it.');
+  }
+  if (chains.length < 2) return;
+  function crossChainIdentity(chainId) {
+    var tier = resolved.tiers[chainId], pricing = resolved.pricing[chainId];
+    if (!tier || !pricing || !Number.isSafeInteger(pricing.currency) || pricing.currency <= 0
+        || !Number.isInteger(pricing.decimals) || pricing.decimals < 0 || pricing.decimals > 77) {
+      throw new Error('The item pricing identity could not be verified. Choose one chain to edit its item separately.');
+    }
+    var uri = String(tier.resolvedUri || '');
+    if (/^0x0{64}$/i.test(tier.encodedIpfsUri) && !uri) {
+      throw new Error('This item has no verifiable shared content identity. Choose one chain to edit its item separately.');
+    }
+    return JSON.stringify([shopTierIdentityFingerprint(tier), pricing.currency, pricing.decimals, uri]);
+  }
+  var expected = crossChainIdentity(sourceChainId);
+  chains.forEach(function (chain) {
+    if (crossChainIdentity(chain.id) !== expected) {
+      throw new Error('Item #' + displayedTier.id + ' has different content or terms on ' + (chain.name || chainNameOf(chain.id)) + '. Choose one chain to edit its item separately.');
+    }
+  });
+}
+
+async function resolveHookMap(project, chains, tierId, verifyIdentity) {
+  var hookMap = {}, tierMap = {}, storeMap = {}, pricingMap = {};
+  var includeResolvedUri = typeof verifyIdentity === 'object' ? !!verifyIdentity.includeResolvedUri : chains.length > 1;
   tierId = tierId == null ? null : Number(tierId);
   await Promise.all(chains.map(async function (chain) {
     var chainProject = Object.assign({}, project, { chainId: chain.id });
@@ -3244,23 +3581,56 @@ async function resolveHookMap(project, chains, tierId) {
     var store = await clientFor(chain.id).readContract({ address: info.hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] });
     if (!store || /^0x0+$/.test(store)) throw new Error('The 721 store could not be verified on ' + (chain.name || chain.id) + '.');
     hookMap[chain.id] = info.hook;
+    storeMap[chain.id] = store;
     if (tierId != null) {
-      var tier = await readActiveTier(clientFor(chain.id), store, info.hook, tierId);
+      var tier = verifyIdentity
+        ? await readBoundedShopTier(clientFor(chain.id), store, info.hook, tierId, includeResolvedUri)
+        : await readActiveTier(clientFor(chain.id), store, info.hook, tierId);
       if (!tier) throw new Error('Item #' + tierId + ' is not live on ' + (chain.name || chain.id) + '.');
       tierMap[chain.id] = tier;
+      if (verifyIdentity) {
+        var pricing = await clientFor(chain.id).readContract({ address: info.hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] });
+        pricingMap[chain.id] = { currency: Number(pricing.currency == null ? pricing[0] : pricing.currency), decimals: Number(pricing.decimals == null ? pricing[1] : pricing.decimals) };
+      }
     }
   }));
-  return { hooks: hookMap, tiers: tierMap };
+  return { hooks: hookMap, tiers: tierMap, stores: storeMap, pricing: pricingMap, includeResolvedUri: includeResolvedUri };
 }
 function shopChainsOf(project) {
   return (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
 }
+export function assertShopTierMutationFresh(chains, reviewed, fresh, discountPercent) {
+  chains.forEach(function (chain) {
+    var oldTier = reviewed.tiers[chain.id], live = fresh.tiers[chain.id];
+    if (String(fresh.hooks[chain.id] || '').toLowerCase() !== String(reviewed.hooks[chain.id] || '').toLowerCase()
+        || String(fresh.stores[chain.id] || '').toLowerCase() !== String(reviewed.stores[chain.id] || '').toLowerCase()
+        || shopTierIdentityFingerprint(live) !== shopTierIdentityFingerprint(oldTier)
+        || String(live.resolvedUri || '') !== String(oldTier.resolvedUri || '')
+        || JSON.stringify(fresh.pricing[chain.id]) !== JSON.stringify(reviewed.pricing[chain.id])) {
+      throw new Error('The reviewed item identity changed on ' + (chain.name || chainNameOf(chain.id)) + '. Review the item again before submitting.');
+    }
+    if (discountPercent == null ? live.flags.cantBeRemoved
+      : live.flags.cantIncreaseDiscountPercent && Number(discountPercent) > Number(live.discountPercent)) {
+      throw new Error('The requested item change is no longer allowed on ' + (chain.name || chainNameOf(chain.id)) + '.');
+    }
+  });
+}
+async function reverifyShopTierMutation(project, chains, tier, reviewed, account, discountPercent) {
+  if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the item change again.');
+  var fresh = await resolveHookMap(project, chains, tier.id, { includeResolvedUri: reviewed.includeResolvedUri });
+  assertShopTierMutationFresh(chains, reviewed, fresh, discountPercent);
+  var allowed = await Promise.all(chains.map(function (chain) {
+    return accountCanShopPermissionOn(project, chain.id, fresh.hooks[chain.id], account, discountPercent == null ? 24n : 27n);
+  }));
+  if (!allowed.every(Boolean)) throw new Error('This wallet no longer has permission to change the item on every selected chain.');
+}
 // Operator: set a tier's discount on every chain (JB721TiersHook.setDiscountPercentsOf), via relayr.
-async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
+async function submitSetTierDiscount(project, tier, pctOff, statusEl, selectedChains) {
   var setStatus = shopOpSetStatus(statusEl);
   if (!Number.isFinite(Number(pctOff)) || Number(pctOff) < 0 || Number(pctOff) > 100) { setStatus('Discount must be between 0 and 100%.', 'error'); return; }
-  var avail = shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id), hookMap = resolved.hooks;
-  var account = await ensureShopManagerAccount(project, avail, hookMap, projectAuthorityAddress(project), setStatus);
+  var avail = selectedChains || shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id, true), hookMap = resolved.hooks;
+  assertShopTierIdentity(tier, Number(project.chainId), avail, resolved);
+  var account = await ensureShopManagerAccount(project, avail, hookMap, projectAuthorityAddress(project), setStatus, 27n);
   if (!account) return;
   var cfg = buildSetDiscountConfig(tier.id, pctOff);
   avail.forEach(function (chain) {
@@ -3279,15 +3649,17 @@ async function submitSetTierDiscount(project, tier, pctOff, statusEl) {
       args: [[cfg]],
     };
   }, 300000n, setStatus, { label: 'Set discount', title: 'Confirm discount', pendingScope: relayrActionScope(project, 'set-discount', tier.id),
+    reverify: function (chainId) { return reverifyShopTierMutation(project, chainId == null ? avail : avail.filter(function (chain) { return Number(chain.id) === Number(chainId); }), tier, resolved, account, cfg.discountPercent); },
     summary: { rows: [['Item', '#' + String(tier.id)], ['Discount', String(pctOff) + '% off']] } });
   bustTiersCache(project);
   if (relaySession && relaySession.resumed) { setStatus(relayrRecoveredMessage(relaySession), 'success'); return; }
   setStatus('Discount set on ' + avail.length + ' chain' + (avail.length > 1 ? 's' : '') + '.', 'success');
 }
 // Operator: remove a tier from the shop on every chain (JB721TiersHook.adjustTiers with tierIdsToRemove).
-async function submitRemoveTier(project, tier, statusEl) {
+async function submitRemoveTier(project, tier, statusEl, selectedChains) {
   var setStatus = shopOpSetStatus(statusEl);
-  var avail = shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id), hookMap = resolved.hooks;
+  var avail = selectedChains || shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id, true), hookMap = resolved.hooks;
+  assertShopTierIdentity(tier, Number(project.chainId), avail, resolved);
   var account = await ensureShopManagerAccount(project, avail, hookMap, projectAuthorityAddress(project), setStatus);
   if (!account) return;
   avail.forEach(function (chain) {
@@ -3304,6 +3676,7 @@ async function submitRemoveTier(project, tier, statusEl) {
       args: tx.args,
     };
   }, 300000n, setStatus, { label: 'Remove item', title: 'Confirm remove', pendingScope: relayrActionScope(project, 'remove-item', tier.id),
+    reverify: function (chainId) { return reverifyShopTierMutation(project, chainId == null ? avail : avail.filter(function (chain) { return Number(chain.id) === Number(chainId); }), tier, resolved, account, null); },
     summary: { rows: [['Removes', 'item #' + String(tier.id) + ' from the shop']] } });
   bustTiersCache(project);
   if (relaySession && relaySession.resumed) { setStatus(relayrRecoveredMessage(relaySession), 'success'); return; }
@@ -3868,14 +4241,7 @@ var creditBalanceOfAbi = [{
   outputs: [{ type: 'uint256' }],
 }];
 // JBController.claimTokensFor — mint the holder's credits as transferable ERC-20s.
-var claimTokensForAbi = [{
-  type: 'function', name: 'claimTokensFor', stateMutability: 'nonpayable',
-  inputs: [
-    { name: 'holder', type: 'address' }, { name: 'projectId', type: 'uint256' },
-    { name: 'tokenCount', type: 'uint256' }, { name: 'beneficiary', type: 'address' },
-  ],
-  outputs: [],
-}];
+var claimTokensForAbi = CREDIT_CLAIM_ABI;
 // Pure builder for JBController.claimTokensFor (mint internal credits into the ERC-20). `o`: { chainId,
 // controllerAddr, holder, projectId, tokenCount (bigint), beneficiary }.
 export function buildClaimTokensArgs(o) {
@@ -10716,7 +11082,7 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
   if (Number(walletChainId) !== Number(chain.id)) {
     throw new Error('Open this Safe on ' + (chain.name || chainNameOf(chain.id)) + ' before proposing the transaction.');
   }
-  var call = buildCall(chain.id);
+  var call = buildCall(chain.id), proposalFloor = null;
   if (!call || !call.to || !call.abi || !call.functionName || !Array.isArray(call.args)) {
     throw new Error('This Safe App action is missing a reviewable contract call.');
   }
@@ -10739,19 +11105,185 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
         if (Number(activeChainId) !== Number(chain.id)) throw new Error('The connected Safe network changed. Review the transaction again.');
         var liveSafe = await fetchSafeInfoFresh(authorityAddr, chain.id);
         if (!liveSafe) throw new Error('The authority Safe is not deployed on ' + (chain.name || chainNameOf(chain.id)) + '.');
-        if (opts.reverify) await opts.reverify();
+        if (opts.reverify) await opts.reverify(chain.id);
+        if (proposalFloor == null) proposalFloor = (await clientFor(chain.id).getBlock({ blockTag: 'latest' })).number;
+        if (proposalFloor == null) throw new Error('Could not save the Safe proposal block. Nothing was proposed.');
       },
+      onSending: opts.onSafeRequest ? function () { opts.onSafeRequest({ chainId: Number(chain.id), safe: authorityAddr, fromBlock: String(proposalFloor), tx: { to: call.to, data: call.data, value: '0', operation: 0 } }); } : null,
       onStatus: setStatus,
       onSuccess: function (message, meta) {
         setStatus(message, meta && meta.phase === 'safe-proposed' ? 'pending' : 'success', meta);
-        resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash });
+        var known = snapshotKnownSafeProposal(chain.id, authorityAddr, { to: call.to, data: call.data, value: 0, operation: 0 }, meta && meta.safeTxHash, proposalFloor, true);
+        if (opts.onSafeProposal) opts.onSafeProposal(known);
+        resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash, proposals: [known] });
       },
-      onError: function (message) {
+      onError: function (message, meta) {
+        if (meta && meta.userRejected && opts.onSafeNotSubmitted) opts.onSafeNotSubmitted();
         if (String(message || '').toLowerCase() === 'cancelled') { resolve({ queued: 0, skipped: [], cancelled: true, safeApp: true }); return; }
         reject(new Error(String(message || 'Could not propose the transaction to the Safe.')));
       },
     });
   });
+}
+
+export function reviewableContractCall(to, abi, functionName, args) {
+  return { to: to, abi: abi, functionName: functionName, args: args,
+    data: encodeFunctionData({ abi: abi, functionName: functionName, args: args }) };
+}
+
+export function hasSelectedProjectAction(scope, account) {
+  return hasSavedActionPlan(scope, account || getAccount()) || !!loadRelayrPendingSession(scope);
+}
+export function acknowledgeSelectedProjectAction(scope, account) {
+  acknowledgeSavedActionPlan(scope, account || getAccount());
+}
+
+// The preparation callback runs only for a new action. Its exact calls (including validation snapshots) survive
+// changed balances, selections and reloads; destination receipts are checkpointed before their journals clear.
+export async function runSelectedProjectCalls(project, chains, prepareOrBuildCall, opts, setStatus) {
+  opts = opts || {};
+  return runSelectedProjectCallRounds(project, async function (sender) {
+    var prepared = opts.prepare ? await prepareOrBuildCall(sender) : { buildCall: prepareOrBuildCall };
+    var selected = prepared.chains || chains;
+    var calls = prepared.calls || selected.map(function (chain) {
+      return Object.assign({}, prepared.buildCall(chain.id), { chainId: chain.id, chainName: chain.name || chainNameOf(chain.id) });
+    });
+    if (prepared.reverify) opts._preparedReverify = prepared.reverify;
+    return { rounds: [calls], summary: prepared.summary || opts.summary, gas: prepared.gas || opts.gas };
+  }, opts, setStatus);
+}
+
+export function snapshotKnownSafeProposal(chainId, safe, tx, hash, fromBlock, hashOnly) {
+  if (!/^0x[0-9a-f]{64}$/i.test(hash || '') || fromBlock == null || BigInt(fromBlock) < 0n) throw new Error('The known Safe proposal is missing its exact hash or recovery block. Keep the original queue entry.');
+  var fields = { to: tx.to, data: tx.data, value: String(tx.value || 0), operation: Number(tx.operation || 0) };
+  if (!hashOnly) {
+    ['safeTxGas', 'baseGas', 'gasPrice'].forEach(function (key) { fields[key] = String(tx[key] || 0); });
+    fields.gasToken = tx.gasToken || ZERO_ADDRESS; fields.refundReceiver = tx.refundReceiver || ZERO_ADDRESS;
+    fields.nonce = String(tx.nonce);
+    if (!sameAddr(safeTxHashForQueuedTx(chainId, safe, fields), hash)) throw new Error('The returned Safe proposal hash does not match the reviewed call.');
+  }
+  return { chainId: Number(chainId), safe: safe, safeTxHash: hash, fromBlock: String(fromBlock),
+    nonce: hashOnly ? null : fields.nonce, hashOnly: !!hashOnly, tx: fields, executed: false };
+}
+
+export async function reconcileSelectedSafeResult(result, calls, sender, verifyReceipt, findExecution) {
+  if (result.relayr || Number(result.executedReady || 0) === Number(result.expectedCount)) return result;
+  var proposals = result.proposals || [];
+  if (proposals.length !== Number(result.queued)) throw new Error('The saved Safe proposals do not have complete execution proofs. Keep their original queue entries.');
+  var next = Object.assign({}, result, { proposals: proposals.map(function (proposal) { return Object.assign({}, proposal); }) });
+  var seen = new Set();
+  for (var proposal of next.proposals) {
+    var call = calls.find(function (candidate) { return Number(candidate.chainId == null ? candidate.cid : candidate.chainId) === Number(proposal.chainId); });
+    if (!call || seen.has(Number(proposal.chainId)) || !sameAddr(proposal.safe, sender) || !sameAddr(proposal.tx && proposal.tx.to, call.to)
+        || String(proposal.tx.data).toLowerCase() !== String(call.data).toLowerCase() || BigInt(proposal.tx.value || 0) !== 0n || Number(proposal.tx.operation || 0) !== 0) throw new Error('The saved Safe proposal does not match its original destination call.');
+    seen.add(Number(proposal.chainId));
+    if (proposal.executed) continue;
+    var receipt = await (findExecution || findSavedSafeExecution)(proposal);
+    if (!receipt) continue;
+    if (verifyReceipt) await verifyReceipt(call, receipt);
+    proposal.executed = true;
+  }
+  next.executedReady = Number(next.immediateExecuted || 0) + next.proposals.filter(function (proposal) { return proposal.executed; }).length;
+  return next;
+}
+
+export function normalizeSelectedSafeResult(result, expectedCount) {
+  var queued = Number(result && result.queued || 0), immediate = Number(result && result.executed || 0), ready = Number(result && result.executedReady || 0);
+  if (!result || result.cancelled || result.partial || result.skipped && result.skipped.length
+      || !Number.isSafeInteger(queued) || !Number.isSafeInteger(immediate) || !Number.isSafeInteger(ready)
+      || queued < 0 || immediate < 0 || ready < 0 || ready > queued || queued + immediate !== expectedCount) {
+    throw new Error('Some selected Safe calls are pending or unaccounted for. Inspect the original batch in the Safe queues before continuing.');
+  }
+  return { relayr: false, expectedCount: expectedCount, queued: queued, immediateExecuted: immediate, executedReady: immediate + ready, proposals: result.proposals || [], cancelled: false };
+}
+
+export async function runSelectedProjectCallRounds(project, prepare, opts, setStatus) {
+  opts = opts || {};
+  if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
+  var account = getAccount();
+  if (!account) account = await connect().then(getAccount);
+  if (!account) throw new Error('Connect a wallet to continue.');
+  var scope = opts.pendingScope || relayrActionScope(project, opts.label || opts.title);
+  var authority = opts.authorityAddr || account;
+  var authoritySafe = (isSafeConnected() || opts.authorityAddr) ? await safeInfoForAuthority(authority, project.chainId, project.chainId) : null;
+  if ((isSafeConnected() || opts.authorityAddr) && !authoritySafe) throw new Error('The selected Safe could not be verified. Reconnect the original Safe or its signer before continuing.');
+  var sender = authoritySafe ? authority : account;
+  // A saved pre-plan Relayr request keeps precedence over newly prepared balances or calldata.
+  if (loadRelayrPendingSession(scope)) {
+    var old = await runRelayrAcrossChains([], account, function () { throw new Error('Saved request missing.'); }, opts.gas, setStatus,
+      Object.assign({}, opts, { pendingScope: scope }));
+    return { relayr: true, resumed: true, session: old, completed: true };
+  }
+  var preparedChecks = null;
+  var outcome = await runSavedActionPlan({
+    scope: scope, account: account, executionAccount: sender, safeMode: !!authoritySafe, gas: opts.gas,
+    prepare: async function () {
+      var prepared = await prepare(sender);
+      preparedChecks = opts._preparedReverify;
+      return prepared;
+    },
+    reconcileResult: function (result, calls) { return reconcileSelectedSafeResult(result, calls, sender, opts.verifyReceipt); },
+    executeRound: async function (calls, index, plan, control) {
+      var chains = calls.map(function (call) { return { id: Number(call.chainId == null ? call.cid : call.chainId), name: call.chainName || chainNameOf(call.chainId == null ? call.cid : call.chainId) }; });
+      calls.forEach(function (call) {
+        if (encodeFunctionData({ abi: call.abi, functionName: call.functionName, args: call.args }).toLowerCase() !== String(call.data).toLowerCase()) throw new Error('The saved call does not match its reviewed arguments.');
+      });
+      var roundScope = scope + ':' + plan.id + ':round:' + index;
+      var roundOpts = Object.assign({}, opts, { gas: plan.gas, pendingScope: roundScope,
+        title: (opts.title || opts.label || 'Project action') + (plan.rounds.length > 1 ? ' — round ' + (index + 1) + '/' + plan.rounds.length : ''),
+        summary: { rows: (plan.summary && plan.summary.rows || []).concat([['Round', (index + 1) + ' of ' + plan.rounds.length], ['Calls in this round', String(calls.length)]]) },
+        reverify: async function (chainId) {
+          if (!getAccount() || !sameAddr(getAccount(), account)) throw new Error('Connected account changed. Resume with the original wallet.');
+          if (opts.reverifySaved) await opts.reverifySaved(calls, chainId, sender);
+          else if (preparedChecks) await preparedChecks(chainId);
+          else if (opts.reverify) await opts.reverify(chainId);
+        },
+        preserveCompletionCheck: true, retainPendingReceipt: true,
+        verifyReceipt: opts.verifyReceipt ? function (call, receipt) {
+          var original = calls.find(function (candidate) { return Number(candidate.chainId == null ? candidate.cid : candidate.chainId) === Number(call.cid == null ? call.chainId : call.cid); });
+          if (!original) throw new Error('The distribution receipt has no matching reviewed call.');
+          return opts.verifyReceipt(original, receipt);
+        } : null,
+        verifyCompletion: opts.verifyReceipt ? async function (session, records) {
+          await Promise.all(records.map(async function (record) {
+            var original = calls.find(function (call) { return Number(call.chainId == null ? call.cid : call.chainId) === Number(record.request && record.request.chain); });
+            if (!original) throw new Error('The distribution receipt has no matching reviewed destination.');
+            var receipt = await clientFor(Number(record.request.chain)).getTransactionReceipt({ hash: relayrDestinationHash(record) });
+            await opts.verifyReceipt(original, receipt);
+          }));
+        } : null,
+        onVerified: function (session) {
+          control.checkpoint({ relayr: true, session: { expectedCount: calls.length, itemCount: calls[0] && calls[0].itemCount, chains: chains, records: (session.records || []).map(function (row) { return { status: row.status, data: row.data }; }) } });
+        },
+      });
+      setStatus('Review round ' + (index + 1) + ' of ' + plan.rounds.length + '. Completed rounds will not be sent again.', 'pending');
+      var buildCall = function (chainId) { return calls.find(function (call) { return Number(call.chainId == null ? call.cid : call.chainId) === Number(chainId); }); };
+      if (authoritySafe) {
+        var requested = false;
+        roundOpts.onSafeRequest = function (attempt) { requested = true; control.beforeSafe(attempt); };
+        roundOpts.onSafeProposal = function (proposal) { control.recordSafeProposal(proposal); };
+        roundOpts.onSafeExecuted = function (chainId) { control.recordSafeExecuted(chainId); };
+        roundOpts.onSafeNotSubmitted = function () { control.safeCancelled(); };
+        var safeResult = await runAuthorityActionAcrossChains(project, chains, authority, buildCall, roundOpts, setStatus);
+        if ((!safeResult || safeResult.cancelled) && !requested && !(safeResult && (safeResult.queued || safeResult.executed || safeResult.executedReady))) return { cancelled: true };
+        return normalizeSelectedSafeResult(safeResult, calls.length);
+      }
+      var session = await runRelayrAcrossChains(chains, account, buildCall, plan.gas, setStatus, roundOpts);
+      return { relayr: true, session: session };
+    },
+  });
+  if (!outcome.completed) return outcome;
+  var results = outcome.results || [];
+  if (results.some(function (result) { return !result.relayr; })) {
+    var queued = results.reduce(function (sum, result) { return sum + Number(result.queued || 0); }, 0);
+    var executed = results.reduce(function (sum, result) { return sum + Number(result.executedReady || 0); }, 0);
+    var expected = results.reduce(function (sum, result) { return sum + Number(result.expectedCount || 0); }, 0);
+    return { relayr: false, queued: queued, executedReady: executed, safePending: expected > executed, completed: expected === executed,
+      resumed: outcome.resumed, rounds: outcome.rounds, cancelled: false };
+  }
+  return { relayr: true, completed: true, resumed: outcome.resumed, rounds: outcome.rounds,
+    session: { resumed: outcome.resumed, itemCount: results[0] && results[0].session && results[0].session.itemCount, expectedCount: results.reduce(function (sum, result) { return sum + Number(result.session && result.session.expectedCount || 0); }, 0),
+      records: results.flatMap(function (result) { return result.session && result.session.records || []; }) } };
 }
 
 async function runAuthorityActionAcrossChains(project, chains, authorityAddr, buildCall, opts, setStatus) {
@@ -10774,13 +11306,13 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
       var executionSafe = await fetchSafeInfoFresh(authorityAddr, homeChainId);
       if (executionSafe) return runConnectedSafeAppAuthorityCall(chains[0], authorityAddr, buildCall, opts, setStatus);
     }
-    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab, reverify: opts.reverify, authorityChainId: authorityChainId, summary: opts.summary ? Object.assign({ action: opts.label }, opts.summary) : undefined, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro });
+    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab, reverify: opts.reverify, onSafeRequest: opts.onSafeRequest, onSafeProposal: opts.onSafeProposal, onSafeExecuted: opts.onSafeExecuted, onSafeNotSubmitted: opts.onSafeNotSubmitted, verifyReceipt: opts.verifyReceipt, authorityChainId: authorityChainId, summary: opts.summary ? Object.assign({ action: opts.label }, opts.summary) : undefined, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro });
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
   var relaySession = await runRelayrAcrossChains(chains, account, buildCall, opts.gas || 500000n, setStatus, {
     label: opts.label, title: opts.title, summary: opts.summary, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro,
-    reverify: opts.reverify,
+    reverify: opts.reverify, onVerified: opts.onVerified,
     pendingScope: opts.pendingScope || relayrActionScope(project, opts.label || opts.title),
   });
   return { relayr: true, resumed: !!(relaySession && relaySession.resumed), session: relaySession };
@@ -10821,8 +11353,8 @@ function openTransferAuthorityModal(project, opts) {
       try { to = authorityValueOf(); }
       catch (err0) { setStatus(err0.message || String(err0), 'error'); busy = false; return; }
       var buildCall = isRev
-        ? function (cid) { var revOwner = getAddress('REVOwner', cid); if (!revOwner) throw new Error('No REVOwner on ' + chainNameOf(cid)); return { to: revOwner, data: encodeFunctionData({ abi: setOperatorOfAbi, functionName: 'setOperatorOf', args: [pidOn(project, cid), to] }) }; }
-        : function (cid) { var jbp = getAddress('JBProjects', cid); if (!jbp) throw new Error('No JBProjects on ' + chainNameOf(cid)); return { to: jbp, data: encodeFunctionData({ abi: jbProjectsTransferAbi, functionName: 'transferFrom', args: [authorityAddr, to, pidOn(project, cid)] }) }; };
+        ? function (cid) { var revOwner = getAddress('REVOwner', cid); if (!revOwner) throw new Error('No REVOwner on ' + chainNameOf(cid)); return reviewableContractCall(revOwner, setOperatorOfAbi, 'setOperatorOf', [pidOn(project, cid), to]); }
+        : function (cid) { var jbp = getAddress('JBProjects', cid); if (!jbp) throw new Error('No JBProjects on ' + chainNameOf(cid)); return reviewableContractCall(jbp, jbProjectsTransferAbi, 'transferFrom', [authorityAddr, to, pidOn(project, cid)]); };
       var res = await runAuthorityActionAcrossChains(project, chains, authorityAddr, buildCall, { label: isRev ? 'Transfer operator' : 'Transfer ownership', title: isRev ? 'Transfer operator' : 'Transfer ownership',
         summary: { rows: [[isRev ? 'New operator' : 'New owner', to], ['From', authorityAddr]] } }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Could not complete the transfer.'), 'error'); return null; });
@@ -10853,7 +11385,7 @@ function openEditProjectModal(project) {
 
   var content = el('div', 'modal-body operator-edit');
 
-  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit the project.'));
+  content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to edit the project.', project.chainId));
 
   // Only fields the operator actually touches are written back to the metadata — everything else in the
   // live projectUri JSON (custom fields, tags, …) rides through the save untouched.
@@ -10937,7 +11469,7 @@ function openEditProjectModal(project) {
     advancedSummary.textContent = ADVANCED_CUSTOM_LABEL + (advanced.open ? ' ▾' : ' ▸');
   });
   var customHint = el('div', 'operator-edit-hint extras-payer-sub');
-  customHint.textContent = 'Fields the form above doesn’t manage. Edit, add, or remove them — what’s left here replaces the custom set when you save. The fields above always win.';
+  customHint.textContent = 'Edit, add, or remove custom fields. Changed keys apply across the selected chains; untouched keys keep each chain’s existing values. The fields above always win.';
   advanced.appendChild(customHint);
   var customTa = el('textarea', 'operator-edit-textarea operator-edit-json');
   customTa.rows = 8; customTa.spellcheck = false; customTa.disabled = true;
@@ -11028,6 +11560,7 @@ function openEditProjectModal(project) {
       payDisclosure: payNoticeTa.value,
       storeCategories: (function () { var m = {}; catRows.forEach(function (r) { var n = (r.name.value || '').trim(); if (n) m[r.id] = n; }); return m; })(),
       logoFile: (logoFile.files && logoFile.files[0]) || null, preloadedMeta: loadedMeta,
+      baselineStoreCategories: project.storeCategories || {},
       customProperties: { value: parsedCustom.value, dirty: !!dirty.customProperties },
       dirty: dirty,
     };
@@ -11099,18 +11632,24 @@ var shopOwnerAbi = [{
 var JB_PERMISSION_ADJUST_721_TIERS = 24n;
 var JB_PERMISSION_MINT_721 = 26n;
 
-// `JB721TiersHook.adjustTiers` checks permission 24 against the hook's live owner. Mirror that
-// exact authorization instead of rejecting a valid wallet because indexed operator data is stale.
-async function accountCanAdjustShopOn(project, chainId, hook, account) {
+// Permission IDs are checked against each hook's live owner, including a revnet operator's grants.
+export async function accountCanShopPermissionOn(project, chainId, hook, account, permissionId) {
   if (!hook || !account) return false;
-  var owner = await clientFor(chainId).readContract({
-    address: hook, abi: shopOwnerAbi, functionName: 'owner', args: [],
-  }).catch(function () { return null; });
+  var owner = await clientFor(chainId).readContract({ address: hook, abi: shopOwnerAbi, functionName: 'owner', args: [] }).catch(function () { return null; });
   if (!owner) return false;
-  if (String(owner).toLowerCase() === String(account).toLowerCase()) return true;
-  return read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
-    account, owner, pidOn(project, chainId), JB_PERMISSION_ADJUST_721_TIERS, true, true,
-  ]).then(Boolean).catch(function () { return false; });
+  if (sameAddr(owner, account)) return true;
+  return read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [account, owner, pidOn(project, chainId), BigInt(permissionId), true, true]).then(Boolean).catch(function () { return false; });
+}
+async function accountCanAdjustShopOn(project, chainId, hook, account) {
+  return accountCanShopPermissionOn(project, chainId, hook, account, JB_PERMISSION_ADJUST_721_TIERS);
+}
+export async function shopActionAuthority(project) {
+  var account = getAccount();
+  if (!account) account = await connect().then(getAccount).catch(function () { return null; });
+  var authority = projectAuthorityAddress(project);
+  if (!account || !authority || sameAddr(account, authority)) return undefined;
+  var safe = await safeInfoForAuthority(authority, project.chainId, project.chainId);
+  return safe && safeAuthorityAccessMode(account, authority, safe, isSafeConnected()) ? authority : undefined;
 }
 
 // `mintFor` uses the same hook-owner permission scope, with MINT_721 (26).
@@ -11128,7 +11667,7 @@ async function accountCanMintShopOn(project, chainId, hook, account) {
   ]).then(Boolean).catch(function () { return false; });
 }
 
-async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, setStatus) {
+async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, setStatus, permissionId) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   var account = getAccount();
   if (!account) {
@@ -11138,7 +11677,7 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
   if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
   setStatus('Checking live shop permissions…', 'pending');
   var allowed = await Promise.all(chains.map(function (chain) {
-    return accountCanAdjustShopOn(project, chain.id, hookMap[chain.id], account);
+    return accountCanShopPermissionOn(project, chain.id, hookMap[chain.id], account, permissionId || JB_PERMISSION_ADJUST_721_TIERS);
   }));
   if (allowed.every(Boolean)) return account;
   var denied = chains.filter(function (_, i) { return !allowed[i]; }).map(function (chain) {
@@ -11198,7 +11737,7 @@ function removeRelayrRecoveryPanel(setStatus) {
 // One recovery card for every Discover Relayr surface. It is intentionally status-only: retry means checking
 // the already-paid bundle, never creating another quote/payment. The feature's original promise stays pending
 // while this card is shown, so its normal success continuation still runs when the bundle eventually confirms.
-function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, allowNewAttempt, onClear) {
+function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, onClear) {
   var statusEl = setStatus && setStatus.element;
   if (!statusEl || !statusEl.parentNode) return false;
   var panel = statusEl._relayrRecoveryPanel;
@@ -11208,17 +11747,21 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, allowNewAt
     statusEl._relayrRecoveryPanel = panel;
   }
   var noteText;
-  if (mode === 'failed') {
-    noteText = allowNewAttempt
-      ? 'Relayr failed before any chain confirmed. This receipt is kept here for reference; review the error, then the action can be tried again.'
-      : 'Some chain outcomes may differ. Nothing was resubmitted—review the affected feature before attempting only the missing work.';
+  if (session.paymentState === 'publication') {
+    noteText = 'Signed requests may have reached Relayr, but its quote response was not received. No payment was requested. Keep this record and inspect the destination chains before signing this action again.';
+  } else if (session.paymentState === 'quoted') {
+    noteText = 'This previously reviewed bundle has not been paid. Its funding options are available only in the original window; keep its bundle ID and review the destination chains before signing again.';
+  } else if (session.paymentState === 'sending') {
+    noteText = 'The payment request reached your wallet, but whether it was submitted is unknown. Check the original bundle and wallet activity before paying again.';
+  } else if (mode === 'failed') {
+    noteText = 'Relayr’s reported failure does not prove that every destination is unchanged. Keep this paid receipt and verify each affected chain before attempting any missing work.';
   } else {
     noteText = session.persisted === false
       ? 'This request is already paid, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never creates another transaction.'
       : 'This request is already paid. It is safe to close this window; the receipt is saved. Checking status never creates another transaction.';
   }
   renderRelayrReceiptInto(panel, session, { noteText: noteText });
-  if (onCheck) {
+  if (onCheck && session.paymentState !== 'publication' && session.paymentState !== 'quoted') {
     var action = document.createElement('button'); action.type = 'button'; action.className = 'operator-cta relayr-pending-action';
     action.disabled = mode === 'checking'; action.textContent = mode === 'checking' ? 'Checking…' : 'Check Relayr status';
     action.addEventListener('click', onCheck); panel.appendChild(action);
@@ -11230,9 +11773,15 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, allowNewAt
   return true;
 }
 
-async function monitorRelayrSession(session, setStatus, opts) {
+export async function monitorRelayrSession(session, setStatus, opts) {
   opts = opts || {};
   var scope = opts.pendingScope;
+  function refreshSavedSession() {
+    var saved = scope && loadRelayrPendingSession(scope, session);
+    if (saved && saved.bundleUuid === session.bundleUuid) session = saved;
+  }
+  // A stale quoted modal can outlive payment from another tab. Refresh before writing or classifying it.
+  refreshSavedSession();
   var expected = Math.max(1, Number(session.expectedCount) || (session.chains && session.chains.length) || 1);
   session.expectedCount = expected;
   function persist(records) {
@@ -11247,8 +11796,19 @@ async function monitorRelayrSession(session, setStatus, opts) {
     if (opts.onProgress) { try { opts.onProgress(session, records, progress); } catch (_) {} }
   }
   async function poll(timeoutMs) {
+    refreshSavedSession();
     renderRelayrRecoveryPanel(setStatus, session, 'checking');
     try {
+      if (session.paymentState === 'publication') {
+        var publication = new Error('The signed requests may have reached Relayr, but no bundle ID was returned. No payment was requested. Keep the saved publication record and inspect the destination chains; do not sign or submit this action again.');
+        publication.code = 'RELAYR_PUBLICATION_PENDING'; publication.retryable = true;
+        throw publication;
+      }
+      if (session.paymentState === 'quoted') {
+        var missingQuote = new Error('The previously reviewed Relayr bundle is saved, but its exact funding quote is no longer available in this window. No payment was requested. Keep its bundle ID and review the destination chains before signing or submitting again.');
+        missingQuote.code = 'RELAYR_QUOTE_RECOVERY_PENDING'; missingQuote.retryable = true;
+        throw missingQuote;
+      }
       if (!Array.isArray(session.expectedTransactions) || session.expectedTransactions.length !== expected) {
         var unbound = new Error('This saved Relayr receipt predates exact transaction binding. Keep it for support and verify its destination transactions manually; it cannot be marked complete automatically.');
         unbound.code = 'RELAYR_STATUS_UNBOUND'; unbound.retryable = true;
@@ -11265,7 +11825,8 @@ async function monitorRelayrSession(session, setStatus, opts) {
         pending.code = 'RELAYR_POSTCONDITION_PENDING'; pending.retryable = true; pending.cause = cause; pending.records = records;
         throw pending;
       }
-      if (scope) clearRelayrPendingSession(scope);
+      if (opts.onVerified) await opts.onVerified(session);
+      if (scope) clearRelayrPendingSession(scope, session);
       removeRelayrRecoveryPanel(setStatus);
       return session;
     } catch (error) {
@@ -11275,22 +11836,20 @@ async function monitorRelayrSession(session, setStatus, opts) {
     }
   }
 
-  // Terminal (non-timeout) failure: decide whether the paid receipt may be auto-discarded, then show the
-  // failed-state card. This rule guards "when may the user pay again" — keep it in this one helper.
+  // A bound API failure is still not proof that a signed request cannot execute. Keep every paid receipt
+  // until exact destination verification succeeds or the user explicitly clears it after reviewing the chains.
   function showFailurePanel() {
-    var allFailed = relayrProgress(session.records, expected).allFailed;
-    var hasSafeProof = (session.expectedTransactions || []).some(function (binding) { return binding && binding.result && binding.result.kind === 'safe-exec'; });
-    var mayDiscard = allFailed && !hasSafeProof;
-    if (mayDiscard && scope) clearRelayrPendingSession(scope);
-    renderRelayrRecoveryPanel(setStatus, session, 'failed', null, mayDiscard, !mayDiscard && scope ? function () {
+    renderRelayrRecoveryPanel(setStatus, session, 'failed', null, scope && !opts.retainPendingReceipt ? function () {
       if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains Relayr reported complete. Review the affected feature and retry only missing work.')) return;
-      clearRelayrPendingSession(scope); removeRelayrRecoveryPanel(setStatus);
+      clearRelayrPendingSession(scope, session); removeRelayrRecoveryPanel(setStatus);
       setStatus('Saved receipt cleared. Verify every Relayr-reported chain onchain before submitting any missing work again.', '');
     } : null);
   }
 
   persist();
-  setStatus('Payment confirmed — Relayr is executing on ' + expected + ' chain' + (expected === 1 ? '' : 's') + '. Do not submit again.', 'pending');
+  setStatus(session.paymentState === 'publication'
+    ? 'Checking the saved Relayr publication record. Do not sign or submit again.'
+    : 'Checking the submitted payment request and Relayr execution on ' + expected + ' chain' + (expected === 1 ? '' : 's') + '. Do not submit again.', 'pending');
   try {
     return await poll(opts.initialTimeoutMs);
   } catch (initialError) {
@@ -11305,7 +11864,8 @@ async function monitorRelayrSession(session, setStatus, opts) {
     return await new Promise(function (resolve, reject) {
       function waitAgain(error) {
         var progress = relayrProgress(session.records, expected);
-        setStatus('Relayr is taking longer than usual — it reports ' + progress.confirmed + '/' + progress.total + ' complete, with exact onchain verification still pending. Use “Check Relayr status”; do not submit again.', 'pending');
+        setStatus(error && (error.code === 'RELAYR_PUBLICATION_PENDING' || error.code === 'RELAYR_QUOTE_RECOVERY_PENDING') ? error.message
+          : 'Relayr is taking longer than usual — it reports ' + progress.confirmed + '/' + progress.total + ' complete, with exact onchain verification still pending. Use “Check Relayr status”; do not submit again.', 'pending');
         renderRelayrRecoveryPanel(setStatus, session, 'waiting', check);
         if (error && typeof error === 'object') error.relayrSession = session;
       }
@@ -11334,10 +11894,10 @@ function rowValueText(v) {
 }
 
 export function shouldUseRelayrForChains(chains) {
-  if (!Array.isArray(chains)) return false;
-  return new Set(chains.map(function (chain) {
+  if (!Array.isArray(chains) || chains.length < 2) return false;
+  return relayrSupportsChains(chains.map(function (chain) {
     return Number(chain && typeof chain === 'object' ? chain.id : chain);
-  }).filter(Number.isFinite)).size > 1;
+  }));
 }
 
 // Shared dispatcher: submit a one-chain EOA call directly on that chain. Relayr is reserved for a
@@ -11348,11 +11908,14 @@ export function shouldUseRelayrForChains(chains) {
 // callers never have to guess whether it is safe to create a second bundle.
 async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus, confirmOpts) {
   confirmOpts = confirmOpts || {};
-  if (confirmOpts.pendingScope && !confirmOpts.manualRecovery) {
+  if (confirmOpts.pendingScope) {
     var restored = loadRelayrPendingSession(confirmOpts.pendingScope);
     if (restored) {
-      setStatus('Found a paid Relayr request for this action. Checking it instead of submitting again…', 'pending');
-      var resumed = await monitorRelayrSession(restored, setStatus, Object.assign({}, confirmOpts, { initialTimeoutMs: 60 * 1000 }));
+      var quoted = restored.paymentState === 'quoted' && relayrResumeQuotedBundle(confirmOpts.pendingScope);
+      setStatus(quoted ? 'Resuming funding for the previously reviewed Relayr request.' : 'Checking the saved Relayr request for this action…', 'pending');
+      var resumed = quoted
+        ? await fundRelayrQuotedSession(quoted, restored, setStatus, Object.assign({}, confirmOpts, { resumeQuoted: true }))
+        : await monitorRelayrSession(restored, setStatus, Object.assign({}, confirmOpts, { initialTimeoutMs: 60 * 1000, reverify: null, verifyCompletion: confirmOpts.preserveCompletionCheck ? confirmOpts.verifyCompletion : null }));
       resumed.resumed = true;
       return resumed;
     }
@@ -11371,78 +11934,108 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
       args: Array.isArray(call.args) ? call.args : null,
     });
   }
-  if (!shouldUseRelayrForChains(chains)) {
-    var direct = calls[0];
-    var directOk = await confirmTransactionModal({
-      via: 'Direct wallet transaction',
-      action: confirmOpts.label || 'Project update',
-      chain: direct.name,
-      chainId: direct.cid,
-      contract: direct.contract || resolveContractName(direct.to, direct.cid) || direct.to,
-      address: direct.to,
-      calldata: direct.data,
-      abi: direct.abi,
-      functionName: direct.functionName,
-      rawArgs: direct.args,
-      summary: confirmOpts.summary ? Object.assign({ action: confirmOpts.label }, confirmOpts.summary, { rows: (confirmOpts.summary.rows || []).concat([['On chain', direct.name]]) }) : undefined,
-    }, { title: confirmOpts.title || 'Confirm transaction', confirmText: 'Confirm & send', steps: confirmOpts.steps, stepIndex: confirmOpts.stepIndex, stepsIntro: confirmOpts.stepsIntro });
-    if (!directOk || (typeof directOk === 'object' && !directOk.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
-    setStatus('Checking wallet network…', 'pending');
-    var directWallet = getWalletClient();
-    if (!directWallet) throw new Error('Connect a wallet to continue.');
-    var directWalletChainId = await directWallet.getChainId();
-    if (directWalletChainId !== direct.cid) {
-      setStatus('Switch your wallet to ' + direct.name + '…', 'pending');
-      await switchChain(direct.cid);
-    }
-    if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) {
-      throw new Error('Connected account changed. Review the transaction again.');
-    }
-    if (confirmOpts.reverify) {
-      setStatus('Rechecking the reviewed onchain state…', 'pending');
-      await confirmOpts.reverify();
-      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    }
-    var directClient = clientFor(direct.cid);
-    var directGas;
-    try { directGas = BigInt(gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
-    if (directGas < 21000n || directGas > 5000000n) throw new Error('This transaction gas limit is outside the supported direct-send range.');
-    setStatus('Simulating the confirmed transaction…', 'pending');
-    var directResult = await directClient.request({
-      method: 'eth_call',
-      params: [{ from: account, to: direct.to, data: direct.data, value: '0x0', gas: '0x' + directGas.toString(16) }, 'latest'],
+  var useRelayr = shouldUseRelayrForChains(chains);
+  if (useRelayr) {
+    var trustedTargets = await Promise.all(calls.map(function (call) { return relayrSupportsForwarding(call.cid, call.to); }));
+    useRelayr = trustedTargets.every(function (trusted) { return trusted; });
+  }
+  if (!useRelayr) {
+    var directReceipts = await runDirectBatch(calls, {
+      account: account, scope: confirmOpts.pendingScope,
+      onComplete: confirmOpts.onVerified ? function (receipts) { return confirmOpts.onVerified({ records: receipts.map(function (receipt) { return { status: { state: 'Completed' }, data: { hash: receipt.transactionHash } }; }) }); } : null,
+      onStorageUnavailable: function () { setStatus('Keep this window open to preserve the submitted direct transaction receipts.', 'pending'); },
+      verifySubmitted: async function (call, hash) {
+        setStatus('Checking the saved transaction on ' + call.name + '…', 'pending');
+        var client = clientFor(call.cid);
+        var transaction = await client.getTransaction({ hash: hash });
+        if (!transaction || !sameAddr(transaction.from, account) || !sameAddr(transaction.to, call.to)
+            || String(transaction.input).toLowerCase() !== String(call.data).toLowerCase() || BigInt(transaction.value) !== 0n) {
+          throw new Error('The saved transaction does not match the reviewed call on ' + call.name + '.');
+        }
+        var receipt = await waitForTrackedTransactionReceipt(client, hash, getWalletClient(), call.cid);
+        if (receipt && receipt.status === 'success' && confirmOpts.verifyReceipt) await confirmOpts.verifyReceipt(call, receipt);
+        return receipt;
+      },
+      execute: async function (direct, directIndex, onSubmitted, onSending) {
+        var directOk = await confirmTransactionModal({
+          via: 'Direct wallet transaction',
+          action: confirmOpts.label || 'Project update',
+          chain: direct.name,
+          chainId: direct.cid,
+          contract: direct.contract || resolveContractName(direct.to, direct.cid) || direct.to,
+          address: direct.to,
+          calldata: direct.data,
+          abi: direct.abi,
+          functionName: direct.functionName,
+          rawArgs: direct.args,
+          summary: confirmOpts.summary ? Object.assign({ action: confirmOpts.label }, confirmOpts.summary, { rows: (confirmOpts.summary.rows || []).concat([['On chain', direct.name]]) }) : undefined,
+        }, { title: confirmOpts.title || 'Confirm transaction', confirmText: 'Confirm & send',
+          steps: calls.length > 1 ? calls.map(function (call) { return 'Send on ' + call.name; }) : confirmOpts.steps,
+          stepIndex: calls.length > 1 ? directIndex : confirmOpts.stepIndex, stepsIntro: confirmOpts.stepsIntro });
+        if (!directOk || (typeof directOk === 'object' && !directOk.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
+        setStatus('Checking wallet network…', 'pending');
+        var directWallet = getWalletClient();
+        if (!directWallet) throw new Error('Connect a wallet to continue.');
+        var directWalletChainId = await directWallet.getChainId();
+        if (directWalletChainId !== direct.cid) {
+          setStatus('Switch your wallet to ' + direct.name + '…', 'pending');
+          await switchChain(direct.cid);
+          directWallet = getWalletClient();
+        }
+        if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) {
+          throw new Error('Connected account changed. Review the transaction again.');
+        }
+        if (confirmOpts.reverify) {
+          setStatus('Rechecking the reviewed onchain state…', 'pending');
+          await confirmOpts.reverify(direct.cid);
+          if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+        }
+        var directClient = clientFor(direct.cid);
+        var directGas;
+        try { directGas = BigInt(gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
+        if (directGas < 21000n || directGas > 5000000n) throw new Error('This transaction gas limit is outside the supported direct-send range.');
+        setStatus('Simulating the confirmed transaction…', 'pending');
+        var directResult = await directClient.request({
+          method: 'eth_call',
+          params: [{ from: account, to: direct.to, data: direct.data, value: '0x0', gas: '0x' + directGas.toString(16) }, 'latest'],
+        });
+        if (typeof directResult !== 'string' || !/^0x[0-9a-f]*$/i.test(directResult) || directResult.length > 8194) {
+          throw new Error('The transaction simulation returned malformed or oversized data.');
+        }
+        if (confirmOpts.reverify) {
+          await confirmOpts.reverify(direct.cid);
+          if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+        }
+        var directSendGas = await gasWithinCap(directClient, {
+          account: account, to: direct.to, data: direct.data, value: 0n,
+        }, directGas);
+        setStatus('Awaiting wallet confirmation…', 'pending');
+        onSending();
+        var directHash = await directWallet.sendTransaction({
+          account: account,
+          chain: CHAINS[direct.cid],
+          to: direct.to,
+          data: direct.data,
+          value: 0n,
+          gas: directSendGas,
+        });
+        onSubmitted(directHash);
+        setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
+        // Use the same dual-source receipt poll as the shared transaction boundary. Some wallet/public-RPC
+        // combinations reject viem's watcher after the transaction has already landed, which used to turn a
+        // successful one-chain management action into an "Invalid parameters" error in the modal.
+        var directReceipt = await waitForTrackedTransactionReceipt(directClient, directHash, directWallet, direct.cid);
+        if (!directReceipt || directReceipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
+        if (confirmOpts.verifyReceipt) await confirmOpts.verifyReceipt(direct, directReceipt);
+        setStatus('Confirmed in block ' + directReceipt.blockNumber + ' | TX: ' + truncAddr(directReceipt.transactionHash), 'success');
+        return directReceipt;
+      },
     });
-    if (typeof directResult !== 'string' || !/^0x[0-9a-f]*$/i.test(directResult) || directResult.length > 8194) {
-      throw new Error('The transaction simulation returned malformed or oversized data.');
-    }
-    if (confirmOpts.reverify) {
-      await confirmOpts.reverify();
-      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    }
-    var directSendGas = await gasWithinCap(directClient, {
-      account: account, to: direct.to, data: direct.data, value: 0n,
-    }, directGas);
-    setStatus('Awaiting wallet confirmation…', 'pending');
-    var directHash = await directWallet.sendTransaction({
-      account: account,
-      chain: CHAINS[direct.cid],
-      to: direct.to,
-      data: direct.data,
-      value: 0n,
-      gas: directSendGas,
-    });
-    setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
-    // Use the same dual-source receipt poll as the shared transaction boundary. Some wallet/public-RPC
-    // combinations reject viem's watcher after the transaction has already landed, which used to turn a
-    // successful one-chain management action into an "Invalid parameters" error in the modal.
-    var directReceipt = await waitForTrackedTransactionReceipt(directClient, directHash, directWallet, direct.cid);
-    if (!directReceipt || directReceipt.status !== 'success') throw new Error('Transaction reverted onchain. No state changes were applied.');
-    setStatus('Confirmed in block ' + directReceipt.blockNumber + ' | TX: ' + truncAddr(directReceipt.transactionHash), 'success');
     return {
       direct: true,
-      expectedCount: 1,
-      chains: [{ id: direct.cid, name: direct.name }],
-      records: [{ status: { state: 'Completed' }, data: { hash: directReceipt.transactionHash } }],
+      expectedCount: calls.length,
+      chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
+      records: directReceipts.map(function (receipt) { return { status: { state: 'Completed' }, data: { hash: receipt.transactionHash } }; }),
     };
   }
   var ok = await confirmTransactionModal({
@@ -11457,48 +12050,99 @@ async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus,
       };
     }),
   }, { title: confirmOpts.title || 'Confirm cross-chain transaction', confirmText: 'Confirm & send', steps: confirmOpts.steps, stepsIntro: confirmOpts.stepsIntro });
-  if (!ok) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
+  if (!ok || (typeof ok === 'object' && !ok.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
 
+  if (confirmOpts.reverify) await confirmOpts.reverify();
   setStatus('Sign the change for ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
   var txs = [];
   for (var j = 0; j < calls.length; j++) {
     txs.push(await buildForwardedTx(calls[j].cid, account, calls[j].to, calls[j].data, gas || 400000n));
   }
   setStatus('Requesting Relayr quote…', 'pending');
-  var bundle = await relayrPostBundle(txs);
-  var payments = bundle.payment_info || [];
-  if (!payments.length) throw new Error('Relayr returned no payment option.');
-  var connectedChainId = await getWalletClient().getChainId().catch(function () { return null; });
-  var payment = payments.filter(function (p) { return p.chain === connectedChainId; })[0] || payments[0];
-  if (payment.chain !== connectedChainId) {
-    setStatus('Switch your wallet to ' + chainNameFor(payment.chain) + ' to pay…', 'pending');
-    await switchChain(payment.chain);
-  }
-  setStatus('Confirm the Relayr payment…', 'pending');
+  if (confirmOpts.reverify) await confirmOpts.reverify();
+  var bundle = await relayrPostBundle(txs, { scope: confirmOpts.pendingScope, account: account,
+    chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }) });
   var session = {
     bundleUuid: bundle.bundle_uuid,
+    account: account,
     paymentHash: null,
-    paymentChainId: Number(payment.chain),
+    paymentState: 'quoted',
     expectedCount: chains.length,
     expectedTransactions: bundle.expected_transactions,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
     records: [],
   };
-  var paymentHash = await relayrPay(payment, account, function (hash) {
-    session.paymentHash = hash;
-    if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
-    if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
-  }, bundle.bundle_uuid, confirmOpts.reverify);
-  session.paymentHash = paymentHash;
+  return fundRelayrQuotedSession(bundle, session, setStatus, confirmOpts);
+}
+
+// Quotes and their original freshness checks live only in this page. A changed form can resume funding for
+// that reviewed request without signing again or applying a validation closure over the new form's values.
+var RELAYR_QUOTED_CHECKS = {};
+export async function fundRelayrQuotedSession(bundle, session, setStatus, confirmOpts) {
+  confirmOpts = confirmOpts || {};
+  // A stale funding modal must not reset another window's sending/submitted journal back to quoted.
+  requireUnpaidRelayrSession(confirmOpts.pendingScope, bundle.bundle_uuid);
+  session.publicationRequestHashes = (bundle.expected_transactions || []).map(function (binding) { return binding.requestHash; });
+  var checksKey = String(session.account || '').toLowerCase() + ':' + String(confirmOpts.pendingScope || '') + ':' + session.bundleUuid;
+  if (confirmOpts.resumeQuoted) {
+    var originalChecks = RELAYR_QUOTED_CHECKS[checksKey] || {};
+    confirmOpts = Object.assign({}, confirmOpts, { reverify: originalChecks.reverify, verifyCompletion: originalChecks.verifyCompletion, onSession: null });
+  } else {
+    RELAYR_QUOTED_CHECKS[checksKey] = { reverify: confirmOpts.reverify, verifyCompletion: confirmOpts.verifyCompletion };
+  }
+  if (confirmOpts.onSession) confirmOpts.onSession(session);
+  if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
+  if (session.persisted === false) {
+    var unavailable = new Error('Enable browser storage before funding this saved Relayr quote. No payment was requested.');
+    unavailable.code = 'RELAYR_STORAGE_UNAVAILABLE'; unavailable.relayrSession = session;
+    throw unavailable;
+  }
+  setStatus(confirmOpts.resumeQuoted ? 'Choose where to fund the previously reviewed bundle.' : 'Choose the chain to fund this bundle…', 'pending');
+  var payment = await chooseRelayrPayment(bundle);
+  if (!payment) {
+    setStatus('Payment cancelled. The existing quote is saved in this window; resume it to choose a funding chain.', '');
+    var cancelled = new Error('Payment cancelled. Resume the saved quote; no new signatures or bundle are needed.');
+    cancelled.relayrSession = session;
+    throw cancelled;
+  }
+  session.paymentChainId = Number(payment.chain);
+  setStatus('Confirm the Relayr payment…', 'pending');
+  try {
+    session.paymentHash = await relayrPay(payment, session.account, function (hash) {
+      session.paymentHash = hash;
+      session.paymentState = null;
+      if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
+      if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
+    }, bundle.bundle_uuid, confirmOpts.reverify, function () {
+      requireUnpaidRelayrSession(confirmOpts.pendingScope, bundle.bundle_uuid);
+      session.paymentState = 'sending';
+      if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
+      if (session.persisted === false) {
+        session.paymentState = 'quoted';
+        if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
+        var unavailable = new Error('The payment journal could not be saved. Enable browser storage, then resume this same quote. No payment was requested.');
+        unavailable.code = 'RELAYR_STORAGE_UNAVAILABLE'; unavailable.relayrSession = session;
+        throw unavailable;
+      }
+      if (confirmOpts.onSession) confirmOpts.onSession(session);
+    });
+  } catch (error) {
+    var submitted = session.paymentHash || session.paymentState === 'sending';
+    if (submitted && error && typeof error === 'object') error.relayrSession = session;
+    if (!submitted || !error || (error.code !== 'RELAYR_PAYMENT_SUBMITTED' && error.code !== 'RELAYR_PAYMENT_UNCERTAIN')) throw error;
+    // Receipt tracking can fail after broadcast. Resume this exact saved bundle, including when storage is
+    // unavailable; never send the user back through signatures or payment just because the RPC timed out.
+    setStatus(error.message, 'pending');
+  }
   if (!confirmOpts.manualRecovery) return monitorRelayrSession(session, setStatus, confirmOpts);
-  setStatus('Payment confirmed — Relayr is executing on ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '. Do not submit again.', 'pending');
+  setStatus('Payment submitted — checking Relayr execution on ' + session.expectedCount + ' chain' + (session.expectedCount > 1 ? 's' : '') + '. Do not submit again.', 'pending');
   try {
     session.records = await relayrPoll(bundle.bundle_uuid, function (records) {
       session.records = records;
-      var progress = relayrProgress(records, chains.length);
+      var progress = relayrProgress(records, session.expectedCount);
       setStatus('Relayr reports ' + progress.confirmed + '/' + progress.total + ' complete; exact onchain verification is pending. Do not submit it again.', 'pending');
       if (confirmOpts.onProgress) { try { confirmOpts.onProgress(session, records, progress); } catch (_) {} }
-    }, undefined, undefined, chains.length, session.expectedTransactions);
+    }, undefined, undefined, session.expectedCount, session.expectedTransactions);
     await verifyRelayrDestinationRecords(session.expectedTransactions, session.records);
     await verifyPersistedRelayrHandlePostconditions(session.expectedTransactions, session.records);
   } catch (error) {
@@ -11599,38 +12243,44 @@ async function loadLiveProjectMetadata(chainId, controller, projectId) {
   } catch (_) {
     return { error: 'Could not read the current project metadata URI. Nothing was saved — try again.' };
   }
-  if (!curUri) return { meta: {} };
+  if (!curUri) return { meta: {}, uri: '' };
   var meta = await fetchMetadata(curUri).catch(function () { return null; });
   if (!meta) return { error: 'Could not load the current project metadata from IPFS. Nothing was saved — saving without it would erase fields this form doesn’t edit. Try again.' };
-  return { meta: meta };
+  return { meta: meta, uri: curUri };
 }
 
-async function submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal) {
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
-  if (!account) return;
-  if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the updated metadata.', 'error'); return; }
+function canonicalMetadataJson(value) {
+  if (Array.isArray(value)) return '[' + value.map(canonicalMetadataJson).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(function (key) {
+    return JSON.stringify(key) + ':' + canonicalMetadataJson(value[key]);
+  }).join(',') + '}';
+  return JSON.stringify(value);
+}
 
-  // Start from the live metadata so every field the operator didn't touch (custom fields, tags,
-  // recognized retained fields such as version, plus custom fields, are preserved.
-  var primaryChain = (chains[0] && chains[0].id) || project.chainId;
-  var controllers = await controllerMapFor(chains, project);
-  var meta = form.preloadedMeta;
-  if (!meta) {
-    setStatus('Reading current metadata…', 'pending');
-    var loaded = await loadLiveProjectMetadata(primaryChain, controllers[primaryChain], pidOn(project, primaryChain));
-    if (loaded.error) { setStatus(loaded.error, 'error'); return; }
-    meta = loaded.meta;
-  }
+// Apply only keys the editor changed from its displayed baseline. Peer-chain properties the editor never
+// displayed, or displayed without changing, stay local even when another key in the same JSON box is edited.
+function mergeMetadataMapPatch(current, baseline, edited) {
+  var out = Object.assign({}, current || {});
+  baseline = baseline || {}; edited = edited || {};
+  Array.from(new Set(Object.keys(baseline).concat(Object.keys(edited)))).forEach(function (key) {
+    if (canonicalMetadataJson(baseline[key]) === canonicalMetadataJson(edited[key])) return;
+    if (!Object.prototype.hasOwnProperty.call(edited, key)) delete out[key];
+    else {
+      var value = edited[key];
+      if (value && typeof value === 'object' && !Array.isArray(value)
+          && baseline[key] && typeof baseline[key] === 'object' && !Array.isArray(baseline[key])) {
+        value = mergeMetadataMapPatch(out[key], baseline[key], value);
+      }
+      Object.defineProperty(out, key, { value: value, enumerable: true, configurable: true, writable: true });
+    }
+  });
+  return out;
+}
 
-  // New logo (if chosen) is pinned first, then referenced by the metadata JSON.
-  var newLogoUri = null;
-  if (form.logoFile) {
-    setStatus('Pinning logo…', 'pending');
-    newLogoUri = await pinFile(form.logoFile, (form.name || project.name || 'logo'));
-  }
+export function mergeProjectMetadataForm(meta, form, newLogoUri) {
   var trim = function (s) { return (s || '').trim(); };
   var dirty = form.dirty || {};
-  meta = mergeProjectMetadataEdit(meta, [
+  var next = mergeProjectMetadataEdit(meta, [
     { key: 'name', value: trim(form.name), dirty: !!dirty.name },
     { key: 'projectTagline', value: trim(form.tagline), dirty: !!dirty.tagline },
     { key: 'description', value: descriptionTextToHtml(form.description), dirty: !!dirty.description },
@@ -11639,17 +12289,128 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
     { key: 'discord', value: trim(form.discord), dirty: !!dirty.discord },
     { key: 'telegram', value: trim(form.telegram), dirty: !!dirty.telegram },
     { key: 'payDisclosure', value: trim(form.payDisclosure), dirty: !!dirty.payDisclosure },
-    { key: 'storeCategories', value: form.storeCategories || {}, dirty: !!dirty.storeCategories },
-  ], form.customProperties);
-  if (newLogoUri) meta.logoUri = newLogoUri;
+  ]);
+  if (dirty.storeCategories) {
+    var categories = mergeMetadataMapPatch(next.storeCategories, form.baselineStoreCategories || (form.preloadedMeta || {}).storeCategories, form.storeCategories);
+    if (Object.keys(categories).length) next.storeCategories = categories; else delete next.storeCategories;
+  }
+  if (form.customProperties && form.customProperties.dirty) {
+    var baseline = {}, current = {}, edited = {};
+    unmanagedProjectMetadataKeys(form.preloadedMeta).forEach(function (key) { baseline[key] = form.preloadedMeta[key]; });
+    unmanagedProjectMetadataKeys(form.customProperties.value).forEach(function (key) { edited[key] = form.customProperties.value[key]; });
+    unmanagedProjectMetadataKeys(next).forEach(function (key) { current[key] = next[key]; delete next[key]; });
+    Object.assign(next, mergeMetadataMapPatch(current, baseline, edited));
+  }
+  if (newLogoUri) next.logoUri = newLogoUri;
+  return next;
+}
 
-  setStatus('Pinning updated metadata…', 'pending');
-  var newUri = await pinJson(meta, (meta.name || 'project') + '-metadata');
+export function appendProjectCategoriesAcrossChains(metadata, names) {
+  var nextId = 1;
+  metadata.forEach(function (meta) {
+    Object.keys(meta.storeCategories || {}).map(Number).forEach(function (id) {
+      if (Number.isSafeInteger(id) && id >= nextId) nextId = id + 1;
+    });
+  });
+  var ids = names.map(function () { return nextId++; });
+  return { ids: ids, metadata: metadata.map(function (meta) {
+    var categories = Object.assign({}, meta.storeCategories || {});
+    names.forEach(function (name, index) { categories[ids[index]] = name; });
+    return Object.assign({}, meta, { storeCategories: categories });
+  }) };
+}
 
-  var relaySession = await runRelayrAcrossChains(chains, account, function (cid) {
-    return { to: controllers[cid], data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [pidOn(project, cid), newUri] }) };
-  }, 400000n, setStatus, { label: 'Edit project details', title: 'Confirm edit', pendingScope: relayrActionScope(project, 'edit-project-details'),
-    summary: { rows: [['Updates', 'the project’s name, description, links, and store details'], ['Metadata', newUri]] } });
+// Resolve every destination before pinning anything. Equal resulting JSON shares one URI; distinct local
+// metadata keeps distinct URIs while all setUriOf calls still travel in one eligible Relayr bundle.
+export async function prepareProjectMetadataUpdates(project, chains, transform, dependencies) {
+  var deps = dependencies || {};
+  var controllerFor = deps.controllerFor || controllerAddressFor;
+  var loadMetadata = deps.loadMetadata || loadLiveProjectMetadata;
+  var readUri = deps.readUri || function (chainId, controller, projectId) {
+    return clientFor(chainId).readContract({ address: controller, abi: uriOfAbi, functionName: 'uriOf', args: [projectId] });
+  };
+  var pinMetadata = deps.pinMetadata || pinJson;
+  var entries = await Promise.all(chains.map(async function (chain) {
+    var projectId = pidOn(project, chain.id);
+    var controller = await controllerFor(chain.id, projectId);
+    var loaded = await loadMetadata(chain.id, controller, projectId);
+    if (loaded.error) throw new Error((chain.name || chainNameOf(chain.id)) + ': ' + loaded.error);
+    if (!loaded.meta || typeof loaded.meta !== 'object' || Array.isArray(loaded.meta)) throw new Error('Invalid metadata on ' + chainNameOf(chain.id) + '. Nothing was saved.');
+    return { chainId: chain.id, projectId: projectId, controller: controller, sourceUri: loaded.uri || '', metadata: loaded.meta };
+  }));
+  var updated = transform(entries.map(function (entry) { return entry.metadata; }));
+  var pinned = new Map();
+  for (var i = 0; i < entries.length; i++) {
+    var entry = entries[i]; entry.metadata = updated[i];
+    var fingerprint = canonicalMetadataJson(entry.metadata);
+    if (!pinned.has(fingerprint)) pinned.set(fingerprint, await pinMetadata(entry.metadata, (entry.metadata.name || 'project') + '-metadata'));
+    entry.uri = pinned.get(fingerprint);
+  }
+  return {
+    entries: entries,
+    buildCall: function (chainId) {
+      var entry = entries.find(function (candidate) { return Number(candidate.chainId) === Number(chainId); });
+      if (!entry) throw new Error('Metadata was not prepared for this destination.');
+      return { to: entry.controller, abi: setUriOfAbi, functionName: 'setUriOf', args: [entry.projectId, entry.uri],
+        data: encodeFunctionData({ abi: setUriOfAbi, functionName: 'setUriOf', args: [entry.projectId, entry.uri] }) };
+    },
+    reverify: async function () {
+      await Promise.all(entries.map(async function (entry) {
+        var controller = await controllerFor(entry.chainId, entry.projectId);
+        var uri = await readUri(entry.chainId, controller, entry.projectId);
+        if (!sameAddr(controller, entry.controller) || (String(uri || '') !== entry.sourceUri && String(uri || '') !== entry.uri)) {
+          throw new Error('Project metadata changed on ' + chainNameOf(entry.chainId) + '. Reopen the editor before submitting this update.');
+        }
+      }));
+    },
+  };
+}
+
+async function ensureMetadataEditorAccount(project, chains, operatorAddr, setStatus) {
+  if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
+  var safe = await safeInfoForAuthority(operatorAddr, (chains[0] || {}).id || project.chainId, project.chainId);
+  if (!safe) return ensureOperatorAccount(project, operatorAddr, setStatus);
+  var account = getAccount();
+  if (!account) account = await connect().then(getAccount).catch(function () { return null; });
+  if (!safeAuthorityAccessMode(account, operatorAddr, safe, isSafeConnected())) {
+    setStatus('Connect the project Safe or one of its signers to propose these metadata changes.', 'error'); return null;
+  }
+  return account;
+}
+
+async function submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal) {
+  var account = await ensureMetadataEditorAccount(project, chains, operatorAddr, setStatus);
+  if (!account) return;
+  if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the updated metadata.', 'error'); return; }
+
+  // Pin a replacement logo once; every destination merges edits over its own freshly read JSON.
+  var newLogoUri = null;
+  if (form.logoFile) {
+    setStatus('Pinning logo…', 'pending');
+    newLogoUri = await pinFile(form.logoFile, (form.name || project.name || 'logo'));
+  }
+  setStatus('Reading and pinning metadata for each chain…', 'pending');
+  var plan = await prepareProjectMetadataUpdates(project, chains, function (metadata) {
+    return metadata.map(function (meta) { return mergeProjectMetadataForm(meta, form, newLogoUri); });
+  });
+  var local = plan.entries.find(function (entry) { return Number(entry.chainId) === Number(project.chainId); }) || plan.entries[0];
+  var meta = local.metadata;
+  var actionResult = await runAuthorityActionAcrossChains(project, chains, operatorAddr, plan.buildCall, {
+    gas: 400000n,
+    label: 'Edit project details', title: 'Confirm edit', pendingScope: relayrActionScope(project, 'edit-project-details'),
+    reverify: plan.reverify,
+    summary: { rows: [['Updates', 'the edited project details; untouched metadata stays local to each chain']] },
+  }, setStatus);
+  if (!actionResult) return;
+  if (!actionResult.relayr) {
+    if (actionResult.cancelled) { setStatus('Cancelled', ''); return; }
+    setStatus(actionResult.executedReady ? 'Metadata proposals executed on ' + actionResult.executedReady + ' chains.'
+      : 'Metadata changes proposed to the Safe. Confirm and execute them in the owner queue.', actionResult.executedReady ? 'success' : 'pending');
+    document.dispatchEvent(new CustomEvent('jb:safe-queued'));
+    if (actionResult.executedReady) notifyProjectUpdated(project);
+    return;
+  }
+  var relaySession = actionResult.session;
 
   if (relaySession && relaySession.resumed) {
     setStatus(relayrRecoveredMessage(relaySession), 'success');
@@ -11676,6 +12437,32 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
 // Operator-only: set the project token's name & symbol on every chain, via relayr. If the ERC-20 is
 // already deployed it's renamed (setTokenMetadataOf → JBERC20.setMetadata — name/symbol ARE mutable);
 // if the project still uses credits, the ERC-20 is deployed (deployERC20For) with the chosen name/symbol.
+export async function verifyTokenEditDeployment(project, chains, deployed, readToken) {
+  if (!chains || !chains.length) throw new Error('Select at least one project chain.');
+  var rows = await Promise.all(chains.map(async function (chain) {
+    var pid = pidOn(project, chain.id);
+    var token;
+    try { token = await (readToken ? readToken(chain.id, pid) : read(chain.id, 'JBTokens', tokenOfAbi, 'tokenOf', [pid])); }
+    catch (_) { throw new Error('Could not verify the project token on ' + (chain.name || chainNameOf(chain.id)) + '. No token change was submitted.'); }
+    if (!isAddr(token)) throw new Error('Invalid project token response on ' + (chain.name || chainNameOf(chain.id)) + '.');
+    return { chainId: chain.id, name: chain.name || chainNameOf(chain.id), token: token, deployed: token.toLowerCase() !== ZERO_ADDRESS.toLowerCase() };
+  }));
+  if (rows.some(function (row) { return row.deployed !== rows[0].deployed; })) {
+    throw new Error('Token deployment differs across the selected chains (' + rows.map(function (row) { return row.name + ': ' + (row.deployed ? 'ERC-20 deployed' : 'credits only'); }).join(', ') + '). Deploy and rename cannot be submitted together. Finish the remaining token deployments separately before using this multichain editor.');
+  }
+  if (rows[0].deployed !== !!deployed) throw new Error('The project token deployment changed since this editor opened. Refresh the project and reopen the token editor before continuing.');
+  return rows;
+}
+
+function pendingTokenEditScope(project, deployed) {
+  var actions = deployed ? ['rename-token', 'deploy-token'] : ['deploy-token', 'rename-token'];
+  for (var i = 0; i < actions.length; i++) {
+    var scope = relayrActionScope(project, actions[i]);
+    if (loadRelayrPendingSession(scope)) return scope;
+  }
+  return null;
+}
+
 function openEditTokenModal(project) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
@@ -11733,29 +12520,52 @@ function openEditTokenModal(project) {
   var modal = openModal(deployed ? 'Edit token name & symbol' : 'Set token name & symbol', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
+  submit.disabled = true;
+  setStatus('Verifying token deployment on every project chain…', 'pending');
+  (pendingTokenEditScope(project, deployed) ? Promise.resolve() : verifyTokenEditDeployment(project, chains, deployed)).then(function () {
+    if (!submit.isConnected) return;
+    submit.disabled = false; setStatus('', '');
+  }).catch(function (error) { setStatus(errMessage(error, 'Could not verify token deployment.'), 'error'); });
   submit.addEventListener('click', function (e) {
     e.preventDefault();
-    if (busy) return;
+    if (busy || submit.disabled) return;
+    busy = true; submit.disabled = true;
     submitTokenEdit(project, chains, operatorAddr, deployed, nameInput.value, symInput.value, setStatus, modal).catch(function (err) {
-      busy = false;
       setStatus((err && (err.shortMessage || err.message)) || (deployed ? 'Could not save the changes.' : 'Deploy failed'), 'error');
-    });
-    busy = true;
+    }).finally(function () { busy = false; submit.disabled = false; });
   });
 }
 
-async function submitTokenEdit(project, chains, operatorAddr, deployed, name, symbol, setStatus, modal) {
+export async function submitTokenEdit(project, chains, operatorAddr, deployed, name, symbol, setStatus, modal) {
+  var existingScope = pendingTokenEditScope(project, deployed);
+  if (existingScope) {
+    var savedTokenSession = loadRelayrPendingSession(existingScope);
+    if (getViewAs() && savedTokenSession && savedTokenSession.paymentState === 'quoted') { setStatus(VIEW_AS_TX_ERROR, 'error'); return; }
+    var recovered = await runRelayrAcrossChains(chains, getAccount(), function () { throw new Error('The saved token request is unavailable. Reopen the token editor.'); }, 300000n, setStatus,
+      { label: 'Token update', title: 'Resume token update', pendingScope: existingScope });
+    setStatus(relayrRecoveredMessage(recovered), 'success');
+    notifyProjectUpdated(project);
+    setTimeout(function () { modal.close(); }, 1800);
+    return;
+  }
   name = (name || '').trim(); symbol = (symbol || '').trim();
   if (!name || !symbol) { setStatus('Enter a token name and symbol', 'error'); return; }
+  setStatus('Verifying token deployment on every project chain…', 'pending');
+  var tokenRows = await verifyTokenEditDeployment(project, chains, deployed);
+  var reverifyRename = deployed ? async function () {
+    var current = await verifyTokenEditDeployment(project, chains, true);
+    if (current.some(function (row, index) { return row.token.toLowerCase() !== tokenRows[index].token.toLowerCase(); })) throw new Error('A project token address changed. Refresh and review the token rename again.');
+  } : undefined;
   setStatus('Verifying project controllers…', 'pending');
   var controllers = await controllerMapFor(chains, project);
 
   // The deterministic salt makes the ERC-20 deploy to the same address on every chain.
   var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [pidOn(project, project.chainId), symbol]));
   var buildCall = function (cid) {
-    return deployed
-      ? { to: controllers[cid], data: encodeFunctionData({ abi: setTokenMetadataAbi, functionName: 'setTokenMetadataOf', args: [pidOn(project, cid), name, symbol] }) }
-      : { to: controllers[cid], data: encodeFunctionData({ abi: deployErc20Abi, functionName: 'deployERC20For', args: [pidOn(project, cid), name, symbol, salt] }) };
+    var abi = deployed ? setTokenMetadataAbi : deployErc20Abi;
+    var functionName = deployed ? 'setTokenMetadataOf' : 'deployERC20For';
+    var args = deployed ? [pidOn(project, cid), name, symbol] : [pidOn(project, cid), name, symbol, salt];
+    return { to: controllers[cid], abi: abi, functionName: functionName, args: args, data: encodeFunctionData({ abi: abi, functionName: functionName, args: args }) };
   };
 
   // If the owner is a Safe, Relayr can't sign for it — propose the call to each chain's Safe queue instead.
@@ -11767,7 +12577,7 @@ async function submitTokenEdit(project, chains, operatorAddr, deployed, name, sy
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
       setStatus('Connected wallet isn’t a signer of the owner Safe (' + truncAddr(operatorAddr) + ').', 'error'); return;
     }
-    var res = await proposeSafeAcrossChains(project, operatorAddr, signer, buildCall, { title: deployed ? 'Queue token rename on Safe' : 'Queue token deploy on Safe', queueTab: project.isRevnet ? 'Operator' : 'Owner',
+    var res = await proposeSafeAcrossChains(project, operatorAddr, signer, buildCall, { title: deployed ? 'Queue token rename on Safe' : 'Queue token deploy on Safe', queueTab: project.isRevnet ? 'Operator' : 'Owner', reverify: reverifyRename,
       summary: { action: deployed ? 'Rename token' : 'Deploy ERC-20 token', rows: [[deployed ? 'Renames to' : 'Token', name + ' (' + symbol + ')']] } });
     if (!res || res.cancelled) { setStatus('Cancelled', ''); return; }
     var readyCount = (res.readyExecs && res.readyExecs.length) || 0;
@@ -11784,7 +12594,7 @@ async function submitTokenEdit(project, chains, operatorAddr, deployed, name, sy
   var account = await ensureProjectTokenManager(project, deployed ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20, setStatus);
   if (!account) return;
   var relaySession = await runRelayrAcrossChains(chains, account, buildCall, deployed ? 300000n : 1500000n, setStatus,
-    { label: deployed ? 'Rename token' : 'Deploy ERC-20 token', title: deployed ? 'Confirm token rename' : 'Confirm token deploy', pendingScope: relayrActionScope(project, deployed ? 'rename-token' : 'deploy-token'),
+    { label: deployed ? 'Rename token' : 'Deploy ERC-20 token', title: deployed ? 'Confirm token rename' : 'Confirm token deploy', pendingScope: relayrActionScope(project, deployed ? 'rename-token' : 'deploy-token'), reverify: reverifyRename,
       summary: { rows: [[deployed ? 'Renames to' : 'Token', name + ' (' + symbol + ')']] } });
 
   if (relaySession && relaySession.resumed) {
@@ -11885,7 +12695,8 @@ function runRelayrBundle(entries, opts) {
     }
 
     var restored = loadRelayrPendingSession(pendingScope);
-    if (restored) {
+    var restoredQuote = relayrResumeQuotedBundle(pendingScope);
+    if (restored && !restoredQuote) {
       setStatus('Found a paid Relayr request. Checking it instead of creating another payment…', 'pending');
       updatePreview(restored.records);
       waitForBundle(restored);
@@ -11893,22 +12704,34 @@ function runRelayrBundle(entries, opts) {
     }
 
     Promise.resolve(opts.reverify ? opts.reverify() : null).then(function () {
-      return relayrPostBundle(entries);
+      if (restoredQuote) {
+        var nonces = {};
+        var fingerprints = entries.map(function (entry) {
+          var nonce = nonces[entry.chain] || 0; nonces[entry.chain] = nonce + 1;
+          return relayrRequestFingerprint(Object.assign({}, entry, { virtual_nonce: nonce }));
+        });
+        if (JSON.stringify(fingerprints) !== JSON.stringify(restored.publicationRequestHashes)) throw new Error('This saved quote belongs to different Safe transactions. Restore those exact queued transactions before funding it.');
+        return restoredQuote;
+      }
+      return relayrPostBundle(entries, { scope: pendingScope, account: getAccount() });
     }).then(function (quote) {
       if (opts.safeExecutionProofs) {
         quote.expected_transactions = bindRelayrSafeExecutions(quote.expected_transactions, opts.safeExecutionProofs);
       }
-      var options = (quote.payment_info || []).slice().sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : 1; });
+      var options = relayrPaymentOptions(quote);
       if (!options.length) { status.className = 'modal-status'; status.textContent = 'Relayr returned no payment option.'; return; }
       status.className = 'modal-status';
       status.textContent = 'Pay gas once on a chain of your choice — relayers then execute on all ' + entries.length + ' chains.';
       choiceWrap.style.display = '';
-      var sel = el('select', 'field create-input');
-      options.forEach(function (o, i) { var op = el('option'); op.value = String(i); op.textContent = chainNameOf(o.chain) + ' — ~' + (+formatEther(BigInt(o.amount))).toFixed(5) + ' ETH'; sel.appendChild(op); });
+      var sel = el('select', 'field create-input'); sel.setAttribute('aria-label', 'Payment chain');
+      var placeholder = el('option'); placeholder.value = ''; placeholder.textContent = 'Choose a chain'; sel.appendChild(placeholder);
+      options.forEach(function (o, i) { var op = el('option'); op.value = String(i); op.textContent = chainNameOf(o.chain) + ' — ' + formatEther(BigInt(o.amount)) + ' ETH'; sel.appendChild(op); });
       choiceWrap.appendChild(sel);
-      var pay = el('button', 'modal-submit'); pay.textContent = 'Pay & execute'; foot.appendChild(pay);
+      var pay = el('button', 'modal-submit'); pay.textContent = 'Pay & execute'; pay.disabled = true; foot.appendChild(pay);
+      sel.addEventListener('change', function () { pay.disabled = sel.value === ''; });
       pay.addEventListener('click', function () {
-        var o = options[Number(sel.value) || 0];
+        if (sel.value === '') return;
+        var o = options[Number(sel.value)];
         pay.disabled = true; cancel.disabled = true; sel.disabled = true;
         (async function () {
           try {
@@ -11918,23 +12741,35 @@ function runRelayrBundle(entries, opts) {
             if (opts.reverify) await opts.reverify();
             status.textContent = 'Confirm the payment in your wallet…';
             var paidSession = {
+              account: getAccount(),
               bundleUuid: quote.bundle_uuid, paymentHash: null, paymentChainId: Number(o.chain),
               expectedCount: entries.length,
               expectedTransactions: quote.expected_transactions,
+              publicationRequestHashes: quote.expected_transactions.map(function (binding) { return binding.requestHash; }),
               chains: (opts.preview || entries).map(function (entry) { return { id: Number(entry.cid || entry.chain), name: entry.chain || chainNameOf(entry.cid || entry.chain) }; }),
               records: [],
             };
             var payHash = await relayrPay(o, null, function (hash) {
+              paidSession.paymentState = null;
               paidSession.paymentHash = hash;
               paidSession = saveRelayrPendingSession(pendingScope, paidSession) || paidSession;
-            }, quote.bundle_uuid, opts.reverify);
+            }, quote.bundle_uuid, opts.reverify, function () {
+              requireUnpaidRelayrSession(pendingScope, quote.bundle_uuid);
+              paidSession.paymentState = 'sending';
+              paidSession = saveRelayrPendingSession(pendingScope, paidSession) || paidSession;
+              if (paidSession.persisted === false) {
+                paidSession.paymentState = 'quoted';
+                paidSession = saveRelayrPendingSession(pendingScope, paidSession) || paidSession;
+                throw new Error('The payment request could not be saved. Enable browser storage before submitting; nothing was sent.');
+              }
+            });
             paidSession.paymentHash = payHash;
             pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
             await waitForBundle(paidSession);
           } catch (e) {
             var saved = loadRelayrPendingSession(pendingScope);
             var recovery = saved || paidSession;
-            if (e && e.code === 'RELAYR_PAYMENT_SUBMITTED' && recovery && recovery.paymentHash) {
+            if (relayrErrorIsUncertain(e) && recovery && (recovery.paymentHash || recovery.paymentState === 'sending')) {
               recovery.persisted = !!saved;
               pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
               setStatus(e.message, 'pending');
@@ -12099,7 +12934,7 @@ async function verifyReadySafeTransactions(readyExecs, expectedSnapshots) {
   return verified;
 }
 
-async function verifyCompletedReadySafeTransactions(readyExecs) {
+async function verifyCompletedReadySafeTransactions(readyExecs, records) {
   await Promise.all((readyExecs || []).map(async function (ready) {
     var liveNonce = BigInt(await readSafeUintBounded(clientFor(ready.cid), ready.safe, 'nonce'));
     var reviewedNonce = BigInt(ready.tx && ready.tx.nonce);
@@ -12107,12 +12942,17 @@ async function verifyCompletedReadySafeTransactions(readyExecs) {
       throw new Error('The Safe nonce did not advance after Relayr execution on ' + (ready.chain || chainNameOf(ready.cid)) + '.');
     }
     await verifyCompletedQueuedProjectHandleTransaction(ready.safe, ready.cid, ready.tx);
+    if (ready.verifyReceipt) {
+      var record = (records || []).find(function (entry) { return Number(entry.request && entry.request.chain) === Number(ready.cid); });
+      if (!record) throw new Error('Missing exact Safe distribution receipt.');
+      await ready.verifyReceipt(await clientFor(ready.cid).getTransactionReceipt({ hash: relayrDestinationHash(record) }));
+    }
   }));
   return true;
 }
 
 // The complete bound Relayr status echoes the exact execTransaction calldata. Decode it with the persisted Safe
-// nonce proof and re-run only handle-specific semantic postconditions. This keeps restored sessions verifiable
+// nonce proof and re-run semantic postconditions, including caught distribution failures. This keeps restored sessions verifiable
 // after the hosted queue row has disappeared and no in-memory `readyExecs` object remains.
 export async function verifyPersistedRelayrHandlePostconditions(expectedTransactions, records) {
   var expected = Array.isArray(expectedTransactions) ? expectedTransactions : [];
@@ -12128,6 +12968,12 @@ export async function verifyPersistedRelayrHandlePostconditions(expectedTransact
       throw new Error('The paid Safe result does not match its reviewed transaction hash.');
     }
     await verifyCompletedQueuedProjectHandleTransaction(proof.safe, Number(binding.chain), decoded.tx);
+    if (distributionCallFromTransaction(decoded.tx, proof.safe)) {
+      var receipt = await clientFor(Number(binding.chain)).getTransactionReceipt({ hash: relayrDestinationHash(results[index]) });
+      await verifyQueuedDistributionReceipt(decoded.tx, proof.safe, receipt, function (controller) {
+        return readDistributionTokens(clientFor(Number(binding.chain)), controller);
+      });
+    }
   }));
   return true;
 }
@@ -12142,14 +12988,14 @@ async function executeReadySafeTransactions(readyExecs, opts) {
   var expectedSnapshots = {};
   initialReady.forEach(function (item) { expectedSnapshots[readySafeExecutionKey(item.ready)] = readySafeExecutionSnapshot(item); });
   var chainIds = Array.from(new Set(readyExecs.map(function (r) { return Number(r.cid); })));
-  if (readyExecs.length && chainIds.length === 1) {
-    var ordered = readyExecs.slice().sort(function (a, b) { return Number(a.tx.nonce) - Number(b.tx.nonce); });
+  if (readyExecs.length && (chainIds.length === 1 || !chainIds.every(relayrSupportsChain))) {
+    var ordered = readyExecs.slice().sort(function (a, b) { return Number(a.cid) - Number(b.cid) || Number(a.tx.nonce) - Number(b.tx.nonce); });
     var directOk = await confirmTransactionModal({
       via: 'Direct wallet transactions',
       action: opts.title || ('Execute ' + ordered.length + ' queued transaction' + (ordered.length === 1 ? '' : 's')),
       summary: { action: 'Execute ' + ordered.length + ' queued Safe transaction' + (ordered.length === 1 ? '' : 's'), rows: ordered.map(function (r) {
         return ['#' + r.tx.nonce, labelForQueuedTx(r.tx) + ' — ' + (resolveContractName(r.tx.to, r.cid) || r.tx.to)];
-      }).concat([['On chain', ordered[0].chain || chainNameOf(ordered[0].cid)], ['Safe', ordered[0].safe]]) },
+      }).concat([['Chains', chainIds.map(chainNameOf).join(', ')], ['Safe', ordered[0].safe]]) },
       transactions: ordered.map(function (r) {
         var call = safeExecRelayrTx(r.cid, r.safe, r.tx);
         return {
@@ -12169,7 +13015,7 @@ async function executeReadySafeTransactions(readyExecs, opts) {
       var direct = ordered[i];
       await executeSafeTx(direct.cid, direct.safe, direct.tx, function () {
         return verifyReadySafeTransactions([direct], expectedSnapshots);
-      });
+      }, direct.verifyReceipt);
       await verifyCompletedQueuedProjectHandleTransaction(direct.safe, direct.cid, direct.tx);
     }
     return { done: true, direct: true };
@@ -12205,7 +13051,7 @@ async function executeReadySafeTransactions(readyExecs, opts) {
     pendingScope: 'safe-queue:' + relaySafes[0],
     safeExecutionProofs: safeExecutionProofs,
     reverify: function () { return verifyReadySafeTransactions(relayReady, expectedSnapshots); },
-    verifyCompletion: function () { return verifyCompletedReadySafeTransactions(relayReady); },
+    verifyCompletion: function (session, records) { return verifyCompletedReadySafeTransactions(relayReady, records); },
   });
 }
 
@@ -12250,7 +13096,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
     var btn = el('button', 'modal-submit'); btn.textContent = 'Sign & queue';
     foot.appendChild(cancel); foot.appendChild(btn); wrap.appendChild(foot);
-    var done = false, inFlight = false, mode = 'sign', lastResult = null, readyExecs = [];
+    var done = false, inFlight = false, mode = 'sign', lastResult = null, readyExecs = [], knownProposals = [];
     var modal = openModal(opts.title || 'Queue on Safe', wrap, {
       canClose: function () { return !inFlight; },
       onClose: function () {
@@ -12433,7 +13279,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     }
 
     async function verifySafeRowAction(rec, account, expectedGovernance) {
-      if (opts.reverify) await opts.reverify();
+      if (opts.reverify) await opts.reverify(rec.cid);
       if (!getAccount() || !sameAddr(getAccount(), account)) throw new Error('Connected account changed. Review the transaction again.');
       var info = await requireFreshSafeGovernance(safe, rec.cid, account);
       if (expectedGovernance && (Number(info.threshold) !== Number(expectedGovernance.threshold)
@@ -12470,7 +13316,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
     }
 
     function setProposalNonceInputsDisabled(disabled) {
-      rows.forEach(function (row) { if (row.nInput) row.nInput.disabled = !!disabled || !!row.existingTx; });
+      rows.forEach(function (row) { if (row.nInput) row.nInput.disabled = !!disabled || !!row.existingTx || row.completedKind === 'known' || !!row.done; });
     }
 
     var setStatus = makeStatusSetter(status);
@@ -12493,8 +13339,10 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           return executeReadySafeTransactions(readyExecs, { title: 'Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's') });
         }).then(function (res) {
           if (res && res.done) {
-            readyExecs.forEach(function (r) { if (r.rec && r.rec.st) r.rec.st.textContent = 'Executed'; });
-            if (lastResult) { lastResult.executedReady = readyExecs.length; lastResult.readyExecs = []; }
+            readyExecs.forEach(function (r) { if (r.rec && r.rec.st) r.rec.st.textContent = 'Executed';
+              knownProposals.forEach(function (proposal) { if (Number(proposal.chainId) === Number(r.cid) && sameAddr(proposal.safeTxHash, safeTxHashForQueuedTx(r.cid, r.safe, r.tx))) proposal.executed = true; });
+            });
+            if (lastResult) { lastResult.executedReady = knownProposals.filter(function (proposal) { return proposal.executed; }).length; lastResult.readyExecs = []; }
             document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
             setStatus('Executed on ' + readyExecs.length + ' chain' + (readyExecs.length === 1 ? '' : 's') + '.', 'success');
             setTimeout(function () { finish(lastResult || { queued: 0, executedReady: readyExecs.length, skipped: [], cancelled: false }); }, 1400);
@@ -12521,10 +13369,10 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       if (!acct) { setStatus('Connect a signer wallet to continue.', 'error'); connect().catch(function () {}); return; }
       inFlight = true; btn.disabled = true; cancel.disabled = true; setProposalNonceInputsDisabled(true);
       (async function () {
-        var queued = 0, executed = 0, pending = 0, approvedThisRun = 0, pendingExec = 0, staleNonce = 0;
+        var queued = live.filter(function (row) { return row.completedKind === 'queued' || row.completedKind === 'known'; }).length, executed = live.filter(function (row) { return row.completedKind === 'executed'; }).length, pending = 0, approvedThisRun = 0, pendingExec = 0, staleNonce = 0;
         var queuedSafeTxHashes = [];
         function checkpointPartialResult() {
-          lastResult = { queued: queued, executed: executed, approved: approvedThisRun, skipped: skipped, cancelled: false, partial: true, readyExecs: readyExecs.slice(), safeTxHashes: queuedSafeTxHashes.slice() };
+          lastResult = { queued: queued, executed: executed, approved: approvedThisRun, skipped: skipped, cancelled: false, partial: true, readyExecs: readyExecs.slice(), safeTxHashes: queuedSafeTxHashes.slice(), proposals: knownProposals.slice(), executedReady: knownProposals.filter(function (proposal) { return proposal.executed; }).length };
           document.dispatchEvent(new CustomEvent('jb:safe-queued'));
           document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
         }
@@ -12537,10 +13385,13 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           setStatus('Checking every selected Safe before the first signature…', 'pending');
           await Promise.all(live.map(async function (row) {
             if (row.done) return;
+            if (row.proposalBlockFloor == null) row.proposalBlockFloor = (await clientFor(row.cid).getBlock({ blockTag: 'latest' })).number;
+            if (row.proposalBlockFloor == null) throw new Error('Could not save the Safe proposal block. Nothing was proposed.');
             var displayed = { threshold: row.threshold, owners: (row.owners || []).slice() };
             var info = await verifySafeRowAction(row, acct, displayed);
             if (!row.onChain) {
               var serviceNonce = await verifyServiceQueueSnapshot(row);
+              if (BigInt(await readSafeUintBounded(clientFor(row.cid), safe, 'nonce')) > BigInt(serviceNonce)) throw new Error('The hosted Safe nonce is stale. Refresh the original queue before adopting or signing that call.');
               row.actionSnapshot = { info: info, nonce: serviceNonce };
               return;
             }
@@ -12558,6 +13409,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             if (!actionSnapshot) throw new Error('The Safe review snapshot is missing for ' + r.chain + '.');
             var liveSafeInfo = await verifySafeRowAction(r, acct, actionSnapshot.info);
             r.threshold = liveSafeInfo.threshold; r.owners = liveSafeInfo.owners;
+            var markSafeRequest = function () { if (opts.onSafeRequest) opts.onSafeRequest({ chainId: Number(r.cid), safe: safe, fromBlock: String(r.proposalBlockFloor), safeTxHash: r.hash || r.existingHash || null, tx: { to: r.to, data: r.data, value: '0', operation: 0 } }); };
             if (!r.onChain) {
               var nonce = await verifyServiceQueueSnapshot(r, actionSnapshot.nonce);
               var proposed;
@@ -12569,10 +13421,11 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                 });
                 if (!alreadySigned) {
                   setStatus('Adding your signature to the existing exact call on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ')…', 'pending');
+
                   var signature = await confirmSafeTx(r.cid, safe, existing, acct, async function () {
                     await verifySafeRowAction(r, acct, liveSafeInfo);
                     await verifyServiceQueueSnapshot(r, nonce);
-                  });
+                  }, markSafeRequest);
                   existing = Object.assign({}, existing, {
                     confirmations: (existing.confirmations || []).concat([{ owner: acct, signature: signature }]),
                   });
@@ -12580,22 +13433,26 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                 proposed = { safeTxHash: r.existingHash, tx: existing, reused: true };
               } else {
                 setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
+
                 proposed = await proposeSafeTx({
-                  chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce,
+                  chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce, onPublishing: markSafeRequest,
                   reverify: async function () {
                     await verifySafeRowAction(r, acct, liveSafeInfo);
                     await verifyServiceQueueSnapshot(r, nonce);
                   },
                 });
               }
-              r.done = true; queued++;
               var qtx = Object.assign({}, proposed.tx || {}, { confirmationsRequired: r.threshold });
+              var known = snapshotKnownSafeProposal(r.cid, safe, qtx, proposed.safeTxHash, r.proposalBlockFloor);
+              if (opts.onSafeProposal) opts.onSafeProposal(known);
+              knownProposals.push(known);
+              r.done = true; r.completedKind = 'queued'; queued++;
               if (proposed.safeTxHash) queuedSafeTxHashes.push(proposed.safeTxHash);
               if (safeUsableConfirmationCount(qtx) >= Number(r.threshold || 1)) {
                 // Carry the action's live project/ENS authority verifier through the later execution review,
                 // direct write, or Relayr payment. A handle proposal can remain open across an authority change;
                 // checking only once before this queue entry is created is not a safe write boundary.
-                readyExecs.push({ cid: r.cid, chain: r.chain, safe: safe, tx: qtx, rec: r, verifyAuthority: opts.reverify });
+                readyExecs.push({ cid: r.cid, chain: r.chain, safe: safe, tx: qtx, rec: r, verifyAuthority: opts.reverify, verifyReceipt: opts.verifyReceipt ? opts.verifyReceipt.bind(null, { cid: r.cid }) : null });
                 r.st.textContent = 'Queued — ready to execute now.';
               } else {
                 r.st.textContent = 'Queued — co-sign + execute it in the ' + queueTabName + ' tab’s “Pending Multisig Transactions”.';
@@ -12612,12 +13469,13 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
               var iApproved = (r.approved || []).some(function (o) { return o.toLowerCase() === acct.toLowerCase(); });
               if (!iApproved) {
                 setStatus('Approving on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
+
                 await approveSafeHashOnChain(r.cid, safe, reviewedHash, async function () {
                   await verifySafeRowAction(r, acct, liveSafeInfo);
                   if (Number(r.nInput && r.nInput.value) !== Number(chosen) || r.hash !== reviewedHash) {
                     throw new Error('The selected nonce or Safe transaction changed while approving on ' + r.chain + '. Review the action again.');
                   }
-                });
+                }, markSafeRequest);
                 await verifySafeRowAction(r, acct, liveSafeInfo);
                 await refreshOnChainStatus(r);
                 chosen = r.chosenNonce; current = Number(r.ctx.nonce);
@@ -12628,17 +13486,26 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                 _onchainNonceHint[safe.toLowerCase() + ':' + r.cid + ':' + acct.toLowerCase()] = chosen + 1; _saveOnchainNonceHint(); // this signer's next onchain tx here defaults to the next nonce
                 checkpointPartialResult();
               }
+              var approvedKnown = knownProposals.find(function (proposal) { return Number(proposal.chainId) === Number(r.cid); });
+              if (approvedKnown && !sameAddr(approvedKnown.safeTxHash, reviewedHash)) throw new Error('This saved Safe approval is bound to its original nonce. Restore that exact call before continuing.');
+              if (!approvedKnown) {
+                approvedKnown = snapshotKnownSafeProposal(r.cid, safe, { to: r.to, data: r.data, value: 0, nonce: chosen }, reviewedHash, r.proposalBlockFloor);
+                if (opts.onSafeProposal) opts.onSafeProposal(approvedKnown);
+                knownProposals.push(approvedKnown); r.completedKind = 'known'; queued++;
+              }
               if ((r.approved || []).length >= r.ctx.threshold) {
                 if (chosen === current) {
                   setStatus('Executing on ' + r.chain + ' at nonce ' + chosen + ' (' + (i + 1) + '/' + live.length + ') — confirm in your wallet…', 'pending');
-                  await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o, approvedHash: true }; }) }, async function () {
+
+                  await executeSafeTx(r.cid, safe, { to: r.to, value: 0, data: r.data, nonce: chosen, operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: r.approved.map(function (o) { return { owner: o, approvedHash: true }; }) }, async function () {
                     await verifySafeRowAction(r, acct, liveSafeInfo);
                     await refreshOnChainStatus(r);
                     if (Number(r.ctx.nonce) !== Number(chosen) || (r.approved || []).length < Number(r.ctx.threshold)) {
                       throw new Error('The Safe nonce or exact approvals changed on ' + r.chain + '. Review the action again.');
                     }
-                  });
-                  r.done = true; r.st.textContent = 'Executed (nonce ' + chosen + ')'; executed++;
+                  }, opts.verifyReceipt ? opts.verifyReceipt.bind(null, { cid: r.cid }) : null, markSafeRequest);
+                  if (opts.onSafeExecuted) opts.onSafeExecuted(r.cid);
+                  approvedKnown.executed = true; r.done = true; r.st.textContent = 'Executed (nonce ' + chosen + ')';
                   checkpointPartialResult();
                 } else {
                   // Fully approved but not next in line — the Safe executes in strict nonce order, so lower nonces
@@ -12661,7 +13528,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
           var didSomething = (queued + executed + approvedThisRun) > 0;
           if (live.every(function (row) { return row.done; })) safeSequence.setActive(opts.steps && opts.steps.length ? (opts.stepIndex || 0) + 1 : chains.length, !(opts.steps && opts.steps.length) || (opts.stepIndex || 0) + 1 >= opts.steps.length);
           var base = (summary.join(' | ') || 'No new actions') + (skipped.length ? ' | skipped ' + skipped.join(', ') : '') + '.';
-          lastResult = { queued: queued, executed: executed, skipped: skipped, cancelled: false, readyExecs: readyExecs.slice(), safeTxHashes: queuedSafeTxHashes.slice() };
+          lastResult = { queued: queued, executed: executed, skipped: skipped, cancelled: false, readyExecs: readyExecs.slice(), safeTxHashes: queuedSafeTxHashes.slice(), proposals: knownProposals.slice(), executedReady: knownProposals.filter(function (proposal) { return proposal.executed; }).length };
           if (staleNonce) {
             // Chosen nonce is below the Safe's current nonce (already used) — actionable, so keep the modal open
             // with an error rather than the green-success + auto-close path.
@@ -12687,6 +13554,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             btn.textContent = 'Execute next in order';
           }
         } catch (e) {
+          if (e && e.safeRequestNotSubmitted && opts.onSafeNotSubmitted) opts.onSafeNotSubmitted();
           if (typeof console !== 'undefined') console.error('[safe-apply]', e);
           inFlight = false; btn.disabled = false; cancel.disabled = false; setProposalNonceInputsDisabled(false);
           var msg = (e && (e.shortMessage || e.message)) || String(e);
@@ -14276,14 +15144,21 @@ function renderProjectPayerAddresses(project) {
   return wrap;
 }
 
-async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
+export async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
   var restored = pendingScope && loadRelayrPendingSession(pendingScope);
   if (restored) {
-    setStatus('Found a paid Relayr request for these payer addresses. Checking it instead of submitting again…', 'pending');
-    var resumed = await monitorRelayrSession(restored, setStatus, { pendingScope: pendingScope, initialTimeoutMs: 60 * 1000 });
+    var quoted = restored.paymentState === 'quoted' && relayrResumeQuotedBundle(pendingScope);
+    setStatus(quoted ? 'Resuming funding for the previously reviewed payer deployment.' : 'Checking the saved Relayr request for these payer addresses…', 'pending');
+    var resumed = quoted
+      ? await fundRelayrQuotedSession(quoted, restored, setStatus, { pendingScope: pendingScope, resumeQuoted: true })
+      : await monitorRelayrSession(restored, setStatus, { pendingScope: pendingScope, initialTimeoutMs: 60 * 1000 });
     resumed.resumed = true;
     return resumed;
   }
+  var account = getAccount();
+  if (!account) throw new Error('Connect a wallet to deploy payer addresses.');
+  // Preserve the exact permissionless calls shown in review, even if the originating form changes while open.
+  calls = calls.map(function (call) { return { chainId: Number(call.chainId), to: call.to, data: call.data }; });
   var ok = await confirmTransactionModal({
     via: 'Relayr — one prepaid payment calls the permissionless project-payer deployer on each chain below',
     action: 'Deploy payer address',
@@ -14299,35 +15174,23 @@ async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScope) {
         : { chain: chainNameOf(c.chainId), chainId: c.chainId, contract: c.to, calldata: c.data };
     }),
   }, { title: 'Confirm payer address deployment', confirmText: 'Confirm & send', steps: ['Pay the relay fee once'] });
-  if (!ok) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
+  if (!ok || (typeof ok === 'object' && !ok.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
+  if (!sameAddr(getAccount(), account)) throw new Error('Connected account changed. Review the payer deployment again.');
 
   setStatus('Requesting Relayr quote…', 'pending');
-  var bundle = await relayrPostBundle(calls.map(projectPayerRelayrEntry));
-  var payments = bundle.payment_info || [];
-  if (!payments.length) throw new Error('Relayr returned no payment option');
-  var wallet = getWalletClient();
-  var connectedChainId = wallet ? await wallet.getChainId().catch(function () { return null; }) : null;
-  var payment = payments.filter(function (p) { return p.chain === connectedChainId; })[0] || payments[0];
-  if (payment.chain !== connectedChainId) {
-    setStatus('Switch your wallet to ' + chainNameFor(payment.chain) + ' to pay…', 'pending');
-    await switchChain(payment.chain);
-  }
-  setStatus('Confirm the Relayr payment…', 'pending');
+  var bundle = await relayrPostBundle(calls.map(projectPayerRelayrEntry), { scope: pendingScope, account: account,
+    chains: calls.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; }) });
   var session = {
     bundleUuid: bundle.bundle_uuid,
+    account: account,
     paymentHash: null,
-    paymentChainId: Number(payment.chain),
+    paymentState: 'quoted',
     expectedCount: calls.length,
     expectedTransactions: bundle.expected_transactions,
     chains: calls.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; }),
     records: [],
   };
-  var paymentHash = await relayrPay(payment, null, function (hash) {
-    session.paymentHash = hash;
-    if (pendingScope) session = saveRelayrPendingSession(pendingScope, session) || session;
-  }, bundle.bundle_uuid);
-  session.paymentHash = paymentHash;
-  return monitorRelayrSession(session, setStatus, { pendingScope: pendingScope });
+  return fundRelayrQuotedSession(bundle, session, setStatus, { pendingScope: pendingScope });
 }
 
 // ---------------------------------------------------------------------------
@@ -15091,7 +15954,7 @@ function renderProjectDraftExport(project) {
   return card;
 }
 
-function renderExtrasSection(project) {
+export function renderExtrasSection(project) {
   var section = el('div', 'detail-section');
   section.appendChild(renderProjectDraftExport(project));
   var card = el('div', 'detail-card extras-card');
@@ -15310,10 +16173,12 @@ function renderExtrasSection(project) {
   section.appendChild(card);
 
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
+  var pendingScope = relayrActionScope(project, 'deploy-payer-address');
   var busy = false;
   var payerDialog = null;
   openPayerForm.addEventListener('click', function () {
     if (payerDialog && payerDialog.dialog && payerDialog.dialog.isConnected) return;
+    syncDeployActions();
     payerDialog = openDialog('Create payer address', {
       canClose: function () { return !busy; },
       onClose: function () { payerDialog = null; },
@@ -15325,7 +16190,9 @@ function renderExtrasSection(project) {
   }
   function syncDeployActions() {
     var selected = selectedChains();
-    deploy.textContent = selected.length > 1 ? 'Deploy payer addresses' : 'Deploy payer address';
+    var pending = !!loadRelayrPendingSession(pendingScope);
+    deploy.textContent = pending ? 'Resume payer deployment' : selected.length > 1 ? 'Deploy payer addresses' : 'Deploy payer address';
+    openPayerForm.textContent = pending ? 'Resume payer deployment' : 'Create payer address';
   }
   chainChecks.forEach(function (r) { r.cb.addEventListener('change', syncDeployActions); });
   syncDeployActions();
@@ -15333,11 +16200,19 @@ function renderExtrasSection(project) {
   function submitDeploy() {
     if (busy) return;
     var selected = selectedChains();
-    if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
     var account = getAccount && getAccount();
     (async function () {
       if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
       if (!account) { setStatus('Connect a wallet to deploy payer addresses.', 'error'); return; }
+      // A publication, quoted bundle or submitted payment belongs to the previous form. Recover it before
+      // interpreting newer chain selections, metadata, ENS recipients, or admin settings.
+      if (loadRelayrPendingSession(pendingScope)) {
+        var recovered = await runProjectPayerRelayrDeploys([], setStatus, pendingScope);
+        setStatus(relayrRecoveredMessage(recovered), 'success');
+        if (payerList && payerList._refresh) payerList._refresh();
+        return;
+      }
+      if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
       if (editableCb.checked && !ownerInput.value.trim()) {
         ownerInput.value = account;
         ownerInput.dispatchEvent(new Event('input'));
@@ -15356,32 +16231,36 @@ function renderExtrasSection(project) {
         }
         return buildProjectPayerDeployCall(cid, pidOn(project, cid), ben, memoInput.value, metadata, addToBalance, own);
       });
-      if (calls.length === 1) {
-        await new Promise(function (resolve, reject) {
-          var call = calls[0];
-          executeTransaction({
-            chainId: call.chainId,
-            address: call.to,
-            abi: call.abi,
-            functionName: call.functionName,
-            args: call.args,
-            contractName: 'JBProjectPayerDeployer',
-            label: 'Deploy payer address',
-            confirmTitle: 'Confirm payer address deployment',
-            confirmSummary: { action: 'Deploy payer address', rows: [
-              ['Pays into', 'project #' + String(pidOn(project, call.chainId))],
-              ['Mode', addToBalance ? 'add to balance (no tokens minted)' : 'pay (mints tokens)'],
-              ['Beneficiary', originalCb.checked ? 'the original payer' : rowValueText(materializeChainValue(beneficiary, call.chainId))],
-              ['Admin', editableCb.checked ? rowValueText(materializeChainValue(payerOwner, call.chainId)) : 'none (immutable)'],
-              ['On chain', chainNameOf(call.chainId)],
-            ] },
-            onStatus: function (m, k) { setStatus(m, k); },
-            onError: function (m) { reject(new Error(m)); },
-            onSuccess: function () { resolve(); },
+      if (!shouldUseRelayrForChains(selected)) {
+        if (isSafeConnected()) {
+          if (calls.length !== 1) throw new Error('Open the Safe on each destination chain and propose its payer deployment separately.');
+          var safeCall = calls[0];
+          await new Promise(function (resolve, reject) {
+            executeTransaction({ chainId: safeCall.chainId, address: safeCall.to, abi: safeCall.abi,
+              functionName: safeCall.functionName, args: safeCall.args, contractName: 'JBProjectPayerDeployer',
+              label: 'Deploy payer address', confirmTitle: 'Confirm payer address deployment',
+              onStatus: setStatus, onError: function (message) { reject(new Error(message)); },
+              onSuccess: function (message, meta) {
+                setStatus(message, meta && meta.phase === 'safe-proposed' ? 'pending' : 'success'); resolve();
+              },
+            });
           });
+          return;
+        }
+        await runRelayrAcrossChains(selected, account, function (chainId) {
+          return calls.find(function (call) { return call.chainId === chainId; });
+        }, 1500000n, setStatus, {
+          label: 'Deploy payer address', title: 'Confirm payer address deployment',
+          pendingScope: pendingScope,
+          summary: { action: 'Deploy payer address', rows: [
+            ['Pays into', 'this project on each selected chain'],
+            ['Mode', addToBalance ? 'add to balance (no tokens minted)' : 'pay (mints tokens)'],
+            ['Beneficiary', originalCb.checked ? 'the original payer' : rowValueText(beneficiary)],
+            ['Admin', editableCb.checked ? rowValueText(payerOwner) : 'none (immutable)'],
+          ] },
         });
       } else {
-        var relaySession = await runProjectPayerRelayrDeploys(calls, setStatus, relayrActionScope(project, 'deploy-payer-address'));
+        var relaySession = await runProjectPayerRelayrDeploys(calls, setStatus, pendingScope);
         if (relaySession && relaySession.resumed) {
           setStatus(relayrRecoveredMessage(relaySession), 'success');
           if (payerList && payerList._refresh) payerList._refresh();
@@ -15396,6 +16275,7 @@ function renderExtrasSection(project) {
     }).finally(function () {
       busy = false;
       deploy.classList.remove('disabled');
+      syncDeployActions();
     });
     busy = true;
     deploy.classList.add('disabled');
@@ -16951,7 +17831,7 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
       var buildCall = function (cid) {
         var to = getAddress(contract, cid);
         if (!to) throw new Error('No ' + contract + ' on ' + chainNameOf(cid));
-        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid) }) };
+        return reviewableContractCall(to, action.abi, action.fn, action.buildArgs(materializeChainValues(values, cid), cid));
       };
       var shim = { owner: adminAddr, chains: selected, chainId: homeChainId, isRevnet: false };
       var res = await runAuthorityActionAcrossChains(shim, selected, adminAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, queueTab: 'Admin',
@@ -17608,7 +18488,7 @@ function openSetPermissionsModal(project, grant) {
         // so an edit on one chain can't silently revoke an extension permission held on another.
         var ids = mergePermissionIds(checked, seedIdsFor(cid));
         var projectId = wildcard ? 0n : pidOn(project, cid);
-        return { to: to, data: encodeFunctionData({ abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor', args: [account, { operator: operator, projectId: projectId, permissionIds: ids }] }) };
+        return reviewableContractCall(to, jbSetPermissionsAbi, 'setPermissionsFor', [account, { operator: operator, projectId: projectId, permissionIds: ids }]);
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, account, buildCall, { label: 'Set permissions', title: editing ? 'Edit permissions' : 'Add operator', gas: 200000n,
@@ -18035,7 +18915,7 @@ function openPowerModal(project, action) {
       var buildCall = function (cid) {
         var to = liveTargets ? liveTargets[cid] : getAddress(action.contract, cid);
         if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
-        return { to: to, data: encodeFunctionData({ abi: action.abi, functionName: action.fn, args: action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)) }) };
+        return reviewableContractCall(to, action.abi, action.fn, action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)));
       };
       var shim = Object.assign({}, project, { chains: selected });
       var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal,
@@ -18053,7 +18933,35 @@ function openPowerModal(project, action) {
 
 // Owner action (gated by allowAddAccountingContext): register a token the project's terminal accepts.
 // Routed by authority type — Safe → proposed per chain; EOA → one relayr payment.
-function openAddAccountingContextModal(project) {
+export async function prepareAccountingContextCalls(project, chains, tokensByChain, decimals, readDecimals) {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error('Enter an integer number of decimals between 0 and 36.');
+  if (!chains || !chains.length) throw new Error('Select at least one chain.');
+  var rows = await Promise.all(chains.map(async function (chain) {
+    var cid = chain.id;
+    var projectId = pidOn(project, cid);
+    var token = tokensByChain[cid];
+    if (!isAddr(token) || token.toLowerCase() === ZERO_ADDRESS.toLowerCase()) throw new Error('Enter a valid token address on ' + (chain.name || chainNameOf(cid)) + '.');
+    var liveDecimals;
+    try {
+      var rawDecimals = token.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? 18
+        : await (readDecimals ? readDecimals(cid, token) : clientFor(cid).readContract({ address: token, abi: ERC20_DECIMALS_ABI, functionName: 'decimals', args: [] }));
+      if (typeof rawDecimals !== 'number' && typeof rawDecimals !== 'bigint') throw new Error('Invalid decimals response');
+      liveDecimals = Number(rawDecimals);
+    } catch (_) { throw new Error('Could not verify token decimals on ' + (chain.name || chainNameOf(cid)) + '. No accounting token was added.'); }
+    if (!Number.isInteger(liveDecimals) || liveDecimals < 0 || liveDecimals > 36) throw new Error('The token on ' + (chain.name || chainNameOf(cid)) + ' returned invalid decimals.');
+    if (liveDecimals !== decimals) throw new Error('The token on ' + (chain.name || chainNameOf(cid)) + ' uses ' + liveDecimals + ' decimals, but this form specifies ' + decimals + '. Correct the decimals or submit chains with different token decimals separately.');
+    var terminal = getAddress('JBMultiTerminal', cid);
+    if (!terminal) throw new Error('No JBMultiTerminal on ' + (chain.name || chainNameOf(cid)) + '.');
+    var args = [projectId, [{ token: token, decimals: decimals, currency: Number(BigInt(token) & 0xffffffffn) }]];
+    return { chainId: cid, call: { to: terminal, abi: addAccountingContextsAbi, functionName: 'addAccountingContextsFor', args: args,
+      data: encodeFunctionData({ abi: addAccountingContextsAbi, functionName: 'addAccountingContextsFor', args: args }) } };
+  }));
+  var calls = {};
+  rows.forEach(function (row) { calls[row.chainId] = row.call; });
+  return calls;
+}
+
+export function openAddAccountingContextModal(project) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Owner').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
@@ -18083,11 +18991,20 @@ function openAddAccountingContextModal(project) {
 
   var tlbl = el('div', 'operator-edit-label'); tlbl.style.marginTop = '12px'; tlbl.textContent = 'Token'; content.appendChild(tlbl);
   var tokenInput = null, tokenHint = null, tokenValueOf = null, tokenRows = {}, tokenWrap = null;
+  var decimalReadVersions = {};
   function maybeReadCustomDecimals(chainId, raw) {
     var t = (raw || '').trim();
     if (mode.kind !== 'custom' || !isAddr(t)) return;
-    if (t.toLowerCase() === NATIVE_TOKEN.toLowerCase()) { decInput.value = '18'; return; }
-    clientFor(chainId).readContract({ address: t, abi: ERC20_DECIMALS_ABI, functionName: 'decimals', args: [] }).then(function (d) { if (d != null) decInput.value = String(Number(d)); }).catch(function () {});
+    var version = (decimalReadVersions[chainId] || 0) + 1; decimalReadVersions[chainId] = version;
+    var request = t.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? Promise.resolve(18)
+      : clientFor(chainId).readContract({ address: t, abi: ERC20_DECIMALS_ABI, functionName: 'decimals', args: [] });
+    request.then(function (d) {
+      if (mode.kind !== 'custom' || decimalReadVersions[chainId] !== version || tokenPreviewForChain(chainId).toLowerCase() !== t.toLowerCase()) return;
+      var value = Number(d);
+      if (!Number.isInteger(value) || value < 0 || value > 36) return;
+      if (allChains.length === 1) decInput.value = String(value);
+      else if (tokenRows[chainId]) tokenRows[chainId].decimalsHint.textContent = 'Token decimals: ' + value;
+    }).catch(function () {});
   }
   if (allChains.length > 1) {
     tokenWrap = el('div', 'operator-chain-addresses');
@@ -18103,8 +19020,10 @@ function openAddAccountingContextModal(project) {
       var hint = el('div', 'operator-edit-token-name');
       var valueOf = attachAddressRecognition(input, hint, c.id, { label: 'Token on ' + (c.name || chainNameOf(c.id)), projectId: Number(pidOn(project, c.id)), projectSymbol: project.tokenSymbol, unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); } });
       input.addEventListener('change', function () { maybeReadCustomDecimals(c.id, input.value); });
-      field.appendChild(input); field.appendChild(hint); row.appendChild(field); tokenWrap.appendChild(row);
-      tokenRows[c.id] = { input: input, valueOf: valueOf };
+      var decimalsHint = el('div', 'operator-edit-token-name');
+      input.addEventListener('input', function () { decimalsHint.textContent = ''; });
+      field.appendChild(input); field.appendChild(hint); field.appendChild(decimalsHint); row.appendChild(field); tokenWrap.appendChild(row);
+      tokenRows[c.id] = { input: input, valueOf: valueOf, decimalsHint: decimalsHint };
     });
     content.appendChild(tokenWrap);
   } else {
@@ -18139,7 +19058,7 @@ function openAddAccountingContextModal(project) {
   function decimalsForMode() {
     if (mode.kind === 'native') return 18;
     if (mode.kind === 'usdc') return 6;
-    return Math.max(0, Math.min(36, parseInt(decInput.value, 10) || 0));
+    return decInput.value.trim() === '' ? NaN : Number(decInput.value);
   }
   function selectedChains() { return allChains.filter(function (c) { return chainSelected[c.id] !== false; }); }
   function updatePresetList() {
@@ -18206,14 +19125,18 @@ function openAddAccountingContextModal(project) {
       var usable = selected.filter(function (c) { return mode.kind === 'custom' ? !!tokenPreviewForChain(c.id) : !!tokenForChain(c.id); });
       var skippedNoUsdc = mode.kind === 'usdc' ? selected.filter(function (c) { return !tokenForChain(c.id); }).map(function (c) { return c.name; }) : [];
       if (!usable.length) { setStatus('USDC isn’t configured on the selected chain(s).', 'error'); busy = false; return; }
-      var buildCall = function (cid) {
-        var token = tokenForChain(cid);
-        var currency = Number(BigInt(token) & 0xffffffffn);
-        return { to: getAddress('JBMultiTerminal', cid), data: encodeFunctionData({ abi: addAccountingContextsAbi, functionName: 'addAccountingContextsFor', args: [pidOn(project, cid), [{ token: token, decimals: dec, currency: currency }]] }) };
-      };
+      var tokensByChain = {}, calls;
+      var selectedMode = mode.kind;
+      try {
+        usable.forEach(function (chain) { tokensByChain[chain.id] = tokenForChain(chain.id); });
+        setStatus('Verifying token decimals on every selected chain…', 'pending');
+        calls = await prepareAccountingContextCalls(project, usable, tokensByChain, dec);
+      } catch (error) { setStatus(errMessage(error, 'Could not verify accounting tokens.'), 'error'); busy = false; return; }
+      var buildCall = function (cid) { return calls[cid]; };
       var shim = Object.assign({}, project, { chains: usable });
       var res = await runAuthorityActionAcrossChains(shim, usable, operatorAddr, buildCall, { label: 'Add accounting token', title: 'Add accounting token', gas: 300000n,
-        summary: { rows: [['Token', mode.kind === 'custom' ? 'custom (set per chain)' : mode.kind === 'usdc' ? 'USDC' : 'ETH'], ['Decimals', String(dec)], ['Reversible', 'no — accounting tokens cannot be removed']] } }, setStatus)
+        reverify: function () { return prepareAccountingContextCalls(project, usable, tokensByChain, dec); },
+        summary: { rows: [['Token', selectedMode === 'custom' ? 'custom (set per chain)' : selectedMode === 'usdc' ? 'USDC' : 'ETH'], ['Decimals', String(dec)], ['Reversible', 'no — accounting tokens cannot be removed']] } }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Could not add the accounting token.'), 'error'); return null; });
       busy = false;
       if (!res) return;
@@ -18318,6 +19241,32 @@ export { quotedOutputFloor };
 
 // Distribute payouts: send the project's funds to its recipients (splits, then owner) on one chain.
 // Permissionless — anyone can trigger it. Amount is in the payout limit's currency (usually the accounting token).
+async function readProjectPayoutAccess(project, cid, acct) {
+  var pid = pidOn(project, cid);
+  var term = getAddress('JBMultiTerminal', cid);
+  var fal = getAddress('JBFundAccessLimits', cid);
+  if (!term || !fal) throw new Error('Payout contracts are unavailable on this chain.');
+  var controller = await controllerAddressFor(cid, pid);
+  var head = await Promise.all([
+    read(cid, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, acct.address]),
+    clientFor(cid).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }),
+  ]);
+  var ruleset = head[1] && head[1][0];
+  if (!ruleset || toBigInt(ruleset.id) === 0n) throw new Error('No current ruleset.');
+  var limits = await read(cid, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, toBigInt(ruleset.id), term, acct.address]);
+  var rows = await Promise.all((limits || []).map(async function (limit) {
+    var currency = toBigInt(limit.currency);
+    var values = await Promise.all([
+      read(cid, 'JBTerminalStore', usedPayoutLimitAbi, 'usedPayoutLimitOf', [term, pid, acct.address, toBigInt(ruleset.cycleNumber), currency]),
+      isExactPayoutCurrency(currency, acct.currency) ? Promise.resolve(1000000000000000000n)
+        : read(cid, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [pid, currency, toBigInt(acct.currency), 18n]),
+    ]);
+    var remaining = remainingAccessAmount(limit.amount, toBigInt(values[0]));
+    return { currency: currency, remaining: remaining, available: availablePayoutAmount(remaining, head[0], toBigInt(values[1])) };
+  }));
+  return { term: term, balance: toBigInt(head[0]), ruleset: ruleset, controller: controller, limits: rows };
+}
+
 function buildPayoutsModal(project, acctKind) {
   var wrap = el('div', 'modal-body');
   var state = { chainId: (project.chains && project.chains[0] && project.chains[0].id) || project.chainId, acct: null, balance: null, limits: [], selected: null, currency: null, meta: null, maxAmount: null };
@@ -18330,6 +19279,12 @@ function buildPayoutsModal(project, acctKind) {
   }
 
   var desc = el('div', 'modal-balance'); desc.textContent = 'Sends funds to payout splits, then the project owner. Anyone can trigger it.'; wrap.appendChild(desc);
+
+  if (projectChains(project).length > 1) {
+    var across = el('button', 'operator-cta'); across.textContent = 'Distribute across chains';
+    across.addEventListener('click', function () { openDistributionAcrossChains(project, 'payouts', acctKind); });
+    wrap.appendChild(across);
+  }
 
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
@@ -18401,37 +19356,7 @@ function buildPayoutsModal(project, acctKind) {
   });
 
   function readPayoutAccess(cid, acct) {
-    var pid = pidOn(project, cid);
-    var term = getAddress('JBMultiTerminal', cid);
-    var fal = getAddress('JBFundAccessLimits', cid);
-    if (!term || !fal) return Promise.reject(new Error('Payout contracts are unavailable on this chain.'));
-    return Promise.all([
-      read(cid, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pid, acct.address]),
-      controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid]),
-    ]).then(function (head) {
-      var ruleset = head[1] && head[1][0];
-      if (!ruleset || toBigInt(ruleset.id) === 0n) throw new Error('No current ruleset.');
-      return read(cid, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, toBigInt(ruleset.id), term, acct.address]).then(function (limits) {
-        return Promise.all((limits || []).map(function (limit) {
-          var currency = toBigInt(limit.currency);
-          var price = isExactPayoutCurrency(currency, acct.currency)
-            ? Promise.resolve(1000000000000000000n)
-            : read(cid, 'JBPrices', pricePerUnitAbi, 'pricePerUnitOf', [pid, currency, toBigInt(acct.currency), 18n]);
-          return Promise.all([
-            read(cid, 'JBTerminalStore', usedPayoutLimitAbi, 'usedPayoutLimitOf', [term, pid, acct.address, toBigInt(ruleset.cycleNumber), currency]),
-            price,
-          ]).then(function (values) {
-            var used = toBigInt(values[0]);
-            var remaining = remainingAccessAmount(limit.amount, used);
-            var pricePerUnit = toBigInt(values[1]);
-            return {
-              currency: Number(currency), remaining: remaining,
-              available: availablePayoutAmount(remaining, head[0], pricePerUnit),
-            };
-          });
-        })).then(function (rows) { return { term: term, balance: toBigInt(head[0]), ruleset: ruleset, limits: rows }; });
-      });
-    });
+    return readProjectPayoutAccess(project, cid, acct);
   }
 
   function selectPayoutLimit(currency) {
@@ -20431,6 +21356,17 @@ function renderAutoIssuance(project, stages) {
     ? project.chains
     : [{ id: project.chainId, name: chainNameFor(project.chainId) }];
   var stageCache = {};
+  var actionScope = relayrActionScope(project, 'auto-issuance');
+
+  var aggregate = el('button', 'ops-action-btn');
+  aggregate.type = 'button';
+  function syncAggregate() { aggregate.textContent = hasSelectedProjectAction(actionScope) ? 'Resume saved distributions' : 'Distribute unlocked'; }
+  syncAggregate();
+  aggregate.addEventListener('click', openAggregate);
+  card.appendChild(aggregate);
+  var actionStatus = el('div', 'operator-edit-status');
+  card.appendChild(actionStatus);
+  var busy = false;
 
   var body = el('div', 'autoissue-tablewrap');
   body.appendChild(skelGenericTable('autoissue-table', 'autoissue-row', 'autoissue-head',
@@ -20451,118 +21387,168 @@ function renderAutoIssuance(project, stages) {
     return stageCache[chainId];
   }
 
-  loadAutoIssuanceRows(project, chains, stagesForChain).then(function (rows) {
-    if (!body.isConnected) return;
+  function refreshRows() { return loadAutoIssuanceRows(project, chains, stagesForChain).then(function (rows) {
+    if (!body.isConnected) return false;
     body.innerHTML = '';
     body.className = 'autoissue-tablewrap';
     if (!rows.length) {
       body.className = 'detail-card-body owners-empty';
       body.textContent = 'No auto issuance configured for this revnet.';
-      return;
+      return true;
     }
     body.appendChild(renderAutoIssuanceTable(rows, sym, distribute));
+    return true;
   }).catch(function () {
-    if (!body.isConnected) return;
+    if (!body.isConnected) return false;
     body.className = 'detail-card-body owners-empty';
     body.textContent = 'Could not load auto issuance.';
-  });
+    return false;
+  }); }
+  refreshRows();
 
   function distribute(row, btn) {
-    var stageId = BigInt(row.stage.id);
-    var localPid = pidOn(project, row.chain.id);
-    var tx = buildAutoIssueArgs({ chainId: row.chain.id, revOwnerAddr: row.revOwnerAddr,
-      revnetId: localPid, stageId: stageId, beneficiary: row.beneficiary });
-    var args = tx.args;
-    var chainName = row.chain && row.chain.name ? row.chain.name : ('Chain ' + row.chain.id);
-    var amount = row.remaining != null && row.remaining > 0n ? row.remaining : row.count;
-    var data = encodeCalldata(autoIssueForAbi, 'autoIssueFor', args);
-    var payload = {
-      chain: chainName,
-      chainId: row.chain.id,
-      contract: 'REVOwner',
-      address: row.revOwnerAddr,
-      functionName: 'autoIssueFor',
-      value: '0',
-      data: data,
-      rawArgs: args,
-      args: {
-        revnetId: localPid.toString(),
-        stageId: stageId.toString(),
-        beneficiary: row.beneficiary,
-      },
-      review: {
-        stage: 'Stage ' + (row.stageIndex + 1),
-        unlockDate: row.stage ? formatDateTime(row.stage.start) : null,
-        configuredAmount: row.count.toString(),
-        remainingAmount: row.remaining == null ? null : row.remaining.toString(),
-        displayAmount: formatAmount(amount, 18) + sym,
-      },
-      abiFragment: autoIssueForAbi[0],
-    };
-    payload.summary = { action: 'Distribute auto issuance', rows: [
-      ['Amount', formatAmount(amount, 18) + ' ' + sym],
-      ['To', row.beneficiary],
-      ['Stage', 'Stage ' + (row.stageIndex + 1) + (row.stage ? ' — unlocked ' + formatDateTime(row.stage.start) : '')],
-      ['On chain', chainName],
-    ] };
-    openTxConfirm(payload, function (ctx) {
-      sendAutoIssue(row, btn, tx, ctx);
-    }, {
-      title: 'Confirm auto issue',
-      confirmText: 'Confirm & Distribute',
-      closeOnConfirm: false,
-      sequenceSteps: ['Distribute the auto issuance'],
+    if (busy) return;
+    runDistribution([row.chain], [row], btn, makeStatusSetter(actionStatus, 'operator-edit-status'));
+  }
+
+  function openAggregate() {
+    if (busy) return;
+    var modal = openDialog('Distribute unlocked auto issuance', { canClose: function () { return !busy; } });
+    var content = el('div', 'modal-body operator-edit');
+    var saved = hasSelectedProjectAction(actionScope);
+    var note = el('div', 'operator-edit-across');
+    note.textContent = saved ? 'Continue the saved distribution request with its original allocations and remaining rounds.'
+      : 'Select the chains to distribute. Every unlocked beneficiary allocation is reviewed separately, up to '
+      + MAX_AUTO_ISSUANCE_CALLS + ' allocations per request. Multiple allocations on one chain run in successive rounds.';
+    content.appendChild(note);
+    var chainBox = el('div', 'extras-chain-list');
+    var checks = chains.map(function (chain) {
+      var label = el('label', 'extras-chain-row');
+      var cb = el('input'); cb.type = 'checkbox'; cb.checked = true;
+      label.appendChild(cb); label.appendChild(chainLogo(chain.id, null));
+      var name = el('span'); name.textContent = chain.name || chainNameFor(chain.id); label.appendChild(name);
+      chainBox.appendChild(label);
+      return { chain: chain, cb: cb };
+    });
+    chainBox.hidden = saved;
+    content.appendChild(chainBox);
+    var status = el('div', 'operator-edit-status'); content.appendChild(status);
+    var setStatus = makeStatusSetter(status, 'operator-edit-status');
+    var submit = el('button', 'operator-cta'); submit.type = 'button'; submit.textContent = saved ? 'Resume saved distributions' : 'Review distributions';
+    content.appendChild(submit); modal.panel.appendChild(content);
+    submit.addEventListener('click', function () {
+      if (busy) return;
+      // The dispatcher checks the stable saved action before evaluating the new selection or reading
+      // amounts. A paid or partially completed request stays recoverable even after rows disappear.
+      var selected = checks.filter(function (entry) { return entry.cb.checked; }).map(function (entry) { return entry.chain; });
+      checks.forEach(function (entry) { entry.cb.disabled = true; });
+      runDistribution(selected, null, submit, setStatus).finally(function () {
+        checks.forEach(function (entry) { entry.cb.disabled = false; });
+        var stillSaved = hasSelectedProjectAction(actionScope);
+        submit.textContent = stillSaved ? 'Resume saved distributions' : 'Review distributions';
+        chainBox.hidden = stillSaved;
+      });
     });
   }
 
-  function setConfirmStatus(ctx, message, kind) {
-    if (!ctx || !ctx.status) return;
-    ctx.status.style.display = message ? '' : 'none';
-    ctx.status.className = 'modal-status tx-confirm-status' + (kind ? (' ' + kind) : '');
-    ctx.status.textContent = message || '';
+  async function readChainState(chainId, projectId) {
+    var client = clientFor(chainId);
+    var revOwnerAddr = getAddress('REVOwner', chainId);
+    var projectsAddr = getAddress('JBProjects', chainId);
+    if (!revOwnerAddr || !projectsAddr) throw new Error('No verified revnet deployment on ' + chainNameFor(chainId) + '.');
+    var block = await client.getBlock({ blockTag: 'latest' });
+    if (!block || block.number == null) throw new Error('Could not read the live block on ' + chainNameFor(chainId) + '.');
+    var values = await Promise.all([
+      client.readContract({ address: projectsAddr, abi: ownerOfAbi, functionName: 'ownerOf', args: [projectId], blockNumber: block.number }),
+      client.readContract({ address: revOwnerAddr, abi: [{ type: 'function', name: 'CONTROLLER', stateMutability: 'view',
+        inputs: [], outputs: [{ type: 'address' }] }], functionName: 'CONTROLLER', blockNumber: block.number }),
+    ]);
+    return { revOwnerAddr: revOwnerAddr, owner: values[0], controller: values[1], timestamp: block.timestamp, blockNumber: block.number };
   }
 
-  function setConfirmBusy(ctx, busy) {
-    if (ctx && ctx.confirm) ctx.confirm.disabled = !!busy;
-    if (ctx && ctx.cancel) ctx.cancel.disabled = !!busy;
+  async function readAllocation(allocation, state) {
+    var client = clientFor(allocation.chainId);
+    var values = await Promise.all([
+      client.readContract({ address: state.controller, abi: getRulesetWithMetadataAbi, functionName: 'getRulesetOf',
+        args: [allocation.projectId, allocation.stageId], blockNumber: state.blockNumber }),
+      client.readContract({ address: state.revOwnerAddr, abi: amountToAutoIssueAbi, functionName: 'amountToAutoIssue',
+        args: [allocation.projectId, allocation.stageId, allocation.beneficiary], blockNumber: state.blockNumber }),
+    ]);
+    return { stage: values[0] && values[0][0], remaining: values[1] };
   }
 
-  function sendAutoIssue(row, btn, tx, ctx) {
-    if (!(getAccount && getAccount())) {
-      btn.disabled = true;
-      btn.textContent = 'Connecting…';
-      setConfirmBusy(ctx, true);
-      setConfirmStatus(ctx, 'Connecting wallet…');
-      connect().then(function () {
-        sendAutoIssue(row, btn, tx, ctx);
-      }).catch(function (err) {
-        btn.disabled = false;
-        btn.textContent = 'Distribute';
-        setConfirmBusy(ctx, false);
-        setConfirmStatus(ctx, errMessage(err, 'Could not connect wallet.'), 'error');
+  function prepare(rows, chainIds) {
+    return prepareAutoIssuanceCalls({ rows: rows, chainIds: chainIds,
+      resolveProjectId: function (chainId) { return pidOn(project, chainId); },
+      readChain: readChainState, readAllocation: readAllocation,
+      buildCall: function (allocation) {
+        var tx = buildAutoIssueArgs({ chainId: allocation.chainId, revOwnerAddr: allocation.revOwnerAddr,
+          revnetId: allocation.projectId, stageId: allocation.stageId, beneficiary: allocation.beneficiary });
+        return { chainId: allocation.chainId, to: tx.address, data: encodeCalldata(tx.abi, tx.functionName, tx.args),
+          abi: tx.abi, functionName: tx.functionName, args: tx.args, contract: 'REVOwner' };
+      },
+    });
+  }
+
+  async function reverifySaved(calls, chainId) {
+    var selectedCalls = calls.filter(function (call) { return chainId == null || Number(call.chainId) === Number(chainId); });
+    var rows = selectedCalls.map(function (call) {
+      if (!call.autoIssue) throw new Error('The saved auto-issuance details are unavailable.');
+      return Object.assign({}, call.autoIssue, { chainId: call.chainId, projectId: call.projectId });
+    });
+    var checked = await prepare(rows, selectedCalls.map(function (call) { return call.chainId; }));
+    if (checked.allocations.length !== selectedCalls.length) throw new Error('A reviewed allocation is now locked or already distributed. Check the saved distribution before continuing.');
+    selectedCalls.forEach(function (call) {
+      var allocation = checked.allocations.find(function (item) {
+        return item.chainId === Number(call.chainId) && String(item.stageId) === call.autoIssue.stageId
+          && sameAddr(item.beneficiary, call.autoIssue.beneficiary);
       });
-      return;
-    }
-    btn.disabled = true;
-    btn.textContent = 'Distributing…';
-    setConfirmBusy(ctx, true);
-    executeTransaction(Object.assign({}, tx, {
-      skipConfirm: true, // already confirmed via openTxConfirm
-      onStatus: function (m, kind) { setConfirmStatus(ctx, m, kind); },
-      onSuccess: function () {
-        row.remaining = 0n;
-        row.distributed = true;
-        btn.textContent = 'Distributed';
-        setConfirmStatus(ctx, 'Auto issuance distributed.', 'success');
-        if (ctx && ctx.modal) ctx.modal.close();
-      },
-      onError: function (m) {
-        btn.disabled = false;
-        btn.textContent = 'Distribute';
-        setConfirmBusy(ctx, false);
-        setConfirmStatus(ctx, m, 'error');
-      },
-    }));
+      if (!allocation) throw new Error('A reviewed auto-issuance allocation could not be verified.');
+      verifyAutoIssuanceCall(call, allocation);
+    });
+  }
+
+  async function runDistribution(selected, rowSelection, btn, setStatus) {
+    if (busy) return;
+    busy = true; btn.disabled = true; aggregate.disabled = true;
+    var previousText = btn.textContent; btn.textContent = 'Checking distributions…';
+    try {
+      var result = await runSelectedProjectCallRounds(project, async function () {
+        if (!selected.length) throw new Error('Select at least one chain.');
+        var chainIds = selected.map(function (chain) { return Number(chain.id); });
+        setStatus('Reading live stages and remaining auto issuance…', 'pending');
+        var rows = rowSelection || await fetchIndexedAutoIssuanceRows(project, chainIds);
+        var prepared = await prepare(rows, chainIds);
+        var paymentCount = prepared.rounds.filter(function (round) {
+          return shouldUseRelayrForChains(round.map(function (call) { return { id: call.chainId }; }));
+        }).length;
+        var summaryRows = [
+          ['Selected chains', selected.map(function (chain) { return chain.name || chainNameFor(chain.id); }).join(', ')],
+          ['Distributions', String(prepared.calls.length)],
+          ['Successive rounds', String(prepared.rounds.length)],
+          ['Relayr payments', paymentCount ? 'Up to ' + paymentCount + ', with funding chosen for each round' : '0; direct wallet transactions'],
+        ];
+        prepared.allocations.forEach(function (allocation) {
+          summaryRows.push([chainNameFor(allocation.chainId) + ' · project #' + allocation.projectId + ' · stage ' + allocation.stageId,
+            formatAmount(allocation.remaining, 18) + sym + ' to ' + allocation.beneficiary
+              + ' · unlocked ' + formatDateTime(Number(allocation.stageStart))]);
+        });
+        return { rounds: prepared.rounds, summary: { action: 'Distribute auto issuance', rows: summaryRows } };
+      }, { pendingScope: actionScope, label: 'Distribute auto issuance',
+        title: 'Confirm auto issuance', gas: 1000000n, reverifySaved: reverifySaved }, setStatus);
+      if (!result || result.cancelled) {
+        setStatus('Cancelled. Any saved distribution request remains available to resume.', '');
+      } else if (result.completed) {
+        setStatus('The reviewed auto-issuance distributions are confirmed. Refreshing remaining amounts…', 'success');
+        if (await refreshRows()) {
+          acknowledgeSelectedProjectAction(actionScope);
+          document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+        }
+      } else {
+        setStatus('Auto-issuance transactions were proposed to your Safe. Confirm and execute them from the Safe queue.', 'pending');
+      }
+    } catch (error) { setStatus(errMessage(error, 'Could not distribute auto issuance.'), 'error'); }
+    finally { busy = false; btn.disabled = false; aggregate.disabled = false; btn.textContent = previousText; syncAggregate(); }
   }
 
   return card;
@@ -21002,6 +21988,7 @@ async function enrichAutoIssuanceRow(project, row, stagesForChain) {
 
   return Object.assign({}, row, {
     chain: chain,
+    projectId: pidOn(project, chain.id).toString(),
     revOwnerAddr: revOwnerAddr,
     stage: match.stage,
     stageId: String(match.stage.id),
@@ -22956,6 +23943,12 @@ function renderOwnersSplits(project, opts) {
   wrap.appendChild(stageRow);
   var limitLine = el('div', 'splits-limit'); wrap.appendChild(limitLine);
   var tableWrap = el('div', 'splits-tablewrap'); wrap.appendChild(tableWrap);
+  var distributeAcross = null;
+  if (projectChains(project).length > 1) {
+    distributeAcross = el('button', 'operator-cta'); distributeAcross.textContent = 'Distribute reserved tokens across chains';
+    distributeAcross.addEventListener('click', function () { openDistributionAcrossChains(project, 'reserved'); });
+    wrap.appendChild(distributeAcross);
+  }
 
   var splitsCache = {};
   var activeIdx = 0;
@@ -22964,6 +23957,7 @@ function renderOwnersSplits(project, opts) {
     activeIdx = idx;
     var s = stages[idx];
     var isCurrent = currentId && String(s.id) === currentId;
+    if (distributeAcross) distributeAcross.hidden = !isCurrent;
     var btns = stageRow.querySelectorAll('.splits-stage-btn');
     for (var b = 0; b < btns.length; b++) btns[b].classList.toggle('active', b === idx);
     var md = decodeStageMetadata(s.metadata);
@@ -24645,7 +25639,7 @@ function openEditSplitsModal(project, opts) {
     if (busy) return;
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     setBusy(true);
-    submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, prefill)
+    submitSplitsEdit(project, selected, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, prefill, editChain)
       .then(function (sent) { if (sent !== true && content.isConnected) setBusy(false); })
       .catch(function (err) { if (content.isConnected) setBusy(false); setStatus(errMessage(err, 'Could not save the changes.'), 'error'); });
   });
@@ -24692,16 +25686,58 @@ export function buildSplitsEditPayload(rows) {
   return { splits: splits, sumPct: sumPct };
 }
 
-async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, expectedPrefill) {
+// Recipient project IDs are entered on the editor's source chain. Resolve their verified peers before
+// preparing any destination call; copying the numeric ID can route splits to an unrelated project.
+export async function resolveSplitsEditByChain(splits, chains, sourceChainId, resolveProject) {
+  resolveProject = resolveProject || resolveSplitProject;
+  sourceChainId = Number(sourceChainId);
+  var remote = chains.some(function (chain) { return Number(chain.id) !== sourceChainId; });
+  var projectMaps = {};
+  if (remote) {
+    for (var i = 0; i < splits.length; i++) {
+      var projectId = BigInt(splits[i].projectId);
+      if (projectId === 0n || projectMaps[projectId.toString()]) continue;
+      if (projectId <= 0n || !Number.isSafeInteger(Number(projectId))) throw new Error('Could not verify recipient project #' + projectId + ' across chains.');
+      var info = await resolveProject(Number(projectId), sourceChainId);
+      var sourceId = Number(info && info.byChain && info.byChain[sourceChainId]);
+      if (!Number.isSafeInteger(sourceId) || sourceId <= 0 || BigInt(sourceId) !== projectId) {
+        throw new Error('Could not verify recipient project #' + projectId + ' on ' + chainNameOf(sourceChainId) + '.');
+      }
+      projectMaps[projectId.toString()] = info.byChain;
+    }
+  }
+  var byChain = {};
+  chains.forEach(function (chain) {
+    var cid = Number(chain.id);
+    byChain[cid] = splits.map(function (split) {
+      var out = Object.assign({}, split);
+      var projectId = BigInt(split.projectId);
+      if (projectId > 0n && cid !== sourceChainId) {
+        var localId = Number(projectMaps[projectId.toString()][cid]);
+        if (!Number.isSafeInteger(localId) || localId <= 0) {
+          throw new Error('Could not verify recipient project #' + projectId + ' on ' + (chain.name || chainNameOf(cid)) + '.');
+        }
+        out.projectId = BigInt(localId);
+      }
+      out.beneficiary = materializeChainValue(split.beneficiary, cid);
+      out.hook = materializeChainValue(split.hook, cid);
+      return out;
+    });
+  });
+  return byChain;
+}
+
+async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, setStatus, modal, groupId, groupIdForChain, expectedPrefill, sourceChainId) {
   var splitGroupId = groupId != null ? groupId : RESERVED_TOKEN_SPLIT_GROUP;
   groupIdForChain = groupIdForChain || function () { return splitGroupId; };
+  if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return; }
   if (!selectedChains.length) { setStatus('Select at least one chain', 'error'); return; }
   var payload = buildSplitsEditPayload(rows);
   if (payload.error) { setStatus(payload.error, 'error'); return; }
   var splits = payload.splits;
 
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
-  if (!account) return;
+  setStatus('Verifying recipient projects across chains…', 'pending');
+  var splitsByChain = await resolveSplitsEditByChain(splits, selectedChains, sourceChainId || project.chainId);
 
   // Each chain can have a different current ruleset ID and token-keyed payout group. Re-read the exact source
   // split set before replacing it: a stale/failed prefill must never turn into an accidental clear.
@@ -24737,22 +25773,25 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     groupMap[cid] = toBigInt(localGroup);
     controllerMap[cid] = liveController;
   }
-  function splitsForChain(cid) {
-    return splits.map(function (sp) {
-      var out = Object.assign({}, sp);
-      out.beneficiary = materializeChainValue(sp.beneficiary, cid);
-      out.hook = materializeChainValue(sp.hook, cid);
-      return out;
-    });
+  var shim = Object.assign({}, project, { chains: selectedChains });
+  var result = await runAuthorityActionAcrossChains(shim, selectedChains, operatorAddr, function (cid) {
+    var groups = [{ groupId: groupMap[cid], splits: splitsByChain[cid] }];
+    var args = [pidOn(project, cid), BigInt(ridMap[cid]), groups];
+    return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args }),
+      contract: 'JBController', abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args };
+  }, { label: 'Edit splits', title: 'Confirm edit splits', gas: 600000n, pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
+    summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts'], ['Recipients', splits.length ? splits.length + ' split' + (splits.length === 1 ? '' : 's') + ' (replaces the current set)' : 'none — clears the group']] } }, setStatus);
+
+  if (!result) return;
+  if (result.cancelled) { setStatus('Cancelled', ''); return; }
+  if (result.relayr) {
+    setStatus(result.resumed ? relayrRecoveredMessage(result.session) : ('Splits ' + (splits.length ? 'updated' : 'cleared') + ' on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '.'), 'success');
+  } else {
+    var skippedNote = result.skipped && result.skipped.length ? ' (skipped ' + result.skipped.join(', ') + ')' : '';
+    setStatus(result.executedReady
+      ? 'Splits updated on ' + result.executedReady + ' chain' + (result.executedReady === 1 ? '' : 's') + skippedNote + '.'
+      : 'Queued on ' + result.queued + ' chain' + (result.queued === 1 ? '' : 's') + skippedNote + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
   }
-
-  var relaySession = await runRelayrAcrossChains(selectedChains, account, function (cid) {
-    var groups = [{ groupId: groupMap[cid], splits: splitsForChain(cid) }];
-    return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: [pidOn(project, cid), BigInt(ridMap[cid]), groups] }) };
-  }, 600000n, setStatus, { label: 'Edit splits', title: 'Confirm edit splits', pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
-    summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts'], ['Recipients', splits.length ? splits.length + ' split' + (splits.length === 1 ? '' : 's') + ' (replaces the current set)' : 'none — clears the group']] } });
-
-  setStatus(relaySession && relaySession.resumed ? relayrRecoveredMessage(relaySession) : ('Splits ' + (splits.length ? 'updated' : 'cleared') + ' on ' + selectedChains.length + ' chain' + (selectedChains.length > 1 ? 's' : '') + '.'), 'success');
   setTimeout(function () { modal.close(); }, 1400);
   return true;
 }
@@ -24796,6 +25835,195 @@ function appendChainSplitBlock(container, splits, md, project, sym, isCurrent, p
   distFoot.appendChild(makeChainDistribute(project, pc, hasPending, isCurrent));
   block.appendChild(distFoot);
   container.appendChild(block);
+}
+
+async function readDistributionState(project, mode, chainId, acctKind) {
+  var projectId = pidOn(project, chainId);
+  if (mode === 'reserved') {
+    var controller = await controllerAddressFor(chainId, projectId);
+    var reservedState = await Promise.all([
+      clientFor(chainId).readContract({ address: controller, abi: pendingReservedAbi,
+        functionName: 'pendingReservedTokenBalanceOf', args: [projectId] }),
+      clientFor(chainId).readContract({ address: controller, abi: [{ type: 'function', name: 'TOKENS', stateMutability: 'view',
+        inputs: [], outputs: [{ type: 'address' }] }], functionName: 'TOKENS' }),
+    ]);
+    if (!isAddr(reservedState[1]) || sameAddr(reservedState[1], ZERO_ADDRESS)) throw new Error('Could not verify the reserved-token manager on ' + chainNameOf(chainId) + '.');
+    return { projectId: projectId, controller: controller, tokens: reservedState[1], pending: toBigInt(reservedState[0]) };
+  }
+  var acct = acctKind ? await resolveFundsKindAcct(chainId, projectId, acctKind) : await resolveAcctToken(chainId, projectId);
+  if (!acct) throw new Error('This token is not accepted on ' + chainNameOf(chainId) + '.');
+  var access = await readProjectPayoutAccess(project, chainId, acct);
+  return { projectId: projectId, controller: access.controller, terminal: access.term, token: acct.address,
+    decimals: acct.decimals, accountingCurrency: acct.currency, rulesetId: access.ruleset.id,
+    cycleNumber: access.ruleset.cycleNumber, limits: access.limits, acct: acct };
+}
+
+export function openDistributionAcrossChains(project, mode, acctKind) {
+  var chains = projectChains(project);
+  var isPayout = mode === 'payouts';
+  var label = isPayout ? 'Distribute payouts' : 'Distribute reserved tokens';
+  var scope = relayrActionScope(project, isPayout ? 'distribute-payouts' : 'distribute-reserved',
+    isPayout ? String(acctKind && (acctKind.key || acctKind.symbol) || 'primary') : undefined);
+  var content = el('div', 'modal-body operator-edit');
+  var note = el('div', 'operator-edit-across');
+  note.textContent = isPayout ? 'Choose each chain’s payout amount and limit currency. The current rules may require owner permission.'
+    : 'Send all pending reserved tokens on the chains you choose. Each chain uses its current reserved recipients.';
+  content.appendChild(note);
+  var saved = !!hasSelectedProjectAction(scope);
+  var busy = false;
+  var rows = [];
+  var status = el('div', 'operator-edit-status');
+  var setStatus = makeStatusSetter(status, 'operator-edit-status');
+  var submit = el('button', 'operator-cta');
+  var refresh = el('button', 'operator-cta'); refresh.textContent = 'Reload balances';
+  function sync() {
+    submit.textContent = saved ? 'Resume distribution' : label + ' on selected chains';
+    submit.disabled = busy || (!saved && !rows.some(function (row) { return row.check.checked; }));
+    refresh.disabled = busy || saved;
+    rows.forEach(function (row) {
+      row.check.disabled = busy || saved;
+      if (row.amount) {
+        row.amount.disabled = busy || saved || !row.live || !row.check.checked;
+        row.currency.disabled = row.amount.disabled;
+        row.max.disabled = row.amount.disabled;
+      }
+    });
+  }
+  function refreshRow(row) {
+    row.text.textContent = 'Reading current balance…'; row.live = null; sync();
+    return readDistributionState(project, mode, Number(row.chain.id), acctKind).then(function (live) {
+      row.live = live;
+      if (!isPayout) {
+        row.text.textContent = formatTokens(live.pending) + ' ' + (project.tokenSymbol || 'tokens') + ' pending';
+      } else {
+        var previous = row.currency.value;
+        row.currency.innerHTML = '';
+        live.limits.forEach(function (limit) {
+          var option = document.createElement('option'); option.value = String(limit.currency);
+          var meta = currencyMeta(limit.currency, live.acct);
+          option.textContent = meta.symbol + ' — available ' + formatCurrencyAmount(limit.available, meta);
+          row.currency.appendChild(option);
+        });
+        if (live.limits.some(function (limit) { return String(limit.currency) === previous; })) row.currency.value = previous;
+        row.text.textContent = live.limits.length ? 'Accounting token: ' + live.acct.symbol + ' (' + live.decimals + ' decimals)'
+          : 'No payout limit is configured for this token.';
+      }
+    }).catch(function (error) { row.text.textContent = errMessage(error, 'Could not read this chain.'); }).finally(sync);
+  }
+  chains.forEach(function (chain) {
+    var box = el('div', 'operator-chain-addresses');
+    var choice = el('label', 'splits-edit-chain');
+    var check = document.createElement('input'); check.type = 'checkbox'; check.checked = true;
+    choice.appendChild(check); choice.appendChild(chainLogo(chain.id, null));
+    choice.appendChild(document.createTextNode(chain.name || chainNameOf(chain.id))); box.appendChild(choice);
+    var row = { chain: chain, check: check, text: el('div', 'operator-edit-cur'), live: null };
+    box.appendChild(row.text);
+    if (isPayout) {
+      row.currency = document.createElement('select'); row.currency.className = 'field create-input';
+      row.currency.setAttribute('aria-label', 'Payout currency on ' + chainNameOf(chain.id)); box.appendChild(row.currency);
+      var amountLine = el('div', 'ops-inrow');
+      row.amount = el('input', 'ops-amount'); row.amount.type = 'text'; row.amount.inputMode = 'decimal'; row.amount.placeholder = 'Amount';
+      row.amount.setAttribute('aria-label', 'Payout amount on ' + chainNameOf(chain.id)); amountLine.appendChild(row.amount);
+      row.max = el('button', 'lp-max'); row.max.textContent = 'Max';
+      row.max.addEventListener('click', function () {
+        var limit = row.live && row.live.limits.find(function (value) { return String(value.currency) === row.currency.value; });
+        if (limit) row.amount.value = formatAmount(limit.available, row.live.decimals);
+      });
+      amountLine.appendChild(row.max); box.appendChild(amountLine);
+    }
+    check.addEventListener('change', sync); rows.push(row); content.appendChild(box);
+  });
+  var authorityChoice = el('label', 'splits-edit-chain'); authorityChoice.hidden = true;
+  var fromSafe = document.createElement('input'); fromSafe.type = 'checkbox';
+  authorityChoice.appendChild(fromSafe); authorityChoice.appendChild(document.createTextNode('Propose from the project Safe'));
+  content.appendChild(authorityChoice);
+  var authority = projectAuthorityAddress(project);
+  if (authority && !isSafeConnected()) {
+    fetchSafeInfoFresh(authority, project.chainId).then(function (info) {
+      var account = getAccount();
+      authorityChoice.hidden = !(info && account && info.owners.some(function (owner) { return sameAddr(owner, account); }));
+    }).catch(function () {});
+  }
+  content.appendChild(status);
+  var actions = el('div', 'operator-edit-actions'); actions.appendChild(refresh); actions.appendChild(submit); content.appendChild(actions);
+  var modal = openModal(label + ' across chains', content);
+  refresh.addEventListener('click', function () { rows.forEach(refreshRow); });
+  if (saved) setStatus('A saved distribution is available. Resume it before starting another.', 'pending');
+  else rows.forEach(refreshRow);
+  sync();
+
+  function validationSnapshot(value) {
+    var snapshot = {};
+    ['chainId', 'chainName', 'projectId', 'controller', 'terminal', 'token', 'tokens', 'decimals', 'accountingCurrency',
+      'rulesetId', 'cycleNumber', 'currency', 'amount'].forEach(function (key) {
+      if (value[key] != null) snapshot[key] = typeof value[key] === 'bigint' ? String(value[key]) : value[key];
+    });
+    return snapshot;
+  }
+  async function reverify(calls, chainId) {
+    for (var call of calls) {
+      if (chainId != null && Number(call.chainId) !== Number(chainId)) continue;
+      var original = call.validation;
+      if (!original) throw new Error('The saved distribution is missing its reviewed configuration.');
+      var live = await readDistributionState(project, mode, Number(call.chainId), acctKind);
+      if (isPayout) assertPayoutDistributionFresh(original, live);
+      else if (BigInt(live.projectId) !== BigInt(original.projectId) || !sameAddr(live.controller, original.controller) || !sameAddr(live.tokens, original.tokens)) {
+        throw new Error('The project controller or token manager changed on ' + chainNameOf(call.chainId) + '. Review the distribution again.');
+      }
+    }
+  }
+  submit.addEventListener('click', async function () {
+    if (busy) return;
+    if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return; }
+    busy = true; fromSafe.disabled = true; sync();
+    var selectedRows = rows.filter(function (row) { return row.check.checked; });
+    var selected = selectedRows.map(function (row) { return row.chain; });
+    try {
+      var result = await runSelectedProjectCalls(project, selected, async function (sender) {
+        var plans;
+        if (isPayout) {
+          var intents = selectedRows.map(function (row) {
+            if (!row.live || !row.currency.value) throw new Error('Load the payout configuration on ' + chainNameOf(row.chain.id) + '.');
+            return Object.assign({}, row.live, { chainId: Number(row.chain.id), chainName: chainNameOf(row.chain.id),
+              currency: BigInt(row.currency.value), amount: parseAmount(row.amount.value, row.live.decimals) });
+          });
+          plans = await preparePayoutDistributions(intents,
+            function (cid) { return readDistributionState(project, mode, cid, acctKind); },
+            async function (intent, args) {
+              var simulation = await clientFor(intent.chainId).simulateContract({ account: sender || getEffectiveAccount(),
+                address: intent.terminal, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', args: args });
+              return simulation.result;
+            });
+        } else plans = await prepareReservedDistributions(selected, function (cid) { return readDistributionState(project, mode, cid); });
+        var calls = plans.map(function (plan) {
+          var abi = isPayout ? sendPayoutsAbi : sendReservedAbi;
+          var fn = isPayout ? 'sendPayoutsOf' : 'sendReservedTokensToSplitsOf';
+          return { chainId: plan.chainId, to: isPayout ? plan.terminal : plan.controller,
+            data: encodeFunctionData({ abi: abi, functionName: fn, args: plan.args }), abi: abi, functionName: fn, args: plan.args,
+            contract: isPayout ? 'JBMultiTerminal' : 'JBController', validation: Object.assign(validationSnapshot(plan), { sender: sender }) };
+        });
+        return { calls: calls, reverify: function (cid) { return reverify(calls, cid); },
+          summary: { rows: plans.map(function (plan) {
+            return [plan.chainName, isPayout
+              ? formatAmount(plan.amount, plan.decimals) + ' ' + currencyMeta(plan.currency, plan.acct).symbol
+                + '; minimum ' + formatAmount(plan.minOut, plan.decimals) + ' ' + plan.acct.symbol
+              : formatTokens(plan.pending) + ' ' + (project.tokenSymbol || 'tokens') + ' pending'];
+          }) } };
+      }, { prepare: true, label: label, title: 'Review selected distributions', pendingScope: scope, gas: 700000n,
+        authorityAddr: fromSafe.checked ? authority : undefined, reverifySaved: reverify, verifyReceipt: verifyDistributionReceipt }, setStatus);
+      if (!result || result.cancelled) { setStatus('Cancelled', ''); return; }
+      if (result.relayr) {
+        setStatus(result.resumed ? relayrRecoveredMessage(result.session) : 'Distributions confirmed on the selected chains.', 'success');
+        notifyProjectUpdated(project);
+        acknowledgeSelectedProjectAction(scope);
+      } else {
+        setStatus(result.completed ? 'Safe distributions executed.' : 'Distributions proposed to the Safe. Execute them from its queue.', 'success');
+        if (result.completed) { notifyProjectUpdated(project); acknowledgeSelectedProjectAction(scope); }
+      }
+      setTimeout(function () { modal.close(); }, 1600);
+    } catch (error) { setStatus(errMessage(error, 'Could not complete the distributions.'), 'error'); }
+    finally { busy = false; saved = !!hasSelectedProjectAction(scope); fromSafe.disabled = false; sync(); }
+  });
 }
 
 // Per-chain Distribute button — calls sendReservedTokensToSplitsOf on that chain. Disabled (idle) unless
@@ -25092,57 +26320,84 @@ function fetchYouPosition(project) {
   }));
 }
 
-// Claim credits → ERC-20: mint the holder's unclaimed credits as transferable tokens. One Claim per
-// chain that has credits (each is a JBController.claimTokensFor tx on that chain). `creditRows` is the
-// held rows carrying a positive `credit`.
-function buildClaimModal(project, creditRows) {
+async function readCreditClaimState(project, chainId, holder) {
+  var projectId = pidOn(project, chainId);
+  var values = await Promise.all([
+    controllerAddressFor(chainId, projectId),
+    read(chainId, 'JBTokens', tokenOfAbi, 'tokenOf', [projectId]),
+    read(chainId, 'JBTokens', creditBalanceOfAbi, 'creditBalanceOf', [holder, projectId]),
+  ]);
+  return { projectId: projectId, controller: values[0], token: values[1], credit: values[2] };
+}
+
+// Claims are independent across destinations. The stable action is recovered before its lazy prepare
+// callback reads new balances, so a partial/unknown old claim can never become a fresh claim batch.
+export function buildClaimModal(project, creditRows) {
   var sym = project.tokenSymbol || 'tokens';
+  var chains = projectChains(project);
+  var scope = relayrActionScope(project, 'claim-credits');
+  var cached = {};
+  (creditRows || []).forEach(function (row) { cached[row.id] = row; });
   var wrap = el('div', 'modal-body');
   var intro = el('div', 'detail-card-body');
   intro.textContent = 'Claim your credits into transferable ' + sym + ' ERC-20 tokens. Credits and ERC-20s '
-    + 'have the same value; claiming just makes them transferable. Done per chain.';
+    + 'have the same value. Select the chains to claim; the review uses their current unclaimed balances.';
   wrap.appendChild(intro);
-
+  var selected = {}, inputs = [];
   var table = el('div', 'claim-rows');
-  creditRows.forEach(function (r) {
-    var rowEl = el('div', 'claim-row');
+  chains.forEach(function (chain) {
+    var row = cached[chain.id];
+    selected[chain.id] = !!(row && row.credit != null && row.credit > 0n);
+    var rowEl = el('label', 'claim-row');
+    var choose = document.createElement('input'); choose.type = 'checkbox'; choose.checked = selected[chain.id];
+    choose.setAttribute('aria-label', 'Claim on ' + (chain.name || chainNameOf(chain.id)));
+    choose.addEventListener('change', function () { selected[chain.id] = choose.checked; });
+    inputs.push(choose); rowEl.appendChild(choose);
     var chainCell = el('span', 'claim-row-chain');
-    chainCell.appendChild(chainLogo(r.id, null));
-    var nm = el('span', 'claim-row-chainname'); nm.textContent = r.name; chainCell.appendChild(nm);
+    chainCell.appendChild(chainLogo(chain.id, null));
+    var nm = el('span', 'claim-row-chainname'); nm.textContent = chain.name || chainNameOf(chain.id); chainCell.appendChild(nm);
     rowEl.appendChild(chainCell);
-    var amt = el('span', 'claim-row-amt'); amt.textContent = formatTokenCount(r.credit) + ' credits'; rowEl.appendChild(amt);
-    var btn = document.createElement('button'); btn.className = 'ops-action-btn claim-row-btn'; btn.textContent = 'Claim';
-    var status = el('span', 'claim-row-status');
-    btn.addEventListener('click', function () {
-      var holder = getAccount && getAccount();
-      if (!holder) { connect(); return; }
-      btn.disabled = true;
-      status.textContent = 'Verifying controller…';
-      var localPid = pidOn(project, r.id);
-      controllerAddressFor(r.id, localPid).then(function (ctrl) {
-      executeTransaction(Object.assign(buildClaimTokensArgs({ chainId: r.id, controllerAddr: ctrl, holder: holder, projectId: localPid, tokenCount: r.credit, beneficiary: holder }), {
-        label: 'Claim credits',
-        confirmSummary: { action: 'Claim credits', rows: [
-          ['Claiming', formatTokenCount(r.credit) + ' credits'],
-          ['You get', 'the same amount as transferable ' + sym + ' ERC-20'],
-          ['To', holder],
-          ['On chain', r.name],
-        ] },
-        onStatus: function (m, k) { status.classList.toggle('pending', k === 'pending'); status.textContent = m; },
-        onError: function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; },
-        onSuccess: function () {
-          status.classList.remove('pending'); status.textContent = 'Claimed on ' + r.name + '.';
-          btn.textContent = 'Claimed';
-          document.dispatchEvent(new CustomEvent('jb:bridge-updated')); // reloads the You card with fresh credit/ERC-20 split
-        },
-      }));
-      }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not verify the project controller.'); btn.disabled = false; });
-    });
-    rowEl.appendChild(btn);
-    rowEl.appendChild(status);
+    var amt = el('span', 'claim-row-amt');
+    amt.textContent = row && row.credit != null ? formatTokenCount(row.credit) + ' credits' : 'Balance checked before review';
+    rowEl.appendChild(amt);
     table.appendChild(rowEl);
   });
   wrap.appendChild(table);
+  var status = el('div', 'claim-row-status'); wrap.appendChild(status);
+  var setStatus = makeStatusSetter(status, 'claim-row-status');
+  var submit = document.createElement('button'); submit.className = 'ops-action-btn claim-selected-btn';
+  function updateButton() { submit.textContent = hasSelectedProjectAction(scope) ? 'Resume saved credit claims' : 'Claim selected credits'; }
+  updateButton(); wrap.appendChild(submit);
+  var busy = false;
+  submit.addEventListener('click', async function () {
+    if (busy) return;
+    busy = true; submit.disabled = true; inputs.forEach(function (input) { input.disabled = true; });
+    try {
+      var result = await runSelectedProjectCalls(project, chains, async function (holder) {
+        var chosen = chains.filter(function (chain) { return selected[chain.id]; });
+        setStatus('Verifying the current controller, token, and credits on each selected chain…', 'pending');
+        var reader = function (cid, account) { return readCreditClaimState(project, cid, account); };
+        var plans = await prepareCreditClaims(chosen, holder, reader);
+        return { chains: chosen, calls: plans, gas: 400000n,
+          reverify: function (cid) { return verifyCreditClaims(plans, reader, cid); },
+          summary: { rows: [['Holder and beneficiary', holder]].concat(plans.map(function (plan) {
+            return [plan.name, formatTokenCount(plan.tokenCount) + ' credits → ' + formatTokenCount(plan.tokenCount) + ' ' + sym + ' ERC-20'];
+          })) },
+        };
+      }, { prepare: true, pendingScope: scope, label: 'Claim credits', title: 'Claim selected credits',
+        reverifySaved: function (calls, cid) { return verifySavedCreditClaims(calls, function (chainId, holder) { return readCreditClaimState(project, chainId, holder); }, cid); },
+      }, setStatus);
+      if (!result || result.cancelled) { setStatus('Cancelled. Any saved claim request remains available to resume.', ''); return; }
+      if (result.completed) {
+        setStatus('Credit claim transactions confirmed.', 'success');
+        document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+        acknowledgeSelectedProjectAction(scope);
+      } else {
+        setStatus('Credit claims were proposed to your Safe. Confirm and execute them from the Safe queue.', 'pending');
+      }
+    } catch (error) { setStatus(errMessage(error, 'Could not claim credits.'), 'error'); }
+    finally { busy = false; submit.disabled = false; inputs.forEach(function (input) { input.disabled = false; }); updateButton(); }
+  });
   return wrap;
 }
 
@@ -25170,15 +26425,15 @@ function renderYouCard(project, opts) {
   wrap.appendChild(body);
   wrap.appendChild(actions);
 
-  // "Claim credits" — appended to the actions row, shown only when an ERC-20 exists AND the wallet holds
-  // unclaimed credits on some chain. `claimRows` is refreshed each load; the handler reads the latest.
+  // Keep saved claims reachable even after their credits have been consumed or a balance read fails.
   var claimRows = [];
+  var claimScope = relayrActionScope(project, 'claim-credits');
   var claimBtn = document.createElement('button');
   claimBtn.className = 'ops-action-btn ops-claim-btn';
   claimBtn.textContent = 'Claim credits';
   claimBtn.style.display = 'none';
   claimBtn.addEventListener('click', function () {
-    if (claimRows.length) openModal('Claim credits', buildClaimModal(project, claimRows));
+    openModal('Claim credits', buildClaimModal(project, claimRows));
   });
   actions.appendChild(claimBtn);
 
@@ -25205,6 +26460,7 @@ function renderYouCard(project, opts) {
       return;
     }
     actions.style.display = ''; // connected: reveal the action buttons
+    claimBtn.style.display = hasSelectedProjectAction(claimScope) ? '' : 'none';
     var headers = noLoans ? ['Chain', 'Balance', 'Cash out'] : ['Chain', 'Balance', 'Cash out', 'Max loan'];
     if (showLp) headers.push('LP');
     var status = skelOpsTable(headers, 2); body.appendChild(status);
@@ -25262,7 +26518,7 @@ function renderYouCard(project, opts) {
       var balanceComplete = rows.every(function (r) { return r.balance != null; });
       var held = rows.filter(function (r) { return r.balance && r.balance > 0n; });
       if (!held.length) {
-        claimRows = []; claimBtn.style.display = 'none';
+        claimRows = []; claimBtn.style.display = hasSelectedProjectAction(claimScope) ? '' : 'none';
         var none = el('div', 'detail-card-body you-empty');
         none.textContent = balanceComplete
           ? ('You don’t hold any ' + sym + ' yet.')
@@ -25300,7 +26556,7 @@ function renderYouCard(project, opts) {
       });
       // Reveal "Claim credits" when an ERC-20 exists and the wallet holds unclaimed credits somewhere.
       claimRows = held.filter(function (r) { return r.credit != null && r.credit > 0n; });
-      claimBtn.style.display = (project.tokenAddress && claimRows.length) ? '' : 'none';
+      claimBtn.style.display = (hasSelectedProjectAction(claimScope) || (project.tokenAddress && claimRows.length)) ? '' : 'none';
       var totBalSub = subFor(anyCredit, anyErc20);
       var totBalCell = !balanceComplete ? '—'
         : (totBalSub ? { main: formatTokenCount(totBal) + ' ' + sym, sub: totBalSub } : (formatTokenCount(totBal) + ' ' + sym));

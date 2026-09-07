@@ -54,7 +54,7 @@ describe('Relayr execution state', () => {
       { status: { state: 'Completed' } },
       { status: { state: 'Failed' } },
     ], 2)).toEqual({ confirmed: 1, failed: 1, pending: 0, total: 2, allFailed: false });
-    // allFailed is the receipt auto-discard rule: only when every expected chain terminally failed.
+    // allFailed summarizes API reports; it is not onchain proof permitting receipt deletion.
     expect(relayrProgress([
       { status: { state: 'Failed' } },
       { status: { state: 'Failed' } },
@@ -224,7 +224,7 @@ describe('Relayr execution state', () => {
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
 
-    const quoting = relayrPostBundle([{ chain: 84532, target: '0xtarget', data: '0x', value: '0' }]);
+    const quoting = relayrPostBundle([{ chain: 8453, target: RELAY_TARGET, data: '0x', value: '0' }]);
     const rejected = expect(quoting).rejects.toMatchObject({
       code: 'RELAYR_QUOTE_TIMEOUT',
       retryable: true,
@@ -255,6 +255,23 @@ describe('Relayr routing boundary', () => {
     expect(shouldUseRelayrForChains([{ id: 8453 }])).toBe(false);
     expect(shouldUseRelayrForChains([{ id: 8453 }, { id: 8453 }])).toBe(false);
     expect(shouldUseRelayrForChains([{ id: 8453 }, { id: 10 }])).toBe(true);
+    expect(shouldUseRelayrForChains([1, 10, 8453, 42161])).toBe(true);
+    expect(shouldUseRelayrForChains([8453, 10, 8453])).toBe(false);
+    expect(shouldUseRelayrForChains([84532, 11155420])).toBe(false);
+    expect(shouldUseRelayrForChains([8453, 84532])).toBe(false);
+    expect(shouldUseRelayrForChains([8453, 137])).toBe(false);
+    expect(shouldUseRelayrForChains([8453, NaN])).toBe(false);
+  });
+
+  it('rejects mixed or unsupported destination bundles before contacting Relayr', async () => {
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    try {
+      await expect(relayrPostBundle([
+        { chain: 8453, target: RELAY_TARGET, data: '0x', value: '0' },
+        { chain: 84532, target: RELAY_TARGET, data: '0x', value: '0' },
+      ])).rejects.toThrow(/mainnet destinations/);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
   });
 });
 
@@ -270,7 +287,6 @@ describe('Relayr pending receipt storage', () => {
       chains: [{ id: 84532, name: 'Base Sepolia' }],
       records: [{ status: { state: 'Pending', data: { transaction: { hash: '0xdestination' } } } }],
       itemCount: 2,
-      account: '0xoperator',
       createdAt: 123,
       signature: 'must-not-be-stored',
       calldata: 'must-not-be-stored',

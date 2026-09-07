@@ -26,7 +26,7 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrDestinationHash, relayrPostBundle, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
@@ -3282,7 +3282,7 @@ function renderDeploy(state, render) {
     var panel = el('div', 'create-success');
     var st = el('div', 'create-success-title'); st.textContent = (state.details.name || 'Your project') + ' is live'; panel.appendChild(st);
     var sub = el('div', 'create-success-sub');
-    sub.textContent = (isRev ? 'Revnet' : 'Project') + ' deployed on ' + state.chainIds.map(chainName).join(', ') + '.';
+    sub.textContent = (isRev ? 'Revnet' : 'Project') + ' deployed on ' + (state._deployedChains || state.chainIds).map(chainName).join(', ') + '.';
     panel.appendChild(sub);
     if (state.deployed && state.deployed.txHash) {
       var txp = el('div', 'create-success-sub'); txp.textContent = 'Transaction: ' + truncAddr(state.deployed.txHash);
@@ -3331,12 +3331,43 @@ function renderDeploy(state, render) {
   // Launch again, and make the only available action re-check that SAME bundle. Only hit localStorage when
   // there is no live session — during active polling this renders every tick.
   if (!state._relayrPending) state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
-  if (state._relayrPending) {
+  if (state._relayrPending && !state.quoteChoice) {
     wrap.appendChild(createRelayrReceiptNode(state._relayrPending, state.deploying, function () { deploy(state, render); }, function () {
       state._relayrPending = null; state.deployProgress = null;
       state.statusLines.push({ text: 'Saved Relayr receipt cleared. Review every chain before launching missing work.', err: true });
       render();
     }));
+    return wrap;
+  }
+
+  if (!state._directPending) state._directPending = loadCreateDirectSession();
+  if (state._directPending) {
+    var savedDirect = state._directPending;
+    var directNote = el('div', 'create-direct-receipt');
+    directNote.appendChild(infoNote('A direct launch is saved for ' + savedDirect.plans.map(function (p) { return chainName(p.chainId); }).join(', ') + '. Resume checks submitted transactions before offering the remaining exact launch calls.'));
+    savedDirect.plans.forEach(function (plan) {
+      var leg = el('div', 'create-hint');
+      leg.textContent = chainName(plan.chainId) + ': ' + ({ ready: 'Ready to launch', 'awaiting-wallet': 'Waiting for wallet', submitted: 'Awaiting confirmation', confirmed: 'Deployed' }[plan.status] || 'Needs checking');
+      if (plan.hash) {
+        var link = el('a'); link.textContent = ' ' + truncAddr(plan.hash); link.href = txExplorerUrl(plan.chainId, plan.hash); link.target = '_blank'; link.rel = 'noopener'; leg.appendChild(link);
+      }
+      directNote.appendChild(leg);
+    });
+    var resumeDirect = el('button', 'create-btn primary'); resumeDirect.textContent = state.deploying ? 'Checking launch…' : 'Resume saved launch'; resumeDirect.disabled = state.deploying;
+    resumeDirect.addEventListener('click', function () { deploy(state, render); }); directNote.appendChild(resumeDirect);
+    if (savedDirect.plans.every(function (plan) { return plan.status === 'ready' && !plan.hash && !(plan.failedHashes || []).length; })) {
+      var discardDirect = el('button', 'create-btn ghost'); discardDirect.textContent = 'Discard unsubmitted launch'; discardDirect.disabled = state.deploying;
+      discardDirect.addEventListener('click', async function () {
+        if (!navigator.locks || !navigator.locks.request) return;
+        await navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+          var latest = loadCreateDirectSession(true);
+          if (lock && latest && latest.id === savedDirect.id && latest.plans.every(function (plan) { return plan.status === 'ready' && !plan.hash && !(plan.failedHashes || []).length; })) clearCreateDirectSession(state);
+          else state.statusLines.push({ text: 'This launch is active or has changed in another window. Check its saved transactions before continuing.', err: true });
+          render();
+        });
+      }); directNote.appendChild(discardDirect);
+    }
+    wrap.appendChild(directNote);
     return wrap;
   }
 
@@ -3346,13 +3377,16 @@ function renderDeploy(state, render) {
     var qc = el('div', 'create-quote-choice');
     var qh = el('div', 'create-label'); qh.textContent = 'Pay gas once to deploy on every chain'; qc.appendChild(qh);
     var qSel = el('select', 'field create-input'); qSel.style.width = 'auto'; qSel.style.minWidth = '0';
+    qSel.setAttribute('aria-label', 'Funding chain');
+    var qPlaceholder = el('option'); qPlaceholder.value = ''; qPlaceholder.textContent = 'Choose a funding chain'; qPlaceholder.disabled = true; qPlaceholder.selected = true; qSel.appendChild(qPlaceholder);
     state.quoteChoice.options.forEach(function (o, i) {
-      var op = el('option'); op.value = String(i); op.textContent = o.chain + ' — ~' + o.eth + ' ETH'; qSel.appendChild(op);
+      var op = el('option'); op.value = String(i); op.textContent = o.chain + ' — ' + o.eth + ' ETH'; qSel.appendChild(op);
     });
     qc.appendChild(qSel);
     var qFoot = el('div', 'create-modal-foot'); qFoot.style.marginTop = '10px';
-    var qPay = el('button', 'create-btn primary'); qPay.textContent = 'Pay & deploy';
-    qPay.addEventListener('click', function () { var i = Number(qSel.value) || 0; var o = state.quoteChoice && state.quoteChoice.options[i]; if (o && state.quoteChoice) state.quoteChoice.resolve(o.opt); });
+    var qPay = el('button', 'create-btn primary'); qPay.textContent = 'Pay & deploy'; qPay.disabled = true;
+    qSel.addEventListener('change', function () { qPay.disabled = qSel.value === ''; });
+    qPay.addEventListener('click', function () { if (qSel.value === '') return; var i = Number(qSel.value); var o = state.quoteChoice && state.quoteChoice.options[i]; if (o && state.quoteChoice) state.quoteChoice.resolve(o.opt); });
     var qCancel = el('button', 'create-btn ghost'); qCancel.textContent = 'Cancel';
     qCancel.addEventListener('click', function () { state.quoteChoice && state.quoteChoice.resolve(null); });
     qFoot.appendChild(qCancel); qFoot.appendChild(qPay);
@@ -3896,8 +3930,158 @@ function relayrChainStatus(t) {
 }
 
 var CREATE_RELAYR_SCOPE = 'create-project';
+var CREATE_DIRECT_KEY = 'jb-create-direct-launch';
+var createDirectMemory = null;
+
+function loadCreateDirectSession(refresh) {
+  if (createDirectMemory && !refresh) return createDirectMemory;
+  var stored;
+  try { stored = localStorage.getItem(CREATE_DIRECT_KEY); } catch (_) { return createDirectMemory; }
+  try {
+    if (!stored) { if (refresh) createDirectMemory = null; return null; }
+    var session = JSON.parse(stored, function (_, value) {
+      return value && typeof value === 'object' && typeof value.createBigInt === 'string' ? BigInt(value.createBigInt) : value;
+    });
+    if (!session || !isAddr(session.account) || !Array.isArray(session.plans) || !session.plans.length) throw new Error('Invalid saved launch');
+    if (createDirectMemory && createDirectMemory.id === session.id && createDirectMemory.revision >= session.revision) return createDirectMemory;
+    createDirectMemory = session;
+    return session;
+  } catch (_) {
+    // Do not silently replace a launch when its receipt cannot be recovered.
+    throw new Error('The saved direct launch cannot be read. Recover its transactions before creating another project.');
+  }
+}
+
+function saveCreateDirectSession(state, session) {
+  if (!session.id) session.id = crypto.randomUUID();
+  session.revision = (session.revision || 0) + 1;
+  createDirectMemory = session;
+  state._directPending = session;
+  try {
+    localStorage.setItem(CREATE_DIRECT_KEY, JSON.stringify(session, function (_, value) {
+      return typeof value === 'bigint' ? { createBigInt: value.toString() } : value;
+    }));
+  } catch (_) {
+    throw new Error('The exact launch calls could not be saved. Keep this window open and restore browser storage before continuing.');
+  }
+}
+
+function clearCreateDirectSession(state) {
+  localStorage.removeItem(CREATE_DIRECT_KEY);
+  createDirectMemory = null;
+  state._directPending = null;
+}
+
+// Every retry uses the saved calldata, salt, fees, and shared stage start. Submitted legs must be
+// identified onchain before any more calls can be sent; an RPC error never means a leg is retryable.
+async function verifyCreateDirectLeg(session, plan) {
+  var pub = createPublicClientForChain(plan.chainId);
+  var results = await Promise.all([pub.getTransactionReceipt({ hash: plan.hash }), pub.getTransaction({ hash: plan.hash })]);
+  var receipt = results[0], tx = results[1];
+  var calldata = encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args });
+  if (!tx || !receipt || !tx.to || !tx.from || tx.to.toLowerCase() !== plan.address.toLowerCase()
+    || tx.from.toLowerCase() !== session.account.toLowerCase() || (tx.input || '').toLowerCase() !== calldata.toLowerCase()
+    || BigInt(tx.value) !== BigInt(plan.value) || String(receipt.transactionHash).toLowerCase() !== plan.hash.toLowerCase()
+    || (tx.chainId != null && Number(tx.chainId) !== Number(plan.chainId))) {
+    throw new Error('The submitted transaction on ' + chainName(plan.chainId) + ' does not match the saved launch. No launch was resubmitted.');
+  }
+  if (receipt.status === 'success') plan.status = 'confirmed';
+  else if (receipt.status === 'reverted') {
+    plan.failedHashes = (plan.failedHashes || []).concat([plan.hash]);
+    plan.hash = null;
+    plan.status = 'ready';
+  } else throw new Error('The launch on ' + chainName(plan.chainId) + ' is still awaiting confirmation.');
+}
+
+async function runCreateDirectSession(state, session, resumed) {
+  if (!navigator.locks || !navigator.locks.request) throw new Error('This browser cannot coordinate a saved launch across windows. Use a browser with Web Locks support for multichain direct creation.');
+  return navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock) {
+    if (!lock) throw new Error('This launch is active in another window. Continue there or close that window before resuming.');
+    var latest = loadCreateDirectSession(true);
+    if (!latest && session.id) throw new Error('This saved launch was cleared in another window. Check its transactions before continuing.');
+    if (latest && latest.id !== session.id) {
+      state._directPending = latest;
+      state._push('Another launch was saved while this review was open. Resume that saved launch before starting another project.');
+      return false;
+    }
+    session = latest || session;
+    saveCreateDirectSession(state, session);
+    return executeCreateDirectSession(state, session, resumed);
+  });
+}
+
+async function executeCreateDirectSession(state, session, resumed) {
+  var push = state._push;
+  for (var i = 0; i < session.plans.length; i++) {
+    var checked = session.plans[i];
+    if (checked.hash) {
+      push('Checking the saved launch on ' + chainName(checked.chainId) + '…');
+      await verifyCreateDirectLeg(session, checked);
+      saveCreateDirectSession(state, session);
+    } else if (checked.status === 'awaiting-wallet') {
+      throw new Error('A wallet request on ' + chainName(checked.chainId) + ' was interrupted before its transaction hash was saved. Check that wallet’s transactions before continuing; this launch will not be resubmitted.');
+    } else if (checked.status !== 'ready') {
+      throw new Error('A saved launch is missing its transaction hash. Recover that transaction before continuing.');
+    }
+  }
+  var remaining = session.plans.filter(function (plan) { return plan.status !== 'confirmed'; });
+  if (remaining.length) {
+    var signer = getAccount();
+    if (!signer || signer.toLowerCase() !== session.account.toLowerCase()) throw new Error('Connect ' + session.account + ' to resume the saved launch.');
+    if (isSafeConnected()) throw new Error('Multichain direct launches require a wallet that can confirm each chain’s transaction.');
+    if (resumed) {
+      var reviewed = await confirmTransactionModal({
+        action: 'Resume saved project launch',
+        transactions: remaining.map(function (plan) { return {
+          chainId: plan.chainId, chain: chainName(plan.chainId), address: plan.address,
+          'function': plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value.toString(),
+          calldata: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args }),
+        }; }),
+      }, { title: 'Review remaining launch transactions', confirmText: 'Confirm & continue',
+        note: 'These are the saved launch calls with the original shared start time. Confirmed chains are skipped. Each remaining chain requires its own transaction and gas.' });
+      if (!reviewed || (typeof reviewed === 'object' && !reviewed.ok)) return false;
+    }
+    // Catch any configuration/fee failures across all remaining chains before submitting the next leg.
+    for (var j = 0; j < remaining.length; j++) {
+      var pending = remaining[j];
+      push('Simulating the saved launch on ' + chainName(pending.chainId) + '…');
+      await simulateTransaction({ chainId: pending.chainId, address: pending.address, abi: pending.abi,
+        functionName: pending.functionName || 'launchProjectFor', args: pending.args, value: pending.value, account: session.account });
+    }
+    for (var k = 0; k < remaining.length; k++) {
+      var plan = remaining[k];
+      if (!getAccount() || getAccount().toLowerCase() !== session.account.toLowerCase()) throw new Error('Connected account changed. Reconnect the launching wallet to continue.');
+      plan.status = 'awaiting-wallet';
+      saveCreateDirectSession(state, session);
+      push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
+      try {
+        var hash = await execTx({ chainId: plan.chainId, address: plan.address, abi: plan.abi,
+          functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value, skipConfirm: true,
+          trackSavedLaunch: true,
+          onStatus: function (message, kind, meta) {
+            if (meta && meta.hash) { plan.hash = meta.hash; plan.status = 'submitted'; saveCreateDirectSession(state, session); }
+            push(message, kind);
+          },
+        });
+        if (!hash) throw new Error('The wallet did not return an onchain transaction hash. Check its activity before continuing.');
+        plan.hash = hash; plan.status = 'submitted'; saveCreateDirectSession(state, session);
+        await verifyCreateDirectLeg(session, plan);
+        saveCreateDirectSession(state, session);
+        if (plan.status !== 'confirmed') throw new Error('The launch on ' + chainName(plan.chainId) + ' reverted. Resume to review the remaining calls.');
+      } catch (error) {
+        // Only an explicit wallet rejection establishes that an un-hashed request was not submitted.
+        if (!plan.hash && error.userRejected === true) { plan.status = 'ready'; saveCreateDirectSession(state, session); }
+        throw error;
+      }
+    }
+  }
+  await captureDeployed(state, session.plans[0].chainId, session.plans[0].hash);
+  state._deployedChains = session.plans.map(function (plan) { return plan.chainId; });
+  clearCreateDirectSession(state);
+}
 
 async function monitorCreateRelayr(state, session, resumed) {
+  if (session.paymentState === 'publication') throw new Error('A signed launch bundle was submitted for a quote, but its publication outcome is unknown. Keep the saved requests and recover that bundle before signing another launch.');
   var expected = Math.max(1, Number(session.expectedCount) || (session.chains && session.chains.length) || (state.chainIds || []).length || 1);
   session.expectedCount = expected;
   function persist(records) {
@@ -3940,23 +4124,29 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
     stateLabel: function (record) { var s = relayrChainStatus(record); return { text: s.label, kind: s.kind }; },
     chainNameOf: chainName,
     noteText: paymentExpired
-      ? 'The payment transaction was confirmed, but Relayr did not recognize it before the quote expired. Nothing deployed. Keep the payment hash and bundle ID for support; clear this receipt only when you are ready to create a new quote.'
+      ? 'The Relayr quote expired. Keep the payment hash and bundle ID, and review every destination before creating a new quote.'
+      : session.paymentState === 'publication'
+      ? 'Signed launch requests were submitted for a quote, but the response was not captured. Recover that bundle before signing or funding another launch.'
+      : session.paymentState === 'quoted'
+      ? 'This launch already has a quote. Continue uses the same signed requests and funding options saved in this window.'
+      : session.paymentState === 'sending'
+      ? 'The wallet payment request was started, but its transaction hash has not been captured. Check the wallet’s activity and this same bundle before starting another launch.'
       : progress.failed
       ? 'Some chain outcomes may differ. Nothing was resubmitted—review the project state before clearing this receipt or retrying missing work.'
       : (session.persisted === false
-        ? 'The payment transaction confirmed, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never signs or pays again.'
-        : 'The payment transaction confirmed. It is safe to close this window; checking status never signs, pays, or creates another bundle.'),
+        ? 'The payment was submitted, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never signs or pays again.'
+        : 'The payment receipt is saved. Checking status never signs, pays, or creates another bundle.'),
   });
   var action = el('button', 'create-btn ghost'); action.type = 'button'; action.style.marginTop = '10px';
   if (paymentExpired || progress.failed) {
     action.textContent = 'Clear saved receipt';
     action.addEventListener('click', function () {
       if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already deployed. Review every chain before launching any missing work.')) return;
-      clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
+      clearRelayrPendingSession(CREATE_RELAYR_SCOPE, session);
       if (onClear) onClear();
     });
   } else {
-    action.disabled = !!checking; action.textContent = checking ? 'Checking Relayr…' : 'Check Relayr status';
+    action.disabled = !!checking; action.textContent = checking ? 'Checking Relayr…' : session.paymentState === 'quoted' ? 'Choose funding chain' : 'Check Relayr status';
     action.addEventListener('click', onCheck);
   }
   panel.appendChild(action);
@@ -3964,6 +4154,7 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
 }
 
 function deploy(state, render) {
+  if (state.deploying) return;
   state.statusLines = [];
   state.done = false;
   state._render = render; // so async deploy progress (relayr poll) can re-render outside the push() log
@@ -3972,6 +4163,12 @@ function deploy(state, render) {
   var pendingRelayr = state._relayrPending || loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
   if (pendingRelayr) {
     state._relayrPending = pendingRelayr;
+    beginDeployRun(state, render, null);
+    return;
+  }
+  var pendingDirect = state._directPending || loadCreateDirectSession();
+  if (pendingDirect) {
+    state._directPending = pendingDirect;
     beginDeployRun(state, render, null);
     return;
   }
@@ -3994,6 +4191,12 @@ function deploy(state, render) {
   }
   if (!state.tos || !(state.chainIds || []).length || !state.details.name) {
     state.statusLines.push({ text: 'Complete the required deploy fields and risk confirmation before launching.', err: true }); render(); return;
+  }
+  if (new Set(state.chainIds.map(Number)).size !== state.chainIds.length) {
+    state.statusLines.push({ text: 'Select each destination chain only once.', err: true }); render(); return;
+  }
+  if (state.chainIds.length > 1 && !relayrSupportsChains(state.chainIds) && isSafeConnected()) {
+    state.statusLines.push({ text: 'Multichain testnet launches require a wallet that can confirm each chain’s transaction. A Safe can launch one chain at a time.', err: true }); render(); return;
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
@@ -4033,15 +4236,22 @@ async function runDeploy(state, owner) {
   // deploy() has already resolved any persisted session into state._relayrPending before reaching here.
   var restoredRelayr = state._relayrPending;
   if (restoredRelayr) {
+    if (restoredRelayr.paymentState === 'quoted') {
+      var restoredQuote = relayrResumeQuotedBundle(CREATE_RELAYR_SCOPE);
+      if (!restoredQuote) throw new Error('The saved quote’s funding options are unavailable after this reload. Verify the existing bundle externally before starting another launch; no new requests will be signed.');
+      return fundCreateRelayrQuote(state, restoredRelayr.account, restoredQuote, restoredRelayr.chains);
+    }
     push('Checking the saved paid Relayr bundle — no new transaction will be created.');
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
     await captureDeployed(state, restoredChain, relayrDestinationHash(restoredTxs[0]));
-    clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
+    state._deployedChains = restoredRelayr.chains.map(function (chain) { return Number(chain.id); });
+    clearRelayrPendingSession(CREATE_RELAYR_SCOPE, restoredRelayr);
     state._relayrPending = null;
     return;
   }
+  if (state._directPending) return runCreateDirectSession(state, state._directPending, true);
   // 1) Pin metadata (best-effort).
   var projectUri = '';
   if (hasPinata()) {
@@ -4115,6 +4325,7 @@ async function runDeploy(state, owner) {
   // is the per-chain calldata that gets wrapped into ERC-2771 forward requests and posted to Relayr for a
   // quote; for single chain it's the wallet transaction. Simulation runs only AFTER the user confirms.
   var multichain = plans.length > 1;
+  var useRelayr = multichain && relayrSupportsChains(plans.map(function (plan) { return plan.chainId; }));
   var reviewPayload = {
     action: (state.projectType === 'revnet' ? 'Deploy revnet' : 'Launch project') + ' on ' + plans.map(function (p) { return chainName(p.chainId); }).join(', '),
     transactions: plans.map(function (p) {
@@ -4145,14 +4356,15 @@ async function runDeploy(state, owner) {
     ].filter(Boolean),
   };
   var reviewOk = await confirmTransactionModal(reviewPayload, {
-    title: multichain ? 'Review the raw data sent to Relayr' : 'Review the transaction',
+    title: useRelayr ? 'Review the raw data sent to Relayr' : 'Review the transaction' + (multichain ? 's' : ''),
     confirmText: multichain ? 'Confirm & simulate' : (isRev ? 'Confirm & deploy' : 'Confirm & launch'),
     keepOpenForProgress: !multichain,
-    steps: multichain
+    steps: useRelayr
       ? plans.map(function (p) { return 'Sign for ' + chainName(p.chainId); }).concat(['Pay the relay fee once'])
-      : [(isRev ? 'Deploy the revnet' : 'Launch the project') + ' on ' + chainName(plans[0].chainId)],
-    note: multichain
+      : plans.map(function (p) { return (isRev ? 'Deploy the revnet' : 'Launch the project') + ' on ' + chainName(p.chainId); }),
+    note: useRelayr
       ? 'This is the exact per-chain calldata that will be wrapped into ERC-2771 forward requests and sent to Relayr for a quote. Nothing is signed or sent until you confirm — simulation runs next, then you pay once.'
+      : multichain ? 'These exact transactions will be sent in sequence. Each chain requires its own wallet confirmation and gas. The shared launch configuration is saved so interrupted launches can resume without redeploying confirmed chains.'
       : 'This is the exact transaction. Nothing is sent until you confirm — it’s simulated next, then sent to your wallet to sign.',
   });
   if (!reviewOk || (typeof reviewOk === 'object' && !reviewOk.ok)) { push('Launch cancelled — nothing was simulated or sent.'); return false; }
@@ -4185,6 +4397,11 @@ async function runDeploy(state, owner) {
     return;
   }
 
+  if (!useRelayr) {
+    var directSession = { account: signer, plans: plans.map(function (plan) { return Object.assign({}, plan, { hash: null, status: 'ready' }); }) };
+    return runCreateDirectSession(state, directSession, false);
+  }
+
   // Multichain → Relayr (two-step, like revnet-app). We DON'T eth_call-simulate locally — Relayr simulates
   // each chain server-side and only returns a quote if every leg would succeed. Sign one request per chain,
   // post the bundle for a quote, let the user CHOOSE which chain to pay gas on, then pay once.
@@ -4198,44 +4415,65 @@ async function runDeploy(state, owner) {
     txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, data, gas, pk.value));
   }
   push('Sending to Relayr to simulate + quote…');
-  var quote = await relayrPostBundle(txs);
-  var options = (quote.payment_info || []).slice().sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : 1; });
+  var quote;
+  try {
+    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, chains: plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }) });
+  } catch (error) {
+    state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
+    throw error;
+  }
+  state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  return fundCreateRelayrQuote(state, signer, quote, plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }));
+}
+
+async function fundCreateRelayrQuote(state, signer, quote, chains) {
+  var push = state._push;
+  if (!signer || !getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connect the original launching wallet to fund this saved quote.');
+  var options = relayrPaymentOptions(quote);
   if (!options.length) throw new Error('Relayr returned no payment options.');
   // Step 2: let the user pick a pay option from the quote (cheapest first), then pay it.
   var pay = await new Promise(function (resolve) {
     state.quoteChoice = {
-      options: options.map(function (o) { return { opt: o, chain: chainName(o.chain), eth: (+formatEther(BigInt(o.amount))).toFixed(5) }; }),
+      options: options.map(function (o) { return { opt: o, chain: chainName(o.chain), eth: formatEther(BigInt(o.amount)) }; }),
       resolve: function (o) { state.quoteChoice = null; resolve(o); },
     };
     push('Relayr quoted ' + options.length + ' pay option' + (options.length > 1 ? 's' : '') + ' — choose where to pay gas once to fund all chains.');
   });
-  if (!pay) { push('Cancelled — nothing was paid (the signed requests expire unused).'); return false; }
+  if (!pay) { push('Funding cancelled. The same saved quote remains available in this window.'); return false; }
   var wallet = getWalletClient();
   var cur = await wallet.getChainId();
   if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
-  push('Pay once on ' + chainName(pay.chain) + ' (~' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
+  push('Pay once on ' + chainName(pay.chain) + ' (' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
   var paidSession = {
+    account: signer,
     bundleUuid: quote.bundle_uuid,
     paymentHash: null,
     paymentChainId: Number(pay.chain),
-    expectedCount: plans.length,
+    expectedCount: chains.length,
     expectedTransactions: quote.expected_transactions,
-    chains: plans.map(function (p) { return { id: p.chainId, name: chainName(p.chainId) }; }),
+    chains: chains,
     records: [],
   };
   var payHash = await relayrPay(pay, signer, function (hash) {
     paidSession.paymentHash = hash;
+    paidSession.paymentState = null;
     state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
-  }, quote.bundle_uuid);
+  }, quote.bundle_uuid, undefined, function () {
+    requireUnpaidRelayrSession(CREATE_RELAYR_SCOPE, quote.bundle_uuid);
+    paidSession.paymentState = 'sending';
+    state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
+    if (state._relayrPending.persisted === false) throw new Error('The payment request could not be saved. Restore browser storage before funding this quote.');
+  });
   paidSession.paymentHash = payHash;
   push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
   // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
   // index to the chains we deployed, and render a friendly per-chain checklist (see renderDeploy).
-  state.deployChains = plans.map(function (p) { return p.chainId; });
+  state.deployChains = chains.map(function (chain) { return Number(chain.id); });
   var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
-  await captureDeployed(state, plans[0].chainId, relayrDestinationHash(finalRelayrTxs[0]));
-  clearRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  await captureDeployed(state, Number(chains[0].id), relayrDestinationHash(finalRelayrTxs[0]));
+  state._deployedChains = state.deployChains.slice();
+  clearRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession);
   state._relayrPending = null;
 }
 
@@ -4264,8 +4502,13 @@ function creationFeeOf(chainId) {
 function execTx(opts) {
   return new Promise(function (resolve, reject) {
     executeTransaction(Object.assign({}, opts, {
+      onStatus: function (message, kind, meta) {
+        try { if (opts.onStatus) opts.onStatus(message, kind, meta); }
+        catch (error) { reject(error); return; }
+        if (opts.trackSavedLaunch && meta && meta.trackingError) reject(new Error('The transaction was submitted, but confirmation is unavailable. Check the saved launch before continuing.'));
+      },
       onSuccess: function (m, meta) { resolve((meta && meta.hash) || null); },
-      onError: function (m) { reject(new Error(m)); },
+      onError: function (m, meta) { var error = new Error(m); error.userRejected = !!(meta && meta.userRejected && !meta.submittedHash); reject(error); },
     }));
   });
 }
@@ -5268,6 +5511,7 @@ function ipfsHttp(uri) {
 }
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
+  renderDeploy, runDeploy, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
   suckerConfigFor, tokenMappingFor,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,

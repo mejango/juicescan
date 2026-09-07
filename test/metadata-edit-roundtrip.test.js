@@ -203,9 +203,10 @@ describe('edit-project modal wiring (source contract)', () => {
 
   it('fails closed when the live projectUri JSON cannot be loaded (both setUriOf writers)', () => {
     expect(discoverSrc).toMatch(/Could not load the current project metadata/);
-    // Definition + the two setUriOf writers (edit-project modal, add-store-categories) routing through it.
-    const uses = discoverSrc.match(/loadLiveProjectMetadata\(/g) || [];
+    // Both writers use the shared preparation boundary, which loads every destination before pinning.
+    const uses = discoverSrc.match(/prepareProjectMetadataUpdates\(/g) || [];
     expect(uses.length).toBeGreaterThanOrEqual(3);
+    expect(discoverSrc).toMatch(/deps\.loadMetadata \|\| loadLiveProjectMetadata/);
   });
 
   it('has a Payment notice editor writing the same payDisclosure key the create flow writes', () => {
@@ -228,19 +229,21 @@ describe('edit-project modal wiring (source contract)', () => {
   it('the modal fails closed: the textarea loads from loadLiveProjectMetadata and the save is blocked before it resolves', () => {
     // The modal's own prefetch routes through the fail-closed loader (in addition to the two writers).
     const uses = discoverSrc.match(/loadLiveProjectMetadata\(/g) || [];
-    expect(uses.length).toBeGreaterThanOrEqual(4);
+    expect(uses.length).toBeGreaterThanOrEqual(2);
     expect(discoverSrc).toMatch(/Still loading the current project metadata/);
     expect(discoverSrc).toMatch(/Loading current metadata/);
   });
 
   it('the save path parses the textarea via parseProjectCustomProperties and feeds mergeProjectMetadataEdit', () => {
     expect(discoverSrc).toMatch(/parseProjectCustomProperties\(/);
-    expect(discoverSrc).toMatch(/mergeProjectMetadataEdit\(meta, \[[\s\S]{0,900}\], form\.customProperties\)/);
+    expect(discoverSrc).toMatch(/mergeProjectMetadataForm\(meta, form, newLogoUri\)/);
+    expect(discoverSrc).toMatch(/mergeMetadataMapPatch\(current, baseline, edited\)/);
   });
 
   it('the add-store-categories writer never touches custom properties', () => {
     const fn = discoverSrc.slice(discoverSrc.indexOf('async function addStoreCategories'), discoverSrc.indexOf('function renderTierCard'));
-    expect(fn).toMatch(/loadLiveProjectMetadata\(/);
+    expect(fn).toMatch(/prepareProjectMetadataUpdates\(/);
+    expect(fn).toMatch(/appendProjectCategoriesAcrossChains\(/);
     expect(fn).not.toMatch(/customProperties/);
   });
 

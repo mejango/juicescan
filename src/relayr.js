@@ -25,6 +25,31 @@ var RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15 * 1000;
 // Consecutive 404s that prove the uuid was never Relayr's rather than a single blip from the gateway.
 var RELAYR_NOT_FOUND_ATTEMPTS = 3;
 var RELAYR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+var RELAYR_KNOWN_QUOTES = new Map();
+var RELAYR_QUOTED_REQUESTS = new Map();
+var RELAYR_SIGNED_FORWARD_REQUESTS = new Map();
+var RELAYR_NONCE_RESERVATIONS_KEY = 'jb-relayr-forwarder-nonces-v1';
+var RELAYR_PUBLICATION_LOCK = {};
+
+// Exact quotes remain in memory only. After reload the durable marker prevents fresh signatures, while
+// callers explain that an unpaid quote cannot be reconstructed automatically from its fingerprints.
+export function relayrResumeQuotedBundle(scope) {
+  var session = loadRelayrPendingSession(scope);
+  if (!session || session.paymentState !== 'quoted') return null;
+  var quote = RELAYR_KNOWN_QUOTES.get(relayrPendingStorageKey(scope, session));
+  return quote && quote.bundle_uuid === session.bundleUuid ? quote : null;
+}
+
+// Called inside the payment Web Lock immediately before persisting the sending marker. A second review
+// of the same bundle must not overwrite a payment that another window already submitted.
+export function requireUnpaidRelayrSession(scope, bundleUuid) {
+  var session = loadRelayrPendingSession(scope);
+  if (!session || session.bundleUuid !== bundleUuid || session.paymentState !== 'quoted' || session.paymentHash) {
+    var pending = new Error('This Relayr payment is already pending or its saved quote changed. Check the original request before paying again.');
+    pending.code = 'RELAYR_PENDING_CONFLICT'; throw pending;
+  }
+  return session;
+}
 
 // Relayr's prepaid-native payment endpoint is deliberately pinned client-side. A quote is an untrusted HTTP
 // response: accepting an arbitrary `target` + `calldata` here would turn a compromised API into a wallet
@@ -37,6 +62,16 @@ export var RELAYR_PAYMENT_SELECTOR = '0x103903a7';
 export var RELAYR_PAYMENT_CODE_HASH = '0x6006b5acadb4cd60aa5c00cb844c34563e182dff83d4f4ff4fde226f7df16fa6';
 export var RELAYR_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 var RELAYR_PAYMENT_CHAINS = new Set([1, 10, 8453, 42161]);
+export function relayrSupportsChain(chainId) {
+  return Number.isSafeInteger(Number(chainId)) && RELAYR_PAYMENT_CHAINS.has(Number(chainId));
+}
+
+// Ordinary forwarded bundles have one independent request per supported destination. Multiple requests
+// for the same sender on one chain would otherwise sign the same live forwarder nonce.
+export function relayrSupportsChains(chainIds) {
+  return Array.isArray(chainIds) && chainIds.length > 0 && chainIds.every(relayrSupportsChain)
+    && new Set(chainIds.map(Number)).size === chainIds.length;
+}
 var RELAYR_PAYMENT_GAS = 150000n;
 var RELAYR_PAYMENT_CODE_MAX_BYTES = 2048;
 
@@ -90,6 +125,16 @@ export function relayrPaymentDetails(payment, expectedBundleUuid, nowSeconds) {
   var now = Number.isSafeInteger(nowSeconds) ? nowSeconds : Math.floor(Date.now() / 1000);
   if (deadline <= BigInt(now + 15)) throw new Error('This Relayr quote expired. Review the action again for a new quote.');
   return { chainId: chainId, target: RELAYR_PAYMENT_ADDRESS, amount: amount, calldata: calldata, bundleUuid: bundleUuid, deadline: deadline };
+}
+
+// Authenticate and snapshot every displayed option before a user chooses where to fund the bundle.
+export function relayrPaymentOptions(quote) {
+  if (!quote || !Array.isArray(quote.payment_info) || !quote.payment_info.length) throw new Error('Relayr returned no payment option.');
+  return quote.payment_info.map(function (payment) {
+    var details = relayrPaymentDetails(payment, quote.bundle_uuid);
+    return Object.freeze({ chain: details.chainId, target: details.target, token: RELAYR_NATIVE_TOKEN,
+      amount: details.amount.toString(), calldata: details.calldata, payment_deadline: details.deadline.toString() });
+  }).sort(function (a, b) { return BigInt(a.amount) < BigInt(b.amount) ? -1 : BigInt(a.amount) > BigInt(b.amount) ? 1 : a.chain - b.chain; });
 }
 
 async function requireRelayrPaymentRuntime(client) {
@@ -146,6 +191,18 @@ var FORWARDER_ABI = [
       { name: 'gas', type: 'uint256' }, { name: 'deadline', type: 'uint48' },
       { name: 'data', type: 'bytes' }, { name: 'signature', type: 'bytes' } ] }] },
 ];
+var TRUSTED_FORWARDER_ABI = [{ type: 'function', name: 'isTrustedForwarder', stateMutability: 'view',
+  inputs: [{ name: 'forwarder', type: 'address' }], outputs: [{ type: 'bool' }] }];
+
+export async function relayrSupportsForwarding(chainId, target) {
+  if (!relayrSupportsChain(chainId)) return false;
+  var forwarder = getAddress('ERC2771Forwarder', chainId);
+  if (!forwarder) return false;
+  try {
+    return await createPublicClientForChain(chainId).readContract({ address: target, abi: TRUSTED_FORWARDER_ABI,
+      functionName: 'isTrustedForwarder', args: [forwarder] }) === true;
+  } catch (_) { return false; }
+}
 
 // Sign an ERC-2771 ForwardRequest for `to`/`data` on `chainId` and return the relayr transaction entry.
 // The EIP-712 domain (name/version) is read from the forwarder at runtime (EIP-5267) so we never guess it.
@@ -153,12 +210,19 @@ var FORWARDER_ABI = [
 // `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
 export async function buildForwardedTx(chainId, from, to, data, gasHint, value) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
+  if (!relayrSupportsChain(chainId)) throw new Error('Relayr does not support this destination chain. Use a direct wallet transaction.');
   var forwarder = getAddress('ERC2771Forwarder', chainId);
   if (!forwarder) throw new Error('No ERC2771Forwarder on ' + chainNameFor(chainId));
   var pub = createPublicClientForChain(chainId);
   var wallet = getWalletClient();
   if (!wallet) throw new Error('Connect a wallet first');
   var val = value || 0n;
+
+  // Forwarding only preserves the wallet's identity when the recipient explicitly trusts this deployment.
+  // In particular, a generic ABI target must never silently receive a relayer as its effective caller.
+  var trusted = await pub.readContract({ address: to, abi: TRUSTED_FORWARDER_ABI,
+    functionName: 'isTrustedForwarder', args: [forwarder] }).catch(function () { return false; });
+  if (trusted !== true) throw new Error('This contract does not support the trusted forwarder on ' + chainNameFor(chainId) + '. Use a direct wallet transaction.');
 
   // MetaMask (and especially a Ledger via MetaMask) reject eth_signTypedData_v4 when the EIP-712 domain's
   // chainId differs from the wallet's ACTIVE chain ("Provided chainId X must match the active chainId Y").
@@ -175,6 +239,9 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   if (!getAccount() || getAccount().toLowerCase() !== from.toLowerCase()) throw new Error('Connected account changed. Review the cross-chain request again.');
 
   var domTuple = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'eip712Domain', args: [] });
+  if (domTuple[0] !== '0x0f' || BigInt(domTuple[3]) !== BigInt(chainId)
+      || String(domTuple[4]).toLowerCase() !== forwarder.toLowerCase()
+      || !Array.isArray(domTuple[6]) || domTuple[6].length) throw new Error('The forwarder domain does not match this chain and deployment.');
   var domainName = domTuple[1], domainVersion = domTuple[2];
   var nonce = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [from] });
 
@@ -186,7 +253,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   // signed limit to the larger value so stale constants cannot cap execution.
   var gas = gasHint;
   try {
-    var estimated = await pub.estimateGas({ account: forwarder, to: to, data: data, value: val });
+    var estimated = await pub.estimateGas({ account: forwarder, to: to, data: data + from.slice(2).toLowerCase(), value: val });
     var buffered = gasWithHeadroom(estimated);
     if (!gas || BigInt(gas) < buffered) gas = buffered;
   } catch (_) {
@@ -207,11 +274,111 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
 
   var requestData = { from: from, to: to, value: val, gas: gas, deadline: deadline, data: data, signature: signature };
   var execData = encodeFunctionData({ abi: FORWARDER_ABI, functionName: 'execute', args: [requestData] });
-  return { chain: Number(chainId), target: forwarder, data: execData, value: val.toString() };
+  var entry = { chain: Number(chainId), target: forwarder, data: execData, value: val.toString() };
+  // execute(request) omits the signed nonce. Keep its exact local signature binding; never infer that nonce
+  // later from a changed onchain value or accept caller-supplied metadata as a substitute for this proof.
+  RELAYR_SIGNED_FORWARD_REQUESTS.set(relayrRequestFingerprint(Object.assign({}, entry, { virtual_nonce: 0 })), {
+    chain: Number(chainId), forwarder: forwarder.toLowerCase(), signer: from.toLowerCase(),
+    nonce: BigInt(nonce).toString(), deadline: String(deadline),
+  });
+  return entry;
+}
+
+function forwardedPublicationProofs(transactions, journal) {
+  return transactions.map(function (request) {
+    var forwarder = getAddress('ERC2771Forwarder', request.chain);
+    if (!forwarder || String(request.target).toLowerCase() !== forwarder.toLowerCase()) return null;
+    var hash = relayrRequestFingerprint(Object.assign({}, request, { virtual_nonce: 0 }));
+    var proof = RELAYR_SIGNED_FORWARD_REQUESTS.get(hash);
+    if (!proof) throw new Error('This forwarded request is missing its original signed nonce proof. Reopen its original review before publication.');
+    if (!journal || !journal.scope || String(journal.account || getAccount()).toLowerCase() !== proof.signer) {
+      throw new Error('A forwarded Relayr request needs its original signer and durable action scope.');
+    }
+    return Object.assign({}, proof, { scope: journal.scope, requestHash: hash });
+  }).filter(Boolean);
+}
+
+function nonceReservationKey(value) { return [value.chain, value.forwarder, value.signer, value.nonce].join(':'); }
+function readNonceReservations() {
+  try {
+    var raw = localStorage.getItem(RELAYR_NONCE_RESERVATIONS_KEY);
+    if (!raw) return [];
+    var rows = JSON.parse(raw), seen = new Set();
+    if (!Array.isArray(rows) || rows.length > 512) throw new Error();
+    rows.forEach(function (row) {
+      if (!row || !relayrSupportsChain(row.chain) || !isAddress(row.forwarder, { strict: false })
+          || !isAddress(row.signer, { strict: false }) || !/^\d+$/.test(row.nonce) || !/^\d+$/.test(row.deadline)
+          || BigInt(row.nonce) >= 1n << 256n || BigInt(row.deadline) >= 1n << 48n
+          || typeof row.scope !== 'string' || !row.scope || !/^0x[0-9a-f]{64}$/.test(row.requestHash || '')) throw new Error();
+      row.forwarder = row.forwarder.toLowerCase(); row.signer = row.signer.toLowerCase();
+      row.nonce = BigInt(row.nonce).toString(); row.chain = Number(row.chain);
+      var key = nonceReservationKey(row);
+      if (seen.has(key)) throw new Error();
+      seen.add(key);
+    });
+    return rows;
+  } catch (_) { throw new Error('The saved Relayr nonce reservations cannot be read. Keep the original requests and enable browser storage before publishing another bundle.'); }
+}
+function writeNonceReservations(rows) {
+  try {
+    if (rows.length > 512) throw new Error();
+    var raw = JSON.stringify(rows);
+    localStorage.setItem(RELAYR_NONCE_RESERVATIONS_KEY, raw);
+    if (localStorage.getItem(RELAYR_NONCE_RESERVATIONS_KEY) !== raw) throw new Error();
+  } catch (_) { throw new Error('The forwarded nonce reservations could not be saved. Enable browser storage. Nothing was published or paid.'); }
+}
+
+// Called only while the shared publication Web Lock is held. Reservations belong to signer + forwarder +
+// chain + signed nonce across ALL action scopes. Clearing an action's UI receipt does not retire this guard.
+// Only a chain-proven expired signature or consumed nonce makes its published request unable to execute.
+async function reserveForwardedPublication(proofs) {
+  if (!proofs.length) return;
+  var rows = readNonceReservations(), seen = new Set();
+  for (var proof of proofs) {
+    var key = nonceReservationKey(proof);
+    if (seen.has(key)) throw new Error('This Relayr bundle repeats a signed forwarder nonce. Use separate confirmed rounds for same-chain calls.');
+    seen.add(key);
+    var client = createPublicClientForChain(proof.chain);
+    var state;
+    try {
+      var block = await client.getBlock({ blockTag: 'latest' });
+      if (!block || block.number == null || block.timestamp == null) throw new Error();
+      state = { timestamp: BigInt(block.timestamp), nonce: BigInt(await client.readContract({ address: proof.forwarder,
+        abi: FORWARDER_ABI, functionName: 'nonces', args: [proof.signer], blockNumber: block.number })) };
+      if (state.timestamp < 0n || state.nonce < 0n) throw new Error();
+    } catch (_) { throw new Error('Could not verify the signed forwarder nonce and chain timestamp on ' + chainNameFor(proof.chain) + '. Nothing was published or paid.'); }
+    if (state.nonce !== BigInt(proof.nonce) || state.timestamp > BigInt(proof.deadline)) {
+      throw new Error('The signed forwarder request is stale on ' + chainNameFor(proof.chain) + '. Review its original nonce and deadline before publishing.');
+    }
+    rows = rows.filter(function (row) {
+      return row.chain !== proof.chain || row.forwarder !== proof.forwarder || row.signer !== proof.signer
+        || !(state.nonce > BigInt(row.nonce) || state.timestamp > BigInt(row.deadline));
+    });
+    var conflict = rows.find(function (row) { return nonceReservationKey(row) === key; });
+    if (conflict) {
+      var error = new Error('Another saved Relayr request already reserves this signer’s nonce on ' + chainNameFor(proof.chain) + '. Resume its original action (' + conflict.scope + '); do not publish or fund a competing bundle.');
+      error.code = 'RELAYR_NONCE_RESERVED'; error.scope = conflict.scope;
+      throw error;
+    }
+    rows.push(proof);
+  }
+  writeNonceReservations(rows);
 }
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.
-export async function relayrPostBundle(transactions) {
+export async function relayrPostBundle(transactions, journal, locked) {
+  if (!Array.isArray(transactions) || !transactions.length || transactions.some(function (tx) { return !relayrSupportsChain(tx && tx.chain); })) {
+    throw new Error('Relayr supports Ethereum, Optimism, Base, and Arbitrum mainnet destinations. Use direct wallet transactions for other chains.');
+  }
+  var forwarded = forwardedPublicationProofs(transactions, journal);
+  if (locked !== RELAYR_PUBLICATION_LOCK && forwarded.length) {
+    if (typeof navigator === 'undefined' || !navigator.locks || typeof navigator.locks.request !== 'function') {
+      throw new Error('This browser cannot lock forwarded Relayr publication across actions. Use a browser with Web Locks support. Nothing was published or paid.');
+    }
+    return navigator.locks.request('jb-relayr-forwarder-publication-v1', function () {
+      return relayrPostBundle(transactions, journal, RELAYR_PUBLICATION_LOCK);
+    });
+  }
   // Order each chain's transactions by their position in the array (per-chain 0,1,2… virtual nonces) and run in
   // ChainIndependent mode: chains execute in parallel, but a single chain's txs run STRICTLY in that order — each
   // after the previous confirms, against the updated state. This lets a bundle carry sequential same-chain txs
@@ -223,6 +390,31 @@ export async function relayrPostBundle(transactions) {
     var vn = perChain[t.chain] || 0; perChain[t.chain] = vn + 1;
     return Object.assign({}, t, { virtual_nonce: vn });
   });
+  var publication = null;
+  if (journal && journal.scope) {
+    if (locked !== RELAYR_PUBLICATION_LOCK && typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
+      return navigator.locks.request('jb-relayr-publish:' + String(journal.account || getAccount()).toLowerCase() + ':' + journal.scope,
+        function () { return relayrPostBundle(transactions, journal, RELAYR_PUBLICATION_LOCK); });
+    }
+    if (journal.account && (!getAccount() || String(getAccount()).toLowerCase() !== String(journal.account).toLowerCase())) {
+      throw new Error('Connected account changed. Review the Relayr request again.');
+    }
+    if (loadRelayrPendingSession(journal.scope)) {
+      var existing = new Error('A previous Relayr request for this action is still saved. Check that request before publishing another bundle.');
+      existing.code = 'RELAYR_PUBLICATION_PENDING'; existing.retryable = true; throw existing;
+    }
+    await reserveForwardedPublication(forwarded);
+    publication = saveRelayrPendingSession(journal.scope, {
+      bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
+      paymentState: 'publication', expectedCount: ordered.length,
+      chains: journal.chains || ordered.map(function (request) { return { id: Number(request.chain), name: chainNameFor(request.chain) }; }),
+      publicationRequestHashes: ordered.map(relayrRequestFingerprint), records: [],
+    });
+    if (!publication || publication.persisted === false) {
+      if (publication) clearRelayrPendingSession(journal.scope, publication);
+      throw new Error('The request could not be saved before publication. Enable browser storage before requesting a Relayr quote. Nothing was published or paid.');
+    }
+  }
   var res;
   try {
     res = await relayrFetch(RELAYR_API + '/v1/bundle/prepaid', {
@@ -230,6 +422,11 @@ export async function relayrPostBundle(transactions) {
       body: JSON.stringify({ transactions: ordered, virtual_nonce_mode: 'ChainIndependent' }),
     }, RELAYR_QUOTE_TIMEOUT_MS);
   } catch (error) {
+    if (publication) {
+      var unknown = new Error('Relayr may have received the signed requests, but no quote was confirmed. The saved request blocks new signatures and payments for this action. Keep it and verify the destination activity before retrying.');
+      unknown.code = 'RELAYR_PUBLICATION_PENDING'; unknown.retryable = true; unknown.cause = error; unknown.relayrSession = publication;
+      throw unknown;
+    }
     if (error && error.code === 'RELAYR_HTTP_TIMEOUT') {
       var timeout = new Error('Relayr did not return a quote in time. Nothing was paid; it is safe to try again.');
       timeout.code = 'RELAYR_QUOTE_TIMEOUT'; timeout.retryable = true;
@@ -263,7 +460,57 @@ export async function relayrPostBundle(transactions) {
       chain: Number(request.chain),
     };
   });
+  RELAYR_QUOTED_REQUESTS.set(body.bundle_uuid, {
+    transactions: Object.freeze(ordered.map(function (request) { return Object.freeze(Object.assign({}, request)); })),
+    forwarded: Object.freeze(forwarded.map(function (proof) { return Object.freeze(Object.assign({}, proof)); })),
+    quote: body,
+  });
+  if (publication) {
+    // Authenticate every amount/target before retaining the quote that the user can reopen after Cancel.
+    body.payment_info = relayrPaymentOptions(body);
+    clearRelayrPendingSession(journal.scope, publication);
+    var quoted = saveRelayrPendingSession(journal.scope, Object.assign({}, publication, {
+      bundleUuid: body.bundle_uuid, paymentState: 'quoted', expectedTransactions: body.expected_transactions,
+    }));
+    RELAYR_KNOWN_QUOTES.set(relayrPendingStorageKey(journal.scope, quoted), body);
+    if (quoted.persisted === false) throw new Error('The Relayr quote could not be saved. Keep this window open and check the saved request before paying.');
+  }
   return body;
+}
+
+// Simulate the exact requests that this client published, including each signed forwarder nonce, deadline,
+// value, and gas limit. Only the caller's native balance is overridden, because Relayr supplies call value.
+// No target code, target storage, or authorization state is replaced.
+export async function verifyRelayrQuotedRequests(bundleUuid, account) {
+  var bound = RELAYR_QUOTED_REQUESTS.get(bundleUuid);
+  if (!bound) return; // Standalone payment-boundary callers have no locally published destination bundle.
+  if (bound.forwarded && bound.forwarded.length) {
+    var reservations = readNonceReservations();
+    bound.forwarded.forEach(function (proof) {
+      var saved = reservations.find(function (row) { return nonceReservationKey(row) === nonceReservationKey(proof); });
+      if (!saved || saved.scope !== proof.scope || saved.requestHash !== proof.requestHash || proof.signer !== String(account).toLowerCase()) {
+        throw new Error('The original forwarded nonce reservation no longer matches this quote. Do not fund a competing request; resume its original saved action.');
+      }
+    });
+  }
+  await Promise.all(bound.transactions.map(async function (request, index) {
+    var value = BigInt(request.value || '0');
+    var params = [{ from: account, to: request.target, data: request.data,
+      value: '0x' + value.toString(16), gas: '0x1c9c380' }, 'latest'];
+    if (value > 0n) params.push({ [account]: { balance: '0x' + value.toString(16) } });
+    var result;
+    try { result = await createPublicClientForChain(request.chain).request({ method: 'eth_call', params: params }); }
+    catch (cause) {
+      throw new Error('The exact quoted transaction no longer simulates on ' + chainNameFor(request.chain) + '. No payment was sent; keep this quote and review its signed nonce, deadline, and destination state. ' + ((cause && cause.shortMessage) || (cause && cause.message) || ''));
+    }
+    var forwarder = getAddress('ERC2771Forwarder', request.chain);
+    var proof = bound.quote.expected_transactions[index] && bound.quote.expected_transactions[index].result;
+    if (typeof result !== 'string' || !/^0x(?:[0-9a-f]{2})*$/i.test(result) || result.length > 8194
+        || (forwarder && String(request.target).toLowerCase() === forwarder.toLowerCase() && result !== '0x')
+        || (proof && proof.kind === 'safe-exec' && result !== '0x' + '0'.repeat(63) + '1')) {
+      throw new Error('The exact quoted transaction returned an unexpected simulation result on ' + chainNameFor(request.chain) + '. No payment was sent.');
+    }
+  }));
 }
 
 function normalizedRelayrQuantity(value, fallback) {
@@ -300,7 +547,7 @@ export function relayrRequestFingerprint(request) {
 // Send the single prepaid payment that funds execution on every chain. The HTTP quote is authenticated against
 // the exact bundle UUID and immutable payment runtime, then shown as a second exact transaction review before
 // the wallet opens. Returns the payment tx hash.
-export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify) {
+export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var details = relayrPaymentDetails(payment, expectedBundleUuid);
   var chainId = details.chainId;
@@ -337,6 +584,7 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   // quote and repeat caller-specific freshness checks after it closes, before any simulation or wallet call.
   details = relayrPaymentDetails(payment, expectedBundleUuid);
   if (reverify) await reverify();
+  await verifyRelayrQuotedRequests(expectedBundleUuid, account);
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   var active = await wallet.getChainId().catch(function () { return null; });
   if (active !== chainId) { await switchChain(chainId); wallet = getWalletClient(); }
@@ -346,14 +594,40 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   details = relayrPaymentDetails(payment, expectedBundleUuid);
   if (reverify) await reverify();
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
-  var hash = await wallet.sendTransaction({
-    account: account,
-    chain: CHAINS[chainId],
-    to: details.target,
-    value: details.amount,
-    data: details.calldata,
-    gas: RELAYR_PAYMENT_GAS,
-  });
+  async function sendPayment() {
+    // Another tab can have opened its own quote while this tab was reviewing. Serialize the final journal
+    // check and wallet submission where Web Locks are available; the journal rejects a competing bundle.
+    details = relayrPaymentDetails(payment, expectedBundleUuid);
+    if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
+    if (reverify) await reverify();
+    await verifyRelayrQuotedRequests(expectedBundleUuid, account);
+    details = relayrPaymentDetails(payment, expectedBundleUuid);
+    if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
+    if (onSending) await onSending();
+    try {
+      return await wallet.sendTransaction({
+        account: account,
+        chain: CHAINS[chainId],
+        to: details.target,
+        value: details.amount,
+        data: details.calldata,
+        gas: RELAYR_PAYMENT_GAS,
+      });
+    } catch (cause) {
+      // Wallet/RPC transport errors can occur after broadcast but before returning a transaction hash.
+      // Keep the pre-send bundle journal so a subsequent attempt can only inspect this original bundle.
+      var uncertain = new Error('The Relayr payment request reached your wallet, but its submission could not be confirmed. Do not pay again; check the saved bundle and wallet activity.');
+      uncertain.name = 'RelayrPaymentUncertainError';
+      uncertain.code = 'RELAYR_PAYMENT_UNCERTAIN';
+      uncertain.bundleUuid = details.bundleUuid;
+      uncertain.chainId = chainId;
+      uncertain.cause = cause;
+      throw uncertain;
+    }
+  }
+  var hash = typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function'
+    ? await navigator.locks.request('jb-relayr-payment:' + account.toLowerCase(), sendPayment)
+    : await sendPayment();
   if (onSubmitted) { try { onSubmitted(hash); } catch (_) {} }
   var receipt;
   try {
@@ -391,7 +665,7 @@ export function relayrProgress(records, expectedCount) {
   var total = Number.isSafeInteger(expected) && expected > 0 ? Math.max(expected, records.length) : records.length;
   return {
     confirmed: confirmed, failed: failed, pending: Math.max(0, total - confirmed - failed), total: total,
-    // The rule that decides whether a paid receipt may be auto-discarded; keep it in one place.
+    // Display summary only: API failure reports do not authorize discarding a paid receipt.
     allFailed: total > 0 && confirmed === 0 && failed >= total,
   };
 }
@@ -408,6 +682,9 @@ function relayrExecutionError(message, code, uuid, records, retryable) {
 
 export function relayrErrorIsUncertain(error) {
   return !!(error && (error.code === 'RELAYR_TIMEOUT' || error.code === 'RELAYR_PAYMENT_SUBMITTED'
+    || error.code === 'RELAYR_PAYMENT_UNCERTAIN'
+    || error.code === 'RELAYR_PUBLICATION_PENDING'
+    || error.code === 'RELAYR_QUOTE_RECOVERY_PENDING'
     || error.code === 'RELAYR_STATUS_MISMATCH' || error.code === 'RELAYR_STATUS_UNBOUND'
     || error.code === 'RELAYR_POSTCONDITION_PENDING'));
 }
@@ -420,17 +697,50 @@ export function relayrErrorIsUncertain(error) {
 // wallet on the same browser never sees (or resumes) the first wallet's bundles. With no wallet connected
 // there is nothing to key by, so storage falls back to the unkeyed (legacy) key; the first wallet that
 // reads such an entry adopts it into its own namespace (best-effort migration).
-function relayrAccountPart() {
-  try { var account = getAccount && getAccount(); return account ? String(account).toLowerCase() + ':' : ''; } catch (_) { return ''; }
+function relayrAccountPart(session) {
+  try {
+    var account = session && Object.prototype.hasOwnProperty.call(session, 'account') ? session.account : getAccount && getAccount();
+    return account ? String(account).toLowerCase() + ':' : '';
+  } catch (_) { return ''; }
 }
 // Feature scopes never start with a bare address ('create-project', 'action:…', 'bundle:…', 'shop-…'),
 // so an account prefix is unambiguous in stored keys.
 var RELAYR_ACCOUNT_KEYED = /^0x[0-9a-f]{40}:/;
-function relayrPendingStorageKey(scope) { return RELAYR_PENDING_PREFIX + relayrAccountPart() + String(scope || ''); }
+function relayrPendingStorageKey(scope, session) { return RELAYR_PENDING_PREFIX + relayrAccountPart(session) + String(scope || ''); }
 function relayrLegacyStorageKey(scope) { return RELAYR_PENDING_PREFIX + String(scope || ''); }
 
 // Status polling persists after every tick; skip the synchronous localStorage write when nothing changed.
 var RELAYR_LAST_SAVED = {};
+// Keep failed writes available for the lifetime of this page. Successfully persisted sessions are deliberately
+// absent from this cache, so removing a receipt in another tab cannot resurrect it from an old in-memory copy.
+var RELAYR_UNSAVED_SESSIONS = {};
+
+function relayrStoredSession(raw) {
+  try { var parsed = JSON.parse(raw); return parsed && parsed.bundleUuid ? parsed : null; } catch (_) { return null; }
+}
+
+function relayrPaymentStage(session) {
+  if (session && session.paymentHash) return 2;
+  if (session && session.paymentState === 'publication') return -1;
+  if (session && session.paymentState === 'quoted') return 0;
+  // Hashless sending, expired, and legacy receipts all block a new payment until their outcome is verified.
+  return 1;
+}
+
+// A failed write can leave a newer local progress snapshot, but another tab may subsequently submit payment.
+// Reconcile readable disk every time; an advanced durable payment must win over stale quoted memory.
+function relayrStoredValue(key) {
+  var memory = RELAYR_UNSAVED_SESSIONS[key], disk;
+  try { disk = localStorage.getItem(key); } catch (_) {}
+  if (!memory) return { raw: disk, persisted: !!disk, disk: disk };
+  var memorySession = relayrStoredSession(memory), diskSession = relayrStoredSession(disk);
+  if (diskSession && (!memorySession || diskSession.bundleUuid !== memorySession.bundleUuid
+      || relayrPaymentStage(diskSession) > relayrPaymentStage(memorySession))) {
+    delete RELAYR_UNSAVED_SESSIONS[key];
+    return { raw: disk, persisted: true, disk: disk };
+  }
+  return { raw: memory, persisted: false, disk: disk };
+}
 
 function relayrRecordSnapshot(record) {
   return {
@@ -471,7 +781,11 @@ export function bindRelayrSafeExecutions(expectedTransactions, proofs) {
 
 export function saveRelayrPendingSession(scope, session) {
   if (!scope || !session || !session.bundleUuid) return null;
+  // Pin the original object too: some submission callbacks retain it while the UI uses the returned snapshot.
+  // Later polling must never move this receipt to a newly connected wallet's namespace.
+  session.account = relayrAccountPart(session).slice(0, -1) || null;
   var snapshot = {
+    account: session.account,
     bundleUuid: String(session.bundleUuid),
     paymentHash: session.paymentHash ? String(session.paymentHash) : null,
     paymentChainId: Number(session.paymentChainId) || null,
@@ -493,41 +807,88 @@ export function saveRelayrPendingSession(scope, session) {
     }),
     records: (session.records || []).map(relayrRecordSnapshot),
     itemCount: Math.max(0, Number(session.itemCount) || 0),
-    paymentState: session.paymentState === 'expired' ? 'expired' : null,
+    paymentState: ['expired', 'sending', 'publication', 'quoted'].indexOf(session.paymentState) !== -1 ? session.paymentState : null,
+    publicationRequestHashes: (session.publicationRequestHashes || []).filter(function (hash) {
+      return typeof hash === 'string' && /^0x[0-9a-f]{64}$/i.test(hash);
+    }).map(function (hash) { return hash.toLowerCase(); }),
     persisted: true,
   };
-  var key = relayrPendingStorageKey(scope);
+  var key = relayrPendingStorageKey(scope, session);
   var serialized = JSON.stringify(snapshot);
-  if (RELAYR_LAST_SAVED[key] === serialized) return snapshot;
-  try { localStorage.setItem(key, serialized); RELAYR_LAST_SAVED[key] = serialized; } catch (_) { snapshot.persisted = false; }
+  var stored = relayrStoredValue(key);
+  var previous = stored.raw;
+  if (previous) {
+    var previousSession = relayrStoredSession(previous);
+    if (previousSession && previousSession.bundleUuid && previousSession.bundleUuid !== snapshot.bundleUuid) {
+      var conflict = new Error('A different Relayr bundle is already saved for this action. Check that original bundle before submitting another payment.');
+      conflict.code = 'RELAYR_PENDING_CONFLICT';
+      conflict.bundleUuid = previousSession.bundleUuid;
+      throw conflict;
+    }
+    if (previousSession && relayrPaymentStage(previousSession) > relayrPaymentStage(snapshot)) {
+      var durable = relayrStoredSession(stored.disk);
+      // The caller stopped before opening its wallet because the sending journal could not be written.
+      // Only an unchanged readable quoted record proves that this local failed write may return to quoted.
+      var unsentRollback = snapshot.paymentState === 'quoted' && previousSession.paymentState === 'sending'
+        && previousSession.persisted === false && !previousSession.paymentHash
+        && durable && durable.bundleUuid === snapshot.bundleUuid && durable.paymentState === 'quoted' && !durable.paymentHash;
+      if (!unsentRollback) {
+        previousSession.account = snapshot.account;
+        previousSession.persisted = stored.persisted;
+        return previousSession;
+      }
+    }
+  }
+  try {
+    if (RELAYR_LAST_SAVED[key] !== serialized || localStorage.getItem(key) !== serialized) {
+      localStorage.setItem(key, serialized);
+    }
+    RELAYR_LAST_SAVED[key] = serialized;
+    delete RELAYR_UNSAVED_SESSIONS[key];
+  } catch (_) {
+    snapshot.persisted = false;
+    RELAYR_UNSAVED_SESSIONS[key] = JSON.stringify(snapshot);
+  }
   return snapshot;
 }
 
-export function loadRelayrPendingSession(scope) {
+export function loadRelayrPendingSession(scope, ownerSession) {
   if (!scope) return null;
-  try {
-    var raw = localStorage.getItem(relayrPendingStorageKey(scope));
-    // Adopt a pre-account-keyed receipt into the connected wallet's namespace on first read.
-    if (!raw && relayrAccountPart()) {
-      var legacy = localStorage.getItem(relayrLegacyStorageKey(scope));
-      if (legacy) {
-        raw = legacy;
-        try {
-          localStorage.setItem(relayrPendingStorageKey(scope), legacy);
-          localStorage.removeItem(relayrLegacyStorageKey(scope));
-        } catch (_) {}
+  var key = relayrPendingStorageKey(scope, ownerSession);
+  var accountPart = relayrAccountPart(ownerSession);
+  var stored = relayrStoredValue(key);
+  var raw = stored.raw;
+  // Adopt a pre-account-keyed receipt into the connected wallet's namespace on first read.
+  if (!raw && accountPart) {
+    var legacyKey = relayrLegacyStorageKey(scope);
+    var legacy = RELAYR_UNSAVED_SESSIONS[legacyKey];
+    if (!legacy) { try { legacy = localStorage.getItem(legacyKey); } catch (_) {} }
+    if (legacy) {
+      raw = legacy;
+      try {
+        localStorage.setItem(key, legacy);
+        localStorage.removeItem(legacyKey);
+        delete RELAYR_UNSAVED_SESSIONS[legacyKey];
+        stored.persisted = true;
+      } catch (_) {
+        RELAYR_UNSAVED_SESSIONS[key] = legacy;
       }
     }
-    if (!raw) return null;
+  }
+  if (!raw) return null;
+  try {
     var session = JSON.parse(raw);
     if (!session || typeof session.bundleUuid !== 'string' || !session.bundleUuid) throw new Error('Invalid Relayr session');
+    session.account = accountPart.slice(0, -1) || null;
+    session.persisted = !!stored.persisted && !RELAYR_UNSAVED_SESSIONS[key];
     session.records = Array.isArray(session.records) ? session.records : [];
     session.chains = Array.isArray(session.chains) ? session.chains : [];
     session.expectedTransactions = Array.isArray(session.expectedTransactions) ? session.expectedTransactions : [];
     session.expectedCount = Math.max(0, Number(session.expectedCount) || session.chains.length || 0);
     return session;
   } catch (_) {
-    try { localStorage.removeItem(relayrPendingStorageKey(scope)); } catch (_) {}
+    delete RELAYR_UNSAVED_SESSIONS[key];
+    try { localStorage.removeItem(key); } catch (_) {}
     return null;
   }
 }
@@ -542,28 +903,40 @@ export function listRelayrPendingScopes() {
   var accountPart = relayrAccountPart();
   if (!accountPart) return scopes;
   var seen = {};
+  var keys = Object.keys(RELAYR_UNSAVED_SESSIONS);
   try {
     for (var i = 0; i < localStorage.length; i++) {
-      var key = localStorage.key(i);
-      if (!key || key.indexOf(RELAYR_PENDING_PREFIX) !== 0) continue;
-      var rest = key.slice(RELAYR_PENDING_PREFIX.length);
-      var scope = null;
-      if (RELAYR_ACCOUNT_KEYED.test(rest)) {
-        if (rest.indexOf(accountPart) === 0) scope = rest.slice(accountPart.length);
-      } else {
-        scope = rest; // legacy unkeyed — adopted on first load
-      }
-      if (scope && !seen[scope]) { seen[scope] = true; scopes.push(scope); }
+      keys.push(localStorage.key(i));
     }
   } catch (_) {}
+  keys.forEach(function (key) {
+    if (!key || key.indexOf(RELAYR_PENDING_PREFIX) !== 0) return;
+    var rest = key.slice(RELAYR_PENDING_PREFIX.length);
+    var scope = null;
+    if (RELAYR_ACCOUNT_KEYED.test(rest)) {
+      if (rest.indexOf(accountPart) === 0) scope = rest.slice(accountPart.length);
+    } else {
+      scope = rest; // legacy unkeyed — adopted on first load
+    }
+    if (scope && !seen[scope]) { seen[scope] = true; scopes.push(scope); }
+  });
   return scopes;
 }
 
-export function clearRelayrPendingSession(scope) {
-  // Remove the connected wallet's copy AND any legacy unkeyed copy, so a cleared receipt can't be
-  // re-adopted from the pre-migration key later.
-  [relayrPendingStorageKey(scope), relayrLegacyStorageKey(scope)].forEach(function (key) {
+export function clearRelayrPendingSession(scope, session) {
+  // Async completion clears the original wallet's copy even if the connected account changed while polling.
+  // Remove its legacy copy too, so a cleared receipt cannot be adopted again after migration.
+  [relayrPendingStorageKey(scope, session), relayrLegacyStorageKey(scope)].forEach(function (key) {
+    if (session && session.bundleUuid) {
+      var raw = relayrStoredValue(key).raw;
+      if (raw) {
+        var saved;
+        try { saved = JSON.parse(raw); } catch (_) {}
+        if (saved && saved.bundleUuid && saved.bundleUuid !== session.bundleUuid) return;
+      }
+    }
     delete RELAYR_LAST_SAVED[key];
+    delete RELAYR_UNSAVED_SESSIONS[key];
     try { localStorage.removeItem(key); } catch (_) {}
   });
 }
@@ -647,7 +1020,7 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs, expectedCount,
         return r.json();
       }).then(function (body) {
         if (body === NOT_FOUND) return reject(relayrExecutionError(
-          'Relayr does not recognize bundle ' + uuid + '. Nothing is pending under it and nothing more will land. If you already paid, keep the payment hash and bundle ID for support before starting over.',
+          'Relayr does not currently recognize bundle ' + uuid + '. Its destination outcomes are not verified. Keep the original payment hash and bundle ID, and check the affected chains before submitting anything again.',
           'RELAYR_NOT_FOUND', uuid, lastRecords, false
         ));
         var txs;
@@ -668,7 +1041,7 @@ export function relayrPoll(uuid, onUpdate, intervalMs, timeoutMs, expectedCount,
         var expiresAt = body && body.expires_at ? Date.parse(body.expires_at) : NaN;
         if (body && body.payment_received === false && Number.isFinite(expiresAt) && Date.now() >= expiresAt) {
           return reject(relayrExecutionError(
-            'Relayr did not recognize the confirmed payment before bundle ' + uuid + ' expired. Nothing deployed. Keep the payment hash and bundle ID for support; do not treat this as a still-pending deployment.',
+            'Relayr reports that no payment was recognized before bundle ' + uuid + ' expired. Its destination outcomes are not verified. Keep the payment hash and bundle ID, and review wallet activity and the affected chains before submitting anything again.',
             'RELAYR_PAYMENT_EXPIRED', uuid, txs, false
           ));
         }

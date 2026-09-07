@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { decodeFunctionData, encodeFunctionResult } from 'viem';
+import { decodeFunctionData, encodeFunctionResult, encodeFunctionData, parseAbi } from 'viem';
 
 const safeState = vi.hoisted(() => ({
   account: null,
@@ -229,6 +229,17 @@ describe('Safe runtime fail-closed boundaries', () => {
       maxFeePerGas: 1000000000n,
       maxPriorityFeePerGas: 50000000n,
     }));
+  });
+
+  it('does not treat a Safe ExecutionSuccess as completion of an inner distribution', async () => {
+    const tx = queuedTx({ data: encodeFunctionData({ abi: parseAbi(['function sendPayoutsOf(uint256,address,uint256,uint256,uint256)']), functionName: 'sendPayoutsOf', args: [7n, OTHER, 100n, 1n, 97n] }) });
+    safeState.wallet = { getChainId: vi.fn().mockResolvedValue(1), writeContract: vi.fn().mockResolvedValue(HASH) };
+    safeState.publicClient = { request: vi.fn().mockResolvedValue(encodeFunctionResult({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction', result: true })),
+      getBlock: vi.fn().mockResolvedValue({ baseFeePerGas: 1n }),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success', transactionHash: HASH,
+        logs: [{ address: SAFE, topics: [SAFE_EXECUTION_SUCCESS_TOPIC, safeTxHashForQueuedTx(1, SAFE, tx)], data: '0x' + '0'.repeat(64) }] }),
+    };
+    await expect(executeSafeTx(1, SAFE, tx)).rejects.toMatchObject({ code: 'SAFE_TX_SUBMITTED', hash: HASH, cause: { message: expect.stringContaining('completion event is missing') } });
   });
 
   it('binds a proposal to the reviewed signer, chain, nonce, and exact service payload', async () => {

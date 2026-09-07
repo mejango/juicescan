@@ -193,6 +193,13 @@ export function shouldKeepSubmittedTransactionPending(hash, error) {
   return !!hash && !(error && error.onchainRevert);
 }
 
+export function isWalletUserRejection(error) {
+  for (var cause = error, depth = 0; cause && depth < 8; cause = cause.cause, depth++) {
+    if (cause.code === 4001 || cause.code === 'ACTION_REJECTED') return true;
+  }
+  return false;
+}
+
 // One address-format check for the whole app (replaces ~39 inline `/^0x[0-9a-fA-F]{40}$/` regexes).
 // strict:false = format only (any case), matching the old regex; the `typeof` guard matches `.test()`'s
 // string coercion so isAddr(undefined) === false. addrOrZero coerces a blank/invalid address to 0x0.
@@ -1452,11 +1459,12 @@ export function executeTransaction(opts) {
       }
       txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
       cbs.onStatus('Proposing to your Safe…', 'pending');
+      if (opts.onSending) opts.onSending();
       return proposeSafeTransactions(txs).then(function (safeTxHash) {
         cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
       });
     }).catch(function (err) {
-      cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'));
+      cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'), { userRejected: isWalletUserRejection(err) });
     });
     return;
   }
@@ -1531,15 +1539,16 @@ export function executeTransaction(opts) {
     var full = ((err.shortMessage || '') + ' ' + (err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
     var chainName = chainNameFor(opts.chainId);
     var friendly = friendlyTransactionError(full);
+    var failureMeta = { userRejected: isWalletUserRejection(err), submittedHash: submittedHash || null };
     if (friendly) {
-      cbs.onError(friendly);
+      cbs.onError(friendly, failureMeta);
     } else if (msg.indexOf('rejected') !== -1 || msg.indexOf('User rejected') !== -1 || /user rejected|denied transaction/i.test(full)) {
-      cbs.onError('Transaction rejected by wallet');
+      cbs.onError('Transaction rejected by wallet', failureMeta);
     } else if (/insufficient funds|exceeds the balance|gas \* price|gas required exceeds/.test(full)) {
       // Most common real failure for destination-chain claims and any tx on a chain the wallet isn’t funded on.
-      cbs.onError('Not enough ' + chainName + ' ETH to cover gas. Fund your wallet on ' + chainName + ', then try again.');
+      cbs.onError('Not enough ' + chainName + ' ETH to cover gas. Fund your wallet on ' + chainName + ', then try again.', failureMeta);
     } else {
-      cbs.onError(msg.length > 150 ? msg.slice(0, 150) + '…' : msg);
+      cbs.onError(msg.length > 150 ? msg.slice(0, 150) + '…' : msg, failureMeta);
     }
   });
   }

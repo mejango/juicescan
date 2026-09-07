@@ -129,7 +129,7 @@ const SWEEP_FILES = [
   'src/pay-component.js', 'src/cashout-component.js', 'src/payouts-component.js', 'src/burn-component.js',
   'src/mint-component.js', 'src/permissions-component.js', 'src/reserved-component.js',
   'src/deploy-erc20-component.js', 'src/project-payer.js', 'src/pay-preview.js', 'src/component-base.js',
-  'src/safe.js', 'src/relayr.js', 'src/discover.js',
+  'src/safe.js', 'src/relayr.js', 'src/discover.js', 'src/credit-claims.js', 'src/shop-media.js',
 ];
 
 // Fragments for contracts that have NO canonical artifact in data/abis (Safe wallet contracts,
@@ -174,13 +174,13 @@ const MIN_FRAGMENTS = {
   'src/burn-component.js': 2, 'src/mint-component.js': 1, 'src/permissions-component.js': 1,
   'src/reserved-component.js': 2, 'src/deploy-erc20-component.js': 1, 'src/project-payer.js': 1,
   'src/pay-preview.js': 1, 'src/component-base.js': 6, 'src/safe.js': 4, 'src/relayr.js': 1,
-  'src/discover.js': 135,
+  'src/discover.js': 135, 'src/credit-claims.js': 1, 'src/shop-media.js': 1,
 };
 
 // The tx-critical discover fragments this sweep exists for — each must be found AND canonical-clean.
 const REQUIRED_DISCOVER_FRAGMENTS = [
   // pay / balance / cash out
-  'payAbi', 'addToBalanceAbi', 'cashOutTokensAbi', 'claimTokensForAbi',
+  'payAbi', 'addToBalanceAbi', 'cashOutTokensAbi', // credit claims now live in their selected-chain module
   // loans
   'borrowFromAbi', 'repayLoanAbi', 'loanOfAbi', 'determineSourceFeeAbi', 'borrowableAbi',
   // suckers
@@ -271,5 +271,7 @@ describe('ABI-parity sweep — every hand-written fragment vs data/abis', () => 
     const okDecls = new Set(results.filter((r) => r.status === 'ok').map((r) => r.key.split('.')[0]));
     const missing = REQUIRED_DISCOVER_FRAGMENTS.filter((name) => !okDecls.has(name));
     expect(missing, 'tx-critical fragments not found or not clean').toEqual([]);
+    expect(sweeps.get('src/credit-claims.js').results).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'CREDIT_CLAIM_ABI.claimTokensFor', status: 'ok' })]));
+    expect(sweeps.get('src/shop-media.js').results).toEqual(expect.arrayContaining([expect.objectContaining({ key: 'SHOP_MEDIA_METADATA_ABI.setMetadata', status: 'ok' })]));
   });
 });
