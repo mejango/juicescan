@@ -193,6 +193,18 @@
         "Safe proposal / confirmation / execution"
       ]
     },
+    "src/safe-batch-ui.js": {
+      "counts": {
+        "approveSafeHashOnChain": 1,
+        "executeSafeTx": 1,
+        "proposeSafeTransactions": 1,
+        "proposeSafeTx": 1,
+        "providerRequest": 2
+      },
+      "actions": [
+        "Safe operator batch"
+      ]
+    },
     "src/safe.js": {
       "counts": {
         "approveSafeHashOnChain": 1,

@@ -19,6 +19,7 @@ import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } fr
 import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
 import { CREDIT_CLAIM_ABI, prepareCreditClaims, verifyCreditClaims, verifySavedCreditClaims } from './credit-claims.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded, findSavedSafeExecution } from './safe.js';
+import { buildStep, loadTray, saveTray, upsertStep, registerPowerKinds, multiSendBatchCalls } from './safe-batch.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel, noticeClashIssue, stageStartOk } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -4457,7 +4458,7 @@ export function projectBuybackHook(project, chainId, opts) {
 //   registry is one of the project's terminals → return the registry's terminalOf (the downstream it forwards into).
 //   the concrete JBRouterTerminal is one of the project's terminals → the project uses the router directly → use it.
 //   neither → none. (terminalOf resolves a *default* even for non-users, so it must be gated the same way as hookOf.)
-function projectRouterTerminal(project, chainId) {
+export function projectRouterTerminal(project, chainId) {
   var registry = getAddress('JBRouterTerminalRegistry', chainId);
   var directTerminal = getAddress('JBRouterTerminal', chainId);
   var pid = pidOn(project, chainId);
@@ -6949,11 +6950,11 @@ async function revnetOperatorOf(projectId, chainId) {
   }
 }
 
-function projectAuthorityLabel(project) {
+export function projectAuthorityLabel(project) {
   return project && project.isRevnet ? 'Operator' : 'Owner';
 }
 
-function projectAuthorityAddress(project) {
+export function projectAuthorityAddress(project) {
   return project && project.isRevnet ? project.operator : project.owner;
 }
 
@@ -11689,7 +11690,7 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
 }
 
 // Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
-async function ensureOperatorAccount(project, operatorAddr, setStatus) {
+export async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   // An unread operator is not an absent one. Without this, the `operatorAddr &&` check below is skipped
   // entirely and any wallet is waved through to sign a transaction the chain will reject.
@@ -11707,7 +11708,7 @@ async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   return account;
 }
 
-function relayrActionScope(project, action, suffix) {
+export function relayrActionScope(project, action, suffix) {
   project = project || {};
   var identity = project.id != null ? project.id
     : (project.projectId != null ? project.projectId : (project.owner || project.operator || 'global'));
@@ -11922,18 +11923,25 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
     }
   }
   // Build each chain's call first so we can show the exact onchain target + calldata before anything is signed.
+  // A batch returns an ordered ARRAY of calls for a chain: they send in that order directly, or carry per-chain
+  // virtual nonces 0,1,2… inside one Relayr bundle.
   var calls = [];
   for (var i = 0; i < chains.length; i++) {
     var cid = chains[i].id;
-    var call = buildCall(cid);
-    if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
-    calls.push({
-      cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data,
-      contract: call.contract || call.contractName || null,
-      abi: call.abi || null,
-      functionName: call.functionName || call.function || null,
-      args: Array.isArray(call.args) ? call.args : null,
-    });
+    var built = buildCall(cid);
+    var list = Array.isArray(built) ? built : [built];
+    for (var k = 0; k < list.length; k++) {
+      var call = list[k];
+      if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
+      calls.push({
+        cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data,
+        contract: call.contract || call.contractName || null,
+        abi: call.abi || null,
+        functionName: call.functionName || call.function || null,
+        args: Array.isArray(call.args) ? call.args : null,
+        step: call.step || null,
+      });
+    }
   }
   var useRelayr = !hasDirectBatch(confirmOpts.pendingScope, account, calls) && shouldUseRelayrForChains(chains);
   if (useRelayr) {
@@ -11971,7 +11979,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
           rawArgs: direct.args,
           summary: confirmOpts.summary ? Object.assign({ action: confirmOpts.label }, confirmOpts.summary, { rows: (confirmOpts.summary.rows || []).concat([['On chain', direct.name]]) }) : undefined,
         }, { title: confirmOpts.title || 'Confirm transaction', confirmText: 'Confirm & send',
-          steps: calls.length > 1 ? calls.map(function (call) { return 'Send on ' + call.name; }) : confirmOpts.steps,
+          steps: calls.length > 1 ? calls.map(function (call) { return (call.step ? call.step + ' on ' : 'Send on ') + call.name; }) : confirmOpts.steps,
           stepIndex: calls.length > 1 ? directIndex : confirmOpts.stepIndex, stepsIntro: confirmOpts.stepsIntro });
         if (!directOk || (typeof directOk === 'object' && !directOk.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
         setStatus('Checking wallet network…', 'pending');
@@ -12068,7 +12076,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
     account: account,
     paymentHash: null,
     paymentState: 'quoted',
-    expectedCount: chains.length,
+    expectedCount: calls.length,
     expectedTransactions: bundle.expected_transactions,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
     records: [],
@@ -13129,7 +13137,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       var matches = (txs || []).filter(function (tx) {
         if (!tx || !tx.to || !sameAddr(tx.to, rec.to)
             || String(tx.data || '0x').toLowerCase() !== String(rec.data || '0x').toLowerCase()
-            || Number(tx.operation || 0) !== 0 || !hasCanonicalSafeRefundFields(tx)) return false;
+            || Number(tx.operation || 0) !== Number(rec.operation || 0) || !hasCanonicalSafeRefundFields(tx)) return false;
         try {
           if (BigInt(tx.value || 0) !== 0n) return false;
           var advertised = queuedSafeTxHash(tx);
@@ -16308,6 +16316,8 @@ var SAFE_FN_LABELS = {
   sendPayoutsOf: 'Send payouts', sendReservedTokensToSplitsOf: 'Distribute reserved tokens',
 };
 function labelForQueuedTx(tx) {
+  var batch = multiSendBatchCalls(tx);
+  if (batch) return 'Batch (' + batch.length + ' call' + (batch.length === 1 ? '' : 's') + ')';
   // Decode via the target contract's ABI (same as the confirm modal) → real function name.
   var d = decodeCallForDisplay({ address: tx.to, calldata: tx.data });
   if (d && d.fn) return SAFE_FN_LABELS[d.fn] || d.fn;
@@ -16318,9 +16328,11 @@ function labelForQueuedTx(tx) {
 // hides the recipient/amount/target a malicious co-signer could slip in. Folds the DELEGATECALL / ETH-value /
 // unrecognized-target warnings into the same review. Returns the user's confirm/cancel as a promise.
 function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
-  var nm = resolveContractName(tx.to, cid);
+  var batch = multiSendBatchCalls(tx);
+  var nm = resolveContractName(tx.to, cid) || (batch ? 'MultiSendCallOnly' : null);
   var warns = [];
-  if (Number(tx.operation) === 1) warns.push('DELEGATECALL — runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets).');
+  if (batch) warns.push('Batch: the Safe delegatecalls the canonical MultiSendCallOnly, which CALLs each inner transaction listed below, in order.');
+  else if (Number(tx.operation) === 1) warns.push('DELEGATECALL — runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets).');
   var ethVal; try { ethVal = BigInt(tx.value || 0); } catch (_) { ethVal = 0n; }
   if (ethVal > 0n) warns.push('Sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe.');
   if (!nm) warns.push('Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
@@ -16338,7 +16350,9 @@ function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
         ['Signatures', confirmations + (tx.confirmationsRequired ? ' of ' + tx.confirmationsRequired : '')],
         ['Target', (nm ? nm + ' at ' : '') + tx.to],
         ['On chain', chainName],
-      ] } },
+      ].concat((batch || []).map(function (call, i) {
+        return ['Call ' + (i + 1), labelForQueuedTx(call) + ' → ' + (resolveContractName(call.to, cid) || call.to)];
+      })) } },
     { title: viewOnly ? ('Transaction #' + tx.nonce + ' details') : ((actionLabel || 'Review') + ' Safe transaction #' + tx.nonce),
       confirmText: viewOnly ? 'Close' : (actionLabel || 'Confirm'), description: desc, hideCancel: viewOnly,
       steps: viewOnly ? false : [(actionLabel || 'Confirm') + ' Safe transaction #' + tx.nonce] }
@@ -17217,8 +17231,15 @@ export function projectAuthoritySafeQueueGroups(rows, authorityRole) {
   });
 }
 
+// The batch tray renderer registers itself (safe-batch-ui.js imports this module, so it can't be imported here).
+var _safeBatchTray = null;
+export function setSafeBatchTrayRenderer(render) { _safeBatchTray = render; }
+
 function renderBackOfficeSection(project) {
   var section = el('div', 'detail-section');
+  // Queued batch steps stay visible above every card; the section is cached across tab switches, so the tray
+  // re-renders itself on the tray-updated event instead of being rebuilt here.
+  if (_safeBatchTray) section.appendChild(_safeBatchTray(project));
   // Account card: who owns the project on each chain + what kind of account it is.
   section.appendChild(renderAccountCard(project));
   // One human-readable ENS alias for the exact deployment selected in the URL. The card writes only Ethereum's
@@ -18684,6 +18705,10 @@ export var POWER_SET_BUYBACK_TWAP = {
   },
 };
 
+// Every power can be queued into the Safe batch tray; the named registry/hook kinds keep their own entries.
+registerPowerKinds([POWER_MINT, POWER_SET_CONTROLLER, POWER_SET_TERMINALS, POWER_MIGRATE, POWER_ADD_PRICE_FEED, POWER_SET_TOKEN,
+  POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP]);
+
 // A deliberate-confirmation gate for irreversible/dangerous owner actions: a danger banner + a checkbox
 // that must be ticked for the submit to proceed (the submit greys out until then).
 function appendDangerGate(content, text, submitBtn, confirmLabel) {
@@ -18892,6 +18917,7 @@ function openPowerModal(project, action) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
+  var addToBatch = el('button', 'operator-cta operator-edit-batch'); addToBatch.type = 'button'; addToBatch.textContent = 'Add to batch'; actions.appendChild(addToBatch);
   var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = action.title; actions.appendChild(submit);
   // Irreversible/dangerous action → require an explicit confirmation before the submit will fire.
   var gate = action.danger ? appendDangerGate(content, action.danger, submit) : null;
@@ -18900,42 +18926,63 @@ function openPowerModal(project, action) {
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   var busy = false;
-  submit.addEventListener('click', function (e) {
-    e.preventDefault(); if (busy) return;
-    if (gate && !gate.ok()) { setStatus('Tick the confirmation box to proceed — this can’t be undone.', 'error'); return; }
-    busy = true;
-    (async function () {
-      var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
-      if (!selected.length) { setStatus('Select at least one chain', 'error'); busy = false; return; }
-      var values;
-      try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
-      catch (err) { setStatus(err.message || String(err), 'error'); busy = false; return; }
-      var liveTargets = null;
-      if (action.contract === 'JBController') {
-        try { liveTargets = await controllerMapFor(selected, project); }
-        catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); busy = false; return; }
-      } else if (action.resolveTargets) {
-        // Per-project targets (e.g. the project's own buyback hook) instead of an infra address.
-        try { liveTargets = await action.resolveTargets(project, selected.map(function (c) { return c.id; })); }
-        catch (targetError) { setStatus(errMessage(targetError, 'Could not resolve the target contract.'), 'error'); busy = false; return; }
-      }
-      var buildCall = function (cid) {
-        var to = liveTargets ? liveTargets[cid] : getAddress(action.contract, cid);
-        if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
-        return reviewableContractCall(to, action.abi, action.fn, action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)));
-      };
-      var shim = Object.assign({}, project, { chains: selected });
-      var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal,
-        summary: { rows: action.fields.map(function (f) { return [f.label || f.name, rowValueText(values[f.name])]; }) } }, setStatus)
-        .catch(function (err) { setStatus(errMessage(err, 'Could not complete the action.'), 'error'); return null; });
-      busy = false;
-      if (!res) return;
-      if (res.cancelled) { setStatus('Cancelled', ''); return; }
-      if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.'), 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
-      setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
-      setTimeout(function () { modal.close(); }, 2600);
-    })();
-  });
+  // The exact chains, values, and per-chain call builder the submit reviews. Shared with "Add to batch" so a
+  // queued step is byte-identical to what the submit would send. Null (with a status) when the form isn't ready.
+  async function prepareCalls() {
+    var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
+    if (!selected.length) { setStatus('Select at least one chain', 'error'); return null; }
+    var values;
+    try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
+    catch (err) { setStatus(err.message || String(err), 'error'); return null; }
+    var liveTargets = null;
+    if (action.contract === 'JBController') {
+      try { liveTargets = await controllerMapFor(selected, project); }
+      catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); return null; }
+    } else if (action.resolveTargets) {
+      // Per-project targets (e.g. the project's own buyback hook) instead of an infra address.
+      try { liveTargets = await action.resolveTargets(project, selected.map(function (c) { return c.id; })); }
+      catch (targetError) { setStatus(errMessage(targetError, 'Could not resolve the target contract.'), 'error'); return null; }
+    }
+    var buildCall = function (cid) {
+      var to = liveTargets ? liveTargets[cid] : getAddress(action.contract, cid);
+      if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
+      return reviewableContractCall(to, action.abi, action.fn, action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)));
+    };
+    return { selected: selected, values: values, buildCall: buildCall };
+  }
+  function onAction(handler) {
+    return function (e) {
+      e.preventDefault(); if (busy) return;
+      if (gate && !gate.ok()) { setStatus('Tick the confirmation box to proceed — this can’t be undone.', 'error'); return; }
+      busy = true;
+      prepareCalls().then(function (prepared) { return prepared ? handler(prepared) : null; })
+        .catch(function (err) { setStatus(errMessage(err, 'Could not complete the action.'), 'error'); })
+        .then(function () { busy = false; });
+    };
+  }
+  submit.addEventListener('click', onAction(async function (prepared) {
+    var selected = prepared.selected, values = prepared.values;
+    var shim = Object.assign({}, project, { chains: selected });
+    var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, prepared.buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal,
+      summary: { rows: action.fields.map(function (f) { return [f.label || f.name, rowValueText(values[f.name])]; }) } }, setStatus);
+    if (!res) return;
+    if (res.cancelled) { setStatus('Cancelled', ''); return; }
+    if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.'), 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
+    setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
+    setTimeout(function () { modal.close(); }, 2600);
+  }));
+  // Queue the same calls into each selected chain's batch tray instead of sending. Adding never sends; a step with
+  // the same kind + target on a chain is replaced, never duplicated.
+  addToBatch.addEventListener('click', onAction(function (prepared) {
+    var added = prepared.selected.map(function (c) {
+      var pid = pidOn(project, c.id), call = prepared.buildCall(c.id);
+      var step = buildStep(action.fn, { chainId: c.id, projectId: pid, values: materializeChainValues(prepared.values, c.id), to: call.to, args: call.args });
+      saveTray(c.id, pid, upsertStep(loadTray(c.id, pid), step));
+      return c.name || chainNameOf(c.id);
+    });
+    setStatus('Added to the batch for ' + added.join(', ') + '.', 'success');
+    setTimeout(function () { modal.close(); }, 1400);
+  }));
 }
 
 // Owner action (gated by allowAddAccountingContext): register a token the project's terminal accepts.

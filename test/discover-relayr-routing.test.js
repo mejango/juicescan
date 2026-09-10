@@ -18,7 +18,7 @@ vi.mock('../src/relayr.js', async importOriginal => ({
 }));
 
 import { buildForwardedTx, relayrPay, relayrPoll, relayrPostBundle, relayrSupportsForwarding, saveRelayrPendingSession } from '../src/relayr.js';
-import { waitForTrackedTransactionReceipt } from '../src/component-base.js';
+import { confirmTransactionModal, waitForTrackedTransactionReceipt } from '../src/component-base.js';
 import { runProjectPayerRelayrDeploys, runRelayrAcrossChains, shouldUseRelayrForChains } from '../src/discover.js';
 
 const ACCOUNT = runtime.account, TARGET = '0x2222222222222222222222222222222222222222';
@@ -67,6 +67,19 @@ describe('Discover routing after testnet Relayr enablement', () => {
   it('retains an old hashless wallet submission instead of moving it to Relayr', async () => {
     seed([A, 'sending']); await expect(run()).rejects.toThrow(/wallet request was interrupted/);
     expect(waitForTrackedTransactionReceipt).toHaveBeenCalledOnce(); expect(runtime.wallet.sendTransaction).not.toHaveBeenCalled();
+    expect(buildForwardedTx).not.toHaveBeenCalled(); expect(relayrPostBundle).not.toHaveBeenCalled();
+  });
+
+  it('sends an ordered array of calls for one chain sequentially with per-step labels, never through Relayr', async () => {
+    runtime.wallet = { getChainId: vi.fn(async () => 84532), sendTransaction: vi.fn(async ({ data }) => (data === '0x12345678' ? A : B)) };
+    const batch = [{ to: TARGET, data: '0x12345678', step: 'Set buyback hook' }, { to: TARGET, data: '0x87654321', step: 'Set router terminal' }];
+    const result = await runRelayrAcrossChains([CHAINS[0]], ACCOUNT, () => batch, 500000n, vi.fn(), { pendingScope: 'batch-scope' });
+    expect(result).toMatchObject({ direct: true, expectedCount: 2 });
+    expect(runtime.wallet.sendTransaction.mock.calls.map(call => call[0].data)).toEqual(['0x12345678', '0x87654321']);
+    expect(confirmTransactionModal.mock.calls.map(call => [call[1].steps, call[1].stepIndex])).toEqual([
+      [['Set buyback hook on Base Sepolia', 'Set router terminal on Base Sepolia'], 0],
+      [['Set buyback hook on Base Sepolia', 'Set router terminal on Base Sepolia'], 1],
+    ]);
     expect(buildForwardedTx).not.toHaveBeenCalled(); expect(relayrPostBundle).not.toHaveBeenCalled();
   });
 

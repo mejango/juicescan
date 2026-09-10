@@ -195,21 +195,24 @@ export function getSafeNextNonce(chainId, safe) {
 
 // Propose a transaction to the Safe's queue on `chainId`. Returns { safeTxHash, nonce }.
 export async function proposeSafeTx(opts) {
-  // opts: { chainId, safe, to, data, value, signer, reverify?, onPublishing? }. `reverify` runs after the wallet
-  // signature and immediately before the service write so a Safe owner/threshold rotation while the wallet
-  // prompt is open cannot post a signature authorized only by stale governance.
+  // opts: { chainId, safe, to, data, value, signer, operation?, nonce?, reverify?, onPublishing? }. `reverify` runs
+  // after the wallet signature and immediately before the service write so a Safe owner/threshold rotation while
+  // the wallet prompt is open cannot post a signature authorized only by stale governance. `operation` is 0 (CALL,
+  // the default) or 1 (DELEGATECALL — only ever the canonical MultiSendCallOnly batch).
   var base = txBase(opts.chainId);
+  var operation = Number(opts.operation || 0);
+  if (operation !== 0 && operation !== 1) throw new Error('Unsupported Safe operation.');
   if (!base) throw new Error('No Safe Transaction Service configured for ' + chainNameFor(opts.chainId));
   // Caller may pick the nonce (e.g. to replace a queued tx); otherwise use the recommended next nonce.
   var nonce = (opts.nonce != null) ? Number(opts.nonce) : await getSafeNextNonce(opts.chainId, opts.safe);
   if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error('Could not read a valid Safe nonce on ' + chainNameFor(opts.chainId) + '.');
-  var fields = { to: opts.to, value: opts.value || 0, data: opts.data || '0x', operation: 0, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO, refundReceiver: ZERO, nonce: nonce };
+  var fields = { to: opts.to, value: opts.value || 0, data: opts.data || '0x', operation: operation, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO, refundReceiver: ZERO, nonce: nonce };
   var safeTxHash = safeTxHashOf(opts.chainId, opts.safe, fields);
   var signature = await signSafeTx(opts.chainId, opts.safe, fields, opts.signer);
   if (opts.reverify) await opts.reverify();
   if (!getAccount() || getAccount().toLowerCase() !== opts.signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   var body = {
-    to: cs(fields.to), value: String(fields.value), data: fields.data, operation: 0,
+    to: cs(fields.to), value: String(fields.value), data: fields.data, operation: operation,
     safeTxGas: '0', baseGas: '0', gasPrice: '0', gasToken: ZERO, refundReceiver: ZERO,
     nonce: String(nonce), contractTransactionHash: safeTxHash, sender: cs(opts.signer),
     signature: signature, origin: 'Juicebox V6 explorer',
@@ -1268,10 +1271,11 @@ export async function deploySafeSameAddress(chainId, creation, expectedSafe, aut
   return hash;
 }
 
-// The SafeTx hash for a {to, data, value, nonce} call — what signers approve and what execTransaction must match.
+// The SafeTx hash for a {to, data, value, nonce, operation?} call — what signers approve and what execTransaction
+// must match. Operation defaults to CALL; a MultiSendCallOnly batch passes 1.
 export function safeTxHashForCall(chainId, safe, call) {
   return safeTxHashOf(chainId, safe, {
-    to: call.to, value: call.value || 0, data: call.data || '0x', operation: 0,
+    to: call.to, value: call.value || 0, data: call.data || '0x', operation: Number(call.operation || 0),
     safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO, refundReceiver: ZERO, nonce: call.nonce,
   });
 }
