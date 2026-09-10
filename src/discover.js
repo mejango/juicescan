@@ -19,6 +19,8 @@ import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } fr
 import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
 import { CREDIT_CLAIM_ABI, prepareCreditClaims, verifyCreditClaims, verifySavedCreditClaims } from './credit-claims.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded, findSavedSafeExecution } from './safe.js';
+import { buildStep, loadTray, saveTray, upsertStep, registerPowerKinds, multiSendBatchCalls, simulateBatchCalls } from './safe-batch.js';
+import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel, noticeClashIssue, stageStartOk } from './create-flow.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -4457,7 +4459,7 @@ export function projectBuybackHook(project, chainId, opts) {
 //   registry is one of the project's terminals → return the registry's terminalOf (the downstream it forwards into).
 //   the concrete JBRouterTerminal is one of the project's terminals → the project uses the router directly → use it.
 //   neither → none. (terminalOf resolves a *default* even for non-users, so it must be gated the same way as hookOf.)
-function projectRouterTerminal(project, chainId) {
+export function projectRouterTerminal(project, chainId) {
   var registry = getAddress('JBRouterTerminalRegistry', chainId);
   var directTerminal = getAddress('JBRouterTerminal', chainId);
   var pid = pidOn(project, chainId);
@@ -6949,11 +6951,11 @@ async function revnetOperatorOf(projectId, chainId) {
   }
 }
 
-function projectAuthorityLabel(project) {
+export function projectAuthorityLabel(project) {
   return project && project.isRevnet ? 'Operator' : 'Owner';
 }
 
-function projectAuthorityAddress(project) {
+export function projectAuthorityAddress(project) {
   return project && project.isRevnet ? project.operator : project.owner;
 }
 
@@ -11689,7 +11691,7 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
 }
 
 // Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
-async function ensureOperatorAccount(project, operatorAddr, setStatus) {
+export async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   // An unread operator is not an absent one. Without this, the `operatorAddr &&` check below is skipped
   // entirely and any wallet is waved through to sign a transaction the chain will reject.
@@ -11707,7 +11709,7 @@ async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   return account;
 }
 
-function relayrActionScope(project, action, suffix) {
+export function relayrActionScope(project, action, suffix) {
   project = project || {};
   var identity = project.id != null ? project.id
     : (project.projectId != null ? project.projectId : (project.owner || project.operator || 'global'));
@@ -11922,18 +11924,25 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
     }
   }
   // Build each chain's call first so we can show the exact onchain target + calldata before anything is signed.
+  // A batch returns an ordered ARRAY of calls for a chain: they send in that order directly, or carry per-chain
+  // virtual nonces 0,1,2… inside one Relayr bundle.
   var calls = [];
   for (var i = 0; i < chains.length; i++) {
     var cid = chains[i].id;
-    var call = buildCall(cid);
-    if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
-    calls.push({
-      cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data,
-      contract: call.contract || call.contractName || null,
-      abi: call.abi || null,
-      functionName: call.functionName || call.function || null,
-      args: Array.isArray(call.args) ? call.args : null,
-    });
+    var built = buildCall(cid);
+    var list = Array.isArray(built) ? built : [built];
+    for (var k = 0; k < list.length; k++) {
+      var call = list[k];
+      if (!call || !call.to) throw new Error('No target contract on ' + (chains[i].name || cid));
+      calls.push({
+        cid: cid, name: chains[i].name || ('chain ' + cid), to: call.to, data: call.data,
+        contract: call.contract || call.contractName || null,
+        abi: call.abi || null,
+        functionName: call.functionName || call.function || null,
+        args: Array.isArray(call.args) ? call.args : null,
+        step: call.step || null,
+      });
+    }
   }
   var useRelayr = !hasDirectBatch(confirmOpts.pendingScope, account, calls) && shouldUseRelayrForChains(chains);
   if (useRelayr) {
@@ -11971,7 +11980,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
           rawArgs: direct.args,
           summary: confirmOpts.summary ? Object.assign({ action: confirmOpts.label }, confirmOpts.summary, { rows: (confirmOpts.summary.rows || []).concat([['On chain', direct.name]]) }) : undefined,
         }, { title: confirmOpts.title || 'Confirm transaction', confirmText: 'Confirm & send',
-          steps: calls.length > 1 ? calls.map(function (call) { return 'Send on ' + call.name; }) : confirmOpts.steps,
+          steps: calls.length > 1 ? calls.map(function (call) { return (call.step ? call.step + ' on ' : 'Send on ') + call.name; }) : confirmOpts.steps,
           stepIndex: calls.length > 1 ? directIndex : confirmOpts.stepIndex, stepsIntro: confirmOpts.stepsIntro });
         if (!directOk || (typeof directOk === 'object' && !directOk.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
         setStatus('Checking wallet network…', 'pending');
@@ -12068,7 +12077,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
     account: account,
     paymentHash: null,
     paymentState: 'quoted',
-    expectedCount: chains.length,
+    expectedCount: calls.length,
     expectedTransactions: bundle.expected_transactions,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
     records: [],
@@ -13129,7 +13138,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
       var matches = (txs || []).filter(function (tx) {
         if (!tx || !tx.to || !sameAddr(tx.to, rec.to)
             || String(tx.data || '0x').toLowerCase() !== String(rec.data || '0x').toLowerCase()
-            || Number(tx.operation || 0) !== 0 || !hasCanonicalSafeRefundFields(tx)) return false;
+            || Number(tx.operation || 0) !== Number(rec.operation || 0) || !hasCanonicalSafeRefundFields(tx)) return false;
         try {
           if (BigInt(tx.value || 0) !== 0n) return false;
           var advertised = queuedSafeTxHash(tx);
@@ -16308,6 +16317,8 @@ var SAFE_FN_LABELS = {
   sendPayoutsOf: 'Send payouts', sendReservedTokensToSplitsOf: 'Distribute reserved tokens',
 };
 function labelForQueuedTx(tx) {
+  var batch = multiSendBatchCalls(tx);
+  if (batch) return 'Batch (' + batch.length + ' call' + (batch.length === 1 ? '' : 's') + ')';
   // Decode via the target contract's ABI (same as the confirm modal) → real function name.
   var d = decodeCallForDisplay({ address: tx.to, calldata: tx.data });
   if (d && d.fn) return SAFE_FN_LABELS[d.fn] || d.fn;
@@ -16318,9 +16329,11 @@ function labelForQueuedTx(tx) {
 // hides the recipient/amount/target a malicious co-signer could slip in. Folds the DELEGATECALL / ETH-value /
 // unrecognized-target warnings into the same review. Returns the user's confirm/cancel as a promise.
 function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
-  var nm = resolveContractName(tx.to, cid);
+  var batch = multiSendBatchCalls(tx);
+  var nm = resolveContractName(tx.to, cid) || (batch ? 'MultiSendCallOnly' : null);
   var warns = [];
-  if (Number(tx.operation) === 1) warns.push('DELEGATECALL — runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets).');
+  if (batch) warns.push('Batch: the Safe delegatecalls the canonical MultiSendCallOnly, which CALLs each inner transaction listed below, in order.');
+  else if (Number(tx.operation) === 1) warns.push('DELEGATECALL — runs arbitrary code in the Safe’s own context (it can move any of the Safe’s assets).');
   var ethVal; try { ethVal = BigInt(tx.value || 0); } catch (_) { ethVal = 0n; }
   if (ethVal > 0n) warns.push('Sends ' + formatBalance(ethVal, 18, 'ETH') + ' from the Safe.');
   if (!nm) warns.push('Targets an UNRECOGNIZED contract (' + tx.to + ') — not a known Juicebox/Revnet contract. Review the raw data below before approving.');
@@ -16338,7 +16351,9 @@ function reviewQueuedSafeTx(cid, chainName, tx, actionLabel) {
         ['Signatures', confirmations + (tx.confirmationsRequired ? ' of ' + tx.confirmationsRequired : '')],
         ['Target', (nm ? nm + ' at ' : '') + tx.to],
         ['On chain', chainName],
-      ] } },
+      ].concat((batch || []).map(function (call, i) {
+        return ['Call ' + (i + 1), labelForQueuedTx(call) + ' → ' + (resolveContractName(call.to, cid) || call.to)];
+      })) } },
     { title: viewOnly ? ('Transaction #' + tx.nonce + ' details') : ((actionLabel || 'Review') + ' Safe transaction #' + tx.nonce),
       confirmText: viewOnly ? 'Close' : (actionLabel || 'Confirm'), description: desc, hideCancel: viewOnly,
       steps: viewOnly ? false : [(actionLabel || 'Confirm') + ' Safe transaction #' + tx.nonce] }
@@ -17217,8 +17232,15 @@ export function projectAuthoritySafeQueueGroups(rows, authorityRole) {
   });
 }
 
+// The batch tray renderer registers itself (safe-batch-ui.js imports this module, so it can't be imported here).
+var _safeBatchTray = null;
+export function setSafeBatchTrayRenderer(render) { _safeBatchTray = render; }
+
 function renderBackOfficeSection(project) {
   var section = el('div', 'detail-section');
+  // Queued batch steps stay visible above every card; the section is cached across tab switches, so the tray
+  // re-renders itself on the tray-updated event instead of being rebuilt here.
+  if (_safeBatchTray) section.appendChild(_safeBatchTray(project));
   // Account card: who owns the project on each chain + what kind of account it is.
   section.appendChild(renderAccountCard(project));
   // One human-readable ENS alias for the exact deployment selected in the URL. The card writes only Ethereum's
@@ -18684,6 +18706,10 @@ export var POWER_SET_BUYBACK_TWAP = {
   },
 };
 
+// Every power can be queued into the Safe batch tray; the named registry/hook kinds keep their own entries.
+registerPowerKinds([POWER_MINT, POWER_SET_CONTROLLER, POWER_SET_TERMINALS, POWER_MIGRATE, POWER_ADD_PRICE_FEED, POWER_SET_TOKEN,
+  POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP]);
+
 // A deliberate-confirmation gate for irreversible/dangerous owner actions: a danger banner + a checkbox
 // that must be ticked for the submit to proceed (the submit greys out until then).
 function appendDangerGate(content, text, submitBtn, confirmLabel) {
@@ -18892,6 +18918,7 @@ function openPowerModal(project, action) {
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
+  var addToBatch = el('button', 'operator-cta operator-edit-batch'); addToBatch.type = 'button'; addToBatch.textContent = 'Add to batch'; actions.appendChild(addToBatch);
   var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = action.title; actions.appendChild(submit);
   // Irreversible/dangerous action → require an explicit confirmation before the submit will fire.
   var gate = action.danger ? appendDangerGate(content, action.danger, submit) : null;
@@ -18900,42 +18927,63 @@ function openPowerModal(project, action) {
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   var busy = false;
-  submit.addEventListener('click', function (e) {
-    e.preventDefault(); if (busy) return;
-    if (gate && !gate.ok()) { setStatus('Tick the confirmation box to proceed — this can’t be undone.', 'error'); return; }
-    busy = true;
-    (async function () {
-      var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
-      if (!selected.length) { setStatus('Select at least one chain', 'error'); busy = false; return; }
-      var values;
-      try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
-      catch (err) { setStatus(err.message || String(err), 'error'); busy = false; return; }
-      var liveTargets = null;
-      if (action.contract === 'JBController') {
-        try { liveTargets = await controllerMapFor(selected, project); }
-        catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); busy = false; return; }
-      } else if (action.resolveTargets) {
-        // Per-project targets (e.g. the project's own buyback hook) instead of an infra address.
-        try { liveTargets = await action.resolveTargets(project, selected.map(function (c) { return c.id; })); }
-        catch (targetError) { setStatus(errMessage(targetError, 'Could not resolve the target contract.'), 'error'); busy = false; return; }
-      }
-      var buildCall = function (cid) {
-        var to = liveTargets ? liveTargets[cid] : getAddress(action.contract, cid);
-        if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
-        return reviewableContractCall(to, action.abi, action.fn, action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)));
-      };
-      var shim = Object.assign({}, project, { chains: selected });
-      var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal,
-        summary: { rows: action.fields.map(function (f) { return [f.label || f.name, rowValueText(values[f.name])]; }) } }, setStatus)
-        .catch(function (err) { setStatus(errMessage(err, 'Could not complete the action.'), 'error'); return null; });
-      busy = false;
-      if (!res) return;
-      if (res.cancelled) { setStatus('Cancelled', ''); return; }
-      if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.'), 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
-      setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
-      setTimeout(function () { modal.close(); }, 2600);
-    })();
-  });
+  // The exact chains, values, and per-chain call builder the submit reviews. Shared with "Add to batch" so a
+  // queued step is byte-identical to what the submit would send. Null (with a status) when the form isn't ready.
+  async function prepareCalls() {
+    var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
+    if (!selected.length) { setStatus('Select at least one chain', 'error'); return null; }
+    var values;
+    try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
+    catch (err) { setStatus(err.message || String(err), 'error'); return null; }
+    var liveTargets = null;
+    if (action.contract === 'JBController') {
+      try { liveTargets = await controllerMapFor(selected, project); }
+      catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); return null; }
+    } else if (action.resolveTargets) {
+      // Per-project targets (e.g. the project's own buyback hook) instead of an infra address.
+      try { liveTargets = await action.resolveTargets(project, selected.map(function (c) { return c.id; })); }
+      catch (targetError) { setStatus(errMessage(targetError, 'Could not resolve the target contract.'), 'error'); return null; }
+    }
+    var buildCall = function (cid) {
+      var to = liveTargets ? liveTargets[cid] : getAddress(action.contract, cid);
+      if (!to) throw new Error('No ' + action.contract + ' on ' + chainNameOf(cid));
+      return reviewableContractCall(to, action.abi, action.fn, action.buildArgs(materializeChainValues(values, cid), cid, pidOn(project, cid)));
+    };
+    return { selected: selected, values: values, buildCall: buildCall };
+  }
+  function onAction(handler) {
+    return function (e) {
+      e.preventDefault(); if (busy) return;
+      if (gate && !gate.ok()) { setStatus('Tick the confirmation box to proceed — this can’t be undone.', 'error'); return; }
+      busy = true;
+      prepareCalls().then(function (prepared) { return prepared ? handler(prepared) : null; })
+        .catch(function (err) { setStatus(errMessage(err, 'Could not complete the action.'), 'error'); })
+        .then(function () { busy = false; });
+    };
+  }
+  submit.addEventListener('click', onAction(async function (prepared) {
+    var selected = prepared.selected, values = prepared.values;
+    var shim = Object.assign({}, project, { chains: selected });
+    var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, prepared.buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal,
+      summary: { rows: action.fields.map(function (f) { return [f.label || f.name, rowValueText(values[f.name])]; }) } }, setStatus);
+    if (!res) return;
+    if (res.cancelled) { setStatus('Cancelled', ''); return; }
+    if (res.relayr) { setStatus(res.resumed ? relayrRecoveredMessage(res.session) : ((action.actionVerb || 'Done') + ' on ' + selected.length + ' chain' + (selected.length > 1 ? 's' : '') + '.'), 'success'); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); setTimeout(function () { modal.close(); }, 1600); return; }
+    setStatus('Queued on ' + res.queued + ' chain' + (res.queued === 1 ? '' : 's') + (res.skipped && res.skipped.length ? ' (skipped ' + res.skipped.join(', ') + ')' : '') + ' — confirm + execute in the ' + (project.isRevnet ? 'Operator' : 'Owner') + ' tab.', 'success');
+    setTimeout(function () { modal.close(); }, 2600);
+  }));
+  // Queue the same calls into each selected chain's batch tray instead of sending. Adding never sends; a step with
+  // the same kind + target on a chain is replaced, never duplicated.
+  addToBatch.addEventListener('click', onAction(function (prepared) {
+    var added = prepared.selected.map(function (c) {
+      var pid = pidOn(project, c.id), call = prepared.buildCall(c.id);
+      var step = buildStep(action.fn, { chainId: c.id, projectId: pid, values: materializeChainValues(prepared.values, c.id), to: call.to, args: call.args });
+      saveTray(c.id, pid, upsertStep(loadTray(c.id, pid), step));
+      return c.name || chainNameOf(c.id);
+    });
+    setStatus('Added to the batch for ' + added.join(', ') + '.', 'success');
+    setTimeout(function () { modal.close(); }, 1400);
+  }));
 }
 
 // Owner action (gated by allowAddAccountingContext): register a token the project's terminal accepts.
@@ -31003,16 +31051,71 @@ export function lpErc20ApprovePrefix(spender) { return '0x095ea7b3' + '00'.repea
 async function lpQueuedSafeStep(chainId, safe, to, dataPrefix) {
   if (!hasSafeService(chainId)) return null;
   var rows = await listPendingSafeTxs(chainId, safe).catch(function () { return []; });
-  return rows.filter(function (t) {
-    return String(t.to || '').toLowerCase() === String(to).toLowerCase() && String(t.data || '').toLowerCase().indexOf(dataPrefix.toLowerCase()) === 0;
-  })[0] || null;
+  function matches(t) { return String(t.to || '').toLowerCase() === String(to).toLowerCase() && String(t.data || '').toLowerCase().indexOf(dataPrefix.toLowerCase()) === 0; }
+  // A step proposed through the Safe App as part of one batch sits inside a queued MultiSend record.
+  return rows.filter(function (t) { return matches(t) || (multiSendBatchCalls(t) || []).some(matches); })[0] || null;
+}
+
+// The three LP step calls, shared by the sequential path and the Safe App batch so both send identical bytes.
+function lpApproveTokenCall(side) { return { address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max] }; }
+function lpPermit2ApproveCall(side, posm, now, dlSecs) { return { address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve', args: [side.currency, posm, side.max, BigInt(now + Math.max(30 * 24 * 3600, dlSecs + 86400))] }; }
+function lpMintCall(prep, deadline) { return { address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline], value: prep.value }; }
+function lpErc20NeedsApproval(erc20Allow, side) { return BigInt(erc20Allow) < side.max; }
+// Require the allowance to outlive a Safe's multi-day queue, not just this moment.
+function lpPermit2NeedsApproval(p2, side, now, smartWallet) { return !(BigInt(p2[0]) >= side.max && Number(p2[1]) > now + (smartWallet ? 86400 : 0)); }
+
+// The ordered calls a smart wallet needs for one add-liquidity: per ERC-20 side an exact ERC20→Permit2 approval
+// and an onchain Permit2→PositionManager approval where `needs[i]` says so, then the mint. Pure: `needs` comes from
+// prep flags (the confirm preview) or from live allowance reads (the submit).
+export function lpAddLiquidityCalls(prep, needs, now, dlSecs, deadline) {
+  var calls = [];
+  (prep.erc20 || []).forEach(function (side, i) {
+    var need = needs[i] || {};
+    if (need.approve) calls.push(Object.assign({ label: 'Approve token for Permit2', guard: [side.currency, lpErc20ApprovePrefix(PERMIT2_ADDRESS), 'The token approval'] }, lpApproveTokenCall(side)));
+    if (need.permit2) calls.push(Object.assign({ label: 'Approve on Permit2', guard: [PERMIT2_ADDRESS, LP_SEL_PERMIT2_APPROVE, 'The Permit2 approval'] }, lpPermit2ApproveCall(side, prep.posm, now, dlSecs)));
+  });
+  calls.push(Object.assign({ label: 'Mint the position', guard: [prep.posm, LP_SEL_MODIFY_LIQUIDITIES, 'The liquidity mint'], dependsOnPrior: calls.length > 0 }, lpMintCall(prep, deadline)));
+  return calls.map(function (c) {
+    return Object.assign({}, c, { to: c.address, value: c.value || 0n, data: encodeFunctionData({ abi: c.abi, functionName: c.functionName, args: c.args }) });
+  });
+}
+// The same two allowance reads and conditions the sequential path applies, so a batch skips satisfied steps too.
+async function lpLiveAllowanceNeeds(chainId, prep, acct, now) {
+  var needs = [];
+  for (var i = 0; i < (prep.erc20 || []).length; i++) {
+    var side = prep.erc20[i];
+    var erc20Allow = await clientFor(chainId).readContract({ address: side.currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] });
+    var p2 = await clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, side.currency, prep.posm] });
+    needs.push({ approve: lpErc20NeedsApproval(erc20Allow, side), permit2: lpPermit2NeedsApproval(p2, side, now, true) });
+  }
+  return needs;
+}
+
+// Inside the Safe App the whole sequence goes to the Safe as ONE proposal (the Safe builds the MultiSend); the
+// queued-step guards refuse a duplicate first, and the sequence is simulated from the Safe before proposing.
+// Returns the proposal hash, which is not an execution: the caller watches for the executed transaction.
+async function proposeAddLiquidityBatch(chainId, prep, calls, onStatus) {
+  for (var i = 0; i < calls.length; i++) {
+    var queued = await lpQueuedSafeStep(chainId, prep.acct, calls[i].guard[0], calls[i].guard[1]);
+    if (queued) throw new Error(calls[i].guard[2] + ' is already queued in your Safe (nonce ' + queued.nonce + '). Execute (or reject) it there, then confirm here again — completed steps are skipped.');
+  }
+  onStatus('Simulating the batch from your Safe…', 'pending', { step: 0 });
+  await simulateBatchCalls(clientFor(chainId), prep.acct, calls, calls.map(function (c) { return !!c.dependsOnPrior; }));
+  if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
+  onStatus('Proposing the batch of ' + calls.length + ' calls to your Safe — confirm in Safe{Wallet}…', 'pending', { step: 0 });
+  var safeTxHash = await proposeSafeTransactions(calls.map(function (c) { return { to: c.to, value: c.value ? '0x' + BigInt(c.value).toString(16) : '0', data: c.data }; }));
+  if (!safeTxHash) throw new Error('Safe returned no proposal hash.');
+  document.dispatchEvent(new CustomEvent('jb:safe-queued'));
+  return { safeTxHash: safeTxHash, calls: calls.length };
 }
 
 // Execute: a one-time exact ERC20→Permit2 approval (if needed), then a GASLESS Permit2 signature batched
 // with the mint via PositionManager.multicall — so it's 2 txs + 1 instant signature instead of 3 txs.
 // Smart wallets (Safes) instead get plain sequential txs (approve → Permit2.approve → mint), each guarded
-// against re-proposing a step that's already queued. Returns the mint tx hash.
-async function runAddLiquidityTxs(chainId, prep, onStatus) {
+// against re-proposing a step that's already queued. Returns the mint tx hash — or, when the Safe App holds the
+// wallet and more than one call remains, `{ safeTxHash, calls }` for the ONE batch proposal (`plan` carries the
+// confirm's now/deadline so the proposed bytes are the reviewed bytes).
+export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
   var acct = getAccount();
   if (!acct) throw new Error('Connect a wallet');
   if (!prep.acct || acct.toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
@@ -31026,10 +31129,15 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
   // the signing rounds, where an EOA's 20 minutes would expire before the co-signers get to it. Slippage is
   // still bounded by amountMax regardless of the window.
   var dlSecs = lpDeadlineSecs(prep);
-  var deadline = BigInt(Math.floor(Date.now() / 1000) + dlSecs);
+  var now = plan ? plan.now : Math.floor(Date.now() / 1000);
+  var deadline = plan ? plan.deadline : BigInt(now + dlSecs);
   var permitDatas = [];
-  var now = Math.floor(Date.now() / 1000);
   var stepNo = 0;
+
+  if (prep.smartWallet && isSafeConnected()) {
+    var batch = lpAddLiquidityCalls(prep, await lpLiveAllowanceNeeds(chainId, prep, acct, now), now, dlSecs, deadline);
+    if (batch.length > 1) return proposeAddLiquidityBatch(chainId, prep, batch, onStatus);
+  }
 
   // Multisig execution is async from this page: a step proposed here sits in the Safe queue until co-signers
   // execute it. Refuse to double-queue, and say what to do when the wallet round-trip outlives the page.
@@ -31053,10 +31161,10 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     var side = prep.erc20[i];
     // 1. ERC20 → Permit2 (exact, bounded; only when the current allowance is short).
     var erc20Allow = await clientFor(chainId).readContract({ address: side.currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] });
-    if (BigInt(erc20Allow) < side.max) {
+    if (lpErc20NeedsApproval(erc20Allow, side)) {
       await guardQueued(side.currency, lpErc20ApprovePrefix(PERMIT2_ADDRESS), 'The token approval');
       onStatus(prep.smartWallet ? proposeMsg('the token approval') : 'Approving token for Permit2…', 'pending', { step: stepNo++ });
-      await lpSendTx(chainId, { account: prep.acct, address: side.currency, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, side.max], smartWallet: prep.smartWallet })
+      await lpSendTx(chainId, Object.assign({ account: prep.acct, smartWallet: prep.smartWallet }, lpApproveTokenCall(side)))
         .catch(withRecheck(side, function (s) {
           // The Safe's proposal hash never gets a receipt (execution is a different tx) — watch the step's
           // EFFECT instead: the ERC20→Permit2 allowance reaching the requested cap.
@@ -31067,15 +31175,14 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     // 2. Permit2 → PositionManager allowance. Reuse if still valid; else sign one (gasless) and fold it
     //    into the mint multicall — no separate onchain approval tx.
     var p2 = await clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, side.currency, posm] });
-    var p2amount = BigInt(p2[0]), p2exp = Number(p2[1]), p2nonce = Number(p2[2]);
-    // Require the allowance to outlive a Safe's multi-day queue, not just this moment.
-    if (!(p2amount >= side.max && p2exp > now + (prep.smartWallet ? 86400 : 0))) {
+    var p2nonce = Number(p2[2]);
+    if (lpPermit2NeedsApproval(p2, side, now, prep.smartWallet)) {
       if (prep.smartWallet) {
         // Contract wallets can't produce the gasless Permit2 signature (and its 30-min sigDeadline could never
         // survive a multisig round anyway) — set the same allowance with an onchain Permit2.approve tx instead.
         await guardQueued(PERMIT2_ADDRESS, LP_SEL_PERMIT2_APPROVE, 'The Permit2 approval');
         onStatus(proposeMsg('the Permit2 approval'), 'pending', { step: stepNo++ });
-        await lpSendTx(chainId, { account: prep.acct, address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'approve', args: [side.currency, posm, side.max, BigInt(now + Math.max(30 * 24 * 3600, dlSecs + 86400))], smartWallet: true })
+        await lpSendTx(chainId, Object.assign({ account: prep.acct, smartWallet: true }, lpPermit2ApproveCall(side, posm, now, dlSecs)))
           .catch(withRecheck(side, function (s) {
             return clientFor(chainId).readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [prep.acct, s.currency, posm] })
               .then(function (p) { return BigInt(p[0]) >= s.max && Number(p[1]) > Math.floor(Date.now() / 1000); });
@@ -31107,7 +31214,7 @@ async function runAddLiquidityTxs(chainId, prep, onStatus) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
     return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value, smartWallet: prep.smartWallet });
   }
-  return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline], value: prep.value, smartWallet: prep.smartWallet });
+  return lpSendTx(chainId, Object.assign({ account: prep.acct, smartWallet: prep.smartWallet }, lpMintCall(prep, deadline)));
 }
 
 // Build the "exact transaction" preview payload (mirrors the Pay confirm), for openTxConfirm.
@@ -32247,9 +32354,46 @@ function buildAddLiquidityModal(project) {
         if (!s.permitReady) lpSteps.push(prep.smartWallet ? 'Approve ' + label + ' on Permit2' : 'Sign the ' + label + ' Permit2 approval');
       });
       lpSteps.push('Mint the position');
-      openTxConfirm(buildAddLiquidityPayload(cid, chainName, sym, prep), function (ctx) {
+      // Inside the Safe App a multi-call sequence is proposed as ONE batch: preview every call with the exact
+      // now/deadline the submit reuses, and replace the per-step wallet list with the single proposal.
+      var payload = buildAddLiquidityPayload(cid, chainName, sym, prep);
+      var plan = null;
+      if (prep.smartWallet && isSafeConnected()) {
+        var planNow = Math.floor(Date.now() / 1000), planDl = lpDeadlineSecs(prep);
+        var planned = lpAddLiquidityCalls(prep, (prep.erc20 || []).map(function (s) { return { approve: !s.approved, permit2: !s.permitReady }; }), planNow, planDl, BigInt(planNow + planDl));
+        if (planned.length > 1) {
+          plan = { now: planNow, deadline: BigInt(planNow + planDl), calls: planned };
+          payload.transactions = planned.map(function (c) {
+            return { step: c.label, chain: chainName, chainId: cid, contract: resolveContractName(c.to, cid) || (c.to === PERMIT2_ADDRESS ? 'Permit2' : c.to === prep.posm ? 'Uniswap V4 PositionManager' : c.to),
+              address: c.to, calldata: c.data, abi: c.abi, functionName: c.functionName, rawArgs: c.args, value: String(c.value) };
+          });
+        }
+      }
+      openTxConfirm(payload, function (ctx) {
         ctx.confirm.disabled = true; ctx.cancel.disabled = true;
-        runAddLiquidityTxs(cid, prep, function (m, kind, meta) { ctx.showStatus(m, kind, meta); }).then(function (hash) {
+        runAddLiquidityTxs(cid, prep, function (m, kind, meta) { ctx.showStatus(m, kind, meta); }, plan).then(function (result) {
+          if (result && result.safeTxHash) {
+            // A proposal, not an execution: keep the dialog up, let it close, and watch the Safe for the executed tx.
+            ctx.cancel.disabled = false; ctx.cancel.textContent = 'Close';
+            ctx.showStatus('Proposed to your Safe as one batch of ' + result.calls + ' calls — sign and execute it in your Safe queue. This page watches for the execution.', 'pending');
+            (function watch(tries) {
+              if (tries > 40) return;
+              setTimeout(function () {
+                txHashForSafeTx(result.safeTxHash).then(function (executed) {
+                  if (!executed) { watch(tries + 1); return; }
+                  ctx.modal.close();
+                  status.className = 'modal-status success';
+                  status.innerHTML = '';
+                  status.appendChild(document.createTextNode('Liquidity added | TX: '));
+                  status.appendChild(renderExplorerTxLink(cid, executed, truncAddr(executed)));
+                  noteLocalLpWrite(cid, prep.poolId);
+                  refreshBalances(); refreshPrice();
+                });
+              }, 15000);
+            })(1);
+            return;
+          }
+          var hash = result;
           ctx.modal.close();
           status.className = 'modal-status success';
           status.innerHTML = '';
@@ -32278,8 +32422,11 @@ function buildAddLiquidityModal(project) {
           ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
         });
       }, {
-        title: 'Confirm add liquidity', confirmText: 'Confirm & add liquidity', closeOnConfirm: false, sequenceSteps: lpSteps,
-        description: prep.smartWallet
+        title: 'Confirm add liquidity', confirmText: plan ? 'Confirm & propose batch' : 'Confirm & add liquidity', closeOnConfirm: false,
+        sequenceSteps: plan ? ['Propose the batch to your Safe'] : lpSteps,
+        sequenceIntro: plan ? 'Goes to your Safe as one batch of ' + plan.calls.length + ' calls: approved once, executed together.' : undefined,
+        description: plan ? 'Execute the batch within days of queueing it: the mint’s price-drift headroom and its 30-day approvals are finite. Already-queued steps are detected and refused, so a second confirm never double-proposes.'
+          : prep.smartWallet
           ? 'Multisig detected: this runs as up to 3 sequential Safe transactions (token approval → Permit2 approval → mint), each proposed here and executed from your Safe queue. If you leave while one is pending, come back and confirm again — completed and already-queued steps are detected and skipped. Execute the mint within days of queueing it: its price-drift headroom and 30-day approvals are finite.'
           : undefined,
       });

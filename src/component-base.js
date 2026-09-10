@@ -1146,6 +1146,12 @@ export function renderConfirmBody(content, payload, opts) {
   if (friendly) content.appendChild(friendly);
   var decoded = renderDecodedSummary(payload);
   if (decoded && !friendly) content.appendChild(decoded);
+  // A caller-owned body (the batch dialog's editable step list) sits between the summary and the raw payload.
+  // A function body receives `opts.bodyControls` so it can hold the primary button while its state is invalid.
+  if (opts.body) {
+    var bodyNode = typeof opts.body === 'function' ? opts.body(opts.bodyControls || {}) : opts.body;
+    if (bodyNode) content.appendChild(bodyNode);
+  }
   var pre = el('pre', 'create-payload');
   pre.textContent = annotateTimestamps(annotateAddresses(formatPayloadJson(payload)));
   if (friendly || decoded) {
@@ -1305,12 +1311,13 @@ export function confirmTransactionModal(payload, opts) {
   content.appendChild(reviewHost);
   function showAction(nextPayload, nextOpts) {
     reviewHost.innerHTML = '';
-    renderConfirmBody(reviewHost, nextPayload, nextOpts); // safety note + decoded summary + raw-in-details + audit link
+    // safety note + decoded summary + raw-in-details + audit link
+    renderConfirmBody(reviewHost, nextPayload, Object.assign({}, nextOpts, { bodyControls: { setConfirmDisabled: function (disabled) { confirm.disabled = !!disabled; }, setConfirmText: function (text) { confirm.textContent = text; } } }));
   }
-  showAction(payload, opts);
   var foot = el('div', 'create-modal-foot');
   var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
   var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
+  showAction(payload, opts);
   if (!opts.hideCancel) foot.appendChild(cancel);
   foot.appendChild(confirm); content.appendChild(foot);
   // Post-confirm progress shows HERE, inside the modal — the modal stays open after "Confirm" so callers

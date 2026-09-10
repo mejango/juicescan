@@ -9,7 +9,11 @@ import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
 import { buildEmbedUrl, getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
-import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet, verifiedHandleProjectRoute } from './discover.js';
+import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet, verifiedHandleProjectRoute, setSafeBatchTrayRenderer } from './discover.js';
+import { renderSafeBatchTray } from './safe-batch-ui.js';
+
+// The Owner/Operator tab mounts the Safe batch tray; the tray module imports discover, so it is wired here.
+setSafeBatchTrayRenderer(renderSafeBatchTray);
 import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js';
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';

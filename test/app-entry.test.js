@@ -97,6 +97,7 @@ vi.mock('../src/learn-build.js', () => ({
   renderWhyTab: entry.renderWhyTab,
 }));
 vi.mock('../src/discover.js', () => ({
+  setSafeBatchTrayRenderer: vi.fn(),
   renderDiscoverTab: entry.renderDiscoverTab,
   applyDiscoverRoute: entry.applyDiscoverRoute,
   cancelDiscoverRoute: entry.cancelDiscoverRoute,
@@ -111,6 +112,7 @@ vi.mock('../src/discover.js', () => ({
 }));
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
 vi.mock('../src/account-view.js', () => ({ renderAccountView: entry.renderAccountView }));
+vi.mock('../src/safe-batch-ui.js', () => ({ renderSafeBatchTray: vi.fn() }));
 vi.mock('../src/create-flow.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
 vi.mock('../src/font-selector.js', () => ({
   mountFontSelector: entry.mountFontSelector,
