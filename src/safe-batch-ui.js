@@ -315,6 +315,7 @@ async function sendBatchDirect(project, chains, setStatus) {
     label: 'Batch', title: 'Send the batch',
     pendingScope: relayrActionScope(project, 'safe-batch', chains.map(function (c) { return c.id; }).join('-')),
   });
+  if (!res || res.cancelled) { setStatus('Cancelled', ''); return res; }
   chains.forEach(function (c) { clearTray(c.id, pidOn(project, c.id)); });
   document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
   setStatus('Sent ' + plural(total, 'transaction') + '.', 'success');
