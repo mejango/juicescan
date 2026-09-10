@@ -23,8 +23,9 @@ const budgets = {
   // 9,004,301 B raw / 1,323,697 B gzip (+4,049 / +832 versus the six-group build).
   // Safe operator batch — per-chain tray, MultiSend codec, operation-1 proposal, preset resolver, batch dialog:
   // 9,055,913 B raw / 1,335,883 B gzip (+51,612 / +12,186 versus the testnet Relayr build); style.css 245,639 B raw.
-  // Reviewed narrow caps leave 87 B raw and 117 B gzip on app.js and 361 B raw on style.css.
-  'dist/app.js': { raw: 9_056_000, gzip: 1_336_000 },
+  // Add-liquidity through the Safe App as one batch: 9,062,911 B raw / 1,337,326 B gzip (+6,998 / +1,443).
+  // Reviewed narrow caps leave 89 B raw and 674 B gzip on app.js and 361 B raw on style.css.
+  'dist/app.js': { raw: 9_063_000, gzip: 1_338_000 },
   'dist/style.css': { raw: 246_000, gzip: 50_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },
@@ -54,8 +55,8 @@ const distributionFiles = await filesBelow('dist');
 const totalGzip = (await Promise.all(distributionFiles.map(async file =>
   gzipSync(await readFile(file), { level: 9 }).byteLength
 ))).reduce((sum, size) => sum + size, 0);
-// Measured 2,082,361 B with the Safe operator batch; 639 B headroom.
-const totalGzipBudget = 2_083_000;
+// Measured 2,083,802 B with the Safe operator batch and the Safe App LP batch; 198 B headroom.
+const totalGzipBudget = 2_084_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

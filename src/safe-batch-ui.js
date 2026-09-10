@@ -6,7 +6,8 @@
 import { el, openDialog, confirmTransactionModal, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
 import { chainNameFor, usdcByChain } from './chain.js';
 import { getAddress } from './abi-registry.js';
-import { STEP_KINDS, buildStep, loadTray, saveTray, clearTray, upsertStep, moveStep, removeStep, composeBatch, checkBatchOrder, dependsOnPrior, mirrorBatch, encodeMultiSend, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN, TRAY_UPDATED_EVENT } from './safe-batch.js';
+import { STEP_KINDS, buildStep, loadTray, saveTray, clearTray, upsertStep, moveStep, removeStep, composeBatch, checkBatchOrder, dependsOnPrior, mirrorBatch, encodeMultiSend, simulateBatchCalls, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN, TRAY_UPDATED_EVENT } from './safe-batch.js';
+export { simulateBatchCalls } from './safe-batch.js';
 import { PRESETS, resolvePreset } from './safe-batch-presets.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, executeSafeTx } from './safe.js';
 import { proposeSafeTransactions } from './safe-app.js';
@@ -210,41 +211,6 @@ function renderBatchBody(project, chain, state, route, others, controls) {
 }
 
 // ── Submit routes ────────────────────────────────────────────────────────────
-// Whole-sequence simulation from the authority via eth_simulateV1. When the RPC lacks it, each call is simulated
-// alone with eth_call, skipping steps that only succeed after an earlier step of the same batch.
-export async function simulateBatchCalls(client, from, calls, dependsOnPriorFlags) {
-  var entries = calls.map(function (c) { return { from: from, to: c.to, data: c.data, value: '0x0' }; });
-  var result = null;
-  try { result = await client.request({ method: 'eth_simulateV1', params: [{ blockStateCalls: [{ calls: entries }], validation: true }, 'latest'] }); }
-  catch (e) { if (!rpcMethodUnsupported(e)) throw new Error('The batch simulation failed: ' + rpcMessage(e) + '. Nothing was proposed.'); }
-  if (result) {
-    var block = Array.isArray(result) ? result[0] : null;
-    var outcomes = (block && block.calls) || [];
-    if (outcomes.length !== calls.length) throw new Error('The batch simulation returned an unexpected shape. Nothing was proposed.');
-    outcomes.forEach(function (outcome, i) {
-      if (String(outcome && outcome.status).toLowerCase() !== '0x1') {
-        throw new Error('Step ' + (i + 1) + ' would revert' + (outcome && outcome.error && outcome.error.message ? ': ' + outcome.error.message : '') + '. Nothing was proposed.');
-      }
-    });
-    return { method: 'eth_simulateV1', simulated: calls.length };
-  }
-  var simulated = 0;
-  for (var i = 0; i < entries.length; i++) {
-    if (dependsOnPriorFlags && dependsOnPriorFlags[i]) continue;
-    try { await client.request({ method: 'eth_call', params: [entries[i], 'latest'] }); simulated++; }
-    catch (e) { throw new Error('Step ' + (i + 1) + ' would revert: ' + rpcMessage(e) + '. Nothing was proposed.'); }
-  }
-  return { method: 'eth_call', simulated: simulated };
-}
-function rpcMessage(e) { return (e && (e.shortMessage || e.message)) || String(e); }
-function rpcMethodUnsupported(e) {
-  for (var depth = 0, current = e; current && depth < 6; depth++, current = current.cause) {
-    if (Number(current.code) === -32601) return true;
-    if (/method not found|not supported|unsupported method|does not exist/i.test(String(current.message || ''))) return true;
-  }
-  return false;
-}
-
 // Connected through the Safe App as the authority: the Safe builds the MultiSend itself from the ordered list.
 export async function proposeBatchThroughSafeApp(opts) {
   var wallet = getWalletClient();

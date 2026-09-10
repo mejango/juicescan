@@ -189,6 +189,42 @@ export async function mirrorBatch(steps, fromChainId, toChainId, resolve, projec
   return { steps: out, skipped: skipped };
 }
 
+// ── Simulation ───────────────────────────────────────────────────────────────
+// Whole-sequence simulation from the authority via eth_simulateV1. When the RPC lacks it, each call is simulated
+// alone with eth_call, skipping steps that only succeed after an earlier step of the same batch.
+export async function simulateBatchCalls(client, from, calls, dependsOnPriorFlags) {
+  var entries = calls.map(function (c) { return { from: from, to: c.to, data: c.data, value: '0x' + BigInt(c.value || 0).toString(16) }; });
+  var result = null;
+  try { result = await client.request({ method: 'eth_simulateV1', params: [{ blockStateCalls: [{ calls: entries }], validation: true }, 'latest'] }); }
+  catch (e) { if (!rpcMethodUnsupported(e)) throw new Error('The batch simulation failed: ' + rpcMessage(e) + '. Nothing was proposed.'); }
+  if (result) {
+    var block = Array.isArray(result) ? result[0] : null;
+    var outcomes = (block && block.calls) || [];
+    if (outcomes.length !== calls.length) throw new Error('The batch simulation returned an unexpected shape. Nothing was proposed.');
+    outcomes.forEach(function (outcome, i) {
+      if (String(outcome && outcome.status).toLowerCase() !== '0x1') {
+        throw new Error('Step ' + (i + 1) + ' would revert' + (outcome && outcome.error && outcome.error.message ? ': ' + outcome.error.message : '') + '. Nothing was proposed.');
+      }
+    });
+    return { method: 'eth_simulateV1', simulated: calls.length };
+  }
+  var simulated = 0;
+  for (var i = 0; i < entries.length; i++) {
+    if (dependsOnPriorFlags && dependsOnPriorFlags[i]) continue;
+    try { await client.request({ method: 'eth_call', params: [entries[i], 'latest'] }); simulated++; }
+    catch (e) { throw new Error('Step ' + (i + 1) + ' would revert: ' + rpcMessage(e) + '. Nothing was proposed.'); }
+  }
+  return { method: 'eth_call', simulated: simulated };
+}
+function rpcMessage(e) { return (e && (e.shortMessage || e.message)) || String(e); }
+function rpcMethodUnsupported(e) {
+  for (var depth = 0, current = e; current && depth < 6; depth++, current = current.cause) {
+    if (Number(current.code) === -32601) return true;
+    if (/method not found|not supported|unsupported method|does not exist/i.test(String(current.message || ''))) return true;
+  }
+  return false;
+}
+
 // ── Tray storage ─────────────────────────────────────────────────────────────
 var STORAGE_PREFIX = 'jb-safe-batch-v1:';
 export var TRAY_UPDATED_EVENT = 'jb:safe-batch-updated';

@@ -73,6 +73,7 @@
         "confirmSafeTx": 2,
         "executeSafeTx": 3,
         "executeTransaction": 20,
+        "proposeSafeTransactions": 1,
         "proposeSafeTx": 1,
         "providerRequest": 6,
         "relayrPay": 2,
@@ -89,7 +90,8 @@
         "Permit2 and direct approvals",
         "Set ENS project record",
         "Publish project handle",
-        "Bounded shop item identity reads"
+        "Bounded shop item identity reads",
+        "Add liquidity through the Safe App"
       ]
     },
     "src/distribution-plan.js": {
@@ -198,7 +200,14 @@
         "approveSafeHashOnChain": 1,
         "executeSafeTx": 1,
         "proposeSafeTransactions": 1,
-        "proposeSafeTx": 1,
+        "proposeSafeTx": 1
+      },
+      "actions": [
+        "Safe operator batch"
+      ]
+    },
+    "src/safe-batch.js": {
+      "counts": {
         "providerRequest": 2
       },
       "actions": [
