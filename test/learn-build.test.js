@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderBuildTab, renderLearnTab, renderWhyTab } from '../src/learn-build.js';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 function assertTableOfContents(container) {
   const links = [...container.querySelectorAll('.guide-toc-link')];
@@ -87,5 +91,30 @@ describe('Learn, Build, and Why guides', () => {
   it('tolerates the optional Why surface being absent', () => {
     document.getElementById('tab-why').remove();
     expect(() => renderWhyTab()).not.toThrow();
+  });
+
+  it('publishes the same complete guides as script-free HTML with usable section links and code', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'juicescan-guides-'));
+    try {
+      execFileSync(process.execPath, ['-e', 'require("./build/render-guides.js").renderGuides(process.argv[1]).catch(e => { console.error(e); process.exit(1); })', dir]);
+      for (const [guide, render] of [['learn', renderLearnTab], ['build', renderBuildTab]]) {
+        render();
+        const live = document.getElementById('tab-' + guide);
+        const html = new DOMParser().parseFromString(readFileSync(join(dir, guide + '.html'), 'utf8'), 'text/html');
+        expect(html.querySelector('script, button, [onclick]')).toBeNull();
+        expect(html.querySelectorAll('h1')).toHaveLength(1);
+        expect([...html.querySelectorAll('.guide-section')].map(s => s.id)).toEqual([...live.querySelectorAll('.guide-section')].map(s => s.id));
+        // Verify all prose and code survive the export, beyond just the headings.
+        for (const section of live.querySelectorAll('.guide-section')) {
+          expect(html.getElementById(section.id).textContent).toBe(section.textContent);
+        }
+        for (const link of html.querySelectorAll('a[href^="#"]')) {
+          expect(html.getElementById(link.getAttribute('href').slice(1))).not.toBeNull();
+        }
+        if (guide === 'build') expect(html.querySelector('details').textContent).toContain('My product:');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

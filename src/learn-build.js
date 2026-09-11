@@ -7,6 +7,7 @@ export function renderLearnTab() {
 
   var wrap = document.createElement('div');
   wrap.className = 'guide-wrap';
+  wrap.appendChild(guideJourneyLinks('learn'));
 
   // --- Table of Contents ---
   var toc = document.createElement('nav');
@@ -51,8 +52,8 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-what', '1. WHAT IS JUICEBOX?', [
     'Juicebox is a programmable money engine for the open web. Anyone can create a project, accept payments, and distribute funds according to rules they define — all without middlemen.',
-    'People who pay into a project get tokens in return. Those tokens represent their stake. If the project has money beyond what it needs for payouts, token holders can cash out their tokens to reclaim a portion of that extra money (called "surplus").',
-    'Projects can accept any currency, operate across multiple blockchains, and customize every aspect of how money flows in and out. Tokens can be programmed to serve any purpose — governance votes, membership access, revenue shares, or just a way to track participation.'
+    'A payment may issue project tokens that record participation. Tokens can allow a cash out against available surplus under the current rules. They do not automatically grant ownership, voting rights, membership, or a promised return.',
+    'Projects accept configured payment assets and can operate across multiple blockchains. Check the selected chain, current terms, payment route, and enabled extensions to understand what a particular payment does.'
   ], []));
 
   wrap.appendChild(guideSection('learn-how', '2. HOW IT WORKS', [
@@ -60,7 +61,7 @@ export function renderLearnTab() {
   ], [
     diagram('THE BASIC LOOP', [
       '  1. Someone PAYS into a project',
-      '     └─▶ They receive project tokens',
+      '     └─▶ They may receive project tokens',
       '',
       '  2. The project DISTRIBUTES payouts',
       '     └─▶ To team members, partners, other projects',
@@ -68,8 +69,8 @@ export function renderLearnTab() {
       '  3. Token holders can CASH OUT',
       '     └─▶ Burn tokens, reclaim a share of what’s left',
       '',
-      '  surplus = project balance - payout commitments',
-      '  cash out value = your tokens’ share of the surplus',
+      '  surplus = balance above the remaining payout limit',
+      '  cash out = a share of surplus, adjusted by rules and fees',
     ]),
     textBlock('The project owner configures rules that determine how much to pay out, how many tokens to issue per payment, and what the cash out terms look like. These rules can evolve over time through "rulesets" — scheduled configurations that automatically take effect.'),
     textBlock('Each step is infinitely customizable via pay hooks, cash out hooks, and split hooks — contracts that run custom logic whenever payments come in, tokens are redeemed, or funds are distributed.'),
@@ -78,7 +79,7 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-projects', '3. PROJECTS', [
     'A Juicebox project is like a bank account with programmable rules. Each project is represented by an NFT — whoever holds the NFT controls the project.',
-    'Projects can accept any token (ETH, stablecoins, etc.) and can operate on multiple chains simultaneously. The project owner sets the rules, but the protocol enforces them automatically — no trust required.',
+    'Projects accept configured tokens and can operate on multiple chains. The contracts enforce their rules, while owners, delegated permissions, hooks, and other dependencies determine which controls remain. Each chain has its own project identity and balance.',
     'Anyone can create a project. There are no gatekeepers and no approval processes.'
   ], [
     diagram('WHAT A PROJECT DOES', [
@@ -96,17 +97,17 @@ export function renderLearnTab() {
 
   wrap.appendChild(guideSection('learn-revnets', '4. REVNETS', [
     'A revnet (revenue network) is a special kind of project where the economics are permanently locked at launch. Nobody — not even the creator — can change issuance, cuts, cash out taxes, or stage timing.',
-    'This makes revnets ideal for protocols, tokens, and any situation where trust needs to be minimized. The token price, issuance schedule, and cash out terms are all predetermined and immutable.',
-    'Revnets progress through "stages" — think of them as chapters in a financial lifecycle. Early stages might issue lots of tokens to attract participation, later stages tighten supply to create scarcity.'
+    'The committed issuance schedule does not fix a market price, guarantee revenue, or promise a cash out value. Those outcomes depend on participation, available funds, market liquidity, and the active terms.',
+    'Revnets progress through stages with a committed schedule. Compare the issuance price, market price, and current cash out quote, and check the limited operator powers and enabled extensions.'
   ], [
     diagram('PROJECT vs REVNET', [
       '  PROJECT                          REVNET',
       '  ───────                          ──────',
       '  owner controls rules             rules locked forever',
-      '  flexible governance              zero trust required',
+      '  permitted owner changes          limited operator powers remain',
       '  good for: DAOs, collectives      good for: protocols, tokens',
     ]),
-    textBlock('Under the hood, revnets are just Juicebox projects owned by a contract (REVOwner) that refuses to change the economics. An operator keeps a short list of non-economic powers: metadata, split recipients, buyback pool, sucker safety. All the same pay and cash out mechanics apply.')
+    textBlock('Under the hood, revnets are just Juicebox projects owned by a contract (REVOwner) that refuses to change the economics. An operator retains limited powers: metadata, split recipients, buyback pool, sucker safety. All the same pay and cash out mechanics apply.')
   ]));
 
   // ============================================
@@ -124,7 +125,7 @@ export function renderLearnTab() {
     'The project owner can queue a new ruleset to take effect at the next cycle boundary. If an approval hook is configured, changes must be approved before activating.'
   ], [
     propertyTable('KEY PARAMETERS', [
-      ['duration', 'How long the ruleset lasts. 0 = forever (must be explicitly replaced).'],
+      ['duration', 'Cycle length in seconds. 0 = flexible, continuing until an eligible replacement starts.'],
       ['weight', 'Tokens issued per unit paid. This is the "exchange rate."'],
       ['weightCutPercent', 'How much the weight decreases each cycle (the decay rate).'],
       ['reservedPercent', 'Share of minted tokens set aside for the team/splits.'],
@@ -461,6 +462,7 @@ export function renderBuildTab() {
 
   var wrap = document.createElement('div');
   wrap.className = 'guide-wrap';
+  wrap.appendChild(guideJourneyLinks('build'));
 
   var agentPrompt = document.createElement('p');
   agentPrompt.className = 'guide-agent-prompt';
@@ -468,20 +470,20 @@ export function renderBuildTab() {
   var agentPromptButton = document.createElement('button');
   agentPromptButton.type = 'button';
   agentPromptButton.textContent = 'Copy the Juicebox build prompt';
-  agentPromptButton.addEventListener('click', function () {
-    var prompt = [
+  var prompt = [
       'I want to build a product or platform on Juicebox V6.',
       '',
       'My product: [describe the users, the value they exchange, and the experience I want].',
       '',
       'Act as my protocol engineer and product architect. Start by reading the Learn and Build sections in this Juicescan bundle, then inspect https://github.com/Bananapus/version-6 and https://github.com/mejango/juicescan. Use only current V6 repositories; do not substitute older Juicebox versions.',
       '',
-      'Design the smallest safe architecture that gives my users a native product experience while Juicebox handles the money layer. Decide whether I need a flexible Juicebox project, an immutable revnet, or both. Map every user action to exact V6 reads and transactions, including payments, token issuance, cash outs, payouts, shops, hooks, permissions, and multichain settlement where relevant.',
+      'Design the smallest safe architecture that gives my users a native product experience while Juicebox handles the money layer. Decide whether I need a flexible Juicebox project, a revnet with committed economics, or both. Map every user action to exact V6 reads and transactions, including payments, token issuance, cash outs, payouts, shops, hooks, permissions, and multichain settlement where relevant.',
       '',
       'For each transaction, identify the contract, function, arguments, units, permissions, fees, approvals, slippage or minimum-output protection, and the state that must be re-read immediately before signing. Use pure transaction builders which round-trip through the ABI. Show and decode every transaction before asking for a signature.',
       '',
       'Deliver: (1) a plain-language product flow, (2) the onchain architecture, (3) a threat model and trust assumptions, (4) an incremental implementation plan, (5) test cases and invariants, and (6) the first working vertical slice. Keep the interface branded as my product; treat Juicebox as open infrastructure, not a hosted dependency.'
     ].join('\n');
+  agentPromptButton.addEventListener('click', function () {
     var copied = function () {
       agentPromptButton.textContent = 'Build prompt copied';
       setTimeout(function () { agentPromptButton.textContent = 'Copy the Juicebox build prompt'; }, 1600);
@@ -502,6 +504,12 @@ export function renderBuildTab() {
   agentPrompt.appendChild(agentPromptButton);
   agentPrompt.appendChild(document.createTextNode('.'));
   wrap.appendChild(agentPrompt);
+  var promptDetails = document.createElement('details');
+  var promptSummary = document.createElement('summary');
+  promptSummary.textContent = 'Read or copy the build prompt';
+  promptDetails.appendChild(promptSummary);
+  promptDetails.appendChild(codeBlock('Juicebox V6 build prompt', prompt));
+  wrap.appendChild(promptDetails);
 
   // --- Table of Contents ---
   var toc = document.createElement('nav');
@@ -1119,6 +1127,26 @@ export function renderWhyTab() {
 }
 
 // --- Helper builders ---
+
+function guideJourneyLinks(guide) {
+  var nav = document.createElement('nav');
+  nav.className = 'guide-text';
+  nav.setAttribute('aria-label', 'Learn, build, and inspect a payment');
+  [
+    ['https://juicebox.money/learn#learn-before-you-pay', 'Understand a payment'],
+    ['https://juicebox.money/build/first-payment', 'Read, pay on testnet, and verify'],
+    ['https://revnet.money/learn#three-prices', 'Understand revnet prices'],
+    [guide + '.html', 'Read this guide without JavaScript'],
+  ].forEach(function (item) {
+    var p = document.createElement('p');
+    var a = document.createElement('a');
+    a.href = item[0];
+    a.textContent = item[1];
+    p.appendChild(a);
+    nav.appendChild(p);
+  });
+  return nav;
+}
 
 // A small link icon next to a section header that copies a deep link to that section (paste to an LLM).
 function sectionLinkButton(id) {

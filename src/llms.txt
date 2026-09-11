@@ -3,12 +3,19 @@
 > A dependency-free explorer for the Juicebox V6 protocol. Every contract, every
 > project, every transaction it can build is derived from onchain state and the
 > Bendystraw indexer — there is no backend of record. The whole app is one static
-> bundle, published to IPFS, so it can be verified by CID and run offline.
+> bundle, published to IPFS, so its files can be verified by CID. Live data still
+> requires an RPC or indexer connection.
 
 ## How to read this site as an agent
 
 The app is hash-routed and renders in the browser, so fetching a route returns the
-same shell every time. Two things are readable without running JavaScript:
+same shell every time. These resources are readable without running JavaScript:
+
+- [Learn Juicebox](./learn.html) — the complete Learn guide, generated from the same
+  source as the interactive tab. Section fragments such as `#learn-revnets` work.
+- [Build with Juicebox](./build.html) — the complete Build guide and code examples.
+- [First payment journey](https://juicebox.money/build/first-payment) — read a
+  testnet project without a wallet, then make and verify a reviewed test payment.
 
 - `/?project=<chain>:<projectId>` on an HTTP host — the server injects that project's
   Open Graph title, description and card image, and `GET /project-og.png?project=<chain>:<projectId>`
@@ -16,7 +23,7 @@ same shell every time. Two things are readable without running JavaScript:
   `opsep`, `basesep`, `arbsep`.
 - `/manifest.json` — app identity (also what Safe reads to add this as a Safe App).
 
-Everything else needs the bundle. On an IPFS gateway there is no server at all, so
+Live project views need the bundle. On an IPFS gateway there is no server at all, so
 the query form above resolves to the generic site card.
 
 ## Routes (hash fragments, resolved in the browser)

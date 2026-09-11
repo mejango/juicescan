@@ -1905,6 +1905,21 @@ input[type="checkbox"].field {
 
 /* --- Learn, Build & Why guide tabs --- */
 
+.guide-static {
+  max-width: 768px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.guide-static main { min-width: 0; }
+.guide-static h1 { font-size: 28px; overflow-wrap: anywhere; }
+.guide-static details { margin-bottom: 24px; }
+.guide-static summary { cursor: pointer; padding: 12px 0; }
+.guide-static a:focus-visible, .guide-static summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+
 .guide-wrap {
   max-width: 720px;
 }

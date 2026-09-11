@@ -44,6 +44,7 @@ async function build() {
   fs.writeFileSync(path.join(DIST, 'index.html'), final);
   fs.writeFileSync(path.join(DIST, 'app.js'), js);
   fs.copyFileSync(path.join(SRC, 'style.css'), path.join(DIST, 'style.css'));
+  await require('./render-guides.js').renderGuides(DIST);
 
   // Copy static assets. manifest.json makes the site a recognizable Safe App (Safe fetches <root>/manifest.json
   // for name/description/icon before it will add a custom app).
