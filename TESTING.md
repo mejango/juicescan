@@ -36,13 +36,13 @@ regression.
 
 ## Contract deployment pin
 
-CI checks out `Bananapus/deploy-all-v6` at commit `20883a7c7fcd58b6264f8375b6156a59ab9a2597`, limited to its `deployments/` directory. The expected generator digest is `sha256:443959a5a09616f4b73a0b4046e82674bab5e4e86287380d43642fa4aa898484`. `DEPLOY_ALL_DEPLOYMENTS_DIR` points the read-only verifier at that checkout; locally it defaults to `../../deploy-all-v6/deployments`.
+CI checks out `Bananapus/deploy-all-v6` at commit `8522541297557c80f8bc2dd674c3098f8849b527`, limited to its `deployments/` directory. The expected generator digest is `sha256:b2a06eba00528ceeed2a821ab5444424da02a55d0deacdec78b9725ff6541b4a`. `DEPLOY_ALL_DEPLOYMENTS_DIR` points the read-only verifier at that checkout; locally it defaults to `../../deploy-all-v6/deployments`.
 
 Updating the pin is an explicit contract review:
 
 1. Check out the proposed deploy-all-v6 commit and review its deployment artifact changes.
 2. Run `DEPLOY_ALL_DEPLOYMENTS_DIR=/path/to/deploy-all-v6/deployments npm run sync-deployments` and review the generated ABI, manifest, address, and metadata diff.
-3. Update the commit in `.github/workflows/test.yml` and the commit/digest constants in `scripts/check-deployment-parity.mjs` to the same reviewed source.
+3. Update the commit in `.github/workflows/test.yml`, the commit/digest constants in `scripts/check-deployment-parity.mjs`, and this testing reference to the same reviewed source.
 4. Run `npm run check:deployments` before accepting the generated snapshot. Bendystraw data may describe indexed activity, but it is never accepted as deployment or calldata truth.
 
 ## Coverage policy
