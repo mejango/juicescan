@@ -865,8 +865,8 @@ function renderType(state, render) {
   flavorContent.appendChild(sel);
   var desc = el('div', 'create-hint'); // 8px subtext gap via the standardized base .create-hint
   desc.textContent = isRev
-    ? 'Fixed rules that run forever, guaranteed. Tokens are always backed by revenues and funds raised, allowing for increasing price floors, loans, and predictability.'
-    : 'Full control and customizability.';
+    ? 'Commit to a schedule for creating tokens and returning funds to holders. Holders can cash out or borrow against funds in the revnet under those rules. Market prices and future income can change.'
+    : 'Choose your project’s rules and which powers its owner keeps.';
   flavorContent.appendChild(desc);
   wrap.appendChild(fieldBlock('Flavor', false, flavorContent));
 
@@ -998,7 +998,7 @@ function lookupCustomToken(state, render) {
 function accountingBlock(state, render) {
   var isRev = state.projectType === 'revnet';
   var isCustom = customAccounting(state);
-  return fieldBlock('Accounting', false, (function () {
+  return fieldBlock('Tokens held', false, (function () {
     var w = el('div', '');
     var opts = [{ key: 'eth', label: 'ETH' }, { key: 'usdc', label: 'USDC' }, { key: 'custom', label: 'Custom token' }];
     // Both custom projects and revnets can hold ETH and/or USDC (multi-select); a custom ERC-20 is exclusive.
@@ -1023,7 +1023,7 @@ function accountingBlock(state, render) {
     if (isCustom) { w.appendChild(customTokenBlock(state, render)); return w; }
     var note = el('div', 'create-hint');
     note.textContent = isRev
-      ? ('The reserve asset(s) that back the value of $' + tickerLabel(state) + '.')
+      ? ('The funds holders of $' + tickerLabel(state) + ' can cash out or borrow against under the revnet’s rules.')
       : 'The token(s) that make up your project’s balance.';
     w.appendChild(note);
     // Multi-asset revnet: the backing is fixed by the proportion of payments received and can't be rebalanced.
@@ -1036,16 +1036,16 @@ function accountingBlock(state, render) {
     if (!isRev) {
       var line2 = el('div', 'create-hint');
       line2.appendChild(document.createTextNode(state.swapRouter
-        ? 'Other payment tokens auto-swap to your chosen accounting token(s) as they’re paid in. '
-        : 'Payers can only pay in your accounting token(s). '));
+        ? 'Supported payment tokens are exchanged for your chosen tokens when paid in. '
+        : 'Payers can only use your chosen tokens. '));
       var toggle = el('button', 'create-inline-toggle');
-      toggle.textContent = state.swapRouter ? 'Make payers pay in your accounting token' : 'Allow payers to pay in any token';
+      toggle.textContent = state.swapRouter ? 'Accept only your chosen tokens' : 'Accept other supported tokens';
       toggle.addEventListener('click', function (e) { e.preventDefault(); state.swapRouter = !state.swapRouter; render(); });
       line2.appendChild(toggle);
       w.appendChild(line2);
     }
     var immut = el('div', 'create-hint');
-    immut.textContent = isRev ? 'Accounting contexts cannot be added or removed later.' : 'Accounting tokens cannot be removed later.';
+    immut.textContent = isRev ? 'The tokens this revnet holds cannot be added or removed later.' : 'Accepted tokens cannot be removed later.';
     w.appendChild(immut);
     return w;
   })());
@@ -1099,8 +1099,8 @@ function ownerSection(state, render) {
   box.appendChild(toggleRow(
     'Allow changes',
     dz(
-      'A project owner receives full project-level authority.',
-      'Ownership is sent to 0xdead, so no owner address retains project-level control.',
+      'The owner can manage the project within its rules.',
+      'Ownership goes to 0xdead, an address with no known controller. No active owner is retained.',
     ),
     changesAllowed,
     function (enabled) {
@@ -1135,8 +1135,8 @@ function operatorSection(state, render) {
   box.appendChild(toggleRow(
     'Enable limited operator controls',
     dz(
-      'An operator can update the name, logo, and description; redirect only the precommitted split share; manage shop items only where separately enabled; and add matching chains when the original deployer is the operator. It cannot rewrite staged issuance or cash-out rules.',
-      'The revnet keeps running its precommitted rules without an operator.',
+      'The operator can edit the name, logo, and description and choose recipients for the token share set at launch. Shop controls must be enabled separately. The original deployer can add matching networks while it remains operator. Token creation and cash out rules stay fixed.',
+      'The revnet follows its chosen rules without an operator.',
     ),
     controlsEnabled,
     function (enabled) {
@@ -1549,7 +1549,7 @@ export function createStage() {
 export function renderStages(state, render, opts) {
   opts = opts || {};
   var wrap = el('div', '');
-  if (!opts.noHead) wrap.appendChild(stepHead('Rulesets', 'Set the sequential rulesets your project follows over time.'));
+  if (!opts.noHead) wrap.appendChild(stepHead('Rulesets', 'Choose the rules your project follows and when each set starts. Each set is called a ruleset.'));
 
   state.stages.forEach(function (stage, idx) {
     wrap.appendChild(renderStageCard(stage, idx, state, render));
@@ -1683,7 +1683,7 @@ function tickerLabel(state) { return state.details.ticker || 'TOKEN'; }
 
 function renderRevnetStages(state, render) {
   var wrap = el('div', '');
-  wrap.appendChild(stepHead('Stages', 'Issuance and cash out rules evolve over time automatically in stages. Staged rules can’t be edited once deployed.'));
+  wrap.appendChild(stepHead('Stages', 'Choose how token creation and cash outs change over time. Each period is a stage. Its rules cannot be edited after launch.'));
 
   state.stages.forEach(function (stage, idx) {
     wrap.appendChild(revStageCard(stage, idx, state, render));
@@ -1729,7 +1729,7 @@ function revStageSummary(stage, idx, state) {
   var unit = state.revBaseCurrency === 2 ? 'USD' : 'ETH';
   var parts = [];
   if (idx === 0 || stage.weight) parts.push((stage.weight || '0') + ' $' + tk + '/' + unit);
-  else parts.push('inherits issuance');
+  else parts.push('keeps previous rate');
   if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('−' + round2(stage.weightCutPercent) + '%/' + (stage.cutFreqDays || '30') + 'd');
   var splitTotal = revSplitTotalPct(stage);
   if (splitTotal > 0) parts.push(round2(splitTotal) + '% to splits');
@@ -1747,8 +1747,8 @@ function revStageEditor(stage, idx, state, render) {
 
   // 1. Issuance
   var s1 = el('div', 'create-rev-sec');
-  var h1 = el('div', 'create-rev-h'); h1.textContent = '$' + tk + ' issuance'; s1.appendChild(h1);
-  var d1 = el('div', 'create-hint'); d1.textContent = 'How many $' + tk + ' to issue when receiving ETH.'; s1.appendChild(d1);
+  var h1 = el('div', 'create-rev-h'); h1.textContent = 'New $' + tk + ' per payment'; s1.appendChild(h1);
+  var d1 = el('div', 'create-hint'); d1.textContent = 'How many $' + tk + ' to create per unit paid, before the project’s share.'; s1.appendChild(d1);
   // Issuance row: "[10000] $TOKEN / ETH"
   var issRow = el('div', 'create-inline-row');
   var issIn = el('input', 'field create-inline-num'); issIn.type = 'number'; issIn.min = '0'; issIn.step = 'any';
@@ -1759,12 +1759,12 @@ function revStageEditor(stage, idx, state, render) {
   // Base currency (revnet-wide): issue per ETH or per USD. Small inline dropdown (no full-width `field`).
   issRow.appendChild(currencySelect(state.revBaseCurrency, function (v) { state.revBaseCurrency = v; render(); }, null, lockedCurrencySym(state)));
   // "add auto cuts?" prompt + checkbox sit to the right of the currency selector (kept even when checked).
-  var cutPrompt = el('span', 'create-inline-prompt'); cutPrompt.textContent = 'add auto cuts?'; issRow.appendChild(cutPrompt);
+  var cutPrompt = el('span', 'create-inline-prompt'); cutPrompt.textContent = 'reduce over time?'; issRow.appendChild(cutPrompt);
   var cutCb = el('input', 'create-inline-check'); cutCb.type = 'checkbox'; cutCb.checked = !!stage.issuanceCutOn;
   cutCb.addEventListener('change', function () { stage.issuanceCutOn = cutCb.checked; if (!cutCb.checked) stage.weightCutPercent = 0; render(); });
   issRow.appendChild(cutCb);
   s1.appendChild(issRow);
-  if (idx > 0) s1.appendChild(infoNote('Leave blank to inherit the previous stage’s issuance (with any cut applied).'));
+  if (idx > 0) s1.appendChild(infoNote('Leave blank to use the previous stage’s rate, including any scheduled reduction.'));
 
   // When cuts are on, the "[N] % every [D] days" controls reveal on their own line.
   if (stage.issuanceCutOn) {
@@ -1793,8 +1793,8 @@ function revStageEditor(stage, idx, state, render) {
     } else {
       splitHead.className = 'create-hint';
       splitHead.textContent = tot > 0
-        ? ('Total split limit of ' + round2(tot) + '%, payer always receives ' + round2(100 - tot) + '% of issuance.')
-        : 'Without splits, the payer always receives 100% of issuance.';
+        ? ('Set aside ' + round2(tot) + '% for these recipients. The payment’s token recipient gets the remaining ' + round2(100 - tot) + '%.')
+        : 'With no tokens set aside, the payment’s token recipient gets all new tokens.';
     }
   }
   setSplitHead();
@@ -1805,15 +1805,15 @@ function revStageEditor(stage, idx, state, render) {
   s1.appendChild(splitHead);
 
   // Auto-issuance — inline rows (no box).
-  var aiHint = el('div', 'create-hint'); aiHint.textContent = 'Optionally, auto-issue $' + tk + ' when the stage starts.'; aiHint.style.marginTop = '22px'; s1.appendChild(aiHint);
+  var aiHint = el('div', 'create-hint'); aiHint.textContent = 'Set aside $' + tk + ' for named recipients. Anyone can create and send these tokens once the stage starts.'; aiHint.style.marginTop = '22px'; s1.appendChild(aiHint);
   (stage.autoIssuances || []).forEach(function (ai, i) { s1.appendChild(autoIssuanceRow(stage, ai, i, tk, render, state, idx)); });
-  var addAi = el('button', 'create-add-btn'); addAi.textContent = '+ Add auto issuance';
+  var addAi = el('button', 'create-add-btn'); addAi.textContent = '+ Set aside tokens';
   addAi.addEventListener('click', function (e) { e.preventDefault(); stage.autoIssuances.push({ count: '', address: '', chainId: null }); render(); });
   s1.appendChild(addAi);
   var aiTotal = (stage.autoIssuances || []).reduce(function (s, a) { return s + (Number(a.count) || 0); }, 0);
   if (aiTotal > 0) {
     var aiSum = el('div', 'create-hint');
-    var aiText = 'Total auto issuance of ' + round2(aiTotal) + ' $' + tk;
+    var aiText = 'Tokens available from stage start: ' + round2(aiTotal) + ' $' + tk;
     if ((state.chainIds || []).length > 1) {
       // Break the total down by mint chain — each row only mints on its chosen chain.
       var byChain = {};
@@ -1833,7 +1833,7 @@ function revStageEditor(stage, idx, state, render) {
   var acctSym = surplusTokenLabel(state);
   var s2 = el('div', 'create-rev-sec');
   var h2 = el('div', 'create-rev-h'); h2.textContent = '$' + tk + ' cash outs'; s2.appendChild(h2);
-  var d2 = el('div', 'create-hint'); d2.textContent = 'The only way to access the ' + acctSym + ' used to issue $' + tk + ' is by cashing out or taking a loan. A tax makes cashing out and loans more expensive, rewarding $' + tk + ' holders who stick around.'; s2.appendChild(d2);
+  var d2 = el('div', 'create-hint'); d2.textContent = 'Holders can access the ' + acctSym + ' in the revnet by cashing out or taking a loan. The cash out tax leaves more funds behind for remaining $' + tk + ' holders and lowers the amount available to borrow.'; s2.appendChild(d2);
   stage.cashOutEnabled = true; // revnets always allow cash outs
   s2.appendChild(cashOutTaxCard(stage, render, acctSym, tk, true));
   w.appendChild(s2);
@@ -2136,7 +2136,7 @@ function stageTiming(stage, idx, isLast, render, state) {
       srow.appendChild(di);
       sf.appendChild(srow);
       sf.appendChild(timeZoneControl(di, { label: 'Ruleset #' + (idx + 1) + ' start date and time', getTimestamp: function () { return stage.startDate; } }));
-      var dh = el('div', 'create-hint'); dh.textContent = 'Rule changes land on cycle boundaries, so the start snaps to Ruleset #' + idx + '’s first cycle ending at or after this date.'; sf.appendChild(dh);
+      var dh = el('div', 'create-hint'); dh.textContent = 'Rules change at the end of a cycle. The start moves to Ruleset #' + idx + '’s first cycle ending at or after this date.'; sf.appendChild(dh);
     } else {
       var ni = el('input', 'field create-split-pct'); ni.type = 'number'; ni.min = '1'; ni.step = '1'; ni.value = stage.startCycles;
       ni.addEventListener('input', function () { stage.startCycles = ni.value.trim(); });
@@ -2812,7 +2812,7 @@ function collectionExtrasSection(state, render) {
   if (!hasPinata()) {
     var jwtField = el('div', 'create-field');
     var jl = el('label', 'create-label'); jl.textContent = 'Pinata JWT'; jwtField.appendChild(jl);
-    var jh = el('div', 'create-hint'); jh.innerHTML = 'To pin item media + metadata to IPFS. <a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.'; jwtField.appendChild(jh);
+    var jh = el('div', 'create-hint'); jh.innerHTML = 'To store item files and details on IPFS, a shared file network. <a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.'; jwtField.appendChild(jh);
     var jwt = el('input', 'field create-input'); jwt.type = 'password'; jwt.placeholder = 'pinata JWT'; jwt.autocomplete = 'off'; jwt.spellcheck = false;
     jwt.addEventListener('change', function () { if (jwt.value.trim()) { setPinataJwt(jwt.value.trim()); render(); } });
     jwtField.appendChild(jwt); f.appendChild(jwtField);
@@ -2839,7 +2839,7 @@ function collectionExtrasSection(state, render) {
   // user revoke individual ones at deploy time (encoded as the REVDeploy721TiersHookConfig preventOperator* flags).
   if (state.projectType === 'revnet') {
     var opHead = el('div', 'create-label'); opHead.style.marginTop = '16px'; opHead.textContent = 'Revnet operator store permissions'; f.appendChild(opHead);
-    var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet’s revnet operator can do to the store after launch.'; f.appendChild(opNote);
+    var opNote = el('div', 'create-hint'); opNote.textContent = 'What the revnet operator can change in the shop after launch.'; f.appendChild(opNote);
     f.appendChild(toggleRow('Revnet operator can add & remove items', dz('The revnet operator can adjust the store’s items.', 'The revnet operator can’t change the store’s items.'), c.opCanAdjustTiers, function (v) { c.opCanAdjustTiers = v; }));
     f.appendChild(toggleRow('Revnet operator can update item metadata', dz('The revnet operator can update the store’s metadata.', 'The revnet operator can’t update the store’s metadata.'), c.opCanUpdateMetadata, function (v) { c.opCanUpdateMetadata = v; }));
     f.appendChild(toggleRow('Revnet operator can mint items for free', dz('The revnet operator can mint shop items from inventory without paying.', 'The revnet operator pays like everyone else.'), c.opCanMint, function (v) { c.opCanMint = v; }));
@@ -3099,7 +3099,7 @@ function itemSplitRow(state, nft, rec, idx, render) {
   var recipientBox = recipBoxWith(recip, ensHint); recipientBox.appendChild(projectHint);
   row.appendChild(recipientBox); row.appendChild(rm); wrap.appendChild(row);
   var benefRow = el('div', 'create-split-benef'); benefRow.style.display = 'none';
-  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'with beneficiary'; benefRow.appendChild(benefLead);
+  var benefLead = el('span', 'create-split-to'); benefLead.textContent = 'tokens go to'; benefRow.appendChild(benefLead);
   var benef = el('input', 'field'); benef.type = 'text'; benef.placeholder = '0x… or name.eth'; benef.value = rec.benef || '';
   benef.addEventListener('input', function () { rec.benef = benef.value.trim(); });
   var benefHint = attachEns(benef, function () {}); // resolves on Ethereum mainnet; populates the global ENS cache
@@ -3112,19 +3112,22 @@ function itemSplitRow(state, nft, rec, idx, render) {
 // Deadline + other-rules section for a stage (folded into the stage editor).
 function otherRulesSection(stage, render) {
   var c = el('div', '');
-  c.appendChild(toggleRow('Hold fees', dz('Fees are held in the project instead of processed automatically, and refunded to the project’s balance if the funds are returned. Useful for managing whole token holder refunds. After 28 days without seeing the withdrawn funds, held fees are automatically processed.', 'Fees are processed automatically.'), stage.holdFees, function (v) { stage.holdFees = v; }));
+  c.appendChild(toggleRow('Hold fees', dz('Delay processing payout fees for 28 days. Returning the withdrawn funds during that time can restore the matching fee to the project’s balance. After 28 days, anyone can process it. Processed fees pay into the Juicebox revnet, which can issue tokens to the recorded fee recipient under its current rules.', 'Process payout fees immediately. They pay into the Juicebox revnet, which can issue tokens to the recorded fee recipient under its current rules.'), stage.holdFees, function (v) { stage.holdFees = v; }));
+
+  var feeGuide = el('a', 'create-hint'); feeGuide.href = 'learn.html#learn-fees';
+  feeGuide.textContent = 'How fees support revnets and return tokens'; c.appendChild(feeGuide);
 
   // Owner-power toggles — each grants the owner mid-flight control that supporters must trust. Grouped
   // in a pink warning zone so the abuse-vector risk is unmistakable.
   var warn = el('div', 'create-warn-zone');
-  var wh = el('div', 'create-warn-zone-head'); wh.textContent = 'Superpowers';
+  var wh = el('div', 'create-warn-zone-head'); wh.textContent = 'Owner powers';
   warn.appendChild(wh);
-  warn.appendChild(toggleRow('Allow setting payment terminals', dz('The project owner can add/remove payment terminals at any time. This lets the project upgrade, but also lets the project owner reroute where funds flow at will.', 'Payment terminals are fixed for this ruleset.'), stage.allowSetTerminals, function (v) { stage.allowSetTerminals = v; }));
-  warn.appendChild(toggleRow('Allow setting controller', dz('The project owner can change the project’s controller at any time. This lets the project upgrade, but can also be used by the project owner to change all the rules at will.', 'The controller is fixed for this ruleset.'), stage.allowSetController, function (v) { stage.allowSetController = v; }));
-  warn.appendChild(toggleRow('Allow terminal migration', dz('The project owner can migrate the project’s terminals to a new version. This lets the project upgrade, but can also be used by the project owner to move all funds to a terminal of their choosing.', 'Terminal migration is disabled.'), stage.allowTerminalMigration, function (v) { stage.allowTerminalMigration = v; }));
+  warn.appendChild(toggleRow('Allow setting payment terminals', dz('The owner can add or remove contracts that accept payments, called terminals. This can change where funds go.', 'Payment terminals are fixed for this ruleset.'), stage.allowSetTerminals, function (v) { stage.allowSetTerminals = v; }));
+  warn.appendChild(toggleRow('Allow setting controller', dz('The owner can replace the contract that manages rules and tokens, called the controller. This can change the project’s rules.', 'The controller is fixed for this ruleset.'), stage.allowSetController, function (v) { stage.allowSetController = v; }));
+  warn.appendChild(toggleRow('Allow terminal migration', dz('The owner can move funds to another payment contract. This can upgrade the project or change who handles its funds.', 'Terminal migration is disabled.'), stage.allowTerminalMigration, function (v) { stage.allowTerminalMigration = v; }));
   warn.appendChild(toggleRow('Allow setting a custom token', dz('The project owner can replace the project’s token with a custom ERC-20 of their choosing.', 'The project token can’t be swapped for a custom one.'), stage.allowSetCustomToken, function (v) { stage.allowSetCustomToken = v; }));
-  warn.appendChild(toggleRow('Allow adding accounting tokens', dz('The project owner can add new accounting tokens the project holds at any time.', 'The set of accounting tokens is fixed for this ruleset.'), stage.allowAddAccountingContext, function (v) { stage.allowAddAccountingContext = v; }));
-  warn.appendChild(toggleRow('Allow adding price feeds', dz('The project owner can add price feeds the project uses to convert currencies.', 'Price feeds can’t be added during this ruleset.'), stage.allowAddPriceFeed, function (v) { stage.allowAddPriceFeed = v; }));
+  warn.appendChild(toggleRow('Allow adding accounting tokens', dz('The owner can add tokens for the project to accept and hold.', 'The tokens the project accepts are fixed for these rules.'), stage.allowAddAccountingContext, function (v) { stage.allowAddAccountingContext = v; }));
+  warn.appendChild(toggleRow('Allow adding price feeds', dz('The owner can add sources of exchange rates, called price feeds, for currency conversions.', 'Price feeds can’t be added during this ruleset.'), stage.allowAddPriceFeed, function (v) { stage.allowAddPriceFeed = v; }));
   c.appendChild(warn);
   return c;
 }
@@ -3193,7 +3196,7 @@ function chainBridgeBlock(state, render) {
       bsel.addEventListener('change', function () { state.suckerType = bsel.value; render(); });
       bRow.appendChild(bsel);
       wrap.appendChild(bRow);
-      var bh = el('div', 'create-hint'); bh.textContent = 'Native bridges connect Ethereum with L2s (strongest guarantees). CCIP (Chainlink) connects any chains. Native and CCIP gives the broadest coverage.'; wrap.appendChild(bh);
+      var bh = el('div', 'create-hint'); bh.textContent = 'Native bridges connect Ethereum to supported networks built on it. Chainlink’s CCIP connects other supported networks. Choose both to cover more routes.'; wrap.appendChild(bh);
     }
     var usdcAcct = (state.accepts || [])[0] === 'usdc';
     if (usdcAcct && state.suckerType !== 'ccip') {

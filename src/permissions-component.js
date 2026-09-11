@@ -116,7 +116,7 @@ export function renderPermissionsComponent() {
     var sel = Object.keys(state.selectedIds).filter(function(k) { return state.selectedIds[k]; });
     if (sel.length) params.ids = sel.join(',');
     return params;
-  }, { permissionNote: 'Only the account itself (or a ROOT operator for that project) can set permissions.' });
+  }, { permissionNote: 'Let another address act for you. Only your account, or an address with full (ROOT) permission for this project, can grant access.' });
 
   var wrapper = comp.wrapper;
   var body = comp.body;
@@ -184,7 +184,7 @@ export function renderPermissionsComponent() {
     // Operator address
     var opSection = el('div', 'component-section');
     var opLabel = el('label', 'input-label');
-    opLabel.textContent = 'operator address';
+    opLabel.textContent = 'address to grant access to';
     opSection.appendChild(opLabel);
     var opInput = el('input', 'field address-field');
     opInput.type = 'text';
@@ -261,7 +261,7 @@ export function renderPermissionsComponent() {
     state.txStatus = null;
 
     if (!state.operator || !isAddr(state.operator)) {
-      state.error = 'Enter a valid operator address'; updateUI(); return;
+      state.error = 'Enter a valid address to grant access to'; updateUI(); return;
     }
 
     var account = getAccount();
@@ -296,7 +296,7 @@ export function renderPermissionsComponent() {
         ['Operator', state.operator],
         ['On behalf of', account],
         ['Scope', projectId === 0 ? 'all your projects on this chain' : 'project #' + String(projectId)],
-        ['Permissions', selectedArr.length ? selectedArr.join(', ') + ' (replaces the current set)' : 'none — revokes everything'],
+        ['Permissions', selectedArr.length ? selectedArr.join(', ') + ' (replaces the current set)' : 'none — removes all access'],
       ] },
       confirmDescription: danger.join(' ') || undefined,
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },

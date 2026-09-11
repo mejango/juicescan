@@ -71,7 +71,7 @@ export function shortHex(hex) {
 // pay surfaces so the tag looks identical everywhere.
 export function renderRoutingTag(routing) {
   var tag = el('span', 'pay-routing-tag' + (routing === 'amm' ? ' amm' : ''));
-  tag.textContent = routing === 'amm' ? 'Swap' : 'Issuance';
+  tag.textContent = routing === 'amm' ? 'Buy on Uniswap' : 'Create new tokens';
   return tag;
 }
 
@@ -85,8 +85,8 @@ export function renderAmmSub(amm) {
   // oracle that produced nothing, in exactly the case where the reader most needs to know the oracle was cold.
   var unseeded = amm.oracleUnseeded === true && !amm.hasUserSpecifiedQuote;
   var bits = ['via Uniswap pool ' + shortHex(amm.poolId)];
-  if (amm.minOut) bits.push('~' + formatTokenCount(amm.minOut) + (unseeded ? ' out (min, issuance floor)' : ' out (min)'));
-  bits.push(amm.hasUserSpecifiedQuote ? 'client quote' : (unseeded ? 'spot quote, no TWAP yet' : 'TWAP quote'));
+  if (amm.minOut) bits.push('~' + formatTokenCount(amm.minOut) + (unseeded ? ' minimum tokens out (based on the project’s token rate)' : ' minimum tokens out'));
+  bits.push(amm.hasUserSpecifiedQuote ? 'quote supplied by the app' : (unseeded ? 'quote at the current price; no price average yet' : 'quote from the average price over time (TWAP)'));
   div.textContent = bits.join(' | ');
   return div;
 }
@@ -180,10 +180,10 @@ export async function computePayPreview(opts) {
   // opts.terminal lets the caller route through the router registry (for swap currencies like USDC);
   // both the router registry and JBMultiTerminal expose the same previewPayFor signature.
   var terminal = opts.terminal || getAddress('JBMultiTerminal', chainId);
-  if (!terminal) { result.unavailable = true; result.reason = 'No terminal on this chain'; return result; }
+  if (!terminal) { result.unavailable = true; result.reason = 'No payment contract on this chain'; return result; }
 
   var client = createPublicClientForChain(chainId);
-  if (!client) { result.unavailable = true; result.reason = 'No RPC for this chain'; return result; }
+  if (!client) { result.unavailable = true; result.reason = 'No blockchain connection for this chain'; return result; }
 
   try {
     var out = await client.readContract({

@@ -433,18 +433,18 @@ export function createProjectAndChainInput(state, onProjectUpdate, onChainChange
 export function createBeneficiaryInput(state, onUpdate) {
   var section = el('div', 'component-section');
   var label = el('label', 'input-label');
-  label.textContent = 'beneficiary';
+  label.textContent = 'recipient';
   section.appendChild(label);
   var pills = el('div', 'token-pills');
   var selfPill = el('button', 'pill' + (state.beneficiary === 'self' ? ' selected' : ''));
-  selfPill.textContent = 'self (connected wallet)';
+  selfPill.textContent = 'your connected wallet';
   selfPill.addEventListener('click', function() {
     state.beneficiary = 'self';
     onUpdate();
   });
   pills.appendChild(selfPill);
   var customPill = el('button', 'pill' + (state.beneficiary === 'custom' ? ' selected' : ''));
-  customPill.textContent = 'custom address';
+  customPill.textContent = 'another address';
   customPill.addEventListener('click', function() {
     state.beneficiary = 'custom';
     onUpdate();

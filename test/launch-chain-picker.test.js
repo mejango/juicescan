@@ -21,7 +21,7 @@ describe('ACTIONS launch widget chain picker', () => {
 
   it('labels the picker honestly', () => {
     const dom = renderLaunchComponent();
-    expect(dom.textContent).toContain('pick a chain');
+    expect(dom.textContent).toContain('blockchain where the project will run');
     expect(dom.textContent).not.toContain('pick one or more');
   });
 });

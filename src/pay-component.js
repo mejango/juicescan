@@ -192,7 +192,7 @@ export function renderPayComponent() {
     if (state.memo) params.memo = state.memo;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Permissionless. Anyone can pay a project unless payments are paused.' });
+  }, { permissionNote: 'Anyone can pay a project unless payments are paused.' });
 
   var wrapper = comp.wrapper;
   var body = comp.body;
@@ -293,7 +293,7 @@ export function renderPayComponent() {
       if (state.phase === 'ready' || state.phase === 'idle') {
         executePay();
       } else {
-        alert('This is a mock UI. Payments will work once contracts are deployed.');
+        alert('Please wait for the current step to finish.');
       }
     });
     amountRow.appendChild(payBtn);
@@ -305,7 +305,7 @@ export function renderPayComponent() {
     youLink.textContent = (state.beneficiary === 'custom' && state.customBeneficiary)
       ? truncAddr(state.customBeneficiary)
       : 'You';
-    youLink.title = 'Click to change beneficiary';
+    youLink.title = 'Change who receives the tokens';
     var youGetText = el('span');
 
     if (state.preview && state.preview.beneficiaryTokens) {
@@ -333,7 +333,7 @@ export function renderPayComponent() {
     // "Splits get" line — the reserved portion.
     if (state.preview && state.preview.reservedTokens && state.preview.reservedTokens !== '0') {
       var splits = el('div', 'pay-splits-line');
-      splits.textContent = 'Splits get ' + state.preview.reservedTokens + ' tokens';
+      splits.textContent = 'Set aside for the project: ' + state.preview.reservedTokens + ' tokens';
       body.appendChild(splits);
     }
 
@@ -342,7 +342,7 @@ export function renderPayComponent() {
     beneficiaryWrap.style.display = (state._showBeneficiary) ? '' : 'none';
     var beneficiaryInput = el('input', 'pay-beneficiary-input');
     beneficiaryInput.type = 'text';
-    beneficiaryInput.placeholder = '0x... beneficiary address';
+    beneficiaryInput.placeholder = '0x... recipient address';
     beneficiaryInput.value = state.customBeneficiary || '';
     beneficiaryInput.addEventListener('input', function() {
       state.customBeneficiary = beneficiaryInput.value.trim();
@@ -363,7 +363,7 @@ export function renderPayComponent() {
     // 3. Memo
     var memo = el('input', 'pay-memo');
     memo.type = 'text';
-    memo.placeholder = 'Add a memo (optional)';
+    memo.placeholder = 'Add a note (optional)';
     memo.value = state.memo || '';
     memo.addEventListener('input', function() {
       state.memo = memo.value;
@@ -445,7 +445,7 @@ export function renderPayComponent() {
       state.liveChains = live;
       if (!live.length) {
         state.selectedChain = null; state.tokens = []; state.selectedToken = null;
-        state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return;
+        state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return;
       }
 
       var preferredChain = (state._defaultChain && live.indexOf(state._defaultChain) !== -1)
@@ -502,7 +502,7 @@ export function renderPayComponent() {
       if (!route) {
         state.phase = 'ready';
         state.preview = null;
-        state.error = 'No terminal address for this chain';
+        state.error = 'No payment contract is available on this chain';
         updateUI();
         return;
       }
@@ -547,7 +547,7 @@ export function renderPayComponent() {
 
     var beneficiary = getBeneficiaryAddress(state);
     if (!beneficiary) {
-      state.error = state.beneficiary === 'custom' ? 'Enter a valid beneficiary address' : 'Connect wallet first';
+      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect wallet first';
       updateUI(); return;
     }
 
@@ -567,7 +567,7 @@ export function renderPayComponent() {
     }).then(function (route) {
       if (!route) {
         state.phase = 'ready';
-        state.error = 'No terminal address for this chain';
+        state.error = 'No payment contract is available on this chain';
         updateUI();
         return;
       }
@@ -597,7 +597,7 @@ export function renderPayComponent() {
         confirmSummary: { action: 'Pay project #' + String(state.projectId), rows: [
           ['Paying', state.amount + ' ' + (state.selectedToken.symbol || '')],
           ['You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
-          ['Minimum', formatTokenCount(quotedOutputFloor(BigInt(route.preview.received), 9900)) + ' tokens — reverts below this'],
+          ['Minimum', formatTokenCount(quotedOutputFloor(BigInt(route.preview.received), 9900)) + ' tokens — fails if you receive less'],
           ['To', beneficiary],
           state.memo ? ['Memo', state.memo] : null,
         ].filter(Boolean) },
@@ -607,7 +607,7 @@ export function renderPayComponent() {
       }));
     }).catch(function (err) {
       state.phase = 'ready';
-      state.error = (err && (err.shortMessage || err.message)) || 'Could not resolve the pay route.';
+      state.error = (err && (err.shortMessage || err.message)) || 'Could not find a payment route.';
       updateUI();
     });
   }

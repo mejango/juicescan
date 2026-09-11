@@ -2258,7 +2258,7 @@ function openAddTierModal(project, shop) {
   // Only surfaced while a split is being configured AND credit purchases are on — the one combination where
   // the split silently doesn't fire (a credit buy brings in no new payment to divide).
   var creditSplitNote = el('div', 'create-banner');
-  creditSplitNote.textContent = 'Buying with shop credit bypasses this split — the split only divides new payment, and a credit purchase brings in little or none. To make every sale honor the split, untick “Allow credit purchases” below.';
+  creditSplitNote.textContent = 'These shares apply only to new payments. Purchases using shop credit may send little or nothing to these recipients. Turn off “Allow credit purchases” to apply the shares to every purchase.';
   splitWrap.appendChild(creditSplitNote);
   function updateCreditSplitNote() { creditSplitNote.style.display = (typeof allowCreditsCb !== 'undefined' && allowCreditsCb.checked) ? '' : 'none'; }
   splitCb.addEventListener('change', function () {
@@ -3260,7 +3260,7 @@ export async function reverifyShopMediaCalls(project, calls, chainId, sender) {
 export function openShopMediaEditor(project, tier) {
   var scope = relayrActionScope(project, 'shop-media', tier.id);
   var content = el('div', 'modal-body operator-edit shop-media-editor');
-  var intro = el('p'); intro.textContent = 'Replace this item’s media on the chains you select. Each chain keeps its other metadata fields.'; content.appendChild(intro);
+  var intro = el('p'); intro.textContent = 'Replace this item’s media on the networks you select. Keep its other details on each network.'; content.appendChild(intro);
   var previews = el('div', 'shop-media-current'); content.appendChild(previews);
   var status = el('div', 'operator-edit-status');
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
@@ -3380,7 +3380,7 @@ function openMintTierModal(project, tier, itemName) {
   var chains = shopChainsOf(project);
   var content = el('div', 'modal-body operator-edit');
   var warning = el('div', 'create-banner');
-  warning.textContent = 'This free mint consumes shop inventory, sends the item directly to the beneficiary, collects no payment, and cannot be undone.';
+  warning.textContent = 'This creates an item for the recipient without payment. It uses shop inventory and cannot be undone.';
   content.appendChild(warning);
 
   var chainLabel = el('div', 'operator-edit-label'); chainLabel.textContent = 'Chain'; content.appendChild(chainLabel);
@@ -3435,7 +3435,7 @@ function openMintTierModal(project, tier, itemName) {
     var beneficiary = (beneficiaryInput.value || '').trim();
     var quantity = Number(quantityInput.value), chainId = Number(chainSelect.value);
     if (!isAddr(beneficiary) || beneficiary.toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
-      status.textContent = 'Enter a valid, non-zero beneficiary address.'; status.className = 'operator-edit-status error'; return;
+      status.textContent = 'Enter a valid recipient address other than the zero address.'; status.className = 'operator-edit-status error'; return;
     }
     var tierIds;
     try { tierIds = buildOwnerMintTierIds(tier.id, quantity); }
@@ -4126,7 +4126,7 @@ function renderFeeReceipt(container, opts) {
     feeTok.appendChild(feeProjectLink(opts.chainId, opts.feeProjectId, opts.projectLabel));
     if (suffix) feeTok.appendChild(document.createTextNode(suffix));
   }
-  withLink('• paid into ', ', minting its token to you…');
+  withLink('• pays into the revnet ', '. Checking tokens for the recipient…');
   container.appendChild(feeTok);
   Promise.all([
     computePayPreview({ chainId: opts.chainId, projectId: Number(opts.feeProjectId), token: opts.feeTokenAddr || NATIVE_TOKEN, amount: opts.feeAmount, beneficiary: opts.beneficiary }),
@@ -4179,43 +4179,43 @@ var JB_PERMISSION_MAX_ID = 39;
 // One-line plain-English explanation of what each permission lets the operator do.
 var JB_PERMISSION_DESCS = {
   1: 'Grants every permission below — full control of the project.',
-  2: 'Queue new rulesets (change duration, issuance, payouts, and rules).',
-  3: 'Launch the project’s first rulesets.',
+  2: 'Schedule new rules for timing, token creation, and payouts.',
+  3: 'Start the project with its first set of rules.',
   4: 'Cash out (redeem) project tokens for a share of the project’s funds on a holder’s behalf.',
-  5: 'Send the project’s scheduled payouts to its splits.',
-  6: 'Move the project’s funds to a new terminal version.',
-  7: 'Update the project’s metadata (name, logo, description).',
-  8: 'Deploy the project’s ERC-20 token.',
+  5: 'Send the project’s scheduled payouts to their recipients.',
+  6: 'Move funds to another payment contract, called a terminal.',
+  7: 'Update the project’s name, logo, and description.',
+  8: 'Create a standard token contract (ERC-20) for the project.',
   9: 'Replace the project token with a custom ERC-20.',
-  10: 'Mint project tokens to any address without a payment.',
-  11: 'Burn project tokens from a holder’s balance.',
-  12: 'Claim a holder’s credits into the ERC-20 token.',
-  13: 'Transfer a holder’s unclaimed token credits.',
+  10: 'Create project tokens for any address without payment.',
+  11: 'Permanently remove tokens from a holder’s balance.',
+  12: 'Convert a holder’s recorded token credits into transferable tokens.',
+  13: 'Move a holder’s recorded token credits to another address.',
   14: 'Swap the controller contract that manages rulesets and tokens.',
-  15: 'Set the full list of the project’s payment terminals.',
-  16: 'Add payment terminals to the project.',
-  17: 'Set which terminal is primary for a given token.',
-  18: 'Spend the project’s surplus allowance.',
-  19: 'Edit the project’s payout and reserved-token splits.',
+  15: 'Choose all contracts that may handle the project’s payments (terminals).',
+  16: 'Add contracts that may handle the project’s payments (terminals).',
+  17: 'Choose the main payment contract for a token.',
+  18: 'Withdraw funds left after planned payouts, within the allowed amount.',
+  19: 'Change who receives payouts and tokens set aside for the project.',
   20: 'Add a price feed used to convert between currencies.',
   21: 'Register new tokens the terminal accepts directly (e.g. an ERC-20 or USDC).',
   22: 'Set the project token’s name and symbol.',
   23: 'Sign permit (ERC-20 approval) messages on the project’s behalf.',
   24: 'Add, remove, or change the project’s shop items (NFT tiers).',
-  25: 'Update the shop collection’s metadata.',
-  26: 'Mint the project’s shop items (NFTs) without a payment.',
+  25: 'Update the shop collection’s name and details.',
+  26: 'Create shop items for a recipient without payment.',
   27: 'Set the discount applied to shop item prices.',
-  28: 'Set the buyback hook’s TWAP window.',
+  28: 'Choose how long the buyback contract averages prices (its TWAP window).',
   29: 'Set the buyback hook’s Uniswap pool.',
   30: 'Set the project’s buyback hook.',
   31: 'Set the router terminal used for swaps.',
-  32: 'Map a token for cross-chain bridging via suckers.',
-  33: 'Deploy the project’s cross-chain suckers.',
-  34: 'Set a sucker’s peer on another chain.',
-  35: 'Control sucker safety limits (caps, emergency hatch).',
-  36: 'Deprecate a sucker (wind down a bridge).',
+  32: 'Choose matching tokens for a bridge between networks.',
+  33: 'Create contracts that move project tokens and backing between networks (suckers).',
+  34: 'Link a bridge contract to its partner on another network.',
+  35: 'Set bridge limits and emergency withdrawal controls.',
+  36: 'Wind down a bridge.',
   37: 'Open loans against the project’s tokens.',
-  38: 'Move collateral between the project’s loans.',
+  38: 'Move the tokens backing one loan to another loan.',
   39: 'Repay the project’s loans.',
 };
 // setPermissionsFor REPLACES an operator's whole set, so any id this build has no checkbox for — a permission a
@@ -4686,7 +4686,7 @@ function renderProjectContractWarnings(project) {
     var card = el('div', 'project-contract-warning');
     var title = el('div', 'project-contract-warning-title'); title.textContent = 'Unknown project contracts'; card.appendChild(title);
     var desc = el('div', 'project-contract-warning-copy');
-    desc.textContent = 'This project points at contracts that are neither canonical deployments nor JBAddressRegistry instances from a deployer this app understands. Interface reads can still succeed, but the UI does not know what those contracts do.';
+    desc.textContent = 'This project uses contracts this app does not recognize. Some data may load, but this app cannot verify how those contracts behave.';
     card.appendChild(desc);
     var list = el('div', 'project-contract-warning-list');
     unknown.forEach(function (u) {
@@ -6589,7 +6589,7 @@ export function splitShareDisplay(percentRaw, limitPct) {
 
 function zeroReservedRateNote() {
   var note = el('div', 'splits-empty-note');
-  note.textContent = 'This ruleset reserves 0% of issuance — these recipients receive nothing until a ruleset reserves tokens.';
+  note.textContent = 'The current rules set aside no new tokens. These recipients receive tokens only when that share is above 0%.';
   return note;
 }
 
@@ -8385,7 +8385,7 @@ function renderGrid() {
     var opt = document.createElement('option'); opt.value = o[0]; opt.textContent = o[1]; netSel.appendChild(opt);
   });
   netSel.value = getNetworkMode();
-  netSel.title = 'Switch between mainnet and testnet deployments';
+  netSel.title = 'Choose networks with real funds or test funds';
   netSel.addEventListener('change', function () { setDiscoverNetwork(netSel.value); });
   topRow.appendChild(netSel);
   // Size in ch so the width tracks the monospace font itself — a measured pixel width races font loading
@@ -8394,13 +8394,13 @@ function renderGrid() {
   var searchWrap = el('label', 'discover-search');
   var searchInput = document.createElement('input');
   searchInput.type = 'search';
-  searchInput.placeholder = 'Search name, ticker, or project ID';
+  searchInput.placeholder = 'Search name, token symbol, or project ID';
   searchInput.setAttribute('aria-label', 'Search projects');
   searchWrap.appendChild(searchInput);
   topRow.appendChild(searchWrap);
   var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
-  createBtn.title = 'Create — in tuning before launch';
+  createBtn.title = 'Create a project';
   createBtn.addEventListener('click', function () { openCreateFlow(); });
   rightCtrls.appendChild(createBtn);
   topRow.appendChild(rightCtrls);
@@ -9770,7 +9770,7 @@ function renderPayCard(project, cart) {
     if (state.contextsError) {
       terminalNotice.style.display = '';
       terminalNotice.className = 'paybox-contract-warning blocked';
-      terminalNotice.textContent = 'Could not verify this project’s accepted tokens. Payments are disabled until the accounting contexts can be read.';
+      terminalNotice.textContent = 'Could not verify which tokens this project accepts. Payments are unavailable until that check succeeds.';
       return;
     }
     var surface = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
@@ -9925,7 +9925,7 @@ function renderPayCard(project, cart) {
         var issuanceCount = el('strong'); issuanceCount.textContent = formatTokenCount(p.received) + ' ' + sym; issuanceValue.appendChild(issuanceCount);
         comparison.appendChild(issuanceValue);
         var comparisonNote = el('div', 'paybox-route-comparison-note');
-        comparisonNote.textContent = 'The better guaranteed return is selected automatically.';
+        comparisonNote.textContent = 'The route with the higher minimum return is selected automatically.';
         comparison.appendChild(comparisonNote);
         feedback.appendChild(comparison);
       }
@@ -10258,7 +10258,7 @@ function renderPayCard(project, cart) {
     function requirePayInputs() {
       if (payInputsUnchanged()) return true;
       status.className = 'paybox-status error';
-      status.textContent = 'Payment inputs, chain, quote, or connected account changed while the preflight was loading. Review and click again.';
+      status.textContent = 'The payment details, network, quote, or wallet changed during the final check. Review and try again.';
       return false;
     }
 
@@ -10716,6 +10716,9 @@ function renderDetailHeader(project) {
     row1.appendChild(mkPair('Site: ', [a]));
   }
   header.appendChild(row1);
+  var glossary = document.createElement('a');
+  glossary.href = 'learn.html#learn-glossary'; glossary.className = 'detail-head-url';
+  glossary.textContent = 'Terms explained'; header.appendChild(glossary);
   // Flag when the controlling account is not the same on every chain (owner for custom projects, operator for revnets).
   if ((project.chains || []).length > 1) {
     fetchAuthorityPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
@@ -10872,7 +10875,7 @@ function renderTokenPanel(project) {
     var empty = el('div', 'token-empty-state');
     var emptyTitle = el('div', 'token-empty-title'); emptyTitle.textContent = 'No ERC-20 yet'; empty.appendChild(emptyTitle);
     var emptyCopy = el('div', 'token-empty-copy');
-    emptyCopy.textContent = 'Project balances remain internal Juicebox credits and can still be cashed out. Deploying an ERC-20 makes them claimable as a transferable token and enables market liquidity.';
+    emptyCopy.textContent = 'Your project tokens are recorded as Juicebox credits and can still be cashed out under the project’s rules. Deploying a standard token contract (ERC-20) lets holders claim transferable tokens that trading pools can use.';
     empty.appendChild(emptyCopy);
     card.appendChild(empty);
   } else {
@@ -16094,11 +16097,11 @@ export function renderExtrasSection(project) {
   });
   ownerFields.appendChild(ownerPerChain.node);
   var ownerExplainer = el('div', 'extras-payer-sub');
-  ownerExplainer.textContent = 'The address admin can later change this payer address’s destination project, Pay/Add to Balance behavior, beneficiary, memo, and metadata, or transfer or renounce the admin role. The role does not receive payments or control either project.';
+  ownerExplainer.textContent = 'The address admin can change where payments go, whether they receive project tokens, who gets those tokens, and the attached memo and data. It can transfer or give up this role. The role does not receive payments or control the project.';
   ownerFields.appendChild(ownerExplainer);
   form.appendChild(ownerFields);
   var immutableExplainer = el('div', 'extras-payer-sub');
-  immutableExplainer.textContent = 'Off by default: no address admin. This payer address’s destination project, Pay/Add to Balance behavior, beneficiary, memo, and metadata are permanent.';
+  immutableExplainer.textContent = 'Off by default. Without an address admin, the destination, payment mode, token recipient, memo, and attached data cannot change.';
   form.appendChild(immutableExplainer);
   function syncEditableFields() {
     ownerFields.style.display = editableCb.checked ? '' : 'none';
@@ -17644,7 +17647,7 @@ function adminAuditPrompt() {
     '- JBRouterTerminalRegistry: allowTerminal, disallowTerminal, setDefaultTerminal',
     '- JBSuckerRegistry: allowSuckerDeployer(s), removeSuckerDeployer, setToRemoteFee, allowTokenMapping(s), removeTokenMapping(s)',
     '- REVLoans: setTokenUriResolver',
-    'Also: the admin is the OPERATOR (not owner) of the protocol fee revnet (project #1, NANA).',
+    'Also: the admin is the OPERATOR (not owner) of the protocol fee revnet (project #1, JBP6).',
     '',
     'Verify each claim, citing the exact contract + function:',
     '1. None of these functions can move, mint, burn, or freeze an arbitrary project’s tokens or funds.',
@@ -17664,10 +17667,10 @@ export function renderAdminTab() {
   var wrap = el('div', 'detail-section admin-tab');
   var head = el('div', 'admin-head');
   var blurb = el('div', 'admin-blurb');
-  blurb.textContent = 'The account that controls Juicebox protocol infrastructure — the Ownable singletons (project registry, directory, prices, feeless config, the buyback / router / sucker registries, revnet loans) and the protocol fee project. It governs shared infrastructure, not individual projects.';
+  blurb.textContent = 'This account manages shared Juicebox contracts, including project records, price feeds, payment routing, bridges, and loans. Its powers are listed below.';
   head.appendChild(blurb);
   var scope = el('div', 'admin-blurb');
-  scope.textContent = 'These powers are scoped. The admin cannot queue rulesets, mint or burn a project’s tokens, send its payouts, spend its surplus, change its controller or terminals, or otherwise move any project’s funds — those stay under each project’s own owner and rules. The admin curates shared infrastructure and allowlists; it cannot rug a project.';
+  scope.textContent = 'This admin role does not grant control of a project’s rules, tokens, or funds. Those powers follow each project’s own rules and permissions. Changes to shared contracts can still affect projects that use them.';
   head.appendChild(scope);
   var audit = el('button', 'admin-audit-link'); audit.textContent = '[copy audit admin powers prompt]';
   audit.addEventListener('click', function (e) {
@@ -17756,7 +17759,7 @@ function renderAdminPowersCard(adminAddr, chains, homeChainId) {
   // Operate it from that project's own Operator tab, so this row is read-only here.
   var feeRow = el('div', 'powers-row');
   var fh = el('div', 'powers-head'); var fl = el('span', 'powers-label'); fl.textContent = 'Protocol fee project'; fh.appendChild(fl); feeRow.appendChild(fh);
-  var fd = el('div', 'powers-desc'); fd.textContent = 'The admin is the operator of the protocol’s fee-collecting revnet (project #1, NANA), where protocol fees accrue — holding that revnet’s operator powers. Operate it from that project’s Operator tab.'; feeRow.appendChild(fd);
+  var fd = el('div', 'powers-desc'); fd.textContent = 'The admin has the limited operator powers of JBP6, the revnet at project #1. Open that project’s Operator tab to use them. Protocol fees pay into this revnet and can return its tokens to the fee payer’s designated recipient.'; feeRow.appendChild(fd);
   card.appendChild(feeRow);
   return card;
 }
@@ -17882,10 +17885,10 @@ function openAdminPowerModal(adminAddr, chains, homeChainId, contract, action) {
 var OWNER_POWERS = [
   { key: 'allowAddAccountingContext', label: 'Add accounting tokens', desc: 'Register new tokens the project’s terminal accepts directly (e.g. an ERC-20 or USDC), with their decimals and currency.', actionLabel: 'Add accounting token', danger: 'Irreversible: once added, the terminal accepts this token forever — accounting tokens cannot be removed. Verify the token, decimals, and chains carefully.', open: function (p) { openAddAccountingContextModal(p); } },
   { key: 'allowAddPriceFeed', label: 'Add price feeds', desc: 'Add a price feed the project uses to convert between currencies (e.g. ETH↔USD).', actionLabel: 'Add price feed', danger: 'Irreversible: a price feed cannot be removed once added, and a wrong feed misprices the whole project.', open: function (p) { openPowerModal(p, POWER_ADD_PRICE_FEED); } },
-  { key: 'allowOwnerMinting', label: 'Mint tokens freely', desc: 'Mint project tokens to any address without a payment.', actionLabel: 'Mint tokens', danger: 'Irreversible: minting dilutes every existing token holder and cannot be undone.', open: function (p) { openPowerModal(p, POWER_MINT); } },
+  { key: 'allowOwnerMinting', label: 'Mint tokens freely', desc: 'Create project tokens for any address without payment.', actionLabel: 'Mint tokens', danger: 'Irreversible: minting dilutes every existing token holder and cannot be undone.', open: function (p) { openPowerModal(p, POWER_MINT); } },
   { key: 'allowSetTerminals', label: 'Set payment terminals', desc: 'Add or replace the project’s payment terminals (where funds are paid in).', actionLabel: 'Set terminals', danger: 'Dangerous: this reroutes where funds are paid in. A wrong terminal can misdirect or strand funds.', open: function (p) { openPowerModal(p, POWER_SET_TERMINALS); } },
   { key: 'allowSetController', label: 'Set controller', desc: 'Swap the controller contract that manages the project’s rulesets and tokens.', actionLabel: 'Set controller', danger: 'Dangerous: this hands control of the project’s rules and tokens to a new contract. A wrong address can permanently brick or compromise the project.', open: function (p) { openPowerModal(p, POWER_SET_CONTROLLER); } },
-  { key: 'allowTerminalMigration', label: 'Migrate terminal', desc: 'Move the project’s funds to a new terminal version.', actionLabel: 'Migrate balance', danger: 'Dangerous: this moves the project’s funds to another terminal. A wrong destination can lose the funds.', open: function (p) { openPowerModal(p, POWER_MIGRATE); } },
+  { key: 'allowTerminalMigration', label: 'Migrate terminal', desc: 'Move funds to another payment contract, called a terminal.', actionLabel: 'Migrate balance', danger: 'Dangerous: this moves the project’s funds to another terminal. A wrong destination can lose the funds.', open: function (p) { openPowerModal(p, POWER_MIGRATE); } },
   { key: 'allowSetCustomToken', label: 'Set custom token', desc: 'Replace the project token with a custom ERC-20.', actionLabel: 'Set token', danger: 'Irreversible: replacing the project token is permanent and affects every holder.', open: function (p) { openPowerModal(p, POWER_SET_TOKEN); } },
 ];
 
@@ -17918,7 +17921,7 @@ function renderPowersCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Powers'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
-  intro.textContent = 'What the current ruleset lets the owner do. Enabled powers can be used here; disabled ones need a ruleset change to turn on.';
+  intro.textContent = 'What the current rules let the owner do. Powers marked “Disabled” require a rule change before they can be used.';
   card.appendChild(intro);
   var m = project.metadata || {};
   OWNER_POWERS.forEach(function (p) {
@@ -18167,7 +18170,7 @@ export function renderBuybackRouterCard(project) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
-  intro.textContent = 'Wire up the project’s buyback hook + swap router, initialize its Uniswap pool, and tune the pool’s TWAP window. Each runs on the chains you select, bundled into one relayr payment (or proposed to the Safe).';
+  intro.textContent = 'Set up contracts that buy existing project tokens or exchange payment tokens. Create the trading pool and choose how long prices are averaged. Each action runs on your selected networks, with one payment or a Safe proposal.';
   card.appendChild(intro);
   [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP].forEach(function (action) {
     var row = el('div', 'powers-row');
@@ -19025,7 +19028,7 @@ export function openAddAccountingContextModal(project) {
   var content = el('div', 'modal-body operator-edit');
   content.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to add an accounting token.', project.chainId));
   var note = el('div', 'operator-edit-across');
-  note.textContent = 'Registers a token the project’s terminal accepts directly. Native ETH is fixed; USDC and custom ERC-20s can differ per chain, so token addresses are set per selected chain. The currency is derived from the token address.';
+  note.textContent = 'Add a token the project can accept directly. ETH uses one standard address; other tokens may have a different address on each network. The token address determines its currency ID.';
   content.appendChild(note);
 
   // Show what's already accepted on the primary chain (read-only reference).
@@ -19333,7 +19336,7 @@ function buildPayoutsModal(project, acctKind) {
     return resolveAcctToken(cid, pid);
   }
 
-  var desc = el('div', 'modal-balance'); desc.textContent = 'Sends funds to payout splits, then the project owner. Anyone can trigger it.'; wrap.appendChild(desc);
+  var desc = el('div', 'modal-balance'); desc.textContent = 'Send funds to the scheduled recipients, then any remainder to the project owner. Anyone can start this payment.'; wrap.appendChild(desc);
 
   if (projectChains(project).length > 1) {
     var across = el('button', 'operator-cta'); across.textContent = 'Distribute across chains';
@@ -19554,7 +19557,7 @@ function buildUseAllowanceModal(project, acctKind) {
   }
 
   wrap.appendChild(operatorGateNode(authorityLabel, operatorAddr, 'to use the surplus allowance.'));
-  var desc = el('div', 'modal-balance'); desc.textContent = 'Withdraws surplus to a beneficiary, up to the current allowance. A fee of up to 2.5% may apply.'; wrap.appendChild(desc);
+  var desc = el('div', 'modal-balance'); desc.textContent = 'Withdraw funds left after planned payouts, up to the amount the current rules allow.'; wrap.appendChild(desc);
 
   var chainRow = el('div', 'ops-chainrow');
   var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; onChainChange(); });
@@ -19621,7 +19624,7 @@ function buildUseAllowanceModal(project, acctKind) {
       : 'Uses the current onchain price; the exact output is simulated before confirmation.';
     preview.appendChild(recv);
     if (state.feeless) {
-      var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'No protocol fee — this address is feeless for the project.'; preview.appendChild(fl);
+      var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'Protocol fee: 0. This address has an exemption for this project.'; preview.appendChild(fl);
     } else if (state.feeRoutes === false) {
       // The fee is still deducted from the withdrawal, but _processFee forgives it and credits it back.
       var rt = el('div', 'ops-preview-line ops-preview-feetok'); rt.textContent = 'The 2.5% returns to the project’s balance — the protocol can’t accept this token.'; preview.appendChild(rt);
@@ -19629,7 +19632,7 @@ function buildUseAllowanceModal(project, acctKind) {
       renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: amount / 40n, beneficiary: getEffectiveAccount() });
     } else {
       var cv = el('div', 'ops-preview-line ops-preview-feetok');
-      cv.textContent = 'Protocol fee is converted by the terminal at the onchain price.';
+      cv.textContent = 'The payment contract converts the fee using the recorded price. See the final quote before confirming.';
       preview.appendChild(cv);
     }
   }
@@ -20348,18 +20351,18 @@ export function formatPrice(n) {
 // no "surplus", no "splits" — those are our words, not theirs.
 export var PROTOCOL_CONCEPTS = {
   // tokenCount = amount * weight / weightRatio (JBTerminalStore.sol:1165-1175).
-  issuance: 'How many tokens you get for each unit you put in. The project sets this in its rules, so unlike a market price it does not move with trading.',
+  issuance: "How many new tokens a payment creates per unit paid, before any are set aside for other recipients. The rules set this rate; trading does not.",
   // JBRulesetMetadataResolver.reservedPercent.
-  reservedShare: 'The share of newly created tokens that goes to people the project chose in advance, instead of to whoever paid. Whoever paid gets the rest.',
-  // Minted to named beneficiaries when a stage starts.
-  autoIssuance: 'Tokens created for specific people the moment this stage begins, without anyone paying for them.',
+  reservedShare: "The share of new tokens set aside for chosen recipients. The payer gets the rest.",
+  // Available to mint for named beneficiaries once a stage starts.
+  autoIssuance: "Tokens set aside for named recipients without a payment. They can be created once their stage starts.",
   // JBCashOuts.cashOutFrom — 0 returns the exact proportional share; higher returns less.
-  cashOutTax: 'What the project keeps when someone cashes their tokens back in. At 0% you get your full share of the money in the treasury. Higher settings pay you less than your full share and leave the difference to everyone still holding.',
+  cashOutTax: "A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0%, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; 100% returns nothing.",
   // JBFundAccessLimitGroup.surplusAllowances. JBTerminalStore.sol:140-144: usage is keyed by
   // `ruleset.id`, NOT cycle number, so cycles rolling over do NOT refill it.
-  surplusAllowance: 'The most the project\u2019s owner can take out of the treasury on top of the payouts, to spend however they choose. Unlike the payout limit this does not refill each cycle \u2014 it is a single budget that lasts as long as the current rules do.',
+  surplusAllowance: "An extra withdrawal budget for funds not set aside for payouts. The owner or an account they authorize can spend it. It does not reset when the same rules repeat.",
   // JBBuybackHook._requireValidTwapWindow — 5 minutes to 2 days.
-  twapWindow: 'How far back to average the trading price when checking that a swap is a fair deal. A longer window is harder for someone to manipulate, but slower to notice a real change in price. A shorter one is the opposite. Anything from 300 to 172800 seconds.',
+  twapWindow: "How much trading history to use for an average price. This helps check a trade before it goes through. A longer window is harder to manipulate but slower to reflect price changes. Allowed range: 5 minutes to 2 days.",
 };
 
 // A header cell whose own tooltip defines the term it names, with the term dotted-underlined.
@@ -20376,10 +20379,8 @@ function conceptHeader(text, note) {
 
 
 export function cashOutFloorTip(price, pairSym, sym) {
-  // "before fees", not "before the 2.5% fee": that rate applies when the project has a nonzero
-  // cash out tax. A zero-tax project's cash outs are fee-free up to its fee-free surplus, so
-  // naming one percentage is wrong for it.
-  return '~' + formatPrice(price) + ' ' + pairSym + ' / ' + sym + ' (what cashing out returns right now, before fees)';
+  // This chart reference is gross; actual cash outs require an amount-specific quote.
+  return '~' + formatPrice(price) + ' ' + pairSym + ' / ' + sym + ' (reference value before fees). Check a quote for the amount you want to cash out.';
 }
 
 // Convert Uniswap V4's raw currency1/currency0 sqrt price into terminal-token
@@ -20586,11 +20587,11 @@ function renderPriceChart(project, stages) {
   var showEveryTrade = false;
   // Order: Issuance, Cash out, then AMM price.
   var issChip = chip('Issuance price', 'pc-issuance', true,
-    'What paying the project costs per ' + sym + ' right now: 1 ÷ the ruleset’s issuance weight. Payments go into the project’s balance and mint ' + sym + ' at this rate.');
+    'The reference cost in ' + baseLabel + ' to create one new ' + sym + ' under the current rules. A payment may set aside some new tokens for other recipients, so this is not always the payer’s cost per token.');
   legend.appendChild(issChip);
-  var cashChip = chip('Cash out price', 'pc-cashout', true, 'Loading historical floor…');
+  var cashChip = chip('Cash out price', 'pc-cashout', true, 'Loading cash out history…');
   legend.appendChild(cashChip);
-  var ammChip = chip('AMM price', 'pc-amm', true, 'Reading the buyback pool…');
+  var ammChip = chip('Market price', 'pc-amm', true, 'Reading the trading pool…');
   legend.appendChild(ammChip);
   top.appendChild(legend);
 
@@ -20725,18 +20726,17 @@ function renderPriceChart(project, stages) {
         });
         setChartNote('Pool and cash out prices are converted from ' + acctLabel + ' into ' + baseLabel
           + ', this project\u2019s issuance currency, at the current exchange rate \u2014 so earlier points are approximate. '
-          + 'The issuance ceiling is natively denominated in ' + baseLabel + ' and is exact.');
+          + 'The token creation rate is set in ' + baseLabel + ' and needs no conversion.');
         chartReady = true;
         if (issPrice) setChipVal(issChip, formatPrice(issPrice)); else issChip._val.textContent = '—';
-        issChip.setAttribute('data-tip', 'What it costs, in ' + baseLabel + ', to get one ' + sym
-          + ' by paying the project directly right now. The project sets this in its own rules rather than the market, '
-          + 'so it only changes when the project’s schedule says it should.');
+        issChip.setAttribute('data-tip', 'The reference cost in ' + baseLabel + ' to create one new ' + sym
+          + ' under the current rules. A payment may set aside some new tokens for other recipients, so this is not always the payer’s cost per token.');
         draw();
       } else {
         // No feed bridges the units. Issuance is exact in base units and still plots; the pool
         // and cash-out series cannot be moved onto the axis, so they are dropped.
         setChartNote('No price feed converts ' + acctLabel + ' into ' + baseLabel
-          + ', this project\u2019s issuance currency, so the pool and cash out series are not shown. Only the issuance ceiling is plotted.');
+          + ', this project\u2019s issuance currency, so the pool and cash out series are not shown. Only the token creation price is plotted.');
         chartReady = true;
         p = null; f = null; history = []; swaps = Object.assign({}, swaps, { series: [], reserves: [] });
         draw();
@@ -20762,9 +20762,8 @@ function renderPriceChart(project, stages) {
         ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
           + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + pairSym + ' volume | '
         : '';
-      ammChip.setAttribute('data-tip', 'What one ' + sym + ' costs to buy from the trading pool right now. '
-        + 'Traders keep it between the other two prices: if it climbs above what paying the project costs, people pay the project instead; '
-        + 'if it drops below what cashing out returns, people cash out instead. '
+      ammChip.setAttribute('data-tip', 'The current trading price of one ' + sym + '. Buyers and sellers can move it. '
+        + 'Creating new tokens or cashing out can offer a better deal, but neither sets a guaranteed market price. '
         + volNote + '~' + formatPrice(p) + ' ' + pairSym + ' / ' + sym + '.');
     } else if (swaps.count) {
       ammChip.classList.remove('muted'); ammChip.classList.add('active');
@@ -20776,16 +20775,16 @@ function renderPriceChart(project, stages) {
       var last = history[history.length - 1];
       cashout = last && last.value > 0 ? last.value : f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
-      cashChip.setAttribute('data-tip', 'What you would get back for one ' + sym
-        + ' by cashing it in to the project’s treasury, before fees. It moves with how much is in the treasury, '
-        + 'how many tokens exist, and the project’s cash out tax.');
+      cashChip.setAttribute('data-tip', 'A reference value for cashing out one ' + sym
+        + '. It depends on available project funds, token supply, and the cash out rules. '
+        + 'Check a quote for the amount you want to cash out.');
     }
     if (f && f > 0) {
       cashout = cashout || f;
       cashChip.classList.remove('muted'); cashChip.classList.add('active');
       if (!history.length) cashChip.setAttribute('data-tip', cashOutFloorTip(f, pairSym, sym));
     } else if (!history.length) {
-      cashChip.setAttribute('data-tip', 'No cash out floor indexed yet');
+      cashChip.setAttribute('data-tip', 'No cash out history available yet');
     }
     if (amm || cashout || cashoutHistory.length || ammHistory.length) draw();
 
@@ -20806,10 +20805,10 @@ function renderPriceChart(project, stages) {
       : 0;
     if (cashout) {
       var showsMinimum = shouldShowCashOutAsymptote(cashout, lastMin);
-      cashChip.setAttribute('data-tip', 'Live quote for cashing out 1 ' + sym + ', before the 2.5% cash out fee: (balance ÷ supply) × ((1 − tax) + tax × your share of supply).'
+      cashChip.setAttribute('data-tip', 'Cash out quote for 1 ' + sym + ', before deductions. It depends on available funds, total token supply, and the cash out tax.'
         + (showsMinimum
-          ? ' As paid issuance grows supply, the quote can fall toward the dashed cash-out asymptote — currently ' + formatPrice(lastMin) + ' ' + pairUnit + '.'
-          : ' The payment asymptote is hidden unless the current cash-out quote is above it and can fall toward it.'));
+          ? ' As payments create more tokens, the quote can fall toward the dashed line: ' + formatPrice(lastMin) + ' ' + pairUnit + '.'
+          : ' The dashed line appears only when payments could lower the current quote toward it.'));
     }
     // (The liquidity-by-price depth chart lives in the Owners → AMM section, not here.)
   });
@@ -20847,7 +20846,7 @@ function renderPriceChart(project, stages) {
           ? swaps.count + ' trade' + (swaps.count === 1 ? '' : 's') + ' | '
             + formatPrice(swaps.buyVolume + swaps.sellVolume) + ' ' + ammPairSym + ' volume | '
           : '';
-        ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now — set by trading, and kept between the issuance price (mint instead) and the cash out floor (cash out instead) by arbitrage. '
+        ammChip.setAttribute('data-tip', 'What the Uniswap pool charges per ' + sym + ' right now. Compare it with paying the project or cashing out; market prices can move outside those quotes. '
           + tradeNote + '~' + formatPrice(live) + ' ' + ammPairSym + ' / ' + sym + '.');
         draw();
       }
@@ -20866,7 +20865,7 @@ function renderPriceChart(project, stages) {
 function renderIssuance(project, stages) {
   var card = el('div', 'detail-card');
   var title = el('div', 'detail-card-title');
-  title.textContent = 'Token issuance';
+  title.textContent = 'New tokens per payment';
   card.appendChild(title);
 
   var sym = project.tokenSymbol ? project.tokenSymbol : 'tokens';
@@ -20874,7 +20873,7 @@ function renderIssuance(project, stages) {
   var cur = r ? Number(r.weight) / 1e18 : 0;
 
   var big = el('div', 'issuance-rate');
-  big.textContent = cur > 0 ? (formatRate(cur) + ' ' + sym + ' / ' + baseUnitLabel(project)) : 'No issuance';
+  big.textContent = cur > 0 ? (formatRate(cur) + ' ' + sym + ' / ' + baseUnitLabel(project)) : 'No new tokens';
   card.appendChild(big);
 
   var now = Math.floor(Date.now() / 1000);
@@ -20886,12 +20885,12 @@ function renderIssuance(project, stages) {
     card.appendChild(sub);
   } else if (cur > 0) {
     var fixed = el('div', 'issuance-sub');
-    fixed.textContent = 'Fixed issuance — no scheduled cut.';
+    fixed.textContent = 'No scheduled change to this rate.';
     card.appendChild(fixed);
   }
   if (project.metadata) {
     var split = el('div', 'issuance-sub');
-    split.textContent = percentFromRuleset(project.metadata.reservedPercent) + ' of issuance and buybacks to splits';
+    split.textContent = percentFromRuleset(project.metadata.reservedPercent) + ' of new or bought-back tokens go to the project’s chosen recipients';
     card.appendChild(split);
   }
 
@@ -21403,7 +21402,7 @@ function renderAutoIssuance(project, stages) {
   var card = el('div');
 
   var desc = el('div', 'detail-card-body');
-  desc.textContent = 'Tokens auto-issued to specific accounts, unlocking per stage across every chain.';
+  desc.textContent = 'Tokens set aside for named recipients on each listed network. Anyone can create and send them once their stage starts.';
   card.appendChild(desc);
 
   var sym = project.tokenSymbol ? ' ' + project.tokenSymbol : '';
@@ -23096,7 +23095,7 @@ function renderOwnersAll(project) {
       body.className = 'detail-card-body owners-empty';
       // This list is indexer-backed (bendystraw) and trails the chain — a brand-new holder (e.g. you,
       // shown live in the You card above) appears here only once the indexer catches up.
-      body.textContent = 'No owners indexed yet — this list comes from the indexer, which trails the chain by a bit. Your own balance shows live under You above; new holders appear here once indexed.';
+      body.textContent = 'No holders listed yet. This list can lag behind the network. Check your current balance under You; new holders appear as the list updates.';
       return;
     }
     body.className = 'owners-distribution';
@@ -23405,7 +23404,7 @@ function renderPoolPriceCard(project) {
       // says so via cashOutFloorTip. Without the same qualifier the two surfaces state one
       // number with two different levels of honesty on the same page.
       [[issuance, 'Current issuance price', null],
-       [cashout, 'Current cash out price', 'before the 2.5% cash out fee']].forEach(function (entry) {
+       [cashout, 'Current cash out price', 'Reference value before fees; check a quote for your amount']].forEach(function (entry) {
         if (!entry[0]) return;
         var row = el('div', 'pool-price-row');
         var label = el('span'); label.textContent = entry[1];
@@ -23421,8 +23420,7 @@ function renderPoolPriceCard(project) {
     }
 
     var note = el('div', 'detail-card-body owners-intro');
-    note.textContent = 'The market fills orders that would give payers more ' + sym
-      + ' than issuance. Arbitrage keeps its price between the issuance ceiling and the cash-out floor.';
+    note.textContent = 'Creating new tokens or cashing out can offer a better deal than trading. These options do not guarantee a minimum or maximum market price.';
     body.appendChild(note);
   }).catch(function () { markCardUnavailable(host, 'The pool price'); });
 
@@ -27722,7 +27720,7 @@ function buildCashOutModal(project, requestClose) {
           // The hook may override supply, surplus, token count, tax, and routing. A raw bonding-curve estimate is
           // not a safe substitute: it can show the wrong payout and produce a misleading transaction floor.
           state.locked = false; state.exact = null; state.reclaim = null; state.net = null; state.outcome = null;
-          preview.textContent = 'Could not verify the exact hook-aware cash out amount. Nothing can be sent until the preview succeeds.';
+          preview.textContent = 'Could not verify the cash out amount under this project’s full rules. Try again before continuing.';
           btn.disabled = true;
         });
       }
@@ -27752,7 +27750,7 @@ function buildCashOutModal(project, requestClose) {
       maybeOfferCashOutRoutes(seq, preCut, revFee, protocolFee, count);
     }).catch(function () {
       if (seq === previewSeq) {
-        preview.textContent = 'Could not verify the exact hook-aware cash out amount. Nothing can be sent until the preview succeeds.';
+        preview.textContent = 'Could not verify the cash out amount under this project’s full rules. Try again before continuing.';
         state.exact = null; state.reclaim = null; state.net = null; state.outcome = null; btn.disabled = true;
       }
     });
@@ -27831,15 +27829,15 @@ function buildCashOutModal(project, requestClose) {
     // via the terminal, or the project treasury.
     if (f.route === 'directsell') {
       var viaDS = el('div', 'ops-preview-line ops-preview-feetok');
-      viaDS.textContent = 'via a direct pool sell — bypasses the terminal (no 2.5% cash out fee), beats ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the treasury';
+      viaDS.textContent = 'Sold directly to the trading pool. Compare ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the project’s funds';
       preview.appendChild(viaDS);
     } else if (f.route === 'amm') {
       var viaAmm = el('div', 'ops-preview-line ops-preview-feetok');
-      viaAmm.textContent = 'via the buyback pool — beats ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the treasury';
+      viaAmm.textContent = 'Sold through the project’s buyback contract. Compare ~' + formatBalance(f.treasuryNet || 0n, a.decimals, a.symbol) + ' from the project’s funds';
       preview.appendChild(viaAmm);
     } else if (f.net != null && f.net > 0n && !f.approx) {
       var viaT = el('div', 'ops-preview-line ops-preview-feetok');
-      viaT.textContent = 'via the project treasury';
+      viaT.textContent = 'Paid from the project’s funds';
       preview.appendChild(viaT);
     }
     // Pool routes: the ~ amount is the quote; the onchain floor = quote × (1 − max slippage). The swap REVERTS
@@ -27849,7 +27847,7 @@ function buildCashOutModal(project, requestClose) {
       var activeRoute = state.cashOutRoute || {};
       var floor = activeRoute.minimum != null ? activeRoute.minimum : cashOutExecutableMinimum(f.net, slip);
       var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
-      floorLine.textContent = 'Reverts below ' + formatBalance(floor, a.decimals, a.symbol) + ' floor (' + (slip / 100) + '% max slippage)';
+      floorLine.textContent = 'Stops if the return falls below ' + formatBalance(floor, a.decimals, a.symbol) + ' (' + (slip / 100) + '% max slippage)';
       preview.appendChild(floorLine);
       if (f.route === 'amm' && activeRoute.rawSwapQuote > 0n && activeRoute.hookMinimum != null) {
         var poolBps = cashOutPoolBufferBps(activeRoute.rawSwapQuote, activeRoute.hookMinimum);
@@ -27880,7 +27878,7 @@ function buildCashOutModal(project, requestClose) {
       var dataHook = project.metadata && project.metadata.dataHook;
       if (!f.approx && dataHook && dataHook !== ZERO_ADDRESS) {
         var revTok = el('div', 'ops-preview-line ops-preview-feetok');
-        revTok.textContent = '• minting the fee revnet’s token to you…';
+        revTok.textContent = '• checking tokens returned by the fee revnet…';
         preview.appendChild(revTok);
         var racct = getEffectiveAccount() || undefined;
         feeRevnetIdOf(state.chainId, dataHook).then(function (frid) {
@@ -27927,8 +27925,8 @@ function buildCashOutModal(project, requestClose) {
       var bh2 = el('div', 'ops-cash-bd-head'); bh2.textContent = 'How this is calculated'; bd2.appendChild(bh2);
       var fm2 = el('div', 'ops-cash-bd-formula');
       fm2.textContent = f.route === 'directsell'
-        ? 'Sold straight into the buyback pool via the Universal Router — the terminal (and its 2.5% cash out fee) is bypassed entirely. The ~ amount is the current quote; you receive the actual swap output, which the max-slippage floor guarantees (the swap reverts below it).'
-        : 'Sold into the buyback pool at the current AMM price; the treasury bonding curve is bypassed. The ~ amount is the current quote; you receive the actual swap output, which the max-slippage floor guarantees (the swap reverts below it).';
+        ? 'Your tokens are sold directly to the trading pool. The ~ amount is an estimate. The transaction stops if the return falls below your minimum.'
+        : 'The project’s buyback contract sells your tokens to the trading pool. The ~ amount is an estimate. The transaction stops if the return falls below your minimum.';
       bd2.appendChild(fm2);
       preview.appendChild(bd2);
     } else if (state.aggSupply != null && state.aggSupply > 0n && count2 > 0n) {
@@ -27999,7 +27997,7 @@ function buildCashOutModal(project, requestClose) {
     function requireCashInputs() {
       if (cashInputsUnchanged()) return true;
       status.classList.remove('pending');
-      status.textContent = 'Cash out inputs, chain, or connected account changed while the quote was loading. Review and try again.';
+      status.textContent = 'The cash out details, network, or wallet changed while the quote loaded. Review and try again.';
       btn.disabled = false;
       return false;
     }
@@ -28337,7 +28335,7 @@ function buildLoanModal(project, requestClose) {
   var decisionTable = document.createElement('table'); decisionTable.className = 'payout-summary loan-decision-table';
   var decisionBody = document.createElement('tbody'); decisionTable.appendChild(decisionBody); decision.appendChild(decisionTable);
   var decisionNote = el('div', 'loan-decision-note');
-  decisionNote.textContent = 'Live treasury cash out and loan quotes are net of protocol and project fees. Cashing out burns the tokens; repaying a loan lets you reclaim them. Personal tax effects are not included.';
+  decisionNote.textContent = 'Compare the amount you would receive from a cash out or a loan. Cashing out gives up your tokens. Repaying a loan lets you recover them. Personal taxes are not included.';
   decision.appendChild(decisionNote); wrap.appendChild(decision);
 
   function decisionRow(label, value) {
@@ -31944,7 +31942,7 @@ function buildAddLiquidityModal(project) {
   function pairDec() { return state.pair ? state.pair.decimals : 18; }
 
   var intro = el('div', 'modal-balance');
-  intro.textContent = 'Seed the buyback pool so payers can route through the AMM. Liquidity is added at the current pool price.';
+  intro.textContent = 'Add tokens to the trading pool so payments can buy existing project tokens. The pool’s current price sets the ratio of tokens you add.';
   wrap.appendChild(intro);
 
   // Your balance per chain, boxed at the top (like the cash out modal). Add-liquidity skips project balances.
@@ -32038,7 +32036,7 @@ function buildAddLiquidityModal(project) {
   modeRangeBtn.addEventListener('click', function () { setMode('range'); });
 
   var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
-  var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash out floor to the issuance ceiling.'; wrap.appendChild(rnote);
+  var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash out reference and token creation price.'; wrap.appendChild(rnote);
   var rangeRow = el('div', 'ops-rangerow');
   var minField = el('div', 'ops-field ops-field--grow');
   var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.step = 'any'; minInput.placeholder = 'Min'; minField.appendChild(minInput);
@@ -32307,10 +32305,10 @@ function buildAddLiquidityModal(project) {
       if (defaultRange.min > 0) minInput.value = lpTrimNum(defaultRange.min);
       if (defaultRange.max > 0) maxInput.value = lpTrimNum(defaultRange.max);
       rnote.textContent = defaultRange.economic
-        ? 'Defaults span the cash out floor (' + formatPrice(state.floor) + ') to the issuance ceiling.'
+        ? 'Defaults span the cash out reference (' + formatPrice(state.floor) + ') and token creation price.'
         : (state.floor > 0
           ? 'The floor and ceiling do not straddle the pool price. The default range is widened so both tokens can be added.'
-          : 'No cash out floor yet. The default range is widened around the pool price so both tokens can be added.');
+          : 'No cash out reference yet. The default range is wider around the trading price so both tokens can be added.');
       onRangeChange();
     }).catch(function () {
       if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;

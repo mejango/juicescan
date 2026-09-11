@@ -33,8 +33,11 @@ describe('Learn, Build, and Why guides', () => {
     const why = document.getElementById('tab-why');
     assertTableOfContents(learn);
     assertTableOfContents(build);
-    expect(learn.querySelectorAll('.guide-section').length).toBe(21);
-    expect(build.querySelectorAll('.guide-section').length).toBe(21);
+    expect(learn.querySelectorAll('.guide-section').length).toBe(22);
+    expect(build.querySelectorAll('.guide-section').length).toBe(19);
+    expect(build.querySelector('#build-revnet-what')).not.toBeNull();
+    expect(build.querySelector('#build-revnet-fees a').getAttribute('href')).toBe('learn.html#learn-fees');
+    expect(build.querySelector('a[href="learn.html#learn-glossary"]')).not.toBeNull();
     expect(why.querySelectorAll('.why-want').length).toBe(12);
     expect(why.textContent).toMatch(/freedom to earn their money, on their terms/i);
 

@@ -285,7 +285,7 @@ describe('production app entry point', () => {
     const promptInput = prompt.querySelector('.viewas-input');
     promptInput.value = 'not an account';
     prompt.querySelector('.viewas-go').click();
-    expect(prompt.querySelector('.viewas-err').textContent).toMatch(/0x address or an ENS name/);
+    expect(prompt.querySelector('.viewas-err').textContent).toMatch(/wallet address or name such as name\.eth/);
     promptInput.value = viewed;
     prompt.querySelector('.viewas-go').click();
     expect(document.querySelector('.wallet-menu')).toBeNull(); // prompt closed on activation

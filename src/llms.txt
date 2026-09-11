@@ -1,10 +1,9 @@
 # Juice Scan
 
-> A dependency-free explorer for the Juicebox V6 protocol. Every contract, every
-> project, every transaction it can build is derived from onchain state and the
-> Bendystraw indexer — there is no backend of record. The whole app is one static
-> bundle, published to IPFS, so its files can be verified by CID. Live data still
-> requires an RPC or indexer connection.
+> Explore Juicebox V6 projects, payments, and contracts. The app reads blockchain
+> data and the Bendystraw indexer, a service that organizes contract events. Its
+> files are published to IPFS and can be checked by their content identifier (CID).
+> Live data needs a chain or indexer connection.
 
 ## How to read this site as an agent
 
@@ -14,6 +13,9 @@ same shell every time. These resources are readable without running JavaScript:
 - [Learn Juicebox](./learn.html) — the complete Learn guide, generated from the same
   source as the interactive tab. Section fragments such as `#learn-revnets` work.
 - [Build with Juicebox](./build.html) — the complete Build guide and code examples.
+- [Glossary](./learn.html#learn-glossary) — short definitions in learning order.
+- [Fees and shared networks](./learn.html#learn-fees) — how charges are calculated
+  and how fee payers share in the receiving revnets.
 - [First payment journey](https://juicebox.money/build/first-payment) — read a
   testnet project without a wallet, then make and verify a reviewed test payment.
 

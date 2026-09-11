@@ -59,7 +59,7 @@ describe('batch dialog', () => {
     const dlg = dialog();
     expect(dlg.querySelector('.modal-title').textContent).toBe('Batch on Base');
     expect(Array.from(dlg.querySelectorAll('.tx-decoded-argname')).map(n => n.textContent)).toContain('Route: ');
-    expect(Array.from(dlg.querySelectorAll('.tx-decoded-argval')).map(n => n.textContent)).toContain('0x1111...1111 (EOA)');
+    expect(Array.from(dlg.querySelectorAll('.tx-decoded-argval')).map(n => n.textContent)).toContain('0x1111...1111 (wallet)');
     let steps = dlg.querySelectorAll('.safe-batch-step');
     expect(steps).toHaveLength(2);
     expect(Array.from(steps).map(s => s.querySelector('.safe-batch-step-label').textContent)).toEqual(['Register buyback pool', 'Set buyback hook']);

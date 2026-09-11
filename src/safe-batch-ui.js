@@ -1,7 +1,7 @@
 // src/safe-batch-ui.js
 // The Safe operator batch surfaces: the tray strip at the top of the Owner/Operator tab, the preset dialog, the
 // per-chain batch dialog (the app's standard confirm shape carrying an editable step list), and the submit routes —
-// one MultiSend proposal through the connected Safe App, one operation-1 SafeTx signed by a Safe owner, or ordered
+// one proposal through the connected Safe App, one operation-1 SafeTx signed by a Safe owner, or ordered
 // direct sends / one Relayr bundle for an EOA authority. Never N separate Safe proposals.
 import { el, openDialog, confirmTransactionModal, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
 import { chainNameFor, usdcByChain } from './chain.js';
@@ -45,7 +45,7 @@ export function renderSafeBatchTray(project) {
     node.innerHTML = '';
     if (node.hidden) return;
     var label = el('span', 'safe-batch-tray-label'); label.textContent = 'Batch'; node.appendChild(label);
-    if (!queued.length) { var none = el('span', 'safe-batch-tray-empty'); none.textContent = 'Nothing queued. Add to batch from any action, or start from a preset.'; node.appendChild(none); }
+    if (!queued.length) { var none = el('span', 'safe-batch-tray-empty'); none.textContent = 'Nothing queued. Add actions to review together as a batch, or start from a preset.'; node.appendChild(none); }
     queued.forEach(function (r) {
       node.appendChild(button('safe-batch-chip', r.steps.length + ' queued · ' + chainName(r.chain), function () {
         openBatchDialog(project, r.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); });
@@ -84,13 +84,13 @@ export async function resolveBatchRoute(project, chainId, authority) {
   if (safeInfo) {
     var mode = safeAuthorityAccessMode(signer, authority, safeInfo, isSafeConnected());
     var base = { safeInfo: safeInfo, signer: signer, label: 'Propose batch to Safe', steps: ['Propose batch to Safe'],
-      intro: 'Your wallet will ask for one signature. The Safe runs every step in one transaction.' };
-    if (!mode) return Object.assign(base, { mode: null, description: 'one MultiSend proposal to the Safe',
+      intro: 'Review one proposal. The Safe runs its steps together once approved and executed.' };
+    if (!mode) return Object.assign(base, { mode: null, description: 'one proposal to the Safe',
       refusal: signer ? 'Connected wallet isn’t a signer of the Safe (' + truncAddr(authority) + ').' : 'Connect a Safe signer to propose the batch.' });
-    return Object.assign(base, { mode: mode, description: mode === 'safe-app' ? 'one MultiSend proposal through the connected Safe'
-      : 'one MultiSendCallOnly transaction (operation 1) ' + (hasSafeService(chainId) ? 'proposed to the Safe’s queue' : 'approved onchain for the Safe') });
+    return Object.assign(base, { mode: mode, description: mode === 'safe-app' ? 'one proposal through the connected Safe'
+      : 'one transaction with all steps ' + (hasSafeService(chainId) ? 'proposed to the Safe’s queue' : 'approved on the blockchain for the Safe') });
   }
-  if (signer && sameAddr(signer, authority)) return { mode: 'eoa', signer: signer, description: 'sequential direct sends from your wallet' };
+  if (signer && sameAddr(signer, authority)) return { mode: 'eoa', signer: signer, description: 'transactions sent from your wallet in order' };
   return { mode: null, label: 'Send batch', description: 'direct sends from the ' + role,
     refusal: signer ? 'Connected wallet is not the ' + role + '. Switch to ' + truncAddr(authority) + '.' : 'Connect the ' + role + ' wallet to send the batch.' };
 }
@@ -112,13 +112,13 @@ export async function openBatchDialog(project, chain, setStatus) {
   if (route.mode === 'eoa') {
     route.label = 'Send ' + plural(eoaCount(), 'transaction');
     route.steps = [route.label];
-    route.intro = 'Each transaction is reviewed and sent in order; this dialog closes and the step viewer advances.';
+    route.intro = 'Review and send each transaction in order.';
     if (others.length) route.description = 'one Relayr bundle across ' + [chain].concat(others).map(chainName).join(', ');
   }
   var title = 'Batch on ' + chainName(chain);
   var session = await confirmTransactionModal({
     action: title, chain: chainName(chain), chainId: chain.id,
-    summary: { action: title, rows: [['On', chainName(chain)], ['From', truncAddr(authority) + (route.safeInfo ? ' (Safe)' : ' (EOA)')], ['Route', route.description]] },
+    summary: { action: title, rows: [['On', chainName(chain)], ['From', truncAddr(authority) + (route.safeInfo ? ' (Safe)' : ' (wallet)')], ['Route', route.description]] },
   }, {
     title: title, confirmText: route.label, keepOpenForProgress: true, steps: route.steps || [route.label], stepsIntro: route.intro,
     body: function (controls) {
@@ -192,12 +192,12 @@ function renderBatchBody(project, chain, state, route, others, controls) {
       var lines = el('ol', 'safe-batch-also-steps');
       trayFor(project, c).forEach(function (s) { var li = el('li'); li.textContent = s.label + (s.detail ? ' — ' + s.detail : ''); lines.appendChild(li); });
       also.appendChild(lines);
-      var hint = el('div', 'safe-batch-step-detail'); hint.textContent = 'Open that chain’s chip to reorder or remove its steps.'; also.appendChild(hint);
+      var hint = el('div', 'safe-batch-step-detail'); hint.textContent = 'Select that chain to reorder or remove its steps.'; also.appendChild(hint);
       box.appendChild(also);
     });
     if (route.mode && route.mode !== 'eoa' && state.steps.length) {
       var details = document.createElement('details'); details.className = 'tx-rawdata';
-      var sm = document.createElement('summary'); sm.textContent = 'Show batch calldata'; details.appendChild(sm);
+      var sm = document.createElement('summary'); sm.textContent = 'Show encoded transaction data (calldata)'; details.appendChild(sm);
       var pre = el('pre', 'create-payload');
       pre.textContent = JSON.stringify({ to: MULTI_SEND_CALL_ONLY, contract: 'MultiSendCallOnly', operation: 1, value: '0', data: encodeMultiSend(composeBatch(state.steps).calls) }, null, 2);
       details.appendChild(pre); box.appendChild(details);
@@ -239,10 +239,10 @@ export async function proposeBatchAsOwner(opts) {
   if (hasSafeService(chainId)) {
     var loaded = await Promise.all([getSafeNextNonce(chainId, safe), listPendingSafeTxs(chainId, safe)]);
     var next = Number(loaded[0]);
-    if (!Number.isSafeInteger(next) || next < 0) throw new Error('Could not read a valid Safe nonce on ' + opts.chainName + '.');
+    if (!Number.isSafeInteger(next) || next < 0) throw new Error('Could not read the Safe’s next transaction number (nonce) on ' + opts.chainName + '.');
     var queued = (loaded[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (n) { return Number.isSafeInteger(n) && n >= 0; });
     var nonce = queued.length ? Math.max(next, Math.max.apply(null, queued) + 1) : next;
-    opts.setStatus('Proposing the batch at nonce ' + nonce + ' — sign in your wallet…', 'pending');
+    opts.setStatus('Proposing the batch at transaction number ' + nonce + ' — sign in your wallet…', 'pending');
     var proposed = await proposeSafeTx({ chainId: chainId, safe: safe, to: MULTI_SEND_CALL_ONLY, data: data, value: 0, operation: 1, signer: opts.signer, nonce: nonce });
     return { safeTxHash: proposed.safeTxHash, nonce: nonce, executed: false };
   }
@@ -250,7 +250,7 @@ export async function proposeBatchAsOwner(opts) {
   var hash = safeTxHashForCall(chainId, safe, { to: MULTI_SEND_CALL_ONLY, data: data, value: 0, nonce: ctx.nonce, operation: 1 });
   var approved = await safeApprovalsOf(chainId, safe, hash, ctx.owners);
   if (!approved.some(function (owner) { return sameAddr(owner, opts.signer); })) {
-    opts.setStatus('Approving the batch onchain at nonce ' + ctx.nonce + ' — confirm in your wallet…', 'pending');
+    opts.setStatus('Approving the batch on the blockchain at transaction number ' + ctx.nonce + ' — confirm in your wallet…', 'pending');
     await approveSafeHashOnChain(chainId, safe, hash);
     approved = await safeApprovalsOf(chainId, safe, hash, ctx.owners);
   }
@@ -352,14 +352,14 @@ export function openPresetDialog(project, setTrayStatus) {
   var chains = projectChains(project);
   var wrap = el('div', 'modal-body safe-batch-preset');
   var desc = el('div', 'modal-balance');
-  desc.textContent = preset.description + ' Each chain is read live and only the steps it still needs are listed. Adding never sends.';
+  desc.textContent = preset.description + ' We check each chain and list the steps it needs. Add them now, then review before sending.';
   wrap.appendChild(desc);
   var list = el('div', 'safe-batch-preset-chains'); wrap.appendChild(list);
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var setStatus = makeStatusSetter(status);
   var foot = el('div', 'modal-foot');
   var cancel = el('button', 'create-btn ghost'); cancel.type = 'button'; cancel.textContent = 'Cancel';
-  var add = el('button', 'modal-submit'); add.type = 'button'; add.textContent = 'Resolving…'; add.disabled = true;
+  var add = el('button', 'modal-submit'); add.type = 'button'; add.textContent = 'Checking…'; add.disabled = true;
   foot.appendChild(cancel); foot.appendChild(add); wrap.appendChild(foot);
   var modal = openDialog(preset.title);
   modal.panel.appendChild(wrap);
@@ -380,7 +380,7 @@ export function openPresetDialog(project, setTrayStatus) {
     var pending = rows.some(function (r) { return r.resolved === null; });
     var n = selectedCount();
     add.disabled = pending || !n;
-    add.textContent = pending ? 'Resolving…' : 'Add ' + plural(n, 'step') + ' to batch';
+    add.textContent = pending ? 'Checking…' : 'Add ' + plural(n, 'step') + ' to batch';
   }
   rows.forEach(function (r) {
     r.cb.addEventListener('change', syncButton);
@@ -397,8 +397,8 @@ export function openPresetDialog(project, setTrayStatus) {
         text.textContent = (i + 1) + '. ' + def.label + ' — ' + (s.kind === 'setPoolFor' ? def.describe(s.values).replace(/, TWAP \d+s$/, '') : def.describe(s.values));
         if (s.kind === 'setPoolFor') {
           var input = el('input', 'safe-batch-twap'); input.type = 'number'; input.min = String(MIN_TWAP_WINDOW); input.max = String(MAX_TWAP_WINDOW);
-          input.value = String(s.values.twapWindow); input.setAttribute('aria-label', 'TWAP window in seconds');
-          line.appendChild(document.createTextNode(' TWAP ')); line.appendChild(input); line.appendChild(document.createTextNode(' s'));
+          input.value = String(s.values.twapWindow); input.setAttribute('aria-label', 'Price averaging period in seconds (TWAP)');
+          line.appendChild(document.createTextNode(' Price averaging period (TWAP) ')); line.appendChild(input); line.appendChild(document.createTextNode(' s'));
           r.twap.push({ step: s, input: input });
         }
         if (s.note) { var note = el('div', 'safe-batch-preset-note'); note.textContent = s.note; line.appendChild(note); }
@@ -423,7 +423,7 @@ export function openPresetDialog(project, setTrayStatus) {
           var edited = r.twap.filter(function (t) { return t.step === s; })[0];
           if (edited) {
             var window = Number(edited.input.value);
-            if (!Number.isInteger(window) || window < MIN_TWAP_WINDOW || window > MAX_TWAP_WINDOW) throw new Error('Enter a TWAP window between ' + MIN_TWAP_WINDOW + ' and ' + MAX_TWAP_WINDOW + ' seconds for ' + chainName(r.chain) + '.');
+            if (!Number.isInteger(window) || window < MIN_TWAP_WINDOW || window > MAX_TWAP_WINDOW) throw new Error('Enter a price averaging period (TWAP) between ' + MIN_TWAP_WINDOW + ' and ' + MAX_TWAP_WINDOW + ' seconds for ' + chainName(r.chain) + '.');
             values.twapWindow = window;
           }
           tray = upsertStep(tray, buildStep(s.kind, { chainId: r.chain.id, projectId: pid, values: values }));

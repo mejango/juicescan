@@ -13,11 +13,11 @@ describe('fixed-point display formatting', () => {
 });
 
 describe('payment settlement labels', () => {
-  it('calls every AMM-backed route a swap', () => {
-    expect(renderRoutingTag('amm').textContent).toBe('Swap');
+  it('explains that the swap route buys tokens', () => {
+    expect(renderRoutingTag('amm').textContent).toBe('Buy on Uniswap');
   });
 
   it('keeps direct terminal issuance distinct', () => {
-    expect(renderRoutingTag('issuance').textContent).toBe('Issuance');
+    expect(renderRoutingTag('issuance').textContent).toBe('Create new tokens');
   });
 });

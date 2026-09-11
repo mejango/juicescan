@@ -1,6 +1,6 @@
 // src/cashout-component.js
 // Cash Out component
-// Flow: Project ID -> chain -> token to reclaim -> amount of project tokens -> beneficiary -> execute
+// Flow: Project ID -> chain -> token to receive -> amount of project tokens -> beneficiary -> execute
 
 import {
   el, createComponentWrapper, createProjectAndChainInput,
@@ -96,7 +96,7 @@ export function renderCashOutComponent() {
     if (state.beneficiary === 'custom' && state.customBeneficiary) params.beneficiary = state.customBeneficiary;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Token holder burns their own tokens to reclaim a share of the project’s funds.' });
+  }, { permissionNote: 'Give up your project tokens to receive funds under the project’s cash-out rules.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -107,7 +107,7 @@ export function renderCashOutComponent() {
     state.contextsVerified = false; state.contextsLoading = true;
     state.tokens = []; state.selectedToken = null;
     if (!term || !client || !state.projectId) {
-      state.contextsLoading = false; state.error = 'Could not verify this project’s reclaim tokens.'; updateUI(); return;
+      state.contextsLoading = false; state.error = 'Could not check which tokens this project can return.'; updateUI(); return;
     }
     var gen = ++tokenGeneration;
     updateUI();
@@ -118,14 +118,14 @@ export function renderCashOutComponent() {
         var known = tokenByAddress(catalog, context.token);
         return { address: context.token, decimals: Number(context.decimals), currency: BigInt(context.currency), symbol: known ? known.symbol : truncAddr(context.token) };
       });
-      if (!tokens.length) throw new Error('No accounting contexts');
+      if (!tokens.length) throw new Error('No accepted tokens found');
       state.tokens = tokens; state.selectedToken = tokenByAddress(tokens, wanted) || tokens[0];
       state._defaultToken = null; state.contextsVerified = true; state.contextsLoading = false; state.error = null; updateUI();
     }).catch(function () {
       if (gen !== tokenGeneration || state.selectedChain !== chainId) return;
       state.tokens = []; state.selectedToken = null;
       state.contextsVerified = false; state.contextsLoading = false;
-      state.error = 'Could not verify this project’s reclaim tokens.'; updateUI();
+      state.error = 'Could not check which tokens this project can return.'; updateUI();
     });
   }
 
@@ -158,7 +158,7 @@ export function renderCashOutComponent() {
     // Token to reclaim selector
     var tokenSection = el('div', 'component-section');
     var tokenLabel = el('label', 'input-label');
-    tokenLabel.textContent = 'token to reclaim';
+    tokenLabel.textContent = 'token to receive';
     tokenSection.appendChild(tokenLabel);
     if (state.tokens.length > 0) {
       var tokenSelect = el('select', 'field');
@@ -183,14 +183,14 @@ export function renderCashOutComponent() {
       });
       tokenSection.appendChild(tokenSelect);
     } else if (state.contextsLoading) {
-      var loadingTokens = el('div', 'type-hint'); loadingTokens.textContent = 'Loading verified accounting contexts…'; tokenSection.appendChild(loadingTokens);
+      var loadingTokens = el('div', 'type-hint'); loadingTokens.textContent = 'Checking accepted tokens…'; tokenSection.appendChild(loadingTokens);
     }
     body.appendChild(tokenSection);
 
     // Cash out count (project tokens to burn)
     var amtSection = el('div', 'component-section');
     var amtLabel = el('label', 'input-label');
-    amtLabel.innerHTML = 'project tokens to cash out <span class="type-hint">18 decimals</span>';
+    amtLabel.innerHTML = 'project tokens to cash out <span class="type-hint">up to 18 decimal places</span>';
     amtSection.appendChild(amtLabel);
     var amtInput = el('input', 'field numeric-field');
     amtInput.type = 'text';
@@ -234,7 +234,7 @@ export function renderCashOutComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
+      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
@@ -296,9 +296,9 @@ export function renderCashOutComponent() {
     if (!state.selectedChain || !state.projectId) {
       state.error = 'Select a project and chain'; updateUI(); return;
     }
-    if (!state.contextsVerified) { state.error = state.contextsLoading ? 'Reclaim tokens are still loading.' : 'Could not verify this project’s reclaim tokens.'; updateUI(); return; }
+    if (!state.contextsVerified) { state.error = state.contextsLoading ? 'Tokens you can receive are still loading.' : 'Could not check which tokens this project can return.'; updateUI(); return; }
     if (!state.amount) { state.error = 'Enter a token count'; updateUI(); return; }
-    if (!state.selectedToken) { state.error = 'Select a token to reclaim'; updateUI(); return; }
+    if (!state.selectedToken) { state.error = 'Select a token to receive'; updateUI(); return; }
 
     var cashOutCount;
     try { cashOutCount = parseAmount(state.amount, 18); } catch (_) {
@@ -312,12 +312,12 @@ export function renderCashOutComponent() {
 
     var beneficiary = getBeneficiaryAddress(state);
     if (!beneficiary) {
-      state.error = state.beneficiary === 'custom' ? 'Enter a valid beneficiary address' : 'Connect wallet first';
+      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect wallet first';
       updateUI(); return;
     }
 
     var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
-    if (!terminalAddr) { state.error = 'No terminal address for this chain'; updateUI(); return; }
+    if (!terminalAddr) { state.error = 'No payment contract is available on this chain'; updateUI(); return; }
     var chainId = state.selectedChain;
     var reclaimToken = state.selectedToken.address;
     var amountText = state.amount;
@@ -350,7 +350,7 @@ export function renderCashOutComponent() {
         if ((firstRuleset != null && lockedRuleset != null && firstRuleset !== lockedRuleset)
           || lockedRoute.via !== 'amm' || lockedRoute.minimum !== preparedRoute.minimum
           || lockedRoute.metadata.toLowerCase() !== preparedRoute.metadata.toLowerCase()) {
-          throw new Error('The cash out route changed while its executable minimum was being locked. Refresh and try again.');
+          throw new Error('The cash out route changed while we checked the minimum you would receive. Refresh and try again.');
         }
       }
     } catch (error) {
@@ -377,8 +377,8 @@ export function renderCashOutComponent() {
       confirmSummary: { action: 'Cash out', rows: [
         ['Cashing out', formatAmount(cashOutCount, 18) + ' tokens'],
         ['You receive', (preparedRoute.via === 'amm' ? '≈ ' : '') + formatAmount(preparedRoute.expected, reclaimDecimals) + ' ' + reclaimSymbol],
-        ['Minimum', formatAmount(preparedRoute.terminalMinimum, reclaimDecimals) + ' ' + reclaimSymbol + ' — reverts below this'],
-        ['Route', preparedRoute.via === 'amm' ? 'sold through the buyback pool' : 'burned against the project surplus'],
+        ['Minimum', formatAmount(preparedRoute.terminalMinimum, reclaimDecimals) + ' ' + reclaimSymbol + ' — fails if you receive less'],
+        ['Route', preparedRoute.via === 'amm' ? 'sold on Uniswap' : 'destroyed in return for available project funds'],
         ['To', beneficiary],
       ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },

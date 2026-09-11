@@ -164,7 +164,7 @@ describe('revnet stage editor — auto-issuance chain selector UI', () => {
       { count: '400', address: BOB, chainId: 8453 },
     ];
     const hints = Array.from(editorFor(s).querySelectorAll('.create-hint')).map((h) => h.textContent);
-    const total = hints.find((t) => t.indexOf('Total auto issuance') !== -1);
+    const total = hints.find((t) => t.indexOf('Tokens available from stage start:') !== -1);
     expect(total).toContain('1000');
     expect(total).toContain('600 on Ethereum');
     expect(total).toContain('400 on Base');
@@ -174,8 +174,8 @@ describe('revnet stage editor — auto-issuance chain selector UI', () => {
     const s = revState([1]);
     s.stages[0].autoIssuances = [{ count: '600', address: ALICE, chainId: null }];
     const hints = Array.from(editorFor(s).querySelectorAll('.create-hint')).map((h) => h.textContent);
-    const total = hints.find((t) => t.indexOf('Total auto issuance') !== -1);
-    expect(total).toBe('Total auto issuance of 600 $TST.');
+    const total = hints.find((t) => t.indexOf('Tokens available from stage start:') !== -1);
+    expect(total).toBe('Tokens available from stage start: 600 $TST.');
   });
 });
 

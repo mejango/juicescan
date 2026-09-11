@@ -73,7 +73,7 @@ export function renderBurnComponent() {
     if (state.memo) params.memo = state.memo;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Token holder burns their own tokens. Irreversible.' });
+  }, { permissionNote: 'Permanently destroy your own tokens. This is called burning. You receive no funds.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -103,7 +103,7 @@ export function renderBurnComponent() {
       balBox.appendChild(row);
       if (getViewAs()) {
         var note = el('div', 'preview-note');
-        note.textContent = 'View as is active — this is your connected wallet’s balance, the account a burn would spend from.';
+        note.textContent = 'You are viewing another account. Burning uses the balance of your connected wallet shown here.';
         balBox.appendChild(note);
       }
       body.appendChild(balBox);
@@ -112,7 +112,7 @@ export function renderBurnComponent() {
     // Token count
     var amtSection = el('div', 'component-section');
     var amtLabel = el('label', 'input-label');
-    amtLabel.innerHTML = 'token count to burn <span class="type-hint">18 decimals</span>';
+    amtLabel.innerHTML = 'token count to burn <span class="type-hint">up to 18 decimal places</span>';
     amtSection.appendChild(amtLabel);
     var amtInput = el('input', 'field numeric-field');
     amtInput.type = 'text';
@@ -125,11 +125,11 @@ export function renderBurnComponent() {
     // Memo
     var memoSection = el('div', 'component-section');
     var memoLabel = el('label', 'input-label');
-    memoLabel.innerHTML = 'memo <span class="type-hint">optional</span>';
+    memoLabel.innerHTML = 'note <span class="type-hint">optional</span>';
     memoSection.appendChild(memoLabel);
     var memoInput = el('input', 'field string-field optional-field');
     memoInput.type = 'text';
-    memoInput.placeholder = 'Add a memo (optional)';
+    memoInput.placeholder = 'Add a note (optional)';
     memoInput.value = state.memo;
     memoInput.addEventListener('input', function() { state.memo = memoInput.value; });
     memoSection.appendChild(memoInput);
@@ -137,7 +137,7 @@ export function renderBurnComponent() {
 
     // Warning
     var warn = el('div', 'error-box warning');
-    warn.textContent = 'Burning tokens is irreversible.';
+    warn.textContent = 'Destroyed tokens cannot be recovered.';
     body.appendChild(warn);
 
     if (state.error) body.appendChild(renderError(state.error));
@@ -167,7 +167,7 @@ export function renderBurnComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
+      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
@@ -220,7 +220,7 @@ export function renderBurnComponent() {
     var tokensAddr = getAddress('JBTokens', state.selectedChain);
     var directoryAddr = getAddress('JBDirectory', state.selectedChain);
     if (!tokensAddr || !directoryAddr) {
-      state.error = 'Protocol contracts are unavailable for this chain'; updateUI(); return;
+      state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return;
     }
     var freshBalance, controllerAddr;
     try {

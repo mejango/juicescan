@@ -1,5 +1,5 @@
 // src/relayr-ui.js
-// The one DOM builder for the "Paid Relayr request" receipt card. The create flow, the add-items modal,
+// The one DOM builder for the "Paid request via Relayr" receipt card. The create flow, the add-items modal,
 // and the Discover recovery panel all show the same card (head + bundle + payment + per-chain rows + note);
 // only their note wording, state labels, and action buttons differ, so those stay at the call sites.
 // relayr.js stays DOM-free; this module owns the shared presentation.
@@ -15,7 +15,7 @@ export function chooseRelayrPayment(quote) {
   return new Promise(function (resolve) {
     var modal = openDialog('Choose where to pay', { onClose: function () { resolve(null); } });
     var body = el('div', 'modal-body');
-    var note = el('p'); note.textContent = 'One payment funds this bundle on every destination chain. Choose the chain holding the ETH you want to use.';
+    var note = el('p'); note.textContent = 'One payment funds these transactions on every selected chain through Relayr. Choose where to pay with ETH.';
     body.appendChild(note);
     var label = el('label'); label.textContent = 'Payment chain';
     var select = el('select', 'field create-input'); select.setAttribute('aria-label', 'Payment chain');
@@ -58,7 +58,7 @@ export function renderRelayrReceiptInto(panel, session, opts) {
   panel.innerHTML = '';
   var progress = relayrProgress(session.records, session.expectedCount);
   var head = el('div', 'relayr-pending-head');
-  var title = el('strong'); title.textContent = 'Paid Relayr request'; head.appendChild(title);
+  var title = el('strong'); title.textContent = 'Paid request via Relayr'; head.appendChild(title);
   var count = el('span', 'relayr-pending-count' + (progress.failed ? ' err' : ''));
   count.textContent = progress.confirmed + '/' + progress.total + (opts.verifiedOnchain ? ' confirmed' : ' reported complete'); head.appendChild(count);
   panel.appendChild(head);

@@ -55,7 +55,7 @@ export function renderReservedComponent() {
     if (state.selectedChain) params.chain = state.selectedChain;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Permissionless. Anyone can trigger distribution of pending reserved tokens to splits.' });
+  }, { permissionNote: 'Send tokens set aside for the project to its chosen recipients. Anyone can do this.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -76,7 +76,7 @@ export function renderReservedComponent() {
       var infoBox = el('div', 'pay-preview');
       var row = el('div', 'preview-row');
       var lbl = el('span', 'preview-label');
-      lbl.textContent = 'Pending reserved tokens';
+      lbl.textContent = 'Reserved tokens ready to send';
       row.appendChild(lbl);
       var val = el('span', 'preview-value');
       val.textContent = formatAmount(state.pendingAmount, 18);
@@ -112,7 +112,7 @@ export function renderReservedComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
+      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
@@ -148,14 +148,14 @@ export function renderReservedComponent() {
     }
 
     var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
 
     executeTransaction({
       ...buildSendReservedArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId }),
       confirmSummary: { action: 'Distribute reserved tokens', rows: [
-        ['Sends', 'all pending reserved tokens to the reserved splits'],
+        ['Sends', 'all reserved tokens ready to send to the chosen recipients'],
         ['Project', '#' + String(state.projectId)],
-        ['Who can call', 'anyone — no fee'],
+        ['Who can call', 'anyone'],
       ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadPending(); updateUI(); },

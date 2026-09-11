@@ -113,7 +113,7 @@ export function renderLaunchComponent() {
     var params = {};
     if (state.chainIds && state.chainIds.length) params.chains = state.chainIds.join(',');
     return params;
-  }, { permissionNote: 'Creates a new project owned by the connected wallet and launches its first ruleset.', wide: true });
+  }, { permissionNote: 'Create a project owned by your connected wallet, with its first set of rules.', wide: true });
 
   var wrapper = comp.wrapper;
   var body = comp.body;
@@ -124,7 +124,7 @@ export function renderLaunchComponent() {
     // Project URI
     var uriSection = el('div', 'component-section');
     var uriLabel = el('label', 'input-label');
-    uriLabel.innerHTML = 'project URI <span class="type-hint">optional, IPFS hash</span>';
+    uriLabel.innerHTML = 'project information link <span class="type-hint">optional IPFS address</span>';
     uriSection.appendChild(uriLabel);
     var uriInput = el('input', 'field string-field optional-field');
     uriInput.type = 'text';
@@ -156,11 +156,11 @@ export function renderLaunchComponent() {
     // Memo
     var memoSection = el('div', 'component-section');
     var memoLabel = el('label', 'input-label');
-    memoLabel.innerHTML = 'memo <span class="type-hint">optional</span>';
+    memoLabel.innerHTML = 'note <span class="type-hint">optional</span>';
     memoSection.appendChild(memoLabel);
     var memoInput = el('input', 'field string-field optional-field');
     memoInput.type = 'text';
-    memoInput.placeholder = 'Add a memo (optional)';
+    memoInput.placeholder = 'Add a note (optional)';
     memoInput.value = state.memo;
     memoInput.addEventListener('input', function() { state.memo = memoInput.value; });
     memoSection.appendChild(memoInput);
@@ -187,7 +187,7 @@ export function renderLaunchComponent() {
     if (!owner) { state.error = 'Connect wallet first'; updateUI(); return; }
 
     var controllerAddr = getAddress('JBController', state.chainIds[0]);
-    if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
 
     // launchProjectFor charges msg.value == JBProjects.creationFee() — omitting it reverts on fee chains.
     var creationFee = 0n;
@@ -232,7 +232,7 @@ export function renderLaunchComponent() {
       confirmSummary: { action: 'Launch project', rows: [
         ['Owner', owner],
         ['Rulesets', String(rulesetConfigs.length)],
-        ['Accepts', terminalAddr ? 'ETH through JBMultiTerminal' : 'no terminal yet'],
+        ['Accepts', terminalAddr ? 'ETH through JBMultiTerminal' : 'no payment contract yet'],
         ['Creation fee', formatAmount(creationFee || 0n, 18) + ' ETH'],
       ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
@@ -253,7 +253,7 @@ export function renderLaunchComponent() {
 function renderChainPicker(state, updateUI) {
   var section = el('div', 'component-section chain-multi-section');
   var label = el('label', 'input-label');
-  label.innerHTML = 'chain <span class="type-hint">pick a chain</span>';
+  label.innerHTML = 'blockchain <span class="type-hint">where the project will run</span>';
   section.appendChild(label);
 
   function networkOf(id) {

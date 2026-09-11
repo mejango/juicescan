@@ -242,7 +242,7 @@ function initTabs() {
       var input = document.createElement('input');
       input.type = 'text';
       input.className = 'viewas-input';
-      input.placeholder = '0x address or ENS name';
+      input.placeholder = 'Wallet address or name.eth';
       var go = document.createElement('button'); go.type = 'button'; go.className = 'viewas-go'; go.textContent = 'View';
       var err = document.createElement('div'); err.className = 'viewas-err';
       function submit() {
@@ -259,7 +259,7 @@ function initTabs() {
           });
           return;
         }
-        err.textContent = 'Enter a 0x address or an ENS name.';
+        err.textContent = 'Enter a wallet address or name such as name.eth.';
       }
       go.addEventListener('click', submit);
       input.addEventListener('keydown', function (e) { if (e.key === 'Enter') submit(); });
@@ -922,7 +922,7 @@ function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, 
       contentEl.style.padding = '0 12px 12px';
 
       if (prettyRenderer) {
-        // Toolbar: pretty/raw + [style] + [embed] + [ask your LLM]
+        // Toolbar: pretty/raw + [style] + [embed] + [ask your assistant]
         var selectorWrap = document.createElement('div');
         selectorWrap.className = 'fn-view-selector';
 
@@ -969,14 +969,14 @@ function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, 
         var copyPromptLink = document.createElement('button');
         copyPromptLink.type = 'button';
         copyPromptLink.className = 'fn-copy-prompt';
-        copyPromptLink.textContent = '[ask your LLM]';
+        copyPromptLink.textContent = '[ask your assistant]';
         copyPromptLink.addEventListener('click', function(e) {
           e.preventDefault();
           var fnNs = natspec[contractName] ? natspec[contractName][fn.name] : null;
           var prompt = getComponentAuditPrompt(fn, contractName, fnNs, componentEl);
           navigator.clipboard.writeText(prompt).then(function() {
             copyPromptLink.textContent = '[copied]';
-            setTimeout(function() { copyPromptLink.textContent = '[ask your LLM]'; }, 2000);
+            setTimeout(function() { copyPromptLink.textContent = '[ask your assistant]'; }, 2000);
           });
         });
         selectorWrap.appendChild(copyPromptLink);

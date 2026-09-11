@@ -57,7 +57,7 @@ export function renderDeployERC20Component() {
     if (state.tokenSymbol) params.symbol = state.tokenSymbol;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Requires project owner or DEPLOY_ERC20 permission.' });
+  }, { permissionNote: 'Create the project’s transferable token (ERC-20). Requires the project owner or DEPLOY_ERC20 permission.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -123,7 +123,7 @@ export function renderDeployERC20Component() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
+      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
@@ -143,7 +143,7 @@ export function renderDeployERC20Component() {
     if (!state.tokenSymbol.trim()) { state.error = 'Enter a token symbol'; updateUI(); return; }
 
     var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
 
     var salt = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
@@ -153,7 +153,7 @@ export function renderDeployERC20Component() {
         ['Name', state.tokenName.trim()],
         ['Symbol', state.tokenSymbol.trim()],
         ['Project', '#' + String(state.projectId)],
-        ['One-time', 'a project can deploy its token once'],
+        ['One-time', 'a project can create its token only once'],
       ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },

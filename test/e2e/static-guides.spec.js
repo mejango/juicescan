@@ -7,7 +7,7 @@ for (const guide of ['learn', 'build']) {
   test(`${guide} is readable and navigable without JavaScript`, async ({ page, browser }) => {
     expect((await page.goto(`/${guide}.html`)).status()).toBe(200);
     await expect(page.getByRole('heading', { level: 1 })).toHaveCount(1);
-    await expect(page.locator('.guide-section')).toHaveCount(21);
+    await expect(page.locator('.guide-section')).toHaveCount(guide === 'learn' ? 22 : 19);
     await expect(page.locator('script, button')).toHaveCount(0);
     const first = page.locator('.guide-toc-link').first();
     const target = await first.getAttribute('href');

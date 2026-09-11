@@ -135,13 +135,13 @@ describe('DEFECT 3 — per-row percentages show issuance share with a group-shar
     const first = rowsOf(b)[0];
     expect(first.textContent).toMatch(/0%/);
     expect(first.textContent).toMatch(/\(100% of limit\)/);
-    expect(b.textContent).toMatch(/reserves 0%/);
+    expect(b.textContent).toMatch(/rules set aside no new tokens/);
   });
 
   it('no zero-rate note when the ruleset actually reserves something', () => {
     const b = box();
     renderSplitsInto(b, [split(1000000000)], { project, chainId: 1, kind: 'reserved', limitPct: 2.5 });
-    expect(b.textContent).not.toMatch(/reserves 0%/);
+    expect(b.textContent).not.toMatch(/rules set aside no new tokens/);
   });
 });
 

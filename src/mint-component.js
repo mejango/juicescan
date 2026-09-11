@@ -63,7 +63,7 @@ export function renderMintComponent() {
     if (state.memo) params.memo = state.memo;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Requires project owner or MINT_TOKENS permission. Ruleset must allow owner minting.' });
+  }, { permissionNote: 'Create new tokens. The current rules must allow it, and you must own the project or have MINT_TOKENS permission.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -80,7 +80,7 @@ export function renderMintComponent() {
     // Token count (always 18 decimals)
     var amtSection = el('div', 'component-section');
     var amtLabel = el('label', 'input-label');
-    amtLabel.innerHTML = 'token count <span class="type-hint">18 decimals</span>';
+    amtLabel.innerHTML = 'token count <span class="type-hint">up to 18 decimal places</span>';
     amtSection.appendChild(amtLabel);
     var amtInput = el('input', 'field numeric-field');
     amtInput.type = 'text';
@@ -96,11 +96,11 @@ export function renderMintComponent() {
     // Memo
     var memoSection = el('div', 'component-section');
     var memoLabel = el('label', 'input-label');
-    memoLabel.innerHTML = 'memo <span class="type-hint">optional</span>';
+    memoLabel.innerHTML = 'note <span class="type-hint">optional</span>';
     memoSection.appendChild(memoLabel);
     var memoInput = el('input', 'field string-field optional-field');
     memoInput.type = 'text';
-    memoInput.placeholder = 'Add a memo (optional)';
+    memoInput.placeholder = 'Add a note (optional)';
     memoInput.value = state.memo;
     memoInput.addEventListener('input', function() { state.memo = memoInput.value; });
     memoSection.appendChild(memoInput);
@@ -117,7 +117,7 @@ export function renderMintComponent() {
     checkbox.checked = state.useReservedPercent;
     checkbox.addEventListener('change', function() { state.useReservedPercent = checkbox.checked; });
     reservedLabel.appendChild(checkbox);
-    reservedLabel.appendChild(document.createTextNode('Apply reserved percent'));
+    reservedLabel.appendChild(document.createTextNode('Set aside the project’s reserved share'));
     reservedSection.appendChild(reservedLabel);
     body.appendChild(reservedSection);
 
@@ -147,7 +147,7 @@ export function renderMintComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
+      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
@@ -173,19 +173,19 @@ export function renderMintComponent() {
 
     var beneficiary = getBeneficiaryAddress(state);
     if (!beneficiary) {
-      state.error = state.beneficiary === 'custom' ? 'Enter a valid beneficiary address' : 'Connect wallet first';
+      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect wallet first';
       updateUI(); return;
     }
 
     var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
 
     executeTransaction({
       ...buildMintArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, tokenCount: tokenCount, beneficiary: beneficiary, memo: state.memo || '', useReservedPercent: state.useReservedPercent }),
       confirmSummary: { action: 'Mint tokens', rows: [
         ['Minting', formatAmount(tokenCount, 18) + ' tokens'],
         ['To', beneficiary],
-        ['Reserved percent', state.useReservedPercent ? 'applied — the reserved share accrues to the project' : 'not applied — the beneficiary gets the full amount'],
+        ['Reserved share', state.useReservedPercent ? 'applied — the project’s share is set aside' : 'not applied — the recipient gets the full amount'],
         ['Project', '#' + String(state.projectId)],
       ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },

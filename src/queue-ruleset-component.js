@@ -34,7 +34,7 @@ function verifyQueueFeedCoverage(chainId, projectId, rulesetConfigs) {
   });
   return createPublicClientForChain(chainId)
     .readContract({ address: terminal, abi: accountingContextsAbi, functionName: 'accountingContextsOf', args: [BigInt(projectId)] })
-    .catch(function () { throw new Error('Couldn’t verify price feed coverage right now — nothing was sent. Try again.'); })
+    .catch(function () { throw new Error('Could not check the exchange rates needed for these rules. Nothing was sent. Try again.'); })
     .then(function (ctxs) {
       var known = getChainTokens(chainId);
       var labeled = (ctxs || []).map(function (ctx) {
@@ -144,7 +144,7 @@ export function renderQueueRulesetComponent() {
     if (state.selectedChain) params.chain = state.selectedChain;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Requires project owner or QUEUE_RULESETS permission.', wide: true });
+  }, { permissionNote: 'Schedule new project rules, called a ruleset. Requires the project owner or QUEUE_RULESETS permission.', wide: true });
 
   var wrapper = comp.wrapper;
   var body = comp.body;
@@ -181,11 +181,11 @@ export function renderQueueRulesetComponent() {
     // Memo
     var memoSection = el('div', 'component-section');
     var memoLabel = el('label', 'input-label');
-    memoLabel.innerHTML = 'memo <span class="type-hint">optional</span>';
+    memoLabel.innerHTML = 'note <span class="type-hint">optional</span>';
     memoSection.appendChild(memoLabel);
     var memoInput = el('input', 'field string-field optional-field');
     memoInput.type = 'text';
-    memoInput.placeholder = 'Add a memo (optional)';
+    memoInput.placeholder = 'Add a note (optional)';
     memoInput.value = state.memo;
     memoInput.addEventListener('input', function() { state.memo = memoInput.value; });
     memoSection.appendChild(memoInput);
@@ -217,7 +217,7 @@ export function renderQueueRulesetComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
+      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
@@ -235,7 +235,7 @@ export function renderQueueRulesetComponent() {
     }
 
     var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No controller address for this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
 
     var rulesetConfigs;
     try {
@@ -244,7 +244,7 @@ export function renderQueueRulesetComponent() {
       state.error = (err && err.message) || String(err); updateUI(); return;
     }
 
-    state.txStatus = { message: 'Verifying price feed coverage…', success: false };
+    state.txStatus = { message: 'Checking the required exchange rates…', success: false };
     updateUI();
     verifyQueueFeedCoverage(state.selectedChain, state.projectId, rulesetConfigs).then(function() {
       executeTransaction({

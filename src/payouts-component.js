@@ -157,7 +157,7 @@ export function renderPayoutsComponent() {
     else if (state.currencyMode && state.currencyMode !== 'token') params.currency = state.currencyMode;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Permissionless unless ruleset has ownerMustSendPayouts enabled.' });
+  }, { permissionNote: 'Send project funds to its chosen recipients, within its payout limit. Anyone can do this unless the rules restrict it to the owner or an approved address.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -176,7 +176,7 @@ export function renderPayoutsComponent() {
       if (gen !== tokenGeneration || state.selectedChain !== chainId) return;
       var catalog = getChainTokens(chainId);
       var tokens = (contexts || []).map(function (context) { return normalizePayoutContext(context, catalog); });
-      if (!tokens.length) throw new Error('No accounting contexts');
+      if (!tokens.length) throw new Error('No accepted tokens found');
       state.tokens = tokens;
       state.selectedToken = tokenByAddress(tokens, wanted) || tokens[0];
       state.decimals = state.selectedToken.decimals;
@@ -231,14 +231,14 @@ export function renderPayoutsComponent() {
       });
       tokenSection.appendChild(tokenSelect);
     } else if (state.contextsLoading) {
-      var loadingTokens = el('div', 'type-hint'); loadingTokens.textContent = 'Loading verified accounting contexts…'; tokenSection.appendChild(loadingTokens);
+      var loadingTokens = el('div', 'type-hint'); loadingTokens.textContent = 'Checking accepted tokens…'; tokenSection.appendChild(loadingTokens);
     }
     body.appendChild(tokenSection);
 
     // Amount
     var amtSection = el('div', 'component-section');
     var amtLabel = el('label', 'input-label');
-    amtLabel.innerHTML = 'amount <span class="type-hint">' + payoutAmountDecimals(state.currencyMode, state.decimals) + ' decimals</span>';
+    amtLabel.innerHTML = 'amount <span class="type-hint">' + payoutAmountDecimals(state.currencyMode, state.decimals) + ' decimal places</span>';
     amtSection.appendChild(amtLabel);
     var amtInput = el('input', 'field numeric-field');
     amtInput.type = 'text';
@@ -286,9 +286,9 @@ export function renderPayoutsComponent() {
     if (state.currencyMode !== 'token') {
       var curHint = el('div');
       curHint.style.fontSize = '12px'; curHint.style.color = 'var(--muted)'; curHint.style.marginTop = '4px';
-      curHint.textContent = state.currencyMode === 'eth' ? 'Amount is denominated in ETH, using the selected token context’s ' + state.decimals + '-decimal scale, then converted onchain.'
-        : state.currencyMode === 'usd' ? 'Amount is denominated in USD, using the selected token context’s ' + state.decimals + '-decimal scale, then converted onchain.'
-        : 'Amount is denominated in this currency id and uses the selected token context’s ' + state.decimals + '-decimal scale.';
+      curHint.textContent = state.currencyMode === 'eth' ? 'Enter the amount in ETH. It supports ' + state.decimals + ' decimal places and is converted to the selected token by the contract.'
+        : state.currencyMode === 'usd' ? 'Enter the amount in USD. It supports ' + state.decimals + ' decimal places and is converted to the selected token by the contract.'
+        : 'Enter the amount in this currency. It supports ' + state.decimals + ' decimal places.';
       curSection.appendChild(curHint);
     }
     body.appendChild(curSection);
@@ -323,7 +323,7 @@ export function renderPayoutsComponent() {
     discoverChains(pid, function(live) {
       if (gen !== discoveryGeneration) return;
       state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Project not found on a reachable supported chain.'; updateUI(); return; }
+      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
       var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
       selectChain(state, preferred);
       state._defaultChain = null;
@@ -351,7 +351,7 @@ export function renderPayoutsComponent() {
     }
 
     var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
-    if (!terminalAddr) { state.error = 'No terminal address for this chain'; updateUI(); return; }
+    if (!terminalAddr) { state.error = 'No payment contract is available on this chain'; updateUI(); return; }
 
     var tokenAddr = state.selectedToken.address;
     var accountingCurrency = state.selectedToken.currency;
@@ -367,15 +367,15 @@ export function renderPayoutsComponent() {
     var prices = getAddress('JBPrices', chainId);
     var client = createPublicClientForChain(chainId);
     var account = getAccount();
-    if (!controller || !limitsAddr || !store || !prices || !client || !account) { state.error = 'Could not resolve the payout contracts or wallet.'; updateUI(); return; }
+    if (!controller || !limitsAddr || !store || !prices || !client || !account) { state.error = 'Could not find the payout contracts or connected wallet.'; updateUI(); return; }
 
-    state.phase = 'confirming'; state.txStatus = { message: 'Refreshing the payout limit and simulating output…', success: false }; updateUI();
+    state.phase = 'confirming'; state.txStatus = { message: 'Checking the payout limit and previewing the amount sent…', success: false }; updateUI();
     client.readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(state.projectId)] }).then(function (current) {
       var ruleset = current && current.id != null ? current : (current && current[0]);
-      if (!ruleset || BigInt(ruleset.id || 0) === 0n) throw new Error('No current ruleset.');
+      if (!ruleset || BigInt(ruleset.id || 0) === 0n) throw new Error('This project has no active ruleset.');
       return client.readContract({ address: limitsAddr, abi: payoutLimitsAbi, functionName: 'payoutLimitsOf', args: [BigInt(state.projectId), BigInt(ruleset.id), terminalAddr, tokenAddr] }).then(function (limits) {
         var configured = (limits || []).filter(function (limit) { return BigInt(limit.currency) === currency; })[0];
-        if (!configured) throw new Error('This currency is not a configured payout limit for the selected token.');
+        if (!configured) throw new Error('This token has no payout limit set in the selected currency.');
         var price = isExactPayoutCurrency(currency, accountingCurrency)
           ? Promise.resolve(1000000000000000000n)
           : client.readContract({ address: prices, abi: pricePerUnitAbi, functionName: 'pricePerUnitOf', args: [BigInt(state.projectId), currency, BigInt(accountingCurrency), 18n] });
@@ -388,7 +388,7 @@ export function renderPayoutsComponent() {
           var remaining = cap > consumed ? cap - consumed : 0n;
           if (amountParsed > remaining) throw new Error('Amount exceeds the remaining payout limit (' + String(remaining) + ' raw units).');
           var available = availablePayoutAmount(remaining, values[1], values[2]);
-          if (amountParsed > available) throw new Error('Amount exceeds what the terminal balance can currently fund (' + String(available) + ' raw units).');
+          if (amountParsed > available) throw new Error('Amount exceeds the project’s available balance (' + String(available) + ' raw units).');
           return client.simulateContract({ account: account, address: terminalAddr, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', args: [BigInt(state.projectId), tokenAddr, amountParsed, currency, 0n] });
         });
       });
@@ -402,17 +402,17 @@ export function renderPayoutsComponent() {
       var quoted = BigInt(simulation.result || 0);
       var exactCurrency = isExactPayoutCurrency(currency, accountingCurrency);
       var minPaidOut = payoutOutputFloor(quoted, exactCurrency);
-      if (minPaidOut === 0n) throw new Error('This payout would send 0 terminal tokens. Nothing was sent.');
+      if (minPaidOut === 0n) throw new Error('This payout would send 0 tokens. Nothing was sent.');
       state.phase = 'ready'; state.txStatus = null; updateUI();
       executeTransaction({
         ...buildSendPayoutsArgs({ chainId: chainId, terminalAddr: terminalAddr, projectId: state.projectId, token: tokenAddr, amount: amountParsed, currency: currency, minPaidOut: minPaidOut }),
         confirmSummary: { action: 'Send payouts', rows: [
-          ['Sending', amountText + ' (currency ' + String(currency) + ') to the payout splits'],
+          ['Sending', amountText + ' (currency ' + String(currency) + ') to the chosen recipients'],
           ['Token', state.selectedToken.symbol || tokenAddr],
-          ['Minimum paid out', String(minPaidOut) + ' raw terminal-token units — reverts below this'],
+          ['Minimum paid out', String(minPaidOut) + ' smallest token units — fails if less is sent'],
           ['Project', '#' + String(state.projectId)],
         ] },
-        confirmNote: 'The live simulation returned ' + String(quoted) + ' raw terminal-token units. This transaction reverts below ' + String(minPaidOut) + ' instead of silently paying less.',
+        confirmNote: 'The preview returned ' + String(quoted) + ' smallest token units (10^' + state.decimals + ' units = 1 token). This transaction fails if less than ' + String(minPaidOut) + ' is sent.',
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
@@ -421,7 +421,7 @@ export function renderPayoutsComponent() {
       state.phase = 'ready'; state.txStatus = null;
       state.error = (error && (error.shortMessage || error.message)) || 'Could not safely quote this payout.';
       if (state.error.indexOf('0x9fa59b9a') !== -1 || state.error.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
-        state.error = 'The terminal balance no longer covers this amount. Review the available amount and try again.';
+        state.error = 'The project’s available balance no longer covers this amount. Review it and try again.';
       }
       updateUI();
     });
