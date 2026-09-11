@@ -28,7 +28,9 @@ const budgets = {
   // Script-free guides are separate, optional page downloads, not added to the app's initial response.
   // Executed testnet gateway/feed, retired router/hook ABI + source history, and exact chain ABI variants:
   // 9,805,853 B raw / 1,421,394 B gzip (+741,768 / +81,184 versus Learn/Build).
-  'dist/app.js': { raw: 9_815_000, gzip: 1_426_000 },
+  // Executed mainnets restore canonical buyback-hook source and preserve retired mainnet identities:
+  // 9,915,280 B raw / 1,457,456 B gzip (+107,306 / +35,494 versus the completed testnet rollout).
+  'dist/app.js': { raw: 9_925_000, gzip: 1_462_000 },
   'dist/style.css': { raw: 246_500, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
@@ -60,8 +62,8 @@ const distributionFiles = await filesBelow('dist');
 const totalGzip = (await Promise.all(distributionFiles.map(async file =>
   gzipSync(await readFile(file), { level: 9 }).byteLength
 ))).reduce((sum, size) => sum + size, 0);
-// Rollout artifact history and chain-specific ABI variants: measured 2,191,256 B gzip.
-const totalGzipBudget = 2_197_000;
+// Executed production artifacts and restored canonical hook source: measured 2,227,322 B gzip.
+const totalGzipBudget = 2_233_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

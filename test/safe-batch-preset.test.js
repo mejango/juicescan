@@ -1,7 +1,7 @@
 // "Move to buyback 1.4.0 + gateway" resolves per chain from live reads: applied steps are skipped, the deployer's
 // 48h default window becomes 30 minutes with a note, no pool means no setPoolFor, and missing target code makes the
 // preset unavailable on that chain.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BUYBACK_GATEWAY_PRESET, DEPLOYER_DEFAULT_TWAP_NOTE, resolvePreset } from '../src/safe-batch-presets.js';
 import { getAddress } from '../src/abi-registry.js';
 import { NATIVE_TOKEN } from '../src/safe-batch.js';
@@ -90,9 +90,29 @@ describe('buyback 1.4.0 + gateway preset', () => {
     await expect(resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 11155111, projectId: 2, client: client(deployed, reads) })).rejects.toThrow('RPC unavailable');
   });
 
-  it('keeps mainnet unavailable until its gateway artifact lands, even if target code exists elsewhere', async () => {
-    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 8453, projectId: 6, client: client(deployed, {}) });
-    expect(result).toMatchObject({ available: false, steps: [], reason: 'Not deployed on Base yet.' });
+  it.each([1, 10, 8453, 42161])('offers the migration from executed mainnet artifacts on chain %s', async chainId => {
+    const hook = getAddress(BUYBACK_GATEWAY_PRESET.targets.hook, chainId);
+    const terminal = getAddress(BUYBACK_GATEWAY_PRESET.targets.terminal, chainId);
+    const registry = getAddress('JBBuybackHookRegistry', chainId).toLowerCase();
+    const routerRegistry = getAddress('JBRouterTerminalRegistry', chainId).toLowerCase();
+    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId, projectId: 6, client: client([hook.toLowerCase(), terminal.toLowerCase()], {
+      [registry + ':hookOf']: OLD_HOOK, [routerRegistry + ':terminalOf']: OLD_TERMINAL,
+      [OLD_HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: 172800n,
+      [OLD_HOOK.toLowerCase() + ':poolKeyOf:' + ZERO]: poolKey(10000, 200),
+    }) });
+    expect(result).toMatchObject({ available: true, nothingToDo: false, steps: [
+      { kind: 'setHookFor', values: { hook } },
+      { kind: 'setPoolFor', values: { fee: 10000, tickSpacing: 200, twapWindow: 1800, terminalToken: NATIVE_TOKEN }, note: DEPLOYER_DEFAULT_TWAP_NOTE },
+      { kind: 'setTerminalFor', values: { terminal } },
+    ] });
+  });
+
+  it('keeps feed-only OP Sepolia unavailable before making any RPC calls', async () => {
+    const rpc = { getCode: vi.fn(async () => '0x6080'), readContract: vi.fn() };
+    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 11155420, projectId: 6, client: rpc });
+    expect(result).toMatchObject({ available: false, steps: [], reason: 'Not deployed on OP Sepolia yet.' });
+    expect(rpc.getCode).not.toHaveBeenCalled();
+    expect(rpc.readContract).not.toHaveBeenCalled();
   });
 
   it('is unavailable where either target has no code', async () => {

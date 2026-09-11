@@ -36,7 +36,7 @@ regression.
 
 ## Contract deployment pin
 
-CI checks out `Bananapus/deploy-all-v6` at commit `8522541297557c80f8bc2dd674c3098f8849b527`, limited to its `deployments/` directory. The expected generator digest is `sha256:b2a06eba00528ceeed2a821ab5444424da02a55d0deacdec78b9725ff6541b4a`. `DEPLOY_ALL_DEPLOYMENTS_DIR` points the read-only verifier at that checkout; locally it defaults to `../../deploy-all-v6/deployments`.
+CI checks out `Bananapus/deploy-all-v6` at commit `a6ab40c5806b52ff4cb21f9eaefe275e621796f9`, limited to its `deployments/` directory. The expected generator digest is `sha256:16794edcdd7a6be201477f4f2797087e0a613eb3f1714a6cc0b27c36a1ca0b43`. `DEPLOY_ALL_DEPLOYMENTS_DIR` points the read-only verifier at that checkout; locally it defaults to `../../deploy-all-v6/deployments`.
 
 Updating the pin is an explicit contract review:
 

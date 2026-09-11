@@ -9,14 +9,17 @@ import { encodeFunctionData } from 'viem';
 import { mirrorBatch, buildStep, NATIVE_TOKEN } from '../src/safe-batch.js';
 import { projectRouterPath } from '../src/discover.js';
 import { mirrorResolver } from '../src/safe-batch-ui.js';
-import { getABI, getAddress, meta as contractMeta } from '../src/abi-registry.js';
+import { getABI, getAddress, meta as contractMeta, registry } from '../src/abi-registry.js';
 import { contractNameByAddress } from '../src/chain.js';
 import { decodeCallForDisplay } from '../src/component-base.js';
 
 const require = createRequire(import.meta.url);
 const { abiEntryKey, validateGatewayRollout } = require('../build/sync-deployments.js');
 const directories = [];
-afterEach(() => directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true })));
+afterEach(() => {
+  directories.splice(0).forEach(path => rmSync(path, { recursive: true, force: true }));
+  routingRuntime.client = null;
+});
 
 function artifact(name, address, args = [], names = []) {
   return { contractName: name, chainId: '0xaa36a7', address, args,
@@ -34,16 +37,41 @@ function rolloutFixture() {
   return { directory, hook, router, gateway, save };
 }
 
-describe('staged buyback and gateway rollout', () => {
-  it('uses the old mainnet ABI while exposing the floor-fix ABI and gateway only on executed testnets', () => {
-    const hasFloorError = (chain) => getABI('JBBuybackHook', chain).some(entry => entry.name === 'JBBuybackHook_DerivedFloorNotMet');
-    expect(hasFloorError(1)).toBe(false);
-    expect(hasFloorError(11155111)).toBe(true);
-    expect(getAddress('JBRouterTerminalGateway', 1)).toBeNull();
-    expect(getAddress('JBRouterTerminalGateway', 11155111)).toMatch(/^0x/);
+describe('buyback and gateway deployment rollout', () => {
+  it.each([1, 10, 8453, 42161, 11155111, 84532, 421614])('exposes the executed floor-fix generation and gateway on chain %s', (chainId) => {
+    expect(getABI('JBBuybackHook', chainId).some(entry => entry.name === 'JBBuybackHook_DerivedFloorNotMet')).toBe(true);
+    for (const name of ['JBBuybackHook', 'JBRouterTerminal', 'JBRouterTerminalGateway', 'JBRatioPriceFeed']) {
+      expect(getAddress(name, chainId)).toMatch(/^0x[\da-f]{40}$/i);
+      expect(contractMeta[name].generation).toBe('current');
+    }
+    for (const name of ['JBBuybackHook', 'JBRouterTerminal', 'JBRouterTerminalGateway']) {
+      expect(getAddress(name, chainId)).toBe(getAddress(name, 11155111));
+    }
+  });
+
+  it('keeps OP Sepolia feed-only until its hook and gateway artifacts exist', () => {
     expect(getAddress('JBRatioPriceFeed', 11155420)).toMatch(/^0x/);
+    expect(getAddress('JBRouterTerminal', 11155420)).toBeNull();
     expect(getAddress('JBRouterTerminalGateway', 11155420)).toBeNull();
     expect(getAddress('JBBuybackHook', 11155420)).toBeNull();
+  });
+
+  it('keeps different chain ABI generations separate during a staged rollout', () => {
+    const name = 'JBStagedRolloutFixture';
+    const previous = getABI('JBBuybackHook_deprecated1');
+    const current = getABI('JBBuybackHook');
+    registry.contracts[name] = [...new Map([...previous, ...current].map(entry => [abiEntryKey(entry), entry])).values()];
+    registry.abisByChain[name] = { variants: [previous, current], forChain: { 1: 0, 11155111: 1 } };
+    try {
+      const hasFloorError = abi => abi.some(entry => entry.name === 'JBBuybackHook_DerivedFloorNotMet');
+      expect(hasFloorError(getABI(name, 1))).toBe(false);
+      expect(hasFloorError(getABI(name, 11155111))).toBe(true);
+      expect(hasFloorError(getABI(name))).toBe(true);
+      expect(getABI(name, 11155420)).toBeUndefined();
+    } finally {
+      delete registry.contracts[name];
+      delete registry.abisByChain[name];
+    }
   });
 
   it('preserves previous and v1 identities and decodes their queued transactions with their own ABI', () => {
@@ -58,7 +86,41 @@ describe('staged buyback and gateway rollout', () => {
     expect(decodeCallForDisplay({ address: getAddress(name, 11155111), chainId: 11155111, calldata: data }).fn).toBe('setTwapWindowOf');
   });
 
-  it.each([1, 11155420])('does not mirror a testnet migration or its pool to unexecuted chain %s', async (chainId) => {
+  it.each([1, 10, 8453, 42161])('mirrors the current migration and destination live pool to executed mainnet chain %s', async (chainId) => {
+    const previousHook = getAddress('JBBuybackHook_deprecated1', chainId);
+    const currentHook = getAddress('JBBuybackHook', chainId);
+    const gateway = getAddress('JBRouterTerminalGateway', chainId);
+    const zero = '0x' + '00'.repeat(20);
+    routingRuntime.client = {
+      getCode: vi.fn(async () => '0x6080'),
+      readContract: vi.fn(async ({ address, functionName, args }) => {
+        if (functionName === 'isHookAllowed' || functionName === 'isTerminalAllowed') return true;
+        if (functionName === 'hookOf') return previousHook;
+        if (functionName === 'terminalOf') return getAddress('JBRouterTerminal_deprecated1', chainId);
+        if (functionName === 'twapWindowOf') return address === previousHook && args[1] === zero ? 900n : 0n;
+        if (functionName === 'poolKeyOf') return { currency0: zero, currency1: zero, fee: 3000, tickSpacing: 60, hooks: previousHook };
+        throw new Error('Unexpected read: ' + functionName);
+      }),
+    };
+    const steps = [
+      buildStep('setHookFor', { chainId: 11155111, projectId: 2, values: { hook: getAddress('JBBuybackHook', 11155111) } }),
+      buildStep('setPoolFor', { chainId: 11155111, projectId: 2, values: { fee: 10000, tickSpacing: 200, twapWindow: 1800, terminalToken: NATIVE_TOKEN } }),
+      buildStep('setTerminalFor', { chainId: 11155111, projectId: 2, values: { terminal: getAddress('JBRouterTerminalGateway', 11155111) } }),
+    ];
+    const project = { id: '2', chainId: 11155111, idByChain: { [chainId]: 6 } };
+    const result = await mirrorBatch(steps, 11155111, chainId, mirrorResolver(project), 6);
+    expect(result.skipped).toEqual([]);
+    expect(result.steps).toMatchObject([
+      { kind: 'setHookFor', chainId, projectId: 6n, to: getAddress('JBBuybackHookRegistry', chainId), values: { hook: currentHook } },
+      { kind: 'setPoolFor', chainId, projectId: 6n, values: { fee: 3000, tickSpacing: 60, twapWindow: 900, terminalToken: NATIVE_TOKEN } },
+      { kind: 'setTerminalFor', chainId, projectId: 6n, to: getAddress('JBRouterTerminalRegistry', chainId), values: { terminal: gateway } },
+    ]);
+    expect(routingRuntime.client.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'isHookAllowed', args: [currentHook] }));
+    expect(routingRuntime.client.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'isTerminalAllowed', args: [gateway] }));
+  });
+
+  it('does not mirror a migration or its pool to feed-only OP Sepolia', async () => {
+    const chainId = 11155420;
     const steps = [
       buildStep('setHookFor', { chainId: 11155111, projectId: 2, values: { hook: getAddress('JBBuybackHook', 11155111) } }),
       buildStep('setPoolFor', { chainId: 11155111, projectId: 2, values: { fee: 10000, tickSpacing: 200, twapWindow: 1800, terminalToken: NATIVE_TOKEN } }),
@@ -68,6 +130,18 @@ describe('staged buyback and gateway rollout', () => {
     const result = await mirrorBatch(steps, 11155111, chainId, mirrorResolver(project), 6);
     expect(result.steps).toEqual([]);
     expect(result.skipped.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor']);
+  });
+
+  it.each(['setHookFor', 'setTerminalFor'])('keeps a recorded but retired %s selection out of the destination batch', async kind => {
+    const contract = kind === 'setHookFor' ? 'JBBuybackHook_deprecated1' : 'JBRouterTerminal_deprecated1';
+    const value = kind === 'setHookFor' ? 'hook' : 'terminal';
+    routingRuntime.client = { readContract: vi.fn(async () => false), getCode: vi.fn() };
+    const step = buildStep(kind, { chainId: 11155111, projectId: 2, values: { [value]: getAddress(contract, 11155111) } });
+    const project = { id: '2', chainId: 11155111, idByChain: { 1: 6 } };
+    const result = await mirrorBatch([step], 11155111, 1, mirrorResolver(project), 6);
+    expect(result.steps).toEqual([]);
+    expect(result.skipped[0]).toMatchObject({ kind, reason: 'the selected generation is retired or not allowed on Ethereum' });
+    expect(routingRuntime.client.getCode).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('drops a dependent pool when its required hook cannot be mirrored (reordered: %s)', async (reordered) => {

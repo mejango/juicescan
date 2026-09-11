@@ -122,11 +122,11 @@ describe('Add to batch', () => {
 });
 
 describe('Same on every chain', () => {
-  it('keeps an undeployed selection and its dependent pool out of the destination tray', async () => {
+  it('keeps an unverified selection and its dependent pool out of the destination tray when RPC reads fail', async () => {
     saveTray(8453, 6, [hook(), pool()]);
     const report = await mirrorAcrossChains(project());
     expect(report.mirrored).toEqual([]);
-    expect(report.skipped).toContain('Optimism: Set buyback hook — the selected generation is not deployed on Optimism');
+    expect(report.skipped).toContain('Optimism: Set buyback hook — offline');
     expect(loadTray(10, 7)).toEqual([]);
   });
 });
