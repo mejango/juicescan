@@ -131,7 +131,7 @@ var previewPayForAbi = [{
 
 // Exact abi.encode order/types from JBBuybackHook.sol (the noop spec metadata). A non-buyback spec
 // (e.g. a 721 hook) won't decode against this, which is how we identify the buyback spec.
-// The deployed generation (buyback-hook-v6 1.1.1, 0x77bee1ad… on every chain) encodes a 15th field,
+// Buyback-hook-v6 1.1.1 and later encode a 15th field,
 // `oracleUnseeded`. Older generations stop one word short, so that spec is kept as a fallback: a strict
 // 15-field decode would drop those previews to the issuance route and misreport the amounts.
 var BUYBACK_META_LEGACY = [

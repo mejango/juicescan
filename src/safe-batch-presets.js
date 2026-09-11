@@ -22,7 +22,7 @@ export var BUYBACK_GATEWAY_PRESET = {
   id: 'buyback-1-4-0-gateway',
   title: 'Move to buyback 1.4.0 + gateway',
   description: 'Points the project at the current buyback hook and router gateway, carrying its live pool onto the new hook.',
-  targets: { hook: '0xB222Da5A71e8FB89a5A38b7c920EaB5DfbC74B91', terminal: '0x4a56AEf5b6A5b9742AbB02cA67C5a85ba183D901' },
+  targets: { hook: 'JBBuybackHook', terminal: 'JBRouterTerminalGateway' },
   steps: ['setHookFor', 'setPoolFor', 'setTerminalFor'],
 };
 export var PRESETS = [BUYBACK_GATEWAY_PRESET];
@@ -36,16 +36,18 @@ function unavailable(reason) { return { available: false, reason: reason, steps:
 export async function resolvePreset(preset, opts) {
   var chainId = Number(opts.chainId), client = opts.client, name = chainNameFor(chainId);
   var pid = BigInt(opts.projectId);
+  var targets = { hook: getAddress(preset.targets.hook, chainId), terminal: getAddress(preset.targets.terminal, chainId) };
+  if (!targets.hook || !targets.terminal) return unavailable('Not deployed on ' + name + ' yet.');
   var registry = getAddress('JBBuybackHookRegistry', chainId), routerRegistry = getAddress('JBRouterTerminalRegistry', chainId);
   if (!registry || !routerRegistry) return unavailable('Not deployed on ' + name + ' yet.');
-  var codes = await Promise.all([client.getCode({ address: preset.targets.hook }), client.getCode({ address: preset.targets.terminal })]);
+  var codes = await Promise.all([client.getCode({ address: targets.hook }), client.getCode({ address: targets.terminal })]);
   if (!hasCode(codes[0]) || !hasCode(codes[1])) return unavailable('Not deployed on ' + name + ' yet.');
   function readOn(address, abi, functionName, args) { return client.readContract({ address: address, abi: abi, functionName: functionName, args: args }); }
 
   var steps = [], notes = [];
   var currentHook = await readOn(registry, hookOfAbi, 'hookOf', [pid]);
-  var hookApplied = sameAddr(currentHook, preset.targets.hook);
-  if (!hookApplied) steps.push({ kind: 'setHookFor', values: { hook: preset.targets.hook } });
+  var hookApplied = sameAddr(currentHook, targets.hook);
+  if (!hookApplied) steps.push({ kind: 'setHookFor', values: { hook: targets.hook } });
 
   // Pools live on the hook, keyed by normalized terminal token: reads use address(0) for native, writes use the
   // 0xEEEe sentinel the hook normalizes. Carry a pool only when the old hook has one and the new hook does not.
@@ -55,9 +57,9 @@ export async function resolvePreset(preset, opts) {
     if (usdc) probes.push({ read: usdc, write: usdc, word: 'USDC' });
     for (var i = 0; i < probes.length; i++) {
       var probe = probes[i];
-      var oldWindow = Number(await readOn(currentHook, twapWindowOfAbi, 'twapWindowOf', [pid, probe.read]).catch(function () { return 0n; }));
+      var oldWindow = Number(await readOn(currentHook, twapWindowOfAbi, 'twapWindowOf', [pid, probe.read]));
       if (!(oldWindow > 0)) continue;
-      var carried = Number(await readOn(preset.targets.hook, twapWindowOfAbi, 'twapWindowOf', [pid, probe.read]).catch(function () { return 0n; }));
+      var carried = Number(await readOn(targets.hook, twapWindowOfAbi, 'twapWindowOf', [pid, probe.read]));
       if (carried > 0) { notes.push('The ' + probe.word + ' pool is already registered on the new hook.'); continue; }
       var key = await readOn(currentHook, poolKeyOfAbi, 'poolKeyOf', [pid, probe.read]);
       var deployerDefault = oldWindow === MAX_TWAP_WINDOW;
@@ -70,7 +72,7 @@ export async function resolvePreset(preset, opts) {
   }
 
   var terminal = await readOn(routerRegistry, terminalOfAbi, 'terminalOf', [pid]);
-  if (!sameAddr(terminal, preset.targets.terminal)) steps.push({ kind: 'setTerminalFor', values: { terminal: preset.targets.terminal } });
+  if (!sameAddr(terminal, targets.terminal)) steps.push({ kind: 'setTerminalFor', values: { terminal: targets.terminal } });
 
   return {
     available: true, steps: steps, notes: notes, nothingToDo: !steps.length,

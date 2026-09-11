@@ -68,7 +68,7 @@ describe('deployment source digest', () => {
     for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
   });
 
-  it('is deterministic and ignores only the generator\'s superseded artifacts', () => {
+  it('is deterministic and includes retired router/hook artifacts while ignoring unrelated snapshots', () => {
     const root = mkdtempSync(join(tmpdir(), 'jb-deployments-'));
     directories.push(root);
     const chain = join(root, 'ethereum');
@@ -76,10 +76,13 @@ describe('deployment source digest', () => {
     writeFileSync(join(chain, 'JBController.json'), '{"address":"0x1"}\n');
     writeFileSync(join(chain, 'Old_deprecated2.json'), '{"address":"0xold"}\n');
 
+    writeFileSync(join(chain, 'JBRouterTerminal_deprecated1.json'), '{"address":"0xoldRouter"}\n');
     const initial = deploymentSourceDigest(root);
     writeFileSync(join(chain, 'Old_deprecated2.json'), '{"address":"0xchanged"}\n');
     expect(deploymentSourceDigest(root)).toBe(initial);
 
+    writeFileSync(join(chain, 'JBRouterTerminal_deprecated1.json'), '{"address":"0xchangedRouter"}\n');
+    expect(deploymentSourceDigest(root)).not.toBe(initial);
     writeFileSync(join(chain, 'JBController.json'), '{"address":"0x2"}\n');
     expect(deploymentSourceDigest(root)).not.toBe(initial);
   });

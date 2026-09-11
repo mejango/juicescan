@@ -2,7 +2,8 @@
 // Renders an ABI function definition into an interactive DOM form
 // Each form has its own chain selector. Chain selection is remembered globally.
 
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, toFunctionSelector } from 'viem';
+import { getABI } from './abi-registry.js';
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
 import { confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
@@ -21,6 +22,18 @@ export function renderFunctionForm(fn, contractName, getContractAddr, abi, fnNat
 
   // Per-form chain state (defaults to global remembered chain)
   var formChainId = getCurrentChainId();
+
+  function selectedFunction() {
+    var chainAbi = getABI(contractName, formChainId);
+    if (!chainAbi) return fn;
+    var selected = chainAbi.find(function (entry) { return entry.type === 'function' && toFunctionSelector(entry) === toFunctionSelector(fn); });
+    if (!selected) {
+      outputArea.innerHTML = '';
+      outputArea.appendChild(renderError('This function is not deployed on ' + chainNameFor(formChainId) + '.'));
+      return null;
+    }
+    return selected;
+  }
 
   // NatSpec documentation block
   if (fnNatspec) {
@@ -112,7 +125,8 @@ export function renderFunctionForm(fn, contractName, getContractAddr, abi, fnNat
     queryBtn.textContent = 'QUERY';
     queryBtn.addEventListener('click', function() {
       var addr = getContractAddr(formChainId);
-      executeRead(fn, inputs, addr, abi, outputArea, formChainId);
+      var selected = selectedFunction();
+      if (selected) executeRead(selected, inputs, addr, getABI(contractName, formChainId) || abi, outputArea, formChainId);
     });
     actions.appendChild(queryBtn);
   } else {
@@ -136,7 +150,8 @@ export function renderFunctionForm(fn, contractName, getContractAddr, abi, fnNat
         return;
       }
       var addr = getContractAddr(formChainId);
-      executeWrite(fn, contractName, inputs, valueInput, addr, abi, outputArea, formChainId);
+      var selected = selectedFunction();
+      if (selected) executeWrite(selected, contractName, inputs, valueInput, addr, getABI(contractName, formChainId) || abi, outputArea, formChainId);
     });
     actions.appendChild(txBtn);
 
@@ -145,7 +160,8 @@ export function renderFunctionForm(fn, contractName, getContractAddr, abi, fnNat
     simBtn.textContent = 'SIMULATE';
     simBtn.addEventListener('click', function() {
       var addr = getContractAddr(formChainId);
-      executeSimulate(fn, inputs, valueInput, addr, abi, outputArea, formChainId);
+      var selected = selectedFunction();
+      if (selected) executeSimulate(selected, inputs, valueInput, addr, getABI(contractName, formChainId) || abi, outputArea, formChainId);
     });
     actions.appendChild(simBtn);
   }

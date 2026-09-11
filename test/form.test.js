@@ -59,6 +59,7 @@ vi.mock('../src/chain.js', () => ({
 
 import * as walletModule from '../src/wallet.js';
 import { renderFunctionForm } from '../src/form.js';
+import { getABI } from '../src/abi-registry.js';
 
 const ADDRESS = '0x1111111111111111111111111111111111111111';
 const ACCOUNT = '0x2222222222222222222222222222222222222222';
@@ -83,6 +84,24 @@ describe('generic ABI function form', () => {
     chainState.setRpc.mockClear();
     transactionReview.mockReset();
     vi.mocked(walletModule.connect).mockClear();
+  });
+
+  it('uses the selected chain ABI and blocks functions absent from that deployment', async () => {
+    state.chainId = 11155111;
+    state.client = { readContract: vi.fn().mockResolvedValue(ACCOUNT) };
+    const abi = getABI('JBBuybackHook', state.chainId);
+    const fn = abi.find(entry => entry.type === 'function' && entry.stateMutability === 'view' && entry.inputs.length === 0 && entry.outputs[0]?.type === 'address');
+    const form = renderFunctionForm(fn, 'JBBuybackHook', () => ADDRESS, abi);
+    document.body.appendChild(form);
+    click(Array.from(form.querySelectorAll('button')).find(button => button.textContent === 'QUERY'));
+    await vi.waitFor(() => expect(state.client.readContract).toHaveBeenCalledWith(expect.objectContaining({ abi: [fn], functionName: fn.name })));
+    state.client.readContract.mockClear();
+    const absent = { type: 'function', name: 'notDeployedFunction', stateMutability: 'view', inputs: [], outputs: [] };
+    const blocked = renderFunctionForm(absent, 'JBBuybackHook', () => ADDRESS, [absent]);
+    document.body.appendChild(blocked);
+    click(Array.from(blocked.querySelectorAll('button')).find(button => button.textContent === 'QUERY'));
+    expect(blocked.textContent).toContain('This function is not deployed on Sepolia.');
+    expect(state.client.readContract).not.toHaveBeenCalled();
   });
 
   it('renders NatSpec, validates reads, selects networks, and displays a successful tuple result', async () => {
@@ -114,7 +133,7 @@ describe('generic ABI function form', () => {
     state.client = {
       readContract: vi.fn().mockResolvedValue([ACCOUNT, 1_700_000_000n]),
     };
-    click(form.querySelector('.btn-query'));
+    click(Array.from(form.querySelectorAll('button')).find(button => button.textContent === 'QUERY'));
     await vi.waitFor(() => expect(form.querySelector('.result-box')).not.toBeNull());
     expect(state.client.readContract).toHaveBeenCalledWith(expect.objectContaining({
       address: ADDRESS,

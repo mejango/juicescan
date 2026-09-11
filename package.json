@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "pdfjs-dist": "^6.2.108",
-    "sharp": "0.35.3",
+    "sharp": "0.35.4",
     "viem": "^2.55.8"
   },
   "devDependencies": {

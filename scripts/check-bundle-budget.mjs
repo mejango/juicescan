@@ -26,7 +26,9 @@ const budgets = {
   // Add-liquidity through the Safe App as one batch: 9,062,911 B raw / 1,337,326 B gzip (+6,998 / +1,443).
   // Learn/Build links, corrected economics and readable prompt: 9,064,085 B raw / 1,340,210 B gzip.
   // Script-free guides are separate, optional page downloads, not added to the app's initial response.
-  'dist/app.js': { raw: 9_065_000, gzip: 1_341_000 },
+  // Executed testnet gateway/feed, retired router/hook ABI + source history, and exact chain ABI variants:
+  // 9,805,853 B raw / 1,421,394 B gzip (+741,768 / +81,184 versus Learn/Build).
+  'dist/app.js': { raw: 9_815_000, gzip: 1_426_000 },
   'dist/style.css': { raw: 246_500, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
@@ -58,8 +60,8 @@ const distributionFiles = await filesBelow('dist');
 const totalGzip = (await Promise.all(distributionFiles.map(async file =>
   gzipSync(await readFile(file), { level: 9 }).byteLength
 ))).reduce((sum, size) => sum + size, 0);
-// Measured 2,110,310 B including both generated guides (25,391 B gzip together).
-const totalGzipBudget = 2_112_000;
+// Rollout artifact history and chain-specific ABI variants: measured 2,191,256 B gzip.
+const totalGzipBudget = 2_197_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

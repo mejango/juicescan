@@ -4440,7 +4440,7 @@ export function projectBuybackHook(project, chainId, opts) {
       return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid])
         .then(function (h) { return (h && h !== ZERO_ADDRESS) ? h : null; }).catch(fallbackNull);
     }
-    if (concrete && d === lc(concrete)) return Promise.resolve(dh);
+    if ((concrete && d === lc(concrete)) || /^JBBuybackHook_deprecated\d*$/.test(resolveContractName(dh, chainId) || '')) return Promise.resolve(dh);
     return Promise.resolve(null);
   }
   return projectDataHook(project, chainId, opts).then(function (info) {
@@ -4459,18 +4459,33 @@ export function projectBuybackHook(project, chainId, opts) {
 //   registry is one of the project's terminals → return the registry's terminalOf (the downstream it forwards into).
 //   the concrete JBRouterTerminal is one of the project's terminals → the project uses the router directly → use it.
 //   neither → none. (terminalOf resolves a *default* even for non-users, so it must be gated the same way as hookOf.)
-export function projectRouterTerminal(project, chainId) {
+export function projectRouterTerminal(project, chainId, opts) {
+  function unavailable(error) { if (opts && opts.strict) throw error; return null; }
   var registry = getAddress('JBRouterTerminalRegistry', chainId);
   var directTerminal = getAddress('JBRouterTerminal', chainId);
   var pid = pidOn(project, chainId);
-  function isTerm(addr) { return addr ? read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pid, addr]).catch(function () { return false; }) : Promise.resolve(false); }
+  function isTerm(addr) { return addr ? read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pid, addr]).catch(function (error) { if (opts && opts.strict) throw error; return false; }) : Promise.resolve(false); }
   return isTerm(registry).then(function (viaRegistry) {
     if (viaRegistry) {
       return read(chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [pid])
-        .then(function (t) { return (t && t !== ZERO_ADDRESS) ? t : null; }).catch(function () { return null; });
+        .then(function (t) { return (t && t !== ZERO_ADDRESS) ? t : null; }).catch(unavailable);
     }
-    return isTerm(directTerminal).then(function (direct) { return direct ? directTerminal : null; });
-  }).catch(function () { return null; });
+    var candidates = [directTerminal, getAddress('JBRouterTerminalGateway', chainId), getAddress('JBRouterTerminal_deprecated1', chainId), getAddress('JBRouterTerminal_deprecated', chainId)].filter(Boolean);
+    return Promise.all(candidates.map(isTerm)).then(function (direct) { var i = direct.indexOf(true); return i < 0 ? null : candidates[i]; });
+  }).catch(unavailable);
+}
+
+// Resolve the selected terminal separately from its underlying router: operator migrations write the gateway,
+// while route inspection reads its immutable ROUTER. Retired direct routers remain valid for existing cohorts.
+export async function projectRouterPath(project, chainId) {
+  var terminal = await projectRouterTerminal(project, chainId, { strict: true });
+  if (!terminal) return null;
+  var registry = getAddress('JBRouterTerminalRegistry', chainId);
+  var viaRegistry = registry && await read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pidOn(project, chainId), registry]);
+  var gateway = getAddress('JBRouterTerminalGateway', chainId);
+  if (!sameAddr(terminal, gateway)) return { registry: viaRegistry ? registry : null, terminal: terminal, gateway: null, router: terminal };
+  var router = await clientFor(chainId).readContract({ address: terminal, abi: [{ type: 'function', name: 'ROUTER', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }], functionName: 'ROUTER', args: [] });
+  return { registry: viaRegistry ? registry : null, terminal: terminal, gateway: gateway, router: router };
 }
 
 function projectChainList(project) {
@@ -4568,7 +4583,9 @@ function readProjectPaymentSurface(project, chainId) {
       chainId: chainId,
       terminals: terminals,
       hasDirect: terminals.some(function (t) { return sameAddr(t, direct); }),
-      hasRouter: terminals.some(function (t) { return sameAddr(t, router) || sameAddr(t, directRouter); }),
+      // Swap payment options execute through the registry. Directly attached gateways/routers remain
+      // recognizable, but must not advertise a route whose entry terminal is not in the directory.
+      hasRouter: terminals.some(function (t) { return sameAddr(t, router); }),
       unknown: terminals.filter(function (t) { return !recognizeProjectContract(t, chainId).known; }),
     };
   });
@@ -15505,7 +15522,7 @@ async function applyDraftAccountingAndTerminals(state, project, sources) {
     var usesRouter = !!(router && lower.indexOf(router.toLowerCase()) !== -1);
     if (usesRouter) {
       var target = await read(source.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [source.projectId]);
-      var canonicalTarget = getAddress('JBRouterTerminal', source.chainId);
+      var canonicalTarget = getAddress('JBRouterTerminalGateway', source.chainId) || getAddress('JBRouterTerminal', source.chainId);
       if (!canonicalTarget || !sameAddr(target, canonicalTarget)) throw new Error('The project uses a custom router-terminal target on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
     }
     return usesRouter;
@@ -16318,6 +16335,11 @@ var SAFE_QUEUE_LABELS = {
 var SAFE_FN_LABELS = {
   deployERC20For: 'Deploy ERC-20 token', setTokenMetadataOf: 'Rename token',
   sendPayoutsOf: 'Send payouts', sendReservedTokensToSplitsOf: 'Distribute reserved tokens',
+  setHookFor: 'Set buyback hook', setPoolFor: 'Register buyback pool', setTwapWindowOf: 'Set TWAP window',
+  setTerminalFor: 'Set project router or gateway', setDefaultTerminal: 'Set default router or gateway',
+  allowTerminal: 'Allow router or gateway', disallowTerminal: 'Retire router or gateway', lockTerminalFor: 'Lock project router or gateway',
+  processPendingCall: 'Retry retained gateway call', processPendingCallWithGas: 'Retry retained gateway call with gas limit',
+  finalizePendingCall: 'Finalize retained gateway call', finalizePendingCallWithGas: 'Finalize retained gateway call with gas limit',
 };
 function labelForQueuedTx(tx) {
   var batch = multiSendBatchCalls(tx);
@@ -18172,6 +18194,19 @@ export function renderBuybackRouterCard(project) {
   var intro = el('div', 'detail-card-body backoffice-intro');
   intro.textContent = 'Set up contracts that buy existing project tokens or exchange payment tokens. Create the trading pool and choose how long prices are averaged. Each action runs on your selected networks, with one payment or a Safe proposal.';
   card.appendChild(intro);
+  var routing = el('div', 'powers-desc'); routing.textContent = 'Router path: reading across chains…'; card.appendChild(routing);
+  Promise.all(projectChainList(project).map(async function (chain) {
+    var name = chain.name || chainNameOf(chain.id);
+    try {
+      var path = await projectRouterPath(project, chain.id);
+      if (!path) return name + ': no router selected';
+      return name + ': ' + (path.registry ? 'registry → ' : '')
+        + (path.gateway ? 'gateway ' + shortAddr6(path.gateway) + ' → ' : '') + 'router ' + shortAddr6(path.router);
+    } catch (_) { return name + ': could not read router path'; }
+  })).then(function (paths) { routing.textContent = 'Router path: ' + paths.join(' | '); });
+  var custody = el('div', 'powers-desc');
+  custody.textContent = 'A gateway keeps failed protocol-fee routes in custody for retry or finalization. A queued call is still held; it is not a settled or forgiven fee. The API exposes pending-call commitments, failure details, and retry/finalization functions.';
+  card.appendChild(custody);
   [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP].forEach(function (action) {
     var row = el('div', 'powers-row');
     var head = el('div', 'powers-head');
@@ -18649,7 +18684,7 @@ export var POWER_SET_BUYBACK_HOOK = {
 export var POWER_SET_ROUTER_TERMINAL = {
   title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
-  note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
+  note: 'Selects the gateway or router that the registry forwards into for this project. A gateway then calls its bound router. Pre-filled with the project’s current selection.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
     defaultRead: function (project) { return projectRouterTerminal(project, project.chainId).then(function (a) { return a || ''; }).catch(function () { return ''; }); },
@@ -18691,7 +18726,7 @@ export var POWER_SET_BUYBACK_TWAP = {
   },
   poolStateRead: buybackPoolStateRead,
   note: 'Changes how far back the buyback hook averages the pool price to decide swap-vs-issue and to floor the swap. The pool must already be initialized for the pair token. Written straight to the project’s hook.',
-  danger: 'Dangerous: a window longer than the pool’s price actually trends floors swaps above what the pool can fill, and every payment routed to a swap reverts. A very short window is cheaper to manipulate.',
+  danger: 'Dangerous: a long window can set a floor above what the pool can fill. Buyback 1.4.0 falls back to minting below its derived floor; older hooks may revert. A very short window is cheaper to manipulate.',
   fields: [
     { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token — the hook stores this pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); },
       // Pre-fill each chain with the pair token it already has a pool for — a USDC revnet has no native pool.
@@ -31333,10 +31368,11 @@ async function readUserLpPositions(project, chainId, account) {
   if (!account) return [];
   var lc = function (a) { return (a || '').toLowerCase(); };
   var newHook = await projectBuybackHook(project, chainId, { strict: true });
-  var oldHook = getAddress('JBBuybackHook', chainId);
+  var hooks = ['JBBuybackHook', 'JBBuybackHook_deprecated1', 'JBBuybackHook_deprecated'].map(function (name) { return getAddress(name, chainId); }).filter(Boolean);
   var tasks = [];
   if (newHook) tasks.push(lpScanPoolPositions(project, chainId, newHook, true));
-  if (oldHook && lc(oldHook) !== lc(newHook)) tasks.push(lpScanPoolPositions(project, chainId, oldHook, false));
+  hooks.filter(function (hook, index) { return lc(hook) !== lc(newHook) && hooks.findIndex(function (other) { return lc(other) === lc(hook); }) === index; })
+    .forEach(function (hook) { tasks.push(lpScanPoolPositions(project, chainId, hook, false)); });
   var all = [].concat.apply([], await Promise.all(tasks));
   return all.filter(function (p) { return p.owner && lc(p.owner) === lc(account); });
 }
@@ -32557,7 +32593,7 @@ function fetchOps(project) {
         var routerRegistry = routerTerminalFor(cid);
         var directRouter = getAddress('JBRouterTerminal', cid);
         var accounted = listed.filter(function (listedTerminal) {
-          return !sameAddr(listedTerminal, routerRegistry) && !sameAddr(listedTerminal, directRouter);
+          return !sameAddr(listedTerminal, routerRegistry) && !sameAddr(listedTerminal, directRouter) && !/^JBRouterTerminal(?:Gateway|_deprecated\d*)?$/.test(resolveContractName(listedTerminal, cid) || '');
         });
         var standardOnly = !!terminal && accounted.every(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });
         var standardListed = !!terminal && listed.some(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });

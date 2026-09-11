@@ -1,7 +1,7 @@
 {
   "source": "../deploy-all-v6/deployments",
-  "generatedAt": "2026-07-17T20:45:03.546Z",
-  "sourceDigest": "sha256:443959a5a09616f4b73a0b4046e82674bab5e4e86287380d43642fa4aa898484",
+  "generatedAt": "2026-09-11T19:52:34.946Z",
+  "sourceDigest": "sha256:b2a06eba00528ceeed2a821ab5444424da02a55d0deacdec78b9725ff6541b4a",
   "chains": {
     "1": {
       "id": "1",
@@ -2153,9 +2153,9 @@
         "10": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
         "8453": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
         "42161": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-        "84532": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-        "421614": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-        "11155111": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948"
+        "84532": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "421614": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "11155111": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
       },
       "chains": {
         "1": {
@@ -2196,8 +2196,128 @@
         },
         "84532": {
           "chain": "base_sepolia",
-          "address": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "address": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
           "file": "../deploy-all-v6/deployments/base_sepolia/JBBuybackHook.json",
+          "transactionHash": "0xf66762c9ac82d619a8bdf1f64f4657e1a606fd483608e62b3fd7b0b2e864f7f7",
+          "blockNumber": "0x2c78e7f",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.4.0",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBBuybackHook.json",
+          "transactionHash": "0x8ac5c892adafffecb6cbd9b19fdf1624b29db86d46760c1a106ecdef6dfb900d",
+          "blockNumber": "0x1253c2a0",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.4.0",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+          "file": "../deploy-all-v6/deployments/sepolia/JBBuybackHook.json",
+          "transactionHash": "0x5b7e5ecd224a7026b06471f20d102647c2944a9c75bae9bc01d7b0776c522e99",
+          "blockNumber": "0xb2221c",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.4.0",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBBuybackHook_deprecated": {
+      "deploymentName": "JBBuybackHook_deprecated",
+      "contractName": "JBBuybackHook",
+      "sourceName": "node_modules/@bananapus/buyback-hook-v6/src/JBBuybackHook.sol",
+      "abi": "JBBuybackHook_deprecated",
+      "addresses": {
+        "1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+        "10": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+        "8453": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+        "42161": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+        "84532": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+        "421614": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+        "11155111": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+      },
+      "chains": {
+        "1": {
+          "chain": "ethereum",
+          "address": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "file": "../deploy-all-v6/deployments/ethereum/JBBuybackHook_deprecated.json",
+          "transactionHash": "0xf07fc468ef5b756d7c897a5aca61d8c9140cbac1365d2588fc2be010c49fed98",
+          "blockNumber": "0x18280fe",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        },
+        "10": {
+          "chain": "optimism",
+          "address": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "file": "../deploy-all-v6/deployments/optimism/JBBuybackHook_deprecated.json",
+          "transactionHash": "0x9a5fbe27d1b5eaac1e8382f50b806821f1fa6a2323a065d1d1c36d63035f0be4",
+          "blockNumber": "0x91e817c",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        },
+        "8453": {
+          "chain": "base",
+          "address": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "file": "../deploy-all-v6/deployments/base/JBBuybackHook_deprecated.json",
+          "transactionHash": "0x16717e6b5f3ea59d31f1f62846f4021d67913f892c716bb54c0e50be8b7af5e5",
+          "blockNumber": "0x2d33ff2",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        },
+        "42161": {
+          "chain": "arbitrum",
+          "address": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "file": "../deploy-all-v6/deployments/arbitrum/JBBuybackHook_deprecated.json",
+          "transactionHash": "0x20ad2ffe653043291a4999635b13a40f91d36e4dd83cf0dcccb669b45f8060a2",
+          "blockNumber": "0x1c407fb8",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        },
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBBuybackHook_deprecated.json",
+          "transactionHash": "0xde859b93394082dd55d2ba9d580e1f3b33107582d77f9f4ccde9c37f068f1885",
+          "blockNumber": "0x28ebe68",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBBuybackHook_deprecated.json",
+          "transactionHash": "0x2e7fde4e8ebdbb98adf16ae4dc7280abd8e4cf98b7c558d28ae1969a8915c6b8",
+          "blockNumber": "0x108dbf63",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "file": "../deploy-all-v6/deployments/sepolia/JBBuybackHook_deprecated.json",
+          "transactionHash": "0x374d7147a25b58064865588b57958246caa899480964431cd970c10e2a2e604c",
+          "blockNumber": "0xa8ec73",
+          "gitCommit": "npm:@bananapus/buyback-hook-v6@1.0.0",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBBuybackHook_deprecated1": {
+      "deploymentName": "JBBuybackHook_deprecated1",
+      "contractName": "JBBuybackHook",
+      "sourceName": "node_modules/@bananapus/buyback-hook-v6/src/JBBuybackHook.sol",
+      "abi": "JBBuybackHook_deprecated1",
+      "addresses": {
+        "84532": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "421614": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+        "11155111": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBBuybackHook_deprecated1.json",
           "transactionHash": "0x7038e097abb4810ab42a03a997833d29b17778d4e35a18bab38c7255fbb5b67d",
           "blockNumber": "0x295922a",
           "gitCommit": "npm:@bananapus/buyback-hook-v6@1.1.1",
@@ -2206,7 +2326,7 @@
         "421614": {
           "chain": "arbitrum_sepolia",
           "address": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBBuybackHook.json",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBBuybackHook_deprecated1.json",
           "transactionHash": "0x47b46a336014878ea95f54db480df93b524cb15571665bfc39e45dfb22ba6ed1",
           "blockNumber": "0x10c44df5",
           "gitCommit": "npm:@bananapus/buyback-hook-v6@1.1.1",
@@ -2215,7 +2335,7 @@
         "11155111": {
           "chain": "sepolia",
           "address": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "file": "../deploy-all-v6/deployments/sepolia/JBBuybackHook.json",
+          "file": "../deploy-all-v6/deployments/sepolia/JBBuybackHook_deprecated1.json",
           "transactionHash": "0xbaa7e6830b9b9adba3543fabc7f2fe103ebc2342cb6cc9fc6d64e810503d2d26",
           "blockNumber": "0xaa0c76",
           "gitCommit": "npm:@bananapus/buyback-hook-v6@1.1.1",
@@ -5883,6 +6003,56 @@
         }
       }
     },
+    "JBRatioPriceFeed": {
+      "deploymentName": "JBRatioPriceFeed",
+      "contractName": "JBRatioPriceFeed",
+      "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBRatioPriceFeed.sol",
+      "abi": "JBRatioPriceFeed",
+      "addresses": {
+        "84532": "0x552da193c58a71d8ad9f354f7d09b29f79c12422",
+        "421614": "0xda4bbf677ba6f1f70054bd2bd6240d839141027d",
+        "11155111": "0xbfcd029ee4e8a550409e65b5e2eca4f21de30c94",
+        "11155420": "0x866aea0a4dba3d191790b68d564e96f1dd4d1f49"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x552da193c58a71d8ad9f354f7d09b29f79c12422",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBRatioPriceFeed.json",
+          "transactionHash": "0x2a67d4512a37686051ad7fe34593e6f619fc39e9b711b63122156470cac61fbc",
+          "blockNumber": "0x2c78e6f",
+          "gitCommit": "npm:@bananapus/core-v6@1.2.0",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0xda4bbf677ba6f1f70054bd2bd6240d839141027d",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBRatioPriceFeed.json",
+          "transactionHash": "0xde0ba8e2aae6b8d027ea9212286e2357ef09f32aa8acf44de48c7b90db4baf6e",
+          "blockNumber": "0x1253c21c",
+          "gitCommit": "npm:@bananapus/core-v6@1.2.0",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0xbfcd029ee4e8a550409e65b5e2eca4f21de30c94",
+          "file": "../deploy-all-v6/deployments/sepolia/JBRatioPriceFeed.json",
+          "transactionHash": "0x689b7eaf30942632e031e5bca11d346d99b230055db0808fbd05dfef6535d06d",
+          "blockNumber": "0xb22216",
+          "gitCommit": "npm:@bananapus/core-v6@1.2.0",
+          "gitDirty": false
+        },
+        "11155420": {
+          "chain": "optimism_sepolia",
+          "address": "0x866aea0a4dba3d191790b68d564e96f1dd4d1f49",
+          "file": "../deploy-all-v6/deployments/optimism_sepolia/JBRatioPriceFeed.json",
+          "transactionHash": "0xcc84fa8dd44f354a90b043ba547edaf3056ff2aed7618a22711a69d5c66de4e3",
+          "blockNumber": "0x2e5d009",
+          "gitCommit": "npm:@bananapus/core-v6@1.2.0",
+          "gitDirty": false
+        }
+      }
+    },
     "JBRouterTerminal": {
       "deploymentName": "JBRouterTerminal",
       "contractName": "JBRouterTerminal",
@@ -5893,9 +6063,9 @@
         "10": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
         "8453": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
         "42161": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-        "84532": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-        "421614": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-        "11155111": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7"
+        "84532": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "421614": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "11155111": "0x62e2fe718ca3008a6a322deec9903286463f1add"
       },
       "chains": {
         "1": {
@@ -5936,8 +6106,128 @@
         },
         "84532": {
           "chain": "base_sepolia",
-          "address": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "address": "0x62e2fe718ca3008a6a322deec9903286463f1add",
           "file": "../deploy-all-v6/deployments/base_sepolia/JBRouterTerminal.json",
+          "transactionHash": "0xe14c752ab6053550972d5e74023f4de969fbaedb53035804f787514303979629",
+          "blockNumber": "0x2c78e9f",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.3.0",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBRouterTerminal.json",
+          "transactionHash": "0x38ef3170ed18769bb2d68acd0f8df41ba508c2dab7ec0f6df93befdc8218b900",
+          "blockNumber": "0x1253c3a2",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.3.0",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+          "file": "../deploy-all-v6/deployments/sepolia/JBRouterTerminal.json",
+          "transactionHash": "0xa484d4f22f288d806ca80c0e3dc6fb2ca473a7318dcde2445a4f9330ac2d1e61",
+          "blockNumber": "0xb22228",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.3.0",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBRouterTerminal_deprecated": {
+      "deploymentName": "JBRouterTerminal_deprecated",
+      "contractName": "JBRouterTerminal",
+      "sourceName": "node_modules/@bananapus/router-terminal-v6/src/JBRouterTerminal.sol",
+      "abi": "JBRouterTerminal_deprecated",
+      "addresses": {
+        "1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+        "10": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+        "8453": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+        "42161": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+        "84532": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+        "421614": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+        "11155111": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+      },
+      "chains": {
+        "1": {
+          "chain": "ethereum",
+          "address": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "file": "../deploy-all-v6/deployments/ethereum/JBRouterTerminal_deprecated.json",
+          "transactionHash": "0x42c4dfe68bfeb6c51888ec96b3863c61fc5c24ffaae55f239b6fef484214d472",
+          "blockNumber": "0x1828104",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.0.1",
+          "gitDirty": false
+        },
+        "10": {
+          "chain": "optimism",
+          "address": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "file": "../deploy-all-v6/deployments/optimism/JBRouterTerminal_deprecated.json",
+          "transactionHash": "0xc227e54b980f11848a11d5604aa21089a66da95cb1d83357d7c7720455c5134b",
+          "blockNumber": "0x91e818b",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.0.1",
+          "gitDirty": false
+        },
+        "8453": {
+          "chain": "base",
+          "address": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "file": "../deploy-all-v6/deployments/base/JBRouterTerminal_deprecated.json",
+          "transactionHash": "0x26f4ffdba154611e6e7599048fe871ed6e36ba47132c74711dc12de05afbbde1",
+          "blockNumber": "0x2d34003",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.0.1",
+          "gitDirty": false
+        },
+        "42161": {
+          "chain": "arbitrum",
+          "address": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "file": "../deploy-all-v6/deployments/arbitrum/JBRouterTerminal_deprecated.json",
+          "transactionHash": "0x0b20007caf77137027e15a8c2e6442b4a1c7676cb4c4b9ba904647af163c5ea5",
+          "blockNumber": "0x1c41eacc",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.0.1",
+          "gitDirty": false
+        },
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBRouterTerminal_deprecated.json",
+          "transactionHash": "0x84c6e9d35bb7354c1e57950c4756754fcfb7eca87b21137a0c540abf1d145f27",
+          "blockNumber": "0x28ebe78",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.0.1",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBRouterTerminal_deprecated.json",
+          "transactionHash": "0x1e5df16a81844c6d8f1ac744e4f6454a3166b4259b7cf746d3f367058a36f5b9",
+          "blockNumber": "0x108dbfe2",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.0.1",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "file": "../deploy-all-v6/deployments/sepolia/JBRouterTerminal_deprecated.json",
+          "transactionHash": "0x3b7838b8b632363d4fc650915e719e9c0fa2748141feb5bf6f3020d5aaf0113f",
+          "blockNumber": "0xa8ec79",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.0.1",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBRouterTerminal_deprecated1": {
+      "deploymentName": "JBRouterTerminal_deprecated1",
+      "contractName": "JBRouterTerminal",
+      "sourceName": "node_modules/@bananapus/router-terminal-v6/src/JBRouterTerminal.sol",
+      "abi": "JBRouterTerminal_deprecated1",
+      "addresses": {
+        "84532": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "421614": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+        "11155111": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBRouterTerminal_deprecated1.json",
           "transactionHash": "0x52cade2b99f30994e28375769d2ed5914f5888a25f37fbac57d14ca8fc238a75",
           "blockNumber": "0x2959235",
           "gitCommit": "npm:@bananapus/router-terminal-v6@1.1.1",
@@ -5946,7 +6236,7 @@
         "421614": {
           "chain": "arbitrum_sepolia",
           "address": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBRouterTerminal.json",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBRouterTerminal_deprecated1.json",
           "transactionHash": "0x1c6db9612ba83b34e500d8851de35eb22b0cd554cf9df8f85212e214a5a32a55",
           "blockNumber": "0x10c44e4a",
           "gitCommit": "npm:@bananapus/router-terminal-v6@1.1.1",
@@ -5955,10 +6245,50 @@
         "11155111": {
           "chain": "sepolia",
           "address": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "file": "../deploy-all-v6/deployments/sepolia/JBRouterTerminal.json",
+          "file": "../deploy-all-v6/deployments/sepolia/JBRouterTerminal_deprecated1.json",
           "transactionHash": "0xd502af3392259f92cf3e297e7bba8d0d5ea566f4bf67f1147712138876048e05",
           "blockNumber": "0xaa0c7a",
           "gitCommit": "npm:@bananapus/router-terminal-v6@1.1.1",
+          "gitDirty": false
+        }
+      }
+    },
+    "JBRouterTerminalGateway": {
+      "deploymentName": "JBRouterTerminalGateway",
+      "contractName": "JBRouterTerminalGateway",
+      "sourceName": "node_modules/@bananapus/router-terminal-v6/src/JBRouterTerminalGateway.sol",
+      "abi": "JBRouterTerminalGateway",
+      "addresses": {
+        "84532": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+        "421614": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+        "11155111": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+      },
+      "chains": {
+        "84532": {
+          "chain": "base_sepolia",
+          "address": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+          "file": "../deploy-all-v6/deployments/base_sepolia/JBRouterTerminalGateway.json",
+          "transactionHash": "0x4424d20965fad66d200d6b424adb0d4b10702d2defa23afc51db0f1e1755c67a",
+          "blockNumber": "0x2c78eaa",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.3.0",
+          "gitDirty": false
+        },
+        "421614": {
+          "chain": "arbitrum_sepolia",
+          "address": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+          "file": "../deploy-all-v6/deployments/arbitrum_sepolia/JBRouterTerminalGateway.json",
+          "transactionHash": "0x66893860799d0b56bf2e246ad3bb6a569e1ec513c6cdc9ddaed0210d8345be1a",
+          "blockNumber": "0x1253c3f7",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.3.0",
+          "gitDirty": false
+        },
+        "11155111": {
+          "chain": "sepolia",
+          "address": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
+          "file": "../deploy-all-v6/deployments/sepolia/JBRouterTerminalGateway.json",
+          "transactionHash": "0xb8d1970e8c71cb47ce89e0c228d9287cd0a0f34dcd0ce49e2d739200e41c8126",
+          "blockNumber": "0xb2222c",
+          "gitCommit": "npm:@bananapus/router-terminal-v6@1.3.0",
           "gitDirty": false
         }
       }

@@ -294,6 +294,24 @@ async function sendBatchDirect(project, chains, setStatus) {
 export function mirrorResolver(project) {
   return async function (kind, toChainId, step) {
     var name = chainNameFor(toChainId);
+    if (kind === 'setHookFor' || kind === 'setTerminalFor') {
+      var hookSelection = kind === 'setHookFor';
+      var selected = hookSelection ? step.values.hook : step.values.terminal;
+      var names = hookSelection ? ['JBBuybackHook', 'JBBuybackHook_deprecated1', 'JBBuybackHook_deprecated']
+        : ['JBRouterTerminalGateway', 'JBRouterTerminal', 'JBRouterTerminal_deprecated1', 'JBRouterTerminal_deprecated'];
+      if (!names.some(function (contract) { return sameAddr(selected, getAddress(contract, toChainId)); })) {
+        return { reason: 'the selected generation is not deployed on ' + name };
+      }
+      var registry = getAddress(hookSelection ? 'JBBuybackHookRegistry' : 'JBRouterTerminalRegistry', toChainId);
+      if (!registry) return { reason: 'no selection registry on ' + name };
+      var client = createPublicClientForChain(toChainId);
+      var fn = hookSelection ? 'isHookAllowed' : 'isTerminalAllowed';
+      var allowed = await client.readContract({ address: registry, abi: [{ type: 'function', name: fn, stateMutability: 'view', inputs: [{ type: 'address' }], outputs: [{ type: 'bool' }] }], functionName: fn, args: [selected] });
+      if (!allowed) return { reason: 'the selected generation is retired or not allowed on ' + name };
+      var code = await client.getCode({ address: selected });
+      if (!code || code === '0x') return { reason: 'the selected generation has no deployed code on ' + name };
+      return { values: step.values };
+    }
     if (kind === 'setPoolFor') {
       var resolved = await resolvePreset(PRESETS[0], { chainId: toChainId, projectId: pidOn(project, toChainId), client: createPublicClientForChain(toChainId) });
       var wantNative = isNative(step.values.terminalToken);

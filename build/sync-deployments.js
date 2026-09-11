@@ -95,14 +95,50 @@ function writeJSON(file, value) {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function abiEntryKey(entry) {
+  const paramType = (param) => param.type.startsWith("tuple")
+    ? `(${(param.components || []).map(paramType).join(",")})${param.type.slice(5)}` : param.type;
+  return `${entry.type}:${entry.name || ""}(${(entry.inputs || []).map(paramType).join(",")})`;
+}
+
+function validateGatewayRollout(chainDir) {
+  const gatewayFile = path.join(chainDir, "JBRouterTerminalGateway.json");
+  if (!fs.existsSync(gatewayFile)) return;
+  const names = ["JBBuybackHook", "JBRouterTerminal", "JBRouterTerminalGateway"];
+  const records = names.map((name) => {
+    const artifact = loadJSON(path.join(chainDir, `${name}.json`), null);
+    const receipt = artifact && artifact.receipt;
+    if (!artifact || artifact.contractName !== name || !receipt || BigInt(receipt.status || 0) !== 1n
+      || BigInt(receipt.blockNumber || 0) <= 0n || !/^0x[0-9a-f]{64}$/i.test(receipt.transactionHash || "")
+      || !/^0x[0-9a-f]{40}$/i.test(artifact.address || "")) {
+      throw new Error(`Gateway rollout lacks an executed ${name} artifact in ${chainDir}`);
+    }
+    return artifact;
+  });
+  const [hook, router, gateway] = records;
+  const constructorArg = (artifact, name) => {
+    const constructor = artifact.abi.find((entry) => entry.type === "constructor");
+    const index = constructor && constructor.inputs.findIndex((input) => input.name.replace(/^_/, "").toLowerCase() === name.toLowerCase());
+    return index >= 0 && artifact.args ? artifact.args[index] : null;
+  };
+  const same = (a, b) => typeof a === "string" && typeof b === "string" && a.toLowerCase() === b.toLowerCase();
+  if (!same(constructorArg(gateway, "router"), router.address)
+    || !same(constructorArg(router, "buybackHook"), hook.address)
+    || records.some((artifact) => parseChainId(artifact.chainId) !== parseChainId(gateway.chainId))) {
+    throw new Error(`Gateway rollout constructor or chain identities disagree in ${chainDir}`);
+  }
+}
+
 function deploymentJsonFiles(chainDir) {
   return fs
     .readdirSync(chainDir)
     .filter((file) => file.endsWith(".json"))
     .filter((file) => {
       const deploymentName = file.replace(/\.json$/, "");
-      // Skip superseded records: _deprecated, _deprecated2, … and the TWAP upgrade snapshot.
-      return !/_deprecated\d*$/.test(deploymentName) && !deploymentName.endsWith("__TwapOracleUpgrade");
+      // Retired buyback/router generations remain available for historical decoding and cohort reads.
+      const retired = /_deprecated\d*$/.test(deploymentName);
+      return (!retired || /^(JBBuybackHook|JBRouterTerminal)_deprecated\d*$/.test(deploymentName))
+        && !deploymentName.endsWith("__TwapOracleUpgrade");
     })
     .sort();
 }
@@ -177,6 +213,7 @@ function main() {
   };
   const abiByDeployment = {};
   const abiFingerprints = {};
+  const abiByChain = {};
 
   const chainSlugs = fs
     .readdirSync(DEPLOYMENTS_DIR)
@@ -185,6 +222,7 @@ function main() {
 
   for (const chainSlug of chainSlugs) {
     const chainDir = path.join(DEPLOYMENTS_DIR, chainSlug);
+    validateGatewayRollout(chainDir);
     const files = deploymentJsonFiles(chainDir);
 
     for (const file of files) {
@@ -220,6 +258,9 @@ function main() {
         addresses: {},
       };
       contracts[deploymentName].addresses[chainId] = artifact.address;
+      contracts[deploymentName].generation = /_deprecated1$/.test(deploymentName) ? "previous"
+        : /_deprecated$/.test(deploymentName) ? "v1"
+        : /_deprecated\d+$/.test(deploymentName) ? "retired-" + deploymentName.match(/_deprecated(\d+)$/)[1] : "current";
 
       deployments.deployments[deploymentName] =
         deployments.deployments[deploymentName] || {
@@ -245,13 +286,17 @@ function main() {
 
       const docs = docsFromArtifact(artifact);
       const fingerprint = JSON.stringify(docs.abi);
+      abiByChain[deploymentName] = abiByChain[deploymentName] || {};
+      abiByChain[deploymentName][chainId] = docs.abi;
       if (!abiByDeployment[deploymentName]) {
         abiByDeployment[deploymentName] = docs;
         abiFingerprints[deploymentName] = fingerprint;
       } else if (abiFingerprints[deploymentName] !== fingerprint) {
-        console.warn(
-          `WARNING: ABI mismatch for ${deploymentName}; keeping first ABI and using all addresses`
-        );
+        // During staged rollouts the canonical record can have different ABIs per chain.
+        // Preserve the complete decoder surface and an exact ABI for each chain.
+        const entries = new Map(abiByDeployment[deploymentName].abi.map((entry) => [abiEntryKey(entry), entry]));
+        for (const entry of docs.abi) if (!entries.has(abiEntryKey(entry))) entries.set(abiEntryKey(entry), entry);
+        abiByDeployment[deploymentName].abi = [...entries.values()];
       }
     }
   }
@@ -265,6 +310,18 @@ function main() {
     }
   }
   for (const [name, abiDoc] of Object.entries(abiByDeployment).sort()) {
+    const variants = abiByChain[name];
+    if (new Set(Object.values(variants).map((abi) => JSON.stringify(abi))).size > 1) {
+      abiDoc.abiVariants = [];
+      abiDoc.abiVariantForChain = {};
+      const keys = [];
+      for (const [chainId, abi] of Object.entries(variants)) {
+        const key = JSON.stringify(abi);
+        let index = keys.indexOf(key);
+        if (index < 0) { index = keys.length; keys.push(key); abiDoc.abiVariants.push(abi); }
+        abiDoc.abiVariantForChain[chainId] = index;
+      }
+    }
     writeJSON(path.join(ABI_DIR, `${name}.json`), abiDoc);
   }
 
@@ -290,4 +347,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { deploymentArtifactFile, deploymentSourceDigest, nextGeneratedAt };
+module.exports = { abiEntryKey, validateGatewayRollout, deploymentArtifactFile, deploymentSourceDigest, nextGeneratedAt };

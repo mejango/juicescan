@@ -67,6 +67,10 @@ test/                     vitest unit/encoding tests + a CDP UI-smoke runner
 
 > `src/abi-registry.js` and `data/*.json` are generated. Regenerate with `npm run build`; never hand-edit them. They change only when `deploy-all-v6/deployments` changes (e.g. a new chain or a redeploy).
 
+The floor-fix rollout is staged per chain. Canonical deployment records activate the hook/router/gateway only after successful receipts and constructor identities agree; a proposal does not activate the migration preset. OP Sepolia has a ratio feed without the AMM stack. Retired hook/router artifacts stay in the registry for historical decoding and existing project cohorts. `getABI(name, chainId)` returns the exact deployed ABI during mixed-generation rollouts; source bodies with conflicting deployed refs are omitted instead of showing a different version's implementation.
+
+A project's payment entry remains `JBRouterTerminalRegistry`. Resolve `terminalOf(projectId)` and, when it selects `JBRouterTerminalGateway`, read the gateway's `ROUTER`. The gateway retains failed protocol-fee routes as pending calls for retry or finalization. `pendingCallCount` is an ID counter, not the number of outstanding calls; inspect commitments/failures and lifecycle events to distinguish held, settled, and refunded funds. Buyback 1.4.0 pay metadata uses `(amountToSwapWith, minimumSwapAmountOut, skipSplits)` and falls back to minting below its derived TWAP floor. Earlier cohorts keep their deployed behavior until an operator migrates them.
+
 ### Currency model (important)
 
 Juicebox separates two notions of "currency":
@@ -74,7 +78,7 @@ Juicebox separates two notions of "currency":
 - **`baseCurrency`** — a standard id (`ETH = 1`, `USD = 2`) used for issuance/pricing. Chain-portable.
 - **`JBAccountingContext.currency`** — `uint32(uint160(token))`, i.e. derived from the token address. Per-token, per-chain.
 
-`JBPrices` bridges them via feeds. A **custom accounting token** uses its own currency id everywhere (base == accounting), so no feed is needed. An **ETH+USDC** project must use `baseCurrency = USD(2)` so both legs resolve through the default ETH/USD + USDC/USD feeds. The wizard enforces this.
+`JBPrices` bridges them via feeds. A **custom accounting token** uses its own currency id everywhere (base == accounting), so no feed is needed. The wizard defaults **ETH+USDC** projects to `baseCurrency = USD(2)` so both legs resolve through ETH/USD + USDC/USD feeds across chains. An ETH base also works where the USDC/ETH ratio feed is registered. Read the selected chain’s live `JBPrices` coverage before choosing a base currency.
 
 ## Transactions
 

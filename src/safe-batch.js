@@ -30,11 +30,11 @@ function poolWords(v) { return tokenWord(v.terminalToken) + ' pool, fee ' + v.fe
 // `values` a step was built from become args. `perChain` marks steps whose values only make sense on the chain they
 // were read on (pool keys, resolved hooks, prices): mirroring them re-resolves through the caller instead of copying.
 export var STEP_KINDS = {
-  setHookFor: { kind: 'setHookFor', label: 'Set buyback hook', contract: 'JBBuybackHookRegistry', abi: setHookForAbi, functionName: 'setHookFor',
+  setHookFor: { kind: 'setHookFor', label: 'Set buyback hook', contract: 'JBBuybackHookRegistry', abi: setHookForAbi, functionName: 'setHookFor', perChain: true,
     buildArgs: function (v, pid) { return [pid, v.hook]; }, describe: function (v) { return 'hook ' + short(v.hook); } },
   setPoolFor: { kind: 'setPoolFor', label: 'Register buyback pool', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, functionName: 'setPoolFor', perChain: true,
     buildArgs: function (v, pid) { return [pid, Number(v.fee), Number(v.tickSpacing), BigInt(v.twapWindow), v.terminalToken]; }, describe: poolWords },
-  setTerminalFor: { kind: 'setTerminalFor', label: 'Set router terminal', contract: 'JBRouterTerminalRegistry', abi: setTerminalForAbi, functionName: 'setTerminalFor',
+  setTerminalFor: { kind: 'setTerminalFor', label: 'Set router terminal', contract: 'JBRouterTerminalRegistry', abi: setTerminalForAbi, functionName: 'setTerminalFor', perChain: true,
     buildArgs: function (v, pid) { return [pid, v.terminal]; }, describe: function (v) { return 'terminal ' + short(v.terminal); } },
   // setTwapWindowOf lives on the project's own hook, so its target is resolved per chain and passed in as `to`.
   setTwapWindowOf: { kind: 'setTwapWindowOf', label: 'Set TWAP window', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, functionName: 'setTwapWindowOf', perChain: true,
@@ -186,6 +186,17 @@ export async function mirrorBatch(steps, fromChainId, toChainId, resolve, projec
     try { out.push(buildStep(step.kind, { chainId: toChainId, projectId: projectId == null ? step.projectId : projectId, values: values, to: to })); }
     catch (e) { skipped.push({ kind: step.kind, label: step.label, reason: (e && e.message) || String(e) }); }
   }
+  // A pool migration targets whichever hook the destination registry currently resolves. Never carry the
+  // pool alone when its source batch first selected a hook that could not be mirrored on this chain.
+  DEPENDENCIES.forEach(function (dependency) {
+    var sourceRequires = steps.some(function (step) { return Number(step.chainId) === Number(fromChainId) && step.kind === dependency.after; });
+    if (!sourceRequires || out.some(function (step) { return step.kind === dependency.after; })) return;
+    out = out.filter(function (step) {
+      if (step.kind !== dependency.kind) return true;
+      skipped.push({ kind: step.kind, label: step.label, reason: dependency.after + ' could not be mirrored on this chain' });
+      return false;
+    });
+  });
   return { steps: out, skipped: skipped };
 }
 
