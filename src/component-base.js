@@ -1,3 +1,4 @@
+import { mountFeeBuybackReview } from './fee-buyback-review.js';
 // src/component-base.js
 // Shared building blocks for all component widgets
 
@@ -1295,10 +1296,11 @@ export function confirmTransactionModal(payload, opts) {
   var keepOpen = !!opts.keepOpenForProgress;
   var cancelResult = keepOpen ? { ok: false } : false;
   var pendingResolve = null, closed = false, inFlight = false;
+  var feeReview = null, feeBusy = false, bodyDisabled = false;
   function settle(result) { var r = pendingResolve; pendingResolve = null; if (r) r(result); }
   var modal = openDialog(opts.title || 'Confirm transaction', {
     canClose: function () { return !inFlight; },
-    onClose: function () { closed = true; settle(cancelResult); },
+    onClose: function () { closed = true; if (feeReview) feeReview.stop(); settle(cancelResult); },
   });
   var content = el('div', 'pay-confirm');
   // `steps: false` is the read-only details view — nothing is sent from it, so no wallet-step list.
@@ -1310,9 +1312,18 @@ export function confirmTransactionModal(payload, opts) {
   var reviewHost = el('div', 'pay-confirm-current-action');
   content.appendChild(reviewHost);
   function showAction(nextPayload, nextOpts) {
+    if (feeReview) feeReview.stop();
+    feeReview = null; feeBusy = false; bodyDisabled = false;
     reviewHost.innerHTML = '';
     // safety note + decoded summary + raw-in-details + audit link
-    renderConfirmBody(reviewHost, nextPayload, Object.assign({}, nextOpts, { bodyControls: { setConfirmDisabled: function (disabled) { confirm.disabled = !!disabled; }, setConfirmText: function (text) { confirm.textContent = text; } } }));
+    renderConfirmBody(reviewHost, nextPayload, Object.assign({}, nextOpts, { bodyControls: { setConfirmDisabled: function (disabled) { bodyDisabled = !!disabled; confirm.disabled = bodyDisabled || feeBusy; }, setConfirmText: function (text) { confirm.textContent = text; } } }));
+    if (nextOpts.feeCall) {
+      feeReview = mountFeeBuybackReview(reviewHost, nextOpts.feeCall, function (state) {
+        feeBusy = state.busy;
+        confirm.disabled = bodyDisabled || feeBusy;
+        confirm.textContent = state.label || nextOpts.confirmText || 'Confirm & send';
+      });
+    }
   }
   var foot = el('div', 'create-modal-foot');
   var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
@@ -1324,7 +1335,7 @@ export function confirmTransactionModal(payload, opts) {
   // don’t have to render tx status next to a button. Hidden until the tx is in flight.
   var statusEl = el('div', 'tx-confirm-status'); statusEl.style.display = 'none'; content.appendChild(statusEl);
   modal.panel.appendChild(content);
-  var teardown = modal.close;
+  var teardown = function () { if (feeReview) feeReview.stop(); modal.close(); };
   function showStatus(m, kind, meta) {
     var mainStep = stepIndex + (hasApproval ? 1 : 0);
     if (meta && meta.step != null) sequence.setActive(meta.step < 0 ? sequence.items.length - 1 : meta.step, false);
@@ -1355,15 +1366,18 @@ export function confirmTransactionModal(payload, opts) {
     sequence.setActive(stepIndex, false);
     if (nextOpts.title) modal.title.textContent = nextOpts.title;
     showAction(nextPayload, nextOpts);
-    confirm.textContent = nextOpts.confirmText || 'Confirm & send';
-    confirm.disabled = false; cancel.disabled = false; cancel.textContent = 'Cancel';
+    if (!feeReview) confirm.textContent = nextOpts.confirmText || 'Confirm & send';
+    confirm.disabled = bodyDisabled || feeBusy; cancel.disabled = false; cancel.textContent = 'Cancel';
     statusEl.style.display = 'none';
     inFlight = false;
     return waitForConfirm();
   }
   cancel.addEventListener('click', modal.requestClose);
-  confirm.addEventListener('click', function () {
+  confirm.addEventListener('click', async function () {
     if (confirm.disabled) return;
+    if (feeReview && !(await feeReview.confirm())) return;
+    if (closed) return;
+    if (feeReview) feeReview.stop();
     if (keepOpen) {
       // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
       // showStatus()/close() as the tx progresses. Resolve now so the caller can start.
@@ -1416,6 +1430,9 @@ export function executeTransaction(opts) {
     // place in it), `keepConfirmOpen` (leave the dialog up on success) and, for the follow-on call,
     // `confirmSession` (the open dialog from the previous call's onSuccess meta) so one dialog carries every step.
     var modalOpts = { title: opts.confirmTitle || 'Confirm transaction', confirmText: opts.confirmText, note: opts.confirmNote, description: opts.confirmDescription, keepOpenForProgress: true, steps: opts.confirmSteps, stepIndex: opts.confirmStepIndex, stepsIntro: opts.confirmStepsIntro };
+    if (/^(borrowFrom|reallocateCollateralFromLoan|repayLoan|cashOutTokensOf|useAllowanceOf|sendPayoutsOf|processHeldFeesOf|pay)$/.test(opts.functionName)) {
+      modalOpts.feeCall = { chainId: opts.chainId, from: account, to: opts.address, data: payload.calldata, value: opts.value || 0n };
+    }
     confirmStep = opts.confirmSession && opts.confirmSession.showNext
       ? opts.confirmSession.showNext(payload, modalOpts)
       : confirmTransactionModal(payload, modalOpts);

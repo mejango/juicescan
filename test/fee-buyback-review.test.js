@@ -1,0 +1,24 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mountFeeBuybackReview } from '../src/fee-buyback-review.js';
+const mocks = vi.hoisted(() => ({ check: vi.fn(), block: null, stop: vi.fn() }));
+vi.mock('../src/fee-buyback-client.js', () => ({ feeBuybackContext: () => ({ client: { watchBlockNumber: o => { mocks.block = o.onBlockNumber; return mocks.stop; } }, options: {} }) }));
+vi.mock('../src/fee-buyback.ts', async original => ({ ...await original(), checkFeeBuyback: (...args) => mocks.check(...args) }));
+let review;
+afterEach(() => { review?.stop(); document.body.innerHTML = ''; vi.clearAllMocks(); });
+const fee = { key: 'base:6', projectId: 6n, received: 9429n * 10n ** 18n, route: 'fallback' };
+const call = { chainId: 8453, from: '0x3333333333333333333333333333333333333333', to: '0x1111111111111111111111111111111111111111', data: '0x1234' };
+it('waits in place, updates on blocks, and rechecks before continuing', async () => {
+  mocks.check.mockResolvedValue({ status: 'fallback', fees: [fee], checkedAt: Date.now() });
+  const host = document.createElement('div'); document.body.append(host);
+  const state = vi.fn(); review = mountFeeBuybackReview(host, call, state);
+  await vi.waitFor(() => expect(host.textContent).toContain('9,429'));
+  host.querySelector('button').click(); expect(host.textContent).toContain('Waiting.');
+  mocks.check.mockResolvedValue({ status: 'ready', fees: [{ ...fee, route: 'swap' }] });
+  mocks.block(); await vi.waitFor(() => expect(host.textContent).toContain('Buyback ready'));
+  expect(state.mock.lastCall[0].label).toBe('Review and submit');
+  mocks.check.mockResolvedValue({ status: 'fallback', fees: [fee] });
+  expect(await review.confirm()).toBe(false);
+  expect(state.mock.lastCall[0].label).toBe('Submit anyway');
+  expect(await review.confirm()).toBe(true);
+  review.stop(); expect(mocks.stop).toHaveBeenCalled();
+});
