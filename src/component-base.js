@@ -605,7 +605,7 @@ function contractRepoFor(name) {
   if (/Buyback/.test(name)) return name + ' (nana-buyback-hook-v6): https://github.com/Bananapus/nana-buyback-hook-v6';
   if (/^JB721/.test(name)) return name + ' (nana-721-hook-v6): https://github.com/Bananapus/nana-721-hook-v6';
   if (name === 'JBOmnichainDeployer') return name + ' (nana-omnichain-deployers-v6): https://github.com/Bananapus/nana-omnichain-deployers-v6';
-  if (name === 'JBRouterTerminalRegistry') return name + ' (nana-router-terminal-v6): https://github.com/Bananapus/nana-router-terminal-v6';
+  if (/^JBRouterTerminal/.test(name)) return name + ' (nana-router-terminal-v6): https://github.com/Bananapus/nana-router-terminal-v6';
   if (/^REV/.test(name)) return name + ' (revnet-core-v6): https://github.com/rev-net/revnet-core-v6';
   if (/^JB/.test(name)) return name + ' (Juicebox V6): https://github.com/Bananapus/version-6';
   return null;
@@ -846,7 +846,7 @@ function txLinkCalldata(tx) {
   var abi = Array.isArray(tx.abi) ? tx.abi : (tx.abiFragment ? [tx.abiFragment] : null);
   if (!abi) {
     var name = tx.contract && !/^0x/i.test(tx.contract) ? tx.contract : null;
-    try { if (name) abi = getABI(name); } catch (_) {}
+    try { if (name) abi = getABI(name, tx.chainId); } catch (_) {}
   }
   if (!abi) return null;
   try { return encodeFunctionData({ abi: abi, functionName: fn, args: args }); } catch (_) { return null; }
@@ -923,7 +923,7 @@ export function decodeCallForDisplay(tx) {
   if (!tx) return null;
   var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
   var abi = Array.isArray(tx.abi) ? tx.abi : null;
-  try { if (!abi && name) abi = getABI(name); } catch (_) {}
+  try { if (!abi && name) abi = getABI(name, tx.chainId); } catch (_) {}
   var cd = txCalldata(tx), fn = txFnName(tx);
   if (cd && cd !== '0x' && abi) {
     try { var dec = decodeFunctionData({ abi: abi, data: cd }); return shapeDecoded(abi, dec.functionName, dec.args); } catch (_) {}
@@ -937,7 +937,7 @@ function decodeCallRich(tx) {
   if (!tx) return null;
   var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
   var abi = Array.isArray(tx.abi) ? tx.abi : null;
-  try { if (!abi && name) abi = getABI(name); } catch (_) {}
+  try { if (!abi && name) abi = getABI(name, tx.chainId); } catch (_) {}
   var cd = txCalldata(tx), fn = txFnName(tx), ar = txArgsArray(tx);
   if (cd && cd !== '0x' && abi) {
     try {
@@ -1082,7 +1082,7 @@ function txRawJson(tx) {
   var cd = txCalldata(tx);
   try {
     var name = (tx.contract && !/^0x/.test(tx.contract)) ? tx.contract : ((tx.address || tx.to) ? contractNameByAddress(tx.address || tx.to) : null);
-    var abi = Array.isArray(tx.abi) ? tx.abi : (name ? getABI(name) : null);
+    var abi = Array.isArray(tx.abi) ? tx.abi : (name ? getABI(name, tx.chainId) : null);
     if (cd && cd !== '0x' && abi) {
       var dec = decodeFunctionData({ abi: abi, data: cd });
       var frag = abi.filter(function (e) { return e.type === 'function' && e.name === dec.functionName; })[0];

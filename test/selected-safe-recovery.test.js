@@ -28,6 +28,29 @@ describe('known Safe proposal lifecycle', () => {
     await expect(reconcileSelectedSafeResult(result, calls, SAFE, async () => { throw new Error('hook underpulled'); }, async () => ({ status: 'success' }))).rejects.toThrow('hook underpulled');
     expect(result.executedReady).toBe(0);
   });
+  it('separates proven obsolete payment proposals from execution and retains their exact cancellation identity', async () => {
+    const calls = [call(1), call(10)], original = queued(calls.map(proposal));
+    const next = await reconcileSelectedSafeResult(original, calls, SAFE, null, async () => null,
+      async candidate => candidate.chainId === 1);
+    expect(next.executedReady).toBe(0);
+    expect(next.obsoleteReady).toBe(1);
+    expect(next.proposals[0]).toMatchObject({ obsolete: true, executed: false, safeTxHash: original.proposals[0].safeTxHash, nonce: original.proposals[0].nonce });
+    expect(next.proposals[1].obsolete).toBe(false);
+    // Obsolete flags in stored data are rechecked, never accepted as their own proof.
+    const rechecked = await reconcileSelectedSafeResult(next, calls, SAFE, null, async () => null, async () => false);
+    expect(rechecked.obsoleteReady).toBe(0);
+  });
+
+  it('can finish a saved plan whose exact queued payments were proven resolved elsewhere without claiming execution', async () => {
+    await runSavedActionPlan(options({ executeRound: async calls => queued(calls.map(proposal)) }));
+    const resumed = options({ executeRound: vi.fn(), reconcileResult: (result, calls) =>
+      reconcileSelectedSafeResult(result, calls, SAFE, null, async () => null, async () => true) });
+    const result = await runSavedActionPlan(resumed);
+    expect(result.results[0]).toMatchObject({ executedReady: 0, obsoleteReady: 2 });
+    expect(resumed.executeRound).not.toHaveBeenCalled();
+    acknowledgeSavedActionPlan(SCOPE, ACCOUNT);
+    expect(hasSavedActionPlan(SCOPE, ACCOUNT)).toBe(false);
+  });
   it('rejects changed destinations, senders and native value before scanning receipts', async () => {
     for (const mutate of [p => { p.tx.to = SAFE; }, p => { p.tx.value = '1'; }, p => { p.safe = ACCOUNT; }]) {
       const result = queued([proposal(call(1))]); mutate(result.proposals[0]); const find = vi.fn();

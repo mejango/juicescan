@@ -1,15 +1,16 @@
 // "Move to buyback 1.4.0 + gateway" resolves per chain from live reads: applied steps are skipped, the deployer's
 // 48h default window becomes 30 minutes with a note, no pool means no setPoolFor, and missing target code makes the
 // preset unavailable on that chain.
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BUYBACK_GATEWAY_PRESET, DEPLOYER_DEFAULT_TWAP_NOTE, resolvePreset } from '../src/safe-batch-presets.js';
+import { getAddress } from '../src/abi-registry.js';
 import { NATIVE_TOKEN } from '../src/safe-batch.js';
 
-const HOOK = BUYBACK_GATEWAY_PRESET.targets.hook, TERMINAL = BUYBACK_GATEWAY_PRESET.targets.terminal;
+const HOOK = getAddress(BUYBACK_GATEWAY_PRESET.targets.hook, 11155111), TERMINAL = getAddress(BUYBACK_GATEWAY_PRESET.targets.terminal, 11155111);
 const OLD_HOOK = '0x77BEe1Ad2Ac0AcE98a9b5B58D75685C8b4D94948', OLD_TERMINAL = '0x0fBCbb3D10c8f524840D74EF81c1a9F161C418D7';
 const REGISTRY = '0x72f55a54cd53410a5ff175508a5a384227081788', ROUTER_REGISTRY = '0xe0427f250fdb0379c8e98e884ee4570521208cbc';
 const ZERO = '0x0000000000000000000000000000000000000000';
-const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const USDC_BASE = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
 
 // A stub public client: `code` maps deployed addresses, `reads` answers "<address>:<fn>[:<lastArg>]".
 function client(code, reads) {
@@ -17,7 +18,9 @@ function client(code, reads) {
     getCode: async ({ address }) => (code.includes(address.toLowerCase()) ? '0x6080' : '0x'),
     readContract: async ({ address, functionName, args }) => {
       const key = address.toLowerCase() + ':' + functionName + (args.length > 1 ? ':' + String(args[1]).toLowerCase() : '');
+      if (!(key in reads) && functionName === 'twapWindowOf') return 0n; // successful empty-pool read
       if (!(key in reads)) throw new Error('unexpected read ' + key);
+      if (reads[key] instanceof Error) throw reads[key];
       return reads[key];
     },
   };
@@ -48,18 +51,18 @@ describe('buyback 1.4.0 + gateway preset', () => {
       [OLD_HOOK.toLowerCase() + ':twapWindowOf:' + USDC_BASE]: 900n, [HOOK.toLowerCase() + ':twapWindowOf:' + USDC_BASE]: 0n,
       [OLD_HOOK.toLowerCase() + ':poolKeyOf:' + USDC_BASE]: poolKey(10000, 200),
     };
-    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 8453, projectId: 6, client: client(deployed, reads) });
+    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 84532, projectId: 6, client: client(deployed, reads) });
     expect(result.steps.map(s => s.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor']);
     expect(result.steps[1]).toEqual({ kind: 'setPoolFor', values: { fee: 10000, tickSpacing: 200, twapWindow: 900, terminalToken: USDC_BASE }, note: null });
   });
 
   it('adds no setPoolFor when the project has no pool, and skips a pool the new hook already carries', async () => {
-    const none = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 10, projectId: 6, client: client(deployed, {
+    const none = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 11155111, projectId: 6, client: client(deployed, {
       [REGISTRY + ':hookOf']: OLD_HOOK, [ROUTER_REGISTRY + ':terminalOf']: OLD_TERMINAL,
       [OLD_HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: 0n,
     }) });
     expect(none.steps.map(s => s.kind)).toEqual(['setHookFor', 'setTerminalFor']);
-    const carried = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 10, projectId: 6, client: client(deployed, {
+    const carried = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 11155111, projectId: 6, client: client(deployed, {
       [REGISTRY + ':hookOf']: OLD_HOOK, [ROUTER_REGISTRY + ':terminalOf']: OLD_TERMINAL,
       [OLD_HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: 1800n, [HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: 1800n,
     }) });
@@ -78,8 +81,42 @@ describe('buyback 1.4.0 + gateway preset', () => {
     expect(done).toMatchObject({ available: true, nothingToDo: true, steps: [], reason: 'Nothing to do on Sepolia: already on the current hook and gateway.' });
   });
 
+  it.each(['old', 'target'])('rejects a failed %s pool read instead of treating it as an empty pool', async (which) => {
+    const reads = {
+      [REGISTRY + ':hookOf']: OLD_HOOK, [ROUTER_REGISTRY + ':terminalOf']: OLD_TERMINAL,
+      [OLD_HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: which === 'old' ? new Error('RPC unavailable') : 1800n,
+      [HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: new Error('RPC unavailable'),
+    };
+    await expect(resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 11155111, projectId: 2, client: client(deployed, reads) })).rejects.toThrow('RPC unavailable');
+  });
+
+  it.each([1, 10, 8453, 42161])('offers the migration from executed mainnet artifacts on chain %s', async chainId => {
+    const hook = getAddress(BUYBACK_GATEWAY_PRESET.targets.hook, chainId);
+    const terminal = getAddress(BUYBACK_GATEWAY_PRESET.targets.terminal, chainId);
+    const registry = getAddress('JBBuybackHookRegistry', chainId).toLowerCase();
+    const routerRegistry = getAddress('JBRouterTerminalRegistry', chainId).toLowerCase();
+    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId, projectId: 6, client: client([hook.toLowerCase(), terminal.toLowerCase()], {
+      [registry + ':hookOf']: OLD_HOOK, [routerRegistry + ':terminalOf']: OLD_TERMINAL,
+      [OLD_HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: 172800n,
+      [OLD_HOOK.toLowerCase() + ':poolKeyOf:' + ZERO]: poolKey(10000, 200),
+    }) });
+    expect(result).toMatchObject({ available: true, nothingToDo: false, steps: [
+      { kind: 'setHookFor', values: { hook } },
+      { kind: 'setPoolFor', values: { fee: 10000, tickSpacing: 200, twapWindow: 1800, terminalToken: NATIVE_TOKEN }, note: DEPLOYER_DEFAULT_TWAP_NOTE },
+      { kind: 'setTerminalFor', values: { terminal } },
+    ] });
+  });
+
+  it('keeps feed-only OP Sepolia unavailable before making any RPC calls', async () => {
+    const rpc = { getCode: vi.fn(async () => '0x6080'), readContract: vi.fn() };
+    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 11155420, projectId: 6, client: rpc });
+    expect(result).toMatchObject({ available: false, steps: [], reason: 'Not deployed on OP Sepolia yet.' });
+    expect(rpc.getCode).not.toHaveBeenCalled();
+    expect(rpc.readContract).not.toHaveBeenCalled();
+  });
+
   it('is unavailable where either target has no code', async () => {
-    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 8453, projectId: 6, client: client([HOOK.toLowerCase()], {}) });
-    expect(result).toMatchObject({ available: false, steps: [], reason: 'Not deployed on Base yet.' });
+    const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 84532, projectId: 6, client: client([HOOK.toLowerCase()], {}) });
+    expect(result).toMatchObject({ available: false, steps: [], reason: 'Not deployed on Base Sepolia yet.' });
   });
 });

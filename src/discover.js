@@ -14,10 +14,13 @@ import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
-import { runDirectBatch, hasDirectBatch, directBatchStatus } from './direct-batch.js';
+import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } from './action-plan.js';
 import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
 import { CREDIT_CLAIM_ABI, prepareCreditClaims, verifyCreditClaims, verifySavedCreditClaims } from './credit-claims.js';
+import { fetchPendingPaymentRows, readPendingPayment, preparePendingPayment, refreshPendingPayment, reverifyPendingPayment, pendingPaymentReceiptOutcome } from './pending-payments.js';
+import { renderPendingPayments } from './pending-payments-ui.js';
+import { isPendingPaymentTransaction, pendingPaymentTransactionGasCap } from './pending-payment-gas.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded, findSavedSafeExecution } from './safe.js';
 import { buildStep, loadTray, saveTray, upsertStep, registerPowerKinds, multiSendBatchCalls, simulateBatchCalls } from './safe-batch.js';
 import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
@@ -4049,34 +4052,9 @@ function isFeelessForCall(chainId, addr, projectId, caller) {
 function isFeelessAddress(chainId, addr, projectId) {
   return isFeelessForCall(chainId, addr, projectId, addr);
 }
-// Whether the protocol fee can actually route for `token`: JB project #1 must have a primary terminal that can
-// process a pay in it. When it can't (e.g. a project-specific accounting token with no swap route), JBMultiTerminal's
-// _processFee forgives the fee and credits it straight back to the paying project — so don't warn about a fee.
-// Probe: previewPayFor(#1, token) on primaryTerminalOf(#1, token). A viable route returns project #1's live
-// ruleset; the router registry fail-softs to an all-zero ruleset when no route exists, and other terminals
-// revert — both mean the fee pay would revert and be forgiven. NOTE an accountingContextForTokenOf read is NOT
-// enough: the registry answers it for tokens it still can't route a pay for (verified against basesep #1/KMAC).
-// Resolves true / false / null (unknown — RPC failure; keep the hedged fee note).
-var primaryTerminalOfAbi = [{ type: 'function', name: 'primaryTerminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [{ type: 'address' }] }];
-var _feeRouteCache = {};
-function feeWillRoute(chainId, token, decimals) {
-  var key = Number(chainId) + ':' + String(token || '').toLowerCase();
-  if (_feeRouteCache[key] === undefined) {
-    _feeRouteCache[key] = read(chainId, 'JBDirectory', primaryTerminalOfAbi, 'primaryTerminalOf', [BigInt(FEE_BENEFICIARY_PROJECT_ID), token]).then(function (term) {
-      if (!term || /^0x0+$/.test(term)) return false;
-      var probeAmount = 10n ** BigInt(decimals == null ? 18 : decimals); // a nominal 1 token
-      return clientFor(chainId).readContract({
-        address: term, abi: feePreviewPayAbi, functionName: 'previewPayFor',
-        args: [BigInt(FEE_BENEFICIARY_PROJECT_ID), token, probeAmount, '0x0000000000000000000000000000000000000001', '0x'],
-      }).then(function (o) { return toBigInt(o[0] && o[0].id) !== 0n; })
-        .catch(function () { return false; });
-    }).catch(function () { return null; });
-  }
-  return _feeRouteCache[key];
-}
-
 // Whether the router registry can actually route a pay of `token` into `projectId` right now (direct forward,
-// swap, or cash-out loop). Same fail-soft signal as feeWillRoute: a dead route previews an all-zero ruleset.
+// swap, or cash-out loop). A dead route previews an all-zero ruleset. This does not determine fee forgiveness:
+// an eligible fee payment can succeed at the gateway while retaining its input for a later routing attempt.
 var _payRouteCache = {};
 function routerPayRouteWorks(chainId, projectId, token, decimals) {
   var registry = routerTerminalFor(chainId);
@@ -4114,7 +4092,7 @@ function feeProjectLink(chainId, projectId, label) {
 // Subtle fee receipt: "<label>: <feeAmount>" then "• get ~<X> <token> in <project link> for the fee" — shows where
 // the protocol fee goes and the project token it mints back to the beneficiary. opts: { chainId, feeProjectId,
 // feeTokenAddr, decimals, symbol, feeAmount (bigint), beneficiary, label, projectLabel }.
-function renderFeeReceipt(container, opts) {
+export function renderFeeReceipt(container, opts) {
   if (!opts.feeAmount || opts.feeAmount <= 0n) return;
   var feeLine = el('div', 'ops-preview-line ops-preview-fee');
   feeLine.textContent = (opts.label || '2.5% protocol fee') + ': ' + formatBalance(opts.feeAmount, opts.decimals, opts.symbol);
@@ -4126,7 +4104,7 @@ function renderFeeReceipt(container, opts) {
     feeTok.appendChild(feeProjectLink(opts.chainId, opts.feeProjectId, opts.projectLabel));
     if (suffix) feeTok.appendChild(document.createTextNode(suffix));
   }
-  withLink('• pays into the revnet ', '. Checking tokens for the recipient…');
+  withLink('• fee destination: ', '. Routing may remain pending.');
   container.appendChild(feeTok);
   Promise.all([
     computePayPreview({ chainId: opts.chainId, projectId: Number(opts.feeProjectId), token: opts.feeTokenAddr || NATIVE_TOKEN, amount: opts.feeAmount, beneficiary: opts.beneficiary }),
@@ -4134,9 +4112,9 @@ function renderFeeReceipt(container, opts) {
   ]).then(function (r) {
     var p = r[0], fsym = r[1] || 'tokens';
     if (p && !p.unavailable && p.received != null && p.received > 0n) {
-      withLink('• get ~ ' + formatTokens(p.received) + ' ' + fsym + ' in ', ' for the fee');
+      withLink('• estimated ~ ' + formatTokens(p.received) + ' ' + fsym + ' in ', ' if the fee routes successfully');
       if (opts.onReceived) opts.onReceived(p.received, fsym);
-    } else withLink('• fee funds ', null);
+    } else withLink('• fee destination: ', '. Routing may remain pending; an unavailable preview does not confirm a refund.');
   }).catch(function () {});
 }
 
@@ -4440,7 +4418,7 @@ export function projectBuybackHook(project, chainId, opts) {
       return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid])
         .then(function (h) { return (h && h !== ZERO_ADDRESS) ? h : null; }).catch(fallbackNull);
     }
-    if (concrete && d === lc(concrete)) return Promise.resolve(dh);
+    if ((concrete && d === lc(concrete)) || /^JBBuybackHook_deprecated\d*$/.test(resolveContractName(dh, chainId) || '')) return Promise.resolve(dh);
     return Promise.resolve(null);
   }
   return projectDataHook(project, chainId, opts).then(function (info) {
@@ -4459,18 +4437,33 @@ export function projectBuybackHook(project, chainId, opts) {
 //   registry is one of the project's terminals → return the registry's terminalOf (the downstream it forwards into).
 //   the concrete JBRouterTerminal is one of the project's terminals → the project uses the router directly → use it.
 //   neither → none. (terminalOf resolves a *default* even for non-users, so it must be gated the same way as hookOf.)
-export function projectRouterTerminal(project, chainId) {
+export function projectRouterTerminal(project, chainId, opts) {
+  function unavailable(error) { if (opts && opts.strict) throw error; return null; }
   var registry = getAddress('JBRouterTerminalRegistry', chainId);
   var directTerminal = getAddress('JBRouterTerminal', chainId);
   var pid = pidOn(project, chainId);
-  function isTerm(addr) { return addr ? read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pid, addr]).catch(function () { return false; }) : Promise.resolve(false); }
+  function isTerm(addr) { return addr ? read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pid, addr]).catch(function (error) { if (opts && opts.strict) throw error; return false; }) : Promise.resolve(false); }
   return isTerm(registry).then(function (viaRegistry) {
     if (viaRegistry) {
       return read(chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [pid])
-        .then(function (t) { return (t && t !== ZERO_ADDRESS) ? t : null; }).catch(function () { return null; });
+        .then(function (t) { return (t && t !== ZERO_ADDRESS) ? t : null; }).catch(unavailable);
     }
-    return isTerm(directTerminal).then(function (direct) { return direct ? directTerminal : null; });
-  }).catch(function () { return null; });
+    var candidates = [directTerminal, getAddress('JBRouterTerminalGateway', chainId), getAddress('JBRouterTerminal_deprecated1', chainId), getAddress('JBRouterTerminal_deprecated', chainId)].filter(Boolean);
+    return Promise.all(candidates.map(isTerm)).then(function (direct) { var i = direct.indexOf(true); return i < 0 ? null : candidates[i]; });
+  }).catch(unavailable);
+}
+
+// Resolve the selected terminal separately from its underlying router: operator migrations write the gateway,
+// while route inspection reads its immutable ROUTER. Retired direct routers remain valid for existing cohorts.
+export async function projectRouterPath(project, chainId) {
+  var terminal = await projectRouterTerminal(project, chainId, { strict: true });
+  if (!terminal) return null;
+  var registry = getAddress('JBRouterTerminalRegistry', chainId);
+  var viaRegistry = registry && await read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pidOn(project, chainId), registry]);
+  var gateway = getAddress('JBRouterTerminalGateway', chainId);
+  if (!sameAddr(terminal, gateway)) return { registry: viaRegistry ? registry : null, terminal: terminal, gateway: null, router: terminal };
+  var router = await clientFor(chainId).readContract({ address: terminal, abi: [{ type: 'function', name: 'ROUTER', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }], functionName: 'ROUTER', args: [] });
+  return { registry: viaRegistry ? registry : null, terminal: terminal, gateway: gateway, router: router };
 }
 
 function projectChainList(project) {
@@ -4568,7 +4561,9 @@ function readProjectPaymentSurface(project, chainId) {
       chainId: chainId,
       terminals: terminals,
       hasDirect: terminals.some(function (t) { return sameAddr(t, direct); }),
-      hasRouter: terminals.some(function (t) { return sameAddr(t, router) || sameAddr(t, directRouter); }),
+      // Swap payment options execute through the registry. Directly attached gateways/routers remain
+      // recognizable, but must not advertise a route whose entry terminal is not in the directory.
+      hasRouter: terminals.some(function (t) { return sameAddr(t, router); }),
       unknown: terminals.filter(function (t) { return !recognizeProjectContract(t, chainId).known; }),
     };
   });
@@ -11171,7 +11166,7 @@ export function snapshotKnownSafeProposal(chainId, safe, tx, hash, fromBlock, ha
     nonce: hashOnly ? null : fields.nonce, hashOnly: !!hashOnly, tx: fields, executed: false };
 }
 
-export async function reconcileSelectedSafeResult(result, calls, sender, verifyReceipt, findExecution) {
+export async function reconcileSelectedSafeResult(result, calls, sender, verifyReceipt, findExecution, verifyObsolete) {
   if (result.relayr || Number(result.executedReady || 0) === Number(result.expectedCount)) return result;
   var proposals = result.proposals || [];
   if (proposals.length !== Number(result.queued)) throw new Error('The saved Safe proposals do not have complete execution proofs. Keep their original queue entries.');
@@ -11184,11 +11179,16 @@ export async function reconcileSelectedSafeResult(result, calls, sender, verifyR
     seen.add(Number(proposal.chainId));
     if (proposal.executed) continue;
     var receipt = await (findExecution || findSavedSafeExecution)(proposal);
-    if (!receipt) continue;
+    proposal.obsolete = false;
+    if (!receipt) {
+      if (verifyObsolete) proposal.obsolete = await verifyObsolete(call, proposal) === true;
+      continue;
+    }
     if (verifyReceipt) await verifyReceipt(call, receipt);
     proposal.executed = true;
   }
   next.executedReady = Number(next.immediateExecuted || 0) + next.proposals.filter(function (proposal) { return proposal.executed; }).length;
+  next.obsoleteReady = next.proposals.filter(function (proposal) { return proposal.obsolete; }).length;
   return next;
 }
 
@@ -11222,21 +11222,34 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
   var preparedChecks = null;
   var outcome = await runSavedActionPlan({
     scope: scope, account: account, executionAccount: sender, safeMode: !!authoritySafe, gas: opts.gas,
+    maxCalls: opts.maxCalls,
     prepare: async function () {
       var prepared = await prepare(sender);
       preparedChecks = opts._preparedReverify;
       return prepared;
     },
-    reconcileResult: function (result, calls) { return reconcileSelectedSafeResult(result, calls, sender, opts.verifyReceipt); },
+    reconcileResult: function (result, calls) { return reconcileSelectedSafeResult(result, calls, sender, opts.verifyReceipt, null, opts.verifyObsoleteSafeCall); },
     executeRound: async function (calls, index, plan, control) {
+      var roundScope = scope + ':' + plan.id + ':round:' + index;
+      // A keeper may resolve a queued payment while an earlier round is being reviewed. Refresh only
+      // calls with no wallet/relay/Safe publication record; submitted work retains its exact recovery.
+      if (opts.refreshUnsubmittedRound && !control.hasSafeProgress
+          && !loadRelayrPendingSession(roundScope) && await clearUnsubmittedDirectBatch(roundScope, account, calls)) {
+        calls = await opts.refreshUnsubmittedRound(calls);
+        if (!calls.length) {
+          var skipped = { relayr: true, session: { expectedCount: 0, records: [] }, alreadyResolved: true };
+          control.checkpoint(skipped);
+          return skipped;
+        }
+        control.replaceUnsubmittedRound(calls);
+      }
       var chains = calls.map(function (call) { return { id: Number(call.chainId == null ? call.cid : call.chainId), name: call.chainName || chainNameOf(call.chainId == null ? call.cid : call.chainId) }; });
       calls.forEach(function (call) {
         if (encodeFunctionData({ abi: call.abi, functionName: call.functionName, args: call.args }).toLowerCase() !== String(call.data).toLowerCase()) throw new Error('The saved call does not match its reviewed arguments.');
       });
-      var roundScope = scope + ':' + plan.id + ':round:' + index;
       var roundOpts = Object.assign({}, opts, { gas: plan.gas, pendingScope: roundScope,
         title: (opts.title || opts.label || 'Project action') + (plan.rounds.length > 1 ? ' — round ' + (index + 1) + '/' + plan.rounds.length : ''),
-        summary: { rows: (plan.summary && plan.summary.rows || []).concat([['Round', (index + 1) + ' of ' + plan.rounds.length], ['Calls in this round', String(calls.length)]]) },
+        summary: { rows: (opts.summaryForRound ? opts.summaryForRound(calls) : plan.summary && plan.summary.rows || []).concat([['Round', (index + 1) + ' of ' + plan.rounds.length], ['Calls in this round', String(calls.length)]]) },
         reverify: async function (chainId) {
           if (!getAccount() || !sameAddr(getAccount(), account)) throw new Error('Connected account changed. Resume with the original wallet.');
           if (opts.reverifySaved) await opts.reverifySaved(calls, chainId, sender);
@@ -11282,8 +11295,10 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
   if (results.some(function (result) { return !result.relayr; })) {
     var queued = results.reduce(function (sum, result) { return sum + Number(result.queued || 0); }, 0);
     var executed = results.reduce(function (sum, result) { return sum + Number(result.executedReady || 0); }, 0);
+    var obsoleteProposals = results.flatMap(function (result) { return (result.proposals || []).filter(function (proposal) { return proposal.obsolete; }); });
     var expected = results.reduce(function (sum, result) { return sum + Number(result.expectedCount || 0); }, 0);
-    return { relayr: false, queued: queued, executedReady: executed, safePending: expected > executed, completed: expected === executed,
+    return { relayr: false, queued: queued, executedReady: executed, obsoleteProposals: obsoleteProposals,
+      safePending: expected > executed + obsoleteProposals.length, completed: expected === executed + obsoleteProposals.length,
       resumed: outcome.resumed, rounds: outcome.rounds, cancelled: false };
   }
   return { relayr: true, completed: true, resumed: outcome.resumed, rounds: outcome.rounds,
@@ -11947,7 +11962,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
       });
     }
   }
-  var useRelayr = !hasDirectBatch(confirmOpts.pendingScope, account, calls) && shouldUseRelayrForChains(chains);
+  var useRelayr = !confirmOpts.forceDirect && !hasDirectBatch(confirmOpts.pendingScope, account, calls) && shouldUseRelayrForChains(chains);
   if (useRelayr) {
     var trustedTargets = await Promise.all(calls.map(function (call) { return relayrSupportsForwarding(call.cid, call.to); }));
     useRelayr = trustedTargets.every(function (trusted) { return trusted; });
@@ -12005,8 +12020,9 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         }
         var directClient = clientFor(direct.cid);
         var directGas;
-        try { directGas = BigInt(gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
-        if (directGas < 21000n || directGas > 5000000n) throw new Error('This transaction gas limit is outside the supported direct-send range.');
+        try { directGas = BigInt(confirmOpts.gasLimitForCall ? await confirmOpts.gasLimitForCall(direct) : gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
+        var directCeiling = confirmOpts.gasLimitForCall ? 16777216n : 5000000n;
+        if (directGas < 21000n || directGas > directCeiling) throw new Error('This transaction gas limit is outside the supported direct-send range.');
         setStatus('Simulating the confirmed transaction…', 'pending');
         var directResult = await directClient.request({
           method: 'eth_call',
@@ -12906,11 +12922,12 @@ function readySafeExecutionKey(ready) {
 
 async function preflightReadySafeExecution(item) {
   var call = safeExecRelayrTx(item.ready.cid, item.ready.safe, item.ready.tx);
+  var gas = await pendingPaymentTransactionGasCap(item.ready.cid, item.ready.tx, clientFor(item.ready.cid)) || 5000000n;
   var result = await clientFor(item.ready.cid).request({
     method: 'eth_call',
     // A Relayr executor is not a Safe owner. Simulate from zero so every v=1 signature must use the onchain
     // approvedHashes entry proven above instead of passing through Safe's msg.sender==owner shortcut.
-    params: [{ from: ZERO_ADDRESS, to: call.target, data: call.data, value: '0x0', gas: '0x4c4b40' }, 'latest'],
+    params: [{ from: ZERO_ADDRESS, to: call.target, data: call.data, value: '0x0', gas: '0x' + gas.toString(16) }, 'latest'],
   });
   if (typeof result !== 'string' || !/^0x[0-9a-f]{64}$/i.test(result) || BigInt(result) !== 1n) {
     throw new Error('Safe execution simulation failed on ' + (item.ready.chain || chainNameOf(item.ready.cid)) + '. Nothing was submitted or paid.');
@@ -13001,7 +13018,8 @@ async function executeReadySafeTransactions(readyExecs, opts) {
   var expectedSnapshots = {};
   initialReady.forEach(function (item) { expectedSnapshots[readySafeExecutionKey(item.ready)] = readySafeExecutionSnapshot(item); });
   var chainIds = Array.from(new Set(readyExecs.map(function (r) { return Number(r.cid); })));
-  if (readyExecs.length && (chainIds.length === 1 || !relayrSupportsChains(chainIds))) {
+  if (readyExecs.length && (chainIds.length === 1 || !relayrSupportsChains(chainIds)
+      || readyExecs.some(function (ready) { return isPendingPaymentTransaction(ready.cid, ready.tx); }))) {
     var ordered = readyExecs.slice().sort(function (a, b) { return Number(a.cid) - Number(b.cid) || Number(a.tx.nonce) - Number(b.tx.nonce); });
     var directOk = await confirmTransactionModal({
       via: 'Direct wallet transactions',
@@ -13809,9 +13827,130 @@ function makeMultiselect(config) {
   };
 }
 
-function renderActivityCard(project, opts) {
+function pendingPaymentReaders(chainId) {
+  return { client: clientFor(Number(chainId)), knownGateway: function (gateway, cid) {
+    return ['JBRouterTerminalGateway', 'JBRouterTerminalGateway_deprecated1', 'JBRouterTerminalGateway_deprecated'].some(function (name) {
+      return sameAddr(getAddress(name, cid), gateway);
+    });
+  } };
+}
+
+async function pendingPaymentGasLimit(call) {
+  var block = await clientFor(Number(call.chainId == null ? call.cid : call.chainId)).getBlock({ blockTag: 'latest' });
+  var limit = BigInt(block.gasLimit);
+  return limit < 16777216n ? limit : 16777216n;
+}
+
+// Each qualified attempt can need most of a block's transaction allowance. Use durable reviewed
+// rounds, with one call per chain per round, rather than an atomic batch that can exhaust that budget.
+export async function runPendingProjectPayments(project, rows, setStatus) {
+  var scope = relayrActionScope(project, 'pending-payments');
+  var result = await runSelectedProjectCallRounds(project, async function () {
+    if (!rows.length) throw new Error('No ready payments remain. Refresh before routing.');
+    var calls = [];
+    for (var row of rows) {
+      var call = await preparePendingPayment(row, pendingPaymentReaders(row.chainId));
+      if (!call) throw new Error('A selected payment has already resolved. Refresh before routing.');
+      call.chainName = chainNameOf(call.chainId); call.contract = 'JBRouterTerminalGateway';
+      calls.push(call);
+    }
+    // Direct transactions already have separate reviews. Checkpoint each payment independently so
+    // a keeper resolving a later payment cannot trap it behind an earlier payment's saved receipt.
+    var rounds = calls.map(function (call) { return [call]; });
+    var finalCount = calls.filter(function (call) { return call.functionName === 'finalizePendingCall'; }).length;
+    return { rounds: rounds,
+      summary: { rows: [['Payments', String(calls.length)], ['Final attempts', String(finalCount)],
+        ['Outcome', 'A retry may remain pending. A final attempt may return funds to the source project.'],
+        ['Beneficiary', 'The original payment beneficiary is unchanged.'],
+        ['Batch', 'Separate transactions, one payment per chain in each round.']] },
+    };
+  }, { pendingScope: scope, label: 'Route pending payments', title: 'Review pending payments',
+    maxCalls: 256, forceDirect: true, gasLimitForCall: pendingPaymentGasLimit,
+    verifyObsoleteSafeCall: async function (call) {
+      // Only a consumed commitment proves the original queued payment can never be retried again.
+      try { return await refreshPendingPayment(call, pendingPaymentReaders(call.chainId)) === null; }
+      catch (_) { return false; }
+    },
+    refreshUnsubmittedRound: async function (calls) {
+      var refreshed = [];
+      for (var original of calls) {
+        var fresh = await refreshPendingPayment(original, pendingPaymentReaders(original.chainId));
+        if (fresh) refreshed.push(Object.assign(fresh, { chainName: chainNameOf(fresh.chainId), contract: 'JBRouterTerminalGateway' }));
+      }
+      return refreshed;
+    },
+    summaryForRound: function (calls) {
+      return calls.map(function (call) {
+        var row = call.pendingPayment;
+        return [chainNameOf(call.chainId), String(row.amount) + ' base units of ' + row.token + ' → project #' + row.projectId + ' · beneficiary ' + row.beneficiary];
+      }).concat([['Final attempts', String(calls.filter(function (call) { return call.functionName === 'finalizePendingCall'; }).length)],
+        ['Outcome', 'A retry may remain pending. A final attempt may return funds to the source project.'],
+        ['Payment from your wallet', 'Gas only; the gateway already holds the original payment.']]);
+    },
+    reverifySaved: async function (calls, chainId, sender) {
+      for (var call of calls) {
+        if (chainId != null && Number(call.chainId) !== Number(chainId)) continue;
+        await reverifyPendingPayment(call, pendingPaymentReaders(call.chainId));
+        if (isSafeConnected()) {
+          // Safe proposals use the same bounded, live simulation before entering the standard review flow.
+          var result = await clientFor(call.chainId).request({ method: 'eth_call', params: [{ from: sender, to: call.to, data: call.data,
+            value: '0x0', gas: '0x' + (await pendingPaymentGasLimit(call)).toString(16) }, 'latest'] });
+          if (typeof result !== 'string' || !/^0x[0-9a-f]*$/i.test(result) || result.length > 8194) throw new Error('The pending payment simulation returned malformed data.');
+        }
+      }
+    },
+    verifyReceipt: function (call, receipt) { return pendingPaymentReceiptOutcome(call, receipt); },
+  }, setStatus);
+  if (result && result.obsoleteProposals && result.obsoleteProposals.length) {
+    // Keep the exact obsolete Safe hashes after the completed action checkpoint is acknowledged.
+    // These proposals were not executed and can still occupy a Safe nonce until canceled.
+    var key = pendingPaymentArchiveKey(project);
+    var archived = JSON.parse(localStorage.getItem(key) || '[]');
+    result.obsoleteProposals.forEach(function (proposal) {
+      if (!archived.some(function (old) { return old.chainId === proposal.chainId && old.safeTxHash === proposal.safeTxHash; })) archived.push(proposal);
+    });
+    var raw = JSON.stringify(archived);
+    localStorage.setItem(key, raw);
+    if (localStorage.getItem(key) !== raw) throw new Error('Keep the original Safe queue entries; their obsolete proposal records could not be saved.');
+  }
+  return result;
+}
+
+function pendingPaymentArchiveKey(project) { return 'jb-obsolete-payment-proposals:' + String(getAccount() || '').toLowerCase() + ':' + relayrActionScope(project, 'pending-payments'); }
+
+export function renderProjectPendingPayments(project) {
+  var scope = relayrActionScope(project, 'pending-payments');
+  var panel = renderPendingPayments({
+    hasSaved: function () { return hasSelectedProjectAction(scope); },
+    archived: function () {
+      try { return JSON.parse(localStorage.getItem(pendingPaymentArchiveKey(project)) || '[]').map(function (proposal) {
+        return { hash: proposal.safeTxHash, url: safeTxLink(proposal.chainId, proposal.safe, proposal.safeTxHash), chain: chainNameOf(proposal.chainId) };
+      }); } catch (_) { return []; }
+    },
+    acknowledge: function () { acknowledgeSelectedProjectAction(scope); },
+    chainName: chainNameOf,
+    describe: function (row) {
+      var token = getChainTokens(row.chainId).find(function (candidate) { return sameAddr(candidate.address, row.token); });
+      return token ? formatAmount(BigInt(row.amount), token.decimals) + ' ' + token.symbol : String(row.amount) + ' base units · ' + truncAddr(row.token);
+    },
+    loadRows: function () {
+      return fetchPendingPaymentRows(projectChains(project).map(function (chain) {
+        return { chainId: chain.id, sourceProjectId: pidOn(project, chain.id), version: BENDYSTRAW_VERSION };
+      }), bendystrawQuery);
+    },
+    readState: function (row) { return readPendingPayment(row, pendingPaymentReaders(row.chainId)); },
+    run: function (rows, setStatus) { return runPendingProjectPayments(project, rows, setStatus); },
+    onUpdated: function () { setTimeout(function () { panel.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true })); }, 0); },
+  });
+  onEffectiveAccountChange(function () { if (panel.isConnected) panel._refresh(); });
+  return panel;
+}
+
+export function renderActivityCard(project, opts) {
   var ACTIVITY_POLL_MS = 15000;
   var card = el('div', 'detail-card');
+  var pendingPayments = renderProjectPendingPayments(project);
+  card.appendChild(pendingPayments);
   // Header row: title on the left, filter controls right-aligned.
   var head = el('div', 'activity-head');
   var title = el('div', 'detail-card-title');
@@ -13902,6 +14041,7 @@ function renderActivityCard(project, opts) {
   // Refresh after a tx confirms. The indexer trails the chain, so retry a few times with backoff
   // until a new top row appears (or the attempts run out).
   card._refresh = function () {
+    pendingPayments._refresh();
     var before = body.querySelector('.activity-row');
     var beforeKey = before ? before.getAttribute('data-tx') : null;
     var attempt = 0;
@@ -13927,6 +14067,7 @@ function renderActivityCard(project, opts) {
         schedulePoll();
         return;
       }
+      pendingPayments._refresh();
       load(true).then(schedulePoll);
     }, ACTIVITY_POLL_MS);
   });
@@ -15505,7 +15646,7 @@ async function applyDraftAccountingAndTerminals(state, project, sources) {
     var usesRouter = !!(router && lower.indexOf(router.toLowerCase()) !== -1);
     if (usesRouter) {
       var target = await read(source.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [source.projectId]);
-      var canonicalTarget = getAddress('JBRouterTerminal', source.chainId);
+      var canonicalTarget = getAddress('JBRouterTerminalGateway', source.chainId) || getAddress('JBRouterTerminal', source.chainId);
       if (!canonicalTarget || !sameAddr(target, canonicalTarget)) throw new Error('The project uses a custom router-terminal target on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
     }
     return usesRouter;
@@ -16318,6 +16459,11 @@ var SAFE_QUEUE_LABELS = {
 var SAFE_FN_LABELS = {
   deployERC20For: 'Deploy ERC-20 token', setTokenMetadataOf: 'Rename token',
   sendPayoutsOf: 'Send payouts', sendReservedTokensToSplitsOf: 'Distribute reserved tokens',
+  setHookFor: 'Set buyback hook', setPoolFor: 'Register buyback pool', setTwapWindowOf: 'Set TWAP window',
+  setTerminalFor: 'Set project router or gateway', setDefaultTerminal: 'Set default router or gateway',
+  allowTerminal: 'Allow router or gateway', disallowTerminal: 'Retire router or gateway', lockTerminalFor: 'Lock project router or gateway',
+  processPendingCall: 'Retry retained gateway call', processPendingCallWithGas: 'Retry retained gateway call with gas limit',
+  finalizePendingCall: 'Finalize retained gateway call', finalizePendingCallWithGas: 'Finalize retained gateway call with gas limit',
 };
 function labelForQueuedTx(tx) {
   var batch = multiSendBatchCalls(tx);
@@ -18172,6 +18318,19 @@ export function renderBuybackRouterCard(project) {
   var intro = el('div', 'detail-card-body backoffice-intro');
   intro.textContent = 'Set up contracts that buy existing project tokens or exchange payment tokens. Create the trading pool and choose how long prices are averaged. Each action runs on your selected networks, with one payment or a Safe proposal.';
   card.appendChild(intro);
+  var routing = el('div', 'powers-desc'); routing.textContent = 'Router path: reading across chains…'; card.appendChild(routing);
+  Promise.all(projectChainList(project).map(async function (chain) {
+    var name = chain.name || chainNameOf(chain.id);
+    try {
+      var path = await projectRouterPath(project, chain.id);
+      if (!path) return name + ': no router selected';
+      return name + ': ' + (path.registry ? 'registry → ' : '')
+        + (path.gateway ? 'gateway ' + shortAddr6(path.gateway) + ' → ' : '') + 'router ' + shortAddr6(path.router);
+    } catch (_) { return name + ': could not read router path'; }
+  })).then(function (paths) { routing.textContent = 'Router path: ' + paths.join(' | '); });
+  var custody = el('div', 'powers-desc');
+  custody.textContent = 'A gateway keeps failed protocol-fee routes in custody for retry or finalization. A queued call is still held; it is not a settled or forgiven fee. The API exposes pending-call commitments, failure details, and retry/finalization functions.';
+  card.appendChild(custody);
   [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP].forEach(function (action) {
     var row = el('div', 'powers-row');
     var head = el('div', 'powers-head');
@@ -18649,7 +18808,7 @@ export var POWER_SET_BUYBACK_HOOK = {
 export var POWER_SET_ROUTER_TERMINAL = {
   title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
-  note: 'Sets the terminal the swap router forwards into for this project (used when paying in USDC etc.). Pre-filled with the project’s current terminal.',
+  note: 'Selects the gateway or router that the registry forwards into for this project. A gateway then calls its bound router. Pre-filled with the project’s current selection.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
     defaultRead: function (project) { return projectRouterTerminal(project, project.chainId).then(function (a) { return a || ''; }).catch(function () { return ''; }); },
@@ -18691,7 +18850,7 @@ export var POWER_SET_BUYBACK_TWAP = {
   },
   poolStateRead: buybackPoolStateRead,
   note: 'Changes how far back the buyback hook averages the pool price to decide swap-vs-issue and to floor the swap. The pool must already be initialized for the pair token. Written straight to the project’s hook.',
-  danger: 'Dangerous: a window longer than the pool’s price actually trends floors swaps above what the pool can fill, and every payment routed to a swap reverts. A very short window is cheaper to manipulate.',
+  danger: 'Dangerous: a long window can set a floor above what the pool can fill. Buyback 1.4.0 falls back to minting below its derived floor; older hooks may revert. A very short window is cheaper to manipulate.',
   fields: [
     { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token — the hook stores this pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); },
       // Pre-fill each chain with the pair token it already has a pool for — a USDC revnet has no native pool.
@@ -19400,9 +19559,9 @@ function buildPayoutsModal(project, acctKind) {
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
     var line = el('div', 'ops-preview-line');
-    // When the protocol can't accept this token, the fee is forgiven and returned to the project — say nothing.
+    // A fee-route preview cannot establish exemption or forgiveness; the gateway can retain a failed route.
     line.textContent = (state.meta.tokenKeyed ? '' : 'Uses the current onchain price. ')
-      + (state.feeRoutes === false ? '' : 'Fee: up to 2.5%; JB projects and registered feeless addresses are exempt.');
+      + 'Fee: up to 2.5%; JB projects and registered feeless addresses are exempt. Routing may remain pending.';
     if (line.textContent) preview.appendChild(line);
   }
   amt.addEventListener('input', updatePayoutPreview);
@@ -19453,11 +19612,6 @@ function buildPayoutsModal(project, acctKind) {
       if (seq !== loadSeq) return null;
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
-      state.feeRoutes = null;
-      feeWillRoute(state.chainId, acct.address, acct.decimals).then(function (routes) {
-        if (seq !== loadSeq) return;
-        state.feeRoutes = routes; updatePayoutPreview();
-      });
       return readPayoutAccess(state.chainId, acct).then(function (access) {
         if (seq !== loadSeq) return;
         state.balance = access.balance; state.limits = access.limits;
@@ -19625,9 +19779,6 @@ function buildUseAllowanceModal(project, acctKind) {
     preview.appendChild(recv);
     if (state.feeless) {
       var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'Protocol fee: 0. This address has an exemption for this project.'; preview.appendChild(fl);
-    } else if (state.feeRoutes === false) {
-      // The fee is still deducted from the withdrawal, but _processFee forgives it and credits it back.
-      var rt = el('div', 'ops-preview-line ops-preview-feetok'); rt.textContent = 'The 2.5% returns to the project’s balance — the protocol can’t accept this token.'; preview.appendChild(rt);
     } else if (state.meta.tokenKeyed) {
       renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: amount / 40n, beneficiary: getEffectiveAccount() });
     } else {
@@ -19712,11 +19863,6 @@ function buildUseAllowanceModal(project, acctKind) {
       if (seq !== loadSeq) return null;
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
-      state.feeRoutes = null;
-      feeWillRoute(state.chainId, acct.address, acct.decimals).then(function (routes) {
-        if (seq !== loadSeq) return;
-        state.feeRoutes = routes; updateAllowancePreview();
-      });
       var allowanceCaller = getEffectiveAccount();
       var allowanceChain = state.chainId;
       isAllowanceFeeless(allowanceChain, pidOn(project, allowanceChain), allowanceCaller, allowanceCaller).then(function (f) {
@@ -31333,10 +31479,11 @@ async function readUserLpPositions(project, chainId, account) {
   if (!account) return [];
   var lc = function (a) { return (a || '').toLowerCase(); };
   var newHook = await projectBuybackHook(project, chainId, { strict: true });
-  var oldHook = getAddress('JBBuybackHook', chainId);
+  var hooks = ['JBBuybackHook', 'JBBuybackHook_deprecated1', 'JBBuybackHook_deprecated'].map(function (name) { return getAddress(name, chainId); }).filter(Boolean);
   var tasks = [];
   if (newHook) tasks.push(lpScanPoolPositions(project, chainId, newHook, true));
-  if (oldHook && lc(oldHook) !== lc(newHook)) tasks.push(lpScanPoolPositions(project, chainId, oldHook, false));
+  hooks.filter(function (hook, index) { return lc(hook) !== lc(newHook) && hooks.findIndex(function (other) { return lc(other) === lc(hook); }) === index; })
+    .forEach(function (hook) { tasks.push(lpScanPoolPositions(project, chainId, hook, false)); });
   var all = [].concat.apply([], await Promise.all(tasks));
   return all.filter(function (p) { return p.owner && lc(p.owner) === lc(account); });
 }
@@ -32557,7 +32704,7 @@ function fetchOps(project) {
         var routerRegistry = routerTerminalFor(cid);
         var directRouter = getAddress('JBRouterTerminal', cid);
         var accounted = listed.filter(function (listedTerminal) {
-          return !sameAddr(listedTerminal, routerRegistry) && !sameAddr(listedTerminal, directRouter);
+          return !sameAddr(listedTerminal, routerRegistry) && !sameAddr(listedTerminal, directRouter) && !/^JBRouterTerminal(?:Gateway|_deprecated\d*)?$/.test(resolveContractName(listedTerminal, cid) || '');
         });
         var standardOnly = !!terminal && accounted.every(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });
         var standardListed = !!terminal && listed.some(function (listedTerminal) { return sameAddr(listedTerminal, terminal); });

@@ -922,7 +922,8 @@ function fundAccessCurrencyLabel(currency, state) {
 
 // Point every ruleset/shop currency at the right base id. A custom ERC-20 → its own currency id. Otherwise,
 // USD(2) whenever USDC is accepted (alone OR alongside ETH) so BOTH ETH and USDC resolve via the default
-// ETH/USD + USDC/USD feeds — a base of ETH(1) has no USDC→ETH feed and every USDC payment would revert.
+// ETH/USD + USDC/USD feeds across chains. An ETH base can also accept USDC where the
+// USDC/ETH ratio feed is registered; verify live feed coverage before choosing it.
 // Pure ETH stays ETH(1) (the user may still switch it to USD via the dropdown; ETH→USD has a feed).
 function applyAccountingDefaults(state) {
   var accepts = state.accepts || [];

@@ -137,14 +137,15 @@ describe('MultiSend codec', () => {
 describe('mirrorBatch', () => {
   it('keeps values, re-resolves per-chain addresses and project ids, re-reads perChain kinds, and lists skips', async () => {
     const twap = buildStep('setTwapWindowOf', { chainId: 11155111, projectId: 2, to: HOOK, values: { terminalToken: NATIVE_TOKEN, twapWindow: 900 } });
-    const resolve = vi.fn(async (kind, toChainId) => {
+    const resolve = vi.fn(async (kind, toChainId, step) => {
+      if (kind === 'setHookFor' || kind === 'setTerminalFor') return { values: step.values };
       if (kind === 'setPoolFor') return { values: { fee: 3000, tickSpacing: 60, twapWindow: 1800, terminalToken: USDC_BASE } };
       if (kind === 'setTwapWindowOf') return { reason: 'no buyback hook on Base' };
       return null;
     });
     const foreign = Object.assign(hook(), { chainId: 1 });
     const result = await mirrorBatch([hook(), pool(), terminal(), twap, foreign], 11155111, 8453, resolve, 6);
-    expect(resolve.mock.calls.map(c => [c[0], c[1]])).toEqual([['setPoolFor', 8453], ['setTwapWindowOf', 8453]]);
+    expect(resolve.mock.calls.map(c => [c[0], c[1]])).toEqual([['setHookFor', 8453], ['setPoolFor', 8453], ['setTerminalFor', 8453], ['setTwapWindowOf', 8453]]);
     expect(result.steps.map(s => s.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor']);
     result.steps.forEach(s => { expect(s.chainId).toBe(8453); expect(s.projectId).toBe(6n); });
     expect(result.steps[0].values).toEqual({ hook: HOOK });

@@ -110,6 +110,34 @@ describe('durable selected action rounds', () => {
     await expect(runSavedActionPlan(options0)).rejects.toThrow('another window');
     expect(options0.prepare).not.toHaveBeenCalled();
   });
+
+  it('retains the ordinary call limit while supporting an explicitly bounded pending-payment batch', async () => {
+    const rounds = Array.from({ length: 25 }, (_, index) => [call(1, BigInt(index + 1))]);
+    await expect(runSavedActionPlan(options({ prepare: async () => ({ rounds }) }))).rejects.toThrow('24 rounds');
+    await expect(runSavedActionPlan(options({ maxCalls: 256, prepare: async () => ({ rounds }) }))).resolves.toMatchObject({ completed: true, rounds: 25 });
+  });
+
+  it('persists a refreshed unsigned round before a new review and preserves earlier completed rounds', async () => {
+    const first = options({ executeRound: async (_calls, index, _plan, control) => {
+      if (!index) { control.checkpoint({ confirmed: true }); return { confirmed: true }; }
+      control.replaceUnsubmittedRound([call(8453, 99n)]);
+      throw new Error('review closed');
+    } });
+    await expect(runSavedActionPlan(first)).rejects.toThrow('review closed');
+    const resumed = options();
+    await runSavedActionPlan(resumed);
+    expect(resumed.executeRound).toHaveBeenCalledTimes(1);
+    expect(resumed.executeRound.mock.calls[0][0][0].args[2]).toBe(99n);
+    expect(resumed.prepare).not.toHaveBeenCalled();
+  });
+
+  it('never replaces a round after a Safe proposal has begun publication', async () => {
+    const first = options({ safeMode: true, executionAccount: SAFE, executeRound: async (_calls, _index, _plan, control) => {
+      control.beforeSafe();
+      control.replaceUnsubmittedRound([call(8453, 99n)]);
+    } });
+    await expect(runSavedActionPlan(first)).rejects.toThrow('submitted Safe round cannot be changed');
+  });
 });
 
 describe('Safe round completion accounting', () => {

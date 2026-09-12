@@ -111,6 +111,8 @@
     "JBProjectPayerDeployer",
     "JBProjectPayer__ProjectCreationFeeReceiver",
     "JBRouterTerminal",
+    "JBRouterTerminalGateway",
+    "JBRatioPriceFeed",
     "JBRouterTerminalRegistry",
     "JBProjectHandles",
     "JBAddressRegistry",

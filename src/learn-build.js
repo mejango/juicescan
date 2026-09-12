@@ -948,14 +948,17 @@ export function renderBuildTab() {
       ['pay(...)', 'Same IJBTerminal interface as JBMultiTerminal — resolves the best route, converts the input, then calls pay() on the destination terminal.'],
       ['addToBalanceOf(...)', 'Same as pay() but forwards via addToBalanceOf() on the destination terminal (no token minting).'],
       ['previewPayFor(...)', 'Preview the chosen route and expected output for a payment without executing it.'],
+      ['pendingCallCount(), pendingCallCommitmentOf(id), pendingCallFailureOf(id)', 'Inspect gateway calls that retain custody after a failed protocol-fee route. Count is an ID counter; a nonzero commitment identifies an outstanding call.'],
+      ['processPendingCall[WithGas](...), finalizePendingCall[WithGas](...)', 'Retry or finalize a committed gateway call using its original event payload. Review QueuePendingCall, ProcessPendingCall, RefundPendingCall, and RecordTerminalCallFailure to distinguish retained, settled, and refunded funds.'],
       ['bestPoolLiquidityOf(tokenA, tokenB)', 'Report the deepest-liquidity Uniswap pool the router would use for a pair.'],
     ]),
-    textBlock('The router is reached through JBRouterTerminalRegistry, which is what a project adds to JBDirectory alongside JBMultiTerminal; the registry resolves to JBRouterTerminal. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration.')
+    textBlock('Rollout availability comes from each chain’s canonical deployment records. Proposals do not activate a chain before execution; OP Sepolia has the JBRatioPriceFeed without a buyback hook, router, or gateway. The ratio feed covers USDC/native and USDC/ETH pricing for ETH-based payments and mixed-balance cash outs.'),
+    textBlock('The router is reached through JBRouterTerminalRegistry, which is what a project adds to JBDirectory alongside JBMultiTerminal; read terminalOf(projectId), then ROUTER() when the selected terminal is JBRouterTerminalGateway. The gateway takes custody before routing. Previous cohorts can still resolve to their old router until an operator migrates them. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration.')
   ]));
 
   wrap.appendChild(guideSection('build-buyback', '17. BUYBACK HOOK', [
     "JBBuybackHook compares creating new tokens with buying them from its configured Uniswap V4 pool. It also compares project cash outs with selling into that pool.",
-    "The default minimum return uses an average pool price over a chosen time window, called a time-weighted average price (TWAP). A payer can supply a quote and minimum in payment metadata instead."
+    "The default minimum return uses an average pool price over a chosen time window, called a time-weighted average price (TWAP). Buyback 1.4.0 payment metadata under getId('pay', hook) must encode three words: (uint256 amountToSwapWith, uint256 minimumSwapAmountOut, bool skipSplits); two-word payment quotes revert. A swap below the TWAP floor falls back to minting. Use the project’s live hook generation when preparing metadata."
   ], [
     codeBlock(
       'JBBuybackHook configuration',

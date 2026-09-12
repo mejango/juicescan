@@ -122,15 +122,11 @@ describe('Add to batch', () => {
 });
 
 describe('Same on every chain', () => {
-  it('mirrors address-only steps and reports per-chain steps it could not re-resolve', async () => {
+  it('keeps an unverified selection and its dependent pool out of the destination tray when RPC reads fail', async () => {
     saveTray(8453, 6, [hook(), pool()]);
     const report = await mirrorAcrossChains(project());
-    expect(report.mirrored).toEqual(['Optimism (1)']);
-    expect(report.skipped).toEqual(['Optimism: Register buyback pool — offline']);
-    expect(report.message).toBe('Mirrored Base’s batch to Optimism (1). Skipped Optimism: Register buyback pool — offline.');
-    const mirrored = loadTray(10, 7);
-    expect(mirrored).toHaveLength(1);
-    expect(mirrored[0]).toMatchObject({ kind: 'setHookFor', chainId: 10, projectId: 7n, values: { hook: HOOK } });
-    expect(decodeFunctionData({ abi: mirrored[0].abi, data: mirrored[0].data }).args).toEqual([7n, HOOK]);
+    expect(report.mirrored).toEqual([]);
+    expect(report.skipped).toContain('Optimism: Set buyback hook — offline');
+    expect(loadTray(10, 7)).toEqual([]);
   });
 });

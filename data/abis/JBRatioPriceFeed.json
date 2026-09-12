@@ -1,0 +1,110 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "numerator",
+          "type": "address",
+          "internalType": "contract IJBPriceFeed"
+        },
+        {
+          "name": "denominator",
+          "type": "address",
+          "internalType": "contract IJBPriceFeed"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "DENOMINATOR",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBPriceFeed"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "NUMERATOR",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBPriceFeed"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "currentUnitPrice",
+      "inputs": [
+        {
+          "name": "decimals",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "error",
+      "name": "JBRatioPriceFeed_ZeroDenominator",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "JBRatioPriceFeed_ZeroDenominatorPrice",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "JBRatioPriceFeed_ZeroNumerator",
+      "inputs": []
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "denominator": "The feed pricing one unit of the currency the result is denominated in, denominated in the same intermediate currency.",
+        "numerator": "The feed pricing one unit of the currency being priced, denominated in the intermediate currency."
+      }
+    },
+    "currentUnitPrice(uint256)": {
+      "details": "The result is floored. At small `decimals` a ratio below one unit of the requested precision floors to zero, which `JBPrices` treats as an unavailable feed and rolls past to its remaining backups.",
+      "params": {
+        "decimals": "The number of decimals the return value should use."
+      },
+      "returns": {
+        "_0": "The current unit price from the feed, as a fixed point number with the specified number of decimals."
+      }
+    }
+  },
+  "userdoc": {
+    "DENOMINATOR()": {
+      "notice": "The feed whose price the result is divided by. Its currency is the one the result is denominated in."
+    },
+    "NUMERATOR()": {
+      "notice": "The feed whose price the result is divided from. Its currency is the one the result prices a unit of."
+    },
+    "currentUnitPrice(uint256)": {
+      "notice": "Gets the current price (per 1 unit) from the feed."
+    }
+  },
+  "contractName": "JBRatioPriceFeed",
+  "sourceName": "node_modules/@bananapus/core-v6/src/periphery/JBRatioPriceFeed.sol"
+}

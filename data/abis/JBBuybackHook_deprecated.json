@@ -1309,22 +1309,6 @@
     },
     {
       "type": "error",
-      "name": "JBBuybackHook_DerivedFloorNotMet",
-      "inputs": [
-        {
-          "name": "amount",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "minimum",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "JBBuybackHook_InsufficientPayAmount",
       "inputs": [
         {
@@ -1386,11 +1370,6 @@
           "internalType": "uint160"
         }
       ]
-    },
-    {
-      "type": "error",
-      "name": "JBBuybackHook_PoolKeyCurrenciesMismatch",
-      "inputs": []
     },
     {
       "type": "error",
@@ -1540,7 +1519,7 @@
       }
     },
     "afterPayRecordedWith((address,uint256,uint256,(address,uint8,uint32,uint256),(address,uint8,uint32,uint256),uint256,uint256,address,bytes,bytes))": {
-      "details": "The swap uses the issuance rate as its price limit: it fills while the pool offers a better rate than minting, and any unswapped tokens are minted at the issuance rate. An explicit caller-provided minimum is a settlement guarantee: if the combined output (swap + leftover mint) falls short, the transaction reverts. An oracle-derived routing minimum never reverts the payment: it is enforced inside the swap attempt, and a miss unwinds the swap so the full payment falls back to minting at the issuance rate. This keeps no-quote (programmatic) payments — protocol fees, split pays, project payers — alive when the TWAP floor is stale, while a manipulated fill can never do better than the protocol's own mint path. If the swap reverts entirely (due to insufficient liquidity or something else), all tokens are likewise minted as a fallback, against which explicit minimums still apply. Offchain observers can detect the fallback as a swap-routed payment that emits `Mint` without a `Swap`.",
+      "details": "The swap uses the issuance rate as its price limit: it fills while the pool offers a better rate than minting, and any unswapped tokens are minted at the issuance rate. The combined output (swap + leftover mint) must meet the user's specified minimum, otherwise the transaction reverts. If the swap reverts entirely (due to insufficient liquidity or something else), all tokens are minted as a fallback. Explicit caller-provided minimums still apply in that case, but oracle-derived routing minimums do not.",
       "params": {
         "context": "The pay context passed in by the terminal."
       }
@@ -1587,7 +1566,7 @@
         "sqrtPriceX96": "The initial sqrtPriceX96 for the pool (if not already initialized).",
         "terminalToken": "The address of the terminal token that payments to the project are made in.",
         "tickSpacing": "The Uniswap V4 pool tick spacing.",
-        "twapWindow": "The period of time over which the TWAP is computed. Exactly `MAX_TWAP_WINDOW` is stored as the 30-minute default (an immutable deployer's baked-in value, not a tuning choice); use `setTwapWindowOf` for a deliberate max-length window."
+        "twapWindow": "The period of time over which the TWAP is computed."
       }
     },
     "isTrustedForwarder(address)": {
@@ -1615,7 +1594,7 @@
         "poolKey": "The V4 PoolKey identifying the pool.",
         "projectId": "The ID of the project to set the pool for.",
         "terminalToken": "The address of the terminal token that payments to the project are made in.",
-        "twapWindow": "The period of time over which the TWAP is computed. Exactly `MAX_TWAP_WINDOW` is stored as the 30-minute default (an immutable deployer's baked-in value, not a tuning choice); use `setTwapWindowOf` for a deliberate max-length window."
+        "twapWindow": "The period of time over which the TWAP is computed."
       }
     },
     "setPoolFor(uint256,uint24,int24,uint256,address)": {
@@ -1625,7 +1604,7 @@
         "projectId": "The ID of the project to set the pool for.",
         "terminalToken": "The address of the terminal token that payments to the project are made in.",
         "tickSpacing": "The Uniswap V4 pool tick spacing.",
-        "twapWindow": "The period of time over which the TWAP is computed. Exactly `MAX_TWAP_WINDOW` is stored as the 30-minute default (an immutable deployer's baked-in value, not a tuning choice); use `setTwapWindowOf` for a deliberate max-length window."
+        "twapWindow": "The period of time over which the TWAP is computed."
       }
     },
     "setTwapWindowOf(uint256,address,uint256)": {

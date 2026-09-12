@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runDirectBatch, hasDirectBatch } from '../src/direct-batch.js';
+import { runDirectBatch, hasDirectBatch, clearUnsubmittedDirectBatch } from '../src/direct-batch.js';
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const CALLS = [84532, 11155420].map(cid => ({ cid, to: '0x2222222222222222222222222222222222222222', data: '0x12345678' }));
@@ -7,6 +7,22 @@ const receipt = hash => ({ status: 'success', transactionHash: hash });
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 
 describe('sequential direct transaction recovery', () => {
+  it('only releases exact all-null journals after a proven rejection, preserving unknown wallet publication', async () => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn({})) } });
+    const scope = 'unsigned-routing';
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
+      sending(); throw Object.assign(new Error('rejected'), { code: 4001 });
+    } })).rejects.toThrow('rejected');
+    expect(await clearUnsubmittedDirectBatch(scope, ACCOUNT, [{ ...CALLS[0], data: '0x5678' }, CALLS[1]])).toBe(false);
+    expect(await clearUnsubmittedDirectBatch(scope, ACCOUNT, CALLS)).toBe(true);
+    expect(hasDirectBatch(scope, ACCOUNT, CALLS)).toBe(false);
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
+      sending(); throw new Error('transport lost');
+    } })).rejects.toThrow('transport lost');
+    expect(await clearUnsubmittedDirectBatch(scope, ACCOUNT, CALLS)).toBe(false);
+    expect(hasDirectBatch(scope, ACCOUNT, CALLS)).toBe(true);
+  });
+
   it('resumes the exact submitted hash and skips confirmed legs after the later wallet step rejects', async () => {
     const options = { account: ACCOUNT, scope: 'direct-partial', verifySubmitted: vi.fn(async (_call, hash) => receipt(hash)),
       execute: vi.fn(async (_call, index, submitted) => {

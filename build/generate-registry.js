@@ -51,6 +51,7 @@ try {
 function loadABIs() {
   const abis = {};
   const natspecRaw = {};
+  const abisByChain = {};
   const abiFiles = fs.readdirSync(ABI_DIR).filter((f) => f.endsWith(".json"));
 
   for (const file of abiFiles) {
@@ -63,6 +64,7 @@ function loadABIs() {
       natspecRaw[name] = { devdoc: {}, userdoc: {} };
     } else {
       abis[name] = raw.abi || [];
+      if (raw.abiVariants) abisByChain[name] = { variants: raw.abiVariants, forChain: raw.abiVariantForChain };
       natspecRaw[name] = {
         devdoc: raw.devdoc || {},
         userdoc: raw.userdoc || {},
@@ -72,7 +74,7 @@ function loadABIs() {
     }
   }
 
-  return { abis, natspecRaw };
+  return { abis, natspecRaw, abisByChain };
 }
 
 // ── Build NatSpec map ────────────────────────────────────────────────────────
@@ -234,7 +236,7 @@ function buildCategories(rawCategories, contractNames) {
 // ── Generate registry ───────────────────────────────────────────────────────
 
 function generate() {
-  const { abis, natspecRaw } = loadABIs();
+  const { abis, natspecRaw, abisByChain } = loadABIs();
 
   // Build sorted contracts map
   const contracts = {};
@@ -280,6 +282,7 @@ function generate() {
     const rawNs = natspecRaw[name] || {};
     const metaEntry = {
       singleton: info.singleton ?? true,
+      generation: info.generation || "current",
       addresses: info.addresses || {},
       contractName: info.contractName || (deploymentInfo && deploymentInfo.contractName) || name,
       deploymentName: info.deploymentName || name,
@@ -303,6 +306,7 @@ function generate() {
 
   // Build output
   const output = {
+    abisByChain,      // exact ABI per chain during staged rollouts
     contracts,        // name → sorted ABI array
     meta: contractMeta, // name → { singleton, addresses, stats }
     natspec,          // name → { fnName → { notice, details, params } }
@@ -346,7 +350,7 @@ function generate() {
     "  if (!registry.sources) return null;",
     "  if (registry.sources[name]) return registry.sources[name];",
     "  const m = registry.meta[name];",
-    "  return m && m.contractName ? (registry.sources[m.contractName] || null) : null;",
+    "  return m && m.generation === 'current' && m.contractName ? (registry.sources[m.contractName] || null) : null;",
     "}",
     "",
     "/**",
@@ -365,7 +369,7 @@ function generate() {
     "  if (!registry.sources) return null;",
     "  const m = registry.meta[contractName];",
     "  const sourceName = m && m.contractName ? m.contractName : contractName;",
-    "  const c = registry.sources[contractName] || registry.sources[sourceName];",
+    "  const c = registry.sources[contractName] || (m && m.generation !== 'current' ? null : registry.sources[sourceName]);",
     "  if (!c || !c.functionsByName) return null;",
     "  const matches = c.functionsByName[abiEntry.name];",
     "  if (!matches || matches.length === 0) return null;",
@@ -419,8 +423,9 @@ function generate() {
     " * @param {string} name - Contract name (e.g. 'JBMultiTerminal')",
     " * @returns {Array} ABI array, or undefined if not found",
     " */",
-    "export function getABI(name) {",
-    "  return registry.contracts[name];",
+    "export function getABI(name, chainId) {",
+    "  const variants = registry.abisByChain[name];",
+    "  return chainId != null && variants ? variants.variants[variants.forChain[String(chainId)]] : registry.contracts[name];",
     "}",
     "",
     "/**",

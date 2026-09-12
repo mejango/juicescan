@@ -3,8 +3,10 @@
 var PREFIX = 'jb-selected-action-v1:';
 var active = new Set();
 
-function validateRounds(rounds) {
-  if (!Array.isArray(rounds) || !rounds.length || rounds.length > 24) throw new Error('Select at least one action (at most 24 rounds).');
+function validateRounds(rounds, maxCalls) {
+  maxCalls = maxCalls == null ? 24 : Number(maxCalls);
+  if (!Number.isSafeInteger(maxCalls) || maxCalls < 1 || maxCalls > 256) throw new Error('The action has an invalid call limit.');
+  if (!Array.isArray(rounds) || !rounds.length || rounds.length > maxCalls) throw new Error('Select at least one action (at most ' + maxCalls + ' rounds).');
   var count = 0;
   rounds.forEach(function (calls) {
     if (!Array.isArray(calls) || !calls.length || calls.length > 8) throw new Error('Each round needs one call per selected chain.');
@@ -17,7 +19,7 @@ function validateRounds(rounds) {
       seen.add(cid); count++;
     });
   });
-  if (count > 24) throw new Error('Select at most 24 calls. Nothing was submitted.');
+  if (count > maxCalls) throw new Error('Select at most ' + maxCalls + ' calls. Nothing was submitted.');
 }
 
 function keyFor(scope, account) { return PREFIX + String(account || '').toLowerCase() + ':' + scope; }
@@ -48,7 +50,7 @@ export function hasSavedActionPlan(scope, account) {
 }
 export function acknowledgeSavedActionPlan(scope, account) {
   var key = keyFor(scope, account), plan = read(key);
-  if (plan && plan.nextRound === plan.rounds.length && !plan.safePending && plan.results.every(function (result) { return result.relayr || result.confirmed === true || Number(result.executedReady || 0) === Number(result.expectedCount); })) localStorage.removeItem(key);
+  if (plan && plan.nextRound === plan.rounds.length && !plan.safePending && plan.results.every(function (result) { return result.relayr || result.confirmed === true || Number(result.executedReady || 0) + Number(result.obsoleteReady || 0) === Number(result.expectedCount); })) localStorage.removeItem(key);
 }
 
 export async function runSavedActionPlan(options, locked) {
@@ -69,13 +71,13 @@ export async function runSavedActionPlan(options, locked) {
     var plan = read(key), resumed = !!plan;
     if (!plan) {
       var prepared = await options.prepare();
-      validateRounds(prepared && prepared.rounds);
+      validateRounds(prepared && prepared.rounds, options.maxCalls);
       plan = { version: 1, id: crypto.randomUUID(), account: options.account.toLowerCase(), scope: options.scope, executionAccount: options.executionAccount || options.account, safeMode: !!options.safeMode, rounds: prepared.rounds,
         summary: prepared.summary || null, gas: prepared.gas || options.gas || 500000n,
         nextRound: 0, results: [], safePending: false };
       save(key, plan);
     }
-    validateRounds(plan.rounds);
+    validateRounds(plan.rounds, options.maxCalls);
     if (!/^[0-9a-f-]{36}$/i.test(plan.id || '') || !Array.isArray(plan.results) || plan.results.length !== plan.nextRound) throw new Error('The saved action checkpoint is malformed. Verify its transactions before starting again.');
     if (plan.account !== options.account.toLowerCase() || plan.scope !== options.scope) throw new Error('The saved action belongs to a different account.');
     if (String(plan.executionAccount).toLowerCase() !== String(options.executionAccount || options.account).toLowerCase() || plan.safeMode !== !!options.safeMode) throw new Error('Resume this saved action with its original execution account and Safe selection.');
@@ -108,6 +110,14 @@ export async function runSavedActionPlan(options, locked) {
       }
       var result = remainingCalls.length ? await options.executeRound(remainingCalls, index, plan, {
         checkpoint: checkpoint,
+        hasSafeProgress: !!(safeProgress.attempt || safeProgress.proposals.length || safeProgress.executedChains.length),
+        replaceUnsubmittedRound: function (replacement) {
+          if (checkpointed || plan.safePending || safeProgress.attempt || safeProgress.proposals.length || safeProgress.executedChains.length) throw new Error('A submitted Safe round cannot be changed.');
+          validateRounds([replacement], options.maxCalls);
+          originalCalls = replacement;
+          plan.rounds[index] = replacement;
+          save(key, plan);
+        },
         beforeSafe: function (attempt) {
           // Execution of an already known exact proposal is recovered by that hash. It never requires
           // another proposal, even if the wallet loses its execution transaction response.

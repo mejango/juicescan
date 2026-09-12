@@ -142,7 +142,7 @@ export function contractNameByAddress(address) {
       if (!addrs) continue;
       for (const cid in addrs) {
         const v = addrs[cid];
-        if (v) _addrToName[String(v).toLowerCase()] = cs[name].contractName || name;
+        if (v) _addrToName[String(v).toLowerCase()] = cs[name].generation && cs[name].generation !== 'current' ? name : (cs[name].contractName || name);
       }
     }
   }

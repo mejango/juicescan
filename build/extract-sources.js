@@ -71,7 +71,7 @@ const MANIFEST = [
   "JBBaseSucker",
   "JBOmnichainDeployer",
   "JBProjectPayer", "JBProjectPayerDeployer",
-  "JBRouterTerminal", "JBRouterTerminalRegistry",
+  "JBBuybackHook", "JBRouterTerminal", "JBRouterTerminalRegistry", "JBRouterTerminalGateway", "JBRatioPriceFeed",
   "JBProjectHandles",
   "JBAddressRegistry",
   "REVDeployer", "REVLoans",
@@ -102,7 +102,7 @@ function loadDeployments() {
 function deploymentRecordsFor(deployments, contractName) {
   const records = [];
   for (const [deploymentName, record] of Object.entries(deployments)) {
-    if (deploymentName === contractName || record.contractName === contractName) {
+    if (deploymentName === contractName || (record.contractName === contractName && !/_deprecated\d*$/.test(deploymentName))) {
       records.push([deploymentName, record]);
     }
   }
@@ -567,7 +567,7 @@ function extractContract(contractName, ref, previous) {
     return { error: `${relPath} missing from ${npm.pkg}@${npm.version}` };
   }
   const raw = fs.readFileSync(absFile, "utf8");
-  const parsed = parseContract(raw, contractName);
+  const parsed = parseContract(raw, contractName.replace(/_deprecated\d*$/, ""));
   if (!parsed) {
     return { error: `contract block not found in ${relPath} @ ${npm.pkg}@${npm.version}` };
   }
@@ -590,9 +590,13 @@ function extractContract(contractName, ref, previous) {
   };
 }
 
+function sourceManifest(deployments) {
+  return [...MANIFEST, ...Object.keys(deployments).filter((name) => /^(JBBuybackHook|JBRouterTerminal)_deprecated\d*$/.test(name))];
+}
+
 function verify(deployments, current) {
   const problems = [];
-  for (const contractName of MANIFEST) {
+  for (const contractName of sourceManifest(deployments)) {
     const ref = deployedRefFor(deployments, contractName);
     const entry = current[contractName];
     if (ref.error) {
@@ -610,7 +614,7 @@ function verify(deployments, current) {
     }
   }
   for (const contractName of Object.keys(current)) {
-    if (!MANIFEST.includes(contractName)) {
+    if (!sourceManifest(deployments).includes(contractName)) {
       problems.push(`${contractName}: present in ${path.basename(OUT_FILE)} but not in the manifest`);
     }
   }
@@ -645,7 +649,7 @@ function main() {
   const failures = [];
   const skipped = [];
 
-  for (const contractName of MANIFEST) {
+  for (const contractName of sourceManifest(deployments)) {
     const ref = deployedRefFor(deployments, contractName);
     if (ref.error) {
       // Nothing is deployed under this name, so nothing in the registry can

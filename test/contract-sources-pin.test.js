@@ -22,8 +22,8 @@ function installFixture(candidates) {
 
 describe('getFunctionSource arity guard', () => {
   test('a lone candidate whose parameter count differs from the ABI entry resolves to null', () => {
-    // The exact INV-133 shape: the undeployed 1.4.0 body is the only `deployPool`
-    // in the parsed source, while the deployed ABI entry still takes two words.
+    // Historical INV-133 shape: a newer one-argument `deployPool` body is the
+    // only parsed source, while the selected deployed ABI still takes two words.
     installFixture([
       {
         name: 'deployPool',
@@ -114,7 +114,8 @@ describe('contract-sources.json is pinned to the deployed refs', () => {
   function deployedRef(contractName) {
     const refs = new Set();
     for (const [deploymentName, record] of Object.entries(deployments)) {
-      if (deploymentName !== contractName && record.contractName !== contractName) continue;
+      if (deploymentName !== contractName
+        && (record.contractName !== contractName || /_deprecated\d*$/.test(deploymentName))) continue;
       for (const chain of Object.values(record.chains || {})) {
         if (chain.gitCommit) refs.add(chain.gitCommit);
       }
@@ -135,6 +136,14 @@ describe('contract-sources.json is pinned to the deployed refs', () => {
   test('no entry is emitted for a contract with no deployment', () => {
     for (const name of Object.keys(contractSources)) {
       expect(deployedRef(name).size, `${name} is not deployed`).toBe(1);
+    }
+  });
+
+  test('current, previous and v1 hook bodies retain their own deployed package refs', () => {
+    for (const [name, version] of [['JBBuybackHook', '1.4.0'], ['JBBuybackHook_deprecated1', '1.1.1'], ['JBBuybackHook_deprecated', '1.0.0']]) {
+      const ref = `npm:@bananapus/buyback-hook-v6@${version}`;
+      expect([...deployedRef(name)]).toEqual([ref]);
+      expect(contractSources[name].sourceRef).toBe(ref);
     }
   });
 

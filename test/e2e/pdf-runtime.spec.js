@@ -11,7 +11,8 @@ test('the bundled PDF runtime renders a local page without browser errors', asyn
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
 
-  await page.goto('/index.html', { waitUntil: 'domcontentloaded' });
+  // Keep the PDF smoke test independent of live project/IPFS traffic from Discover.
+  await page.goto('/index.html#learn', { waitUntil: 'domcontentloaded' });
   const rendered = await page.evaluate(async bytes => {
     const pdfjs = await import('/pdf.min.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';

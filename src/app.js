@@ -782,7 +782,7 @@ function renderContractSection(contractName) {
   arrow.textContent = '\u25B8'; // ▸
   var nameSpan = document.createElement('span');
   nameSpan.className = 'contract-name';
-  nameSpan.textContent = contractName;
+  nameSpan.textContent = contractName + (contractMeta && contractMeta.generation !== 'current' ? ' [' + contractMeta.generation + ' — retired]' : '');
   var countSpan = document.createElement('span');
   countSpan.className = 'contract-fn-count';
   countSpan.textContent = '(' + fns.length + ' functions)';

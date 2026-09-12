@@ -15,6 +15,7 @@ import { getWalletClient, getAccount, switchChain, createPublicClientForChain, Z
 import { CHAINS, chainList, chainNameFor, isTestnetChain } from './chain.js';
 import { contractGasWithinCap } from './gas.js';
 import { verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
+import { pendingPaymentTransactionGasCap } from './pending-payment-gas.js';
 
 // The Safe Transaction Service rejects non-checksummed addresses (HTTP 422). Checksum everything we send.
 function cs(a) { try { return checksumAddress(a); } catch (_) { return a; } }
@@ -387,7 +388,7 @@ async function feeOverrides(chainId) {
 
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an onchain revert surfaces as
 // an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
-async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending) {
+async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending, executionGasCap) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var account = getAccount();
   if (!account) throw new Error('Connect a wallet first');
@@ -399,7 +400,7 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var calldata = encodeFunctionData({ abi: params.abi, functionName: params.functionName, args: params.args || [] });
   var value = BigInt(params.value || 0);
-  var gas = label === 'approveHash' ? 300000n : 5000000n;
+  var gas = executionGasCap == null ? (label === 'approveHash' ? 300000n : 5000000n) : executionGasCap;
   var rawTx = {
     from: account, to: params.address, data: calldata,
     value: '0x' + value.toString(16), gas: '0x' + gas.toString(16),
@@ -465,6 +466,9 @@ export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, 
   if (!confs.length) throw new Error('No confirmations to execute with.');
   var signatures = '0x' + confs.map(sigBytesFor).join('');
   var expectedSafeTxHash = safeTxHashForQueuedTx(chainId, safe, tx);
+  // A qualified gateway retry needs more than the ordinary 5M outer-call cap. Simulate the
+  // complete Safe execution at the live transaction ceiling; insufficient wrapper gas still fails.
+  var executionGasCap = await pendingPaymentTransactionGasCap(chainId, tx, createPublicClientForChain(chainId));
   return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: safeExecArgs(tx, signatures) }, 'execTransaction', null, reverify, async function (receipt) {
     if (!hasExactSafeExecutionSuccess(receipt.logs, safe, expectedSafeTxHash)) {
       var failure = new Error('Safe execTransaction mined without ExecutionSuccess for the reviewed transaction (tx ' + receipt.transactionHash + ').');
@@ -475,7 +479,7 @@ export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, 
       return readDistributionTokens(createPublicClientForChain(chainId), controller);
     });
     if (verifyReceipt) await verifyReceipt(receipt);
-  }, onSending);
+  }, onSending, executionGasCap);
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.

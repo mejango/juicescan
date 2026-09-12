@@ -3,8 +3,8 @@ import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const DEPLOY_ALL_COMMIT = '20883a7c7fcd58b6264f8375b6156a59ab9a2597';
-const DEPLOY_ALL_SOURCE_DIGEST = 'sha256:443959a5a09616f4b73a0b4046e82674bab5e4e86287380d43642fa4aa898484';
+const DEPLOY_ALL_COMMIT = 'a6ab40c5806b52ff4cb21f9eaefe275e621796f9';
+const DEPLOY_ALL_SOURCE_DIGEST = 'sha256:16794edcdd7a6be201477f4f2797087e0a613eb3f1714a6cc0b27c36a1ca0b43';
 const root = resolve(import.meta.dirname, '..');
 const deploymentsDir = resolve(
   process.env.DEPLOY_ALL_DEPLOYMENTS_DIR || resolve(root, '..', '..', 'deploy-all-v6', 'deployments'),
