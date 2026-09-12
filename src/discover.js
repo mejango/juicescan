@@ -4049,34 +4049,9 @@ function isFeelessForCall(chainId, addr, projectId, caller) {
 function isFeelessAddress(chainId, addr, projectId) {
   return isFeelessForCall(chainId, addr, projectId, addr);
 }
-// Whether the protocol fee can actually route for `token`: JB project #1 must have a primary terminal that can
-// process a pay in it. When it can't (e.g. a project-specific accounting token with no swap route), JBMultiTerminal's
-// _processFee forgives the fee and credits it straight back to the paying project — so don't warn about a fee.
-// Probe: previewPayFor(#1, token) on primaryTerminalOf(#1, token). A viable route returns project #1's live
-// ruleset; the router registry fail-softs to an all-zero ruleset when no route exists, and other terminals
-// revert — both mean the fee pay would revert and be forgiven. NOTE an accountingContextForTokenOf read is NOT
-// enough: the registry answers it for tokens it still can't route a pay for (verified against basesep #1/KMAC).
-// Resolves true / false / null (unknown — RPC failure; keep the hedged fee note).
-var primaryTerminalOfAbi = [{ type: 'function', name: 'primaryTerminalOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'token', type: 'address' }], outputs: [{ type: 'address' }] }];
-var _feeRouteCache = {};
-function feeWillRoute(chainId, token, decimals) {
-  var key = Number(chainId) + ':' + String(token || '').toLowerCase();
-  if (_feeRouteCache[key] === undefined) {
-    _feeRouteCache[key] = read(chainId, 'JBDirectory', primaryTerminalOfAbi, 'primaryTerminalOf', [BigInt(FEE_BENEFICIARY_PROJECT_ID), token]).then(function (term) {
-      if (!term || /^0x0+$/.test(term)) return false;
-      var probeAmount = 10n ** BigInt(decimals == null ? 18 : decimals); // a nominal 1 token
-      return clientFor(chainId).readContract({
-        address: term, abi: feePreviewPayAbi, functionName: 'previewPayFor',
-        args: [BigInt(FEE_BENEFICIARY_PROJECT_ID), token, probeAmount, '0x0000000000000000000000000000000000000001', '0x'],
-      }).then(function (o) { return toBigInt(o[0] && o[0].id) !== 0n; })
-        .catch(function () { return false; });
-    }).catch(function () { return null; });
-  }
-  return _feeRouteCache[key];
-}
-
 // Whether the router registry can actually route a pay of `token` into `projectId` right now (direct forward,
-// swap, or cash-out loop). Same fail-soft signal as feeWillRoute: a dead route previews an all-zero ruleset.
+// swap, or cash-out loop). A dead route previews an all-zero ruleset. This does not determine fee forgiveness:
+// an eligible fee payment can succeed at the gateway while retaining its input for a later routing attempt.
 var _payRouteCache = {};
 function routerPayRouteWorks(chainId, projectId, token, decimals) {
   var registry = routerTerminalFor(chainId);
@@ -4114,7 +4089,7 @@ function feeProjectLink(chainId, projectId, label) {
 // Subtle fee receipt: "<label>: <feeAmount>" then "• get ~<X> <token> in <project link> for the fee" — shows where
 // the protocol fee goes and the project token it mints back to the beneficiary. opts: { chainId, feeProjectId,
 // feeTokenAddr, decimals, symbol, feeAmount (bigint), beneficiary, label, projectLabel }.
-function renderFeeReceipt(container, opts) {
+export function renderFeeReceipt(container, opts) {
   if (!opts.feeAmount || opts.feeAmount <= 0n) return;
   var feeLine = el('div', 'ops-preview-line ops-preview-fee');
   feeLine.textContent = (opts.label || '2.5% protocol fee') + ': ' + formatBalance(opts.feeAmount, opts.decimals, opts.symbol);
@@ -4126,7 +4101,7 @@ function renderFeeReceipt(container, opts) {
     feeTok.appendChild(feeProjectLink(opts.chainId, opts.feeProjectId, opts.projectLabel));
     if (suffix) feeTok.appendChild(document.createTextNode(suffix));
   }
-  withLink('• pays into the revnet ', '. Checking tokens for the recipient…');
+  withLink('• fee destination: ', '. Routing may remain pending.');
   container.appendChild(feeTok);
   Promise.all([
     computePayPreview({ chainId: opts.chainId, projectId: Number(opts.feeProjectId), token: opts.feeTokenAddr || NATIVE_TOKEN, amount: opts.feeAmount, beneficiary: opts.beneficiary }),
@@ -4134,9 +4109,9 @@ function renderFeeReceipt(container, opts) {
   ]).then(function (r) {
     var p = r[0], fsym = r[1] || 'tokens';
     if (p && !p.unavailable && p.received != null && p.received > 0n) {
-      withLink('• get ~ ' + formatTokens(p.received) + ' ' + fsym + ' in ', ' for the fee');
+      withLink('• estimated ~ ' + formatTokens(p.received) + ' ' + fsym + ' in ', ' if the fee routes successfully');
       if (opts.onReceived) opts.onReceived(p.received, fsym);
-    } else withLink('• fee funds ', null);
+    } else withLink('• fee destination: ', '. Routing may remain pending; an unavailable preview does not confirm a refund.');
   }).catch(function () {});
 }
 
@@ -19435,9 +19410,9 @@ function buildPayoutsModal(project, acctKind) {
     var amount; try { amount = parseAmount(amt.value, state.meta.decimals); } catch (_) { return; }
     if (!amount || amount <= 0n) return;
     var line = el('div', 'ops-preview-line');
-    // When the protocol can't accept this token, the fee is forgiven and returned to the project — say nothing.
+    // A fee-route preview cannot establish exemption or forgiveness; the gateway can retain a failed route.
     line.textContent = (state.meta.tokenKeyed ? '' : 'Uses the current onchain price. ')
-      + (state.feeRoutes === false ? '' : 'Fee: up to 2.5%; JB projects and registered feeless addresses are exempt.');
+      + 'Fee: up to 2.5%; JB projects and registered feeless addresses are exempt. Routing may remain pending.';
     if (line.textContent) preview.appendChild(line);
   }
   amt.addEventListener('input', updatePayoutPreview);
@@ -19488,11 +19463,6 @@ function buildPayoutsModal(project, acctKind) {
       if (seq !== loadSeq) return null;
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
-      state.feeRoutes = null;
-      feeWillRoute(state.chainId, acct.address, acct.decimals).then(function (routes) {
-        if (seq !== loadSeq) return;
-        state.feeRoutes = routes; updatePayoutPreview();
-      });
       return readPayoutAccess(state.chainId, acct).then(function (access) {
         if (seq !== loadSeq) return;
         state.balance = access.balance; state.limits = access.limits;
@@ -19660,9 +19630,6 @@ function buildUseAllowanceModal(project, acctKind) {
     preview.appendChild(recv);
     if (state.feeless) {
       var fl = el('div', 'ops-preview-line ops-preview-feetok'); fl.textContent = 'Protocol fee: 0. This address has an exemption for this project.'; preview.appendChild(fl);
-    } else if (state.feeRoutes === false) {
-      // The fee is still deducted from the withdrawal, but _processFee forgives it and credits it back.
-      var rt = el('div', 'ops-preview-line ops-preview-feetok'); rt.textContent = 'The 2.5% returns to the project’s balance — the protocol can’t accept this token.'; preview.appendChild(rt);
     } else if (state.meta.tokenKeyed) {
       renderFeeReceipt(preview, { chainId: state.chainId, feeProjectId: FEE_BENEFICIARY_PROJECT_ID, feeTokenAddr: state.acct.address, decimals: state.acct.decimals, symbol: state.acct.symbol, feeAmount: amount / 40n, beneficiary: getEffectiveAccount() });
     } else {
@@ -19747,11 +19714,6 @@ function buildUseAllowanceModal(project, acctKind) {
       if (seq !== loadSeq) return null;
       if (!acct) { state.acct = null; bal.textContent = (acctKind ? acctKind.symbol : 'This token') + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.'; return; }
       state.acct = acct;
-      state.feeRoutes = null;
-      feeWillRoute(state.chainId, acct.address, acct.decimals).then(function (routes) {
-        if (seq !== loadSeq) return;
-        state.feeRoutes = routes; updateAllowancePreview();
-      });
       var allowanceCaller = getEffectiveAccount();
       var allowanceChain = state.chainId;
       isAllowanceFeeless(allowanceChain, pidOn(project, allowanceChain), allowanceCaller, allowanceCaller).then(function (f) {
