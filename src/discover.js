@@ -14,10 +14,13 @@ import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
-import { runDirectBatch, hasDirectBatch, directBatchStatus } from './direct-batch.js';
+import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } from './action-plan.js';
 import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
 import { CREDIT_CLAIM_ABI, prepareCreditClaims, verifyCreditClaims, verifySavedCreditClaims } from './credit-claims.js';
+import { fetchPendingPaymentRows, readPendingPayment, preparePendingPayment, refreshPendingPayment, reverifyPendingPayment, pendingPaymentReceiptOutcome } from './pending-payments.js';
+import { renderPendingPayments } from './pending-payments-ui.js';
+import { isPendingPaymentTransaction, pendingPaymentTransactionGasCap } from './pending-payment-gas.js';
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded, findSavedSafeExecution } from './safe.js';
 import { buildStep, loadTray, saveTray, upsertStep, registerPowerKinds, multiSendBatchCalls, simulateBatchCalls } from './safe-batch.js';
 import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
@@ -11163,7 +11166,7 @@ export function snapshotKnownSafeProposal(chainId, safe, tx, hash, fromBlock, ha
     nonce: hashOnly ? null : fields.nonce, hashOnly: !!hashOnly, tx: fields, executed: false };
 }
 
-export async function reconcileSelectedSafeResult(result, calls, sender, verifyReceipt, findExecution) {
+export async function reconcileSelectedSafeResult(result, calls, sender, verifyReceipt, findExecution, verifyObsolete) {
   if (result.relayr || Number(result.executedReady || 0) === Number(result.expectedCount)) return result;
   var proposals = result.proposals || [];
   if (proposals.length !== Number(result.queued)) throw new Error('The saved Safe proposals do not have complete execution proofs. Keep their original queue entries.');
@@ -11176,11 +11179,16 @@ export async function reconcileSelectedSafeResult(result, calls, sender, verifyR
     seen.add(Number(proposal.chainId));
     if (proposal.executed) continue;
     var receipt = await (findExecution || findSavedSafeExecution)(proposal);
-    if (!receipt) continue;
+    proposal.obsolete = false;
+    if (!receipt) {
+      if (verifyObsolete) proposal.obsolete = await verifyObsolete(call, proposal) === true;
+      continue;
+    }
     if (verifyReceipt) await verifyReceipt(call, receipt);
     proposal.executed = true;
   }
   next.executedReady = Number(next.immediateExecuted || 0) + next.proposals.filter(function (proposal) { return proposal.executed; }).length;
+  next.obsoleteReady = next.proposals.filter(function (proposal) { return proposal.obsolete; }).length;
   return next;
 }
 
@@ -11214,21 +11222,34 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
   var preparedChecks = null;
   var outcome = await runSavedActionPlan({
     scope: scope, account: account, executionAccount: sender, safeMode: !!authoritySafe, gas: opts.gas,
+    maxCalls: opts.maxCalls,
     prepare: async function () {
       var prepared = await prepare(sender);
       preparedChecks = opts._preparedReverify;
       return prepared;
     },
-    reconcileResult: function (result, calls) { return reconcileSelectedSafeResult(result, calls, sender, opts.verifyReceipt); },
+    reconcileResult: function (result, calls) { return reconcileSelectedSafeResult(result, calls, sender, opts.verifyReceipt, null, opts.verifyObsoleteSafeCall); },
     executeRound: async function (calls, index, plan, control) {
+      var roundScope = scope + ':' + plan.id + ':round:' + index;
+      // A keeper may resolve a queued payment while an earlier round is being reviewed. Refresh only
+      // calls with no wallet/relay/Safe publication record; submitted work retains its exact recovery.
+      if (opts.refreshUnsubmittedRound && !control.hasSafeProgress
+          && !loadRelayrPendingSession(roundScope) && await clearUnsubmittedDirectBatch(roundScope, account, calls)) {
+        calls = await opts.refreshUnsubmittedRound(calls);
+        if (!calls.length) {
+          var skipped = { relayr: true, session: { expectedCount: 0, records: [] }, alreadyResolved: true };
+          control.checkpoint(skipped);
+          return skipped;
+        }
+        control.replaceUnsubmittedRound(calls);
+      }
       var chains = calls.map(function (call) { return { id: Number(call.chainId == null ? call.cid : call.chainId), name: call.chainName || chainNameOf(call.chainId == null ? call.cid : call.chainId) }; });
       calls.forEach(function (call) {
         if (encodeFunctionData({ abi: call.abi, functionName: call.functionName, args: call.args }).toLowerCase() !== String(call.data).toLowerCase()) throw new Error('The saved call does not match its reviewed arguments.');
       });
-      var roundScope = scope + ':' + plan.id + ':round:' + index;
       var roundOpts = Object.assign({}, opts, { gas: plan.gas, pendingScope: roundScope,
         title: (opts.title || opts.label || 'Project action') + (plan.rounds.length > 1 ? ' — round ' + (index + 1) + '/' + plan.rounds.length : ''),
-        summary: { rows: (plan.summary && plan.summary.rows || []).concat([['Round', (index + 1) + ' of ' + plan.rounds.length], ['Calls in this round', String(calls.length)]]) },
+        summary: { rows: (opts.summaryForRound ? opts.summaryForRound(calls) : plan.summary && plan.summary.rows || []).concat([['Round', (index + 1) + ' of ' + plan.rounds.length], ['Calls in this round', String(calls.length)]]) },
         reverify: async function (chainId) {
           if (!getAccount() || !sameAddr(getAccount(), account)) throw new Error('Connected account changed. Resume with the original wallet.');
           if (opts.reverifySaved) await opts.reverifySaved(calls, chainId, sender);
@@ -11274,8 +11295,10 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
   if (results.some(function (result) { return !result.relayr; })) {
     var queued = results.reduce(function (sum, result) { return sum + Number(result.queued || 0); }, 0);
     var executed = results.reduce(function (sum, result) { return sum + Number(result.executedReady || 0); }, 0);
+    var obsoleteProposals = results.flatMap(function (result) { return (result.proposals || []).filter(function (proposal) { return proposal.obsolete; }); });
     var expected = results.reduce(function (sum, result) { return sum + Number(result.expectedCount || 0); }, 0);
-    return { relayr: false, queued: queued, executedReady: executed, safePending: expected > executed, completed: expected === executed,
+    return { relayr: false, queued: queued, executedReady: executed, obsoleteProposals: obsoleteProposals,
+      safePending: expected > executed + obsoleteProposals.length, completed: expected === executed + obsoleteProposals.length,
       resumed: outcome.resumed, rounds: outcome.rounds, cancelled: false };
   }
   return { relayr: true, completed: true, resumed: outcome.resumed, rounds: outcome.rounds,
@@ -11939,7 +11962,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
       });
     }
   }
-  var useRelayr = !hasDirectBatch(confirmOpts.pendingScope, account, calls) && shouldUseRelayrForChains(chains);
+  var useRelayr = !confirmOpts.forceDirect && !hasDirectBatch(confirmOpts.pendingScope, account, calls) && shouldUseRelayrForChains(chains);
   if (useRelayr) {
     var trustedTargets = await Promise.all(calls.map(function (call) { return relayrSupportsForwarding(call.cid, call.to); }));
     useRelayr = trustedTargets.every(function (trusted) { return trusted; });
@@ -11997,8 +12020,9 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         }
         var directClient = clientFor(direct.cid);
         var directGas;
-        try { directGas = BigInt(gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
-        if (directGas < 21000n || directGas > 5000000n) throw new Error('This transaction gas limit is outside the supported direct-send range.');
+        try { directGas = BigInt(confirmOpts.gasLimitForCall ? await confirmOpts.gasLimitForCall(direct) : gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
+        var directCeiling = confirmOpts.gasLimitForCall ? 16777216n : 5000000n;
+        if (directGas < 21000n || directGas > directCeiling) throw new Error('This transaction gas limit is outside the supported direct-send range.');
         setStatus('Simulating the confirmed transaction…', 'pending');
         var directResult = await directClient.request({
           method: 'eth_call',
@@ -12898,11 +12922,12 @@ function readySafeExecutionKey(ready) {
 
 async function preflightReadySafeExecution(item) {
   var call = safeExecRelayrTx(item.ready.cid, item.ready.safe, item.ready.tx);
+  var gas = await pendingPaymentTransactionGasCap(item.ready.cid, item.ready.tx, clientFor(item.ready.cid)) || 5000000n;
   var result = await clientFor(item.ready.cid).request({
     method: 'eth_call',
     // A Relayr executor is not a Safe owner. Simulate from zero so every v=1 signature must use the onchain
     // approvedHashes entry proven above instead of passing through Safe's msg.sender==owner shortcut.
-    params: [{ from: ZERO_ADDRESS, to: call.target, data: call.data, value: '0x0', gas: '0x4c4b40' }, 'latest'],
+    params: [{ from: ZERO_ADDRESS, to: call.target, data: call.data, value: '0x0', gas: '0x' + gas.toString(16) }, 'latest'],
   });
   if (typeof result !== 'string' || !/^0x[0-9a-f]{64}$/i.test(result) || BigInt(result) !== 1n) {
     throw new Error('Safe execution simulation failed on ' + (item.ready.chain || chainNameOf(item.ready.cid)) + '. Nothing was submitted or paid.');
@@ -12993,7 +13018,8 @@ async function executeReadySafeTransactions(readyExecs, opts) {
   var expectedSnapshots = {};
   initialReady.forEach(function (item) { expectedSnapshots[readySafeExecutionKey(item.ready)] = readySafeExecutionSnapshot(item); });
   var chainIds = Array.from(new Set(readyExecs.map(function (r) { return Number(r.cid); })));
-  if (readyExecs.length && (chainIds.length === 1 || !relayrSupportsChains(chainIds))) {
+  if (readyExecs.length && (chainIds.length === 1 || !relayrSupportsChains(chainIds)
+      || readyExecs.some(function (ready) { return isPendingPaymentTransaction(ready.cid, ready.tx); }))) {
     var ordered = readyExecs.slice().sort(function (a, b) { return Number(a.cid) - Number(b.cid) || Number(a.tx.nonce) - Number(b.tx.nonce); });
     var directOk = await confirmTransactionModal({
       via: 'Direct wallet transactions',
@@ -13801,9 +13827,130 @@ function makeMultiselect(config) {
   };
 }
 
-function renderActivityCard(project, opts) {
+function pendingPaymentReaders(chainId) {
+  return { client: clientFor(Number(chainId)), knownGateway: function (gateway, cid) {
+    return ['JBRouterTerminalGateway', 'JBRouterTerminalGateway_deprecated1', 'JBRouterTerminalGateway_deprecated'].some(function (name) {
+      return sameAddr(getAddress(name, cid), gateway);
+    });
+  } };
+}
+
+async function pendingPaymentGasLimit(call) {
+  var block = await clientFor(Number(call.chainId == null ? call.cid : call.chainId)).getBlock({ blockTag: 'latest' });
+  var limit = BigInt(block.gasLimit);
+  return limit < 16777216n ? limit : 16777216n;
+}
+
+// Each qualified attempt can need most of a block's transaction allowance. Use durable reviewed
+// rounds, with one call per chain per round, rather than an atomic batch that can exhaust that budget.
+export async function runPendingProjectPayments(project, rows, setStatus) {
+  var scope = relayrActionScope(project, 'pending-payments');
+  var result = await runSelectedProjectCallRounds(project, async function () {
+    if (!rows.length) throw new Error('No ready payments remain. Refresh before routing.');
+    var calls = [];
+    for (var row of rows) {
+      var call = await preparePendingPayment(row, pendingPaymentReaders(row.chainId));
+      if (!call) throw new Error('A selected payment has already resolved. Refresh before routing.');
+      call.chainName = chainNameOf(call.chainId); call.contract = 'JBRouterTerminalGateway';
+      calls.push(call);
+    }
+    // Direct transactions already have separate reviews. Checkpoint each payment independently so
+    // a keeper resolving a later payment cannot trap it behind an earlier payment's saved receipt.
+    var rounds = calls.map(function (call) { return [call]; });
+    var finalCount = calls.filter(function (call) { return call.functionName === 'finalizePendingCall'; }).length;
+    return { rounds: rounds,
+      summary: { rows: [['Payments', String(calls.length)], ['Final attempts', String(finalCount)],
+        ['Outcome', 'A retry may remain pending. A final attempt may return funds to the source project.'],
+        ['Beneficiary', 'The original payment beneficiary is unchanged.'],
+        ['Batch', 'Separate transactions, one payment per chain in each round.']] },
+    };
+  }, { pendingScope: scope, label: 'Route pending payments', title: 'Review pending payments',
+    maxCalls: 256, forceDirect: true, gasLimitForCall: pendingPaymentGasLimit,
+    verifyObsoleteSafeCall: async function (call) {
+      // Only a consumed commitment proves the original queued payment can never be retried again.
+      try { return await refreshPendingPayment(call, pendingPaymentReaders(call.chainId)) === null; }
+      catch (_) { return false; }
+    },
+    refreshUnsubmittedRound: async function (calls) {
+      var refreshed = [];
+      for (var original of calls) {
+        var fresh = await refreshPendingPayment(original, pendingPaymentReaders(original.chainId));
+        if (fresh) refreshed.push(Object.assign(fresh, { chainName: chainNameOf(fresh.chainId), contract: 'JBRouterTerminalGateway' }));
+      }
+      return refreshed;
+    },
+    summaryForRound: function (calls) {
+      return calls.map(function (call) {
+        var row = call.pendingPayment;
+        return [chainNameOf(call.chainId), String(row.amount) + ' base units of ' + row.token + ' → project #' + row.projectId + ' · beneficiary ' + row.beneficiary];
+      }).concat([['Final attempts', String(calls.filter(function (call) { return call.functionName === 'finalizePendingCall'; }).length)],
+        ['Outcome', 'A retry may remain pending. A final attempt may return funds to the source project.'],
+        ['Payment from your wallet', 'Gas only; the gateway already holds the original payment.']]);
+    },
+    reverifySaved: async function (calls, chainId, sender) {
+      for (var call of calls) {
+        if (chainId != null && Number(call.chainId) !== Number(chainId)) continue;
+        await reverifyPendingPayment(call, pendingPaymentReaders(call.chainId));
+        if (isSafeConnected()) {
+          // Safe proposals use the same bounded, live simulation before entering the standard review flow.
+          var result = await clientFor(call.chainId).request({ method: 'eth_call', params: [{ from: sender, to: call.to, data: call.data,
+            value: '0x0', gas: '0x' + (await pendingPaymentGasLimit(call)).toString(16) }, 'latest'] });
+          if (typeof result !== 'string' || !/^0x[0-9a-f]*$/i.test(result) || result.length > 8194) throw new Error('The pending payment simulation returned malformed data.');
+        }
+      }
+    },
+    verifyReceipt: function (call, receipt) { return pendingPaymentReceiptOutcome(call, receipt); },
+  }, setStatus);
+  if (result && result.obsoleteProposals && result.obsoleteProposals.length) {
+    // Keep the exact obsolete Safe hashes after the completed action checkpoint is acknowledged.
+    // These proposals were not executed and can still occupy a Safe nonce until canceled.
+    var key = pendingPaymentArchiveKey(project);
+    var archived = JSON.parse(localStorage.getItem(key) || '[]');
+    result.obsoleteProposals.forEach(function (proposal) {
+      if (!archived.some(function (old) { return old.chainId === proposal.chainId && old.safeTxHash === proposal.safeTxHash; })) archived.push(proposal);
+    });
+    var raw = JSON.stringify(archived);
+    localStorage.setItem(key, raw);
+    if (localStorage.getItem(key) !== raw) throw new Error('Keep the original Safe queue entries; their obsolete proposal records could not be saved.');
+  }
+  return result;
+}
+
+function pendingPaymentArchiveKey(project) { return 'jb-obsolete-payment-proposals:' + String(getAccount() || '').toLowerCase() + ':' + relayrActionScope(project, 'pending-payments'); }
+
+export function renderProjectPendingPayments(project) {
+  var scope = relayrActionScope(project, 'pending-payments');
+  var panel = renderPendingPayments({
+    hasSaved: function () { return hasSelectedProjectAction(scope); },
+    archived: function () {
+      try { return JSON.parse(localStorage.getItem(pendingPaymentArchiveKey(project)) || '[]').map(function (proposal) {
+        return { hash: proposal.safeTxHash, url: safeTxLink(proposal.chainId, proposal.safe, proposal.safeTxHash), chain: chainNameOf(proposal.chainId) };
+      }); } catch (_) { return []; }
+    },
+    acknowledge: function () { acknowledgeSelectedProjectAction(scope); },
+    chainName: chainNameOf,
+    describe: function (row) {
+      var token = getChainTokens(row.chainId).find(function (candidate) { return sameAddr(candidate.address, row.token); });
+      return token ? formatAmount(BigInt(row.amount), token.decimals) + ' ' + token.symbol : String(row.amount) + ' base units · ' + truncAddr(row.token);
+    },
+    loadRows: function () {
+      return fetchPendingPaymentRows(projectChains(project).map(function (chain) {
+        return { chainId: chain.id, sourceProjectId: pidOn(project, chain.id), version: BENDYSTRAW_VERSION };
+      }), bendystrawQuery);
+    },
+    readState: function (row) { return readPendingPayment(row, pendingPaymentReaders(row.chainId)); },
+    run: function (rows, setStatus) { return runPendingProjectPayments(project, rows, setStatus); },
+    onUpdated: function () { setTimeout(function () { panel.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true })); }, 0); },
+  });
+  onEffectiveAccountChange(function () { if (panel.isConnected) panel._refresh(); });
+  return panel;
+}
+
+export function renderActivityCard(project, opts) {
   var ACTIVITY_POLL_MS = 15000;
   var card = el('div', 'detail-card');
+  var pendingPayments = renderProjectPendingPayments(project);
+  card.appendChild(pendingPayments);
   // Header row: title on the left, filter controls right-aligned.
   var head = el('div', 'activity-head');
   var title = el('div', 'detail-card-title');
@@ -13894,6 +14041,7 @@ function renderActivityCard(project, opts) {
   // Refresh after a tx confirms. The indexer trails the chain, so retry a few times with backoff
   // until a new top row appears (or the attempts run out).
   card._refresh = function () {
+    pendingPayments._refresh();
     var before = body.querySelector('.activity-row');
     var beforeKey = before ? before.getAttribute('data-tx') : null;
     var attempt = 0;
@@ -13919,6 +14067,7 @@ function renderActivityCard(project, opts) {
         schedulePoll();
         return;
       }
+      pendingPayments._refresh();
       load(true).then(schedulePoll);
     }, ACTIVITY_POLL_MS);
   });

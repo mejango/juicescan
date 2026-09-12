@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { keccak256, stringToHex } from 'viem';
 
-const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', transactions: {}, wallet: null }));
+const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', transactions: {}, wallet: null, rpc: vi.fn(), estimate: 100000n }));
 vi.mock('../src/component-base.js', async importOriginal => ({
   ...await importOriginal(), getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account,
   getWalletClient: () => runtime.wallet,
   confirmTransactionModal: vi.fn().mockResolvedValue(true), switchChain: vi.fn(),
   waitForTrackedTransactionReceipt: vi.fn(async (_client, hash) => ({ status: 'success', transactionHash: hash, blockNumber: 100n })),
-  createPublicClientForChain: cid => ({ request: vi.fn().mockResolvedValue('0x'), estimateGas: vi.fn().mockResolvedValue(100000n),
+  createPublicClientForChain: cid => ({ request: (...args) => runtime.rpc(...args), estimateGas: vi.fn(async () => runtime.estimate),
     getTransaction: vi.fn(async ({ hash }) => runtime.transactions[hash]),
   }),
 }));
@@ -35,6 +35,7 @@ const run = calls => runRelayrAcrossChains(CHAINS, ACCOUNT, cid => (calls || CAL
 
 beforeEach(() => {
   localStorage.clear(); vi.clearAllMocks(); runtime.transactions = {};
+  runtime.rpc.mockResolvedValue('0x'); runtime.estimate = 100000n;
   runtime.wallet = { getChainId: vi.fn(async () => 11155420), sendTransaction: vi.fn(async () => B) };
   relayrPostBundle.mockRejectedValue(new Error('Reached the Relayr quote boundary'));
   relayrSupportsForwarding.mockResolvedValue(true);
@@ -81,6 +82,30 @@ describe('Discover routing after testnet Relayr enablement', () => {
       [['Set buyback hook on Base Sepolia', 'Set router terminal on Base Sepolia'], 1],
     ]);
     expect(buildForwardedTx).not.toHaveBeenCalled(); expect(relayrPostBundle).not.toHaveBeenCalled();
+  });
+
+  it('keeps qualified retries direct across chains and bounds their larger gas allowance after review', async () => {
+    runtime.estimate = 9000000n;
+    const limit = vi.fn(async () => 16777216n);
+    await runRelayrAcrossChains(CHAINS, ACCOUNT, cid => CALLS.find(call => call.chainId === cid), 500000n, vi.fn(), {
+      pendingScope: 'qualified-routing', forceDirect: true, gasLimitForCall: limit,
+    });
+    expect(limit).toHaveBeenCalledTimes(2);
+    expect(runtime.wallet.sendTransaction).toHaveBeenCalledTimes(2);
+    expect(runtime.wallet.sendTransaction.mock.calls.every(([request]) => request.gas === 16777216n && request.value === 0n)).toBe(true);
+    expect(runtime.rpc.mock.calls.every(([request]) => request.params[0].gas === '0x1000000')).toBe(true);
+    expect(buildForwardedTx).not.toHaveBeenCalled();
+    expect(relayrPostBundle).not.toHaveBeenCalled();
+  });
+
+  it('rejects excess gas on ordinary actions and rejects qualified caps above the transaction ceiling', async () => {
+    await expect(runRelayrAcrossChains([CHAINS[0]], ACCOUNT, () => CALLS[0], 6000000n, vi.fn(), {
+      pendingScope: 'ordinary-gas-limit',
+    })).rejects.toThrow('outside the supported direct-send range');
+    await expect(runRelayrAcrossChains([CHAINS[0]], ACCOUNT, () => CALLS[0], 500000n, vi.fn(), {
+      pendingScope: 'invalid-qualified-gas', gasLimitForCall: async () => 16777217n,
+    })).rejects.toThrow('outside the supported direct-send range');
+    expect(runtime.wallet.sendTransaction).not.toHaveBeenCalled();
   });
 
   it('also preserves the old direct transport at the permissionless payer helper boundary', async () => {

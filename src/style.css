@@ -4004,6 +4004,12 @@ dialog[data-covered], dialog[data-covered]::backdrop { visibility: hidden; }
 .detail-spacious .project-detail-tabs { margin-bottom: 20px; }
 
 /* Activity rows */
+.pending-payments { margin-bottom: 24px; }
+.pending-payments .detail-card-title { margin-top: 0; }
+.pending-payment-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0; }
+.pending-payment-row .detail-card-body { flex: 1 1 180px; overflow-wrap: anywhere; }
+.pending-payments > .ops-action-btn { margin: 8px 8px 0 0; }
+.pending-payments a { overflow-wrap: anywhere; }
 
 
 .activity-head {

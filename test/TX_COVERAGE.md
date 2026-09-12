@@ -23,6 +23,7 @@ Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg a
 | Deploy ERC-20 | `JBController.deployERC20For` | `buildDeployErc20Args` | **U** |
 | Send reserved | `JBController.sendReservedTokensToSplitsOf` | `buildSendReservedArgs` | **U** |
 | Claim credits | `JBController.claimTokensFor` | `buildClaimTokensArgs` | **U** |
+| Pending payment routing | `JBRouterTerminalGateway.processPendingCall` / `finalizePendingCall` | `preparePendingPayment` | **U** (canonical tuple, live commitment, cooldown, qualified gas, preserved beneficiary, zero value, and lifecycle receipt proof) |
 | Distribute auto issuance | `REVOwner.autoIssueFor` | `buildAutoIssueArgs` | **U** |
 | Add / remove shop items | `JB721TiersHook.adjustTiers` | `buildAdjustTiersArgs` | **U** (all tier fields + remove ids) |
 | Mint shop item without payment | `JB721TiersHook.mintFor` | `buildOwnerMintTierIds` | **U** (repeated uint16 quantity, bounds, exact ABI round trip) |
@@ -105,6 +106,8 @@ items with differing content or terms, and permits chain-local edits of divergen
 `setter-call-descriptors.test.js` checks structured Safe App call descriptors against the encoded setter bytes.
 
 ## Selected-chain operational actions
+
+`pending-payments.test.js` and `pending-payments-ui.test.js` cover **Pending payment routing**: complete source-project pagination, canonical gateway identities, original call commitments, live cooldown/finalization state, qualified gas budgets, per-payment reviews, bounded batches, and settlement/refund/retained-failure receipt proofs. The saved action-plan boundary keeps one payment per chain per round and preserves submitted transactions; only a round with no direct, relay, or Safe publication record can refresh its original call against current keeper state. `action-plan.test.js` covers the explicit batch limit and unsigned-round persistence. No token approval or native payment value is added.
 
 `shop-add-plan.test.js` checks that all staged items stay in one local-hook call per destination and uploads
 are skipped on saved-plan resume. `shop-media.test.js` and `shop-media-ui.test.js` cover the reachable media

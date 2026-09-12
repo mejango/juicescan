@@ -22,6 +22,25 @@ export function directBatchStatus(scope, account, calls) {
 
 export function hasDirectBatch(scope, account, calls) { return !!directBatchStatus(scope, account, calls); }
 
+// A definite wallet rejection (or a proven reverted receipt) leaves null slots. A caller holding
+// its parent action lock may refresh that unsigned round, but any hash/unknown marker stays frozen.
+export async function clearUnsubmittedDirectBatch(scope, account, calls) {
+  if (!scope || !account || !Array.isArray(calls)) return false;
+  var key = PREFIX + String(account).toLowerCase() + ':' + scope;
+  if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return false;
+  return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
+    if (!lock || memory.has(key)) return false;
+    var raw = localStorage.getItem(key);
+    if (raw == null) return true;
+    var session;
+    try { session = JSON.parse(raw); } catch (_) { return false; }
+    if (!session || session.identity !== directBatchIdentity(calls) || !Array.isArray(session.hashes)
+        || session.hashes.length !== calls.length || session.hashes.some(function (hash) { return hash !== null; })) return false;
+    localStorage.removeItem(key);
+    return localStorage.getItem(key) == null;
+  });
+}
+
 export async function runDirectBatch(calls, options, locked) {
   var identity = directBatchIdentity(calls);
   var key = PREFIX + String(options.account).toLowerCase() + ':' + (options.scope || identity);

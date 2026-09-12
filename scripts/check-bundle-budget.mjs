@@ -30,8 +30,10 @@ const budgets = {
   // 9,805,853 B raw / 1,421,394 B gzip (+741,768 / +81,184 versus Learn/Build).
   // Executed mainnets restore canonical buyback-hook source and preserve retired mainnet identities:
   // 9,915,280 B raw / 1,457,456 B gzip (+107,306 / +35,494 versus the completed testnet rollout).
-  'dist/app.js': { raw: 9_925_000, gzip: 1_462_000 },
-  'dist/style.css': { raw: 246_500, gzip: 50_000 },
+  // Pending-payment forms, canonical commitment/receipt verification, and durable direct/Safe retries:
+  // 9,950,161 B raw / 1,464,061 B gzip (+34,881 / +6,605 versus the production rollout above).
+  'dist/app.js': { raw: 9_955_000, gzip: 1_466_000 },
+  'dist/style.css': { raw: 247_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
@@ -62,8 +64,8 @@ const distributionFiles = await filesBelow('dist');
 const totalGzip = (await Promise.all(distributionFiles.map(async file =>
   gzipSync(await readFile(file), { level: 9 }).byteLength
 ))).reduce((sum, size) => sum + size, 0);
-// Executed production artifacts and restored canonical hook source: measured 2,227,322 B gzip.
-const totalGzipBudget = 2_233_000;
+// Pending-payment forms and verified retry recovery: measured 2,236,049 B gzip.
+const totalGzipBudget = 2_238_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

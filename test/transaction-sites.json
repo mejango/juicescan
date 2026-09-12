@@ -61,7 +61,7 @@
     },
     "src/direct-batch.js": {
       "counts": {
-        "providerRequest": 1
+        "providerRequest": 2
       },
       "actions": [
         "Sequential direct batch recovery"
@@ -75,7 +75,7 @@
         "executeTransaction": 20,
         "proposeSafeTransactions": 1,
         "proposeSafeTx": 1,
-        "providerRequest": 6,
+        "providerRequest": 7,
         "relayrPay": 2,
         "relayrPostBundle": 3,
         "sendTransaction": 1,
@@ -91,7 +91,8 @@
         "Set ENS project record",
         "Publish project handle",
         "Bounded shop item identity reads",
-        "Add liquidity through the Safe App"
+        "Add liquidity through the Safe App",
+        "Pending payment routing"
       ]
     },
     "src/distribution-plan.js": {

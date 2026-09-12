@@ -38,6 +38,7 @@ import {
   safeTxHashForQueuedTx,
 } from '../src/safe.js';
 import { isTestnetChain } from '../src/chain.js';
+import { getAddress, registry } from '../src/abi-registry.js';
 
 const SAFE = '0x1111111111111111111111111111111111111111';
 const OWNER = '0x2222222222222222222222222222222222222222';
@@ -240,6 +241,36 @@ describe('Safe runtime fail-closed boundaries', () => {
         logs: [{ address: SAFE, topics: [SAFE_EXECUTION_SUCCESS_TOPIC, safeTxHashForQueuedTx(1, SAFE, tx)], data: '0x' + '0'.repeat(64) }] }),
     };
     await expect(executeSafeTx(1, SAFE, tx)).rejects.toMatchObject({ code: 'SAFE_TX_SUBMITTED', hash: HASH, cause: { message: expect.stringContaining('completion event is missing') } });
+  });
+
+  it('simulates the complete Safe gateway retry at the live transaction cap and still requires its execution proof', async () => {
+    const original = { amount: 100n, preferAddToBalance: false, shouldReturnHeldFees: false, beneficiary: OWNER,
+      projectId: 1n, refundTo: OTHER, sourceProjectId: 7n, token: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' };
+    const tx = queuedTx({ to: getAddress('JBRouterTerminalGateway', 1), data: encodeFunctionData({ abi: registry.contracts.JBRouterTerminalGateway,
+      functionName: 'processPendingCall', args: ['0x' + '1'.padStart(64, '0'), original, '', '0x' + '7'.padStart(64, '0')] }) });
+    safeState.wallet = { getChainId: vi.fn().mockResolvedValue(1), writeContract: vi.fn().mockResolvedValue(HASH) };
+    const proof = { address: SAFE, topics: [SAFE_EXECUTION_SUCCESS_TOPIC, safeTxHashForQueuedTx(1, SAFE, tx)], data: '0x' + '0'.repeat(64) };
+    safeState.publicClient = {
+      request: vi.fn().mockResolvedValue(encodeFunctionResult({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction', result: true })),
+      getBlock: vi.fn().mockResolvedValue({ gasLimit: 60000000n, baseFeePerGas: 1n }),
+      estimateContractGas: vi.fn().mockResolvedValue(10000000n),
+      waitForTransactionReceipt: vi.fn().mockResolvedValue({ status: 'success', transactionHash: HASH, logs: [proof] }),
+    };
+    const verifyPayment = vi.fn();
+    await expect(executeSafeTx(1, SAFE, tx, null, verifyPayment)).resolves.toBe(HASH);
+    expect(safeState.publicClient.request).toHaveBeenCalledWith({ method: 'eth_call', params: [expect.objectContaining({ to: SAFE, gas: '0x1000000' }), 'latest'] });
+    expect(safeState.publicClient.estimateContractGas).toHaveBeenCalledWith(expect.objectContaining({ address: SAFE, functionName: 'execTransaction', gas: 16777216n }));
+    expect(safeState.wallet.writeContract).toHaveBeenCalledWith(expect.objectContaining({ address: SAFE, functionName: 'execTransaction', gas: 16777216n }));
+    expect(verifyPayment).toHaveBeenCalledTimes(1);
+
+    safeState.wallet.writeContract.mockClear();
+    safeState.publicClient.request.mockResolvedValue(encodeFunctionResult({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction', result: false }));
+    await expect(executeSafeTx(1, SAFE, tx)).rejects.toThrow('simulation reported');
+    expect(safeState.wallet.writeContract).not.toHaveBeenCalled();
+
+    safeState.publicClient.request.mockResolvedValue(encodeFunctionResult({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction', result: true }));
+    safeState.publicClient.waitForTransactionReceipt.mockResolvedValue({ status: 'success', transactionHash: HASH, logs: [] });
+    await expect(executeSafeTx(1, SAFE, tx)).rejects.toThrow('without ExecutionSuccess');
   });
 
   it('binds a proposal to the reviewed signer, chain, nonce, and exact service payload', async () => {
