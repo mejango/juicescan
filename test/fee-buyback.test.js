@@ -3,18 +3,21 @@ import { encodeAbiParameters, encodeEventTopics, parseAbi } from "viem";
 import {
   analyzeFeeSimulation,
   checkFeeBuyback,
-  createFeeWatch
+  createFeeWatch,
+  feeReceipt
 } from "../src/fee-buyback.ts";
 const terminal = "0x1111111111111111111111111111111111111111";
 const hook = "0x2222222222222222222222222222222222222222";
 const user = "0x3333333333333333333333333333333333333333";
 const controller = "0x4444444444444444444444444444444444444444";
 const loans = "0x5555555555555555555555555555555555555555";
+const owner = "0x6666666666666666666666666666666666666666";
 const abi = parseAbi([
   "event Mint(uint256 indexed projectId,uint256 leftoverAmount,uint256 tokenCount,address caller)",
   "event Swap(uint256 indexed projectId,uint256 amountToSwapWith,bytes32 indexed poolId,uint256 amountReceived,address caller)",
   "event Pay(uint256 indexed rulesetId,uint256 indexed rulesetCycleNumber,uint256 indexed projectId,address payer,address beneficiary,uint256 amount,uint256 newlyIssuedTokenCount,string memo,bytes metadata,address caller)",
-  "event MintTokens(address indexed beneficiary,uint256 indexed projectId,uint256 tokenCount,uint256 beneficiaryTokenCount,string memo,uint256 reservedPercent,address caller)"
+  "event MintTokens(address indexed beneficiary,uint256 indexed projectId,uint256 tokenCount,uint256 beneficiaryTokenCount,string memo,uint256 reservedPercent,address caller)",
+  "event ProcessFee(uint256 indexed projectId,address indexed token,uint256 indexed amount,bool wasHeld,address beneficiary,address caller)"
 ]);
 const opts = {
   trustedHooks: [hook],
@@ -48,13 +51,13 @@ const swap = {
     [15090000n, 60874n, terminal]
   )
 };
-function pay(issued = 0n, payer = loans, beneficiary = user) {
+function pay(issued = 0n, payer = loans, beneficiary = user, projectId = 6n) {
   return {
     address: terminal,
     topics: encodeEventTopics({
       abi,
       eventName: "Pay",
-      args: { rulesetId: 1n, rulesetCycleNumber: 1n, projectId: 6n }
+      args: { rulesetId: 1n, rulesetCycleNumber: 1n, projectId }
     }),
     data: encodeAbiParameters(
       [
@@ -70,13 +73,13 @@ function pay(issued = 0n, payer = loans, beneficiary = user) {
     )
   };
 }
-function receipt(received = 9429n) {
+function receipt(received = 9429n, beneficiary = user, projectId = 6n) {
   return {
     address: controller,
     topics: encodeEventTopics({
       abi,
       eventName: "MintTokens",
-      args: { beneficiary: user, projectId: 6n }
+      args: { beneficiary, projectId }
     }),
     data: encodeAbiParameters(
       [
@@ -89,6 +92,28 @@ function receipt(received = 9429n) {
       [9429n, received, "", 2500n, hook]
     )
   };
+}
+function processFee(beneficiary = user, projectId = 6n, address = terminal) {
+  return {
+    address,
+    topics: encodeEventTopics({
+      abi,
+      eventName: "ProcessFee",
+      args: { projectId, token: user, amount: 15090000n }
+    }),
+    data: encodeAbiParameters(
+      [{ type: "bool" }, { type: "address" }, { type: "address" }],
+      [false, beneficiary, loans]
+    )
+  };
+}
+function terminalFee(beneficiary = user, projectId = 1n) {
+  return [
+    pay(0n, terminal, beneficiary, projectId),
+    { ...mint, topics: encodeEventTopics({ abi, eventName: "Mint", args: { projectId } }) },
+    receipt(9429n, beneficiary, projectId),
+    processFee(beneficiary)
+  ];
 }
 function simulation(swaps = false, received = swaps ? 60874n : 9429n) {
   return [
@@ -114,6 +139,39 @@ describe("fee buyback execution evidence", () => {
     expect(
       analyzeFeeSimulation(simulation(true, 45655n), opts).fees[0].received
     ).toBe(45655n);
+  });
+  it("includes fees paid to another beneficiary and labels the actual recipient", () => {
+    const s = simulation();
+    s[0].calls[0].logs = [pay(0n, loans, owner), mint, receipt(9429n, owner)];
+    const feeResult = analyzeFeeSimulation(s, opts);
+    expect(feeResult).toMatchObject({
+      status: "fallback",
+      fees: [{ beneficiary: owner, received: 9429n, route: "fallback" }]
+    });
+    expect(feeReceipt({ ...feeResult.fees[0], received: 10n ** 18n })).toBe(
+      "~1 project #6 tokens to 0x6666…6666"
+    );
+  });
+  it("keeps separate beneficiaries and matches receipts to each fee recipient", () => {
+    const s = simulation();
+    s[0].calls[0].logs = [
+      pay(), mint, receipt(12n),
+      pay(0n, loans, owner), swap, receipt(99n), receipt(34n, owner)
+    ];
+    const { fees } = analyzeFeeSimulation(s, opts);
+    expect(fees).toMatchObject([
+      { beneficiary: user, received: 12n, route: "fallback" },
+      { beneficiary: owner, received: 34n, route: "swap" }
+    ]);
+    expect(fees[0].key).not.toBe(fees[1].key);
+  });
+  it("does not use the viewer's receipt to verify another beneficiary's fee", () => {
+    const s = simulation(true);
+    s[0].calls[0].logs[0] = pay(7n, loans, owner);
+    expect(analyzeFeeSimulation(s, opts)).toMatchObject({
+      status: "unknown",
+      fees: [{ beneficiary: owner, received: 7n, route: "unknown" }]
+    });
   });
   it("reports ready only for successful nonzero swaps", () => {
     expect(result(true).status).toBe("ready");
@@ -150,13 +208,13 @@ describe("fee buyback execution evidence", () => {
       "none"
     );
   });
-  it("does not include rolled-back transactions or unrelated beneficiaries and hooks", () => {
+  it("does not include rolled-back transactions or unrelated hooks", () => {
     const s = simulation();
     s[0].calls[0].status = "0x0";
     expect(analyzeFeeSimulation(s, opts).status).toBe("unknown");
     expect(
       analyzeFeeSimulation(simulation(), { ...opts, beneficiary: terminal }).fees
-    ).toEqual([]);
+    ).toEqual(result().fees);
     expect(
       analyzeFeeSimulation(simulation(true), {
         ...opts,
@@ -169,10 +227,25 @@ describe("fee buyback execution evidence", () => {
     s[0].calls[0].logs[0] = pay(0n, user);
     expect(analyzeFeeSimulation(s, opts).fees).toEqual([]);
   });
-  it("detects a same-terminal internal fee without any external pay call", () => {
+  it.each([user, owner])("detects a same-terminal internal fee for its actual beneficiary (%s)", (beneficiary) => {
     const s = simulation();
-    s[0].calls[0].logs[0] = pay(0n, terminal);
-    expect(analyzeFeeSimulation(s, opts).status).toBe("fallback");
+    s[0].calls[0].logs = terminalFee(beneficiary);
+    expect(analyzeFeeSimulation(s, opts)).toMatchObject({
+      status: "fallback",
+      fees: [{ beneficiary, route: "fallback", received: 9429n }]
+    });
+  });
+  it.each([1n, 6n])("does not label an ordinary terminal payout as a fee (project %s)", (projectId) => {
+    const s = simulation();
+    s[0].calls[0].logs = terminalFee(owner, projectId).slice(0, -1);
+    expect(analyzeFeeSimulation(s, opts).fees).toEqual([]);
+  });
+  it("requires matching trusted ProcessFee proof for terminal payments", () => {
+    for (const proof of [processFee(owner), processFee(user, 7n), processFee(user, 6n, owner)]) {
+      const s = simulation();
+      s[0].calls[0].logs = [...terminalFee().slice(0, -1), proof];
+      expect(analyzeFeeSimulation(s, opts).fees).toEqual([]);
+    }
   });
   it("keeps a warning when another fee successfully swaps", () => {
     const s = simulation();
@@ -186,6 +259,21 @@ describe("fee buyback execution evidence", () => {
     expect(
       analyzeFeeSimulation([{ calls: [{ status: "0x1" }] }], opts).status
     ).toBe("unknown");
+  });
+  it.each([false, true])("requires a verified hook receipt even with direct issuance (swap: %s)", (swaps) => {
+    const s = simulation(swaps);
+    s[0].calls[0].logs = [pay(7n), swaps ? swap : mint];
+    expect(analyzeFeeSimulation(s, opts)).toMatchObject({
+      status: "unknown",
+      fees: [{ received: 7n, route: "unknown" }]
+    });
+    s[0].calls[0].logs.push({ ...receipt(), address: owner });
+    expect(analyzeFeeSimulation(s, opts).status).toBe("unknown");
+    s[0].calls[0].logs.push(receipt());
+    expect(analyzeFeeSimulation(s, opts)).toMatchObject({
+      status: swaps ? "ready" : "fallback",
+      fees: [{ received: 9436n, route: swaps ? "swap" : "fallback" }]
+    });
   });
   it("treats malformed/unsupported RPC as unknown, never ready", async () => {
     const client = {
@@ -251,6 +339,46 @@ describe("fee buyback execution evidence", () => {
   });
 });
 describe("live fee review", () => {
+  it.each([[owner, 6n], [user, 7n]])("recovers when an unrelated earlier fee disappears (%s / %s)", async (beneficiary, projectId) => {
+    const initial = simulation();
+    initial[0].calls[0].logs.unshift(pay(5n, loans, beneficiary, projectId));
+    const before = analyzeFeeSimulation(initial, opts);
+    const after = result(true);
+    const check = vi.fn().mockResolvedValueOnce(before).mockResolvedValue(after);
+    const watch = createFeeWatch(check, vi.fn());
+    expect((await watch.refresh()).status).toBe("fallback");
+    expect((await watch.refresh()).status).toBe("ready");
+    expect(await watch.confirm()).toBe(true);
+    watch.stop();
+  });
+  it("retains separate occurrence IDs for repeated fees to the same beneficiary", () => {
+    const s = simulation();
+    s[0].calls[0].logs.push(...simulation(true)[0].calls[0].logs);
+    const { fees } = analyzeFeeSimulation(s, opts);
+    expect(fees[0].key).not.toBe(fees[1].key);
+  });
+  it("does not infer recovery when one of several identical fee identities disappears", async () => {
+    const initial = simulation();
+    initial[0].calls[0].logs.push(...simulation(true)[0].calls[0].logs);
+    const check = vi.fn().mockResolvedValueOnce(analyzeFeeSimulation(initial, opts)).mockResolvedValue(result(true));
+    const watch = createFeeWatch(check, vi.fn());
+    expect((await watch.refresh()).status).toBe("fallback");
+    expect((await watch.refresh()).status).toBe("unknown");
+    watch.stop();
+  });
+  it("keeps an affected group's identity count after recovery and later growth", async () => {
+    const expanded = simulation(true);
+    expanded[0].calls[0].logs.push(...simulation(true)[0].calls[0].logs);
+    const check = vi.fn()
+      .mockResolvedValueOnce(result())
+      .mockResolvedValueOnce(analyzeFeeSimulation(expanded, opts))
+      .mockResolvedValue(result(true));
+    const watch = createFeeWatch(check, vi.fn());
+    expect((await watch.refresh()).status).toBe("fallback");
+    expect((await watch.refresh()).status).toBe("ready");
+    expect((await watch.refresh()).status).toBe("unknown");
+    watch.stop();
+  });
   it("rechecks before confirmation and refuses a newly unfavorable result", async () => {
     const check = vi.fn().mockResolvedValueOnce(result(true)).mockResolvedValue(result());
     const watch = createFeeWatch(check, vi.fn());
