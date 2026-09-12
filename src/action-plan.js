@@ -2,6 +2,9 @@
 // the lower-level Relayr/direct journal can clear, so interrupted rounds never start over from new balances.
 var PREFIX = 'jb-selected-action-v1:';
 var active = new Set();
+// A persisted completion flag is not receipt evidence after a reload. Acknowledgement is available only
+// after this window has reconciled the plan; every resumed run invalidates its previous acknowledgement.
+var verifiedPlans = new Map();
 
 function validateRounds(rounds, maxCalls) {
   maxCalls = maxCalls == null ? 24 : Number(maxCalls);
@@ -50,7 +53,9 @@ export function hasSavedActionPlan(scope, account) {
 }
 export function acknowledgeSavedActionPlan(scope, account) {
   var key = keyFor(scope, account), plan = read(key);
-  if (plan && plan.nextRound === plan.rounds.length && !plan.safePending && plan.results.every(function (result) { return result.relayr || result.confirmed === true || Number(result.executedReady || 0) + Number(result.obsoleteReady || 0) === Number(result.expectedCount); })) localStorage.removeItem(key);
+  if (plan && verifiedPlans.has(key) && verifiedPlans.get(key) === plan.verificationId && plan.nextRound === plan.rounds.length && !plan.safePending && plan.results.every(function (result) { return result.relayr || result.confirmed === true || Number(result.executedReady || 0) + Number(result.obsoleteReady || 0) === Number(result.expectedCount); })) {
+    localStorage.removeItem(key); verifiedPlans.delete(key);
+  }
 }
 
 export async function runSavedActionPlan(options, locked) {
@@ -67,6 +72,7 @@ export async function runSavedActionPlan(options, locked) {
     throw new Error('This browser cannot lock a saved multichain action. Use a browser with Web Locks support to continue.');
   }
   active.add(key);
+  verifiedPlans.delete(key);
   try {
     var plan = read(key), resumed = !!plan;
     if (!plan) {
@@ -81,12 +87,18 @@ export async function runSavedActionPlan(options, locked) {
     if (!/^[0-9a-f-]{36}$/i.test(plan.id || '') || !Array.isArray(plan.results) || plan.results.length !== plan.nextRound) throw new Error('The saved action checkpoint is malformed. Verify its transactions before starting again.');
     if (plan.account !== options.account.toLowerCase() || plan.scope !== options.scope) throw new Error('The saved action belongs to a different account.');
     if (String(plan.executionAccount).toLowerCase() !== String(options.executionAccount || options.account).toLowerCase() || plan.safeMode !== !!options.safeMode) throw new Error('Resume this saved action with its original execution account and Safe selection.');
-    if (options.reconcileResult && plan.safeMode) {
+    // A second window starting recovery invalidates this window's older completion proof even if its
+    // RPC lookup subsequently fails. Persist the new generation before reading any receipt.
+    plan.verificationId = crypto.randomUUID(); save(key, plan);
+    async function reconcileResults() {
+      if (!options.reconcileResult) return;
       for (var ri = 0; ri < plan.results.length; ri++) {
-        var reconciled = await options.reconcileResult(plan.results[ri], plan.rounds[ri]);
-        if (reconciled) { plan.results[ri] = reconciled; save(key, plan); }
+        var reconciled = await options.reconcileResult(plan.results[ri], plan.rounds[ri], plan.skippedCalls && plan.skippedCalls[ri] || []);
+        if (!reconciled) throw new Error('The saved action receipt could not be verified. Resume this same action to check again.');
+        plan.results[ri] = reconciled; save(key, plan);
       }
     }
+    await reconcileResults();
     if (plan.safePending) throw new Error('A Safe proposal or execution may have been submitted for this saved action. Inspect its exact calls in the Safe queue before starting another batch.');
     while (plan.nextRound < plan.rounds.length) {
       var index = plan.nextRound;
@@ -114,6 +126,11 @@ export async function runSavedActionPlan(options, locked) {
         replaceUnsubmittedRound: function (replacement) {
           if (checkpointed || plan.safePending || safeProgress.attempt || safeProgress.proposals.length || safeProgress.executedChains.length) throw new Error('A submitted Safe round cannot be changed.');
           validateRounds([replacement], options.maxCalls);
+          var removed = originalCalls.filter(function (call) { return !replacement.some(function (next) { return Number(next.chainId == null ? next.cid : next.chainId) === Number(call.chainId == null ? call.cid : call.chainId); }); });
+          if (removed.length) {
+            plan.skippedCalls = plan.skippedCalls || {};
+            plan.skippedCalls[index] = (plan.skippedCalls[index] || []).concat(removed);
+          }
           originalCalls = replacement;
           plan.rounds[index] = replacement;
           save(key, plan);
@@ -143,10 +160,13 @@ export async function runSavedActionPlan(options, locked) {
         // Same-window execution marks the returned known records; refresh the persisted copies as well.
         (result.proposals || []).forEach(function (proposal) { var saved = safeProgress.proposals.find(function (old) { return Number(old.chainId) === Number(proposal.chainId); }); if (saved && proposal.executed) saved.executed = true; });
         result = combinedSafeResult();
-        if (options.reconcileResult && remainingCalls.length === 0) result = await options.reconcileResult(result, originalCalls);
       }
       checkpoint(result);
     }
+    // Later rounds may outlive the block that proved an earlier round. Recheck every exact submitted
+    // identity before publishing completion, without moving nextRound back or submitting it again.
+    await reconcileResults();
+    verifiedPlans.set(key, plan.verificationId);
     return { completed: true, resumed: resumed, rounds: plan.rounds.length, results: plan.results };
   } finally { active.delete(key); }
 }

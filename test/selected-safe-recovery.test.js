@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseAbi, encodeFunctionData } from 'viem';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } from '../src/action-plan.js';
 import { snapshotKnownSafeProposal, reconcileSelectedSafeResult } from '../src/discover.js';
-import { safeTxHashForQueuedTx } from '../src/safe.js';
+import { safeTxHashForQueuedTx, authenticateSavedSafeProposal } from '../src/safe.js';
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const SAFE = '0x2222222222222222222222222222222222222222';
 const TARGET = '0x3333333333333333333333333333333333333333';
@@ -13,8 +13,35 @@ function proposal(call0) { const tx = { to: call0.to, data: call0.data, value: 0
 function queued(proposals) { return { relayr: false, expectedCount: proposals.length, queued: proposals.length, immediateExecuted: 0, executedReady: 0, proposals }; }
 function options(extra = {}) { return { scope: SCOPE, account: ACCOUNT, executionAccount: SAFE, safeMode: true, prepare: vi.fn(async () => ({ rounds: [[call(1), call(10)]] })), ...extra }; }
 beforeEach(() => { localStorage.clear(); Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (_k, _o, fn) => fn({}) } }); });
+afterEach(() => vi.unstubAllGlobals());
 
 describe('known Safe proposal lifecycle', () => {
+  it('adversarial: revokes a saved execution result when its receipt disappears', async () => {
+    const calls = [call(1)], original = queued(calls.map(proposal));
+    const verified = await reconcileSelectedSafeResult(original, calls, SAFE, null,
+      async () => ({ status: 'success', transactionHash: '0x' + 'ab'.repeat(32) }));
+    expect(verified.executedReady).toBe(1);
+    const restored = JSON.parse(JSON.stringify(verified));
+    const find = vi.fn(async () => null); // Execution was orphaned during reload.
+    const next = await reconcileSelectedSafeResult(restored, calls, SAFE, null, find);
+    expect(next.executedReady, 'stored executed flags are not canonical receipt proofs').toBe(0);
+    expect(find).toHaveBeenCalledOnce();
+  });
+
+  it('does not trust old aggregate-only execution checkpoints without proposal identities', async () => {
+    await expect(reconcileSelectedSafeResult({ relayr: false, queued: 0, expectedCount: 1, immediateExecuted: 1, executedReady: 1 }, [call(1)], SAFE)).rejects.toThrow('complete execution proofs');
+  });
+
+  it('preserves proposal and execution identities separately across a lost receipt', async () => {
+    const calls = [call(1)], original = queued(calls.map(proposal));
+    const execution = { status: 'success', transactionHash: '0x' + 'cd'.repeat(32), blockHash: '0x' + 'ef'.repeat(32), blockNumber: 123n };
+    const next = await reconcileSelectedSafeResult(original, calls, SAFE, async () => ({ status: 'routed' }), async () => execution);
+    expect(next.proposals[0]).toMatchObject({ safeTxHash: original.proposals[0].safeTxHash, executionReceipt: { transactionHash: execution.transactionHash, blockHash: execution.blockHash, blockNumber: '123', outcome: { status: 'routed' } } });
+    const rechecked = await reconcileSelectedSafeResult(next, calls, SAFE, null, async () => null);
+    expect(rechecked).toMatchObject({ executedReady: 0, obsoleteReady: 0 });
+    expect(rechecked.proposals[0]).toMatchObject({ safeTxHash: original.proposals[0].safeTxHash, executed: false, executionReceipt: { transactionHash: execution.transactionHash } });
+  });
+
   it('marks only the proven destination and never mistakes a pending proposal for execution', async () => {
     const calls = [call(1), call(10)], result = queued(calls.map(proposal));
     const verify = vi.fn(), find = vi.fn(async record => record.chainId === 1 ? { status: 'success', transactionHash: '0xknown' } : null);
@@ -109,5 +136,33 @@ describe('known Safe proposal lifecycle', () => {
   it('retains exact SDK hashes without inventing a Safe App nonce', () => {
     const tx = call(1), hash = '0x' + 'ab'.repeat(32);
     expect(snapshotKnownSafeProposal(1, SAFE, tx, hash, 10n, true)).toMatchObject({ hashOnly: true, nonce: null, safeTxHash: hash, fromBlock: '10', tx: { to: TARGET, data: tx.data } });
+  });
+
+  it('authenticates a cancelled connector proposal by its exact hash before obsolescence and retains its nonce', async () => {
+    const original = proposal(call(1)), saved = snapshotKnownSafeProposal(1, SAFE, original.tx, original.safeTxHash, 100n, true);
+    const record = { ...original.tx, safe: SAFE, safeTxHash: original.safeTxHash, isExecuted: false };
+    const fetch = vi.fn(async () => ({ ok: true, text: async () => JSON.stringify(record) }));
+    vi.stubGlobal('fetch', fetch);
+    const verifyObsolete = vi.fn(async (_call, proposal) => { expect(proposal).toMatchObject({ hashOnly: false, nonce: '7', safeTxHash: original.safeTxHash }); return true; });
+    const result = await reconcileSelectedSafeResult(queued([saved]), [call(1)], SAFE, null, async () => null, verifyObsolete);
+    expect(fetch.mock.calls[0][0]).toBe('https://api.safe.global/tx-service/eth/api/v1/multisig-transactions/' + original.safeTxHash + '/');
+    expect(result).toMatchObject({ executedReady: 0, obsoleteReady: 1, proposals: [{ hashOnly: false, nonce: '7', executed: false, obsolete: true }] });
+    expect(verifyObsolete).toHaveBeenCalledOnce();
+  });
+
+  it.each(['safe', 'safeTxHash', 'to', 'data', 'value', 'operation', 'nonce', 'safeTxGas', 'gasPrice'])('rejects connector proposal metadata changing %s', async field => {
+    const original = proposal(call(1)), saved = snapshotKnownSafeProposal(1, SAFE, original.tx, original.safeTxHash, 100n, true);
+    const record = { ...original.tx, safe: SAFE, safeTxHash: original.safeTxHash };
+    record[field] = ['safe', 'to'].includes(field) ? ACCOUNT : field === 'safeTxHash' ? '0x' + 'ab'.repeat(32) : field === 'data' ? '0x1234' : '9';
+    await expect(authenticateSavedSafeProposal(saved, async () => record)).rejects.toThrow(/does not match|does not authenticate/);
+    expect(saved).toMatchObject({ hashOnly: true, nonce: null, safeTxHash: original.safeTxHash });
+  });
+
+  it('keeps an unavailable connector identity unresolved without invoking the obsolescence policy', async () => {
+    const original = proposal(call(1)), saved = snapshotKnownSafeProposal(1, SAFE, original.tx, original.safeTxHash, 100n, true);
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404 })));
+    const verifyObsolete = vi.fn(async () => true);
+    await expect(reconcileSelectedSafeResult(queued([saved]), [call(1)], SAFE, null, async () => null, verifyObsolete)).rejects.toThrow('could not be authenticated');
+    expect(verifyObsolete).not.toHaveBeenCalled();
   });
 });

@@ -565,6 +565,42 @@ function safeRecoveryRangeLimit(error) {
   return false;
 }
 
+// Recover a connector proposal's full hash preimage before applying commitment-based obsolescence.
+export async function authenticateSavedSafeProposal(saved, fetchProposal) {
+  if (!saved || !/^0x[0-9a-f]{64}$/i.test(saved.safeTxHash || '') || !saved.tx) throw safeRecoveryPending('The saved Safe proposal is missing its exact identity.');
+  var record;
+  if (fetchProposal) record = await fetchProposal(saved);
+  else {
+    var base = txBase(saved.chainId);
+    if (!base) throw safeRecoveryPending('This chain has no Safe proposal service to authenticate the original proposal.');
+    var controller = new AbortController(), timer = setTimeout(function () { controller.abort(); }, 10000);
+    try {
+      // Fetch by exact hash, including replaced/cancelled proposals that pending-queue nonce filters omit.
+      var response = await safeFetch(base + '/api/v1/multisig-transactions/' + saved.safeTxHash + '/', { headers: headers(false), signal: controller.signal });
+      if (!response.ok) throw new Error('Safe service ' + response.status);
+      var raw = await response.text();
+      if (raw.length > 300000) throw new Error('Oversized Safe proposal');
+      record = JSON.parse(raw);
+    } catch (cause) { throw safeRecoveryPending('The original Safe proposal could not be authenticated yet. Keep its exact hash and check again.', cause); }
+    finally { clearTimeout(timer); }
+  }
+  var fields = { to: record && record.to, data: record && record.data, gasToken: record && record.gasToken, refundReceiver: record && record.refundReceiver };
+  if (!record || String(record.safe).toLowerCase() !== String(saved.safe).toLowerCase()
+      || String(record.safeTxHash).toLowerCase() !== saved.safeTxHash.toLowerCase()
+      || String(fields.to).toLowerCase() !== String(saved.tx.to).toLowerCase()
+      || String(fields.data).toLowerCase() !== String(saved.tx.data).toLowerCase()
+      || !/^0x[0-9a-f]{40}$/i.test(fields.gasToken || '') || !/^0x[0-9a-f]{40}$/i.test(fields.refundReceiver || '')) {
+    throw safeRecoveryPending('The original Safe proposal does not match the saved Safe and reviewed call.');
+  }
+  ['value', 'operation', 'safeTxGas', 'baseGas', 'gasPrice', 'nonce'].forEach(function (key) { fields[key] = String(safeRecoveryUint(record[key], key)); });
+  if (BigInt(fields.value) !== BigInt(saved.tx.value || 0) || BigInt(fields.operation) !== BigInt(saved.tx.operation || 0)
+      || BigInt(fields.nonce) > BigInt(Number.MAX_SAFE_INTEGER)
+      || safeTxHashForQueuedTx(Number(saved.chainId), saved.safe, fields).toLowerCase() !== saved.safeTxHash.toLowerCase()) {
+    throw safeRecoveryPending('The original Safe proposal hash does not authenticate its nonce and exact transaction.');
+  }
+  return Object.assign({}, saved, { hashOnly: false, nonce: fields.nonce, tx: fields });
+}
+
 // Reconcile a known proposal that was executed in another tab, wallet or Safe UI. A nonce advance alone
 // never proves this call: require its exact Safe success event and canonical mined execTransaction calldata.
 // Native Safe Apps only return a SafeTx hash; their saved inner call can be matched without inventing a nonce.
