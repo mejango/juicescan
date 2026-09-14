@@ -6104,7 +6104,7 @@ function addressLinkNode(address, chainId) {
     a.appendChild(node);
     inner = a;
   }
-  // Safe badge sits OUTSIDE the explorer link so its click opens the details modal, not the link.
+  // The Safe badge is a sibling of the explorer link and opens the wallet in Safe.
   var wrap = el('span', 'address-with-safe');
   wrap.appendChild(inner);
   wrap.appendChild(safeBadge(address, chainId));
@@ -7153,7 +7153,8 @@ var SUPPORTED_SAFE_PROXY_CODE_HASHES = {
   '0xd7d408ebcd99b2b70be43e20253d6d92a8ea8fab29bd3be7f55b10032331fb4c': true,
 };
 // Safe wallet-app chain prefixes (https://app.safe.global) for the "Open in Safe" link. Best-effort.
-var SAFE_CHAIN_PREFIX = { 1: 'eth', 10: 'oeth', 8453: 'base', 42161: 'arb1', 11155111: 'sep' };
+var SAFE_CHAIN_PREFIX = { 1: 'eth', 10: 'oeth', 8453: 'base', 42161: 'arb1', 11155111: 'sep', 11155420: 'opsepolia', 84532: 'basesep', 421614: 'arb1-sep' };
+var safeBadgeId = 0;
 var SAFE_ICON_SVG = '<svg viewBox="0 0 661.62 661.47" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="m531.98 330.7h-49.42c-14.76 0-26.72 11.96-26.72 26.72v71.73c0 14.76-11.96 26.72-26.72 26.72h-196.61c-14.76 0-26.72 11.96-26.72 26.72v49.42c0 14.76 11.96 26.72 26.72 26.72h207.99c14.76 0 26.55-11.96 26.55-26.72v-39.65c0-14.76 11.96-25.23 26.72-25.23h38.2c14.76 0 26.72-11.96 26.72-26.72v-83.3c0-14.76-11.96-26.41-26.72-26.41zm-326.2-98.18c0-14.76 11.96-26.72 26.72-26.72h196.49c14.76 0 26.72-11.96 26.72-26.72v-49.42c0-14.76-11.96-26.72-26.72-26.72h-207.88c-14.76 0-26.72 11.96-26.72 26.72v38.08c0 14.76-11.96 26.72-26.72 26.72h-38.03c-14.76 0-26.72 11.96-26.72 26.72v83.39c0 14.76 12.01 26.12 26.77 26.12h49.42c14.76 0 26.72-11.96 26.72-26.72l-.05-71.44zm101.77 46.23h47.47c15.47 0 28.02 12.56 28.02 28.02v47.47c0 15.47-12.56 28.02-28.02 28.02h-47.47c-15.47 0-28.02-12.56-28.02-28.02v-47.47c0-15.47 12.56-28.02 28.02-28.02z" fill="currentColor"></path></svg>';
 
 var _safeCache = {};
@@ -7402,45 +7403,66 @@ export async function verifyProjectHandleAuthorityIdentity(chainId, address, cli
   }
   return identity;
 }
-// A slot that fills with a small Safe icon (opening the details modal) once we confirm the address is a Safe.
+// A confirmed Safe links directly to its wallet, with its live policy available on hover/focus.
 function safeBadge(address, chainId) {
   var slot = el('span', 'safe-badge-slot');
+  var prefix = SAFE_CHAIN_PREFIX[chainId];
+  if (!prefix) return slot;
   fetchSafeInfo(address, chainId).then(function (info) {
     if (!info || !slot.isConnected) return;
-    var btn = el('button', 'safe-badge'); btn.type = 'button';
-    btn.title = 'Safe | ' + info.threshold + ' of ' + info.owners.length + ' signers — view details';
-    btn.innerHTML = SAFE_ICON_SVG;
-    btn.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); openSafeModal(address, chainId, info); });
-    slot.appendChild(btn);
+    var link = el('a', 'safe-badge');
+    link.href = 'https://app.safe.global/home?safe=' + prefix + ':' + address;
+    link.target = '_blank'; link.rel = 'noopener noreferrer';
+    link.setAttribute('aria-label', 'Open wallet in Safe');
+    link.innerHTML = SAFE_ICON_SVG;
+    link.addEventListener('click', function (e) { e.stopPropagation(); });
+    var tip = el('span', 'safe-badge-tip');
+    tip.id = 'safe-badge-tip-' + (++safeBadgeId);
+    tip.setAttribute('role', 'tooltip'); tip.hidden = true;
+    function paint(policy) {
+      tip.replaceChildren();
+      var heading = el('strong');
+      heading.textContent = 'Safe · ' + policy.threshold + ' of ' + policy.owners.length + ' signatures';
+      tip.appendChild(heading);
+      var label = el('span', 'safe-badge-tip-label'); label.textContent = 'Signers'; tip.appendChild(label);
+      policy.owners.forEach(function (owner) {
+        var row = el('span', 'safe-badge-tip-owner'); row.textContent = owner; tip.appendChild(row);
+      });
+    }
+    paint(info);
+    var closeTimer;
+    function hide() {
+      clearTimeout(closeTimer);
+      tip.hidden = true; link.removeAttribute('aria-describedby');
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', hide);
+    }
+    function onScroll(e) { if (!tip.contains(e.target)) hide(); }
+    function show() {
+      clearTimeout(closeTimer);
+      var rect = link.getBoundingClientRect();
+      var width = Math.min(368, window.innerWidth - 16);
+      var top = Math.min(rect.bottom + 6, window.innerHeight - 120);
+      tip.style.width = width + 'px';
+      tip.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px';
+      tip.style.top = top + 'px';
+      tip.style.maxHeight = Math.max(100, window.innerHeight - top - 8) + 'px';
+      tip.hidden = false; link.setAttribute('aria-describedby', tip.id);
+      window.addEventListener('scroll', onScroll, true);
+      window.addEventListener('resize', hide);
+      fetchSafeInfo(address, chainId).then(function (fresh) {
+        if (fresh && slot.isConnected) paint(fresh);
+        else if (!fresh) { hide(); slot.replaceChildren(); }
+      }).catch(function () {});
+    }
+    slot.addEventListener('pointerenter', show);
+    slot.addEventListener('pointerleave', function () { closeTimer = setTimeout(hide, 120); });
+    slot.addEventListener('focusin', show);
+    slot.addEventListener('focusout', hide);
+    slot.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+    slot.appendChild(link); slot.appendChild(tip);
   }).catch(function () {});
   return slot;
-}
-function openSafeModal(address, chainId, info) {
-  var content = el('div', 'modal-body safe-modal');
-  var policy = el('div', 'safe-policy');
-  policy.innerHTML = 'Requires <strong>' + info.threshold + ' of ' + info.owners.length + '</strong> signatures';
-  content.appendChild(policy);
-
-  var addrRow = el('div', 'safe-addr'); addrRow.appendChild(fullAddressNode(address, true));
-  // fullAddressNode swaps the text to the ENS name when it resolves — show the raw 0x address alongside it too.
-  ensNameOf(address).then(function (n) {
-    if (n && addrRow.isConnected) { var raw = el('span', 'safe-addr-raw'); raw.textContent = address; addrRow.appendChild(raw); }
-  }).catch(function () {});
-  content.appendChild(addrRow);
-
-  var lbl = el('div', 'safe-signers-label'); lbl.textContent = 'Signers'; content.appendChild(lbl);
-  var list = el('div', 'safe-signers');
-  info.owners.forEach(function (o) { var row = el('div', 'safe-signer'); row.appendChild(addressNode(o, chainId)); list.appendChild(row); });
-  content.appendChild(list);
-
-  var prefix = SAFE_CHAIN_PREFIX[chainId];
-  if (prefix) {
-    var link = document.createElement('a'); link.className = 'safe-applink';
-    link.href = 'https://app.safe.global/home?safe=' + prefix + ':' + address;
-    link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open in Safe ↗';
-    content.appendChild(link);
-  }
-  openModal('Safe', content);
 }
 
 // -- Onchain fetch --
