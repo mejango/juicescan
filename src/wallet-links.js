@@ -7,10 +7,12 @@ const WALLET_UNSAFE_IPFS_SUFFIXES = [
   '.ipfs.dweb.link',
   '.ipfs.w3s.link',
 ];
-const WALLET_IPFS_GATEWAY = 'https://ipfs.io';
+// ipfs.io 302s page loads to the inbrowser.link service worker and Filebase's path gateway sends a
+// `default-src 'self'` CSP which blocks every RPC, so the wallet handoff lands on the eth.sucks subdomain gateway.
+const WALLET_IPFS_GATEWAY_HOST = 'eth.sucks';
 
 function ipfsPathUrl(cid, pathname, search, hash) {
-  return WALLET_IPFS_GATEWAY + '/ipfs/' + cid + (pathname || '/') + (search || '') + (hash || '');
+  return 'https://' + cid + '.' + WALLET_IPFS_GATEWAY_HOST + (pathname || '/') + (search || '') + (hash || '');
 }
 
 export function walletDappUrl(href) {

@@ -167,10 +167,12 @@ export function setCustomRpc(chainId, url) {
 // can only emit a single URL (an <a href>, an <img src>) take the primary. Kept here, in a
 // leaf module, because the copies that lived beside their callers drifted to a bare ipfs.io
 // and went dark whenever that gateway 502'd while project pages kept working.
+// ipfs.io and dweb.link stopped answering fetch() on 2026-09-14 (429, Sunset 2026-09-21: service-worker gateway
+// only), so JB Center's cached gateway leads and Filebase (its first upstream) backs it.
 export var IPFS_PATH_GATEWAYS = [
+  'https://juicebox.center/ipfs/',
+  'https://ipfs.filebase.io/ipfs/',
   'https://gateway.pinata.cloud/ipfs/',
-  'https://dweb.link/ipfs/',
-  'https://ipfs.io/ipfs/',
 ];
 
 /** An `ipfs://` URI as an HTTP URL on the primary gateway. Non-IPFS input is returned as-is. */

@@ -40,7 +40,7 @@ describe('shop tier media rendering', () => {
     expect(video.pause).toHaveBeenCalledOnce();
 
     video.dispatchEvent(new Event('error'));
-    expect(video.getAttribute('src')).toBe('https://gateway.pinata.cloud/ipfs/bafyvideo/movie.mp4');
+    expect(video.getAttribute('src')).toBe('https://juicebox.center/ipfs/bafyvideo/movie.mp4');
   });
 
   it('uses a music-note thumbnail without starting an audio request', () => {

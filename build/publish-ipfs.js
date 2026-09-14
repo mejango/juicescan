@@ -125,9 +125,9 @@ async function main() {
 
   console.log('\n✅ Published');
   console.log(`CID:      ${cid}`);
-  console.log(`ipfs.io:  https://ipfs.io/ipfs/${cid}/`);
-  console.log(`dweb:     https://${cid}.ipfs.dweb.link/`);
+  console.log(`filebase: https://ipfs.filebase.io/ipfs/${cid}/`);
   console.log(`sw:       https://${cid}.ipfs.inbrowser.link/`);
+  console.log(`eth.sucks: https://${cid}.eth.sucks/`);
 
   // Filebase announces to routing, so gateways CAN find the content — warming just saves the first
   // visitor the ~50s cold retrieval of the 8MB app.js. Retries resume from partial gateway caches.
@@ -140,8 +140,9 @@ async function main() {
       else rels.push(base ? base + '/' + name : name);
     }
   })(DIST, '');
-  for (const base of [`https://ipfs.io/ipfs/${cid}`, `https://${cid}.ipfs.dweb.link`]) {
-    const name = base.includes('dweb') ? 'dweb   ' : 'ipfs.io';
+  // ipfs.io and dweb.link stopped serving path fetches (429, Sunset 2026-09-21).
+  for (const base of [`https://ipfs.filebase.io/ipfs/${cid}`, `https://juicebox.center/ipfs/${cid}`]) {
+    const name = base.includes('filebase') ? 'filebase' : 'center  ';
     for (const rel of rels) {
       let status = 'failed';
       const started = Date.now();

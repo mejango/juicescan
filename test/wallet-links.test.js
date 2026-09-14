@@ -6,32 +6,32 @@ const CID = 'bafybeia7uzprpwhblgdlu5b6bqzd3wcfx2ef6zyczlk67253fttdky6kly';
 describe('mobile wallet handoffs', () => {
   it('moves subdomain IPFS URLs to a gateway that wallet browsers can load', () => {
     expect(walletDappUrl('https://' + CID + '.ipfs.inbrowser.link/#base:1/pay')).toBe(
-      'https://ipfs.io/ipfs/' + CID + '/#base:1/pay',
+      'https://' + CID + '.eth.sucks/#base:1/pay',
     );
     expect(walletDappUrl('https://' + CID + '.ipfs.dweb.link/#base:1/pay')).toBe(
-      'https://ipfs.io/ipfs/' + CID + '/#base:1/pay',
+      'https://' + CID + '.eth.sucks/#base:1/pay',
     );
     expect(walletDappUrl('https://' + CID + '.ipfs.w3s.link/#base:1/pay')).toBe(
-      'https://ipfs.io/ipfs/' + CID + '/#base:1/pay',
+      'https://' + CID + '.eth.sucks/#base:1/pay',
     );
   });
 
   it('preserves path, query, and hash when rewriting either inbrowser.link IPFS form', () => {
     var suffix = '/project/view?mode=compact#base:1';
-    var expected = 'https://ipfs.io/ipfs/' + CID + suffix;
+    var expected = 'https://' + CID + '.eth.sucks' + suffix;
     expect(walletDappUrl('https://' + CID + '.ipfs.inbrowser.link' + suffix)).toBe(expected);
     expect(walletDappUrl('https://ipfs.inbrowser.link/ipfs/' + CID + suffix)).toBe(expected);
   });
 
   it('does not rewrite ordinary sites or already-compatible IPFS gateways', () => {
     expect(walletDappUrl('https://juicebox.money/#discover')).toBe('https://juicebox.money/#discover');
-    expect(walletDappUrl('https://ipfs.io/ipfs/' + CID + '/#discover')).toBe(
-      'https://ipfs.io/ipfs/' + CID + '/#discover',
+    expect(walletDappUrl('https://' + CID + '.eth.sucks/#discover')).toBe(
+      'https://' + CID + '.eth.sucks/#discover',
     );
   });
 
   it('puts the rewritten URL into every supported wallet-app link', () => {
-    var safe = 'https://ipfs.io/ipfs/' + CID + '/#discover';
+    var safe = 'https://' + CID + '.eth.sucks/#discover';
     var links = mobileWalletLinks('https://' + CID + '.ipfs.inbrowser.link/#discover');
     expect(links.map(function (link) { return link.name; })).toEqual([
       'Open in MetaMask',

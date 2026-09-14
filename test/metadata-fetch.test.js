@@ -23,29 +23,29 @@ describe('IPFS metadata fetches', () => {
 
   it('builds a multi-gateway list with a path gateway first and eth.sucks as fallback', () => {
     const urls = ipfsGatewayUrls('ipfs://bafytest/meta.json');
-    expect(urls[0]).toBe('https://gateway.pinata.cloud/ipfs/bafytest/meta.json');
+    expect(urls[0]).toBe('https://juicebox.center/ipfs/bafytest/meta.json');
     expect(urls).toContain('https://bafytest.eth.sucks/meta.json');
+    expect(urls).toContain('https://juicebox.center/ipfs/bafytest/meta.json');
+    expect(urls).toContain('https://ipfs.filebase.io/ipfs/bafytest/meta.json');
     expect(urls).toContain('https://gateway.pinata.cloud/ipfs/bafytest/meta.json');
-    expect(urls).toContain('https://dweb.link/ipfs/bafytest/meta.json');
-    expect(urls).toContain('https://ipfs.io/ipfs/bafytest/meta.json');
     expect(ipfsToHttp('ipfs://bafytest/meta.json')).toBe(urls[0]);
   });
 
   it('falls back to path gateways first for CIDv0, which is not DNS-safe', () => {
     const urls = ipfsGatewayUrls('ipfs://QmNotDnsSafe/meta.json');
-    expect(urls[0]).toBe('https://gateway.pinata.cloud/ipfs/QmNotDnsSafe/meta.json');
+    expect(urls[0]).toBe('https://juicebox.center/ipfs/QmNotDnsSafe/meta.json');
     expect(urls.some((url) => url.includes('.eth.sucks'))).toBe(false);
   });
 
   it('prefers the range-friendly eth.sucks CID subdomain for media with path-gateway fallbacks', () => {
     expect(ipfsMediaGatewayUrls('ipfs://bafyvideo/movie.mp4')).toEqual([
       'https://bafyvideo.eth.sucks/movie.mp4',
+      'https://juicebox.center/ipfs/bafyvideo/movie.mp4',
+      'https://ipfs.filebase.io/ipfs/bafyvideo/movie.mp4',
       'https://gateway.pinata.cloud/ipfs/bafyvideo/movie.mp4',
-      'https://dweb.link/ipfs/bafyvideo/movie.mp4',
-      'https://ipfs.io/ipfs/bafyvideo/movie.mp4',
     ]);
     expect(ipfsMediaGatewayUrls('ipfs://QmNotDnsSafe/song.mp3')[0]).toBe(
-      'https://gateway.pinata.cloud/ipfs/QmNotDnsSafe/song.mp3',
+      'https://juicebox.center/ipfs/QmNotDnsSafe/song.mp3',
     );
     expect(ipfsMediaGatewayUrls('ipfs://QmNpmC2rbp7NrkvrUFApUM6JFkgHgvLtd3d6d8Vh9XuYgm/song.mp3')[0]).toBe(
       'https://bafybeiahgolv57kxe6fc6yoo5hrfpgydp7h2cqcbxjqzqlmtqpv2n6cily.eth.sucks/song.mp3',
@@ -62,7 +62,7 @@ describe('IPFS metadata fetches', () => {
     const first = await fetchMetadata('ipfs://bafycache/project.json');
     expect(first).toEqual({ name: 'Cached Project' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('https://gateway.pinata.cloud/ipfs/bafycache/project.json');
+    expect(fetchMock.mock.calls[0][0]).toBe('https://juicebox.center/ipfs/bafycache/project.json');
 
     fetchMock.mockClear();
     const second = await fetchMetadata('https://bafycache.eth.sucks/project.json');
@@ -144,7 +144,7 @@ describe('Bendystraw-first project metadata', () => {
       name: 'Bounty 1',
       description: 'A useful project',
       tagline: 'Public bounties',
-      logoUri: 'https://gateway.pinata.cloud/ipfs/bafylogo',
+      logoUri: 'https://juicebox.center/ipfs/bafylogo',
       metaSymbol: 'BEN1',
       metadataUri: 'ipfs://bafyproject',
       projectMetadataSource: 'bendystraw',
