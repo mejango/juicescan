@@ -7422,7 +7422,7 @@ function safeBadge(address, chainId) {
     function paint(policy) {
       tip.replaceChildren();
       var heading = el('strong');
-      heading.textContent = 'Safe · ' + policy.threshold + ' of ' + policy.owners.length + ' signatures';
+      heading.textContent = 'Safe: ' + policy.threshold + ' of ' + policy.owners.length + ' signatures';
       tip.appendChild(heading);
       var label = el('span', 'safe-badge-tip-label'); label.textContent = 'Signers'; tip.appendChild(label);
       policy.owners.forEach(function (owner) {
