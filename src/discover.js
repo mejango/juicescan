@@ -3041,6 +3041,13 @@ function readTierSupplyAcrossChains(project, tierId) {
 }
 
 // Item-detail popup: large art, name, price (+ discount), per-chain supply, and the full tier config.
+// Always answer "can this item be transferred?" — a tier without the pausable flag ignores ruleset pauses entirely.
+export function tierTransferStatus(shop, tier) {
+  if (!(tier.flags && tier.flags.transfersPausable)) return 'Always allowed';
+  var pauseOn = shop.transfersPausedChainId ? ' on ' + chainNameOf(shop.transfersPausedChainId) : '';
+  if (shop.transfersPaused == null) return 'Current ruleset unavailable';
+  return (shop.transfersPaused ? 'Paused by the current ruleset' : 'Allowed by the current ruleset') + pauseOn;
+}
 function openTierDetail(project, shop, tier, cart, refreshers) {
   var content = el('div', 'tier-detail');
   var art = el('div', 'tier-detail-art'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; art.appendChild(ph); content.appendChild(art);
@@ -3102,13 +3109,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   if (tier.reserveFrequency > 0) fact('Reserve mint', '1 per ' + tier.reserveFrequency + ' sold');
   if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
   if (tier.splitPercent > 0) fact('Split', (tier.splitPercent / 1e7) + '% of sales');
-  if (tier.flags && tier.flags.transfersPausable) {
-    var pauseOn = shop.transfersPausedChainId ? ' on ' + chainNameOf(shop.transfersPausedChainId) : '';
-    fact('Transfers', shop.transfersPaused == null ? 'Current ruleset unavailable'
-      : shop.transfersPaused
-        ? 'Paused by the current ruleset' + pauseOn
-        : 'Allowed by the current ruleset' + pauseOn);
-  }
+  fact('Transfers', tierTransferStatus(shop, tier));
   content.appendChild(cfg);
 
   // Each set flag on its own row with a plain-English explanation.
