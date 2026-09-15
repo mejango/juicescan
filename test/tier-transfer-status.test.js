@@ -13,3 +13,15 @@ describe('item transfer status', () => {
     expect(tierTransferStatus({ transfersPaused: null }, tier)).toBe('Current ruleset unavailable');
   });
 });
+
+describe('revnet item transfer status', () => {
+  const tier = { flags: { transfersPausable: true } };
+  it('states the item is not transferable when the stage pauses transfers', () => {
+    expect(tierTransferStatus({ transfersPaused: true, transfersPausedChainId: 8453 }, tier, true)).toBe('Not transferable — paused by this revnet’s stage on Base');
+  });
+  it('speaks in stages, not rulesets, for the other states', () => {
+    expect(tierTransferStatus({ transfersPaused: false }, tier, true)).toBe('Allowed by the current stage');
+    expect(tierTransferStatus({ transfersPaused: null }, tier, true)).toBe('Current stage unavailable');
+    expect(tierTransferStatus({ transfersPaused: true }, { flags: {} }, true)).toBe('Always allowed');
+  });
+});

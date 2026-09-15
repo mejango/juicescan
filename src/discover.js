@@ -1613,8 +1613,10 @@ function renderShopSection(project, shop, cart) {
     var transferValue = document.createElement('dd');
     var pauseChain = s.transfersPausedChainId ? ' on ' + chainNameOf(s.transfersPausedChainId) : '';
     transferValue.textContent = s.transfersPaused == null
-      ? 'Ruleset unavailable'
-      : (s.transfersPaused ? 'Paused now' + pauseChain : 'Allowed now' + pauseChain);
+      ? (project.isRevnet ? 'Stage unavailable' : 'Ruleset unavailable')
+      : project.isRevnet
+        ? (s.transfersPaused ? 'Paused by this stage' : 'Allowed by this stage') + pauseChain
+        : (s.transfersPaused ? 'Paused now' + pauseChain : 'Allowed now' + pauseChain);
     transferLine.appendChild(transferValue); list.appendChild(transferLine);
     details.appendChild(list);
     card.appendChild(details);
@@ -2417,9 +2419,14 @@ function openAddTierModal(project, shop) {
   }
   var itemMinter = project.isRevnet ? 'Revnet operator' : 'Project owner';
   var allowOwnerMintCb = flagCheck(itemMinter + ' can mint for free', 'The ' + itemMinter.toLowerCase() + ' can mint this item from inventory without paying.');
+  // Revnets deployed here keep the collection-level pause on in every stage, so this flag IS the item's
+  // transfer policy: checked = never transferable, unchecked = transferable. Say so instead of "pausable".
+  var revnetLocksTransfers = project.isRevnet && shop && shop.transfersPaused === true;
   var transfersPausableCb = flagCheck(
-    project.isRevnet ? 'Transfers pausable by stage' : 'Transfers pausable per ruleset',
-    project.isRevnet
+    revnetLocksTransfers ? 'Non-transferable' : project.isRevnet ? 'Transfers pausable by stage' : 'Transfers pausable per ruleset',
+    revnetLocksTransfers
+      ? 'This revnet’s stages keep item transfers paused, so a checked item can never move wallet to wallet. Leave it unchecked for a transferable item. Minting and burning still work.'
+      : project.isRevnet
       ? 'Allow an active precommitted revnet stage to pause this item’s wallet-to-wallet transfers.'
       : 'Allow an active ruleset to pause this item’s wallet-to-wallet transfers.',
   );
@@ -3042,11 +3049,13 @@ function readTierSupplyAcrossChains(project, tierId) {
 
 // Item-detail popup: large art, name, price (+ discount), per-chain supply, and the full tier config.
 // Always answer "can this item be transferred?" — a tier without the pausable flag ignores ruleset pauses entirely.
-export function tierTransferStatus(shop, tier) {
+export function tierTransferStatus(shop, tier, isRevnet) {
   if (!(tier.flags && tier.flags.transfersPausable)) return 'Always allowed';
   var pauseOn = shop.transfersPausedChainId ? ' on ' + chainNameOf(shop.transfersPausedChainId) : '';
-  if (shop.transfersPaused == null) return 'Current ruleset unavailable';
-  return (shop.transfersPaused ? 'Paused by the current ruleset' : 'Allowed by the current ruleset') + pauseOn;
+  var gate = isRevnet ? 'stage' : 'ruleset';
+  if (shop.transfersPaused == null) return 'Current ' + gate + ' unavailable';
+  if (shop.transfersPaused && isRevnet) return 'Not transferable — paused by this revnet’s stage' + pauseOn;
+  return (shop.transfersPaused ? 'Paused by the current ruleset' : 'Allowed by the current ' + gate) + pauseOn;
 }
 function openTierDetail(project, shop, tier, cart, refreshers) {
   var content = el('div', 'tier-detail');
@@ -3109,14 +3118,17 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   if (tier.reserveFrequency > 0) fact('Reserve mint', '1 per ' + tier.reserveFrequency + ' sold');
   if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
   if (tier.splitPercent > 0) fact('Split', (tier.splitPercent / 1e7) + '% of sales');
-  fact('Transfers', tierTransferStatus(shop, tier));
+  fact('Transfers', tierTransferStatus(shop, tier, project.isRevnet));
   content.appendChild(cfg);
 
   // Each set flag on its own row with a plain-English explanation.
   var fl = tier.flags || {};
   var FLAG_DESCS = [
     ['allowOwnerMint', project.isRevnet ? 'Revnet operator can mint' : 'Project owner can mint', 'The ' + (project.isRevnet ? 'revnet operator' : 'project owner') + ' can mint this item for free, without a payment.'],
-    ['transfersPausable', 'Ruleset-controlled transfers', 'A ruleset or precommitted revnet stage can pause wallet-to-wallet transfers of this item. Minting and burning still work.'],
+    ['transfersPausable', project.isRevnet && shop.transfersPaused === true ? 'Non-transferable' : 'Ruleset-controlled transfers',
+      project.isRevnet && shop.transfersPaused === true
+        ? 'This revnet’s stages keep item transfers paused, so this item can never move wallet to wallet. Minting and burning still work.'
+        : 'A ruleset or precommitted revnet stage can pause wallet-to-wallet transfers of this item. Minting and burning still work.'],
     ['cantBeRemoved', 'Cannot be removed', 'This item can never be removed from the shop.'],
     ['cantBuyWithCredits', 'No credit buys', 'Buyers can’t use project credits to mint this item — only a fresh payment.'],
     ['cantIncreaseDiscountPercent', 'Discount capped', 'This item’s discount can only be lowered, never increased.'],
