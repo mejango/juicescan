@@ -34,7 +34,8 @@ const budgets = {
   // 9,950,161 B raw / 1,464,061 B gzip (+34,881 / +6,605 versus the production rollout above).
   // Live fee-buyback execution receipts and wait/ready review controls:
   // 9,963,295 B raw / 1,468,745 B gzip (+13,134 / +4,684 versus the pending-payment build).
-  'dist/app.js': { raw: 9_967_000, gzip: 1_470_000 },
+  // Revnet item transfer copy — non-transferable wording at add-item, item modal, shop config: 9,967,611 B raw / 1,468,831 B gzip.
+  'dist/app.js': { raw: 9_975_000, gzip: 1_472_000 },
   'dist/style.css': { raw: 247_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
