@@ -17423,11 +17423,11 @@ export function setSafeBatchTrayRenderer(render) { _safeBatchTray = render; }
 
 function renderBackOfficeSection(project) {
   var section = el('div', 'detail-section');
-  // Queued batch steps stay visible above every card; the section is cached across tab switches, so the tray
-  // re-renders itself on the tray-updated event instead of being rebuilt here.
-  if (_safeBatchTray) section.appendChild(_safeBatchTray(project));
   // Account card: who owns the project on each chain + what kind of account it is.
   section.appendChild(renderAccountCard(project));
+  // Queued batch steps sit under the account they'll be proposed from; the section is cached across tab
+  // switches, so the tray re-renders itself on the tray-updated event instead of being rebuilt here.
+  if (_safeBatchTray) section.appendChild(_safeBatchTray(project));
   // One human-readable ENS alias for the exact deployment selected in the URL. The card writes only Ethereum's
   // JBProjectHandles entry for that chainId:projectId; it never fans one ENS record across sibling deployments.
   section.appendChild(renderProjectHandleCard(project));
