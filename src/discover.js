@@ -419,6 +419,7 @@ var setTokenAbi = [{ type: 'function', name: 'setTokenFor', stateMutability: 'no
 // → JBRouterTerminalRegistry; initializePoolFor → JBBuybackHook (singleton, keyed by projectId + terminalToken).
 var setBuybackHookForAbi = [{ type: 'function', name: 'setHookFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'hook', type: 'address' }], outputs: [] }];
 var setRouterTerminalForAbi = [{ type: 'function', name: 'setTerminalFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminal', type: 'address' }], outputs: [] }];
+var setPoolForAbi = [{ type: 'function', name: 'setPoolFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'twapWindow', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [] }];
 var initializePoolForAbi = [{ type: 'function', name: 'initializePoolFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'twapWindow', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'sqrtPriceX96', type: 'uint160' }], outputs: [] }];
 // Registry getters — the project's CURRENT resolved hook / terminal, used to pre-fill the setter fields.
 var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -17448,12 +17449,14 @@ function renderBackOfficeSection(project) {
   // the owner exercises the ruleset-gated owner powers (Powers card) AND can manage operators (Permissions card).
   if (project.isRevnet) {
     section.appendChild(renderEditsCard(project));
-    section.appendChild(renderBuybackRouterCard(project));
+    section.appendChild(renderBuybackHookCard(project));
+    section.appendChild(renderSwapRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
   } else {
     section.appendChild(renderEditsCard(project));
     section.appendChild(renderPowersCard(project));
-    section.appendChild(renderBuybackRouterCard(project));
+    section.appendChild(renderBuybackHookCard(project));
+    section.appendChild(renderSwapRouterCard(project));
     section.appendChild(renderPermissionsCard(project));
   }
   return section;
@@ -17506,7 +17509,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
       // Operator/owner txs there are coordinated onchain (approve + execute via the action panels), not here.
       if (!hasSafeService(c.id)) {
         list.innerHTML = '';
-        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — no offchain queue here. A second signer completes a pending tx by re-running the same operator action (e.g. Buyback & swap router → Set buyback hook): it reads the onchain approvals and lets them approve + execute.';
+        var nos = el('div', 'backoffice-none'); nos.textContent = 'No hosted Safe service on ' + c.name + ' — no offchain queue here. A second signer completes a pending tx by re-running the same operator action (e.g. Buyback hook → Set buyback hook): it reads the onchain approvals and lets them approve + execute.';
         list.appendChild(nos); return Promise.resolve();
       }
       return Promise.all([
@@ -18347,26 +18350,25 @@ function makePerChainAddressControl(chains, defaultValueOf, opts) {
   };
 }
 
-export function renderBuybackRouterCard(project) {
+export function renderBuybackHookCard(project) {
+  return renderPowerCard(project, 'Buyback hook',
+    'Choose the hook that decides, on every payment, whether to issue tokens or buy them on the AMM, then point it at a Uniswap pool and choose how long prices are averaged. Each action runs on your selected networks, with one payment or a Safe proposal.',
+    [POWER_SET_BUYBACK_HOOK, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP]);
+}
+
+export function renderSwapRouterCard(project) {
+  return renderPowerCard(project, 'Swap router',
+    'Choose the terminal the router registry deposits router-swapped funds to.',
+    [POWER_SET_ROUTER_TERMINAL]);
+}
+
+function renderPowerCard(project, titleText, introText, actions) {
   var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title'); title.textContent = 'Buyback & swap router'; card.appendChild(title);
+  var title = el('div', 'detail-card-title'); title.textContent = titleText; card.appendChild(title);
   var intro = el('div', 'detail-card-body backoffice-intro');
-  intro.textContent = 'Set up contracts that buy existing project tokens or exchange payment tokens. Create the trading pool and choose how long prices are averaged. Each action runs on your selected networks, with one payment or a Safe proposal.';
+  intro.textContent = introText;
   card.appendChild(intro);
-  var routing = el('div', 'powers-desc'); routing.textContent = 'Router path: reading across chains…'; card.appendChild(routing);
-  Promise.all(projectChainList(project).map(async function (chain) {
-    var name = chain.name || chainNameOf(chain.id);
-    try {
-      var path = await projectRouterPath(project, chain.id);
-      if (!path) return name + ': no router selected';
-      return name + ': ' + (path.registry ? 'registry → ' : '')
-        + (path.gateway ? 'gateway ' + shortAddr6(path.gateway) + ' → ' : '') + 'router ' + shortAddr6(path.router);
-    } catch (_) { return name + ': could not read router path'; }
-  })).then(function (paths) { routing.textContent = 'Router path: ' + paths.join(' | '); });
-  var custody = el('div', 'powers-desc');
-  custody.textContent = 'A gateway keeps failed protocol-fee routes in custody for retry or finalization. A queued call is still held; it is not a settled or forgiven fee. The API exposes pending-call commitments, failure details, and retry/finalization functions.';
-  card.appendChild(custody);
-  [POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP].forEach(function (action) {
+  actions.forEach(function (action) {
     var row = el('div', 'powers-row');
     var head = el('div', 'powers-head');
     var lab = el('span', 'powers-label'); lab.textContent = action.title; head.appendChild(lab);
@@ -18843,7 +18845,7 @@ export var POWER_SET_BUYBACK_HOOK = {
 export var POWER_SET_ROUTER_TERMINAL = {
   title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
-  note: 'Selects the gateway or router that the registry forwards into for this project. A gateway then calls its bound router. Pre-filled with the project’s current selection.',
+  note: 'Sets the project’s entry in the router registry: the terminal router-swapped funds are deposited to. Pre-filled with the project’s current selection.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
     defaultRead: function (project) { return projectRouterTerminal(project, project.chainId).then(function (a) { return a || ''; }).catch(function () { return ''; }); },
@@ -18866,6 +18868,23 @@ export var POWER_INIT_BUYBACK_POOL = {
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
     return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken, BigInt(v.sqrtPriceX96)];
+  },
+};
+export var POWER_SET_BUYBACK_POOL = {
+  title: 'Set buyback pool', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, fn: 'setPoolFor', gas: 200000n, chainsDefault: 'all',
+  chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
+  poolStateRead: buybackPoolStateRead,
+  note: 'Points the project’s hook at an existing Uniswap v4 pool for the pair (terminal) token, without creating or pricing one. Routed through the buyback hook registry, which forwards to the project’s configured hook (set the hook first).',
+  danger: 'Dangerous: every payment can swap through this pool. A wrong or illiquid pool lets arbitrageurs extract value. Verify the fee / tick-spacing pair and the pair token on every selected chain.',
+  fields: [
+    { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
+    { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10' },
+    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)' },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token - sent to setPoolFor; hook stores the pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); }, help: 'Set the pair token per selected chain. Use the native-token sentinel for native ETH pools; the hook stores the resulting pool key under address(0). USDC and project-token addresses can differ by chain.' },
+  ],
+  buildArgs: function (v, cid, pid) {
+    var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
+    return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken];
   },
 };
 // JBBuybackHook._requireValidTwapWindow: 5 minutes to 2 days.
@@ -18905,7 +18924,7 @@ export var POWER_SET_BUYBACK_TWAP = {
 
 // Every power can be queued into the Safe batch tray; the named registry/hook kinds keep their own entries.
 registerPowerKinds([POWER_MINT, POWER_SET_CONTROLLER, POWER_SET_TERMINALS, POWER_MIGRATE, POWER_ADD_PRICE_FEED, POWER_SET_TOKEN,
-  POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP]);
+  POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP]);
 
 // A deliberate-confirmation gate for irreversible/dangerous owner actions: a danger banner + a checkbox
 // that must be ticked for the submit to proceed (the submit greys out until then).

@@ -785,7 +785,7 @@ function projectTokenLabel(chainId, projectId, addr) {
 }
 function decorateArgValue(input, value, ctx, valNode, formatted) {
   if (!ctx || (input.type || '') !== 'address' || !isAddr(String(value || ''))) return;
-  if (ctx.fn !== 'initializePoolFor' || input.name !== 'terminalToken') return;
+  if ((ctx.fn !== 'initializePoolFor' && ctx.fn !== 'setPoolFor') || input.name !== 'terminalToken') return;
   var raw = String(value);
   var lc = raw.toLowerCase();
   if (lc === ZERO_ADDRESS.toLowerCase()) {

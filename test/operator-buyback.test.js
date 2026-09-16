@@ -2,16 +2,23 @@
 // couldn't be exercised in the test browser — its project feed is empty), and each descriptor's buildArgs must
 // encode the registry call with correctly-typed args (BigInt projectId + numeric pool params).
 import { describe, it, expect } from 'vitest';
-import { renderBuybackRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP, materializeChainValues } from '../src/discover.js';
+import { renderBuybackHookCard, renderSwapRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP, materializeChainValues } from '../src/discover.js';
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
 
-describe('renderBuybackRouterCard', () => {
-  it('renders the card + 4 action buttons without throwing', () => {
-    const card = renderBuybackRouterCard({ id: '5', chainId: 1, idByChain: { 1: 5 }, chains: [{ id: 1, name: 'Ethereum', projectId: 5 }] });
-    expect(card.querySelector('.detail-card-title').textContent).toMatch(/Buyback . swap router/);
+describe('buyback hook + swap router cards', () => {
+  const project = { id: '5', chainId: 1, idByChain: { 1: 5 }, chains: [{ id: 1, name: 'Ethereum', projectId: 5 }] };
+  it('renders the buyback hook card + its action buttons without throwing', () => {
+    const card = renderBuybackHookCard(project);
+    expect(card.querySelector('.detail-card-title').textContent).toBe('Buyback hook');
     const btns = [].slice.call(card.querySelectorAll('.powers-act')).map((b) => b.textContent);
-    expect(btns).toEqual(['Set buyback hook', 'Set router terminal', 'Initialize buyback pool', 'Set TWAP window']);
+    expect(btns).toEqual(['Set buyback hook', 'Initialize buyback pool', 'Set buyback pool', 'Set TWAP window']);
+  });
+  it('renders the swap router card with the terminal action alone', () => {
+    const card = renderSwapRouterCard(project);
+    expect(card.querySelector('.detail-card-title').textContent).toBe('Swap router');
+    const btns = [].slice.call(card.querySelectorAll('.powers-act')).map((b) => b.textContent);
+    expect(btns).toEqual(['Set router terminal']);
   });
 });
 
@@ -38,6 +45,12 @@ describe('operator buyback/router descriptors', () => {
     const args = POWER_INIT_BUYBACK_POOL.buildArgs(
       { fee: '3000', tickSpacing: '60', twapWindow: '1800', terminalToken: NATIVE, sqrtPriceX96: '79228162514264337593543950336' }, 1, 5n);
     expect(args).toEqual([5n, 3000n, 60n, 1800n, NATIVE, 79228162514264337593543950336n]);
+  });
+  it('set pool → JBBuybackHookRegistry.setPoolFor with numeric pool params and no price', () => {
+    expect(POWER_SET_BUYBACK_POOL.contract).toBe('JBBuybackHookRegistry');
+    expect(POWER_SET_BUYBACK_POOL.fn).toBe('setPoolFor');
+    const args = POWER_SET_BUYBACK_POOL.buildArgs({ fee: '3000', tickSpacing: '60', twapWindow: '1800', terminalToken: NATIVE }, 1, 5n);
+    expect(args).toEqual([5n, 3000n, 60n, 1800n, NATIVE]);
   });
   it('buyback hook / router terminal pre-fill the project’s CURRENT value, with no standard-infra fallback', () => {
     const hookField = POWER_SET_BUYBACK_HOOK.fields[0];

@@ -13,7 +13,7 @@ vi.mock('../src/component-base.js', async importOriginal => ({
 }));
 vi.mock('../src/discover.js', async importOriginal => ({ ...await importOriginal(), safeInfoForAuthority: vi.fn(async () => runtime.safeInfo) }));
 
-import { renderBuybackRouterCard } from '../src/discover.js';
+import { renderBuybackHookCard } from '../src/discover.js';
 import { buildStep, loadTray, saveTray, NATIVE_TOKEN } from '../src/safe-batch.js';
 import { mirrorAcrossChains, renderSafeBatchTray } from '../src/safe-batch-ui.js';
 
@@ -98,7 +98,7 @@ describe('batch dialog', () => {
 describe('Add to batch', () => {
   it('upserts the exact reviewed call from the power modal into the selected chain’s tray and closes without sending', async () => {
     const one = Object.assign(project(), { chains: [{ id: 8453, name: 'Base', projectId: 6 }] });
-    const card = renderBuybackRouterCard(one);
+    const card = renderBuybackHookCard(one);
     document.body.appendChild(card);
     Array.from(card.querySelectorAll('.powers-act')).find(b => b.textContent === 'Set buyback hook').click();
     const dlg = dialog();
