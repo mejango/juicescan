@@ -18814,6 +18814,26 @@ function initializedPoolTokenOf(project, chainId) {
   }).catch(function () { return null; });
 }
 
+// The first initialized pool on the URL's chain (fee, tick spacing, TWAP window), so Set buyback pool and Set TWAP
+// window start from what the project already has rather than generic defaults.
+function livePoolOf(project) {
+  var chainId = project.chainId, pid = pidOn(project, chainId);
+  return projectBuybackHook(project, chainId).then(function (hook) {
+    if (!hook || hook === ZERO_ADDRESS) return null;
+    var probes = [ZERO_ADDRESS]; var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push(usdc);
+    return Promise.all(probes.map(function (token) {
+      var client = clientFor(chainId);
+      return Promise.all([
+        client.readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, token] }).catch(function () { return 0n; }),
+        client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pid, token] }).catch(function () { return null; }),
+      ]).then(function (r) { return Number(r[0]) > 0 && r[1] ? { twap: Number(r[0]), fee: Number(r[1].fee), tickSpacing: Number(r[1].tickSpacing) } : null; });
+    })).then(function (found) { return found.filter(Boolean)[0] || null; });
+  }).catch(function () { return null; });
+}
+function livePoolField(name) {
+  return function (project) { return livePoolOf(project).then(function (pool) { return pool ? String(pool[name]) : ''; }); };
+}
+
 // Per-chain buyback-pool summary. There is no scalar getter for the PoolKey (internal), so resolve the project's
 // hook and read twapWindowOf for the native + USDC pairs — a non-zero window means a pool is initialized there.
 function buybackPoolStateRead(project, chainId) {
@@ -18876,11 +18896,14 @@ export var POWER_SET_BUYBACK_POOL = {
   poolStateRead: buybackPoolStateRead,
   note: 'Points the project’s hook at an existing Uniswap v4 pool for the pair (terminal) token, without creating or pricing one. Routed through the buyback hook registry, which forwards to the project’s configured hook (set the hook first).',
   danger: 'Dangerous: every payment can swap through this pool. A wrong or illiquid pool lets arbitrageurs extract value. Verify the fee / tick-spacing pair and the pair token on every selected chain.',
+  // Pre-filled from the pool the project already has, like the hook and terminal pre-fill their current value.
   fields: [
-    { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)' },
-    { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10' },
-    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)' },
-    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token - sent to setPoolFor; hook stores the pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); }, help: 'Set the pair token per selected chain. Use the native-token sentinel for native ETH pools; the hook stores the resulting pool key under address(0). USDC and project-token addresses can differ by chain.' },
+    { name: 'fee', label: 'Fee (hundredths of a bip)', kind: 'uint', placeholder: 'e.g. 3000 (0.3%), 10000 (1%)', defaultRead: livePoolField('fee') },
+    { name: 'tickSpacing', label: 'Tick spacing', kind: 'uint', placeholder: 'matches fee: 0.3%→60, 1%→200, 0.05%→10', defaultRead: livePoolField('tickSpacing') },
+    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min)', defaultRead: livePoolField('twap') },
+    { name: 'terminalToken', label: 'Pair (terminal) token', kind: 'chainAddress', defaultValue: NATIVE_TOKEN, zeroLabel: 'Zero address native pool key', nativeLabel: 'Native ETH token - sent to setPoolFor; hook stores the pool key as address(0)', unknownLabel: function (addr) { return 'Custom token ' + truncAddr(addr); },
+      crossChainRead: initializedPoolTokenOf,
+      help: 'Pre-filled per chain with the pair token that already has a pool. Native ETH pools use the native-token sentinel; USDC addresses differ by chain.' },
   ],
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
@@ -18910,7 +18933,7 @@ export var POWER_SET_BUYBACK_TWAP = {
       // Pre-fill each chain with the pair token it already has a pool for — a USDC revnet has no native pool.
       crossChainRead: initializedPoolTokenOf,
       help: 'Pre-filled per chain with the pair token that already has a pool. Native ETH pools use the native-token sentinel; USDC addresses differ by chain.' },
-    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min) — min 300, max 172800' },
+    { name: 'twapWindow', label: 'TWAP window (seconds)', kind: 'uint', placeholder: 'e.g. 1800 (30 min) — min 300, max 172800', defaultRead: livePoolField('twap') },
   ],
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
