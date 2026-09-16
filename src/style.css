@@ -6467,13 +6467,13 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .account-siteas { border-color: var(--c-orange); color: var(--c-orange); }
 
 /* Safe operator batch: tray strip (Owner/Operator tab), batch dialog step list, preset dialog */
-.safe-batch-tray { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; margin-bottom: 14px; font-size: 12px; }
+.safe-batch-tray { margin-bottom: 14px; font-size: 12px; }
 .safe-batch-tray[hidden] { display: none; }
-.safe-batch-tray-label { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted-2); }
-.safe-batch-tray-empty { color: var(--muted-2); }
-.safe-batch-chip { font-family: inherit; font-size: 11px; font-weight: bold; padding: 3px 10px; min-height: 24px; border: 1px solid var(--c-teal); background: transparent; color: var(--c-teal); cursor: pointer; }
-.safe-batch-chip:hover { color: var(--text); border-color: var(--write); }
-.safe-batch-tray-status { flex-basis: 100%; font-size: 11px; color: var(--muted-2); word-break: break-word; }
+.safe-batch-tray .owners-subtabs { margin: 12px 0; }
+.safe-batch-tray-empty { color: var(--muted-2); margin-top: 12px; }
+.safe-batch-table .splits-row { grid-template-columns: 24px 1.4fr 2fr; }
+.safe-batch-tray-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.safe-batch-tray-status { margin-top: 8px; font-size: 11px; color: var(--muted-2); word-break: break-word; }
 .safe-batch-tray-status:empty { display: none; }
 .safe-batch-tray-status.pending { color: var(--c-teal); }
 .safe-batch-tray-status.error { color: var(--c-pink); }

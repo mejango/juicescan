@@ -31,12 +31,14 @@ function button(className, text, onClick) {
 }
 
 // ── Tray ─────────────────────────────────────────────────────────────────────
-// One chip per chain with queued steps; hidden only when nothing is queued AND no chain has the buyback/router
-// registries a preset could target. Re-renders on the storage writer's event so it survives the cached tab.
+// One tab per chain with queued steps over a table of them; hidden only when nothing is queued AND no chain has
+// the buyback/router registries a preset could target. Re-renders on the storage writer's event so it survives
+// the cached tab.
 export function renderSafeBatchTray(project) {
-  var node = el('div', 'safe-batch-tray');
+  var node = el('div', 'detail-card safe-batch-tray');
   var status = el('div', 'safe-batch-tray-status');
   var setStatus = makeStatusSetter(status, 'safe-batch-tray-status');
+  var activeChainId = null;
   function paint() {
     var chains = projectChains(project);
     var queued = chains.map(function (c) { return { chain: c, steps: trayFor(project, c) }; }).filter(function (r) { return r.steps.length; });
@@ -44,27 +46,56 @@ export function renderSafeBatchTray(project) {
     node.hidden = !queued.length && !hasInfra;
     node.innerHTML = '';
     if (node.hidden) return;
-    var label = el('span', 'safe-batch-tray-label'); label.textContent = 'Batch'; node.appendChild(label);
-    if (!queued.length) { var none = el('span', 'safe-batch-tray-empty'); none.textContent = 'Nothing queued. Add actions to review together as a batch, or start from a preset.'; node.appendChild(none); }
-    queued.forEach(function (r) {
-      node.appendChild(button('safe-batch-chip', r.steps.length + ' queued · ' + chainName(r.chain), function () {
-        openBatchDialog(project, r.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); });
+    var title = el('div', 'detail-card-title'); title.textContent = 'Batch'; node.appendChild(title);
+    var intro = el('div', 'detail-card-body backoffice-intro');
+    intro.textContent = 'Actions you add with “Add to batch” queue here, one Safe proposal per chain. Nothing is sent until you review a chain’s batch.';
+    node.appendChild(intro);
+    // The batch shown in the active tab is the one mirrored to the other chains.
+    var source = queued.filter(function (r) { return r.chain.id === activeChainId; })[0] || queued[0] || null;
+    if (!source) {
+      var none = el('div', 'safe-batch-tray-empty'); none.textContent = 'Nothing queued. Add actions to review together as a batch, or start from a preset.'; node.appendChild(none);
+    } else {
+      var subRow = el('div', 'owners-subtabs'); subRow.setAttribute('role', 'tablist'); subRow.setAttribute('aria-label', 'Queued chains');
+      queued.forEach(function (r) {
+        var tab = button('owners-subtab' + (r === source ? ' active' : ''), chainName(r.chain) + ' (' + r.steps.length + ')', function () { activeChainId = r.chain.id; paint(); });
+        tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', r === source ? 'true' : 'false');
+        subRow.appendChild(tab);
+      });
+      node.appendChild(subRow);
+      var table = el('div', 'splits-table safe-batch-table');
+      var head = el('div', 'splits-row splits-head');
+      ['#', 'Action', 'Detail'].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
+      table.appendChild(head);
+      source.steps.forEach(function (step, i) {
+        var row = el('div', 'splits-row');
+        var num = el('span', 'splits-muted'); num.textContent = String(i + 1); row.appendChild(num);
+        var lab = el('span', 'splits-acct'); lab.textContent = step.label; row.appendChild(lab);
+        var det = el('span', 'splits-muted'); det.textContent = step.detail || ''; row.appendChild(det);
+        table.appendChild(row);
+      });
+      node.appendChild(table);
+      var foot = el('div', 'splits-chain-foot');
+      foot.appendChild(button('operator-cta safe-batch-review', 'Review and propose on ' + chainName(source.chain), function () {
+        openBatchDialog(project, source.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); });
       }));
-    });
-    node.appendChild(button('operator-cta safe-batch-presets', 'Presets', function () { openPresetDialog(project, setStatus); }));
-    if (queued.length && chains.length > 1) {
-      node.appendChild(button('operator-cta safe-batch-mirror', 'Same on every chain', function () {
+      node.appendChild(foot);
+    }
+    var actions = el('div', 'safe-batch-tray-actions');
+    if (hasInfra) actions.appendChild(button('operator-cta safe-batch-presets', 'Start from a preset', function () { openPresetDialog(project, setStatus); }));
+    if (source && chains.length > 1) {
+      actions.appendChild(button('operator-cta safe-batch-mirror', 'Copy the ' + chainName(source.chain) + ' batch to every chain', function () {
         setStatus('Reading the other chains…', 'pending');
-        mirrorAcrossChains(project).then(function (report) { setStatus(report.message, report.mirrored.length ? 'success' : 'error'); })
+        mirrorAcrossChains(project, source.chain.id).then(function (report) { setStatus(report.message, report.mirrored.length ? 'success' : 'error'); })
           .catch(function (e) { setStatus(errMessage(e, 'Could not mirror the batch.'), 'error'); });
       }));
     }
-    if (queued.length) {
-      node.appendChild(button('operator-cta safe-batch-clear', 'Clear', function () {
+    if (source) {
+      actions.appendChild(button('operator-cta safe-batch-clear', 'Clear all', function () {
         chains.forEach(function (c) { clearTray(c.id, pidOn(project, c.id)); });
         setStatus('Cleared the batch.', '');
       }));
     }
+    node.appendChild(actions);
     node.appendChild(status);
   }
   paint();
@@ -336,9 +367,9 @@ function mapToken(token, fromChainId, toChainId) {
   return sameAddr(token, usdc[Number(fromChainId)]) ? (usdc[Number(toChainId)] || null) : null;
 }
 
-export async function mirrorAcrossChains(project) {
+export async function mirrorAcrossChains(project, sourceChainId) {
   var chains = projectChains(project);
-  var current = Number(project._urlChainId || project.chainId);
+  var current = Number(sourceChainId || project._urlChainId || project.chainId);
   var source = chains.filter(function (c) { return c.id === current && trayFor(project, c).length; })[0]
     || chains.filter(function (c) { return trayFor(project, c).length; })[0];
   if (!source) return { mirrored: [], skipped: [], message: 'Nothing queued to mirror.' };

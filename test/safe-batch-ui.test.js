@@ -24,26 +24,31 @@ const project = () => ({ id: '6', chainId: 8453, _urlChainId: 8453, idByChain: {
 const hook = () => buildStep('setHookFor', { chainId: 8453, projectId: 6, values: { hook: HOOK } });
 const pool = () => buildStep('setPoolFor', { chainId: 8453, projectId: 6, values: { fee: 10000, tickSpacing: 200, twapWindow: 1800, terminalToken: NATIVE_TOKEN } });
 const dialog = () => document.querySelector('dialog.modal-dialog');
-const chips = node => Array.from(node.querySelectorAll('.safe-batch-chip')).map(b => b.textContent);
+const tabs = node => Array.from(node.querySelectorAll('[role="tab"]')).map(b => b.textContent);
+const rows = node => Array.from(node.querySelectorAll('.safe-batch-table .splits-row:not(.splits-head)')).map(r => r.children[1].textContent);
 const buttons = node => Array.from(node.querySelectorAll('button')).map(b => b.textContent);
 
 beforeEach(() => { localStorage.clear(); runtime.account = OWNER; runtime.safeInfo = null; });
 afterEach(() => { document.querySelectorAll('dialog').forEach(node => { if (node.open) node.close(); node.remove(); }); document.body.innerHTML = ''; });
 
 describe('tray', () => {
-  it('shows one chip per queued chain from storage, keeps Presets when empty, and repaints on the update event', () => {
+  it('shows one tab per queued chain from storage over its steps, keeps the preset button when empty, and repaints on the update event', () => {
     saveTray(8453, 6, [hook(), pool()]);
     const tray = renderSafeBatchTray(project());
     document.body.appendChild(tray);
     expect(tray.hidden).toBe(false);
-    expect(chips(tray)).toEqual(['2 queued · Base']);
-    expect(buttons(tray)).toEqual(['2 queued · Base', 'Presets', 'Same on every chain', 'Clear']);
+    expect(tabs(tray)).toEqual(['Base (2)']);
+    expect(rows(tray)).toEqual(['Set buyback hook', 'Register buyback pool']);
+    expect(buttons(tray)).toEqual(['Base (2)', 'Review and propose on Base', 'Start from a preset', 'Copy the Base batch to every chain', 'Clear all']);
     saveTray(10, 7, [buildStep('setHookFor', { chainId: 10, projectId: 7, values: { hook: HOOK } })]);
-    expect(chips(tray)).toEqual(['2 queued · Base', '1 queued · Optimism']);
+    expect(tabs(tray)).toEqual(['Base (2)', 'Optimism (1)']);
+    tray.querySelectorAll('[role="tab"]')[1].click();
+    expect(rows(tray)).toEqual(['Set buyback hook']);
+    expect(buttons(tray)).toContain('Copy the Optimism batch to every chain');
     tray.querySelector('.safe-batch-clear').click();
     expect(loadTray(8453, 6)).toEqual([]); expect(loadTray(10, 7)).toEqual([]);
-    expect(chips(tray)).toEqual([]);
-    expect(buttons(tray)).toEqual(['Presets']);
+    expect(tabs(tray)).toEqual([]);
+    expect(buttons(tray)).toEqual(['Start from a preset']);
     expect(tray.querySelector('.safe-batch-tray-empty').textContent).toMatch(/Nothing queued/);
     expect(tray.querySelector('.safe-batch-tray-status').textContent).toBe('Cleared the batch.');
   });
@@ -54,7 +59,7 @@ describe('batch dialog', () => {
     saveTray(8453, 6, [pool(), hook()]);
     const tray = renderSafeBatchTray(project());
     document.body.appendChild(tray);
-    tray.querySelector('.safe-batch-chip').click();
+    tray.querySelector('.safe-batch-review').click();
     await vi.waitFor(() => expect(dialog()).not.toBeNull());
     const dlg = dialog();
     expect(dlg.querySelector('.modal-title').textContent).toBe('Batch on Base');
@@ -88,7 +93,7 @@ describe('batch dialog', () => {
     runtime.account = OTHER;
     const tray = renderSafeBatchTray(project());
     document.body.appendChild(tray);
-    tray.querySelector('.safe-batch-chip').click();
+    tray.querySelector('.safe-batch-review').click();
     await vi.waitFor(() => expect(dialog()).not.toBeNull());
     expect(dialog().querySelector('.safe-batch-refusal').textContent).toBe('Connected wallet is not the owner. Switch to 0x1111...1111.');
     expect(dialog().querySelector('.create-modal-foot .create-btn.primary').disabled).toBe(true);
