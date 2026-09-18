@@ -36,15 +36,15 @@
     "test:ci": "npm run check:source && npm run check:deployments && npm run check:generated && npm run schema:check && npm run transaction:check && npm run bundle && npm run test:coverage && npm run check:bundle && npm run test:browser"
   },
   "dependencies": {
-    "pdfjs-dist": "^6.2.108",
+    "pdfjs-dist": "^6.3.289",
     "sharp": "0.35.4",
-    "viem": "^2.55.8"
+    "viem": "^2.56.3"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.12.1",
-    "@playwright/test": "^1.61.1",
-    "@vitest/coverage-v8": "^4.1.10",
-    "esbuild": "^0.28.1",
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.62.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "esbuild": "^0.28.2",
     "graphql": "17.0.2",
     "jsdom": "^29.1.1",
     "typescript": "5.9.3",
