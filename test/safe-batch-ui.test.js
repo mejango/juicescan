@@ -40,7 +40,7 @@ describe('tray', () => {
     document.body.appendChild(tray);
     expect(tray.hidden).toBe(false);
     expect(tabs(tray)).toEqual(['Base (2)']);
-    expect(rows(tray)).toEqual(['Set buyback hook', 'Register buyback pool']);
+    expect(rows(tray)).toEqual(['Set buyback hook', 'Set buyback pool']);
     expect(buttons(tray)).toEqual(['Base (2)', 'Review and propose on Base', 'Start from a preset', 'Copy the Base batch to every chain', 'Clear all']);
     saveTray(10, 7, [buildStep('setHookFor', { chainId: 10, projectId: 7, values: { hook: HOOK } })]);
     expect(tabs(tray)).toEqual(['Base (2)', 'Optimism (1)']);
@@ -85,7 +85,7 @@ describe('batch dialog', () => {
     expect(Array.from(dlg.querySelectorAll('.tx-decoded-argval')).map(n => n.textContent)).toContain('0x1111...1111 (wallet)');
     let steps = dlg.querySelectorAll('.safe-batch-step');
     expect(steps).toHaveLength(2);
-    expect(Array.from(steps).map(s => s.querySelector('.safe-batch-step-label').textContent)).toEqual(['Register buyback pool', 'Set buyback hook']);
+    expect(Array.from(steps).map(s => s.querySelector('.safe-batch-step-label').textContent)).toEqual(['Set buyback pool', 'Set buyback hook']);
     expect(steps[0].querySelector('.tx-decoded-fn').textContent).toBe('setPoolFor');
     expect(steps[0].querySelector('.safe-batch-problem').textContent).toMatch(/Set the buyback hook before registering its pool/);
     const confirm = dlg.querySelector('.create-modal-foot .create-btn.primary');
@@ -94,7 +94,7 @@ describe('batch dialog', () => {
     expect(steps[0].querySelector('[aria-label="Move up"]').disabled).toBe(true);
     steps[0].querySelector('[aria-label="Move down"]').click();
     steps = dlg.querySelectorAll('.safe-batch-step');
-    expect(Array.from(steps).map(s => s.querySelector('.safe-batch-step-label').textContent)).toEqual(['Set buyback hook', 'Register buyback pool']);
+    expect(Array.from(steps).map(s => s.querySelector('.safe-batch-step-label').textContent)).toEqual(['Set buyback hook', 'Set buyback pool']);
     expect(dlg.querySelector('.safe-batch-problem')).toBeNull();
     expect(confirm.disabled).toBe(false);
     expect(loadTray(8453, 6).map(s => s.kind)).toEqual(['setHookFor', 'setPoolFor']);

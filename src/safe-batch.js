@@ -32,7 +32,7 @@ function poolWords(v) { return tokenWord(v.terminalToken) + ' pool, fee ' + v.fe
 export var STEP_KINDS = {
   setHookFor: { kind: 'setHookFor', label: 'Set buyback hook', contract: 'JBBuybackHookRegistry', abi: setHookForAbi, functionName: 'setHookFor', perChain: true,
     buildArgs: function (v, pid) { return [pid, v.hook]; }, describe: function (v) { return 'hook ' + short(v.hook); } },
-  setPoolFor: { kind: 'setPoolFor', label: 'Register buyback pool', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, functionName: 'setPoolFor', perChain: true,
+  setPoolFor: { kind: 'setPoolFor', label: 'Set buyback pool', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, functionName: 'setPoolFor', perChain: true,
     buildArgs: function (v, pid) { return [pid, Number(v.fee), Number(v.tickSpacing), BigInt(v.twapWindow), v.terminalToken]; }, describe: poolWords },
   setTerminalFor: { kind: 'setTerminalFor', label: 'Set router terminal', contract: 'JBRouterTerminalRegistry', abi: setTerminalForAbi, functionName: 'setTerminalFor', perChain: true,
     buildArgs: function (v, pid) { return [pid, v.terminal]; }, describe: function (v) { return 'terminal ' + short(v.terminal); } },

@@ -16495,7 +16495,7 @@ var SAFE_QUEUE_LABELS = {
 var SAFE_FN_LABELS = {
   deployERC20For: 'Deploy ERC-20 token', setTokenMetadataOf: 'Rename token',
   sendPayoutsOf: 'Send payouts', sendReservedTokensToSplitsOf: 'Distribute reserved tokens',
-  setHookFor: 'Set buyback hook', setPoolFor: 'Register buyback pool', setTwapWindowOf: 'Set TWAP window',
+  setHookFor: 'Set buyback hook', setPoolFor: 'Set buyback pool', setTwapWindowOf: 'Set TWAP window',
   setTerminalFor: 'Set project router or gateway', setDefaultTerminal: 'Set default router or gateway',
   allowTerminal: 'Allow router or gateway', disallowTerminal: 'Retire router or gateway', lockTerminalFor: 'Lock project router or gateway',
   processPendingCall: 'Retry retained gateway call', processPendingCallWithGas: 'Retry retained gateway call with gas limit',
