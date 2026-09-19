@@ -216,6 +216,19 @@ describe('safesForOwner', () => {
     expect(fetchMock.mock.calls[0][0].toLowerCase())
       .toBe(('https://api.safe.global/tx-service/eth/api/v1/owners/' + ADDR + '/safes/').toLowerCase());
   });
+  it('retries a 429 after the Retry-After delay', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: () => '2' } })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ safes: ['0x1111111111111111111111111111111111111111'] }) });
+      vi.stubGlobal('fetch', fetchMock);
+      const pending = safesForOwner(ADDR, 1);
+      await vi.advanceTimersByTimeAsync(2000);
+      await expect(pending).resolves.toEqual(['0x1111111111111111111111111111111111111111']);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
   it('returns [] for chains without a Safe service and throws on service errors', async () => {
     await expect(safesForOwner(ADDR, 999999)).resolves.toEqual([]);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));

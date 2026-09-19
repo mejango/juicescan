@@ -67,7 +67,16 @@ function headers(json) {
 var SAFE_MAX_CONCURRENT = 3;
 var _safeActive = 0;
 var _safeWaiters = [];
-function safeFetch(url, opts, beforeSend) {
+// One Safe service request; a 429 (rejected before processing, so safe to repeat) waits and tries again.
+async function safeFetch(url, opts, beforeSend) {
+  for (var attempt = 0; ; attempt++) {
+    var r = await safeFetchOnce(url, opts, beforeSend);
+    if (r.status !== 429 || attempt >= 3) return r;
+    var retryAfter = Number(r.headers && r.headers.get && r.headers.get('retry-after'));
+    await new Promise(function (resolve) { setTimeout(resolve, retryAfter > 0 ? retryAfter * 1000 : 1000 * (attempt + 1)); });
+  }
+}
+function safeFetchOnce(url, opts, beforeSend) {
   return new Promise(function (resolve, reject) {
     function release() { _safeActive--; var next = _safeWaiters.shift(); if (next) next(); }
     function run() {

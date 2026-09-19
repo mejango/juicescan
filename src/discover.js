@@ -17576,6 +17576,16 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           if (isDelegate) { sub.appendChild(boSep()); var dc = el('span', 'backoffice-warn'); dc.textContent = 'DELEGATECALL'; sub.appendChild(dc); }
           if (ethVal > 0n) { sub.appendChild(boSep()); sub.appendChild(document.createTextNode('sends ' + formatBalance(ethVal, 18, 'ETH'))); }
           main.appendChild(sub);
+          // A batch row lists its inner calls, so a signer sees what the MultiSend does without opening it.
+          var batchCalls = multiSendBatchCalls(tx);
+          if (batchCalls && batchCalls.length) {
+            var callList = el('ol', 'backoffice-batch-calls');
+            batchCalls.forEach(function (call) {
+              var item = el('li'); item.textContent = labelForQueuedTx(call) + ' → ' + (resolveContractName(call.to, c.id) || truncAddr(call.to));
+              callList.appendChild(item);
+            });
+            main.appendChild(callList);
+          }
           // Show WHO has signed (and who's still needed), so a coordinator can chase the exact missing signer(s)
           // instead of guessing from a bare count. Confirmations come from the Safe tx-service (hosted chains).
           // Each owner renders as its truncated address, upgraded to its ENS name (mainnet reverse-resolve) if any.
