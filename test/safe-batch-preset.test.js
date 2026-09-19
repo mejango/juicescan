@@ -2,7 +2,7 @@
 // 48h default window becomes 30 minutes with a note, no pool means no setPoolFor, and missing target code makes the
 // preset unavailable on that chain.
 import { describe, expect, it, vi } from 'vitest';
-import { BUYBACK_GATEWAY_PRESET, DEPLOYER_DEFAULT_TWAP_NOTE, resolvePreset } from '../src/safe-batch-presets.js';
+import { BUYBACK_GATEWAY_PRESET, DEPLOYER_DEFAULT_TWAP_NOTE, projectTwapNote, resolvePreset } from '../src/safe-batch-presets.js';
 import { getAddress } from '../src/abi-registry.js';
 import { NATIVE_TOKEN } from '../src/safe-batch.js';
 
@@ -42,6 +42,18 @@ describe('buyback 1.4.0 + gateway preset', () => {
       { kind: 'setPoolFor', values: { fee: 10000, tickSpacing: 200, twapWindow: 1800, terminalToken: NATIVE_TOKEN }, note: DEPLOYER_DEFAULT_TWAP_NOTE },
       { kind: 'setTerminalFor', values: { terminal: TERMINAL } },
     ]);
+  });
+
+  it('uses the fixed 3600s window for project 7 whatever the old window', async () => {
+    for (const twap of [172800n, 900n]) {
+      const reads = {
+        [REGISTRY + ':hookOf']: OLD_HOOK, [ROUTER_REGISTRY + ':terminalOf']: OLD_TERMINAL,
+        [OLD_HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: twap, [HOOK.toLowerCase() + ':twapWindowOf:' + ZERO]: 0n,
+        [OLD_HOOK.toLowerCase() + ':poolKeyOf:' + ZERO]: poolKey(10000, 200),
+      };
+      const result = await resolvePreset(BUYBACK_GATEWAY_PRESET, { chainId: 11155111, projectId: 7, client: client(deployed, reads) });
+      expect(result.steps[1]).toEqual({ kind: 'setPoolFor', values: { fee: 10000, tickSpacing: 200, twapWindow: 3600, terminalToken: NATIVE_TOKEN }, note: projectTwapNote(3600) });
+    }
   });
 
   it('keeps a non-default window and a USDC pool key with the chain USDC as terminal token', async () => {

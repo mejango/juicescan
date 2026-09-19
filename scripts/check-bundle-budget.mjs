@@ -68,7 +68,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(async file =>
   gzipSync(await readFile(file), { level: 9 }).byteLength
 ))).reduce((sum, size) => sum + size, 0);
 // Live fee-buyback reviews: measured 2,238,685 B gzip.
-const totalGzipBudget = 2_241_000;
+// Revnet transfer copy + project 7 fixed TWAP window in the batch preset: measured 2,241,951 B gzip.
+const totalGzipBudget = 2_244_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

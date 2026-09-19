@@ -10,6 +10,9 @@ var ZERO = '0x0000000000000000000000000000000000000000';
 // when asked for exactly the max, so a carried pool defaults to 30 minutes instead of a nominal 48 hours.
 export var MAX_TWAP_WINDOW = 172800;
 export var DEFAULT_TWAP_WINDOW = 1800;
+/** Windows a project keeps identical on every chain, used instead of the carried value. */
+export var PROJECT_TWAP_WINDOWS = { 7: 3600 };
+export function projectTwapNote(window) { return 'This project uses a ' + window + 's window on every chain.'; }
 export var DEPLOYER_DEFAULT_TWAP_NOTE = 'The old window was the deployer default (48h); 30 minutes will be stored.';
 
 var hookOfAbi = [{ type: 'function', name: 'hookOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] }];
@@ -63,10 +66,11 @@ export async function resolvePreset(preset, opts) {
       if (carried > 0) { notes.push('The ' + probe.word + ' pool is already registered on the new hook.'); continue; }
       var key = await readOn(currentHook, poolKeyOfAbi, 'poolKeyOf', [pid, probe.read]);
       var deployerDefault = oldWindow === MAX_TWAP_WINDOW;
+      var fixed = PROJECT_TWAP_WINDOWS[Number(opts.projectId)];
       steps.push({
         kind: 'setPoolFor',
-        values: { fee: Number(key.fee), tickSpacing: Number(key.tickSpacing), twapWindow: deployerDefault ? DEFAULT_TWAP_WINDOW : oldWindow, terminalToken: probe.write },
-        note: deployerDefault ? DEPLOYER_DEFAULT_TWAP_NOTE : null,
+        values: { fee: Number(key.fee), tickSpacing: Number(key.tickSpacing), twapWindow: fixed !== undefined ? fixed : deployerDefault ? DEFAULT_TWAP_WINDOW : oldWindow, terminalToken: probe.write },
+        note: fixed !== undefined ? projectTwapNote(fixed) : deployerDefault ? DEPLOYER_DEFAULT_TWAP_NOTE : null,
       });
     }
   }
