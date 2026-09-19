@@ -6,10 +6,10 @@
 import { el, openDialog, confirmTransactionModal, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
 import { chainNameFor, usdcByChain } from './chain.js';
 import { getAddress } from './abi-registry.js';
-import { STEP_KINDS, buildStep, loadTray, saveTray, clearTray, upsertStep, moveStep, removeStep, composeBatch, checkBatchOrder, dependsOnPrior, mirrorBatch, encodeMultiSend, simulateBatchCalls, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN, TRAY_UPDATED_EVENT } from './safe-batch.js';
+import { STEP_KINDS, buildStep, loadTray, saveTray, clearTray, upsertStep, moveStep, removeStep, composeBatch, checkBatchOrder, dependsOnPrior, mirrorBatch, encodeMultiSend, multiSendBatchCalls, simulateBatchCalls, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN, TRAY_UPDATED_EVENT } from './safe-batch.js';
 export { simulateBatchCalls } from './safe-batch.js';
 import { PRESETS, resolvePreset } from './safe-batch-presets.js';
-import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, executeSafeTx } from './safe.js';
+import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, hasSafeService, safeOnChainContext, safeTxHashForCall, safeApprovalsOf, approveSafeHashOnChain, executeSafeTx, safeTxLink } from './safe.js';
 import { proposeSafeTransactions } from './safe-app.js';
 import { safeInfoForAuthority, safeAuthorityAccessMode, runRelayrAcrossChains, projectAuthorityAddress, projectAuthorityLabel, ensureOperatorAccount, relayrActionScope, pidOn, projectBuybackHook } from './discover.js';
 
@@ -29,6 +29,17 @@ function button(className, text, onClick) {
   b.addEventListener('click', function (e) { e.preventDefault(); onClick(); });
   return b;
 }
+// The calls as an order-free key, so a reordered tray still matches its proposal.
+function callsKey(calls) {
+  return calls.map(function (c) { return String(c.to).toLowerCase() + ':' + String(c.data || '0x').toLowerCase() + ':' + BigInt(c.value || 0); }).sort().join('|');
+}
+// The pending Safe proposal whose MultiSend holds exactly these queued steps, if one is already queued.
+export async function findProposedBatch(chainId, safe, steps) {
+  if (!safe || !steps.length || !hasSafeService(chainId)) return null;
+  var key = callsKey(composeBatch(steps).calls);
+  var pending = await listPendingSafeTxs(chainId, safe);
+  return pending.filter(function (tx) { var calls = multiSendBatchCalls(tx); return !!calls && callsKey(calls) === key; })[0] || null;
+}
 
 // ── Tray ─────────────────────────────────────────────────────────────────────
 // One tab per chain with queued steps over a table of them; hidden only when nothing is queued AND no chain has
@@ -39,6 +50,7 @@ export function renderSafeBatchTray(project) {
   var status = el('div', 'safe-batch-tray-status');
   var setStatus = makeStatusSetter(status, 'safe-batch-tray-status');
   var activeChainId = null;
+  var proposed = {}; // chainId → { key, tx } from the last Safe service read
   function paint() {
     var chains = projectChains(project);
     var queued = chains.map(function (c) { return { chain: c, steps: trayFor(project, c) }; }).filter(function (r) { return r.steps.length; });
@@ -75,9 +87,29 @@ export function renderSafeBatchTray(project) {
       });
       node.appendChild(table);
       var foot = el('div', 'splits-chain-foot');
-      foot.appendChild(button('operator-cta safe-batch-review', 'Review and propose on ' + chainName(source.chain), function () {
-        openBatchDialog(project, source.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); });
-      }));
+      var key = callsKey(composeBatch(source.steps).calls), known = proposed[source.chain.id];
+      if (known && known.key === key && known.tx) {
+        var tx = known.tx, authority = projectAuthorityAddress(project);
+        var note = el('div', 'safe-batch-proposed'); note.setAttribute('role', 'status');
+        var text = el('span'); text.textContent = 'Already proposed on ' + chainName(source.chain) + ' as Safe transaction #' + tx.nonce
+          + (tx.confirmationsRequired ? ' (' + ((tx.confirmations || []).length) + '/' + tx.confirmationsRequired + ' signatures)' : '')
+          + '. Sign or execute it under Pending multisig transactions.';
+        note.appendChild(text);
+        var link = tx.safeTxHash && authority ? safeTxLink(source.chain.id, authority, tx.safeTxHash) : null;
+        if (link) { var a = el('a'); a.href = link; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = 'Open in Safe ↗'; note.appendChild(a); }
+        note.appendChild(button('safe-batch-remove-proposed', 'Remove from the batch', function () { clearTray(source.chain.id, pidOn(project, source.chain.id)); }));
+        foot.appendChild(note);
+      } else {
+        foot.appendChild(button('operator-cta safe-batch-review', 'Review and propose on ' + chainName(source.chain), function () {
+          openBatchDialog(project, source.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); });
+        }));
+        if (!known || known.key !== key) {
+          proposed[source.chain.id] = { key: key, tx: null };
+          findProposedBatch(source.chain.id, projectAuthorityAddress(project), source.steps)
+            .then(function (tx) { if (tx && node.isConnected) { proposed[source.chain.id] = { key: key, tx: tx }; paint(); } })
+            .catch(function () {});
+        }
+      }
       node.appendChild(foot);
     }
     var actions = el('div', 'safe-batch-tray-actions');

@@ -6473,6 +6473,9 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .safe-batch-tray-empty { color: var(--muted-2); margin-top: 12px; }
 .safe-batch-table .splits-row { grid-template-columns: 24px 1.4fr 2fr; }
 .safe-batch-tray-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.safe-batch-proposed { flex: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 6px; color: var(--c-teal); }
+.safe-batch-proposed a { color: var(--c-teal); text-decoration: underline; text-underline-offset: 2px; }
+.safe-batch-remove-proposed { font-family: inherit; font-size: inherit; border: 0; background: transparent; padding: 0; color: var(--muted-2); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .safe-batch-tray-status { margin-top: 8px; font-size: 11px; color: var(--muted-2); word-break: break-word; }
 .safe-batch-tray-status:empty { display: none; }
 .safe-batch-tray-status.pending { color: var(--c-teal); }

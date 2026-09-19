@@ -4,17 +4,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData } from 'viem';
 
-const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', safeInfo: null }));
+const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', safeInfo: null, pending: [] }));
 // Every RPC read fails closed: the surfaces under test never depend on a live chain.
 const offlineClient = new Proxy({}, { get: (_, key) => (key === 'then' ? undefined : () => Promise.reject(new Error('offline'))) });
 vi.mock('../src/component-base.js', async importOriginal => ({
   ...await importOriginal(), getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account, connect: vi.fn(async () => {}),
   isSafeConnected: () => false, getWalletClient: () => null, createPublicClientForChain: () => offlineClient,
 }));
+vi.mock('../src/safe.js', async importOriginal => ({ ...await importOriginal(), listPendingSafeTxs: vi.fn(async () => runtime.pending) }));
 vi.mock('../src/discover.js', async importOriginal => ({ ...await importOriginal(), safeInfoForAuthority: vi.fn(async () => runtime.safeInfo) }));
 
 import { renderBuybackHookCard } from '../src/discover.js';
-import { buildStep, loadTray, saveTray, NATIVE_TOKEN } from '../src/safe-batch.js';
+import { buildStep, loadTray, saveTray, composeBatch, encodeMultiSend, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN } from '../src/safe-batch.js';
 import { mirrorAcrossChains, renderSafeBatchTray } from '../src/safe-batch-ui.js';
 
 const OWNER = runtime.account, OTHER = '0x3333333333333333333333333333333333333333';
@@ -28,7 +29,8 @@ const tabs = node => Array.from(node.querySelectorAll('[role="tab"]')).map(b => 
 const rows = node => Array.from(node.querySelectorAll('.safe-batch-table .splits-row:not(.splits-head)')).map(r => r.children[1].textContent);
 const buttons = node => Array.from(node.querySelectorAll('button')).map(b => b.textContent);
 
-beforeEach(() => { localStorage.clear(); runtime.account = OWNER; runtime.safeInfo = null; });
+beforeEach(() => { localStorage.clear(); runtime.account = OWNER; runtime.safeInfo = null; runtime.pending = []; });
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 afterEach(() => { document.querySelectorAll('dialog').forEach(node => { if (node.open) node.close(); node.remove(); }); document.body.innerHTML = ''; });
 
 describe('tray', () => {
@@ -51,6 +53,22 @@ describe('tray', () => {
     expect(buttons(tray)).toEqual(['Start from a preset']);
     expect(tray.querySelector('.safe-batch-tray-empty').textContent).toMatch(/Nothing queued/);
     expect(tray.querySelector('.safe-batch-tray-status').textContent).toBe('Cleared the batch.');
+  });
+
+  it('shows a queued proposal in place of the review button, whatever order the tray holds', async () => {
+    saveTray(8453, 6, [pool(), hook()]);
+    runtime.pending = [{ to: MULTI_SEND_CALL_ONLY, operation: 1, data: encodeMultiSend(composeBatch([hook(), pool()]).calls), nonce: 10,
+      safeTxHash: '0x' + 'cd'.repeat(32), confirmationsRequired: 2, confirmations: [{ owner: OWNER }] }];
+    const tray = renderSafeBatchTray(project());
+    document.body.appendChild(tray);
+    expect(buttons(tray)).toContain('Review and propose on Base');
+    await tick(); await tick();
+    expect(tray.querySelector('.safe-batch-proposed').textContent).toContain('Already proposed on Base as Safe transaction #10 (1/2 signatures)');
+    expect(tray.querySelector('.safe-batch-proposed a').href).toContain('multisig_');
+    expect(buttons(tray)).not.toContain('Review and propose on Base');
+    tray.querySelector('.safe-batch-remove-proposed').click();
+    expect(loadTray(8453, 6)).toEqual([]);
+    expect(tray.querySelector('.safe-batch-tray-empty').textContent).toMatch(/Nothing queued/);
   });
 });
 
