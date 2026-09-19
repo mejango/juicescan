@@ -122,6 +122,9 @@ describe('simulation gate', () => {
     await expect(simulateBatchCalls(runtime.client, SAFE, calls(), flags())).rejects.toThrow(/Step 3 would revert: TerminalNotAllowed/);
     runtime.client.request.mockRejectedValue(new Error('rate limited'));
     await expect(simulateBatchCalls(runtime.client, SAFE, calls(), flags())).rejects.toThrow(/batch simulation failed: rate limited/);
+    expect(runtime.client.request.mock.calls.at(-1)[0].params[0].validation).toBe(false);
+    runtime.client.request.mockRejectedValue(Object.assign(new Error('Missing or invalid parameters.'), { shortMessage: 'Missing or invalid parameters.', details: 'intrinsic gas too high' }));
+    await expect(simulateBatchCalls(runtime.client, SAFE, calls(), flags())).rejects.toThrow(/batch simulation failed: intrinsic gas too high/);
     runtime.client.request.mockResolvedValue([{ calls: [{ status: '0x1' }] }]);
     await expect(simulateBatchCalls(runtime.client, SAFE, calls(), flags())).rejects.toThrow(/unexpected shape/);
   });

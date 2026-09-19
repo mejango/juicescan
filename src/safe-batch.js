@@ -206,7 +206,9 @@ export async function mirrorBatch(steps, fromChainId, toChainId, resolve, projec
 export async function simulateBatchCalls(client, from, calls, dependsOnPriorFlags) {
   var entries = calls.map(function (c) { return { from: from, to: c.to, data: c.data, value: '0x' + BigInt(c.value || 0).toString(16) }; });
   var result = null;
-  try { result = await client.request({ method: 'eth_simulateV1', params: [{ blockStateCalls: [{ calls: entries }], validation: true }, 'latest'] }); }
+  // validation: false — the Safe is the caller only inside execTransaction; validated as a sender it fails
+  // nonce/balance checks, and publicnode Optimism rejects the block-gas default with "intrinsic gas too high".
+  try { result = await client.request({ method: 'eth_simulateV1', params: [{ blockStateCalls: [{ calls: entries }], validation: false }, 'latest'] }); }
   catch (e) { if (!rpcMethodUnsupported(e)) throw new Error('The batch simulation failed: ' + rpcMessage(e) + '. Nothing was proposed.'); }
   if (result) {
     var block = Array.isArray(result) ? result[0] : null;
@@ -227,7 +229,8 @@ export async function simulateBatchCalls(client, from, calls, dependsOnPriorFlag
   }
   return { method: 'eth_call', simulated: simulated };
 }
-function rpcMessage(e) { return (e && (e.shortMessage || e.message)) || String(e); }
+// viem's shortMessage for -32000 is a generic "Missing or invalid parameters"; the node's own text is in details.
+function rpcMessage(e) { return (e && (e.details || e.shortMessage || e.message)) || String(e); }
 function rpcMethodUnsupported(e) {
   for (var depth = 0, current = e; current && depth < 6; depth++, current = current.cause) {
     if (Number(current.code) === -32601) return true;
