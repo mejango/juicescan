@@ -14222,7 +14222,34 @@ function activityRowPhrase(row, unit, distributed, fanOut) {
   }
   // A fan-out (several pays in one tx) names who got what: the swap's payee, or an issuing pay's beneficiary.
   if (fanOut && row.received) return { lead: row.type === 'swap' ? row.payee : row.account, text: ' got ' + row.received };
+  if (row.nft) return { text: row.action, nft: row.nft };
   return row.action + (row.tokenAmount ? ' ' + row.tokenAmount + ' ' + unit : '');
+}
+
+// "minted item #2" grows into the item's name and, when the tier splits its sales, the share of this
+// payment that went to the split recipients — the part of the price the buyer's token count does not account for.
+function decorateItemMintBullet(bullet, project, nft) {
+  // The account view renders rows against a symbol-only project stub with no shop to read.
+  var tiers;
+  try { tiers = fetchProjectTiers(project); } catch (_) { return; }
+  tiers.then(function (shop) {
+    if (!shop || !bullet.isConnected) return;
+    var tier = (shop.tiers || []).filter(function (t) { return t.id === nft.tierId; })[0];
+    if (!tier) return;
+    var suffix = el('span', 'activity-item-detail');
+    bullet.appendChild(suffix);
+    var setText = function (name) {
+      var parts = [];
+      if (name) parts.push('(' + name + ')');
+      if (tier.splitPercent > 0) {
+        var share = (BigInt(nft.amountPaid) * BigInt(tier.splitPercent)) / 1000000000n;
+        parts.push('· ' + formatShopPrice(shop, share, project.chainId) + ' (' + (tier.splitPercent / 1e7) + '%) sent to item recipients');
+      }
+      suffix.textContent = parts.length ? ' ' + parts.join(' ') : '';
+    };
+    setText('');
+    resolveTierMedia(shop, tier, project.chainId).then(function (m) { setText(m && m.name); }).catch(function () {});
+  }).catch(function () {});
 }
 function phraseText(phrase) {
   if (typeof phrase === 'string') return phrase;
@@ -14398,7 +14425,9 @@ export function renderActivityRow(row, project) {
     }
     var phrases = (row.actionParts && row.actionParts.length)
       ? row.actionParts
-      : [row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')];
+      : row.nft
+        ? [{ text: row.action, nft: row.nft }]
+        : [row.action + (row.tokenAmount ? (' ' + row.tokenAmount + ' ' + unit) : '')];
     var bullets = el('ul', 'activity-bullets');
     phrases.forEach(function (phrase) {
       var bullet = el('li', '');
@@ -14416,6 +14445,7 @@ export function renderActivityRow(row, project) {
       if (lastIndex < text.length) bullet.appendChild(document.createTextNode(text.slice(lastIndex)));
       if (phrase.address) bullet.appendChild(addressNode(phrase.address));
       if (phrase.lead) bullet.insertBefore(addressNode(phrase.lead), bullet.firstChild);
+      if (phrase.nft && project) decorateItemMintBullet(bullet, project, phrase.nft);
       bullets.appendChild(bullet);
     });
     main.appendChild(bullets);
@@ -14609,7 +14639,8 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       txHash: nft.txHash || event.txHash, timestamp: Number(nft.timestamp || event.timestamp),
       account: nft.beneficiary || nft.from || event.from, from: nft.from || event.from,
       baseAmount: '',
-      tokenAmount: '', action: 'minted NFT (item #' + nft.tierId + ')', memo: '',
+      tokenAmount: '', action: 'minted item #' + nft.tierId, memo: '',
+      nft: { tierId: Number(nft.tierId), amountPaid: String(nft.totalAmountPaid || 0) },
     };
   }
   if (event.deployErc20Event) {
