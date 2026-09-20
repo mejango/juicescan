@@ -14226,8 +14226,9 @@ function activityRowPhrase(row, unit, distributed, fanOut) {
   return row.action + (row.tokenAmount ? ' ' + row.tokenAmount + ' ' + unit : '');
 }
 
-// "minted item #2" grows into the item's name and, when the tier splits its sales, the share of this
-// payment that went to the split recipients — the part of the price the buyer's token count does not account for.
+// "minted item #2" grows into the item's name and, when the tier splits its sales, a second bullet for the
+// share of this payment that went to the split recipients — the part of the price the buyer's token count
+// does not account for.
 function decorateItemMintBullet(bullet, project, nft) {
   // The account view renders rows against a symbol-only project stub with no shop to read.
   var tiers;
@@ -14236,19 +14237,17 @@ function decorateItemMintBullet(bullet, project, nft) {
     if (!shop || !bullet.isConnected) return;
     var tier = (shop.tiers || []).filter(function (t) { return t.id === nft.tierId; })[0];
     if (!tier) return;
-    var suffix = el('span', 'activity-item-detail');
-    bullet.appendChild(suffix);
-    var setText = function (name) {
-      var parts = [];
-      if (name) parts.push('(' + name + ')');
-      if (tier.splitPercent > 0) {
-        var share = (BigInt(nft.amountPaid) * BigInt(tier.splitPercent)) / 1000000000n;
-        parts.push('· ' + formatShopPrice(shop, share, project.chainId) + ' (' + (tier.splitPercent / 1e7) + '%) sent to item recipients');
-      }
-      suffix.textContent = parts.length ? ' ' + parts.join(' ') : '';
-    };
-    setText('');
-    resolveTierMedia(shop, tier, project.chainId).then(function (m) { setText(m && m.name); }).catch(function () {});
+    if (tier.splitPercent > 0) {
+      var share = (BigInt(nft.amountPaid) * BigInt(tier.splitPercent)) / 1000000000n;
+      var shareBullet = el('li', '');
+      var em = el('span', 'activity-em'); em.textContent = formatShopPrice(shop, share, project.chainId);
+      shareBullet.appendChild(em);
+      shareBullet.appendChild(document.createTextNode(' (' + (tier.splitPercent / 1e7) + '%) sent to item recipients'));
+      bullet.parentNode.insertBefore(shareBullet, bullet.nextSibling);
+    }
+    resolveTierMedia(shop, tier, project.chainId).then(function (m) {
+      if (m && m.name && bullet.isConnected) bullet.appendChild(document.createTextNode(' (' + m.name + ')'));
+    }).catch(function () {});
   }).catch(function () {});
 }
 function phraseText(phrase) {
