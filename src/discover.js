@@ -3048,6 +3048,57 @@ function readTierSupplyAcrossChains(project, tierId) {
   }));
 }
 
+// Each split recipient's cut of a whole tier sale, in hundredths of a percent, and what is left for the
+// project: everything outside the tier's split share plus whatever the split group leaves unclaimed
+// (JB721TiersHookLib routes that leftover to the project's balance).
+export function tierSaleShares(splitPercent, splits) {
+  var total = 1000000000n;
+  var share = BigInt(splitPercent);
+  var rows = splits.map(function (split) {
+    return { split: split, bps: (share * BigInt(split.percent)) / ((total * total) / 10000n) };
+  });
+  var treasuryBps = 10000n - rows.reduce(function (sum, row) { return sum + row.bps; }, 0n);
+  return { rows: rows, treasuryBps: treasuryBps };
+}
+
+function formatBps(bps) { return (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + '%'; }
+
+// Where each sale of this tier goes. The tier's split share is paid out to its split group
+// (groupId = hook | tierId << 160, ruleset 0); whatever the group leaves unclaimed, and everything
+// outside the share, lands in the project's balance.
+function renderTierSaleRouting(project, shop, tier) {
+  var box = el('div', 'tier-detail-cfg');
+  var h = el('div', 'tier-detail-section-h'); h.textContent = 'Where each sale goes'; box.appendChild(h);
+  var body = el('div'); body.textContent = 'Reading recipients…'; box.appendChild(body);
+  function row(labelNode, val) {
+    var r = el('div', 'tier-detail-fact'); var l = el('span', 'tier-detail-fact-l');
+    if (typeof labelNode === 'string') l.textContent = labelNode; else l.appendChild(labelNode);
+    var v = el('span'); v.textContent = val; r.appendChild(l); r.appendChild(v); return r;
+  }
+  var groupId = BigInt(shop.hook) | (BigInt(tier.id) << 160n);
+  read(project.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [BigInt(project.id), 0n, groupId]).then(function (splits) {
+    if (!body.isConnected) return;
+    body.innerHTML = '';
+    var shares = tierSaleShares(tier.splitPercent, splits || []);
+    shares.rows.forEach(function (entry) {
+      var split = entry.split;
+      var label = BigInt(split.projectId || 0) > 0n
+        ? 'Project #' + String(split.projectId)
+        : addressLinkNode(split.hook && split.hook !== ZERO_ADDRESS ? split.hook : split.beneficiary, project.chainId);
+      body.appendChild(row(label, formatBps(entry.bps)));
+    });
+    body.appendChild(row('This project', formatBps(shares.treasuryBps)));
+  }).catch(function () {
+    if (body.isConnected) body.textContent = formatBps(BigInt(tier.splitPercent) / 100000n) + ' of each sale is split with recipients that could not be read; the rest goes to the project.';
+  });
+  if (!(shop.configFlags && shop.configFlags.issueTokensForSplits)) {
+    var note = el('div', 'tier-detail-flag-sub');
+    note.textContent = 'Tokens are issued on the ' + formatBps(10000n - BigInt(tier.splitPercent) / 100000n) + ' the project keeps, not the full price.';
+    box.appendChild(note);
+  }
+  return box;
+}
+
 // Item-detail popup: large art, name, price (+ discount), per-chain supply, and the full tier config.
 // Always answer "can this item be transferred?" — a tier without the pausable flag ignores ruleset pauses entirely.
 export function tierTransferStatus(shop, tier, isRevnet) {
@@ -3118,9 +3169,9 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   fact('Category', String(tier.category));
   if (tier.reserveFrequency > 0) fact('Reserve mint', '1 per ' + tier.reserveFrequency + ' sold');
   if (tier.votingUnits && BigInt(tier.votingUnits) > 0n) fact('Voting units', String(tier.votingUnits));
-  if (tier.splitPercent > 0) fact('Split', (tier.splitPercent / 1e7) + '% of sales');
   fact('Transfers', tierTransferStatus(shop, tier, project.isRevnet));
   content.appendChild(cfg);
+  if (tier.splitPercent > 0) content.appendChild(renderTierSaleRouting(project, shop, tier));
 
   // Each set flag on its own row with a plain-English explanation.
   var fl = tier.flags || {};
