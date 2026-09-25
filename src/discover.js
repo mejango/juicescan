@@ -17696,7 +17696,11 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           row.appendChild(main);
           var actions = el('div', 'backoffice-actions');
           var signed = (tx.confirmations || []).some(function (cf) { return acc && cf.owner && cf.owner.toLowerCase() === acc.toLowerCase(); });
-          if (isSigner && !signed && nconf < need) {
+          // Opened as a Safe App, the connected account is a Safe, not an owner: it cannot sign for
+          // itself, and executing or paying Relayr from it would take the nonce the queued tx needs.
+          // Its owners sign and execute in Safe{Wallet}, reached through each row's Open in Safe.
+          var viaSafeApp = isSafeConnected();
+          if (isSigner && !signed && nconf < need && !viaSafeApp) {
             var signBtn = el('button', 'detail-check-btn'); signBtn.textContent = 'Sign';
             signBtn.addEventListener('click', function () {
               (async function () {
@@ -17720,7 +17724,7 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
           // Enough signatures → execute straight from here (connected wallet sends it + pays gas). Safe nonces are
           // strict, but same-nonce proposals are alternatives: executing either current-nonce tx consumes the nonce and
           // replaces the rest. Higher nonces stay gated until the current nonce lands.
-          if (nconf >= need) {
+          if (nconf >= need && !viaSafeApp) {
             if (execPlan.batchByIndex[txIdx]) ready.push({ cid: c.id, chain: c.name, safe: safe, tx: tx, verifyAuthority: verifyAuthority });
             else if (execPlan.duplicateNonceByIndex[txIdx]) readyAlternativesExcluded += 1;
             else readyBlockedExcluded += 1;
@@ -17778,6 +17782,12 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
         var recovering = el('span', 'backoffice-batch-note');
         recovering.textContent = 'A paid Safe batch is still being verified. No second Relayr payment can start for this Safe.';
         batchBar.appendChild(recovering);
+        return;
+      }
+      if (isSafeConnected()) {
+        var viaSafe = el('span', 'backoffice-batch-note');
+        viaSafe.textContent = 'You are connected as a Safe. Its owners sign and execute these in Safe{Wallet}: use Open in Safe on each transaction.';
+        batchBar.appendChild(viaSafe);
         return;
       }
       if (ready.length < 2) {
