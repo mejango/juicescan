@@ -1534,14 +1534,11 @@ function renderShopSection(project, shop, cart) {
     + ', or an operator granted "Adjust shop items" in the Owner tab’s Permissions card';
   headAdd.style.display = 'none';
   head.appendChild(headAdd);
-  // Shop managers are granted in the Owner tab's Permissions card, which nobody finds from here.
+  // A revnet operator can't delegate: the shop checks grants from REVOwner, which only the revnet sets.
   if (!project.isRevnet) {
-    var mgr = el('button', 'operator-cta shop-head-add'); mgr.textContent = 'Managers';
-    mgr.title = 'Who else can add, mint, or reprice items — grant or revoke it in the Owner tab’s Permissions card';
-    mgr.addEventListener('click', function (e) {
-      e.preventDefault();
-      navigateProjectSection(project, 'Owner', undefined, function () { if (_activeDetail) _activeDetail.showTab('Owner'); });
-    });
+    var mgr = el('button', 'operator-cta shop-head-add'); mgr.textContent = '+ Add manager';
+    mgr.title = 'Let another account add, mint, or reprice items. Current managers are listed in the Owner tab’s Permissions card.';
+    mgr.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null, SHOP_MANAGER_PERMISSION_IDS); });
     head.appendChild(mgr);
   }
   card.appendChild(head);
@@ -11738,6 +11735,8 @@ var shopOwnerAbi = [{
 }];
 var JB_PERMISSION_ADJUST_721_TIERS = 24n;
 var JB_PERMISSION_MINT_721 = 26n;
+// Adjust 721 tiers, set 721 metadata, mint 721, set 721 discount percent.
+var SHOP_MANAGER_PERMISSION_IDS = [24, 25, 26, 27];
 
 // Permission IDs are checked against each hook's live owner, including a revnet operator's grants.
 export async function accountCanShopPermissionOn(project, chainId, hook, account, permissionId) {
@@ -18689,7 +18688,7 @@ function renderPermissionsCard(project) {
 // Grant/revoke an operator's permissions via JBPermissions.setPermissionsFor. setPermissionsFor REPLACES the
 // operator's full set on each chain (unchecking revokes; clearing all removes the operator). Routed by owner
 // type — Safe → proposed per chain; EOA → one relayr payment — via runAuthorityActionAcrossChains.
-function openSetPermissionsModal(project, grant) {
+function openSetPermissionsModal(project, grant, presetIds) {
   var authorityLabel = (projectAuthorityLabel(project) || 'Project owner').toLowerCase();
   var account = projectAuthorityAddress(project); // the grantor — for a custom project this is the owner
   var allChains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
@@ -18702,7 +18701,7 @@ function openSetPermissionsModal(project, grant) {
   var perChain = editing && grant.differs && allChains.length > 1;
   var seedChain = perChain ? project.chainId : null;
   var seedIdsFor = function (cid) {
-    if (!editing) return [];
+    if (!editing) return presetIds || [];
     return cid == null ? grant.permsUnion : permissionIdsOnChain(grant, cid);
   };
 
@@ -18795,7 +18794,7 @@ function openSetPermissionsModal(project, grant) {
   var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = editing ? 'Update permissions' : 'Add operator'; actions.appendChild(submit);
   var gate = appendDangerGate(content, 'Granting permissions lets the ' + grantee + ' act on the project’s behalf for the checked powers. Verify the address — a wrong or malicious ' + grantee + ' can use these powers against the project. You can change or revoke them here at any time.', submit, 'I’ve verified the ' + grantee + ' address and the permissions I’m granting.');
   content.appendChild(actions);
-  var modal = openModal(editing ? 'Edit permissions' : 'Add operator', content);
+  var modal = openModal(editing ? 'Edit permissions' : presetIds ? 'Add shop manager' : 'Add operator', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
 
   var busy = false;
