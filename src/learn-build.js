@@ -1,6 +1,8 @@
 // src/learn-build.js
 // Learn & Build tab content — engaging walkthrough of the Juicebox protocol
 
+import { BENDYSTRAW_GRAPHQL_ENDPOINTS } from './bendystraw-endpoints.js';
+
 export function renderLearnTab() {
   var container = document.getElementById('tab-learn');
   container.innerHTML = '';
@@ -999,13 +1001,13 @@ export function renderBuildTab() {
     "Use it for browsing. Before a wallet signs, read current balances, rules, spending approvals, and quotes directly from the chain. An indexer can be behind or incomplete; missing results do not prove nothing happened."
   ], [
     fnRefTable('ENDPOINTS', [
-      ['https://bendystraw.up.railway.app/graphql', 'Mainnets: Ethereum, Optimism, Base, Arbitrum. No API key needed'],
-      ['https://testnet.bendystraw.xyz/graphql', 'Testnets: Sepolia and the L2 Sepolias'],
+      [BENDYSTRAW_GRAPHQL_ENDPOINTS.mainnet, 'Mainnets: Ethereum, Optimism, Base, Arbitrum. No API key needed'],
+      [BENDYSTRAW_GRAPHQL_ENDPOINTS.testnet, 'Testnets: Sepolia and the L2 Sepolias'],
       ['…/schema', 'A playground with the schema explorer; POST an introspection query to the graphql URL for codegen (same schema on both databases)'],
     ]),
     codeBlock(
       'A first query',
-      'POST https://bendystraw.up.railway.app/graphql\n' +
+      'POST ' + BENDYSTRAW_GRAPHQL_ENDPOINTS.mainnet + '\n' +
       '{\n' +
       '  projects(where: { chainId: 8453, version: 6 }, orderBy: "balance", orderDirection: "desc", limit: 10) {\n' +
       '    items { projectId chainId name balance suckerGroupId }\n' +

@@ -1,5 +1,14 @@
 # Thorough test coverage — transactions + views
 
+## 2026-10-03 — publication endpoint recovery
+- [x] Diagnose the custom testnet domain failure using keyless public health, schema and known-project reads.
+- [x] Extract one shared endpoint owner without changing destinations; verify and commit the refactor separately.
+- [ ] Switch the testnet owner to the healthy official Railway origin and update behavioral regressions.
+- [ ] Measure the pinned Node 22 build, align the distribution budget with the recorded release delta, and run release checks.
+
+### Review
+The custom testnet domain returns Railway 502, while the source-documented Railway origin serves the current four Sepolia chains, full schema, and known V6 Base Sepolia project 13 (kmac's shop / KMAC). Keyless CORS remains limited to the configured retail origin, so browser requests retain the existing keyed route. The behavior-preserving shared-origin refactor passes 32 focused tests in 6 files and produces byte-identical learn/build HTML; both destinations remain unchanged in its separate commit. Endpoint switch and final release validation pending.
+
 ## 2026-10-03 — custom ruleset duration decimals
 - [x] Verify the focused existing baseline (5 files, 65 tests) and trace typing, conversion, draft and queue consumers.
 - [x] Add a real-browser regression for sequential decimal typing and preserve input focus/raw text.

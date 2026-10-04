@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { BENDYSTRAW_MAINNET_HOST as MAINNET_HOST, BENDYSTRAW_TESTNET_HOST as TESTNET_HOST } from './bendystraw-endpoints.js';
 
 const CHAIN_IDS = Object.freeze({
   eth: 1,
@@ -11,8 +12,6 @@ const CHAIN_IDS = Object.freeze({
   opsep: 11155420,
 });
 const TESTNET_IDS = new Set([11155111, 421614, 84532, 11155420]);
-const MAINNET_HOST = 'https://bendystraw.up.railway.app';
-const TESTNET_HOST = 'https://testnet.bendystraw.xyz';
 const DEFAULT_PUBLIC_KEY = '3ZNJpGtazh5fwYoSW59GWDEj';
 const QUERY_TIMEOUT_MS = 8000;
 const MAX_JSON_BYTES = 512 * 1024;

@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
 import { buildClientSchema, getIntrospectionQuery, parse, validate, visit } from 'graphql'
+import { BENDYSTRAW_GRAPHQL_ENDPOINTS } from '../src/bendystraw-endpoints.js'
 
 const minimumDocuments = Number(process.argv[2] ?? 1)
 const extensions = new Set(['.js', '.jsx', '.mjs', '.ts', '.tsx'])
@@ -155,7 +156,7 @@ async function liveSchema(endpoint) {
 // a schema rolls out; the check FAILS once that endpoint serves the field, so the list cannot rot.
 const PENDING_SCHEMA_FIELDS = []
 
-for (const endpoint of ['https://bendystraw.up.railway.app/graphql', 'https://testnet.bendystraw.xyz/graphql']) {
+for (const endpoint of Object.values(BENDYSTRAW_GRAPHQL_ENDPOINTS)) {
   const schema = await liveSchema(endpoint)
   const errors = parsedDocuments.flatMap(({ parsed, location }) =>
     validate(schema, parsed).map(error => `${location}: ${error.message}`),

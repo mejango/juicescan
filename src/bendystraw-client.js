@@ -5,8 +5,7 @@
 // key (BENDYSTRAW_API_KEY) is preferred; fall back to the public testnet key so a build that forgets the
 // env var doesn't silently drop to the origin-locked keyless route (the key ships in the bundle regardless).
 
-const HOST_TESTNET = 'https://testnet.bendystraw.xyz';
-const HOST_MAINNET = 'https://bendystraw.up.railway.app';
+import { BENDYSTRAW_MAINNET_HOST as HOST_MAINNET, BENDYSTRAW_TESTNET_HOST as HOST_TESTNET } from './bendystraw-endpoints.js';
 const DEFAULT_TESTNET_KEY = '3ZNJpGtazh5fwYoSW59GWDEj';
 const API_KEY = (typeof __BENDYSTRAW_API_KEY__ === 'string' && __BENDYSTRAW_API_KEY__) ? __BENDYSTRAW_API_KEY__ : DEFAULT_TESTNET_KEY;
 export const BENDYSTRAW_TIMEOUT_MS = 15000;
@@ -14,8 +13,7 @@ export const MAX_BENDYSTRAW_RESPONSE_BYTES = 5 * 1024 * 1024;
 const RETRY_DELAYS_MS = [250, 750];
 const RETRYABLE_STATUSES = { 408: true, 429: true, 500: true, 502: true, 503: true, 504: true };
 
-// Indexer host follows the Discover network toggle: testnet.bendystraw.xyz vs
-// bendystraw.up.railway.app (prod).
+// Indexer host follows the Discover network toggle using the shared public origins.
 // Initialized from the persisted choice so a mainnet reload hits the right indexer.
 let _host = HOST_MAINNET;
 try { if (localStorage.getItem('jb-network') === 'testnet') _host = HOST_TESTNET; } catch (_) {}
@@ -100,7 +98,7 @@ export function renderBendystrawSettings(opts) {
   const note = document.createElement('div');
   note.className = 'bendystraw-settings-note';
   note.innerHTML = 'Read-only GraphQL of Juicebox V6 events. Indexer host follows the network '
-    + 'toggle (' + (isMainnet ? 'bendystraw.up.railway.app' : 'testnet.bendystraw.xyz') + '). '
+    + 'toggle (' + new URL(_host).hostname + '). '
     + '<a href="https://bendystraw-dev.up.railway.app/schema" target="_blank" rel="noopener">Open schema</a>.';
   panel.appendChild(note);
 
