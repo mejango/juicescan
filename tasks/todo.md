@@ -1,5 +1,16 @@
 # Thorough test coverage — transactions + views
 
+## 2026-10-03 — custom ruleset duration decimals
+- [x] Verify the focused existing baseline (5 files, 65 tests) and trace typing, conversion, draft and queue consumers.
+- [x] Add a real-browser regression for sequential decimal typing and preserve input focus/raw text.
+- [x] Share strict custom-duration conversion across state updates, imports and launch/queue validation; retain draft persistence and refresh all duration-dependent controls while typing.
+- [x] Verify behavioral tests, source syntax, bundle and Chromium regressions; document results.
+
+### Review
+The number input and full render discarded a trailing decimal point and focus: Chromium reproduced `4.` becoming `4`. A text input with the decimal keyboard now preserves raw text; scoped focus/caret restoration keeps the existing render, draft persistence, summaries, Afterwards choices, approval controls and split locks synchronized. One strict converter owns rounding to seconds and validates positive custom durations within uint32 bounds; imported custom stages rederive seconds, and launch/queue builders and deploy controls reject invalid values. Existing split locks survive incomplete custom text and clear only for an explicit Flexible choice.
+
+Validation: all 181 unit-test files / 1810 tests pass, including 23 new duration regressions; all 24 Chromium modal tests pass across desktop/tablet/mobile/narrow viewports. The browser regression proves sequential `4.5` / `.5`, native unit activation, mid-value caret edits, draft persistence, dependent-control updates and one-click Next. Source syntax (269 files), bundle, distribution budget (2,243,839 B gzip / 2,244,000 B limit) and `git diff --check` pass. No commit, publish or generated ABI/deployment edits.
+
 Pattern: extract inline `executeTransaction({...})` arg-building into a pure exported `buildXArgs(...)`
 returning `{address, abi, functionName, args, value}`; component calls it (spread / Object.assign);
 unit test round-trips through the contract ABI + asserts amounts/decimals/recipients/slippage.

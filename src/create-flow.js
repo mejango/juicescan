@@ -523,6 +523,7 @@ function mergeKnownDraftFields(defaults, input) {
 
 function normalizeImportedStage(value, chainIds) {
   var stage = mergeKnownDraftFields(createStage(), value);
+  if (stage.durationCustom) recomputeCustomDuration(stage);
   ['reservedRecipients', 'autoIssuances', 'payoutRecipients'].forEach(function (key) {
     if (!Array.isArray(stage[key])) stage[key] = [];
     else stage[key] = stage[key].slice(0, 100);
@@ -1993,7 +1994,8 @@ function stageSummaryRaw(stage, idx, state) {
   } else {
     parts.push(idx === 0 ? ((stage.scheduleOn && stage.schedule) ? 'Starts at a set time' : 'Starts at launch') : startLabel(stage, idx));
   }
-  parts.push(!stage.durationSeconds ? 'lasts until changed by owner'
+  parts.push(stage.durationCustom && customDurationResult(stage).issue ? 'duration needs a valid value'
+    : !stage.durationSeconds ? 'lasts until changed by owner'
     : (stage.durationSeconds === FOREVER_SECONDS ? 'lasts forever' : 'lasts ' + secondsLabel(stage.durationSeconds)));
 
   // Issuance — weight, reserved split, issuance cut.
@@ -2084,13 +2086,30 @@ function stageTiming(stage, idx, isLast, render, state) {
   fitSelect(sel); f.appendChild(sel);
   if (stage.durationCustom) {
     var crow = el('div', 'create-amount-row'); crow.style.marginTop = '8px';
-    var num = el('input', 'field create-amount-input'); num.type = 'number'; num.min = '1'; num.step = '1'; num.placeholder = '1'; num.value = stage.customDurVal;
-    num.addEventListener('input', function () { stage.customDurVal = num.value.trim(); recomputeCustomDuration(stage); render(); });
+    var num = el('input', 'field create-amount-input'); num.type = 'text'; num.inputMode = 'decimal'; num.placeholder = '1'; num.value = stage.customDurVal;
+    num.setAttribute('aria-label', 'Custom duration');
+    num.dataset.durationStage = String(idx);
+    num.addEventListener('input', function () {
+      // Text preserves intermediate decimals ("4." / "."). The existing render refreshes all
+      // timing-dependent controls and saves the draft; restore this field's focus and caret afterward.
+      var focused = document.activeElement === num;
+      var start = num.selectionStart, end = num.selectionEnd, direction = num.selectionDirection;
+      var host = num.closest('.create-overlay, .modal-dialog') || document;
+      stage.customDurVal = num.value; recomputeCustomDuration(stage);
+      render();
+      var replacement = focused && host.querySelector('input[data-duration-stage="' + idx + '"]');
+      if (replacement) {
+        replacement.focus({ preventScroll: true });
+        replacement.setSelectionRange(start, end, direction);
+      }
+    });
     var unit = el('select', 'create-amount-cur');
     ['hours', 'days', 'weeks', 'years'].forEach(function (u) { var op = el('option', ''); op.value = u; op.textContent = u; if (stage.customDurUnit === u) op.selected = true; unit.appendChild(op); });
     unit.addEventListener('change', function () { stage.customDurUnit = unit.value; recomputeCustomDuration(stage); render(); });
     crow.appendChild(num); crow.appendChild(unit);
     f.appendChild(crow);
+    var durationBad = customDurationResult(stage).issue;
+    if (durationBad) f.appendChild(warnNote(durationBad));
   }
   w.appendChild(f);
 
@@ -2187,7 +2206,12 @@ function currencySelect(current, onChange, cls, lockedSym) {
 function splitLockAllowed(stage) { return !!stage && (Number(stage.durationSeconds) || 0) > 0; }
 function tsToDateInput(ts) { return timestampToZonedInput(ts, 'date'); }
 function splitLockRow(stage, rec, render) {
-  if (!splitLockAllowed(stage)) { if (rec.lockedUntil) rec.lockedUntil = 0; return null; } // flexible → no lock; clear any stale value
+  if (!splitLockAllowed(stage)) {
+    // Only an explicit Flexible choice removes a lock. Incomplete custom text is invalid, rather
+    // than Flexible, so editing a decimal must not silently clear the recipient's existing lock.
+    if (rec.lockedUntil && !stage.durationCustom) rec.lockedUntil = 0;
+    return null;
+  }
   var wrap = el('div', 'create-split-lock');
   var lbl = el('label', 'create-split-lockcheck');
   var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = !!rec.lockedUntil;
@@ -3400,6 +3424,7 @@ function renderDeploy(state, render) {
   }
 
   var bad = isRev ? -1 : badStageIndex(state); // revnets have no per-stage durations to validate
+  var durationBad = durationIssue(state);
 
   // Network is chosen on the Flavor step's "On [Mainnets ▾]" toggle — no separate picker here.
   var needTicker = isRev && !state.details.ticker;
@@ -3426,7 +3451,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!noticeBad || startBad !== -1 || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3445,6 +3470,7 @@ function renderDeploy(state, render) {
   if (lpBad) wrap.appendChild(warnNote(lpBad));
   if (mediaBad) wrap.appendChild(warnNote(mediaBad));
   if (noticeBad) wrap.appendChild(warnNote(noticeBad));
+  if (durationBad) wrap.appendChild(warnNote(durationBad));
   if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start — a whole number of cycles or a date — on the Rulesets step.'));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
@@ -4204,6 +4230,8 @@ function deploy(state, render) {
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
+  var durationBad = durationIssue(state);
+  if (durationBad) { state.statusLines.push({ text: durationBad, err: true }); render(); return; }
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
@@ -4558,6 +4586,8 @@ export function deploySalt(state, owner) {
 // Used BOTH for the onchain send (runDeploy) and the JSON payload preview, so what the user reviews is
 // byte-for-byte what they sign.
 function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
+  var durationBad = durationIssue(state);
+  if (durationBad) throw new Error(durationBad);
   var multi = state.chainIds.length > 1;
   // Per-chain owner override (the "same on all chains" control may set a different address per chain). The
   // CREATE2 `salt` stays derived from the default owner (passed in) so omnichain addresses still match.
@@ -4798,6 +4828,8 @@ function buildRevStage(state, stage, idx, chainId, start) {
 // scaffolding. `immediateStart` aligns the first ruleset across chains for an omnichain queue (0 = next
 // cycle on a single chain). Returns the JBRulesetConfig[] for JBController/JBOmnichainDeployer.queueRulesetsOf.
 export function buildQueueRulesetConfigs(state, chainId, immediateStart, opts) {
+  var durationBad = durationIssue(state);
+  if (durationBad) throw new Error(durationBad);
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
   var firstStart = effectiveStages[0].schedule ? Number(effectiveStages[0].schedule) : (immediateStart || 0);
@@ -5399,9 +5431,35 @@ function secondsLabel(s) {
 }
 var DURATION_UNIT_SECONDS = { hours: 3600, days: 86400, weeks: 604800, years: 31536000 };
 export var FOREVER_SECONDS = 4294967295; // uint32 max (~136 years) — the "Forever" option's max duration
+function customDurationResult(stage) {
+  var text = String(stage.customDurVal == null ? '' : stage.customDurVal).trim();
+  var unit = DURATION_UNIT_SECONDS[stage.customDurUnit];
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(text) || !Number.isFinite(Number(text)) || Number(text) <= 0) {
+    return { seconds: 0, issue: 'Enter a positive duration (decimals are allowed).' };
+  }
+  if (typeof unit !== 'number') return { seconds: 0, issue: 'Choose hours, days, weeks, or years for the duration.' };
+  var seconds = Math.round(Number(text) * unit);
+  if (seconds < 1) return { seconds: 0, issue: 'The duration must round to at least 1 second.' };
+  if (!Number.isSafeInteger(seconds) || seconds > FOREVER_SECONDS) {
+    return { seconds: 0, issue: 'The duration must be no more than 4294967295 seconds (about 136 years).' };
+  }
+  return { seconds: seconds, issue: null };
+}
 function recomputeCustomDuration(stage) {
-  var v = parseFloat(stage.customDurVal);
-  stage.durationSeconds = (v > 0) ? Math.round(v * (DURATION_UNIT_SECONDS[stage.customDurUnit] || 86400)) : 0;
+  stage.durationSeconds = customDurationResult(stage).seconds;
+}
+function durationIssue(state) {
+  if (state.projectType === 'revnet') return null;
+  for (var i = 0; i < (state.stages || []).length; i++) {
+    var stage = state.stages[i];
+    var issue = stage.durationCustom ? customDurationResult(stage).issue : null;
+    var seconds = Number(stage.durationSeconds);
+    if (!issue && (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > FOREVER_SECONDS)) {
+      issue = 'The duration must be a whole number of seconds from 0 to 4294967295.';
+    }
+    if (issue) return 'Ruleset #' + (i + 1) + ': ' + issue;
+  }
+  return null;
 }
 function uint256FromAddress(addr) { return BigInt(addr).toString(); }
 function uint32FromAddress(addr) { return (BigInt(addr) & 0xFFFFFFFFn).toString(); }
@@ -5528,6 +5586,7 @@ export const __test = {
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,
   createPayoutKinds, safeParseEther, priceUnits, fundAccessAmountDecimals, fundAccessUnits, uint256FromAddress,
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
+  recomputeCustomDuration, durationIssue,
   verifyLaunchFeedCoverage, launchBaseCurrencies, revnetBaseCurrencyId,
   lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft, noticeClashIssue, stageMustStartAtOrAfter, stageStarts,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,

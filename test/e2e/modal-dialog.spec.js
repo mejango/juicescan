@@ -227,6 +227,58 @@ test('a modal opened from the create wizard takes Escape without closing the wiz
   await expect(wizard).toHaveCount(0);
 });
 
+test('custom ruleset duration keeps focus and decimal text while typing, then updates its summary', async ({ page }) => {
+  await openLauncherPage(page);
+  await page.evaluate(() => {
+    const state = window.__jbModalHarness.createState();
+    state.step = 2;
+    state.stages[0].expanded = true;
+    state.stages[0].durationCustom = true;
+    state.stages[0].customDurUnit = 'hours';
+    state.stages[0].reservedRecipients = [{ type: 'wallet', address: '0x1111111111111111111111111111111111111111', percent: 10, lockedUntil: 0 }];
+    localStorage.setItem('jb-create-draft', JSON.stringify(state));
+    window.__jbModalHarness.openCreateFlow();
+  });
+
+  const duration = page.locator('.create-stage-body .create-amount-input').first();
+  await duration.pressSequentially('4.');
+  await expect(duration).toHaveValue('4.');
+  await expect(duration).toBeFocused();
+  await duration.pressSequentially('5');
+  await expect(duration).toHaveValue('4.5');
+  await expect(duration).toBeFocused();
+  await expect(page.locator('.create-stage-sum').first()).toContainText('Lasts 16200s');
+  await expect(page.locator('.create-split-lock')).toHaveCount(1);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('jb-create-draft')).stages[0]))
+    .toMatchObject({ customDurVal: '4.5', durationSeconds: 16200 });
+
+  // Real blur/pointer activation catches a render-on-change handler swallowing the unit click.
+  await page.locator('.create-stage-body .create-amount-cur').first().click();
+  await page.keyboard.press('d');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.create-stage-body .create-amount-cur').first()).toHaveValue('days');
+  await duration.fill('');
+  await duration.pressSequentially('.5');
+  await expect(duration).toHaveValue('.5');
+  await expect(duration).toBeFocused();
+  await duration.press('Tab');
+  await expect(page.locator('.create-stage-sum').first()).toContainText('Lasts 12 hours');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('jb-create-draft')).stages[0]))
+    .toMatchObject({ customDurVal: '.5', customDurUnit: 'days', durationSeconds: 43200 });
+
+  // Editing inside the value must restore the caret, rather than sending every digit to the end.
+  await duration.fill('4.5');
+  await duration.press('Home');
+  await duration.press('ArrowRight');
+  await duration.pressSequentially('2');
+  await expect(duration).toHaveValue('42.5');
+  expect(await duration.evaluate(input => input.selectionStart)).toBe(2);
+  // One pointer click navigates after a dirty input; no blur handler may remove the button first.
+  await page.getByRole('button', { name: 'Next →', exact: true }).click();
+  await expect(page.locator('.create-step')).toContainText('Sell items to customers');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('jb-create-draft')).step)).toBe(3);
+});
+
 test('a click on the backdrop closes the modal, a click inside it does not', async ({ page }) => {
   await openLauncherPage(page);
   await page.click('#open-first');
