@@ -60,7 +60,7 @@ describe('project ID field resolution', () => {
     await expect(lookupProjectIdentity(987654, 84532)).resolves.toMatchObject({
       chainId: 84532, found: true, name: 'Resolved project', suckerGroupId: '0x1',
     });
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('https://testnet.bendystraw.xyz/'), expect.any(Object));
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('https://bendystraw-testnet.up.railway.app/'), expect.any(Object));
   });
 
   it('renders the resolved name in standard subtext beneath the input', async () => {

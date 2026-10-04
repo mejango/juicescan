@@ -3,11 +3,13 @@
 ## 2026-10-03 — publication endpoint recovery
 - [x] Diagnose the custom testnet domain failure using keyless public health, schema and known-project reads.
 - [x] Extract one shared endpoint owner without changing destinations; verify and commit the refactor separately.
-- [ ] Switch the testnet owner to the healthy official Railway origin and update behavioral regressions.
-- [ ] Measure the pinned Node 22 build, align the distribution budget with the recorded release delta, and run release checks.
+- [x] Switch the testnet owner to the healthy official Railway origin and update behavioral regressions.
+- [x] Measure the pinned Node 22 build, align the distribution budget with the recorded release delta, and run release checks.
 
 ### Review
-The custom testnet domain returns Railway 502, while the source-documented Railway origin serves the current four Sepolia chains, full schema, and known V6 Base Sepolia project 13 (kmac's shop / KMAC). Keyless CORS remains limited to the configured retail origin, so browser requests retain the existing keyed route. The behavior-preserving shared-origin refactor passes 32 focused tests in 6 files and produces byte-identical learn/build HTML; both destinations remain unchanged in its separate commit. Endpoint switch and final release validation pending.
+The custom testnet domain returns Railway 502, while the source-documented Railway origin serves the current four Sepolia chains, full schema, and known V6 Base Sepolia project 13 (kmac's shop / KMAC). Keyless CORS remains limited to the configured retail origin, so browser requests retain the existing keyed route. The behavior-preserving shared-origin refactor passes 32 focused tests in 6 files and produces byte-identical learn/build HTML; both destinations remain unchanged in its separate commit (b598f79).
+
+The testnet destination now changes once in the shared owner for browser queries, server previews, DATA prompts, Build guides, and the live schema gate. Mainnet remains unchanged. All 37 production GraphQL documents validate against both live schemas; 32 focused tests cover exact origins, keyed routes, project identity and displayed/copied endpoints. Source syntax checks 271 JavaScript files; the fresh pinned Node 22.23.1 bundle measures 9,983,374 B raw / 1,472,846 B gzip for app.js and 2,244,915 B gzip total. The endpoint change adds 126 B total over the same-toolchain duration release (2,244,789 B); the total cap rises from 2,244,000 B to the next 1 KB (2,245,000 B), with individual file limits unchanged. Bundle budget and diff checks pass. Parent will rerun the complete publication gates after these edits stop; no backend or DNS changes and no private-key diagnostics.
 
 ## 2026-10-03 — custom ruleset duration decimals
 - [x] Verify the focused existing baseline (5 files, 65 tests) and trace typing, conversion, draft and queue consumers.

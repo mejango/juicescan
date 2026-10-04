@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderBuildTab, renderLearnTab, renderWhyTab } from '../src/learn-build.js';
+import { BENDYSTRAW_GRAPHQL_ENDPOINTS } from '../src/bendystraw-endpoints.js';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,6 +39,9 @@ describe('Learn, Build, and Why guides', () => {
     expect(build.querySelector('#build-revnet-what')).not.toBeNull();
     expect(build.querySelector('#build-revnet-fees a').getAttribute('href')).toBe('learn.html#learn-fees');
     expect(build.querySelector('a[href="learn.html#learn-glossary"]')).not.toBeNull();
+    for (const endpoint of Object.values(BENDYSTRAW_GRAPHQL_ENDPOINTS)) {
+      expect(build.querySelector('#build-bendystraw').textContent).toContain(endpoint);
+    }
     expect(why.querySelectorAll('.why-want').length).toBe(12);
     expect(why.textContent).toMatch(/freedom to earn their money, on their terms/i);
 

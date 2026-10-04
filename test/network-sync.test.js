@@ -38,7 +38,7 @@ describe('Discover/Data network synchronization', () => {
     // Flip the network from the Discover toggle — WITHOUT touching the DATA strip.
     setDiscoverNetwork('testnet');
 
-    expect(note()).toContain('(testnet.bendystraw.xyz)');
+    expect(note()).toContain('(bendystraw-testnet.up.railway.app)');
     expect(select().value).toBe('testnet');
     // Freshly rendered pills follow the new network.
     const preview2 = Array.from(document.querySelectorAll('.data-row .fn-name-preview'))

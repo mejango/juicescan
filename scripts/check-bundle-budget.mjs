@@ -70,7 +70,9 @@ const totalGzip = (await Promise.all(distributionFiles.map(async file =>
 ))).reduce((sum, size) => sum + size, 0);
 // Live fee-buyback reviews: measured 2,238,685 B gzip.
 // Revnet transfer copy + project 7 fixed TWAP window in the batch preset: measured 2,241,951 B gzip.
-const totalGzipBudget = 2_244_000;
+// Pinned Node 22.23.1 duration release: 2,244,789 B gzip; shared endpoints + official testnet origin:
+// 2,244,915 B gzip (+126 B), app.js 9,983,374 B raw / 1,472,846 B gzip. Round total limit to the next 1 KB.
+const totalGzipBudget = 2_245_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

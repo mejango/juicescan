@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDataQueryPrompt, coerce, renderDataTab } from '../src/data-tab.js';
 import { setBendystrawNetwork } from '../src/bendystraw-client.js';
+import { BENDYSTRAW_MAINNET_HOST, BENDYSTRAW_TESTNET_HOST } from '../src/bendystraw-endpoints.js';
 
 function expandQuery(title) {
   const preview = Array.from(document.querySelectorAll('.data-row .fn-name-preview'))
@@ -91,6 +92,8 @@ describe('Data tab variable coercion', () => {
     expect(prompt).toContain('Build a client-only, read-only Juicebox V6 data view for “NFTs in project”');
     expect(prompt).toContain('src/data-tab.js');
     expect(prompt).toContain('visible, single-select Project chain');
+    expect(prompt).toContain(BENDYSTRAW_MAINNET_HOST + ' on mainnet');
+    expect(prompt).toContain(BENDYSTRAW_TESTNET_HOST + ' on testnet');
     expect(prompt).not.toContain('Label chainIds as Result chains');
   });
 

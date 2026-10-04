@@ -8,7 +8,7 @@ afterEach(() => setBendystrawNetwork('mainnet'));
 describe('shared Bendystraw origins', () => {
   it('keeps the configured public mainnet and testnet schema destinations explicit', () => {
     expect(BENDYSTRAW_MAINNET_HOST).toBe('https://bendystraw.up.railway.app');
-    expect(BENDYSTRAW_TESTNET_HOST).toBe('https://testnet.bendystraw.xyz');
+    expect(BENDYSTRAW_TESTNET_HOST).toBe('https://bendystraw-testnet.up.railway.app');
     expect(BENDYSTRAW_GRAPHQL_ENDPOINTS).toEqual({
       mainnet: BENDYSTRAW_MAINNET_HOST + '/graphql',
       testnet: BENDYSTRAW_TESTNET_HOST + '/graphql',
