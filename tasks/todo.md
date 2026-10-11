@@ -97,3 +97,39 @@ shares), the reserved-limit drift check in submitSplitsEdit (encoding no longer 
 Tests: test/reserved-splits-card.test.js (36 new) + test/reserved-splits-empty.test.js retargeted to
 group-share semantics. 95 files / 722 tests green; check:source/deployments/generated/transaction, bundle
 budget (1,893,827 B gzip of 2,050,000 B) and 44 playwright tests green. Uncommitted.
+
+## Native Defifa Entries consumer (2026-10-11)
+
+## Plan refinement
+- **Objective:** Show historical native entries, validated against the SDK market identity, and label known native markets Defifa while retaining ordinary shop behavior.
+- **System fit:** The shared SDK owns protocol identity; Metalog owns receipt/curve verification and domain charts; Juicescan displays read-only evidence. Root coordinates API deployment, CI merge and publication; no wallet or contract changes.
+- **Reuse and simplicity:** Reuse native inventory, flavor callbacks, explorer links, existing table/subtab styles and esbuild. Load a separate same-origin ESM only when Entries is selected; add no dependencies or chain scans.
+- **Evidence and unknowns:** API metalog.entries.v1 uses fixed snapshot/cursor pagination, full range objects and optional chart precision errors. Desktop/mobile mocked integration is verified; production API/publication proof remains pending.
+- **Verification:** Required npm check and hosted CI remain gates. Focused parser/render/identity tests, actual lazy-module browser integration, source/transaction checks and measured bundle ceilings cover failures, retry, pagination and generic writer exclusion.
+- **Resource budget:** Each user-requested page is bounded by the API and a 2MiB/20s consumer ceiling; initial inventory adds no history scan. Optional module total growth is measured with pinned Node22.23.1; retain rounded, enforced ceilings.
+
+- [x] Read required workspace resources and trace existing owners; root refinement gate passed.
+- [x] Implement validated lazy entry history and SDK-native flavor labeling.
+- [x] Focused tests:82; desktop/mobile browser integration:2; source/transaction/bundle checks pass.
+- [x] Required full npm check passes: 1906 unit tests, 96 browser cases, clean audit, syntax/deployment/generated/schema/transaction gates and 2,286,212 B total gzip.
+- [ ] Hosted CI must pass on final pushed source.
+- [x] Deployed API pinned Base27 page validates; actual public evidence desktop/mobile replay passes (7 range rows,100 tokens,600 curve segments).
+- [ ] Verify merged asset bytes and published desktop/mobile native Entries.
+
+### Review
+Source is prepared on an isolated branch; parent dirty drafts remain untouched. Entry charts use API density/positions directly, retain manual-reference and unavailable-chart labels, and never infer current ownership or sales. Source push does not imply publication or real transactions.
+
+Validation evidence: /tmp/juicescan-entries-check.log; /tmp/juicescan-entries-real-replay/results.json and390.png/1280.png; /tmp/juicescan-entries-live-api.json. Public API snapshot52459661 includes verified transaction0xcd6bd310120559b85d136be071177421affbb34e8a3c2e31d8606d6ca2a0e212. PR61 is source-only; parent owns merge/publication after CI.
+
+### Presentation follow-up (2026-10-11)
+User requested no visible middot separators, a plain Onchain ranges caption, and no Terms explained project-header link. Copy is changed at the existing owners, retaining receipt/block audit details and protocol math comments. Root refinement gate passed before edits; native-caption, visible-copy and header-link regressions enforce the preference. Required complete checks and hosted CI rerun on the final copy commit before release.
+
+## Generic Defifa NFT consumer final scope (2026-10-11)
+
+## Plan refinement
+- **Objective:** Show generic Defifa NFT tiers and verified protocol flavor, without Metalog links, numeric-range assumptions or curve information. Keep the requested plain captions and remove the header glossary link.
+- **System fit:** The published SDK owns protocol identity, exact names/pricing/supply/phase and read snapshots. Metalog alone owns curve evidence. Generic writer guards remain fail closed; root owns merge/publication.
+- **Reuse and simplicity:** Remove the optional curve module/client/build/CSS/tests completely; use the existing native inventory and SDK identity callbacks. Change visible copy at its existing owners, with no new dependencies.
+- **Evidence and unknowns:** Nonnumeric names and mixed prices must render unchanged. The hidden inventory block enables release proof without technical caption text. Existing ordinary JB721 behavior remains covered.
+- **Verification:** Run focused native/control/copy tests, source/transaction checks, complete required npm check and final hosted CI. Root verifies published source and desktop/mobile after coordinated release.
+- **Resource budget:** Remove all curve request, asset and budget additions. Measure any remaining generic-flavor growth with pinned Node22.23.1 and keep enforced narrow ceilings. No new chain scans or public writes.

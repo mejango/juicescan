@@ -24,10 +24,11 @@ it('restores ordinary payment controls after verified absence of an NFT hook', a
   await vi.waitFor(() => expect(document.querySelector('.paybox-amount-row').hidden).toBe(false));
   expect(document.querySelector('.paybox-top').hidden).toBe(false);
 });
-it('native identification keeps generic controls hidden and links to Metalog', async () => {
+it('native identification keeps generic controls hidden without assigning application identity', async () => {
   runtime.read.mockResolvedValue({ protocol: 'defifa', hook: '0x123', pricing: { currency: 61166, decimals: 18 }, blockNumber: 1n, phase: 1, tiers: [], nextStartingId: null });
   document.body.append(renderPayCard(project(403)));
-  await vi.waitFor(() => expect(document.querySelector('a[href="https://metalog.money/markets/8453/403"]')).not.toBeNull());
+  await vi.waitFor(() => expect(document.body.textContent).toContain('Defifa NFT transactions are not supported'));
+  expect(document.querySelector('a[href*="metalog.money"]')).toBeNull();
   expect(document.querySelector('.paybox-amount-row').hidden).toBe(true);
   expect(document.querySelector('.paybox-top').hidden).toBe(true);
 });

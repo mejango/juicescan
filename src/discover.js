@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, isNativeInventory, nativeMarketUrl, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
+import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
@@ -1622,10 +1622,11 @@ export function renderShopSection(project, shop, cart) {
   ready.then(function (s) {
     if (!wrap.isConnected) return;
     resolvedShop = s;
+    rememberProjectInventory(project, s);
     body.innerHTML = '';
     if (typeof mgr !== 'undefined' && mgr) mgr.hidden = isNativeInventory(s);
     if (isNativeInventory(s)) {
-      title.textContent = 'Market ranges';
+      title.textContent = 'Defifa NFT tiers';
       headAdd.remove(); if (typeof mgr !== 'undefined' && mgr) mgr.remove();
       body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri)));
       return;
@@ -1697,7 +1698,7 @@ export function renderShopSection(project, shop, cart) {
       setTimeout(function () { cardEl.classList.remove('shop-tier-focus'); }, 1500);
     }
     if (_activeDetail) _activeDetail.shopFocus = focusTier;
-  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again; market entry and settlement are available in Metalog.'; } });
+  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; } });
 
   // Mobile checkout bar — on phones the Pay card (where the purchase is completed) is a separate stacked
   // section above the tabs, so once items are in the cart show a bar that scrolls up to it. Hidden on
@@ -3772,8 +3773,8 @@ function renderPayShopStrip(project, cart, opts) {
     if (!shop) return;
     if (isNativeInventory(shop)) {
       wrap.style.display = '';
-      var link = document.createElement('a'); link.href = nativeMarketUrl(project.chainId, pidOn(project, project.chainId)); link.textContent = 'Open market in Metalog →';
-      wrap.appendChild(link); return;
+      var note = document.createElement('p'); note.textContent = nativeActionUnavailable;
+      wrap.appendChild(note); return;
     }
     if (!shop.tiers.length) return;
     wrap.style.display = '';
@@ -8848,7 +8849,7 @@ function renderProjectCard(project) {
   var meta1 = el('div', 'discover-card-meta');
   var flavorPair = el('span', 'discover-card-pair');
   flavorPair.appendChild(cardLbl('Flavor: '));
-  var typeVal = el('span', 'discover-card-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
+  var typeVal = el('span', 'discover-card-val'); typeVal.textContent = projectFlavor(project); typeVal.dataset.projectFlavor = Number(project.chainId) + ':' + BigInt(project.id);
   flavorPair.appendChild(typeVal);
   meta1.appendChild(flavorPair);
   if (project.chains && project.chains.length) {
@@ -9700,7 +9701,7 @@ export function renderPayCard(project, cart) {
   cart.onName(function () { renderFeedback(); });
   card.appendChild(renderPayShopStrip(project, cart, {
     onIdentity: function (shop) {
-      state.shop = shop; state.inventoryKnown = true;
+      state.shop = shop; state.inventoryKnown = true; rememberProjectInventory(project, shop);
       amountRow.hidden = isNativeInventory(shop); topRow.hidden = isNativeInventory(shop);
       if (isNativeInventory(shop)) return;
       status.textContent = '';
@@ -10262,7 +10263,7 @@ export function renderPayCard(project, cart) {
     status.className = 'paybox-status';
     status.textContent = '';
     if (!state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Reload to try again.'; return; }
-    if (isNativeInventory(state.shop)) { status.textContent = 'Enter and claim through Metalog.'; return; }
+    if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable; return; }
     try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (startsAt > Math.floor(Date.now() / 1000)) { return; }
@@ -10799,7 +10800,7 @@ function renderDetailHeader(project) {
   // line when the viewport is too narrow (mobile) — a label never separates from its value.
   var ownerWarn = el('span', 'detail-head-ownerwarn');
   var row1 = el('div', 'detail-head-meta');
-  var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
+  var typeVal = el('span', 'detail-head-val'); typeVal.textContent = projectFlavor(project); typeVal.dataset.projectFlavor = Number(project.chainId) + ':' + BigInt(project.id);
   row1.appendChild(mkPair('Flavor: ', [typeVal]));
   row1.appendChild(document.createTextNode(' '));
   row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [authorityValueNode(project, addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id))), ownerWarn]));
@@ -10823,9 +10824,6 @@ function renderDetailHeader(project) {
     row1.appendChild(mkPair('Site: ', [a]));
   }
   header.appendChild(row1);
-  var glossary = document.createElement('a');
-  glossary.href = 'learn.html#learn-glossary'; glossary.className = 'detail-head-url';
-  glossary.textContent = 'Terms explained'; header.appendChild(glossary);
   // Flag when the controlling account is not the same on every chain (owner for custom projects, operator for revnets).
   if ((project.chains || []).length > 1) {
     fetchAuthorityPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
@@ -13996,7 +13994,7 @@ export async function runPendingProjectPayments(project, rows, setStatus) {
     summaryForRound: function (calls) {
       return calls.map(function (call) {
         var row = call.pendingPayment;
-        return [chainNameOf(call.chainId), String(row.amount) + ' base units of ' + row.token + ' → project #' + row.projectId + ' · beneficiary ' + row.beneficiary];
+        return [chainNameOf(call.chainId), String(row.amount) + ' base units of ' + row.token + ' → project #' + row.projectId + ' | beneficiary ' + row.beneficiary];
       }).concat([['Final attempts', String(calls.filter(function (call) { return call.functionName === 'finalizePendingCall'; }).length)],
         ['Outcome', 'A retry may remain pending. A final attempt may return funds to the source project.'],
         ['Payment from your wallet', 'Gas only; the gateway already holds the original payment.']]);
@@ -14045,7 +14043,7 @@ export function renderProjectPendingPayments(project) {
     chainName: chainNameOf,
     describe: function (row) {
       var token = getChainTokens(row.chainId).find(function (candidate) { return sameAddr(candidate.address, row.token); });
-      return token ? formatAmount(BigInt(row.amount), token.decimals) + ' ' + token.symbol : String(row.amount) + ' base units · ' + truncAddr(row.token);
+      return token ? formatAmount(BigInt(row.amount), token.decimals) + ' ' + token.symbol : String(row.amount) + ' base units | ' + truncAddr(row.token);
     },
     loadRows: function () {
       return fetchPendingPaymentRows(projectChains(project).map(function (chain) {
@@ -15948,7 +15946,7 @@ async function applyDraftShop(state, project, sources, warnings) {
   }
   if (shops.some(function (shop) { return !shop; })) throw new Error('The shop is not present on every project chain.');
   var home = shops[0];
-  if (shops.some(isNativeInventory)) throw new Error('Edit this market in Metalog.');
+  if (shops.some(isNativeInventory)) throw new Error(nativeActionUnavailable);
   var knownShops = await Promise.all(shops.map(function (shop, index) {
     return isKnown721HookClone(shop.hook, sources[index].chainId, sources[index].projectId);
   }));
@@ -21935,9 +21933,9 @@ function renderAutoIssuance(project, stages) {
           ['Relayr payments', paymentCount ? 'Up to ' + paymentCount + ', with funding chosen for each round' : '0; direct wallet transactions'],
         ];
         prepared.allocations.forEach(function (allocation) {
-          summaryRows.push([chainNameFor(allocation.chainId) + ' · project #' + allocation.projectId + ' · stage ' + allocation.stageId,
+          summaryRows.push([chainNameFor(allocation.chainId) + ' | project #' + allocation.projectId + ' | stage ' + allocation.stageId,
             formatAmount(allocation.remaining, 18) + sym + ' to ' + allocation.beneficiary
-              + ' · unlocked ' + formatDateTime(Number(allocation.stageStart))]);
+              + ' | unlocked ' + formatDateTime(Number(allocation.stageStart))]);
         });
         return { rounds: prepared.rounds, summary: { action: 'Distribute auto issuance', rows: summaryRows } };
       }, { pendingScope: actionScope, label: 'Distribute auto issuance',
@@ -26633,7 +26631,7 @@ function opsActionsRow(project, opts) {
   [
     ['Cash out', async function () {
       var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
-      if (isNativeInventory(shop)) { var native = el('div', 'modal-body'); var link = document.createElement('a'); link.href = nativeMarketUrl(project.chainId, pidOn(project, project.chainId)); link.textContent = 'Claim or refund in Metalog →'; native.appendChild(link); openModal('Market settlement', native); return; }
+      if (isNativeInventory(shop)) { var native = el('div', 'modal-body'); native.textContent = nativeActionUnavailable; openModal('Defifa NFT transactions', native); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
