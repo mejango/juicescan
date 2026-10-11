@@ -110,9 +110,13 @@ budget (1,893,827 B gzip of 2,050,000 B) and 44 playwright tests green. Uncommit
 
 - [x] Read required workspace resources and trace existing owners; root refinement gate passed.
 - [x] Implement validated lazy entry history and SDK-native flavor labeling.
-- [x] Focused tests:79; desktop/mobile browser integration:2; source/transaction/bundle checks pass.
-- [ ] Run required full npm check and hosted CI.
-- [ ] Verify deployed API, merged asset bytes and published desktop/mobile native Entries.
+- [x] Focused tests:82; desktop/mobile browser integration:2; source/transaction/bundle checks pass.
+- [x] Required full npm check passes: 1906 unit tests, 96 browser cases, clean audit, syntax/deployment/generated/schema/transaction gates and 2,286,212 B total gzip.
+- [ ] Hosted CI must pass on final pushed source.
+- [x] Deployed API pinned Base27 page validates; actual public evidence desktop/mobile replay passes (7 range rows,100 tokens,600 curve segments).
+- [ ] Verify merged asset bytes and published desktop/mobile native Entries.
 
 ### Review
 Source is prepared on an isolated branch; parent dirty drafts remain untouched. Entry charts use API density/positions directly, retain manual-reference and unavailable-chart labels, and never infer current ownership or sales. Source push does not imply publication or real transactions.
+
+Validation evidence: /tmp/juicescan-entries-check.log; /tmp/juicescan-entries-real-replay/results.json and390.png/1280.png; /tmp/juicescan-entries-live-api.json. Public API snapshot52459661 includes verified transaction0xcd6bd310120559b85d136be071177421affbb34e8a3c2e31d8606d6ca2a0e212. PR61 is source-only; parent owns merge/publication after CI.

@@ -41,7 +41,7 @@ const budgets = {
   // Shared ABI/discovery adds 418,410 B raw / 34,238 B gzip; keep enforceable rounded ceilings.
   // Optional native Entries: initial app +3,085 B raw / +678 B gzip; no added dependencies.
   'dist/app.js': { raw: 10_409_000, gzip: 1_509_000 },
-  // Lazy read-only entry evidence + SVG renderer, measured 19,312 B raw / 5,504 B gzip.
+  // Lazy read-only entry evidence + SVG renderer, measured 19,460 B raw / 5,556 B gzip.
   'dist/entries-view.mjs': { raw: 20_000, gzip: 6_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
