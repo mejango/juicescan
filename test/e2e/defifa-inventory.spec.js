@@ -35,7 +35,7 @@ for (const fixture of fixtures) test(`Defifa ${fixture.chainId}/${fixture.projec
 let controlHarness;
 async function controlsSource() {
   if (!controlHarness) controlHarness = esbuild.build({
-    stdin: { contents: "import { renderPayCard, renderShopSection } from './src/discover.js'; window.renderControls = function (id) { const p = { id, chainId: 8453, ruleset: { start: 0, weight: 0n }, isRevnet: false }; document.querySelector('main').replaceChildren(renderPayCard(p), renderShopSection(p)); };", resolveDir: process.cwd(), loader: 'js' },
+    stdin: { contents: "import { renderPayCard, renderShopSection, renderTokenPanel } from './src/discover.js'; window.renderControls = function (id) { const p = { id, chainId: 8453, ruleset: { start: 0, weight: 0n }, isRevnet: false }; document.querySelector('main').replaceChildren(renderPayCard(p), renderShopSection(p)); }; window.renderTokens = function (id) { const p = { id, chainId: 8453, isRevnet: false }; const main = document.querySelector('main'); main.innerHTML = '<span data-project-flavor=\"8453:' + id + '\">CUSTOM</span>'; main.appendChild(renderTokenPanel(p)); };", resolveDir: process.cwd(), loader: 'js' },
     bundle: true, format: 'esm', write: false, define: { __BENDYSTRAW_API_KEY__: '""', __PINATA_JWT__: '""' },
     plugins: [{ name: 'controlled-identity', setup(build) {
       build.onResolve({ filter: /^@bananapus\/nana-sdk-core\/v6$/ }, () => ({ path: 'sdk', namespace: 'identity' }));
@@ -61,6 +61,33 @@ test('protocol identification gates visible controls and preserves ordinary paym
   await expect(page.locator('a[href*="metalog.money"]')).toHaveCount(0);
   await expect(page.locator('.paybox-amount-row')).toBeHidden();
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeHidden();
+});
+
+test('initial Tokens keeps failed identity unverified and retries Defifa guidance without a wallet send', async ({ page }) => {
+  const writes = [];
+  page.on('request', request => { if (/eth_send|wallet_send|personal_sign|eth_sign/.test(request.postData() || '')) writes.push(request.url()); });
+  await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+  await page.route('**/inventory-controls.js', async route => route.fulfill({ contentType: 'text/javascript', body: await controlsSource() }));
+  await page.goto('/index.html#learn');
+  await page.addScriptTag({ url: '/inventory-controls.js', type: 'module' });
+  await page.evaluate(() => {
+    window.inventoryPromise = new Promise((resolve, reject) => { window.rejectIdentity = reject; });
+    window.renderTokens(503);
+  });
+  await expect(page.locator('[data-project-flavor]')).toHaveText('Checking');
+  await expect(page.getByText('Checking token protocol…', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Deploy ERC-20', exact: true })).toHaveCount(0);
+  await page.evaluate(() => window.rejectIdentity(new Error('Identity unavailable')));
+  await expect(page.locator('[data-project-flavor]')).toHaveText('Unverified');
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+  await page.evaluate(() => { window.inventoryPromise = Promise.resolve({ protocol: 'defifa' }); });
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  await expect(page.locator('[data-project-flavor]')).toHaveText('Defifa');
+  await expect(page.getByText('Defifa NFTs', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Defifa uses NFTs for participation and payouts/)).toBeVisible();
+  await expect(page.getByText(/Your project tokens are recorded as Juicebox credits/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Deploy ERC-20', exact: true })).toBeVisible();
+  expect(writes).toEqual([]);
 });
 
 test('generic Defifa tiers retain nonnumeric names and mixed prices without curve views or application links', async ({ page }) => {

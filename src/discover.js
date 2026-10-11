@@ -3763,7 +3763,9 @@ function renderPayShopStrip(project, cart, opts) {
   opts = opts || {};
   var wrap = el('div', 'paybox-shop');
   wrap.style.display = 'none';
-  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }).then(function (identity) {
+  function load() {
+  wrap.innerHTML = ''; wrap.style.display = 'none';
+  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, project).then(function (identity) {
     if (!wrap.isConnected) return null;
     if (opts.onIdentity) opts.onIdentity(identity);
     return isNativeInventory(identity) ? identity : fetchProjectTiers(project);
@@ -3790,7 +3792,9 @@ function renderPayShopStrip(project, cart, opts) {
       strip.appendChild(makePayShopItem(project, shop, tier, cart, refreshers, opts.focusInShop));
     });
     cart.subscribe(function (id) { if (refreshers[id]) refreshers[id](); });
-  }).catch(function (error) { if (wrap.isConnected && opts.onError) opts.onError(error); });
+  }).catch(function (error) { if (wrap.isConnected && opts.onError) opts.onError(error, function () { bustTiersCache(project); load(); }); });
+  }
+  load();
   return wrap;
 }
 
@@ -4579,7 +4583,7 @@ function registeredInstanceProvenance(address, chainId) {
       return { address: address, deployer: deployer, known: !!known,
         deployerName: (known && known.deployment) || resolveContractName(deployer, chainId) || null,
         family: (known && known.family) || null };
-    }).catch(function () { return null; });
+    }).catch(function (error) { delete _instanceProvenanceCache[key]; throw error; });
   return _instanceProvenanceCache[key];
 }
 
@@ -4667,7 +4671,7 @@ function paySurfaceBlockedMessage(surface, terminal, chainId) {
   return 'This project does not list ' + name + ' as a payment terminal on ' + chainNameOf(chainId) + '. Review the project contracts before paying.';
 }
 
-function inspectProjectContractsOnChain(project, chain) {
+export function inspectProjectContractsOnChain(project, chain) {
   var chainId = chain.id;
   var chainName = chain.name || chainNameOf(chainId);
   var pid = pidOn(project, chainId);
@@ -4690,8 +4694,11 @@ function inspectProjectContractsOnChain(project, chain) {
       var dataHook = m && m.dataHook;
       var approvalHookP = addUnknownProjectContract(unknown, chainId, chainName, 'Rule-change hook', approvalHook, 'This hook can affect when queued rulesets take effect.');
       var hookP = inspectBuybackHookBehindDataHook(unknown, chainId, chainName, pid, dataHook, 'Buyback hook');
-      var dataHookP = isKnown721HookClone(dataHook, chainId, pid).then(function (knownClone) {
-        if (!knownClone) return addUnknownProjectContract(unknown, chainId, chainName, 'Data hook', dataHook, 'Payments and cash outs can run custom hook logic.');
+      var dataHookP = readProjectNftIdentity(clientFor(chainId), { chainId: Number(chainId), projectId: pid, isRevnet: !!project.isRevnet }).then(function (identity) {
+        if (isNativeInventory(identity) && sameAddr(identity.hook, dataHook)) return;
+        return isKnown721HookClone(dataHook, chainId, pid).then(function (knownClone) {
+          if (!knownClone) return addUnknownProjectContract(unknown, chainId, chainName, 'Data hook', dataHook, 'Payments and cash outs can run custom hook logic.');
+        });
       });
       var baseHookAuditP = Promise.all([hookP, dataHookP, approvalHookP]);
       var omni = getAddress('JBOmnichainDeployer', chainId);
@@ -9701,10 +9708,10 @@ export function renderPayCard(project, cart) {
   cart.onName(function () { renderFeedback(); });
   card.appendChild(renderPayShopStrip(project, cart, {
     onIdentity: function (shop) {
-      state.shop = shop; state.inventoryKnown = true; rememberProjectInventory(project, shop);
+      state.shop = shop; state.inventoryKnown = true;
       amountRow.hidden = isNativeInventory(shop); topRow.hidden = isNativeInventory(shop);
-      if (isNativeInventory(shop)) return;
       status.textContent = '';
+      if (isNativeInventory(shop)) return;
       loadAcceptedTokens(state.chainId); loadPaymentSurface(state.chainId);
     },
     onShop: function (shop) {
@@ -9713,7 +9720,15 @@ export function renderPayCard(project, cart) {
       refreshNftCredits();
       if (selectedTierIds().length) refreshNftCheckoutRoutes();
     },
-    onError: function (error) { status.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; },
+    onError: function (error, retryRead) {
+      status.textContent = errMessage(error, 'Could not verify NFT inventory.');
+      var retry = el('button'); retry.type = 'button'; retry.textContent = 'Retry';
+      retry.addEventListener('click', function () {
+        retry.disabled = true;
+        state.inventoryKnown = false; amountRow.hidden = true; topRow.hidden = true;
+        retryRead();
+      }); status.appendChild(retry);
+    },
     focusInShop: focusShopTier,
     onViewAll: openShopTab,
   }));
@@ -10801,6 +10816,8 @@ function renderDetailHeader(project) {
   var ownerWarn = el('span', 'detail-head-ownerwarn');
   var row1 = el('div', 'detail-head-meta');
   var typeVal = el('span', 'detail-head-val'); typeVal.textContent = projectFlavor(project); typeVal.dataset.projectFlavor = Number(project.chainId) + ':' + BigInt(project.id);
+  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, project).catch(function () {});
+  typeVal.textContent = projectFlavor(project);
   row1.appendChild(mkPair('Flavor: ', [typeVal]));
   row1.appendChild(document.createTextNode(' '));
   row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [authorityValueNode(project, addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id))), ownerWarn]));
@@ -10961,7 +10978,25 @@ async function ensureProjectTokenManager(project, permissionId, setStatus) {
   return account;
 }
 
-function renderTokenPanel(project) {
+export function renderTokenPanel(project) {
+  if (project.isRevnet) return renderResolvedTokenPanel(project, null);
+  var host = el('div');
+  function load() {
+    host.innerHTML = '';
+    var pending = el('div', 'detail-card-body'); pending.textContent = 'Checking token protocol…'; host.appendChild(pending);
+    readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: false }, project).then(function (identity) {
+      if (host.isConnected) host.replaceChildren(renderResolvedTokenPanel(project, identity));
+    }).catch(function (error) {
+      if (!host.isConnected) return;
+      pending.textContent = errMessage(error, 'Could not verify token protocol.');
+      var retry = el('button'); retry.textContent = 'Retry';
+      retry.addEventListener('click', function () { bustTiersCache(project); load(); }); host.appendChild(retry);
+    });
+  }
+  load(); return host;
+}
+
+function renderResolvedTokenPanel(project, identity) {
   var card = el('div', 'detail-card token-line-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Token'; card.appendChild(title);
   var capabilities = tokenUiCapabilities(project);
@@ -10978,9 +11013,9 @@ function renderTokenPanel(project) {
 
   if (!capabilities.hasErc20) {
     var empty = el('div', 'token-empty-state');
-    var emptyTitle = el('div', 'token-empty-title'); emptyTitle.textContent = 'No ERC-20 yet'; empty.appendChild(emptyTitle);
+    var emptyTitle = el('div', 'token-empty-title'); emptyTitle.textContent = isNativeInventory(identity) ? 'Defifa NFTs' : 'No ERC-20 yet'; empty.appendChild(emptyTitle);
     var emptyCopy = el('div', 'token-empty-copy');
-    emptyCopy.textContent = 'Your project tokens are recorded as Juicebox credits and can still be cashed out under the project’s rules. Deploying a standard token contract (ERC-20) lets holders claim transferable tokens that trading pools can use.';
+    emptyCopy.textContent = isNativeInventory(identity) ? 'Defifa uses NFTs for participation and payouts. Payouts follow the ratified scorecard and Defifa lifecycle. This interface shows NFT tiers but does not execute Defifa NFT transactions.' : 'Your project tokens are recorded as Juicebox credits and can still be cashed out under the project’s rules. Deploying a standard token contract (ERC-20) lets holders claim transferable tokens that trading pools can use.';
     empty.appendChild(emptyCopy);
     card.appendChild(empty);
   } else {

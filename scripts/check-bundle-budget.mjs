@@ -39,7 +39,8 @@ const budgets = {
   // Published SDK2.28.0 protocol inventory + native Defifa view: 10,400,410 B raw / 1,506,547 B gzip.
   // Same dependency graph/env HEAD baseline: 9,982,000 B raw / 1,472,309 B gzip.
   // Shared ABI/discovery adds 418,410 B raw / 34,238 B gzip; keep enforceable rounded ceilings.
-  'dist/app.js': { raw: 10_405_000, gzip: 1_508_000 },
+  // Retryable identity/provenance feedback and native token copy: +3,426 B raw / +729 B gzip.
+  'dist/app.js': { raw: 10_409_000, gzip: 1_509_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
@@ -76,7 +77,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(async file =>
 // Pinned Node 22.23.1 duration release: 2,244,789 B gzip; shared endpoints + official testnet origin:
 // 2,244,915 B gzip (+126 B), app.js 9,983,374 B raw / 1,472,846 B gzip. Round total limit to the next 1 KB.
 // SDK/native inventory measured total: 2,278,700 B gzip.
-const totalGzipBudget = 2_280_000;
+// Verification feedback measured total: 2,280,560 B gzip; round to the next 1 KB.
+const totalGzipBudget = 2_281_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
