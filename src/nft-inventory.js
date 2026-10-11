@@ -1,5 +1,23 @@
 import { getProjectNftInventory } from '@bananapus/nana-sdk-core/v6';
 
+var identities = new Map();
+function identityKey(args) { return Number(args.chainId) + ':' + BigInt(args.projectId) + ':' + !!args.isRevnet; }
+export function clearProjectNftIdentity(args) {
+  if (args) identities.forEach(function (cache) { cache.delete(identityKey(args)); });
+  else identities.clear();
+}
+export function readProjectNftIdentity(client, args) {
+  if (!identities.has(client)) identities.set(client, new Map());
+  var cache = identities.get(client);
+  var key = identityKey(args);
+  if (!cache.has(key)) {
+    var promise = getProjectNftInventory(client, Object.assign({}, args, { tierLimit: 1 }));
+    cache.set(key, promise);
+    promise.catch(function () { if (cache.get(key) === promise) cache.delete(key); });
+  }
+  return cache.get(key);
+}
+
 export function isNativeInventory(inventory) { return !!inventory && inventory.protocol === 'defifa'; }
 export function nativeMarketUrl(chainId, projectId) { return 'https://metalog.money/markets/' + Number(chainId) + '/' + BigInt(projectId); }
 
