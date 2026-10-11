@@ -29,6 +29,7 @@ async function build() {
     },
   });
   const js = jsResult.outputFiles[0].text;
+  const entriesResult = await esbuild.build({ entryPoints: [path.join(SRC, 'entries-view.js')], bundle: true, format: 'esm', write: false, minify: false, sourcemap: false });
 
   // Read HTML shell
   const html = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8');
@@ -43,6 +44,7 @@ async function build() {
   fs.mkdirSync(DIST, { recursive: true });
   fs.writeFileSync(path.join(DIST, 'index.html'), final);
   fs.writeFileSync(path.join(DIST, 'app.js'), js);
+  fs.writeFileSync(path.join(DIST, 'entries-view.mjs'), entriesResult.outputFiles[0].text);
   fs.copyFileSync(path.join(SRC, 'style.css'), path.join(DIST, 'style.css'));
   await require('./render-guides.js').renderGuides(DIST);
 

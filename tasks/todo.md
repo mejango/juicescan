@@ -97,3 +97,22 @@ shares), the reserved-limit drift check in submitSplitsEdit (encoding no longer 
 Tests: test/reserved-splits-card.test.js (36 new) + test/reserved-splits-empty.test.js retargeted to
 group-share semantics. 95 files / 722 tests green; check:source/deployments/generated/transaction, bundle
 budget (1,893,827 B gzip of 2,050,000 B) and 44 playwright tests green. Uncommitted.
+
+## Native Defifa Entries consumer (2026-10-11)
+
+## Plan refinement
+- **Objective:** Show historical native entries, validated against the SDK market identity, and label known native markets Defifa while retaining ordinary shop behavior.
+- **System fit:** The shared SDK owns protocol identity; Metalog owns receipt/curve verification and domain charts; Juicescan displays read-only evidence. Root coordinates API deployment, CI merge and publication; no wallet or contract changes.
+- **Reuse and simplicity:** Reuse native inventory, flavor callbacks, explorer links, existing table/subtab styles and esbuild. Load a separate same-origin ESM only when Entries is selected; add no dependencies or chain scans.
+- **Evidence and unknowns:** API metalog.entries.v1 uses fixed snapshot/cursor pagination, full range objects and optional chart precision errors. Desktop/mobile mocked integration is verified; production API/publication proof remains pending.
+- **Verification:** Required npm check and hosted CI remain gates. Focused parser/render/identity tests, actual lazy-module browser integration, source/transaction checks and measured bundle ceilings cover failures, retry, pagination and generic writer exclusion.
+- **Resource budget:** Each user-requested page is bounded by the API and a 2MiB/20s consumer ceiling; initial inventory adds no history scan. Optional module total growth is measured with pinned Node22.23.1; retain rounded, enforced ceilings.
+
+- [x] Read required workspace resources and trace existing owners; root refinement gate passed.
+- [x] Implement validated lazy entry history and SDK-native flavor labeling.
+- [x] Focused tests:79; desktop/mobile browser integration:2; source/transaction/bundle checks pass.
+- [ ] Run required full npm check and hosted CI.
+- [ ] Verify deployed API, merged asset bytes and published desktop/mobile native Entries.
+
+### Review
+Source is prepared on an isolated branch; parent dirty drafts remain untouched. Entry charts use API density/positions directly, retain manual-reference and unavailable-chart labels, and never infer current ownership or sales. Source push does not imply publication or real transactions.

@@ -6513,3 +6513,11 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .native-nft-inventory caption { text-align: left; margin-bottom: 8px; color: var(--text-muted); }
 .native-nft-inventory th, .native-nft-inventory td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .native-nft-inventory th:last-child, .native-nft-inventory td:last-child { text-align: right; }
+
+/* Optional native Entries view: no fixed column width or offsite media. */
+.native-entries, .native-entry-card { min-width: 0; overflow-wrap: anywhere; }
+.native-entry-card { border-top: 1px solid var(--c-orange-light); margin-top: 16px; padding-top: 12px; }
+.native-entry-chart { margin: 12px 0; }
+.native-entry-chart svg { display: block; width: 100%; height: auto; }
+.native-entry-chart p { font-size: 11px; color: var(--muted-2); }
+.native-entries-controls { display: flex; flex-wrap: wrap; gap: 8px; }

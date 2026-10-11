@@ -67,3 +67,18 @@ it('caches bounded identity per client and invalidates exact project reads after
   await readProjectNftIdentity(client, args);
   expect(getProjectNftInventory).toHaveBeenCalledTimes(3);
 });
+
+it('labels only SDK-verified native protocol as Defifa and updates matching visible flavor nodes', async () => {
+  const { projectFlavor, rememberProjectInventory } = await import('../src/nft-inventory.js');
+  const native = { id: 27, chainId: 8453, isRevnet: false };
+  const ordinary = { id: 28, chainId: 8453, isRevnet: false };
+  document.body.innerHTML = '<span data-project-flavor="8453:27">CUSTOM</span><span data-project-flavor="8453:28">CUSTOM</span>';
+  expect(projectFlavor(native)).toBe('CUSTOM');
+  rememberProjectInventory(native, { protocol: 'defifa' });
+  expect(projectFlavor(native)).toBe('Defifa');
+  expect(document.querySelector('[data-project-flavor="8453:27"]').textContent).toBe('Defifa');
+  expect(document.querySelector('[data-project-flavor="8453:28"]').textContent).toBe('CUSTOM');
+  rememberProjectInventory(ordinary, { protocol: 'jb721' });
+  expect(projectFlavor(ordinary)).toBe('CUSTOM');
+  expect(projectFlavor({ isRevnet: true })).toBe('REVNET');
+});

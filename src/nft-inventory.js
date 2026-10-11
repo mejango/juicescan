@@ -19,6 +19,11 @@ export function readProjectNftIdentity(client, args) {
 }
 
 export function isNativeInventory(inventory) { return !!inventory && inventory.protocol === 'defifa'; }
+export function projectFlavor(project) { return project.nftInventoryProtocol === 'defifa' ? 'Defifa' : project.isRevnet ? 'REVNET' : 'CUSTOM'; }
+export function rememberProjectInventory(project, inventory) {
+  project.nftInventoryProtocol = inventory ? inventory.protocol : null;
+  if (typeof document !== 'undefined') document.querySelectorAll('[data-project-flavor]').forEach(function (node) { if (node.dataset.projectFlavor === Number(project.chainId) + ':' + BigInt(project.id)) node.textContent = projectFlavor(project); });
+}
 export function nativeMarketUrl(chainId, projectId) { return 'https://metalog.money/markets/' + Number(chainId) + '/' + BigInt(projectId); }
 
 // One SDK owner recognizes protocols. Keep every page at the first page's block;
@@ -49,7 +54,7 @@ export async function requireGenericInventory(client, args, capability) {
   return inventory;
 }
 
-export function renderNativeInventory(inventory, chainId, projectId, formatPrice, metadataUrl) {
+export function renderNativeInventory(inventory, chainId, projectId, formatPrice, metadataUrl, entriesView) {
   var wrap = document.createElement('div'); wrap.className = 'detail-card-body';
   var phase = document.createElement('p'); phase.textContent = ['Countdown', 'Entry open', 'Refund period', 'Scoring', 'Complete', 'No contest'][inventory.phase]; wrap.appendChild(phase);
   var link = document.createElement('a'); link.href = nativeMarketUrl(chainId, projectId); link.textContent = 'Open market in Metalog →'; wrap.appendChild(link);
@@ -65,7 +70,17 @@ export function renderNativeInventory(inventory, chainId, projectId, formatPrice
     [tier.id, tier.name, formatPrice(tier.price), tier.currentSupply].forEach(function (value) { var cell = document.createElement('td'); cell.textContent = String(value); row.appendChild(cell); });
     body.appendChild(row);
   });
-  table.appendChild(body); wrap.appendChild(table);
+  table.appendChild(body);
+  if (entriesView) {
+    var tabs = document.createElement('div'); tabs.className = 'owners-subtabs';
+    var ranges = document.createElement('button'); ranges.type = 'button'; ranges.className = 'owners-subtab active'; ranges.textContent = 'Ranges';
+    var entries = document.createElement('button'); entries.type = 'button'; entries.className = 'owners-subtab'; entries.textContent = 'Entries';
+    tabs.appendChild(ranges); tabs.appendChild(entries); wrap.appendChild(tabs);
+    var pane = document.createElement('div'), loaded = null;
+    ranges.addEventListener('click', function () { table.hidden = false; pane.hidden = true; ranges.classList.add('active'); entries.classList.remove('active'); });
+    entries.addEventListener('click', function () { if (!loaded) { loaded = entriesView(); pane.appendChild(loaded); } table.hidden = true; pane.hidden = false; entries.classList.add('active'); ranges.classList.remove('active'); });
+    wrap.appendChild(table); wrap.appendChild(pane);
+  } else wrap.appendChild(table);
   var addr = document.createElement('p'); addr.textContent = 'Collection: ' + inventory.hook; addr.className = 'shop-collection-addr'; wrap.appendChild(addr);
   return wrap;
 }

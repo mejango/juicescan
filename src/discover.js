@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, isNativeInventory, nativeMarketUrl, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
+import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeMarketUrl, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
@@ -1622,12 +1622,13 @@ export function renderShopSection(project, shop, cart) {
   ready.then(function (s) {
     if (!wrap.isConnected) return;
     resolvedShop = s;
+    rememberProjectInventory(project, s);
     body.innerHTML = '';
     if (typeof mgr !== 'undefined' && mgr) mgr.hidden = isNativeInventory(s);
     if (isNativeInventory(s)) {
       title.textContent = 'Market ranges';
       headAdd.remove(); if (typeof mgr !== 'undefined' && mgr) mgr.remove();
-      body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri)));
+      body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri), function () { return renderNativeEntries(project, s); }));
       return;
     }
     if (!s || !s.tiers.length) {
@@ -1719,6 +1720,20 @@ export function renderShopSection(project, shop, cart) {
   wrap.appendChild(checkoutBar);
   onEffectiveAccountChange(function () { if (wrap.isConnected) showCredits(resolvedShop); });
   return wrap;
+}
+
+function renderNativeEntries(project, inventory) {
+  var wrap = el('div', 'native-entries-loading');
+  function load() {
+    wrap.textContent = 'Loading entries view…';
+    // Separate optional asset: no chart/client code in the initial IIFE.
+    var moduleUrl = './entries-view.mjs';
+    import(moduleUrl).then(function (module) {
+      if (!wrap.isConnected) return;
+      wrap.replaceChildren(module.renderEntries({ chainId: Number(project.chainId), projectId: String(pidOn(project, project.chainId)), hook: inventory.hook }, { receiptUrl: function (hash) { return txExplorerUrl(project.chainId, hash); }, stakeText: function (wei) { return formatEther(BigInt(wei)) + ' ETH'; } }));
+    }).catch(function () { wrap.textContent = 'Entries view unavailable. '; var retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry'; retry.addEventListener('click', load); wrap.appendChild(retry); });
+  }
+  queueMicrotask(load); return wrap;
 }
 
 // Shop tab wrapper: [Inventory | Customers] subtabs. Inventory is the items-for-sale card; Customers
@@ -8848,7 +8863,7 @@ function renderProjectCard(project) {
   var meta1 = el('div', 'discover-card-meta');
   var flavorPair = el('span', 'discover-card-pair');
   flavorPair.appendChild(cardLbl('Flavor: '));
-  var typeVal = el('span', 'discover-card-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
+  var typeVal = el('span', 'discover-card-val'); typeVal.textContent = projectFlavor(project); typeVal.dataset.projectFlavor = Number(project.chainId) + ':' + BigInt(project.id);
   flavorPair.appendChild(typeVal);
   meta1.appendChild(flavorPair);
   if (project.chains && project.chains.length) {
@@ -9700,7 +9715,7 @@ export function renderPayCard(project, cart) {
   cart.onName(function () { renderFeedback(); });
   card.appendChild(renderPayShopStrip(project, cart, {
     onIdentity: function (shop) {
-      state.shop = shop; state.inventoryKnown = true;
+      state.shop = shop; state.inventoryKnown = true; rememberProjectInventory(project, shop);
       amountRow.hidden = isNativeInventory(shop); topRow.hidden = isNativeInventory(shop);
       if (isNativeInventory(shop)) return;
       status.textContent = '';
@@ -10799,7 +10814,7 @@ function renderDetailHeader(project) {
   // line when the viewport is too narrow (mobile) — a label never separates from its value.
   var ownerWarn = el('span', 'detail-head-ownerwarn');
   var row1 = el('div', 'detail-head-meta');
-  var typeVal = el('span', 'detail-head-val'); typeVal.textContent = project.isRevnet ? 'REVNET' : 'CUSTOM';
+  var typeVal = el('span', 'detail-head-val'); typeVal.textContent = projectFlavor(project); typeVal.dataset.projectFlavor = Number(project.chainId) + ':' + BigInt(project.id);
   row1.appendChild(mkPair('Flavor: ', [typeVal]));
   row1.appendChild(document.createTextNode(' '));
   row1.appendChild(mkPair(projectAuthorityLabel(project) + ': ', [authorityValueNode(project, addressLinkNode(projectAuthorityAddress(project), project.chainId || (project.chains && project.chains[0] && project.chains[0].id))), ownerWarn]));
