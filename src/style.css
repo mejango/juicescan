@@ -6507,3 +6507,8 @@ select.create-input-auto { width: auto; max-width: 100%; }
 /* Plain definitions shared by the live and static guides. */
 .guide-glossary dt { font-weight: 600; }
 .guide-glossary dd { margin: 0 0 12px; }
+
+.native-nft-inventory { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+.native-nft-inventory caption { text-align: left; margin-bottom: 8px; color: var(--text-muted); }
+.native-nft-inventory th, .native-nft-inventory td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.native-nft-inventory th:last-child, .native-nft-inventory td:last-child { text-align: right; }

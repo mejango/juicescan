@@ -2,6 +2,7 @@
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
+import { readProjectNftInventory, isNativeInventory, nativeMarketUrl, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
@@ -737,7 +738,8 @@ export function cashOutPreviewRulesetId(previewResult) {
 
 // The project's 721 hook. Returns { hook, authoritative }; null means the authoritative mapping/ruleset says
 // there is none. RPC failures reject so the UI never turns "could not read" into "no shop".
-function readShopHook(project) {
+async function readShopHook(project, inventory) {
+  if (!inventory) await requireGenericInventory(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, 'manageTiers');
   var client = clientFor(project.chainId);
   var homePid = pidOn(project, project.chainId);
   var revo = getAddress('REVOwner', project.chainId);
@@ -989,33 +991,22 @@ async function current721TransferPause(project) {
 }
 
 async function fetchProjectTiersUncached(project) {
-  var hookInfo = await readShopHook(project);
-  if (!hookInfo) return null;
-  var hook = hookInfo.hook;
   var client = clientFor(project.chainId);
-  var store = hookInfo.authoritative
-    ? await client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] })
-    : await client.readContract({ address: hook, abi: HOOK_STORE_ABI, functionName: 'STORE', args: [] }).catch(function () { return null; });
-  if (!store) return null;
-  var idTarget = await client.readContract({ address: hook, abi: HOOK_METADATA_ID_TARGET_ABI, functionName: 'METADATA_ID_TARGET', args: [] });
-  if (!idTarget || /^0x0+$/.test(idTarget)) throw new Error('The shop metadata ID target is invalid.');
-  var pricingRaw = await client.readContract({ address: hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] }).catch(function () { return null; });
-  // Tier prices are unusable without the hook's exact currency + decimals. Falling back from a failed read to
-  // project baseCurrency (and guessing USD=6) can display and charge a different amount, so fail closed.
-  if (!pricingRaw) return null;
-  var pricing = {
-    currency: Number(pricingRaw.currency != null ? pricingRaw.currency : pricingRaw[0]),
-    decimals: Number(pricingRaw.decimals != null ? pricingRaw.decimals : pricingRaw[1]),
-  };
-  if (!Number.isSafeInteger(pricing.currency) || pricing.currency <= 0 || !Number.isInteger(pricing.decimals) || pricing.decimals < 0 || pricing.decimals > 77) return null;
+  var inventory = await readProjectNftInventory(client, { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet });
+  if (!inventory) return null;
+  var hook = inventory.hook, store = inventory.store;
+  var pricing = Object.assign({}, inventory.pricing);
   pricing.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
-  // A custom accounting token (a project's own ERC-20) isn't in the known-token list, so pricingSymbol
-  // falls back to "currency <uint32(address)>" — resolve the real symbol from the accounting contexts.
   if (/^currency \d+$/.test(pricing.symbol)) {
     var acctCtxs = await resolveAcctTokens(project.chainId, pidOn(project, project.chainId)).catch(function () { return null; });
     var acctMatch = (acctCtxs || []).filter(function (c) { return Number(c.currency) === pricing.currency; })[0];
     if (acctMatch && acctMatch.symbol) pricing.symbol = acctMatch.symbol;
   }
+  if (isNativeInventory(inventory)) return Object.assign({}, inventory, { pricing: pricing });
+  var idTarget = inventory.metadataIdTarget;
+  var hookInfo = { itemsCashOut: !!inventory.ruleset.metadata.useDataHookForCashOut };
+  // The omnichain deployer's cash-out flag forwards to its own per-ruleset hook configuration.
+  if (!project.isRevnet) hookInfo = await readShopHook(project, inventory) || hookInfo;
   var resolver = await client.readContract({ address: store, abi: TIER721_STORE_ABI, functionName: 'tokenUriResolverOf', args: [hook] });
   if (resolver && /^0x0+$/.test(resolver)) resolver = null;
   var shopReads = await Promise.all([
@@ -1034,7 +1025,7 @@ async function fetchProjectTiersUncached(project) {
       flags: t.flags || {}, allowOwnerMint: t.flags && t.flags.allowOwnerMint,
       indexedMetadata: indexedByTier && indexedByTier[Number(t.id)] || null };
   }).filter(function (t) { return t.initial > 0; });
-  return { hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers,
+  return { protocol: inventory.protocol, capabilities: inventory.capabilities, blockNumber: inventory.blockNumber, hook: hook, idTarget: idTarget, store: store, resolver: resolver, pricing: pricing, tiers: tiers,
     configFlags: configFlags, itemsCashOut: !!hookInfo.itemsCashOut, transfersPaused: transfersPaused,
     // Read from ONE chain's ruleset. Per-chain rulesets can diverge, so every label built from
     // this must name the chain rather than imply a global state.
@@ -1045,6 +1036,7 @@ async function fetchProjectTiersUncached(project) {
 // productName + categoryName + image uniformly for every tier, even ones that also carry an IPFS URI),
 // falling back to the tier's IPFS metadata when no resolver is set. Best-effort.
 function resolveTierMedia(shop, tier, chainId) {
+  if (isNativeInventory(shop)) return Promise.resolve({ name: tier.name, image: '' });
   // The resolver sometimes returns an SVG that merely wraps an EXTERNAL <image href="…"> (Banny
   // accessories) — browsers block external loads inside an <img> data URI, so pull the href out and
   // load the bitmap directly. Inline-vector SVGs (Banny bodies) are self-contained and used as-is.
@@ -1523,7 +1515,7 @@ function makeNftCart() {
   };
 }
 
-function renderShopSection(project, shop, cart) {
+export function renderShopSection(project, shop, cart) {
   var wrap = el('div', 'detail-section');
   var card = el('div', 'detail-card shop-card');
   var head = el('div', 'shop-card-head');
@@ -1626,6 +1618,12 @@ function renderShopSection(project, shop, cart) {
     if (!wrap.isConnected) return;
     resolvedShop = s;
     body.innerHTML = '';
+    if (isNativeInventory(s)) {
+      title.textContent = 'Market ranges';
+      headAdd.remove(); if (typeof mgr !== 'undefined' && mgr) mgr.remove();
+      body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri)));
+      return;
+    }
     if (!s || !s.tiers.length) {
       body.className = 'detail-card-body owners-empty';
       body.textContent = s ? 'No items being sold yet' : 'No NFT store available.';
@@ -3759,7 +3757,14 @@ function renderPayShopStrip(project, cart, opts) {
   var wrap = el('div', 'paybox-shop');
   wrap.style.display = 'none';
   fetchProjectTiers(project).then(function (shop) {
-    if (!wrap.isConnected || !shop || !shop.tiers.length) return;
+    if (!wrap.isConnected || !shop) return;
+    if (isNativeInventory(shop)) {
+      if (opts.onShop) opts.onShop(shop);
+      wrap.style.display = '';
+      var link = document.createElement('a'); link.href = nativeMarketUrl(project.chainId, pidOn(project, project.chainId)); link.textContent = 'Open market in Metalog →';
+      wrap.appendChild(link); return;
+    }
+    if (!shop.tiers.length) return;
     if (opts.onShop) opts.onShop(shop);
     wrap.style.display = '';
     var head = el('div', 'paybox-shop-head');
@@ -9685,6 +9690,10 @@ function renderPayCard(project, cart) {
   card.appendChild(renderPayShopStrip(project, cart, {
     onShop: function (shop) {
       state.shop = shop;
+      if (isNativeInventory(shop)) {
+        amountRow.hidden = true; topRow.hidden = true;
+        return;
+      }
       refreshNftCredits();
       if (selectedTierIds().length) refreshNftCheckoutRoutes();
     },
@@ -10233,9 +10242,11 @@ function renderPayCard(project, cart) {
     });
   }
 
-  function doPay() {
+  async function doPay() {
     status.className = 'paybox-status';
     status.textContent = '';
+    if (isNativeInventory(state.shop)) { status.textContent = 'Enter and claim through Metalog.'; return; }
+    try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (startsAt > Math.floor(Date.now() / 1000)) { return; }
     if (!state.contextsReady) { status.textContent = state.contextsError ? 'Could not verify the project’s accepted tokens.' : 'Accepted tokens are still loading…'; return; }
@@ -15920,6 +15931,7 @@ async function applyDraftShop(state, project, sources, warnings) {
   }
   if (shops.some(function (shop) { return !shop; })) throw new Error('The shop is not present on every project chain.');
   var home = shops[0];
+  if (shops.some(isNativeInventory)) throw new Error('Edit this market in Metalog.');
   var knownShops = await Promise.all(shops.map(function (shop, index) {
     return isKnown721HookClone(shop.hook, sources[index].chainId, sources[index].projectId);
   }));
@@ -26602,7 +26614,11 @@ function opsActionsRow(project, opts) {
   var multiChain = (project.chains || []).length > 1;
   var capabilities = tokenUiCapabilities(project);
   [
-    ['Cash out', function () { var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close; }],
+    ['Cash out', async function () {
+      var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
+      if (isNativeInventory(shop)) { var native = el('div', 'modal-body'); var link = document.createElement('a'); link.href = nativeMarketUrl(project.chainId, pidOn(project, project.chainId)); link.textContent = 'Claim or refund in Metalog →'; native.appendChild(link); openModal('Market settlement', native); return; }
+      var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
+    }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
     opts.noLoans ? null : ['Get a loan', function () { var h = {}; var content = buildLoanModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Get a loan', content).close; }],
     // Moving funds only makes sense when the project lives on more than one chain.
@@ -27751,7 +27767,8 @@ function buildRedeemItemsModal(project, requestClose) {
     }).catch(function () { if (seq === previewSeq) preview.textContent = 'Could not estimate the redemption.'; });
   }
 
-  btn.addEventListener('click', function () {
+  btn.addEventListener('click', async function () {
+    try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericCashOut'); } catch (error) { status.textContent = errMessage(error); return; }
     if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     var ids = selectedTokenIds();
@@ -28282,7 +28299,8 @@ function buildCashOutModal(project, requestClose) {
     } else if (state.acct) loadCashAggregates(state.acct);
   }).catch(function () {});
 
-  btn.addEventListener('click', function () {
+  btn.addEventListener('click', async function () {
+    try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericCashOut'); } catch (error) { status.textContent = errMessage(error); return; }
     if (getViewAs()) { status.classList.remove('pending'); status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     if (!acct) { connect().then(onChainChange).catch(function () {}); return; }

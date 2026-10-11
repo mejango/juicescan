@@ -32,20 +32,18 @@ export function defaultRpcFor(chainId) {
   return DEFAULT_RPC[chainId] || undefined;
 }
 
-// Keyless, rate-limited read RPC at JB Center (publicnode's fallback): any origin, read methods only,
-// so an IPFS-hosted copy of this site keeps working when the public provider flakes. Center serves the
-// four mainnets and their Sepolia testnets.
+// Center owns default read RPC for the four mainnets and their Sepolia testnets.
+// Explicit user RPC settings remain an override; provider errors stay visible.
 const JBCENTER_RPC_CHAINS = [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614];
 export function fallbackRpcFor(chainId) {
   return JBCENTER_RPC_CHAINS.includes(Number(chainId)) ? 'https://juicebox.center/v1/rpc/' + chainId : undefined;
 }
 
-/** The read RPC URLs for a chain in try order: a user-set custom RPC alone, else the default (undefined =
- *  viem's chain default) then JB Center. */
+/** Explicit user RPC, otherwise Center alone on supported chains. */
 export function readRpcUrlsFor(chainId, customRpc) {
   if (customRpc) return [customRpc];
   const fallbackUrl = fallbackRpcFor(chainId);
-  return fallbackUrl ? [defaultRpcFor(chainId), fallbackUrl] : [defaultRpcFor(chainId)];
+  return fallbackUrl ? [fallbackUrl] : [defaultRpcFor(chainId)];
 }
 
 export function getCurrentChainId() {

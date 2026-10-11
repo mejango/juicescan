@@ -192,10 +192,7 @@ export function createPublicClientForChain(chainId) {
   var customRpc = getCustomRpc(chainId) || '';
   var key = chainId + '|' + customRpc;
   if (_readClients[key]) return _readClients[key];
-  // publicnode first, JB Center's keyless read gateway second. viem's fallback moves to the next
-  // transport on transport/provider errors but rethrows execution reverts and user rejections at once,
-  // so a revert is never re-run against the fallback. No default URL (a chain outside DEFAULT_RPC)
-  // falls through to viem's own chain default.
+  // Center is the shared read endpoint; explicit custom RPC preferences override it.
   var urls = readRpcUrlsFor(chainId, customRpc);
   var transport = urls.length > 1 ? fallback(urls.map(function (url) { return http(url); })) : http(urls[0]);
   return (_readClients[key] = createPublicClient({
