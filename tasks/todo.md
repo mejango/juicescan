@@ -120,3 +120,6 @@ budget (1,893,827 B gzip of 2,050,000 B) and 44 playwright tests green. Uncommit
 Source is prepared on an isolated branch; parent dirty drafts remain untouched. Entry charts use API density/positions directly, retain manual-reference and unavailable-chart labels, and never infer current ownership or sales. Source push does not imply publication or real transactions.
 
 Validation evidence: /tmp/juicescan-entries-check.log; /tmp/juicescan-entries-real-replay/results.json and390.png/1280.png; /tmp/juicescan-entries-live-api.json. Public API snapshot52459661 includes verified transaction0xcd6bd310120559b85d136be071177421affbb34e8a3c2e31d8606d6ca2a0e212. PR61 is source-only; parent owns merge/publication after CI.
+
+### Presentation follow-up (2026-10-11)
+User requested no visible middot separators, a plain Onchain ranges caption, and no Terms explained project-header link. Copy is changed at the existing owners, retaining receipt/block audit details and protocol math comments. Root refinement gate passed before edits; native-caption, visible-copy and header-link regressions enforce the preference. Required complete checks and hosted CI rerun on the final copy commit before release.

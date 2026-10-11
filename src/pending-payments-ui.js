@@ -38,7 +38,7 @@ export function renderPendingPayments(options) {
     if (archived.length) {
       archive.appendChild(node('p', '', 'These payments resolved elsewhere. Their obsolete Safe proposals were not executed; cancel them in Safe{Wallet} if they still occupy a nonce.'));
       archived.forEach(function (proposal) {
-        var link = node('a', '', proposal.chain + ' · ' + proposal.hash);
+        var link = node('a', '', proposal.chain + ' | ' + proposal.hash);
         link.href = proposal.url; link.target = '_blank'; link.rel = 'noopener noreferrer';
         var line = node('div'); line.appendChild(link); archive.appendChild(line);
       });
@@ -52,7 +52,7 @@ export function renderPendingPayments(options) {
       var row = node('form', 'pending-payment-row');
       var detail = node('div', 'detail-card-body');
       detail.appendChild(node('div', '', options.describe(state.row)));
-      detail.appendChild(node('div', '', 'To project #' + state.row.projectId + ' · ' + options.chainName(state.row.chainId)));
+      detail.appendChild(node('div', '', 'To project #' + state.row.projectId + ' | ' + options.chainName(state.row.chainId)));
       if (state.error) detail.appendChild(node('div', '', 'Could not verify this payment: ' + state.error));
       else if (!state.eligible) detail.appendChild(node('div', '', 'Available ' + new Date(Number(state.nextAttemptAt) * 1000).toLocaleString()));
       else if (state.finalizes) detail.appendChild(node('div', '', 'A final attempt may return this payment to its source project if the route still fails.'));

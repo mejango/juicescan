@@ -8,7 +8,7 @@ function download(value, name) {
 function svgNode(tag, attributes) { const n = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [key, value] of Object.entries(attributes)) n.setAttribute(key, String(value)); return n; }
 function chartView(chart, manual) {
   const wrap = node('figure', null, 'native-entry-chart');
-  wrap.appendChild(node('figcaption', manual ? 'Actual entries · reference curve' : 'Verified curve · actual entries'));
+  wrap.appendChild(node('figcaption', manual ? 'Actual entries | reference curve' : 'Verified curve | actual entries'));
   const svg = svgNode('svg', { viewBox: '0 0 640 220', role: 'img', 'aria-label': manual ? 'Reference density and actual NFT quantities by range' : 'Verified curve density and actual NFT quantities by range' });
   const left = 42, right = 624, top = 12, bottom = 184;
   const peak = (Math.max(chart.peak, ...chart.positions.map(p => p.density || 0)) || 1);
@@ -37,7 +37,7 @@ function entryView(entry, page, context, options) {
   const card = node('article', null, 'native-entry-card');
   const label = { 'verified-curve': 'Verified curve', 'verified-manual': 'Verified manual allocation', unrecognized: 'Unrecognized entry', unsupported: 'Unsupported entry', invalid: 'Invalid entry' }[entry.status];
   card.appendChild(node('h3', label));
-  card.appendChild(node('p', new Date(entry.timestamp * 1000).toISOString() + ' · block ' + entry.blockNumber));
+  card.appendChild(node('p', new Date(entry.timestamp * 1000).toISOString() + ' | block ' + entry.blockNumber));
   card.appendChild(node('p', 'Account: ' + entry.account));
   card.appendChild(node('p', entry.beneficiary ? 'Beneficiary: ' + entry.beneficiary : 'Multiple recipients'));
   card.appendChild(node('p', entry.stakeWei == null ? 'Stake unavailable' : 'Stake: ' + (options.stakeText ? options.stakeText(entry.stakeWei) : entry.stakeWei + ' wei')));

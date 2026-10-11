@@ -19,6 +19,8 @@ it('renders API evidence as inert text and distinguishes manual reference from v
   expect(document.querySelector('svg').getAttribute('role')).toBe('img');
   expect(document.querySelector('a').href).toBe('https://basescan.org/tx/' + hash);
   expect(document.body.textContent).toContain('1970-01-01T00:20:34.000Z');
+  expect(document.body.textContent).not.toContain('·');
+  expect(document.body.textContent).toContain('block 99');
   expect(document.body.textContent).toContain('History is incomplete');
 });
 it('preserves snapshot on continuation and explicitly exposes failure/retry without discarding earlier evidence', async () => {

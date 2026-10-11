@@ -26,7 +26,7 @@ test('native Entries is lazy, responsive, read-only and carries snapshot continu
   await expect(page.getByRole('button', { name: 'Entries', exact: true })).toBeVisible(); expect(calls).toHaveLength(0);
   await page.getByRole('button', { name: 'Entries', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Verified manual allocation' })).toBeVisible(); expect(calls).toHaveLength(1);
-  await expect(page.getByText('Actual entries · reference curve', { exact: true })).toBeVisible();
+  await expect(page.getByText('Actual entries | reference curve', { exact: true })).toBeVisible();
   await expect(page.locator('.native-entries svg')).toHaveAttribute('role', 'img');
   await expect(page.getByRole('link', { name: 'Receipt', exact: true })).toHaveAttribute('href', `https://basescan.org/tx/${hash}`);
   await expect(page.getByText(/History is incomplete/)).toBeVisible();

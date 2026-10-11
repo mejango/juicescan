@@ -60,7 +60,7 @@ export function renderNativeInventory(inventory, chainId, projectId, formatPrice
   var link = document.createElement('a'); link.href = nativeMarketUrl(chainId, projectId); link.textContent = 'Open market in Metalog →'; wrap.appendChild(link);
   if (/^https?:\/\//.test(metadataUrl || '')) { var meta = document.createElement('a'); meta.href = metadataUrl; meta.textContent = 'Market metadata'; var paragraph = document.createElement('p'); paragraph.appendChild(meta); wrap.appendChild(paragraph); }
   var table = document.createElement('table'); table.className = 'native-nft-inventory';
-  var caption = document.createElement('caption'); caption.textContent = 'Onchain ranges · block ' + inventory.blockNumber; table.appendChild(caption);
+  var caption = document.createElement('caption'); caption.textContent = 'Onchain ranges'; table.appendChild(caption);
   var head = document.createElement('thead'), headRow = document.createElement('tr');
   ['Tier', 'Range', 'Price per NFT', 'Current NFTs'].forEach(function (label) { var cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; headRow.appendChild(cell); });
   head.appendChild(headRow); table.appendChild(head);

@@ -10838,9 +10838,6 @@ function renderDetailHeader(project) {
     row1.appendChild(mkPair('Site: ', [a]));
   }
   header.appendChild(row1);
-  var glossary = document.createElement('a');
-  glossary.href = 'learn.html#learn-glossary'; glossary.className = 'detail-head-url';
-  glossary.textContent = 'Terms explained'; header.appendChild(glossary);
   // Flag when the controlling account is not the same on every chain (owner for custom projects, operator for revnets).
   if ((project.chains || []).length > 1) {
     fetchAuthorityPerChain(project).then(function (res) { if (res.diverged && ownerWarn.isConnected) ownerWarn.textContent = ' differs by chain'; }).catch(function () {});
@@ -14011,7 +14008,7 @@ export async function runPendingProjectPayments(project, rows, setStatus) {
     summaryForRound: function (calls) {
       return calls.map(function (call) {
         var row = call.pendingPayment;
-        return [chainNameOf(call.chainId), String(row.amount) + ' base units of ' + row.token + ' → project #' + row.projectId + ' · beneficiary ' + row.beneficiary];
+        return [chainNameOf(call.chainId), String(row.amount) + ' base units of ' + row.token + ' → project #' + row.projectId + ' | beneficiary ' + row.beneficiary];
       }).concat([['Final attempts', String(calls.filter(function (call) { return call.functionName === 'finalizePendingCall'; }).length)],
         ['Outcome', 'A retry may remain pending. A final attempt may return funds to the source project.'],
         ['Payment from your wallet', 'Gas only; the gateway already holds the original payment.']]);
@@ -14060,7 +14057,7 @@ export function renderProjectPendingPayments(project) {
     chainName: chainNameOf,
     describe: function (row) {
       var token = getChainTokens(row.chainId).find(function (candidate) { return sameAddr(candidate.address, row.token); });
-      return token ? formatAmount(BigInt(row.amount), token.decimals) + ' ' + token.symbol : String(row.amount) + ' base units · ' + truncAddr(row.token);
+      return token ? formatAmount(BigInt(row.amount), token.decimals) + ' ' + token.symbol : String(row.amount) + ' base units | ' + truncAddr(row.token);
     },
     loadRows: function () {
       return fetchPendingPaymentRows(projectChains(project).map(function (chain) {
@@ -21950,9 +21947,9 @@ function renderAutoIssuance(project, stages) {
           ['Relayr payments', paymentCount ? 'Up to ' + paymentCount + ', with funding chosen for each round' : '0; direct wallet transactions'],
         ];
         prepared.allocations.forEach(function (allocation) {
-          summaryRows.push([chainNameFor(allocation.chainId) + ' · project #' + allocation.projectId + ' · stage ' + allocation.stageId,
+          summaryRows.push([chainNameFor(allocation.chainId) + ' | project #' + allocation.projectId + ' | stage ' + allocation.stageId,
             formatAmount(allocation.remaining, 18) + sym + ' to ' + allocation.beneficiary
-              + ' · unlocked ' + formatDateTime(Number(allocation.stageStart))]);
+              + ' | unlocked ' + formatDateTime(Number(allocation.stageStart))]);
         });
         return { rounds: prepared.rounds, summary: { action: 'Distribute auto issuance', rows: summaryRows } };
       }, { pendingScope: actionScope, label: 'Distribute auto issuance',
