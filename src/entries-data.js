@@ -54,11 +54,12 @@ export function validateEntriesPage(payload, context) {
     object(entry); requireValue(STATUSES.includes(entry.status));
     requireValue(HASH.test(entry.transactionHash) && !hashes.has(entry.transactionHash.toLowerCase())); hashes.add(entry.transactionHash.toLowerCase());
     uint(entry.blockNumber); requireValue(BigInt(entry.blockNumber) <= BigInt(payload.blockNumber));
-    integer(entry.timestamp); requireValue(ADDRESS.test(entry.account));
+    integer(entry.timestamp, 8640000000000); requireValue(ADDRESS.test(entry.account));
     requireValue(entry.beneficiary === null || ADDRESS.test(entry.beneficiary));
     if (entry.stakeWei !== null) uint(entry.stakeWei);
     list(entry.tokenIds, 2000); entry.tokenIds.forEach(uint); requireValue(new Set(entry.tokenIds).size === entry.tokenIds.length);
     list(entry.quantities, 61); requireValue(entry.quantities.length === payload.ranges.length); entry.quantities.forEach(value => integer(value, 2000));
+    requireValue(entry.quantities.reduce((sum, value) => sum + value, 0) === entry.tokenIds.length);
     if (entry.reason !== undefined) text(entry.reason, 1024);
     if (entry.chartError !== undefined) { text(entry.chartError, 1024); requireValue(entry.chartError.length > 0); }
     if (entry.coefficients !== null) {

@@ -30,6 +30,7 @@ describe('Metalog entry evidence trust boundary', () => {
   it.each([
     value => { value.schema = 'other.v1'; }, value => { value.chainId = 1; }, value => { value.projectId = '28'; }, value => { value.hook = '0x' + '22'.repeat(20); },
     value => { value.snapshotBlockHash = 'no hash'; }, value => { value.blockNumber = '1e4'; }, value => { value.blockNumber = (2n ** 256n).toString(); },
+    value => { value.entries[0].timestamp = 8640000000001; }, value => { value.entries[0].quantities = [0, 0, 0]; },
     value => { value.entries[0].account = 'javascript:alert(1)'; }, value => { value.entries[0].timestamp = Infinity; },
     value => { value.entries[0].coefficients[1] = NaN; }, value => { value.entries[0].quantities[1] = -1; },
     value => { value.entries[0].tokenIds = ['1', '1']; }, value => { value.entries[0].stakeWei = '-1'; }, value => { value.entries[0].blockNumber = '101'; },

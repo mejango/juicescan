@@ -11,7 +11,7 @@ function chartView(chart, manual) {
   wrap.appendChild(node('figcaption', manual ? 'Actual entries · reference curve' : 'Verified curve · actual entries'));
   const svg = svgNode('svg', { viewBox: '0 0 640 220', role: 'img', 'aria-label': manual ? 'Reference density and actual NFT quantities by range' : 'Verified curve density and actual NFT quantities by range' });
   const left = 42, right = 624, top = 12, bottom = 184;
-  const peak = Math.max(chart.peak, ...chart.positions.map(p => p.density || 0), 0.000001);
+  const peak = (Math.max(chart.peak, ...chart.positions.map(p => p.density || 0)) || 1);
   const x = value => left + (value - chart.low) / (chart.high - chart.low) * (right - left);
   const y = value => bottom - value / peak * (bottom - top);
   for (const position of chart.positions) {
@@ -39,8 +39,8 @@ function entryView(entry, page, context, options) {
   card.appendChild(node('h3', label));
   card.appendChild(node('p', new Date(entry.timestamp * 1000).toISOString() + ' · block ' + entry.blockNumber));
   card.appendChild(node('p', 'Account: ' + entry.account));
-  if (entry.beneficiary) card.appendChild(node('p', 'Beneficiary: ' + entry.beneficiary));
-  if (entry.stakeWei != null) card.appendChild(node('p', 'Stake: ' + (options.stakeText ? options.stakeText(entry.stakeWei) : entry.stakeWei + ' wei')));
+  card.appendChild(node('p', entry.beneficiary ? 'Beneficiary: ' + entry.beneficiary : 'Multiple recipients'));
+  card.appendChild(node('p', entry.stakeWei == null ? 'Stake unavailable' : 'Stake: ' + (options.stakeText ? options.stakeText(entry.stakeWei) : entry.stakeWei + ' wei')));
   const receipt = node('a', 'Receipt'); receipt.href = options.receiptUrl(entry.transactionHash); receipt.target = '_blank'; receipt.rel = 'noopener noreferrer'; card.appendChild(receipt);
   if (entry.reason) card.appendChild(node('p', entry.reason));
   if (entry.chart) card.appendChild(chartView(entry.chart, entry.status === 'verified-manual'));

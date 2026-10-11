@@ -38,3 +38,13 @@ it('retains verified quantities, coefficients and receipt when chart precision i
   await vi.waitFor(() => expect(document.body.textContent).toContain('Chart unavailable: Range precision unavailable'));
   expect(document.querySelector('svg')).toBeNull(); expect(document.body.textContent).toContain('Coefficients: [0,1]'); expect(document.querySelector('a')).not.toBeNull();
 });
+
+it('labels partial receipt attribution and preserves very small chart densities', async () => {
+  const value = page(), entry = value.entries[0]; entry.beneficiary = null; entry.stakeWei = null;
+  entry.chart.peak = 1e-12; entry.chart.buckets.forEach(b => { b.density = 1e-12; }); api.read.mockResolvedValue(value);
+  document.body.appendChild(renderEntries(context, options));
+  await vi.waitFor(() => expect(document.body.textContent).toContain('Stake unavailable'));
+  expect(document.body.textContent).toContain('Multiple recipients');
+  const path = document.querySelector('svg path'); expect(path.getAttribute('d')).not.toContain('NaN');
+  expect(path.getAttribute('d')).toMatch(/^M[^,]+,12 L[^,]+,12$/);
+});
