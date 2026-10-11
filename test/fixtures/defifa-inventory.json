@@ -1,0 +1,222 @@
+[
+  {
+    "chainId": 8453,
+    "projectId": "27",
+    "inventory": {
+      "protocol": "defifa",
+      "hook": "0x3002E5a8089ef22062023d8776D2F58cD176Bc09",
+      "store": "0x69913acF79DbBA170d9EfAFe605ee62B42164F9C",
+      "implementation": "0xE2229dD6A7DA99ebB8f7D749612Edd1b2addaFE1",
+      "contractUri": "ipfs://QmbqThmV2XWbuPWduzXk4j1CHW86UEhvfDBMhLP3s6SatP",
+      "pricing": {
+        "currency": 1,
+        "decimals": 18,
+        "token": "0x000000000000000000000000000000000000EEEe"
+      },
+      "phase": 1,
+      "capabilities": {
+        "genericPay": false,
+        "genericCashOut": false,
+        "manageTiers": false
+      },
+      "blockNumber": "52447038",
+      "nextStartingId": null,
+      "tiers": [
+        {
+          "id": 1,
+          "name": "< -2.5%",
+          "price": "1000000000000",
+          "currentSupply": "3"
+        },
+        {
+          "id": 2,
+          "name": "-2.5% to < -1.5%",
+          "price": "1000000000000",
+          "currentSupply": "11"
+        },
+        {
+          "id": 3,
+          "name": "-1.5% to < -0.5%",
+          "price": "1000000000000",
+          "currentSupply": "24"
+        },
+        {
+          "id": 4,
+          "name": "-0.5% to < +0.5%",
+          "price": "1000000000000",
+          "currentSupply": "21"
+        },
+        {
+          "id": 5,
+          "name": "+0.5% to < +1.5%",
+          "price": "1000000000000",
+          "currentSupply": "14"
+        },
+        {
+          "id": 6,
+          "name": "+1.5% to < +2.5%",
+          "price": "1000000000000",
+          "currentSupply": "10"
+        },
+        {
+          "id": 7,
+          "name": "\u2265 +2.5%",
+          "price": "1000000000000",
+          "currentSupply": "17"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": 84532,
+    "projectId": "46",
+    "inventory": {
+      "protocol": "defifa",
+      "hook": "0x4eB6c2B2957A73dbFeA30e8135100E54dd665671",
+      "store": "0x69913acF79DbBA170d9EfAFe605ee62B42164F9C",
+      "implementation": "0x3184783d0E3cBf5A821794b246C71a3D1A0cF312",
+      "contractUri": "ipfs://QmT3zCseCWFk9qKQJ7nm737i3GwvQypnHgHbB3bkfXcRF2",
+      "pricing": {
+        "currency": 1,
+        "decimals": 18,
+        "token": "0x000000000000000000000000000000000000EEEe"
+      },
+      "phase": 3,
+      "capabilities": {
+        "genericPay": false,
+        "genericCashOut": false,
+        "manageTiers": false
+      },
+      "blockNumber": "47957571",
+      "nextStartingId": null,
+      "tiers": [
+        {
+          "id": 1,
+          "name": "< -9.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 2,
+          "name": "-9.5% to < -8.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 3,
+          "name": "-8.5% to < -7.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 4,
+          "name": "-7.5% to < -6.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 5,
+          "name": "-6.5% to < -5.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 6,
+          "name": "-5.5% to < -4.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 7,
+          "name": "-4.5% to < -3.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 8,
+          "name": "-3.5% to < -2.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 9,
+          "name": "-2.5% to < -1.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 10,
+          "name": "-1.5% to < -0.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 11,
+          "name": "-0.5% to < +0.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 12,
+          "name": "+0.5% to < +1.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 13,
+          "name": "+1.5% to < +2.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 14,
+          "name": "+2.5% to < +3.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 15,
+          "name": "+3.5% to < +4.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 16,
+          "name": "+4.5% to < +5.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 17,
+          "name": "+5.5% to < +6.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 18,
+          "name": "+6.5% to < +7.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 19,
+          "name": "+7.5% to < +8.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 20,
+          "name": "+8.5% to < +9.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        },
+        {
+          "id": 21,
+          "name": "\u2265 +9.5%",
+          "price": "1000000000000",
+          "currentSupply": "0"
+        }
+      ]
+    }
+  }
+]

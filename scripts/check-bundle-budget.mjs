@@ -36,8 +36,11 @@ const budgets = {
   // 9,963,295 B raw / 1,468,745 B gzip (+13,134 / +4,684 versus the pending-payment build).
   // Revnet item transfer copy — non-transferable wording at add-item, item modal, shop config: 9,967,611 B raw / 1,468,831 B gzip.
   // Safe batch tabs + queued-proposal view, buyback pool setter, item sale/split-share activity, Safe App queue handoff: 9,980,290 B raw / 1,471,877 B gzip.
-  'dist/app.js': { raw: 9_985_000, gzip: 1_475_000 },
-  'dist/style.css': { raw: 247_000, gzip: 50_000 },
+  // Published SDK2.28.0 protocol inventory + native Defifa view: 10,400,410 B raw / 1,506,547 B gzip.
+  // Same dependency graph/env HEAD baseline: 9,982,000 B raw / 1,472,309 B gzip.
+  // Shared ABI/discovery adds 418,410 B raw / 34,238 B gzip; keep enforceable rounded ceilings.
+  'dist/app.js': { raw: 10_405_000, gzip: 1_508_000 },
+  'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
@@ -72,7 +75,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(async file =>
 // Revnet transfer copy + project 7 fixed TWAP window in the batch preset: measured 2,241,951 B gzip.
 // Pinned Node 22.23.1 duration release: 2,244,789 B gzip; shared endpoints + official testnet origin:
 // 2,244,915 B gzip (+126 B), app.js 9,983,374 B raw / 1,472,846 B gzip. Round total limit to the next 1 KB.
-const totalGzipBudget = 2_245_000;
+// SDK/native inventory measured total: 2,278,700 B gzip.
+const totalGzipBudget = 2_280_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

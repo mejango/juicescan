@@ -36,8 +36,9 @@
     "test:ci": "npm run check:source && npm run check:deployments && npm run check:generated && npm run schema:check && npm run transaction:check && npm run bundle && npm run test:coverage && npm run check:bundle && npm run test:browser"
   },
   "dependencies": {
+    "@bananapus/nana-sdk-core": "2.28.0",
     "pdfjs-dist": "^6.2.108",
-    "sharp": "0.35.4",
+    "sharp": "0.35.5",
     "viem": "^2.55.8"
   },
   "devDependencies": {
