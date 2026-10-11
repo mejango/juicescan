@@ -45,6 +45,12 @@ describe('Metalog entry evidence trust boundary', () => {
   ])('rejects malformed or mismatched evidence %#', change => {
     const value = page(); change(value); expect(() => validateEntriesPage(value, context)).toThrow('invalid entry evidence');
   });
+  it.each(['verified-curve', 'verified-manual'])('requires attributable bounded receipts for %s', status => {
+    for (const change of [e => { e.stakeWei = null; }, e => { e.beneficiary = null; }, e => { e.tokenIds = []; e.quantities = [0,0,0]; }, e => { e.tokenIds = Array.from({length:201}, (_,i) => String(i+1)); e.quantities = [0,201,0]; e.chart = null; e.chartError = 'Precision unavailable'; }]) {
+      const value=page();value.entries[0].status=status;change(value.entries[0]);
+      expect(() => validateEntriesPage(value,context)).toThrow('invalid entry evidence');
+    }
+  });
   it.each(['verified-curve', 'verified-manual'])('preserves verified %s receipts and coefficients when chart precision is unavailable', status => {
     const value = page(), entry = value.entries[0]; entry.status = status; entry.chart = null;
     entry.chartError = 'This range layout cannot be drawn at chart precision. See the exact counts and receipt.';

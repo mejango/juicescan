@@ -67,7 +67,7 @@ export function validateEntriesPage(payload, context) {
     }
     const verified = entry.status === 'verified-curve' || entry.status === 'verified-manual';
     requireValue(verified || (entry.coefficients === null && entry.chart === null));
-    if (verified) requireValue(entry.coefficients !== null && (entry.chart !== null || entry.chartError !== undefined));
+    if (verified) requireValue(entry.coefficients !== null && entry.stakeWei !== null && entry.beneficiary !== null && entry.tokenIds.length >= 1 && entry.tokenIds.length <= 200 && (entry.chart !== null || entry.chartError !== undefined));
     if (entry.chart !== null) {
       requireValue(verified && entry.coefficients !== null); const chart = entry.chart; object(chart);
       finite(chart.low); finite(chart.high); requireValue(chart.high > chart.low); finite(chart.peak); requireValue(chart.peak >= 0);
