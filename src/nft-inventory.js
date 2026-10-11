@@ -24,7 +24,7 @@ export function rememberProjectInventory(project, inventory) {
   project.nftInventoryProtocol = inventory ? inventory.protocol : null;
   if (typeof document !== 'undefined') document.querySelectorAll('[data-project-flavor]').forEach(function (node) { if (node.dataset.projectFlavor === Number(project.chainId) + ':' + BigInt(project.id)) node.textContent = projectFlavor(project); });
 }
-export function nativeMarketUrl(chainId, projectId) { return 'https://metalog.money/markets/' + Number(chainId) + '/' + BigInt(projectId); }
+export const nativeActionUnavailable = 'Defifa NFT transactions are not supported in this interface.';
 
 // One SDK owner recognizes protocols. Keep every page at the first page's block;
 // store category ordering is not necessarily numeric tier-ID ordering.
@@ -50,19 +50,18 @@ export async function requireGenericInventory(client, args, capability) {
   // Defifa markets cannot be revnets; keep revnet-only writer paths unchanged.
   if (args.isRevnet) return null;
   var inventory = await getProjectNftInventory(client, Object.assign({}, args, { tierLimit: 1 }));
-  if (inventory && !inventory.capabilities[capability]) throw new Error('Use Metalog for this market: ' + nativeMarketUrl(args.chainId, args.projectId));
+  if (inventory && !inventory.capabilities[capability]) throw new Error(nativeActionUnavailable);
   return inventory;
 }
 
-export function renderNativeInventory(inventory, chainId, projectId, formatPrice, metadataUrl, entriesView) {
+export function renderNativeInventory(inventory, chainId, projectId, formatPrice, metadataUrl) {
   var wrap = document.createElement('div'); wrap.className = 'detail-card-body'; wrap.dataset.inventoryBlock = String(inventory.blockNumber);
   var phase = document.createElement('p'); phase.textContent = ['Countdown', 'Entry open', 'Refund period', 'Scoring', 'Complete', 'No contest'][inventory.phase]; wrap.appendChild(phase);
-  var link = document.createElement('a'); link.href = nativeMarketUrl(chainId, projectId); link.textContent = 'Open market in Metalog →'; wrap.appendChild(link);
-  if (/^https?:\/\//.test(metadataUrl || '')) { var meta = document.createElement('a'); meta.href = metadataUrl; meta.textContent = 'Market metadata'; var paragraph = document.createElement('p'); paragraph.appendChild(meta); wrap.appendChild(paragraph); }
+  if (/^https?:\/\//.test(metadataUrl || '')) { var meta = document.createElement('a'); meta.href = metadataUrl; meta.textContent = 'NFT metadata'; var paragraph = document.createElement('p'); paragraph.appendChild(meta); wrap.appendChild(paragraph); }
   var table = document.createElement('table'); table.className = 'native-nft-inventory';
-  var caption = document.createElement('caption'); caption.textContent = 'Onchain ranges'; table.appendChild(caption);
+  var caption = document.createElement('caption'); caption.textContent = 'Onchain NFT tiers'; table.appendChild(caption);
   var head = document.createElement('thead'), headRow = document.createElement('tr');
-  ['Tier', 'Range', 'Price per NFT', 'Current NFTs'].forEach(function (label) { var cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; headRow.appendChild(cell); });
+  ['Tier', 'Name', 'Price per NFT', 'Current NFTs'].forEach(function (label) { var cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; headRow.appendChild(cell); });
   head.appendChild(headRow); table.appendChild(head);
   var body = document.createElement('tbody');
   inventory.tiers.forEach(function (tier) {
@@ -71,16 +70,7 @@ export function renderNativeInventory(inventory, chainId, projectId, formatPrice
     body.appendChild(row);
   });
   table.appendChild(body);
-  if (entriesView) {
-    var tabs = document.createElement('div'); tabs.className = 'owners-subtabs';
-    var ranges = document.createElement('button'); ranges.type = 'button'; ranges.className = 'owners-subtab active'; ranges.textContent = 'Ranges';
-    var entries = document.createElement('button'); entries.type = 'button'; entries.className = 'owners-subtab'; entries.textContent = 'Entries';
-    tabs.appendChild(ranges); tabs.appendChild(entries); wrap.appendChild(tabs);
-    var pane = document.createElement('div'), loaded = null;
-    ranges.addEventListener('click', function () { table.hidden = false; pane.hidden = true; ranges.classList.add('active'); entries.classList.remove('active'); });
-    entries.addEventListener('click', function () { if (!loaded) { loaded = entriesView(); pane.appendChild(loaded); } table.hidden = true; pane.hidden = false; entries.classList.add('active'); ranges.classList.remove('active'); });
-    wrap.appendChild(table); wrap.appendChild(pane);
-  } else wrap.appendChild(table);
+  wrap.appendChild(table);
   var addr = document.createElement('p'); addr.textContent = 'Collection: ' + inventory.hook; addr.className = 'shop-collection-addr'; wrap.appendChild(addr);
   return wrap;
 }

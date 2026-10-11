@@ -123,3 +123,13 @@ Validation evidence: /tmp/juicescan-entries-check.log; /tmp/juicescan-entries-re
 
 ### Presentation follow-up (2026-10-11)
 User requested no visible middot separators, a plain Onchain ranges caption, and no Terms explained project-header link. Copy is changed at the existing owners, retaining receipt/block audit details and protocol math comments. Root refinement gate passed before edits; native-caption, visible-copy and header-link regressions enforce the preference. Required complete checks and hosted CI rerun on the final copy commit before release.
+
+## Generic Defifa NFT consumer final scope (2026-10-11)
+
+## Plan refinement
+- **Objective:** Show generic Defifa NFT tiers and verified protocol flavor, without Metalog links, numeric-range assumptions or curve information. Keep the requested plain captions and remove the header glossary link.
+- **System fit:** The published SDK owns protocol identity, exact names/pricing/supply/phase and read snapshots. Metalog alone owns curve evidence. Generic writer guards remain fail closed; root owns merge/publication.
+- **Reuse and simplicity:** Remove the optional curve module/client/build/CSS/tests completely; use the existing native inventory and SDK identity callbacks. Change visible copy at its existing owners, with no new dependencies.
+- **Evidence and unknowns:** Nonnumeric names and mixed prices must render unchanged. The hidden inventory block enables release proof without technical caption text. Existing ordinary JB721 behavior remains covered.
+- **Verification:** Run focused native/control/copy tests, source/transaction checks, complete required npm check and final hosted CI. Root verifies published source and desktop/mobile after coordinated release.
+- **Resource budget:** Remove all curve request, asset and budget additions. Measure any remaining generic-flavor growth with pinned Node22.23.1 and keep enforced narrow ceilings. No new chain scans or public writes.

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectNftInventory: vi.fn() }));
 import { getProjectNftInventory } from '@bananapus/nana-sdk-core/v6';
-import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, requireGenericInventory, renderNativeInventory, isNativeInventory, nativeMarketUrl } from '../src/nft-inventory.js';
+import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, requireGenericInventory, renderNativeInventory, isNativeInventory, nativeActionUnavailable } from '../src/nft-inventory.js';
 const args = { chainId: 8453, projectId: 27n };
 const native = { protocol: 'defifa', hook: '0x123', blockNumber: 123n, phase: 1, pricing: { currency: 61166, decimals: 18 }, tiers: [{ id: 1, name: 'Rekt', price: 1000000000000n, currentSupply: 3n }], capabilities: { genericPay: false, genericCashOut: false, manageTiers: false }, nextStartingId: null };
 beforeEach(() => { getProjectNftInventory.mockReset(); clearProjectNftIdentity(); });
@@ -26,7 +26,7 @@ describe('shared protocol inventory adoption', () => {
   });
   it.each(['genericPay', 'genericCashOut', 'manageTiers'])('blocks native %s before writer execution', async capability => {
     getProjectNftInventory.mockResolvedValueOnce(native);
-    await expect(requireGenericInventory({}, args, capability)).rejects.toThrow('https://metalog.money/markets/8453/27');
+    await expect(requireGenericInventory({}, args, capability)).rejects.toThrow(nativeActionUnavailable);
   });
   it('retains ordinary JB721 transaction context and allows its compatible calldata', async () => {
     const shop = { ...native, protocol: 'jb721', metadataIdTarget: '0xabc', capabilities: { genericPay: true, genericCashOut: true, manageTiers: true } };
@@ -37,17 +37,18 @@ describe('shared protocol inventory adoption', () => {
   });
   it.each(['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'file:///tmp/metadata'])('rejects unsafe native metadata URL %s', metadataUrl => {
     const output = renderNativeInventory(native, 8453, 27n, () => '0.000001 ETH', metadataUrl);
-    expect(output.querySelectorAll('a')).toHaveLength(1);
+    expect(output.querySelectorAll('a')).toHaveLength(0);
   });
   it('keeps explicit revnet-only writer paths unchanged', async () => {
     expect(await requireGenericInventory({}, { ...args, isRevnet: true }, 'genericPay')).toBeNull();
     expect(getProjectNftInventory).not.toHaveBeenCalled();
   });
-  it('renders onchain names/supplies as read-only text with native lifecycle link', () => {
+  it('renders onchain names/supplies as read-only generic Defifa tiers without an application link', () => {
     const output = renderNativeInventory({ ...native, tiers: [{ ...native.tiers[0], name: '<img onerror=alert(1)>' }] }, 8453, 27n, () => '0.000001 ETH');
-    expect(output.querySelector('a').href).toBe(nativeMarketUrl(8453, 27n));
+    expect(output.querySelector('a')).toBeNull();
+    expect(output.textContent).not.toContain('Metalog');
     expect(output.dataset.inventoryBlock).toBe('123');
-    expect(output.querySelector('caption').textContent).toBe('Onchain ranges');
+    expect(output.querySelector('caption').textContent).toBe('Onchain NFT tiers');
     expect(output.querySelector('caption').textContent).not.toContain('block');
     expect(output.textContent).not.toContain('·');
     expect(output.textContent).toContain('Current NFTs');
@@ -85,4 +86,12 @@ it('labels only SDK-verified native protocol as Defifa and updates matching visi
   rememberProjectInventory(ordinary, { protocol: 'jb721' });
   expect(projectFlavor(ordinary)).toBe('CUSTOM');
   expect(projectFlavor({ isRevnet: true })).toBe('REVNET');
+});
+
+it('renders nonnumeric Defifa names and mixed tier prices without numeric range or application assumptions', () => {
+  const inventory={...native,phase:3,tiers:[{id:1,name:'Blue Team',price:7n,currentSupply:2n},{id:2,name:'Orange Team',price:19n,currentSupply:5n}]};
+  const output=renderNativeInventory(inventory,8453,27n,p=>String(p)+' wei');
+  expect([...output.querySelectorAll('tbody tr')].map(r=>r.textContent)).toEqual(['1Blue Team7 wei2','2Orange Team19 wei5']);
+  expect([...output.querySelectorAll('th')].map(n=>n.textContent)).toEqual(['Tier','Name','Price per NFT','Current NFTs']);
+  expect(output.textContent).toContain('Scoring');expect(output.textContent).not.toContain('Range');expect(output.textContent).not.toContain('Metalog');expect(output.querySelector('a')).toBeNull();
 });

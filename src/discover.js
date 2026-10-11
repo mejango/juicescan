@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeMarketUrl, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
+import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
@@ -1626,9 +1626,9 @@ export function renderShopSection(project, shop, cart) {
     body.innerHTML = '';
     if (typeof mgr !== 'undefined' && mgr) mgr.hidden = isNativeInventory(s);
     if (isNativeInventory(s)) {
-      title.textContent = 'Market ranges';
+      title.textContent = 'Defifa NFT tiers';
       headAdd.remove(); if (typeof mgr !== 'undefined' && mgr) mgr.remove();
-      body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri), function () { return renderNativeEntries(project, s); }));
+      body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri)));
       return;
     }
     if (!s || !s.tiers.length) {
@@ -1698,7 +1698,7 @@ export function renderShopSection(project, shop, cart) {
       setTimeout(function () { cardEl.classList.remove('shop-tier-focus'); }, 1500);
     }
     if (_activeDetail) _activeDetail.shopFocus = focusTier;
-  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again; market entry and settlement are available in Metalog.'; } });
+  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; } });
 
   // Mobile checkout bar — on phones the Pay card (where the purchase is completed) is a separate stacked
   // section above the tabs, so once items are in the cart show a bar that scrolls up to it. Hidden on
@@ -1720,20 +1720,6 @@ export function renderShopSection(project, shop, cart) {
   wrap.appendChild(checkoutBar);
   onEffectiveAccountChange(function () { if (wrap.isConnected) showCredits(resolvedShop); });
   return wrap;
-}
-
-function renderNativeEntries(project, inventory) {
-  var wrap = el('div', 'native-entries-loading');
-  function load() {
-    wrap.textContent = 'Loading entries view…';
-    // Separate optional asset: no chart/client code in the initial IIFE.
-    var moduleUrl = './entries-view.mjs';
-    import(moduleUrl).then(function (module) {
-      if (!wrap.isConnected) return;
-      wrap.replaceChildren(module.renderEntries({ chainId: Number(project.chainId), projectId: String(pidOn(project, project.chainId)), hook: inventory.hook }, { receiptUrl: function (hash) { return txExplorerUrl(project.chainId, hash); }, stakeText: function (wei) { return formatEther(BigInt(wei)) + ' ETH'; } }));
-    }).catch(function () { wrap.textContent = 'Entries view unavailable. '; var retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry'; retry.addEventListener('click', load); wrap.appendChild(retry); });
-  }
-  queueMicrotask(load); return wrap;
 }
 
 // Shop tab wrapper: [Inventory | Customers] subtabs. Inventory is the items-for-sale card; Customers
@@ -3787,8 +3773,8 @@ function renderPayShopStrip(project, cart, opts) {
     if (!shop) return;
     if (isNativeInventory(shop)) {
       wrap.style.display = '';
-      var link = document.createElement('a'); link.href = nativeMarketUrl(project.chainId, pidOn(project, project.chainId)); link.textContent = 'Open market in Metalog →';
-      wrap.appendChild(link); return;
+      var note = document.createElement('p'); note.textContent = nativeActionUnavailable;
+      wrap.appendChild(note); return;
     }
     if (!shop.tiers.length) return;
     wrap.style.display = '';
@@ -10277,7 +10263,7 @@ export function renderPayCard(project, cart) {
     status.className = 'paybox-status';
     status.textContent = '';
     if (!state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Reload to try again.'; return; }
-    if (isNativeInventory(state.shop)) { status.textContent = 'Enter and claim through Metalog.'; return; }
+    if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable; return; }
     try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (startsAt > Math.floor(Date.now() / 1000)) { return; }
@@ -15960,7 +15946,7 @@ async function applyDraftShop(state, project, sources, warnings) {
   }
   if (shops.some(function (shop) { return !shop; })) throw new Error('The shop is not present on every project chain.');
   var home = shops[0];
-  if (shops.some(isNativeInventory)) throw new Error('Edit this market in Metalog.');
+  if (shops.some(isNativeInventory)) throw new Error(nativeActionUnavailable);
   var knownShops = await Promise.all(shops.map(function (shop, index) {
     return isKnown721HookClone(shop.hook, sources[index].chainId, sources[index].projectId);
   }));
@@ -26645,7 +26631,7 @@ function opsActionsRow(project, opts) {
   [
     ['Cash out', async function () {
       var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
-      if (isNativeInventory(shop)) { var native = el('div', 'modal-body'); var link = document.createElement('a'); link.href = nativeMarketUrl(project.chainId, pidOn(project, project.chainId)); link.textContent = 'Claim or refund in Metalog →'; native.appendChild(link); openModal('Market settlement', native); return; }
+      if (isNativeInventory(shop)) { var native = el('div', 'modal-body'); native.textContent = nativeActionUnavailable; openModal('Defifa NFT transactions', native); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
