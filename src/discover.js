@@ -10961,7 +10961,9 @@ async function ensureProjectTokenManager(project, permissionId, setStatus) {
   return account;
 }
 
-function renderTokenPanel(project) {
+function renderTokenPanel(project) { return renderResolvedTokenPanel(project); }
+
+function renderResolvedTokenPanel(project) {
   var card = el('div', 'detail-card token-line-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Token'; card.appendChild(title);
   var capabilities = tokenUiCapabilities(project);
