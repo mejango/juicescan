@@ -95,3 +95,32 @@ it('renders nonnumeric Defifa names and mixed tier prices without numeric range 
   expect([...output.querySelectorAll('th')].map(n=>n.textContent)).toEqual(['Tier','Name','Price per NFT','Current NFTs']);
   expect(output.textContent).toContain('Scoring');expect(output.textContent).not.toContain('Range');expect(output.textContent).not.toContain('Metalog');expect(output.querySelector('a')).toBeNull();
 });
+
+it('keeps requested identity failure distinct from absence and ignores an older rejected request after retry', async () => {
+  const { projectFlavor } = await import('../src/nft-inventory.js');
+  const project = { id: 27, chainId: 8453 };
+  let reject;
+  getProjectNftInventory.mockReturnValueOnce(new Promise((_, failure) => { reject = failure; })).mockResolvedValueOnce(native);
+  const first = readProjectNftIdentity({}, args, project);
+  expect(projectFlavor(project)).toBe('Checking');
+  clearProjectNftIdentity(args);
+  await readProjectNftIdentity({}, args, project);
+  expect(projectFlavor(project)).toBe('Defifa');
+  reject(new Error('Older request failed'));
+  await expect(first).rejects.toThrow('Older request failed');
+  expect(projectFlavor(project)).toBe('Defifa');
+});
+
+it.each([false, true])('does not let an older page overwrite verified flavor after a fresh read (clear all: %s)', async clearAll => {
+  document.body.innerHTML = '<span data-project-flavor="8453:27">CUSTOM</span>';
+  const client = {}, oldProject = { id: 27, chainId: 8453 }, currentProject = { ...oldProject };
+  let reject;
+  getProjectNftInventory.mockReturnValueOnce(new Promise((_, failure) => { reject = failure; })).mockResolvedValueOnce(native);
+  const first = readProjectNftIdentity(client, args, oldProject);
+  clearProjectNftIdentity(clearAll ? undefined : args);
+  await readProjectNftIdentity(client, args, currentProject);
+  expect(document.querySelector('[data-project-flavor]').textContent).toBe('Defifa');
+  reject(new Error('Older page failed'));
+  await expect(first).rejects.toThrow('Older page failed');
+  expect(document.querySelector('[data-project-flavor]').textContent).toBe('Defifa');
+});

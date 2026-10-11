@@ -1,12 +1,13 @@
 import { getProjectNftInventory } from '@bananapus/nana-sdk-core/v6';
 
 var identities = new Map();
+var projectRequests = new WeakMap();
 function identityKey(args) { return Number(args.chainId) + ':' + BigInt(args.projectId) + ':' + !!args.isRevnet; }
 export function clearProjectNftIdentity(args) {
   if (args) identities.forEach(function (cache) { cache.delete(identityKey(args)); });
   else identities.clear();
 }
-export function readProjectNftIdentity(client, args) {
+export function readProjectNftIdentity(client, args, project) {
   if (!identities.has(client)) identities.set(client, new Map());
   var cache = identities.get(client);
   var key = identityKey(args);
@@ -15,14 +16,32 @@ export function readProjectNftIdentity(client, args) {
     cache.set(key, promise);
     promise.catch(function () { if (cache.get(key) === promise) cache.delete(key); });
   }
-  return cache.get(key);
+  var result = cache.get(key);
+  if (project) {
+    projectRequests.set(project, result);
+    project.nftIdentityStatus = 'checking'; updateProjectFlavor(project);
+    result.then(function (inventory) {
+      if (projectRequests.get(project) !== result || identities.get(client) !== cache || cache.get(key) !== result) return;
+      rememberProjectInventory(project, inventory);
+    }, function () {
+      if (projectRequests.get(project) !== result || identities.get(client) !== cache || (cache.has(key) && cache.get(key) !== result)) return;
+      project.nftIdentityStatus = 'error'; updateProjectFlavor(project);
+    });
+  }
+  return result;
 }
 
 export function isNativeInventory(inventory) { return !!inventory && inventory.protocol === 'defifa'; }
-export function projectFlavor(project) { return project.nftInventoryProtocol === 'defifa' ? 'Defifa' : project.isRevnet ? 'REVNET' : 'CUSTOM'; }
-export function rememberProjectInventory(project, inventory) {
-  project.nftInventoryProtocol = inventory ? inventory.protocol : null;
+export function projectFlavor(project) {
+  return project.isRevnet ? 'REVNET' : project.nftIdentityStatus === 'checking' ? 'Checking' : project.nftIdentityStatus === 'error' ? 'Unverified' : project.nftInventoryProtocol === 'defifa' ? 'Defifa' : 'CUSTOM';
+}
+function updateProjectFlavor(project) {
   if (typeof document !== 'undefined') document.querySelectorAll('[data-project-flavor]').forEach(function (node) { if (node.dataset.projectFlavor === Number(project.chainId) + ':' + BigInt(project.id)) node.textContent = projectFlavor(project); });
+}
+export function rememberProjectInventory(project, inventory) {
+  project.nftIdentityStatus = 'verified';
+  project.nftInventoryProtocol = inventory ? inventory.protocol : null;
+  updateProjectFlavor(project);
 }
 export const nativeActionUnavailable = 'Defifa NFT transactions are not supported in this interface.';
 
