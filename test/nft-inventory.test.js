@@ -46,6 +46,7 @@ describe('shared protocol inventory adoption', () => {
   it('renders onchain names/supplies as read-only text with native lifecycle link', () => {
     const output = renderNativeInventory({ ...native, tiers: [{ ...native.tiers[0], name: '<img onerror=alert(1)>' }] }, 8453, 27n, () => '0.000001 ETH');
     expect(output.querySelector('a').href).toBe(nativeMarketUrl(8453, 27n));
+    expect(output.dataset.inventoryBlock).toBe('123');
     expect(output.querySelector('caption').textContent).toBe('Onchain ranges');
     expect(output.querySelector('caption').textContent).not.toContain('block');
     expect(output.textContent).not.toContain('·');

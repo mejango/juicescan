@@ -55,7 +55,7 @@ export async function requireGenericInventory(client, args, capability) {
 }
 
 export function renderNativeInventory(inventory, chainId, projectId, formatPrice, metadataUrl, entriesView) {
-  var wrap = document.createElement('div'); wrap.className = 'detail-card-body';
+  var wrap = document.createElement('div'); wrap.className = 'detail-card-body'; wrap.dataset.inventoryBlock = String(inventory.blockNumber);
   var phase = document.createElement('p'); phase.textContent = ['Countdown', 'Entry open', 'Refund period', 'Scoring', 'Complete', 'No contest'][inventory.phase]; wrap.appendChild(phase);
   var link = document.createElement('a'); link.href = nativeMarketUrl(chainId, projectId); link.textContent = 'Open market in Metalog →'; wrap.appendChild(link);
   if (/^https?:\/\//.test(metadataUrl || '')) { var meta = document.createElement('a'); meta.href = metadataUrl; meta.textContent = 'Market metadata'; var paragraph = document.createElement('p'); paragraph.appendChild(meta); wrap.appendChild(paragraph); }
