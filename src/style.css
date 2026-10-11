@@ -5430,6 +5430,7 @@ th[data-tip]:hover::after {
   color: var(--c-teal);
 }
 .paybox-amount-row { display: flex; align-items: stretch; gap: 0; }
+.paybox-top[hidden], .paybox-amount-row[hidden], .shop-head-add[hidden] { display: none; }
 /* One bordered field holding the amount + an inline currency dropdown right after it. */
 .paybox-field {
   flex: 1; min-width: 0; display: flex; align-items: center;

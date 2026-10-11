@@ -133,3 +133,5 @@ separate reviews and completion requirements.
 `verify-tx-builders-vs-contracts` (workflow, 5 agents) confirmed **every builder encodes correctly** against the
 deployed V6 contracts (selectors, arg order, types, payability) — zero HIGH/MEDIUM. The three LOW findings
 (deploy-erc20 permission label, permission display grouping, borrow slippage floor) are fixed.
+
+| Bounded RPC history reads | `rpc-logs.js` | Read-client forwarding only: splits `eth_getLogs` into exact 500-block ranges; does not create, approve or submit a transaction. Other methods retain the existing public-client behavior. `test/rpc-logs.test.js` verifies filters, range coverage, failure propagation and passthrough. |

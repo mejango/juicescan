@@ -187,6 +187,14 @@
         "Send reserved"
       ]
     },
+    "src/rpc-logs.js": {
+      "counts": {
+        "providerRequest": 3
+      },
+      "actions": [
+        "Bounded RPC history reads"
+      ]
+    },
     "src/safe-app.js": {
       "counts": {
         "proposeSafeTransactions": 1,

@@ -2,7 +2,8 @@
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
-import { readProjectNftInventory, isNativeInventory, nativeMarketUrl, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
+import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
+import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, isNativeInventory, nativeMarketUrl, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
@@ -100,7 +101,7 @@ export function setDiscoverNetwork(mode) {
   DISCOVER_CHAINS = mode === 'mainnet' ? MAINNET_CHAINS : TESTNET_CHAINS;
   setBendystrawNetwork(mode);
   invalidateGroupCache(); _cache = {}; _operatorCache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {}; _preferredProjectMetadataCache = {};
-  _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _instanceProvenanceCache = {}; _activeDetail = null;
+  clearProjectNftIdentity(); _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _instanceProvenanceCache = {}; _activeDetail = null;
   // Only discard a project route from the other network. Top-level routes such as #data must stay put.
   if (networkModeFromHash()) location.hash = '';
   if (_container) renderDiscoverTab();
@@ -905,7 +906,7 @@ function fetchProjectTiers(project) {
   if (_tiersCache[k]) return _tiersCache[k];
   return (_tiersCache[k] = fetchProjectTiersUncached(project));
 }
-function bustTiersCache(project) { delete _tiersCache[project.chainId + ':' + pidOn(project, project.chainId).toString()]; }
+function bustTiersCache(project) { clearProjectNftIdentity({ chainId: project.chainId, projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }); delete _tiersCache[project.chainId + ':' + pidOn(project, project.chainId).toString()]; }
 
 // A tier's effective (discounted) price. Mirrors JB721TiersHookStore: effective = price - mulDiv(price,
 // discountPercent, 200), where DISCOUNT_DENOMINATOR = 200 (so discountPercent 200 = 100% off). Integer-floor
@@ -1531,6 +1532,7 @@ export function renderShopSection(project, shop, cart) {
     var mgr = el('button', 'operator-cta shop-head-add'); mgr.textContent = '+ Add manager';
     mgr.title = 'Let another account add, mint, or reprice items. Current managers are listed in the Owner tab’s Permissions card.';
     mgr.addEventListener('click', function (e) { e.preventDefault(); openSetPermissionsModal(project, null, SHOP_MANAGER_PERMISSION_IDS); });
+    mgr.hidden = true;
     head.appendChild(mgr);
   }
   card.appendChild(head);
@@ -1612,12 +1614,16 @@ export function renderShopSection(project, shop, cart) {
     card.appendChild(details);
   }
 
+  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }).then(function (identity) {
+    if (wrap.isConnected && typeof mgr !== 'undefined' && mgr) mgr.hidden = isNativeInventory(identity);
+  }).catch(function () {});
   var ready = shop ? Promise.resolve(shop) : fetchProjectTiers(project);
   body.textContent = 'Loading items…';
   ready.then(function (s) {
     if (!wrap.isConnected) return;
     resolvedShop = s;
     body.innerHTML = '';
+    if (typeof mgr !== 'undefined' && mgr) mgr.hidden = isNativeInventory(s);
     if (isNativeInventory(s)) {
       title.textContent = 'Market ranges';
       headAdd.remove(); if (typeof mgr !== 'undefined' && mgr) mgr.remove();
@@ -1691,7 +1697,7 @@ export function renderShopSection(project, shop, cart) {
       setTimeout(function () { cardEl.classList.remove('shop-tier-focus'); }, 1500);
     }
     if (_activeDetail) _activeDetail.shopFocus = focusTier;
-  }).catch(function () { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = 'Could not load the shop.'; } });
+  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again; market entry and settlement are available in Metalog.'; } });
 
   // Mobile checkout bar — on phones the Pay card (where the purchase is completed) is a separate stacked
   // section above the tabs, so once items are in the cart show a bar that scrolls up to it. Hidden on
@@ -3756,16 +3762,20 @@ function renderPayShopStrip(project, cart, opts) {
   opts = opts || {};
   var wrap = el('div', 'paybox-shop');
   wrap.style.display = 'none';
-  fetchProjectTiers(project).then(function (shop) {
-    if (!wrap.isConnected || !shop) return;
+  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }).then(function (identity) {
+    if (!wrap.isConnected) return null;
+    if (opts.onIdentity) opts.onIdentity(identity);
+    return isNativeInventory(identity) ? identity : fetchProjectTiers(project);
+  }).then(function (shop) {
+    if (!wrap.isConnected) return;
+    if (opts.onShop) opts.onShop(shop);
+    if (!shop) return;
     if (isNativeInventory(shop)) {
-      if (opts.onShop) opts.onShop(shop);
       wrap.style.display = '';
       var link = document.createElement('a'); link.href = nativeMarketUrl(project.chainId, pidOn(project, project.chainId)); link.textContent = 'Open market in Metalog →';
       wrap.appendChild(link); return;
     }
     if (!shop.tiers.length) return;
-    if (opts.onShop) opts.onShop(shop);
     wrap.style.display = '';
     var head = el('div', 'paybox-shop-head');
     var lbl = el('span', 'paybox-shop-label'); lbl.textContent = 'Shop'; head.appendChild(lbl);
@@ -3779,7 +3789,7 @@ function renderPayShopStrip(project, cart, opts) {
       strip.appendChild(makePayShopItem(project, shop, tier, cart, refreshers, opts.focusInShop));
     });
     cart.subscribe(function (id) { if (refreshers[id]) refreshers[id](); });
-  }).catch(function () {});
+  }).catch(function (error) { if (wrap.isConnected && opts.onError) opts.onError(error); });
   return wrap;
 }
 
@@ -7971,7 +7981,7 @@ function scheduleActiveProjectRefresh(project) {
     try { urlProjectId = Number(pidOn(active.project, urlChainId)); }
     catch (_) { return; }
     delete _cache[urlChainId + '-' + urlProjectId];
-    _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {};
+    clearProjectNftIdentity(); _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _accountingTokenMetadataCache = {};
     fetchProject(urlProjectId, urlChainId).then(function (fresh) {
       if (seq !== _projectRefreshSeq || !_activeDetail || !sameProjectDeployment(_activeDetail.project, project)) return;
       fresh.idByChain = idByChain;
@@ -8067,7 +8077,7 @@ function scheduleProjectGroupRefresh(generation) {
 
 function invalidateDiscoverProjects() {
   invalidateGroupCache(); _cache = {}; _operatorCache = {}; _splitProjCache = {}; _bendystrawProjectRecordCache = {};
-  _preferredProjectMetadataCache = {}; _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _instanceProvenanceCache = {};
+  _preferredProjectMetadataCache = {}; clearProjectNftIdentity(); _tiersCache = {}; _tierMetadataCache = {}; _dataHookCache = {}; _instanceProvenanceCache = {};
   _activeDetail = null;
   if (_container) renderDiscoverTab();
 }
@@ -9347,7 +9357,7 @@ export function payTokenOutputVisible(rulesetWeight, phase, preview) {
 // Inline pay card (revnet.app-style) for the project detail page. The project is already known, so it
 // only needs a chain (when omnichain), a currency, and an amount. Live feedback — tokens received,
 // reserved/splits, and the Issuance-vs-AMM routing tag — comes from the shared computePayPreview.
-function renderPayCard(project, cart) {
+export function renderPayCard(project, cart) {
   var sym = project.tokenSymbol ? project.tokenSymbol : 'tokens';
   cart = cart || makeNftCart();
   var chains = (project.chains && project.chains.length)
@@ -9433,6 +9443,7 @@ function renderPayCard(project, cart) {
     directSwap: null, // { pool, out } when a direct AMM swap beats paying (no split-tax)
     slippageBps: 100, // AMM-route max slippage (default 1%)
     shop: null,       // { hook, tiers, ... } once the strip loads
+    inventoryKnown: false,
     mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
     conversion: null, // { sym, units } router-swap landed amount for add-to-balance
     terminalSurface: null,
@@ -9445,7 +9456,7 @@ function renderPayCard(project, cart) {
     nftCreditsLoading: false,
   };
   state.token = state.tokens[0] || null;
-  loadAcceptedTokens(state.chainId); // refine direct-vs-router from the project's accounting contexts
+  // Generic payment reads start only after NFT protocol identification.
 
   var previewTimer = null;
   var previewGen = 0;
@@ -9688,21 +9699,26 @@ function renderPayCard(project, cart) {
   cart.subscribe(function () { onNftChange(); });
   cart.onName(function () { renderFeedback(); });
   card.appendChild(renderPayShopStrip(project, cart, {
+    onIdentity: function (shop) {
+      state.shop = shop; state.inventoryKnown = true;
+      amountRow.hidden = isNativeInventory(shop); topRow.hidden = isNativeInventory(shop);
+      if (isNativeInventory(shop)) return;
+      status.textContent = '';
+      loadAcceptedTokens(state.chainId); loadPaymentSurface(state.chainId);
+    },
     onShop: function (shop) {
       state.shop = shop;
-      if (isNativeInventory(shop)) {
-        amountRow.hidden = true; topRow.hidden = true;
-        return;
-      }
+      if (isNativeInventory(shop)) return;
       refreshNftCredits();
       if (selectedTierIds().length) refreshNftCheckoutRoutes();
     },
+    onError: function (error) { status.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; },
     focusInShop: focusShopTier,
     onViewAll: openShopTab,
   }));
 
   // Row 1: "[Pay ▾] on <chain>" — the leading word is the action toggle (Pay / Add to balance).
-  var topRow = el('div', 'paybox-top');
+  var topRow = el('div', 'paybox-top'); topRow.hidden = true;
   var payOn = el('div', 'paybox-payon');
   // Action picker as the sentence's first word.
   var modeSel = el('select', 'paybox-select paybox-mode');
@@ -9813,7 +9829,7 @@ function renderPayCard(project, cart) {
   rebuildCurrency();
 
   // Row 2: [ amount  currency ▾ ] [ Pay ] — amount auto-sizes so the currency hugs the number.
-  var amountRow = el('div', 'paybox-amount-row');
+  var amountRow = el('div', 'paybox-amount-row'); amountRow.hidden = true;
   var field = el('div', 'paybox-field');
   var amtInput = el('input', 'paybox-amount');
   amtInput.type = 'number'; amtInput.step = 'any'; // decimals are valid; without step the default (1) marks any fractional amount invalid
@@ -9893,7 +9909,6 @@ function renderPayCard(project, cart) {
       renderTerminalNotice();
     });
   }
-  loadPaymentSurface(state.chainId);
 
   // The selected NFTs, listed under "You get" with a small preview thumbnail (juicy-vision "+ Original").
   function nftBlock() {
@@ -10101,6 +10116,7 @@ function renderPayCard(project, cart) {
   }
 
   function schedulePreview() {
+    if (!state.inventoryKnown || isNativeInventory(state.shop)) return;
     if (previewTimer) clearTimeout(previewTimer);
     state.payAfterPreview = false;
     state.preview = null;
@@ -10245,6 +10261,7 @@ function renderPayCard(project, cart) {
   async function doPay() {
     status.className = 'paybox-status';
     status.textContent = '';
+    if (!state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Reload to try again.'; return; }
     if (isNativeInventory(state.shop)) { status.textContent = 'Enter and claim through Metalog.'; return; }
     try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
@@ -23185,7 +23202,7 @@ async function fetchBridgeTransactions(project) {
             return fallbackLogClient.getLogs(request);
           });
         };
-        var W = 45000n, cursor = latest;
+        var W = RPC_LOG_WINDOW, cursor = latest;
         var cacheKey = C + ':' + srcSucker.toLowerCase() + ':' + TOKEN.toLowerCase();
         var cachedLeaves = BRIDGE_LEAF_CACHE[cacheKey];
         var byIndex = cachedLeaves && cachedLeaves.count <= count ? Object.assign({}, cachedLeaves.byIndex) : {};
@@ -29808,6 +29825,11 @@ function renderGossipSection(project) {
             readLatestSyncSent(p.peerChainId, p.syncSucker).then(function (sent) {
               if (!row.isConnected) return;
               if (sent && sent > (p.snapshot || 0) && (Math.floor(Date.now() / 1000) - sent) < 3600) paint(true);
+            }).catch(function () {
+              if (!row.isConnected) return;
+              var syncButton = row.querySelector('.xchain-sync');
+              if (syncButton) { syncButton.disabled = true; syncButton.title = 'Reload to verify sync history before sending another sync.'; }
+              c5.appendChild(document.createTextNode(' Sync history unavailable; reload to retry.'));
             });
           }
         });
@@ -29857,20 +29879,23 @@ var suckerSyncAbi = [{ type: 'function', name: 'syncAccountingData', stateMutabi
 // Emitted on the SOURCE sucker each time a snapshot is pushed. We scan this (like the Movement table scans
 // InsertToOutboxTree) to detect an in-flight sync ONCHAIN — universal (any caller) and reload-proof.
 var ACCOUNTING_SYNCED_EVENT = { type: 'event', name: 'AccountingDataSynced', inputs: [{ name: 'sourceTimestamp', type: 'uint256', indexed: false }, { name: 'caller', type: 'address', indexed: false }] };
-// Latest accounting-snapshot push from `sucker` (its `peerChainId` is the destination), as unix seconds
-// (sourceTimestamp is packed (block.timestamp << 128 | seq) — unpack >> 128). 0 if none / unreadable.
-async function readLatestSyncSent(chainId, sucker) {
+// Latest accounting-snapshot push within the existing 180,000-block observation window.
+// Read newest first and stop at the first matching window; failures remain unknown.
+export async function readLatestSyncSent(chainId, sucker) {
   if (!sucker) return 0;
   var lc = lpLogsClient(chainId) || clientFor(chainId);
-  var latest; try { latest = await lc.getBlockNumber(); } catch (_) { return 0; }
-  var W = 45000n, windows = [];
-  for (var n = 0; n < 4 && latest - BigInt(n) * W > 0n; n++) { var hi = latest - BigInt(n) * W, lo = hi > W ? hi - W + 1n : 0n; windows.push({ lo: lo, hi: hi }); if (lo === 0n) break; }
-  var batches = await Promise.all(windows.map(function (w) {
-    return lc.getLogs({ address: sucker, event: ACCOUNTING_SYNCED_EVENT, fromBlock: w.lo, toBlock: w.hi }).catch(function () { return []; });
-  }));
-  var maxTs = 0n;
-  batches.forEach(function (b) { b.forEach(function (l) { var ts = toBigInt(l.args.sourceTimestamp) >> 128n; if (ts > maxTs) maxTs = ts; }); });
-  return Number(maxTs);
+  var latest = await lc.getBlockNumber();
+  var oldest = latest >= 180000n ? latest - 180000n + 1n : 0n;
+  for (var hi = latest; hi >= oldest;) {
+    var lo = hi >= RPC_LOG_WINDOW ? hi - RPC_LOG_WINDOW + 1n : 0n;
+    if (lo < oldest) lo = oldest;
+    var logs = await lc.getLogs({ address: sucker, event: ACCOUNTING_SYNCED_EVENT, fromBlock: lo, toBlock: hi });
+    var maxTs = 0n;
+    logs.forEach(function (log) { var ts = toBigInt(log.args.sourceTimestamp) >> 128n; if (ts > maxTs) maxTs = ts; });
+    if (maxTs > 0n) return Number(maxTs);
+    hi = lo - 1n;
+  }
+  return 0;
 }
 
 // + inboxOf / executedLeafHashOf. Verified against JBSucker.sol + structs/JBClaim.sol/JBLeaf.sol.
@@ -30554,26 +30579,16 @@ function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
 // --- Uniswap V4 mint (Add liquidity) — exact encoding per v4-periphery PositionManager ---
 var PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 var LP_Q96 = 1n << 96n;
-// The site's default RPCs (e.g. thirdweb on Sepolia) don't serve eth_getLogs; use a getLogs-capable endpoint
-// for the LP-position log scan only (reads still go through clientFor). publicnode now 403s the archive
-// getLogs scan on EVERY chain ("Archive requests require a personal token"), which stranded the LP column on
-// "Unavailable" — so mainnets use Tenderly's public gateways too, the same ones the testnets already use.
-// They serve the address-filtered Initialize/ModifyLiquidity scan the LP-position table needs. Override per
-// chain via localStorage['jb-lp-logs-rpc:<id>'] (e.g. an archive endpoint of your own).
-var LP_LOGS_RPC = {
-  1: 'https://mainnet.gateway.tenderly.co', 10: 'https://optimism.gateway.tenderly.co',
-  8453: 'https://base.gateway.tenderly.co', 42161: 'https://arbitrum.gateway.tenderly.co',
-  11155111: 'https://sepolia.gateway.tenderly.co', 11155420: 'https://optimism-sepolia.gateway.tenderly.co',
-  84532: 'https://base-sepolia.gateway.tenderly.co', 421614: 'https://arbitrum-sepolia.gateway.tenderly.co',
-};
+// Historical reads use the shared Center client unless an explicit archive RPC is set.
 var _lpLogClients = {};
 function lpLogsClient(chainId) {
   if (_lpLogClients[chainId]) return _lpLogClients[chainId];
   // Per-chain override for a getLogs-capable (archive) RPC, e.g. Base Sepolia publicnode 403s on archive getLogs.
   // Set localStorage['jb-lp-logs-rpc:84532'] = '<archive rpc url>' — keeps API-key-bearing URLs out of the build.
   var override; try { override = localStorage.getItem('jb-lp-logs-rpc:' + chainId); } catch (e) {}
-  var url = override || LP_LOGS_RPC[chainId]; if (!url || !CHAINS[chainId]) return null;
-  _lpLogClients[chainId] = createPublicClient({ chain: CHAINS[chainId], transport: http(url) });
+  if (!override) return clientFor(chainId);
+  if (!CHAINS[chainId]) return null;
+  _lpLogClients[chainId] = boundedLogClient(createPublicClient({ chain: CHAINS[chainId], transport: http(override) }));
   return _lpLogClients[chainId];
 }
 
@@ -30734,7 +30749,7 @@ function lpSignExtend24(v) { return (v & 0x800000n) ? v - 0x1000000n : v; }
 // `Initialize` is the authoritative lower bound for one pool, and both events index the pool id in topic1.
 var LP_INITIALIZE_TOPIC = toEventSelector('Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)').toLowerCase();
 var LP_MODIFY_LIQUIDITY_TOPIC = toEventSelector('ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)').toLowerCase();
-var LP_LOG_WINDOW = 45000n;
+var LP_LOG_WINDOW = RPC_LOG_WINDOW;
 var LP_LOG_BATCH_WINDOWS = 8;
 var LP_LOG_REORG_OVERLAP = 128n;
 var _lpPoolHistoryCache = {};
@@ -30807,7 +30822,7 @@ async function lpScanKnownPoolRange(primary, fallback, pm, poolId, posm, fromBlo
 // Return every PositionManager NFT id ever used in this pool. The scan stops only at the pool's Initialize event;
 // provider failures reject instead of becoming an empty position list. A short overlap keeps the session cache safe
 // across shallow reorgs while avoiding a full rescan every time the Owners/You views refresh.
-async function lpPoolPositionTokenIds(chainId, pm, posm, poolId) {
+export async function lpPoolPositionTokenIds(chainId, pm, posm, poolId) {
   var fallback = clientFor(chainId);
   var primary = lpLogsClient(chainId) || fallback;
   var latest = await lpLatestLogBlock(primary, fallback);
@@ -30827,11 +30842,6 @@ async function lpPoolPositionTokenIds(chainId, pm, posm, poolId) {
     });
     await lpScanKnownPoolRange(primary, fallback, pm, poolId, posm, overlapStart, latest, state);
   } else {
-    // A one-shot Initialize lookup is much cheaper when the RPC supports wide indexed ranges.
-    try {
-      var initializeLogs = await lpPoolLogsRange(primary, fallback, pm, poolId, 0n, latest, true);
-      lpCollectPoolLogs(initializeLogs, posm, state);
-    } catch (_) {}
     if (state.initializeBlock != null) {
       await lpScanKnownPoolRange(primary, fallback, pm, poolId, posm, state.initializeBlock, latest, state);
     } else {

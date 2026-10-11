@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectNftInventory: vi.fn() }));
 import { getProjectNftInventory } from '@bananapus/nana-sdk-core/v6';
-import { readProjectNftInventory, requireGenericInventory, renderNativeInventory, isNativeInventory, nativeMarketUrl } from '../src/nft-inventory.js';
+import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, requireGenericInventory, renderNativeInventory, isNativeInventory, nativeMarketUrl } from '../src/nft-inventory.js';
 const args = { chainId: 8453, projectId: 27n };
 const native = { protocol: 'defifa', hook: '0x123', blockNumber: 123n, phase: 1, pricing: { currency: 61166, decimals: 18 }, tiers: [{ id: 1, name: 'Rekt', price: 1000000000000n, currentSupply: 3n }], capabilities: { genericPay: false, genericCashOut: false, manageTiers: false }, nextStartingId: null };
-beforeEach(() => getProjectNftInventory.mockReset());
+beforeEach(() => { getProjectNftInventory.mockReset(); clearProjectNftIdentity(); });
 describe('shared protocol inventory adoption', () => {
   it('returns absent inventory without pretending transport failures mean absence', async () => {
     getProjectNftInventory.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('RPC unavailable'));
@@ -52,4 +52,18 @@ describe('shared protocol inventory adoption', () => {
     expect(output.querySelector('img,button,input')).toBeNull();
     expect(output.querySelectorAll('tbody tr')).toHaveLength(1);
   });
+});
+
+it('caches bounded identity per client and invalidates exact project reads after a refresh', async () => {
+  getProjectNftInventory.mockResolvedValue(native);
+  const client = {}, otherClient = {};
+  await readProjectNftIdentity(client, args);
+  await readProjectNftIdentity(client, args);
+  expect(getProjectNftInventory).toHaveBeenCalledTimes(1);
+  expect(getProjectNftInventory).toHaveBeenCalledWith(client, { ...args, tierLimit: 1 });
+  await readProjectNftIdentity(otherClient, args);
+  expect(getProjectNftInventory).toHaveBeenCalledTimes(2);
+  clearProjectNftIdentity(args);
+  await readProjectNftIdentity(client, args);
+  expect(getProjectNftInventory).toHaveBeenCalledTimes(3);
 });

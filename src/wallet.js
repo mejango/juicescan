@@ -4,6 +4,7 @@
 
 import { createWalletClient, createPublicClient, custom, fallback, http } from 'viem';
 import { CHAINS, getCurrentChainId, getCustomRpc, readRpcUrlsFor } from './chain.js';
+import { boundedLogClient } from './rpc-logs.js';
 import { isMobileDevice } from './wallet-links.js';
 import { detectSafeApp, makeSafeProvider, proposeSafeTransactions } from './safe-app.js';
 export { proposeSafeTransactions } from './safe-app.js';
@@ -195,11 +196,11 @@ export function createPublicClientForChain(chainId) {
   // Center is the shared read endpoint; explicit custom RPC preferences override it.
   var urls = readRpcUrlsFor(chainId, customRpc);
   var transport = urls.length > 1 ? fallback(urls.map(function (url) { return http(url); })) : http(urls[0]);
-  return (_readClients[key] = createPublicClient({
+  return (_readClients[key] = boundedLogClient(createPublicClient({
     chain: chain,
     transport: withBlockLagRetry(transport),
     batch: { multicall: { wait: 32 } },
-  }));
+  })));
 }
 
 // A stale/detached view must never prevent the rest of the app from learning about an account switch. Iterate a
