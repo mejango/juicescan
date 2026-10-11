@@ -67,24 +67,26 @@ export function renderEntries(context, options) {
   const controls = node('div', null, 'native-entries-controls'); wrap.appendChild(controls);
   const more = node('button', 'Load earlier entries'); more.type = 'button'; more.hidden = true; controls.appendChild(more);
   const retry = node('button', 'Retry'); retry.type = 'button'; retry.hidden = true; controls.appendChild(retry);
+  const restart = node('button', 'Restart history'); restart.type = 'button'; restart.hidden = true; controls.appendChild(restart);
   const save = node('button', 'Download scanned history JSON'); save.type = 'button'; save.hidden = true; controls.appendChild(save);
   const pages = [], seen = new Set(); let cursor, blockNumber, busy = false;
   async function load() {
-    if (busy) return; busy = true; more.disabled = true; retry.hidden = true; status.textContent = 'Loading entries…';
+    if (busy) return; busy = true; let restartRequired = false; more.disabled = true; retry.hidden = true; restart.hidden = true; status.textContent = 'Loading entries…';
     try {
       const page = await fetchEntriesPage(context, { cursor, blockNumber });
       if (!wrap.isConnected) return;
       if (page.nextCursor != null && seen.has(page.nextCursor)) throw new Error('Entry history repeated a continuation cursor.');
+      if (pages.length && (page.snapshotBlockHash !== pages[0].snapshotBlockHash || JSON.stringify(page.ranges) !== JSON.stringify(pages[0].ranges))) { restartRequired = true; throw new Error('Entry history snapshot changed. Restart history to read a new snapshot.'); }
       if (page.nextCursor != null) seen.add(page.nextCursor);
-      if (pages.length && (page.snapshotBlockHash !== pages[0].snapshotBlockHash || JSON.stringify(page.ranges) !== JSON.stringify(pages[0].ranges))) throw new Error('Entry history snapshot changed. Retry from the beginning.');
       pages.push(page); blockNumber = page.blockNumber; cursor = page.nextCursor;
       page.entries.forEach(entry => list.appendChild(entryView(entry, page, context, options)));
       status.textContent = 'Snapshot block ' + page.blockNumber + '. Scanned ' + (page.scannedFromBlock == null ? 'unavailable' : page.scannedFromBlock + '–' + page.scannedToBlock) + '. ' + (page.complete ? 'History scan complete.' : 'History is incomplete; load earlier entries to continue.') + (page.entries.length ? '' : ' No entries found in this scanned window.');
       more.hidden = cursor == null; save.hidden = false;
-    } catch (error) { status.textContent = 'Entries unavailable: ' + error.message; retry.hidden = false; }
+    } catch (error) { status.textContent = 'Entries unavailable: ' + error.message; retry.hidden = restartRequired; restart.hidden = !restartRequired; }
     finally { busy = false; more.disabled = false; }
   }
   more.addEventListener('click', load); retry.addEventListener('click', load);
+  restart.addEventListener('click', () => { if (busy) return; pages.length = 0; seen.clear(); list.replaceChildren(); cursor = undefined; blockNumber = undefined; more.hidden = true; save.hidden = true; load(); });
   save.addEventListener('click', () => download({ schema: 'metalog.entries.history.v1', chainId: context.chainId, projectId: String(context.projectId), complete: pages.at(-1)?.complete || false, pages }, 'metalog-entries-' + context.chainId + '-' + context.projectId + '.json'));
   // The caller appends this pane synchronously. No network work until the Entries view is selected.
   queueMicrotask(load);

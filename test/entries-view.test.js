@@ -48,3 +48,20 @@ it('labels partial receipt attribution and preserves very small chart densities'
   const path = document.querySelector('svg path'); expect(path.getAttribute('d')).not.toContain('NaN');
   expect(path.getAttribute('d')).toMatch(/^M[^,]+,12 L[^,]+,12$/);
 });
+
+it('preserves rejected snapshot evidence until explicit restart requests and accepts a fresh latest page', async () => {
+  const first = page(), changed = {...page(), snapshotBlockHash: '0x'+'cd'.repeat(32), nextCursor:'88:0'}, latest={...page(),blockNumber:'200',snapshotBlockHash:'0x'+'cd'.repeat(32),complete:true,nextCursor:null};
+  api.read.mockResolvedValueOnce(first).mockResolvedValueOnce(changed).mockResolvedValueOnce(latest);
+  document.body.appendChild(renderEntries(context,options));
+  await vi.waitFor(()=>expect(document.body.textContent).toContain('Snapshot block 100'));
+  [...document.querySelectorAll('button')].find(b=>b.textContent==='Load earlier entries').click();
+  await vi.waitFor(()=>expect(document.body.textContent).toContain('snapshot changed'));
+  expect(document.querySelectorAll('.native-entry-card')).toHaveLength(1);
+  expect(document.body.textContent).not.toContain('History scan complete');
+  expect([...document.querySelectorAll('button')].find(b=>b.textContent==='Retry').hidden).toBe(true);
+  [...document.querySelectorAll('button')].find(b=>b.textContent==='Restart history').click();
+  await vi.waitFor(()=>expect(document.body.textContent).toContain('Snapshot block 200'));
+  expect(api.read.mock.calls[2][1]).toEqual({cursor:undefined,blockNumber:undefined});
+  expect(document.querySelectorAll('.native-entry-card')).toHaveLength(1);
+  expect(document.body.textContent).toContain('History scan complete');
+});
