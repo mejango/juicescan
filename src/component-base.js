@@ -1459,6 +1459,9 @@ export function executeTransaction(opts) {
   });
 
   function sendNow() {
+  if (opts.expectedSafe != null && isSafeConnected() !== opts.expectedSafe) {
+    cbs.onError('Wallet route changed. Review the transaction again.'); return;
+  }
   var submittedHash = null;
   var reverifiedBlock = null;
   var beforeWriteComplete = false, walletInvoked = false;
@@ -1501,7 +1504,10 @@ export function executeTransaction(opts) {
       var txs = [];
       var isNativeApprovalToken = opts.tokenAddr && (opts.tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || opts.tokenAddr === ZERO_ADDRESS);
       if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount && !isNativeApprovalToken) {
-        txs.push({ to: opts.tokenAddr, value: '0', data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [opts.spenderAddr, BigInt(opts.approvalAmount)] }) });
+        if (opts.safeSingleCall) {
+          var allowance = await readErc20Allowance(createPublicClientForChain(opts.chainId), opts.tokenAddr, account, opts.spenderAddr);
+          if (BigInt(allowance) < BigInt(opts.approvalAmount)) throw new Error('Verify a separate currency approval before reviewing this NFT mint.');
+        } else txs.push({ to: opts.tokenAddr, value: '0', data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [opts.spenderAddr, BigInt(opts.approvalAmount)] }) });
       }
       txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
       cbs.onStatus('Proposing to your Safe…', 'pending');

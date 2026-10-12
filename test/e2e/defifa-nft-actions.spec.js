@@ -19,6 +19,8 @@ export async function restoreDefifaNftReceiptContext(){return {}}
 export const getAccount=()=>window.native.account,getViewAs=()=>null,createPublicClientForChain=()=>({});
 export async function connect(){};export const isAddr=value=>/^0x[0-9a-fA-F]{40}$/.test(value);
 export const isSafeConnected=()=>false;export const formatAmount=(value,decimals)=>String(value)+' / 10^'+decimals;
+export const erc20ApproveAbi=[{type:'function',name:'approve',stateMutability:'nonpayable',inputs:[{name:'spender',type:'address'},{name:'amount',type:'uint256'}],outputs:[{name:'',type:'bool'}]}];
+export const readErc20Allowance=async()=>0n;
 export async function executeTransaction(options){window.native.execution=options;await options.onSending?.();window.native.executions++}
 export async function waitForTrackedTransactionReceipt(){return {status:'success'}}
 export function onEffectiveAccountChange(){return ()=>{}}

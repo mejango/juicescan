@@ -1,11 +1,23 @@
 import { prepareDefifaPay, prepareDefifaCashOut, prepareDefifaTransfer, getDefifaHoldings, verifyDefifaNftTransaction, restoreDefifaNftReceiptContext, DefifaNftTransactionRevertedError, MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, defifaPhaseAllowsCashOut, effectiveTierPrice } from '@bananapus/nana-sdk-core/v6';
-import { encodeFunctionData } from 'viem';
-import { createBrowserWriteRecovery, readBrowserWriteRecovery } from '@bananapus/nana-sdk-core/review';
+import { encodeFunctionData, decodeFunctionData, TransactionReceiptNotFoundError } from 'viem';
+import { createBrowserWriteRecovery, readBrowserWriteRecovery, verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review';
 import { txHashForSafeTx } from './safe-app.js';
-import { getAccount, getViewAs, connect, createPublicClientForChain, executeTransaction, waitForTrackedTransactionReceipt, onEffectiveAccountChange, ZERO_ADDRESS, isAddr, isSafeConnected, formatAmount } from './component-base.js';
+import { getAccount, getViewAs, connect, createPublicClientForChain, executeTransaction, waitForTrackedTransactionReceipt, onEffectiveAccountChange, ZERO_ADDRESS, isAddr, isSafeConnected, formatAmount, readErc20Allowance, erc20ApproveAbi, NATIVE_TOKEN } from './component-base.js';
 import { readProjectNftInventory } from './nft-inventory.js';
 
 const actionNames = { mint: 'pay', cashout: 'cash-out', transfer: 'transfer' };
+
+function approvalOf(record) {
+  try { var decoded = decodeFunctionData({ abi: erc20ApproveAbi, data: record.call.data }); return decoded.functionName === 'approve' ? decoded : null; }
+  catch { return null; }
+}
+
+async function assertApprovalGranted(client, record, receipt) {
+  var approval = approvalOf(record);
+  if (!approval) throw new Error('Original approval calldata is unavailable.');
+  var allowance = await readErc20Allowance(client, record.call.to, record.account, approval.args[0], receipt.blockNumber);
+  if (allowance < approval.args[1]) throw new Error('Original approval did not grant the reviewed allowance. Keep this action pending.');
+}
 
 function fingerprint(prepared) {
   return JSON.stringify({ transaction: prepared.transaction, phase: prepared.inventory.phase,
@@ -45,7 +57,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
       if (!record) return;
       records.set(kind, record);
       var card = document.createElement('div'); recoveryBody.appendChild(card);
-      text(card, 'p', 'Pending NFT ' + actionNames[kind] + ': ' + (record.hash || 'Wallet submission outcome unknown. Do not submit this action again.'));
+      text(card, 'p', (approvalOf(record) ? 'Pending token approval' : 'Pending NFT ' + actionNames[kind]) + ': ' + (record.hash || 'Wallet submission outcome unknown. Do not submit this action again.'));
       if (!record.hash) return;
       button(card, record.safe ? 'Check Safe execution' : 'Check original transaction', async function (event) {
         var check = event.currentTarget, ticket = generation, resultMessage = ''; check.disabled = true;
@@ -53,9 +65,23 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
         try {
           await recovery.withLock(async function () {
             recovery.submitted(record.hash, record);
-            var hash = record.safe ? await txHashForSafeTx(record.hash) : record.hash;
-            if (!hash) { resultMessage = 'Safe proposal has not executed.'; return; }
-            var receipt = await waitForTrackedTransactionReceipt(client, hash, null, chainId);
+            var receipt;
+            if (record.safe) {
+              try { receipt = await client.getTransactionReceipt({ hash: record.hash }); }
+              catch (err) {
+                if (!(err instanceof TransactionReceiptNotFoundError)) throw err;
+                var executionHash = await txHashForSafeTx(record.hash);
+                if (!executionHash) { resultMessage = 'Safe proposal remains unverified. No execution receipt is available.'; return; }
+                receipt = await waitForTrackedTransactionReceipt(client, executionHash, null, chainId);
+              }
+            } else receipt = await waitForTrackedTransactionReceipt(client, record.hash, null, chainId);
+            if (approvalOf(record)) {
+              var outcome = await verifyReviewedWriteReceipt(client, record, receipt);
+              if (outcome === 'success') await assertApprovalGranted(client, record, receipt);
+              recovery.clear(record);
+              resultMessage = outcome === 'failed' ? 'Original token approval ' + record.hash + ' failed onchain. Review a new approval if needed.' : 'Token approval ' + record.hash + ' verified onchain. Review NFT mint again to continue.';
+              return;
+            }
             try {
               var context = await restoreDefifaNftReceiptContext(client, { chainId: chainId, projectId: BigInt(projectId), record: record, receipt: receipt });
               await verifyDefifaNftTransaction(client, context, receipt);
@@ -107,9 +133,16 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
         var rewards = reviewed.protocolRewards;
         if (rewards) { rows.push(['Defifa rewards', formatAmount(rewards.defifaAmount, rewards.defifaDecimals) + ' (' + rewards.defifaToken + ')']); rows.push(['Base protocol rewards', formatAmount(rewards.baseProtocolAmount, rewards.baseProtocolDecimals) + ' (' + rewards.baseProtocolToken + ')']); }
       }
-      var label = kind === 'mint' ? 'Mint Defifa NFTs' : kind === 'cashout' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT';
+      var safeRoute = isSafeConnected(), token = reviewed.inventory.pricing.token;
+      var approvalOnly = kind === 'mint' && safeRoute && token && token.toLowerCase() !== NATIVE_TOKEN.toLowerCase() && token.toLowerCase() !== ZERO_ADDRESS.toLowerCase()
+        && await readErc20Allowance(client, token, account, reviewed.transaction.address) < reviewed.amount;
+      assertAccount(account);
+      if (isSafeConnected() !== safeRoute) throw new Error('Wallet route changed. Review the transaction again.');
+      var request = approvalOnly ? { chainId: chainId, address: token, abi: erc20ApproveAbi, functionName: 'approve', args: [reviewed.transaction.address, reviewed.amount], value: 0n } : reviewed.transaction;
+      var label = approvalOnly ? 'Approve token spending' : kind === 'mint' ? 'Mint Defifa NFTs' : kind === 'cashout' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT';
+      if (approvalOnly) rows = [['Account', account], ['Token', token], ['Spender', reviewed.transaction.address], ['Approval amount', formatPrice(reviewed.amount, reviewed.inventory.pricing)]];
       var context = { hook: reviewed.inventory.hook, implementation: reviewed.inventory.implementation, account: account, transaction: reviewed.transaction };
-      var recovery = createBrowserWriteRecovery({ chainId: chainId, account: account, namespace: namespace(kind), safe: isSafeConnected(), call: { to: reviewed.transaction.address, data: encodeFunctionData(reviewed.transaction), value: reviewed.transaction.value || 0n } });
+      var recovery = createBrowserWriteRecovery({ chainId: chainId, account: account, namespace: namespace(kind), safe: safeRoute, call: { to: request.address, data: encodeFunctionData(request), value: request.value || 0n } });
       await recovery.withLock(function () { return new Promise(function (resolve) {
         if (recovery.read()) { error(new Error('Check the original transaction before starting this action again.')); resolve(); return; }
         var reservation = null;
@@ -119,19 +152,26 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
           busy = false; if (await refresh()) message(value); resolve();
         }
         function releaseBeforeBroadcast() { if (reservation && !reservation.hash) { recovery.rejected(); reservation = null; } }
-        executeTransaction(Object.assign({}, reviewed.transaction, {
-          tokenAddr: kind === 'mint' ? reviewed.inventory.pricing.token : undefined, spenderAddr: kind === 'mint' ? reviewed.transaction.address : undefined, approvalAmount: kind === 'mint' ? reviewed.amount : undefined,
-          onSending: function () { assertAccount(account); reservation = recovery.reserve(); },
+        executeTransaction(Object.assign({}, request, {
+          expectedSafe: safeRoute, safeSingleCall: kind === 'mint',
+          tokenAddr: kind === 'mint' && !approvalOnly ? reviewed.inventory.pricing.token : undefined, spenderAddr: kind === 'mint' && !approvalOnly ? reviewed.transaction.address : undefined, approvalAmount: kind === 'mint' && !approvalOnly ? reviewed.amount : undefined,
+          onSending: function () { assertAccount(account); if (isSafeConnected() !== safeRoute) throw new Error('Wallet route changed. Review the transaction again.'); reservation = recovery.reserve(); },
           onBeforeWriteAborted: releaseBeforeBroadcast, onWriteRejected: releaseBeforeBroadcast,
           label: label, confirmSummary: { action: label, rows: rows },
-          confirmNote: kind === 'mint' ? 'Self-payment applies the reviewed voting power recipient to ALL existing NFTs you own in the selected tiers, as well as the new NFTs.' : kind === 'cashout' ? 'The selected NFTs will be burned in exchange for the displayed reclaim and protocol rewards.' : undefined,
+          confirmNote: approvalOnly ? 'This approves token spending only. No NFTs are minted. After approval is verified, review NFT mint again to continue.' : kind === 'mint' ? 'Self-payment applies the reviewed voting power recipient to ALL existing NFTs you own in the selected tiers, as well as the new NFTs.' : kind === 'cashout' ? 'The selected NFTs will be burned in exchange for the displayed reclaim and protocol rewards.' : undefined,
           reverify: async function () { assertAccount(account); var fresh = await prepare(client, args); assertAccount(account); if (fingerprint(fresh) !== snapshot) throw new Error('NFT phase, prices, voting power recipient or cash-out quote changed. Review again.'); return { simulationBlockNumber: fresh.inventory.blockNumber }; },
-          verifyReceipt: function (receipt) { return verifyDefifaNftTransaction(client, context, receipt); },
+          verifyReceipt: async function (receipt) {
+            if (!approvalOnly) return verifyDefifaNftTransaction(client, context, receipt);
+            if (!reservation) throw new Error('Original approval reservation is unavailable.');
+            var outcome = await verifyReviewedWriteReceipt(client, reservation, receipt);
+            if (outcome !== 'success') throw new Error('Original approval failed onchain. Check the original transaction.');
+            await assertApprovalGranted(client, reservation, receipt);
+          },
           onStatus: function (value, statusKind, meta) { if (meta && meta.hash && reservation) { try { reservation = recovery.submitted(meta.hash, reservation); } catch (err) { message(err.message || String(err)); } } if (meta && meta.trackingError) finishPending(value, meta.hash); else message(value); },
           onError: function (value, meta) { if (reservation) finishPending(value, meta && meta.submittedHash); else { error(new Error(value)); resolve(); } },
           onSuccess: async function (value, meta) {
             if (!meta || meta.phase !== 'confirmed') return finishPending(value, meta && meta.safeTxHash);
-            try { if (reservation) recovery.clear(reservation); busy = false; if (await refresh()) message('NFT transaction verified onchain.'); } catch (err) { finishPending(err.message || String(err), meta.hash); } finally { resolve(); }
+            try { if (reservation) recovery.clear(reservation); busy = false; if (await refresh()) message(approvalOnly ? 'Token approval verified onchain. Review NFT mint again to continue.' : 'NFT transaction verified onchain.'); } catch (err) { finishPending(err.message || String(err), meta.hash); } finally { resolve(); }
           },
         }));
       }); });

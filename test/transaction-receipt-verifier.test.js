@@ -82,6 +82,25 @@ it.each(['account','view','route'])('refuses Safe %s changes while the final net
  if(kind==='account')h.account=args.address;else if(kind==='view')setViewAs(args.address);else h.safe=false;
  finish(8453);await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));expect(h.propose).not.toHaveBeenCalled();expect(h.wallet.writeContract).not.toHaveBeenCalled();
 });
+it('preserves ordinary Safe approval-plus-payment batches',async()=>{
+ h.safe=true;const onSuccess=vi.fn();executeTransaction({...args,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,onSuccess});
+ await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledTimes(1));expect(h.propose.mock.calls[0][0]).toHaveLength(2);
+});
+it('proposes only the native requested call after sufficient separate approval',async()=>{
+ h.safe=true;h.client.readContract=vi.fn(async()=>10n);const onSuccess=vi.fn();
+ executeTransaction({...args,expectedSafe:true,safeSingleCall:true,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,onSuccess});
+ await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledTimes(1));expect(h.propose.mock.calls[0][0]).toHaveLength(1);
+ expect(h.client.readContract).toHaveBeenCalledWith(expect.objectContaining({functionName:'allowance',args:[h.account,args.address]}));
+});
+it('does not reserve or propose native payment before the separate approval is verified',async()=>{
+ h.safe=true;h.client.readContract=vi.fn(async()=>0n);const onSending=vi.fn(),onError=vi.fn();
+ executeTransaction({...args,expectedSafe:true,safeSingleCall:true,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,onSending,onError});
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalled());expect(h.propose).not.toHaveBeenCalled();expect(onSending).not.toHaveBeenCalled();
+});
+it('does not change a saved direct route into a Safe proposal during review',async()=>{
+ h.safe=true;const onError=vi.fn(),onSending=vi.fn();executeTransaction({...args,expectedSafe:false,onSending,onError});
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith('Wallet route changed. Review the transaction again.'));expect(h.propose).not.toHaveBeenCalled();expect(onSending).not.toHaveBeenCalled();
+});
 
 it('rechecks reviewed context after a confirmed approval and refuses the NFT send if it changed',async()=>{
  h.client.readContract=vi.fn(async call=>call.blockNumber==null?0n:10n);
