@@ -1462,6 +1462,11 @@ export function executeTransaction(opts) {
   var submittedHash = null;
   var reverifiedBlock = null;
   var beforeWriteComplete = false, walletInvoked = false;
+  function assertWalletInvocation(expectedSafe) {
+    if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
+    if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+    if (isSafeConnected() !== expectedSafe) throw new Error('Wallet route changed. Review the transaction again.');
+  }
   async function reportWriteBoundaryFailure(err) {
     var callback = beforeWriteComplete && !walletInvoked ? opts.onBeforeWriteAborted : null;
     if (walletInvoked && !submittedHash) {
@@ -1502,8 +1507,8 @@ export function executeTransaction(opts) {
       cbs.onStatus('Proposing to your Safe…', 'pending');
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
-      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-      if (!isSafeConnected()) throw new Error('Safe connection changed. Review the transaction again.');
+      if (await wallet.getChainId() !== opts.chainId) throw new Error('Wallet network changed. Review the transaction again.');
+      assertWalletInvocation(true);
       walletInvoked = true;
       return proposeSafeTransactions(txs).then(function (safeTxHash) {
         cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
@@ -1560,8 +1565,8 @@ export function executeTransaction(opts) {
       var gas = await contractGasWithHeadroom(pub, simulation.request);
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
-      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
       if (opts.onSending && await wallet.getChainId() !== opts.chainId) throw new Error('Wallet network changed. Review the transaction again.');
+      assertWalletInvocation(false);
       walletInvoked = true;
       return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
     });

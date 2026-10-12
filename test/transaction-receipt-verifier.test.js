@@ -1,10 +1,11 @@
 import {beforeEach,expect,it,vi} from 'vitest';
-const h=vi.hoisted(()=>({wallet:null,client:null,safe:false,propose:vi.fn()}));
-vi.mock('../src/wallet.js',async original=>({...await original(),getAccount:()=> '0x1111111111111111111111111111111111111111',getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>h.safe,proposeSafeTransactions:(txs)=>h.propose(txs),waitForSafeInitialization:async()=>{}}));
+const h=vi.hoisted(()=>({wallet:null,client:null,safe:false,account:'0x1111111111111111111111111111111111111111',propose:vi.fn()}));
+vi.mock('../src/wallet.js',async original=>({...await original(),getAccount:()=>h.account,getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>h.safe,proposeSafeTransactions:(txs)=>h.propose(txs),waitForSafeInitialization:async()=>{}}));
+import {setViewAs,clearViewAs} from '../src/view-as.js';
 import {executeTransaction} from '../src/component-base.js';
 const hash='0x'+'a'.repeat(64),receipt={status:'success',blockNumber:10n,transactionHash:hash};
 const args={chainId:8453,address:'0x2222222222222222222222222222222222222222',abi:[{type:'function',name:'noop',inputs:[],outputs:[],stateMutability:'nonpayable'}],functionName:'noop',args:[],skipConfirm:true};
-beforeEach(()=>{h.safe=false;h.propose=vi.fn(async()=>hash);h.wallet={getChainId:vi.fn(async()=>8453),writeContract:vi.fn(async()=>hash)};h.client={simulateContract:vi.fn(async request=>({request})),estimateContractGas:vi.fn(async()=>100n),getTransactionReceipt:vi.fn(async()=>receipt)};});
+beforeEach(()=>{clearViewAs();h.account='0x1111111111111111111111111111111111111111';h.safe=false;h.propose=vi.fn(async()=>hash);h.wallet={getChainId:vi.fn(async()=>8453),writeContract:vi.fn(async()=>hash)};h.client={simulateContract:vi.fn(async request=>({request})),estimateContractGas:vi.fn(async()=>100n),getTransactionReceipt:vi.fn(async()=>receipt)};});
 it('awaits optional effect verification before reporting success',async()=>{
  let finish;const verifyReceipt=vi.fn(()=>new Promise(resolve=>finish=resolve)),onSuccess=vi.fn();
  executeTransaction({...args,verifyReceipt,onSuccess});
@@ -62,6 +63,24 @@ it('releases only explicit wallet refusal and retains an ambiguous wallet answer
  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
  executeTransaction({...args,onSending:async()=>{},onWriteRejected,onError});
  await vi.waitFor(()=>expect(onError).toHaveBeenCalledTimes(2));expect(onWriteRejected).toHaveBeenCalledTimes(1);
+});
+it.each(['account','view','route'])('refuses %s changes while the final network read is pending',async(kind)=>{
+ let finish;h.wallet.getChainId.mockResolvedValueOnce(8453).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));
+ const onBeforeWriteAborted=vi.fn(),onError=vi.fn();executeTransaction({...args,onSending:async()=>{},onBeforeWriteAborted,onError});
+ await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));
+ if(kind==='account')h.account=args.address;else if(kind==='view')setViewAs(args.address);else h.safe=true;
+ finish(8453);await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));expect(h.wallet.writeContract).not.toHaveBeenCalled();expect(h.propose).not.toHaveBeenCalled();
+});
+it('does not propose a prepared call on a different Safe chain',async()=>{
+ h.safe=true;h.wallet.getChainId.mockResolvedValue(1);const onBeforeWriteAborted=vi.fn(),onError=vi.fn();
+ executeTransaction({...args,onSending:async()=>{},onBeforeWriteAborted,onError});
+ await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));expect(h.propose).not.toHaveBeenCalled();expect(h.wallet.writeContract).not.toHaveBeenCalled();
+});
+it.each(['account','view','route'])('refuses Safe %s changes while the final network read is pending',async(kind)=>{
+ h.safe=true;let finish;h.wallet.getChainId.mockImplementation(()=>new Promise(resolve=>finish=resolve));const onBeforeWriteAborted=vi.fn();
+ executeTransaction({...args,onSending:async()=>{},onBeforeWriteAborted});await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));
+ if(kind==='account')h.account=args.address;else if(kind==='view')setViewAs(args.address);else h.safe=false;
+ finish(8453);await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));expect(h.propose).not.toHaveBeenCalled();expect(h.wallet.writeContract).not.toHaveBeenCalled();
 });
 
 it('rechecks reviewed context after a confirmed approval and refuses the NFT send if it changed',async()=>{
