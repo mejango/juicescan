@@ -51,15 +51,20 @@ test('protocol identification gates visible controls and preserves ordinary paym
   await page.addScriptTag({ url: '/inventory-controls.js', type: 'module' });
   await page.evaluate(() => { window.inventoryPromise = new Promise(resolve => window.resolveIdentity = resolve); window.renderControls(501); });
   await expect(page.locator('.paybox-amount-row')).toBeHidden();
+  await expect(page.locator('.paybox-memo')).toBeHidden();
+  await expect(page.locator('.paybox-feedback')).toBeHidden();
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeHidden();
   await page.evaluate(() => window.resolveIdentity({ protocol: 'jb721' }));
   await expect(page.locator('.paybox-amount-row')).toBeVisible();
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeVisible();
   await expect(page.getByText(/Resolver unavailable/).first()).toBeVisible();
   await page.evaluate(() => { window.inventoryPromise = Promise.resolve({ protocol: 'defifa', hook: '0x123', pricing: { currency: 61166, decimals: 18 }, blockNumber: 1n, phase: 1, tiers: [], nextStartingId: null }); window.renderControls(502); });
-  await expect(page.getByText('Defifa NFT transactions are not supported in this interface.', {exact:true})).toBeVisible();
+  await expect(page.locator('.paybox-mode')).toHaveValue('addbalance');
+  await expect(page.locator('.paybox-mode option[value="pay"]')).toHaveCount(0);
+  await expect(page.getByRole('button', {name:'Add',exact:true})).toBeVisible();
+  await expect(page.locator('.paybox-memo')).toBeVisible();
   await expect(page.locator('a[href*="metalog.money"]')).toHaveCount(0);
-  await expect(page.locator('.paybox-amount-row')).toBeHidden();
+  await expect(page.locator('.paybox-amount-row')).toBeVisible();
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeHidden();
 });
 

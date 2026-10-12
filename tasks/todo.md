@@ -133,3 +133,22 @@ User requested no visible middot separators, a plain Onchain ranges caption, and
 - **Evidence and unknowns:** Nonnumeric names and mixed prices must render unchanged. The hidden inventory block enables release proof without technical caption text. Existing ordinary JB721 behavior remains covered.
 - **Verification:** Run focused native/control/copy tests, source/transaction checks, complete required npm check and final hosted CI. Root verifies published source and desktop/mobile after coordinated release.
 - **Resource budget:** Remove all curve request, asset and budget additions. Measure any remaining generic-flavor growth with pinned Node22.23.1 and keep enforced narrow ceilings. No new chain scans or public writes.
+
+## Defifa basic Juicebox actions (2026-10-12)
+
+## Plan refinement
+- **Objective:** Make verified Defifa projects usable for ordinary Add to balance, remove inactive payment fragments, then integrate generic native NFT checkout/transfer/cashout without Metalog-specific data or public wallet writes.
+- **System fit:** Existing SDK owns identity and protocol metadata; Juicescan owns rendering and existing terminal/accounting/simulation/review/receipt execution. Defifa mint and cashout require native calldata, while Add to balance is independent of NFT minting.
+- **Reuse and simplicity:** Preserve the existing Add-to-balance transaction builder and quote/review protections. Keep genericPay false and scope its guard to actual generic Pay. Reuse the forthcoming SDK native encoder instead of copying Metalog.
+- **Evidence and unknowns:** Baseline origin/main95cdc21 is clean; prior blanket native guards prevent Add to balance and leave memo/feedback visible. Native mint delegate defaults, phase, ownership and exact prices must be checked before subsequent integration.
+- **Verification:** Focused control/action regressions prove unknown/error states hide all unused controls, verified Defifa exposes Add to balance, and generic Pay remains blocked. Required full checks and native simulated/reviewed action tests precede publication; no public wallet execution.
+- **Resource budget:** Separate clean worktree preserves parent drafts. Finish basic-funds/UI behavior separately before native NFT integration. Use focused tests while iterating, one required full check after final source freeze, and coordinate SDK ownership.
+
+- [ ] Enable verified native Add to balance using existing execution owner and clean unused fragments.
+- [ ] Prove focused UI/action guard and ordinary/Revnet parity.
+- [ ] Integrate shared SDK native NFT actions with fresh identity/phase/price/ownership simulation.
+- [ ] Run required checks and independent review before release.
+
+Basic-funds review: focused 35 tests across inventory-controls, nft-inventory and discover-calldata-gaps pass on Node22.23.1; source syntax gate280 passes; ten focused desktop/mobile native browser cases pass. Unknown identity hides unused fields; verified native exposes Add to balance and keeps incompatible Pay guarded. No public wallet writes. Required final full checks/publication remain pending after shared native NFT integration.
+
+Review correction: payment mode is validated as exactly Pay or Add to balance before any protocol guard or calldata preparation. Empty/unknown forged select values fail closed; focused suite now37 tests. Shared hook metadata decoder refactor preserves the installed SDK2.28 generic shop/swap/buyback/redemption outputs and passes existing10 review decoder tests plus source280 gate before native decoder changes.

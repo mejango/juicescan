@@ -14,24 +14,36 @@ it('withholds generic payment and manager controls while identification is pendi
   const p = project(401); document.body.append(renderPayCard(p), renderShopSection(p));
   expect(document.querySelector('.paybox-amount-row').hidden).toBe(true);
   expect(document.querySelector('.paybox-top').hidden).toBe(true);
+  expect(document.querySelector('.paybox-memo').hidden).toBe(true);
+  expect(document.querySelector('.paybox-feedback').hidden).toBe(true);
   expect([...document.querySelectorAll('button')].find(x => x.textContent === '+ Add manager').hidden).toBe(true);
   reject(new Error('RPC rate limit'));
   await vi.waitFor(() => expect(document.body.textContent).toContain('RPC rate limit'));
   expect(document.querySelector('.paybox-amount-row').hidden).toBe(true);
   expect(document.querySelector('.paybox-top').hidden).toBe(true);
+  expect(document.querySelector('.paybox-memo').hidden).toBe(true);
+  expect(document.querySelector('.paybox-feedback').hidden).toBe(true);
 });
 it('restores ordinary payment controls after verified absence of an NFT hook', async () => {
   runtime.read.mockResolvedValue(null); document.body.append(renderPayCard(project(402)));
   await vi.waitFor(() => expect(document.querySelector('.paybox-amount-row').hidden).toBe(false));
   expect(document.querySelector('.paybox-top').hidden).toBe(false);
 });
-it('native identification keeps generic controls hidden without assigning application identity', async () => {
+it('native identification exposes Add to balance without allowing incompatible generic Pay', async () => {
   runtime.read.mockResolvedValue({ protocol: 'defifa', hook: '0x123', pricing: { currency: 61166, decimals: 18 }, blockNumber: 1n, phase: 1, tiers: [], nextStartingId: null });
   document.body.append(renderPayCard(project(403)));
-  await vi.waitFor(() => expect(document.body.textContent).toContain('Defifa NFT transactions are not supported'));
+  await vi.waitFor(() => expect(document.querySelector('.paybox-mode').value).toBe('addbalance'));
+  expect([...document.querySelectorAll('.paybox-mode option')].map(x=>x.value)).toEqual(['addbalance']);
+  expect(document.querySelector('.paybox-btn').textContent).toBe('Add');
+  expect(document.body.textContent).not.toContain('Defifa NFT transactions are not supported');
   expect(document.querySelector('a[href*="metalog.money"]')).toBeNull();
-  expect(document.querySelector('.paybox-amount-row').hidden).toBe(true);
-  expect(document.querySelector('.paybox-top').hidden).toBe(true);
+  expect(document.querySelector('.paybox-amount-row').hidden).toBe(false);
+  expect(document.querySelector('.paybox-top').hidden).toBe(false);
+  expect(document.querySelector('.paybox-memo').hidden).toBe(false);
+  expect(document.querySelector('.paybox-feedback').hidden).toBe(false);
+  const mode=document.querySelector('.paybox-mode');const stalePay=document.createElement('option');stalePay.value='pay';mode.appendChild(stalePay);mode.value='pay';mode.dispatchEvent(new Event('change'));
+  document.querySelector('.paybox-btn').click();
+  await vi.waitFor(()=>expect(document.querySelector('.paybox-status').textContent).toContain('Defifa NFT transactions are not supported'));
 });
 it('keeps plain JB721 payment available when optional shop detail reads fail', async () => {
   runtime.read.mockImplementation((client, args) => args.tierLimit === 1 ? Promise.resolve({ protocol: 'jb721' }) : Promise.reject(new Error('Resolver unavailable')));
@@ -106,4 +118,14 @@ it('marks registry failures unverified, evicts them and preserves genuinely unkn
   const next = await inspectProjectContractsOnChain(project(410), { id: 8453 });
   expect(next.failed).toBeUndefined(); expect(next.unknown).toHaveLength(1); expect(next.unknown[0].address).toBe(hook);
   expect(registry).toHaveBeenCalledTimes(2);
+});
+
+it.each(['', 'unknown'])('rejects an invalid payment mode %s before preparing any transaction', async value => {
+  runtime.read.mockResolvedValue({ protocol:'defifa',hook:'0x123',pricing:{currency:61166,decimals:18},blockNumber:1n,phase:1,tiers:[],nextStartingId:null });
+  document.body.append(renderPayCard(project(value ? 414 : 413)));
+  await vi.waitFor(()=>expect(document.querySelector('.paybox-mode').value).toBe('addbalance'));
+  const mode=document.querySelector('.paybox-mode'),invalid=document.createElement('option');invalid.value=value;mode.appendChild(invalid);mode.value=value;mode.dispatchEvent(new Event('change'));
+  runtime.read.mockClear();document.querySelector('.paybox-btn').click();
+  await vi.waitFor(()=>expect(document.querySelector('.paybox-status').textContent).toBe('Choose Pay or Add to balance.'));
+  expect(runtime.read).not.toHaveBeenCalled();
 });

@@ -124,3 +124,15 @@ it.each([false, true])('does not let an older page overwrite verified flavor aft
   await expect(first).rejects.toThrow('Older page failed');
   expect(document.querySelector('[data-project-flavor]').textContent).toBe('Defifa');
 });
+
+
+it('uses native NFT participation labels without hiding independently existing ERC20 details', async () => {
+ const {projectTokenType,rememberProjectInventory}=await import('../src/nft-inventory.js');
+ const project={id:27,chainId:8453};
+ document.body.innerHTML='<span data-project-token-type="8453:27">Credits</span>';
+ rememberProjectInventory(project,native);
+ expect(projectTokenType(project)).toBe('NFTs');
+ expect(document.querySelector('[data-project-token-type]').textContent).toBe('NFTs');
+ expect(projectTokenType({...project,tokenAddress:'0x123'})).toBe('ERC-20');
+ expect(projectTokenType({id:28,chainId:8453})).toBe('Credits');
+});

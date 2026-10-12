@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
+import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
@@ -3774,9 +3774,7 @@ function renderPayShopStrip(project, cart, opts) {
     if (opts.onShop) opts.onShop(shop);
     if (!shop) return;
     if (isNativeInventory(shop)) {
-      wrap.style.display = '';
-      var note = document.createElement('p'); note.textContent = nativeActionUnavailable;
-      wrap.appendChild(note); return;
+      return;
     }
     if (!shop.tiers.length) return;
     wrap.style.display = '';
@@ -9709,9 +9707,17 @@ export function renderPayCard(project, cart) {
   card.appendChild(renderPayShopStrip(project, cart, {
     onIdentity: function (shop) {
       state.shop = shop; state.inventoryKnown = true;
-      amountRow.hidden = isNativeInventory(shop); topRow.hidden = isNativeInventory(shop);
+      amountRow.hidden = false; topRow.hidden = false; memo.hidden = false; feedback.hidden = false;
+      if (isNativeInventory(shop)) {
+        state.mode = 'addbalance';
+        var payOption = modeSel.querySelector('option[value="pay"]');
+        if (payOption) payOption.remove();
+        modeSel.value = state.mode; sizeSelectToText(modeSel); updateModeUi();
+        var countdown = card.querySelector('.paybox-countdown'); if (countdown) countdown.remove();
+      } else if (!modeSel.querySelector('option[value="pay"]')) {
+        var ordinaryPay = document.createElement('option'); ordinaryPay.value = 'pay'; ordinaryPay.textContent = 'Pay'; modeSel.prepend(ordinaryPay);
+      }
       status.textContent = '';
-      if (isNativeInventory(shop)) return;
       loadAcceptedTokens(state.chainId); loadPaymentSurface(state.chainId);
     },
     onShop: function (shop) {
@@ -9725,7 +9731,7 @@ export function renderPayCard(project, cart) {
       var retry = el('button'); retry.type = 'button'; retry.textContent = 'Retry';
       retry.addEventListener('click', function () {
         retry.disabled = true;
-        state.inventoryKnown = false; amountRow.hidden = true; topRow.hidden = true;
+        state.inventoryKnown = false; amountRow.hidden = true; topRow.hidden = true; memo.hidden = true; feedback.hidden = true;
         retryRead();
       }); status.appendChild(retry);
     },
@@ -9810,7 +9816,7 @@ export function renderPayCard(project, cart) {
       if (payBtn) payBtn.disabled = true;
       return;
     }
-    if (payBtn && startsAt <= Math.floor(Date.now() / 1000)) payBtn.disabled = false;
+    if (payBtn && (state.mode === 'addbalance' || startsAt <= Math.floor(Date.now() / 1000))) payBtn.disabled = false;
     if (shownTokens.length > 1) {
       var sel = el('select', 'paybox-select');
       // Value by INDEX (not address) — a project can offer the same address both directly and via-router, and
@@ -9862,20 +9868,21 @@ export function renderPayCard(project, cart) {
 
   // Reflect the selected action across the button label (Pay → Add) and feedback. NFTs only mint on a Pay.
   function updateModeUi() {
-    if (startsAt > Math.floor(Date.now() / 1000)) { payBtn.textContent = 'Not started'; renderFeedback(); return; }
+    if (state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { payBtn.textContent = 'Not started'; renderFeedback(); return; }
+    if (state.mode === 'addbalance') { payBtn.disabled = false; payBtn.classList.remove('paybox-btn-idle'); }
     payBtn.textContent = state.mode === 'addbalance' ? 'Add' : 'Pay';
     renderFeedback();
   }
 
   // Memo — subtle, optional, directly under the amount/Pay row.
-  var memo = el('input', 'paybox-memo');
+  var memo = el('input', 'paybox-memo'); memo.hidden = true;
   memo.type = 'text';
   memo.placeholder = 'Add a note (optional)';
   memo.addEventListener('input', function () { state.memo = memo.value; });
   card.appendChild(memo);
 
   // Feedback block — "You get" / routing tag / AMM subtext / "Splits get".
-  var feedback = el('div', 'paybox-feedback');
+  var feedback = el('div', 'paybox-feedback'); feedback.hidden = true;
   card.appendChild(feedback);
 
   var status = el('div', 'paybox-status');
@@ -10132,7 +10139,7 @@ export function renderPayCard(project, cart) {
   }
 
   function schedulePreview() {
-    if (!state.inventoryKnown || isNativeInventory(state.shop)) return;
+    if (!state.inventoryKnown || (isNativeInventory(state.shop) && state.mode === 'pay')) return;
     if (previewTimer) clearTimeout(previewTimer);
     state.payAfterPreview = false;
     state.preview = null;
@@ -10203,6 +10210,8 @@ export function renderPayCard(project, cart) {
 
   function loadPreview() {
     if (!state.amount || !state.token) return;
+    // Direct top-ups do not run the pay hook and do not mint project tokens.
+    if (isNativeInventory(state.shop) && state.mode === 'addbalance' && !state.token.viaRouter) { state.phase = 'ready'; renderFeedback(); return; }
     var amt;
     try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { return; }
     var previewTierIds = state.mode === 'pay' ? selectedTierIds() : [];
@@ -10277,11 +10286,14 @@ export function renderPayCard(project, cart) {
   async function doPay() {
     status.className = 'paybox-status';
     status.textContent = '';
+    if (state.mode !== 'pay' && state.mode !== 'addbalance') { status.textContent = 'Choose Pay or Add to balance.'; return; }
     if (!state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Reload to try again.'; return; }
-    if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable; return; }
-    try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
+    if (state.mode === 'pay') {
+      if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable; return; }
+      try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
+    }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
-    if (startsAt > Math.floor(Date.now() / 1000)) { return; }
+    if (state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { return; }
     if (!state.contextsReady) { status.textContent = state.contextsError ? 'Could not verify the project’s accepted tokens.' : 'Accepted tokens are still loading…'; return; }
     if (state.amount === '' || !state.token) { status.textContent = selectedTierIds().length ? 'No supported payment currency is available for these items.' : 'Enter an amount'; return; }
     var amt;
@@ -11162,7 +11174,8 @@ function renderOtherInfoPanel(project) {
     grid.appendChild(infoItem('Token address', fullAddressNode(project.tokenAddress)));
     grid.appendChild(infoItem('Token type', 'ERC-20'));
   } else {
-    grid.appendChild(infoItem('Token type', 'Credits'));
+    var type = el('span'); type.textContent = projectTokenType(project); type.dataset.projectTokenType = Number(project.chainId) + ':' + BigInt(project.id);
+    grid.appendChild(infoItem('Token type', type));
   }
 
   // Operator/owner — ENS-resolved, with a transfer CTA below (revnets only — REVOwner.setOperatorOf).

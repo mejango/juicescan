@@ -35,8 +35,13 @@ export function isNativeInventory(inventory) { return !!inventory && inventory.p
 export function projectFlavor(project) {
   return project.isRevnet ? 'REVNET' : project.nftIdentityStatus === 'checking' ? 'Checking' : project.nftIdentityStatus === 'error' ? 'Unverified' : project.nftInventoryProtocol === 'defifa' ? 'Defifa' : 'CUSTOM';
 }
+export function projectTokenType(project) {
+  if (project.tokenAddress) return 'ERC-20';
+  return project.nftIdentityStatus === 'checking' ? 'Checking' : project.nftIdentityStatus === 'error' ? 'Unverified' : project.nftInventoryProtocol === 'defifa' ? 'NFTs' : 'Credits';
+}
 function updateProjectFlavor(project) {
   if (typeof document !== 'undefined') document.querySelectorAll('[data-project-flavor]').forEach(function (node) { if (node.dataset.projectFlavor === Number(project.chainId) + ':' + BigInt(project.id)) node.textContent = projectFlavor(project); });
+  if (typeof document !== 'undefined') document.querySelectorAll('[data-project-token-type]').forEach(function (node) { if (node.dataset.projectTokenType === Number(project.chainId) + ':' + BigInt(project.id)) node.textContent = projectTokenType(project); });
 }
 export function rememberProjectInventory(project, inventory) {
   project.nftIdentityStatus = 'verified';
