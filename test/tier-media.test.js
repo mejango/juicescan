@@ -21,6 +21,41 @@ describe('shop tier media rendering', () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(['thumb', 'full', 'detail'])('restores the placeholder after image candidates fail in %s', async mode => {
+    const container = document.createElement('div');
+    container.innerHTML = '<span class="shop-tier-ph">#2</span>';
+    renderTierMediaInto(container, { image: 'data:image/svg+xml;base64,YnJva2Vu' }, 'Blue Team', mode);
+    const image = container.querySelector('img');
+    image.dispatchEvent(new Event('error'));
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('.shop-tier-ph').textContent).toBe('#2');
+  });
+
+  it('provides a named fallback for selected thumbnails and ignores stale image errors', () => {
+    const container = document.createElement('div');
+    renderTierMediaInto(container, { image: 'data:image/svg+xml;base64,YnJva2Vu' }, 'Blue Team', 'thumb');
+    const stale = container.querySelector('img');
+    renderTierMediaInto(container, { image: 'data:image/svg+xml;base64,Z29vZA==' }, 'Orange Team', 'thumb');
+    const current = container.querySelector('img');
+    stale.dispatchEvent(new Event('error'));
+    expect(container.querySelector('img')).toBe(current);
+    current.dispatchEvent(new Event('error'));
+    expect(container.textContent).toBe('Orange Team');
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  it('keeps the image while an IPFS retry remains, then restores its fallback', async () => {
+    const container = document.createElement('div');
+    renderTierMediaInto(container, { image: 'ipfs://bafyimage/image.png' }, 'Blue Team', 'thumb');
+    const image = container.querySelector('img');
+    await vi.waitFor(() => expect(image.getAttribute('src')).toBeTruthy());
+    let attempts = 0;
+    while (container.querySelector('img') && attempts++ < 10) image.dispatchEvent(new Event('error'));
+    expect(attempts).toBeGreaterThan(1);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.textContent).toBe('Blue Team');
+  });
+
   it('loads visible video previews lazily through eth.sucks and falls back on error', () => {
     const container = document.createElement('div');
     expect(renderTierMediaInto(container, {

@@ -1433,12 +1433,18 @@ function activateTierVideo(video, media, mode) {
 
 // Render a tier's media (any file type) into `container`. mode 'full' (card), 'detail', or 'thumb'.
 export function renderTierMediaInto(container, m, alt, mode) {
+  var placeholder = container.querySelector('.shop-tier-ph');
   container.innerHTML = '';
   var kind = tierMediaKind(m);
   if (!kind) return false;
   var media = m.animationUrl || m.image;
   if (kind === 'image') {
-    var img = document.createElement('img'); img.loading = 'lazy'; img.addEventListener('load', function () { removeLightEdgeMatteFromImage(img); }); setMediaSource(img, m.image || media); img.alt = alt || ''; container.appendChild(img); return true;
+    var img = document.createElement('img'); img.loading = 'lazy'; img.addEventListener('load', function () { removeLightEdgeMatteFromImage(img); }); setMediaSource(img, m.image || media, function () {
+      if (img.parentNode !== container) return;
+      var fallback = placeholder || el('span', 'shop-tier-ph');
+      if (!placeholder) fallback.textContent = alt || 'Image unavailable';
+      container.replaceChildren(fallback);
+    }); img.alt = alt || ''; container.appendChild(img); return true;
   }
   if (kind === 'video') {
     var v = document.createElement('video');
@@ -1550,7 +1556,7 @@ function renderDefifaActionsForProject(project, inventory, options) {
     var fresh = Object.assign({}, inventory.pricing, pricing || {});
     if (pricing && (Number(pricing.currency) !== Number(inventory.pricing.currency) || Number(pricing.decimals) !== Number(inventory.pricing.decimals) || String(pricing.token).toLowerCase() !== String(inventory.pricing.token).toLowerCase())) fresh.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
     return formatShopPrice(Object.assign({}, inventory, { pricing: fresh }), price, project.chainId);
-  }, options);
+  }, Object.assign({}, options, { renderMedia: renderTierMediaInto }));
 }
 
 export function renderShopSection(project, shop, cart) {
@@ -10041,7 +10047,7 @@ export function renderPayCard(project, cart) {
       var plus = el('span', 'paybox-nft-plus'); plus.textContent = '+'; row.appendChild(plus);
       var thumb = el('span', 'paybox-nft-thumb');
       var url = cart.image(s.id);
-      if (url) { var im = document.createElement('img'); im.loading = 'lazy'; im.src = url; im.alt = s.name; thumb.appendChild(im); }
+      if (url) renderTierMediaInto(thumb, { image: url }, s.name, 'thumb');
       row.appendChild(thumb);
       var label = el('span', 'paybox-nft-label'); label.textContent = s.name + (s.qty > 1 ? ' ×' + s.qty : ''); row.appendChild(label);
       box.appendChild(row);

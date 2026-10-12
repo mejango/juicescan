@@ -17,3 +17,5 @@
 - **Qualify action-absence regressions in a phase where the old action would exist.** A closed mint phase cannot prove removal of a duplicate mint form. Revert the owning caller and confirm the regression fails, then restore it; source review and passing fixtures alone do not prove the gate catches the bug. (2026-10-12, Cash out presentation review.)
 
 - **Connection is part of the draft lifecycle.** Never restore values captured before an awaited wallet connection over edits made while it waits. Preserve the existing visible draft through redraws and prepare from its latest getter; event and no-event regressions enforce this without another state machine. (2026-10-12, shared checkout connection review.)
+
+- **Successful metadata does not prove decodable artwork.** Creator SVG can contain malformed XML despite a valid data URI. Keep gateway retries in the shared media source owner, then restore a placeholder on final image failure across cards and selected thumbnails; never leave a broken icon or rewrite creator SVG to claim success. Real-browser malformed XML and stale-image error regressions enforce this. (2026-10-12, native checkout live qualification.)

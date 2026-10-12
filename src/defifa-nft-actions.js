@@ -234,7 +234,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
         text(line, 'span', '+').className = 'paybox-nft-plus';
         var thumb = document.createElement('span'); thumb.className = 'paybox-nft-thumb'; line.appendChild(thumb);
         var imageUrl = options.cart.image(id);
-        if (imageUrl) { var image = document.createElement('img'); image.src = imageUrl; image.alt = options.cart.name(id) || 'NFT ' + id; image.loading = 'lazy'; thumb.appendChild(image); }
+        if (imageUrl && options.renderMedia) options.renderMedia(thumb, { image: imageUrl }, options.cart.name(id) || 'NFT ' + id, 'thumb');
         var tier = current.tiers.find(function (item) { return BigInt(item.id) === BigInt(id); });
         text(line, 'span', (options.cart.name(id) || (tier && tier.name) || 'NFT ' + id) + (entries[id] > 1 ? ' ×' + entries[id] : '')).className = 'paybox-nft-label';
       });
