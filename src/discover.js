@@ -9704,16 +9704,20 @@ export function renderPayCard(project, cart) {
   // Both the strip and the Shop tab share `cart`; keep the pay amount/feedback in sync with either.
   cart.subscribe(function () { onNftChange(); });
   cart.onName(function () { renderFeedback(); });
+  function showFundingOnly() {
+    state.mode = 'addbalance';
+    var payOption = modeSel.querySelector('option[value="pay"]');
+    if (payOption) payOption.remove();
+    amountRow.hidden = false; topRow.hidden = false; memo.hidden = false; feedback.hidden = false;
+    modeSel.value = state.mode; sizeSelectToText(modeSel); updateModeUi();
+    var countdown = card.querySelector('.paybox-countdown'); if (countdown) countdown.remove();
+  }
   card.appendChild(renderPayShopStrip(project, cart, {
     onIdentity: function (shop) {
       state.shop = shop; state.inventoryKnown = true;
       amountRow.hidden = false; topRow.hidden = false; memo.hidden = false; feedback.hidden = false;
       if (isNativeInventory(shop)) {
-        state.mode = 'addbalance';
-        var payOption = modeSel.querySelector('option[value="pay"]');
-        if (payOption) payOption.remove();
-        modeSel.value = state.mode; sizeSelectToText(modeSel); updateModeUi();
-        var countdown = card.querySelector('.paybox-countdown'); if (countdown) countdown.remove();
+        showFundingOnly();
       } else if (!modeSel.querySelector('option[value="pay"]')) {
         var ordinaryPay = document.createElement('option'); ordinaryPay.value = 'pay'; ordinaryPay.textContent = 'Pay'; modeSel.prepend(ordinaryPay);
       }
