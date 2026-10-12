@@ -1711,16 +1711,21 @@ export function waitForTrackedTransactionReceipt(client, hash, walletOverride, e
   return client.waitForTransactionReceipt({ hash: hash, timeout: 240000 });
 }
 
-export async function waitForErc20Approval(client, hash, tokenAddr, owner, spender, amount) {
-  var receipt = await waitForTrackedTransactionReceipt(client, hash);
-  if (!receipt || receipt.status !== 'success') throw new Error('Token approval reverted onchain. Nothing else was sent.');
-  var allowance = await client.readContract({
+export function readErc20Allowance(client, tokenAddr, owner, spender, blockNumber) {
+  var request = {
     address: tokenAddr,
     abi: erc20AllowanceAbi,
     functionName: 'allowance',
     args: [owner, spender],
-    blockNumber: receipt.blockNumber,
-  });
+  };
+  if (blockNumber != null) request.blockNumber = blockNumber;
+  return client.readContract(request);
+}
+
+export async function waitForErc20Approval(client, hash, tokenAddr, owner, spender, amount) {
+  var receipt = await waitForTrackedTransactionReceipt(client, hash);
+  if (!receipt || receipt.status !== 'success') throw new Error('Token approval reverted onchain. Nothing else was sent.');
+  var allowance = await readErc20Allowance(client, tokenAddr, owner, spender, receipt.blockNumber);
   if (BigInt(allowance) < BigInt(amount)) throw new Error('Token approval confirmed but did not grant the reviewed amount. Nothing else was sent.');
   return receipt;
 }
@@ -1733,12 +1738,7 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
   // `allowance` on the native pseudo-address reverts with "returned no data (0x)".
   if (!tokenAddr || tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || tokenAddr === ZERO_ADDRESS) return Promise.resolve();
 
-  return pub.readContract({
-    address: tokenAddr,
-    abi: erc20AllowanceAbi,
-    functionName: 'allowance',
-    args: [owner, spender],
-  }).then(function(allowance) {
+  return readErc20Allowance(pub, tokenAddr, owner, spender).then(function(allowance) {
     if (BigInt(allowance) >= BigInt(amount)) return;
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     onStatus('Approving token spend…', 'pending');
