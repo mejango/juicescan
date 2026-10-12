@@ -203,3 +203,19 @@ Official final bundle measures 10,594,759 B app raw / 1,537,367 B app gzip and 2
 Three real viem HTTP regressions fail on the original dedicated provider and pass with the shared client, including normalized forward/reverse resolution, cache/alias behavior and explicit custom RPC isolation. Required npm check passes on Node22.23.1/npm10.9.8: 1,928 unit tests, 116 browser cases, production audit, source/deployment/generated/schema/transaction and bundle gates. Bundle decreases to 10,594,623 B app raw / 1,537,295 B app gzip and 2,309,470 B total gzip, with unchanged caps. Evidence: /tmp/juicescan-center-ens-before.log and /tmp/juicescan-center-ens-check.log.
 
 Native action, inventory, identity and transaction-engine source files are byte-equivalent to approved75f0553. Root reviewed the narrow transport change. Hosted CI, exact merged publication/byte proof, Center directory update and narrow actual forward/reverse/connected-wallet verification remain release gates; the completed native production proof is retained. No public wallet writes.
+
+
+## Shared Defifa checkout presentation
+
+## Plan refinement
+- **Objective:** Defifa NFT checkout uses the same visible Shop preview, tier cards, synchronized cart and Pay-card layout as ordinary collections, while retaining native phase, exact-price, delegation and transaction evidence requirements.
+- **System fit:** discover owns makeNftCart, makePayShopItem, renderTierCard and the Pay/Shop layout; defifa-nft-actions owns SDK preparation, review, durable recovery, successive Safe approval and canonical receipt verification. Connect existing selection to that adapter without generic native calldata.
+- **Reuse and simplicity:** Reuse existing presentation functions directly with a native display adaptation and mint-only/holdings-only adapter options. Avoid copying the ordinary transaction engine or building another cart. If a clean shared owner is missing, extract behavior unchanged in a separately checked commit before changing presentation.
+- **Evidence and unknowns:** Current native strip prematurely returns one Choose NFTs link from a tierLimit1 identity; the Shop uses independent quantity fields. Full SDK inventory is already owned by fetchProjectTiers. Native metadata supplies actual names, mixed prices, supplies and phase, not Metalog identity or curve evidence.
+- **Verification:** Prove ordinary preview/card parity, native complete tier preview and shared cart synchronization, exact native selected quantities/prices/review, phase/supply limits, unknown/error retry, preserved recovery and Safe approval tests, desktop/mobile fixture screenshots, full required checks, hosted CI and exact merged release/live proof.
+- **Resource budget:** One clean worktree at222c5f preserves dirty parents and previous artifacts; reuse existing dependencies and bounded SDK readers. Separate native adapter work from discover presentation ownership; no public wallet writes, new contracts, unbounded histories or curve requests.
+
+- [ ] Freeze shared presentation/adapter design and run plan gate.
+- [ ] Reuse preview/tier cards/cart for native checkout and preserve ordinary behavior.
+- [ ] Pass focused native/security/parity and desktop/mobile presentation regressions.
+- [ ] Pass full gates/CI and publish only exact merged artifact.

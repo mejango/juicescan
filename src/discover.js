@@ -1517,6 +1517,15 @@ function makeNftCart() {
   };
 }
 
+export function nftCartSubtotal(shop, cart) {
+  var total = 0n, selection = cart.entries();
+  Object.keys(selection).forEach(function (id) {
+    var tier = shop && shop.tiers.find(function (item) { return item.id === Number(id); });
+    if (tier) total += tierEffectivePrice(tier.price, tier.discountPercent) * BigInt(selection[id]);
+  });
+  return total;
+}
+
 function renderDefifaActionsForProject(project, inventory) {
   return renderDefifaNftActions(inventory, project.chainId, pidOn(project, project.chainId), function (price, pricing) {
     var fresh = Object.assign({}, inventory.pricing, pricing || {});
@@ -9568,12 +9577,7 @@ export function renderPayCard(project, cart) {
       }).catch(function () { return null; });
   }
   function nftTierById(id) { return state.shop ? state.shop.tiers.filter(function (t) { return t.id === id; })[0] : null; }
-  function nftTotalWei() {
-    var s = 0n, sel = cart.entries();
-    // Charge the DISCOUNTED price the store actually applies at mint, not the raw tier price.
-    Object.keys(sel).forEach(function (id) { var t = nftTierById(Number(id)); if (t) s += tierEffectivePrice(t.price, t.discountPercent) * BigInt(sel[id]); });
-    return s;
-  }
+  function nftTotalWei() { return nftCartSubtotal(state.shop, cart); }
   function selectedTierIds() {
     var a = [], sel = cart.entries();
     Object.keys(sel).forEach(function (id) { for (var i = 0; i < sel[id]; i++) a.push(Number(id)); });

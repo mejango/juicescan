@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   nftCreditBreakdown,
+  nftCartSubtotal,
   nftPaymentAmountFromPricing,
   nftPricingValueFromPayment,
 } from '../src/discover.js';
@@ -45,4 +46,11 @@ describe('NFT cross-currency checkout conversion', () => {
     expect(nftPaymentAmountFromPricing(1n, 18, 0n)).toBeNull();
     expect(nftPricingValueFromPayment(1n, 18, 0n)).toBeNull();
   });
+});
+
+// Ordinary and native display selection both use this existing discounted subtotal.
+it('preserves cart subtotal for mixed-price, discounted and missing tiers', () => {
+  const shop = { tiers: [{ id: 3, price: 7n, discountPercent: 40 }, { id: 1, price: 11n, discountPercent: 0 }] };
+  expect(nftCartSubtotal(shop, { entries: () => ({ 3: 2, 1: 4, 99: 10 }) })).toBe(56n);
+  expect(nftCartSubtotal(null, { entries: () => ({ 1: 2 }) })).toBe(0n);
 });
