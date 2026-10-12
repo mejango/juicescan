@@ -1,12 +1,12 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const runtime = vi.hoisted(() => ({ read: vi.fn(), contractRead: vi.fn(), account: null }));
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: runtime.read }));
+const runtime = vi.hoisted(() => ({ read: vi.fn(), contractRead: vi.fn(), holdings: vi.fn(), account: null }));
+vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: runtime.read, getDefifaHoldings: runtime.holdings }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(), getAccount:()=>runtime.account, getEffectiveAccount:()=>runtime.account, createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance:async()=>10n**18n }) }));
 import { getAddress } from '../src/abi-registry.js';
-import { renderPayCard, renderShopSection, renderTokenPanel, inspectProjectContractsOnChain, makeNftCart } from '../src/discover.js';
+import { renderPayCard, renderShopSection, renderTokenPanel, inspectProjectContractsOnChain, makeNftCart, opsActionsRow } from '../src/discover.js';
 const project = id => ({ id, chainId: 8453, ruleset: { start: 0, weight: 0n }, isRevnet: false });
 beforeEach(() => {
-  document.body.innerHTML = ''; runtime.account=null; runtime.read.mockReset(); runtime.contractRead.mockReset().mockRejectedValue(new Error('Unavailable'));
+  document.body.innerHTML = ''; runtime.account=null; runtime.holdings.mockReset().mockResolvedValue({tokens:[],totalOwned:0n,complete:true,nextCursor:null,blockNumber:1n}); runtime.read.mockReset(); runtime.contractRead.mockReset().mockRejectedValue(new Error('Unavailable'));
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ measureText: () => ({ width: 40 }) });
 });
 it('withholds mint controls while identification is pending and permits only funding after failure', async () => {
@@ -209,4 +209,27 @@ it('native Pay preserves the selected funding chain and restores its actual bala
   expect(document.body.textContent).toContain('Base Sepolia'); expect(document.body.textContent).toContain('addToBalanceOf');
   expect(runtime.contractRead.mock.calls.some(([call]) => call.functionName === 'terminalsOf' && call.fixtureChainId === 84532 && call.args[0] === 46n)).toBe(true);
   expect(runtime.contractRead.mock.calls.some(([call]) => call.functionName === 'terminalsOf' && call.fixtureChainId === 8453)).toBe(false);
+});
+
+it('keeps generic funding errors scoped to Add mode while native checkout uses its own verifier',async()=>{
+ const inventory={protocol:'defifa',hook:'0x123',pricing:{currency:1,decimals:18,token:'0x000000000000000000000000000000000000EEEe'},blockNumber:1n,phase:1,tiers:[],nextStartingId:null};
+ runtime.read.mockResolvedValue(inventory);runtime.contractRead.mockRejectedValue(new Error('Funding context unavailable'));
+ document.body.append(renderPayCard(project(421)));
+ await vi.waitFor(()=>expect(document.querySelector('.paybox-mode').value).toBe('pay'));
+ await vi.waitFor(()=>expect(runtime.contractRead).toHaveBeenCalled());
+ await new Promise(resolve=>setTimeout(resolve,20));
+ expect(document.querySelector('.paybox-contract-warning').style.display).toBe('none');
+ const mode=document.querySelector('.paybox-mode');mode.value='addbalance';mode.dispatchEvent(new Event('change'));
+ await vi.waitFor(()=>expect(document.querySelector('.paybox-contract-warning').textContent).toContain('Could not verify which tokens'));
+ expect(document.querySelector('.paybox-contract-warning').style.display).toBe('');
+});
+
+it('Cash out opens only owned native NFT actions without a second mint quantity form',async()=>{
+ runtime.account='0x1111111111111111111111111111111111111111';const inventory={...nativeInventory(),phase:2};runtime.read.mockResolvedValue(inventory);
+ runtime.holdings.mockResolvedValue({tokens:[{tokenId:1000000001n,tierId:1}],totalOwned:1n,complete:true,nextCursor:null,blockNumber:inventory.blockNumber});
+ document.body.append(opsActionsRow(project(422),{noLoans:true}));document.querySelector('.ops-action-btn').click();
+ await vi.waitFor(()=>expect(document.body.textContent).toContain('Your NFTs'));
+ expect(document.body.textContent).toContain('Owned NFTs: 1');expect([...document.querySelectorAll('button')].some(x=>x.textContent==='Review NFT transfer')).toBe(true);
+ expect([...document.querySelectorAll('button')].some(x=>x.textContent==='Review NFT cash out')).toBe(true);
+ expect(document.body.textContent).not.toContain('Mint NFTs');expect(document.body.textContent).not.toContain('Review NFT mint');expect(document.querySelector('.defifa-nft-actions input[type="number"]')).toBeNull();
 });

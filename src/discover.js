@@ -9964,6 +9964,7 @@ export function renderPayCard(project, cart) {
     if (chainStatic) chainStatic.hidden = !!nativePay;
     if (nativeCheckout && nativeCheckout.setActive) nativeCheckout.setActive(!!nativePay);
     amountRow.hidden = !!nativePay; memo.hidden = !!nativePay; feedback.hidden = !!nativePay;
+    if (terminalNotice) renderTerminalNotice();
     if (!nativePay && state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { payBtn.textContent = 'Not started'; renderFeedback(); return; }
     if (state.mode === 'addbalance') { payBtn.disabled = false; payBtn.classList.remove('paybox-btn-idle'); }
     payBtn.textContent = state.mode === 'addbalance' ? 'Add' : 'Pay';
@@ -9990,6 +9991,7 @@ export function renderPayCard(project, cart) {
   function renderTerminalNotice() {
     terminalNotice.innerHTML = '';
     terminalNotice.style.display = 'none';
+    if (isNativeInventory(state.shop) && state.mode === 'pay') return;
     if (state.contextsError) {
       terminalNotice.style.display = '';
       terminalNotice.className = 'paybox-contract-warning blocked';
@@ -26767,7 +26769,7 @@ function renderOpsSection(project) {
 }
 
 // The row of wallet actions (cash out, borrow, move, add liquidity), each opening a modal.
-function opsActionsRow(project, opts) {
+export function opsActionsRow(project, opts) {
   opts = opts || {};
   var row = el('div', 'ops-actions');
   var multiChain = (project.chains || []).length > 1;
@@ -26775,7 +26777,7 @@ function opsActionsRow(project, opts) {
   [
     ['Cash out', async function () {
       var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
-      if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop)); return; }
+      if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop, { mode: 'holdings' })); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
