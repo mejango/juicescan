@@ -43,7 +43,10 @@ const budgets = {
   // SDK2.29.0 native NFT actions, canonical recovery and Safe approval: 10,594,759 B raw / 1,537,367 B gzip.
   // Same Node22/env baseline95cdc21: 10,408,036 / 1,508,387 B; growth +186,723 / +28,980 B.
   // Round each measured ceiling to the next1KB; no other asset allowance changes.
-  'dist/app.js': { raw: 10_595_000, gzip: 1_538_000 },
+  // Shared native/ordinary checkout, bounded cosmetic URI media and final synchronous intent guards:
+  // Node22 same-env222c5f baseline10,594,623 raw /1,537,295 gzip; final10,608,739 /1,540,551.
+  // Growth +14,116 raw /+3,256 gzip, no new dependency; keep the next1KB ceilings.
+  'dist/app.js': { raw: 10_609_000, gzip: 1_541_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
@@ -82,7 +85,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(async file =>
 // SDK/native inventory measured total: 2,278,700 B gzip.
 // Verification feedback measured total: 2,280,560 B gzip; round to the next 1 KB.
 // Official SDK2.29/native actions measured total2,309,541 B gzip, +28,981 B versus the same-env baseline.
-const totalGzipBudget = 2_310_000;
+// Shared checkout measured2,312,731 B gzip, +3,261 B versus222c5f same-env distribution.
+const totalGzipBudget = 2_313_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

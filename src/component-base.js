@@ -1469,6 +1469,7 @@ export function executeTransaction(opts) {
     if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     if (isSafeConnected() !== expectedSafe) throw new Error('Wallet route changed. Review the transaction again.');
+    if (opts.assertWriteState) opts.assertWriteState();
   }
   async function reportWriteBoundaryFailure(err) {
     var callback = beforeWriteComplete && !walletInvoked ? opts.onBeforeWriteAborted : null;
@@ -1539,7 +1540,7 @@ export function executeTransaction(opts) {
     return reverifyReviewedState();
   }).then(function() {
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
-      return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus);
+      return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus, opts.assertWriteState ? function () { assertWalletInvocation(false); } : null);
     }
   }).then(function(receipt) {
     approvalReceipt = receipt || null;
@@ -1736,7 +1737,7 @@ export async function waitForErc20Approval(client, hash, tokenAddr, owner, spend
   return receipt;
 }
 
-function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
+function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus, assertWriteState) {
   var pub = createPublicClientForChain(chainId);
   var owner = getAccount();
   if (!pub || !owner) return Promise.resolve();
@@ -1758,6 +1759,10 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus) {
     }).then(async function(simulation) {
       if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
       var gas = await contractGasWithHeadroom(pub, simulation.request);
+      if (assertWriteState) {
+        if (await wallet.getChainId() !== chainId) throw new Error('Wallet network changed. Review the transaction again.');
+        assertWriteState();
+      }
       return wallet.writeContract(Object.assign({}, simulation.request, { account: owner, chain: CHAINS[chainId], gas: gas }));
     }).then(function(hash) {
       return waitForErc20Approval(pub, hash, tokenAddr, owner, spender, amount);

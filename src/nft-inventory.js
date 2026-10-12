@@ -82,10 +82,12 @@ export async function requireGenericInventory(client, args, capability) {
   return inventory;
 }
 
-export function renderNativeInventory(inventory, chainId, projectId, formatPrice, metadataUrl) {
+export function renderNativeInventory(inventory, chainId, projectId, formatPrice, metadataUrl, renderTiers) {
   var wrap = document.createElement('div'); wrap.className = 'detail-card-body'; wrap.dataset.inventoryBlock = String(inventory.blockNumber);
   var phase = document.createElement('p'); phase.textContent = ['Countdown', 'Entry open', 'Refund period', 'Scoring', 'Complete', 'No contest'][inventory.phase]; wrap.appendChild(phase);
   if (/^https?:\/\//.test(metadataUrl || '')) { var meta = document.createElement('a'); meta.href = metadataUrl; meta.textContent = 'NFT metadata'; var paragraph = document.createElement('p'); paragraph.appendChild(meta); wrap.appendChild(paragraph); }
+  if (renderTiers) wrap.appendChild(renderTiers());
+  else {
   var table = document.createElement('table'); table.className = 'native-nft-inventory';
   var caption = document.createElement('caption'); caption.textContent = 'Onchain NFT tiers'; table.appendChild(caption);
   var head = document.createElement('thead'), headRow = document.createElement('tr');
@@ -99,6 +101,7 @@ export function renderNativeInventory(inventory, chainId, projectId, formatPrice
   });
   table.appendChild(body);
   wrap.appendChild(table);
+  }
   var addr = document.createElement('p'); addr.textContent = 'Collection: ' + inventory.hook; addr.className = 'shop-collection-addr'; wrap.appendChild(addr);
   return wrap;
 }

@@ -118,3 +118,31 @@ it('simulates at the newer verified snapshot after an approval instead of anchor
  await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledTimes(1));
  expect(h.client.simulateContract.mock.calls.find(([call])=>call.functionName==='noop')[0].blockNumber).toBe(22n);
 });
+
+it.each([false,true])('rechecks native cart intent after the final wallet network await (Safe=%s)', async safe => {
+ h.safe=safe;let finish;let valid=true;
+ if(safe) h.wallet.getChainId.mockImplementation(()=>new Promise(resolve=>finish=resolve));
+ else h.wallet.getChainId.mockResolvedValueOnce(8453).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));
+ const onBeforeWriteAborted=vi.fn(),onError=vi.fn();
+ executeTransaction({...args,onSending:async()=>{},assertWriteState:()=>{if(!valid)throw new Error('Cart or payment mode changed');},onBeforeWriteAborted,onError});
+ await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));valid=false;finish(8453);
+ await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));
+ expect(h.wallet.writeContract).not.toHaveBeenCalled();expect(h.propose).not.toHaveBeenCalled();
+});
+it('guards a native prerequisite approval after its final wallet network await', async()=>{
+ h.client.readContract=vi.fn(async()=>0n);let finish;let valid=true;
+ h.wallet.getChainId.mockResolvedValueOnce(8453).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));
+ const onError=vi.fn();
+ executeTransaction({...args,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,assertWriteState:()=>{if(!valid)throw new Error('Cart changed');},onError});
+ await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));valid=false;finish(8453);
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalled());expect(h.wallet.writeContract).not.toHaveBeenCalled();
+});
+
+it('invokes approval synchronously after the native intent guard without a promise gap', async()=>{
+ h.client.readContract=vi.fn(async call=>call.blockNumber==null?0n:10n);let valid=true;let validAtApproval;
+ h.wallet.writeContract.mockImplementation(async request=>{if(request.functionName==='approve')validAtApproval=valid;return hash;});
+ const onError=vi.fn();
+ executeTransaction({...args,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,assertWriteState:()=>{if(!valid)throw new Error('Changed');queueMicrotask(()=>{valid=false;});},onError});
+ await vi.waitFor(()=>expect(validAtApproval).toBe(true));
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalled());expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});

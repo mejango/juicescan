@@ -1,9 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const runtime = vi.hoisted(() => ({ read: vi.fn(), contractRead: vi.fn(), account: null }));
-vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectNftInventory: runtime.read }));
-vi.mock('../src/component-base.js', async original => ({ ...await original(), getAccount:()=>runtime.account, getEffectiveAccount:()=>runtime.account, createPublicClientForChain: () => ({ readContract: runtime.contractRead, getBalance:async()=>10n**18n }) }));
+vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: runtime.read }));
+vi.mock('../src/component-base.js', async original => ({ ...await original(), getAccount:()=>runtime.account, getEffectiveAccount:()=>runtime.account, createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance:async()=>10n**18n }) }));
 import { getAddress } from '../src/abi-registry.js';
-import { renderPayCard, renderShopSection, renderTokenPanel, inspectProjectContractsOnChain } from '../src/discover.js';
+import { renderPayCard, renderShopSection, renderTokenPanel, inspectProjectContractsOnChain, makeNftCart } from '../src/discover.js';
 const project = id => ({ id, chainId: 8453, ruleset: { start: 0, weight: 0n }, isRevnet: false });
 beforeEach(() => {
   document.body.innerHTML = ''; runtime.account=null; runtime.read.mockReset(); runtime.contractRead.mockReset().mockRejectedValue(new Error('Unavailable'));
@@ -29,21 +29,48 @@ it('restores ordinary payment controls after verified absence of an NFT hook', a
   await vi.waitFor(() => expect(document.querySelector('.paybox-amount-row').hidden).toBe(false));
   expect(document.querySelector('.paybox-top').hidden).toBe(false);
 });
-it('native identification exposes Add to balance without allowing incompatible generic Pay', async () => {
-  runtime.read.mockResolvedValue({ protocol: 'defifa', hook: '0x123', pricing: { currency: 61166, decimals: 18 }, blockNumber: 1n, phase: 1, tiers: [], nextStartingId: null });
-  document.body.append(renderPayCard(project(403)));
-  await vi.waitFor(() => expect(document.querySelector('.paybox-mode').value).toBe('addbalance'));
-  expect([...document.querySelectorAll('.paybox-mode option')].map(x=>x.value)).toEqual(['addbalance']);
-  expect(document.querySelector('.paybox-btn').textContent).toBe('Add');
-  expect(document.body.textContent).not.toContain('Defifa NFT purchases require native payment instructions');
+// Synthetic cart fixture, not a live supply assertion.
+function nativeInventory(phase = 1) {
+  return { protocol: 'defifa', hook: '0x' + '12'.repeat(20), pricing: { currency: 1, decimals: 18 }, blockNumber: 1n, phase, nextStartingId: null,
+    capabilities: { genericPay: false, genericCashOut: false, manageTiers: false },
+    tiers: [{ id: 1, name: 'Blue Team', price: 1000000000000n, currentSupply: 2n, remainingSupply: 100n },
+      { id: 7, name: 'Orange Team', price: 3000000000000n, currentSupply: 5n, remainingSupply: 100n }] };
+}
+it('native checkout shares Shop and preview selection with exact mixed-price totals and preserves balance funding', async () => {
+  const inventory = nativeInventory();
+  runtime.read.mockImplementation(async (client, args) => args.tierLimit === 1 ? { ...inventory, tiers: inventory.tiers.slice(0, 1) } : inventory);
+  const p = project(403), cart = makeNftCart(); document.body.append(renderPayCard(p, cart), renderShopSection(p, undefined, cart));
+  await vi.waitFor(() => expect(document.querySelector('input[aria-label="Selected NFT amount"]')).not.toBeNull());
+  expect([...document.querySelectorAll('.paybox-mode option')].map(x => x.value)).toEqual(['pay', 'addbalance']);
+  expect(document.querySelector('.paybox > .paybox-amount-row').hidden).toBe(true);
+  expect(document.querySelectorAll('.shop-grid .shop-tier')).toHaveLength(2);
+  const orange = document.querySelector('.shop-tier[data-tier-id="7"]');
+  orange.querySelectorAll('button')[1].click(); orange.querySelectorAll('button')[1].click();
+  expect(document.querySelector('input[aria-label="Selected NFT amount"]').value).toBe('0.0000060 ETH');
+  expect(document.querySelector('.defifa-nft-actions .paybox-feedback').textContent).toContain('Orange Team ×2');
+  expect(document.querySelectorAll('.paybox-shop-item')[1].querySelector('.paybox-shop-qty').textContent).toBe('2');
+  document.querySelector('.paybox-shop-thumb').click();
+  expect(document.querySelector('.shop-tier[data-tier-id="1"] .shop-tier-qty').textContent).toBe('1');
+  expect(document.querySelector('input[aria-label="Selected NFT amount"]').value).toBe('0.0000070 ETH');
+  expect(runtime.read.mock.calls.some(([, args]) => args.tierLimit === undefined)).toBe(true);
+  runtime.contractRead.mockClear();
+  document.querySelector('.paybox > .paybox-amount-row .paybox-btn').click();
+  expect(document.querySelector('.paybox > .paybox-status').textContent).toContain('Defifa NFT purchases require native payment instructions');
+  expect(runtime.contractRead).not.toHaveBeenCalled();
+  const mode = document.querySelector('.paybox-mode'); mode.value = 'addbalance'; mode.dispatchEvent(new Event('change'));
+  expect(document.querySelector('.paybox > .paybox-amount-row').hidden).toBe(false);
+  expect(document.querySelector('.paybox > .paybox-amount-row .paybox-btn').textContent).toBe('Add');
+  expect(document.querySelector('.defifa-nft-actions').parentNode.hidden).toBe(true);
   expect(document.querySelector('a[href*="metalog.money"]')).toBeNull();
-  expect(document.querySelector('.paybox-amount-row').hidden).toBe(false);
-  expect(document.querySelector('.paybox-top').hidden).toBe(false);
-  expect(document.querySelector('.paybox-memo').hidden).toBe(false);
-  expect(document.querySelector('.paybox-feedback').hidden).toBe(false);
-  const mode=document.querySelector('.paybox-mode');const stalePay=document.createElement('option');stalePay.value='pay';mode.appendChild(stalePay);mode.value='pay';mode.dispatchEvent(new Event('change'));
-  document.querySelector('.paybox-btn').click();
-  await vi.waitFor(()=>expect(document.querySelector('.paybox-status').textContent).toContain('Defifa NFT purchases require native payment instructions'));
+});
+it('closed native entry disables tier selection while keeping intentional balance funding', async () => {
+  runtime.read.mockResolvedValue(nativeInventory(3));
+  const p = project(416); document.body.append(renderPayCard(p), renderShopSection(p));
+  await vi.waitFor(() => expect(document.body.textContent).toContain('NFT minting is not open.'));
+  expect([...document.querySelectorAll('.shop-tier-stepbtn')].every(button => button.disabled)).toBe(true);
+  const mode = document.querySelector('.paybox-mode'); mode.value = 'addbalance'; mode.dispatchEvent(new Event('change'));
+  expect(document.querySelector('.paybox > .paybox-amount-row').hidden).toBe(false);
+  expect(document.querySelector('.paybox > .paybox-amount-row .paybox-btn').textContent).toBe('Add');
 });
 it('keeps plain JB721 payment available when optional shop detail reads fail', async () => {
   runtime.read.mockImplementation((client, args) => args.tierLimit === 1 ? Promise.resolve({ protocol: 'jb721' }) : Promise.reject(new Error('Resolver unavailable')));
@@ -124,7 +151,7 @@ it('marks registry failures unverified, evicts them and preserves genuinely unkn
 it.each(['', 'unknown'])('rejects an invalid payment mode %s before preparing any transaction', async value => {
   runtime.read.mockResolvedValue({ protocol:'defifa',hook:'0x123',pricing:{currency:61166,decimals:18},blockNumber:1n,phase:1,tiers:[],nextStartingId:null });
   document.body.append(renderPayCard(project(value ? 414 : 413)));
-  await vi.waitFor(()=>expect(document.querySelector('.paybox-mode').value).toBe('addbalance'));
+  await vi.waitFor(()=>expect(document.querySelector('.paybox-mode').value).toBe('pay'));
   const mode=document.querySelector('.paybox-mode'),invalid=document.createElement('option');invalid.value=value;mode.appendChild(invalid);mode.value=value;mode.dispatchEvent(new Event('change'));
   runtime.read.mockClear();document.querySelector('.paybox-btn').click();
   await vi.waitFor(()=>expect(document.querySelector('.paybox-status').textContent).toBe('Choose Pay or Add to balance.'));
@@ -150,4 +177,36 @@ it('allows a hook-free funding review after failed NFT identity with independent
  await vi.waitFor(()=>expect(document.body.textContent).toContain('Confirm add to balance'));
  expect(document.body.textContent).toContain('addToBalanceOf');
  expect(document.body.textContent).not.toContain('NFT protocol identification is unavailable');
+});
+
+it('native Pay preserves the selected funding chain and restores its actual balance-review context', async () => {
+  runtime.account = '0x1111111111111111111111111111111111111111';
+  runtime.read.mockResolvedValue(nativeInventory());
+  runtime.contractRead.mockImplementation(async call => {
+    if (call.functionName === 'accountingContextsOf') return [{ token: '0x000000000000000000000000000000000000EEEe', decimals: 18, currency: 1 }];
+    if (call.functionName === 'terminalsOf') return [getAddress('JBMultiTerminal', call.fixtureChainId)];
+    if (call.functionName === 'controllerOf') return getAddress('JBController', call.fixtureChainId);
+    if (call.functionName === 'currentRulesetOf') return [{ start: 0, weight: 0n }, { dataHook: '0x0000000000000000000000000000000000000000' }];
+    return 0n;
+  });
+  const p = { ...project(417), chains: [{ id: 8453, name: 'Base' }, { id: 84532, name: 'Base Sepolia' }], idByChain: { 8453: 417, 84532: 46 } };
+  document.body.append(renderPayCard(p));
+  await vi.waitFor(() => expect(document.querySelector('input[aria-label="Selected NFT amount"]')).not.toBeNull());
+  const mode = document.querySelector('.paybox-mode'), chain = document.querySelector('.paybox-payon select:not(.paybox-mode)');
+  mode.value = 'addbalance'; mode.dispatchEvent(new Event('change'));
+  chain.value = '84532'; chain.dispatchEvent(new Event('change'));
+  await vi.waitFor(() => expect(runtime.contractRead.mock.calls.some(([call]) => call.fixtureChainId === 84532 && call.functionName === 'accountingContextsOf')).toBe(true));
+  mode.value = 'pay'; mode.dispatchEvent(new Event('change'));
+  expect(chain.hidden).toBe(true);
+  expect([...document.querySelectorAll('.paybox-chain-static')].filter(node => !node.hidden).map(node => node.textContent)).toEqual(['Base']);
+  mode.value = 'addbalance'; mode.dispatchEvent(new Event('change'));
+  expect(chain.hidden).toBe(false); expect(chain.value).toBe('84532');
+  await new Promise(resolve => setTimeout(resolve, 20));
+  runtime.contractRead.mockClear();
+  const amount = document.querySelector('.paybox > .paybox-amount-row .paybox-amount'); amount.value = '0.01'; amount.dispatchEvent(new Event('input'));
+  document.querySelector('.paybox > .paybox-amount-row .paybox-btn').click();
+  await vi.waitFor(() => expect(document.body.textContent).toContain('Confirm add to balance'));
+  expect(document.body.textContent).toContain('Base Sepolia'); expect(document.body.textContent).toContain('addToBalanceOf');
+  expect(runtime.contractRead.mock.calls.some(([call]) => call.functionName === 'terminalsOf' && call.fixtureChainId === 84532 && call.args[0] === 46n)).toBe(true);
+  expect(runtime.contractRead.mock.calls.some(([call]) => call.functionName === 'terminalsOf' && call.fixtureChainId === 8453)).toBe(false);
 });
