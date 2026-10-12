@@ -11,8 +11,7 @@
 // Project metadata (name/logo/description/links) is pinned to IPFS via Pinata (src/ipfs-pin.js); the
 // JWT lives in localStorage only.
 
-import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, createPublicClient, decodeEventLog, http } from 'viem';
-import { mainnet } from 'viem/chains';
+import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, decodeEventLog } from 'viem';
 import { isSafeConnected } from './wallet.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
 import { normalize as ensNormalize } from 'viem/ens';
@@ -5464,12 +5463,10 @@ function durationIssue(state) {
 function uint256FromAddress(addr) { return BigInt(addr).toString(); }
 function uint32FromAddress(addr) { return (BigInt(addr) & 0xFFFFFFFFn).toString(); }
 // --- ENS resolution for address fields (resolves on mainnet, regardless of the deploy chain) ---
-// The app's default mainnet RPC is CORS-blocked in the browser, so use a dedicated CORS-enabled endpoint.
+// Reuse the shared mainnet read transport: Center by default, explicit user RPC when configured.
 var _ensCache = {};
-var _ensClient = null;
 function ensClient() {
-  if (!_ensClient) _ensClient = createPublicClient({ chain: mainnet, transport: http('https://ethereum-rpc.publicnode.com') });
-  return _ensClient;
+  return createPublicClientForChain(1);
 }
 export function isEnsName(v) { v = (v || '').trim(); return /\.[a-z]{2,}$/i.test(v) && !/^0x/i.test(v); }
 function resolveEns(name) {
@@ -5579,6 +5576,7 @@ function ipfsHttp(uri) {
 }
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
+  resolveEns, attachEns,
   renderDeploy, runDeploy, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
   suckerConfigFor, tokenMappingFor,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,

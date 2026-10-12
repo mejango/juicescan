@@ -9,3 +9,5 @@
 - **Keep market copy plain and keep audit identity in audit details.** Do not use middot separators in visible copy; native ranges captions stay concise, without snapshot blocks. Remove redundant header glossary links rather than adding presentation switches. Native-caption and visible-copy regressions enforce this preference. (2026-10-11, user presentation correction.)
 
 - **Protocol identity is not application identity.** A verified Defifa hook supplies tier names, per-tier prices, supply and lifecycle state; it does not prove Metalog numeric ranges or justify Metalog navigation. Keep generic NFT displays free of curve information and API clients. Mixed-price/nonnumeric-name and consumer-independence regressions enforce this boundary. (2026-10-11, user scope correction.)
+
+- **Audit ancillary RPC clients as well as the main project reader.** ENS lookups in address fields and connected headers must use the shared mainnet client, preserving explicit user overrides. Real viem forward/reverse HTTP regressions enforce Center defaults and prevent a dedicated provider from bypassing the policy. (2026-10-12, connected-wallet live proof.)
