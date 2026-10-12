@@ -39,7 +39,8 @@ async function controlsSource() {
     bundle: true, format: 'esm', write: false, define: { __BENDYSTRAW_API_KEY__: '""', __PINATA_JWT__: '""' },
     plugins: [{ name: 'controlled-identity', setup(build) {
       build.onResolve({ filter: /^@bananapus\/nana-sdk-core\/v6$/ }, () => ({ path: 'sdk', namespace: 'identity' }));
-      build.onLoad({ filter: /.*/, namespace: 'identity' }, () => ({ contents: "export async function getProjectNftInventory(client, args) { if (args.tierLimit === 1) return window.inventoryPromise; throw new Error('Resolver unavailable'); }", loader: 'js' }));
+      build.onResolve({filter:/^\//,namespace:'identity'},args=>({path:args.path,namespace:'file'}));
+      build.onLoad({ filter: /.*/, namespace: 'identity' }, () => ({ contents: "export * from " + JSON.stringify(process.cwd() + "/node_modules/@bananapus/nana-sdk-core/dist/esm/v6/index.js") + "; export async function getProjectNftInventory(client, args) { if (args.tierLimit === 1) return window.inventoryPromise; throw new Error('Resolver unavailable'); }", loader: 'js' }));
     } }],
   }).then(result => result.outputFiles[0].text);
   return controlHarness;

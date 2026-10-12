@@ -3,6 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
+import { renderDefifaNftActions } from './defifa-nft-actions.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
@@ -1516,6 +1517,14 @@ function makeNftCart() {
   };
 }
 
+function renderDefifaActionsForProject(project, inventory) {
+  return renderDefifaNftActions(inventory, project.chainId, pidOn(project, project.chainId), function (price, pricing) {
+    var fresh = Object.assign({}, inventory.pricing, pricing || {});
+    if (pricing && (Number(pricing.currency) !== Number(inventory.pricing.currency) || Number(pricing.decimals) !== Number(inventory.pricing.decimals) || String(pricing.token).toLowerCase() !== String(inventory.pricing.token).toLowerCase())) fresh.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
+    return formatShopPrice(Object.assign({}, inventory, { pricing: fresh }), price, project.chainId);
+  });
+}
+
 export function renderShopSection(project, shop, cart) {
   var wrap = el('div', 'detail-section');
   var card = el('div', 'detail-card shop-card');
@@ -1629,6 +1638,7 @@ export function renderShopSection(project, shop, cart) {
       title.textContent = 'Defifa NFT tiers';
       headAdd.remove(); if (typeof mgr !== 'undefined' && mgr) mgr.remove();
       body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri)));
+      body.appendChild(renderDefifaActionsForProject(project, s));
       return;
     }
     if (!s || !s.tiers.length) {
@@ -3774,6 +3784,9 @@ function renderPayShopStrip(project, cart, opts) {
     if (opts.onShop) opts.onShop(shop);
     if (!shop) return;
     if (isNativeInventory(shop)) {
+      wrap.style.display = '';
+      var choose = el('button', 'paybox-shop-all'); choose.type = 'button'; choose.textContent = 'Choose NFTs';
+      choose.addEventListener('click', function () { if (opts.onViewAll) opts.onViewAll(); }); wrap.appendChild(choose);
       return;
     }
     if (!shop.tiers.length) return;
@@ -10297,7 +10310,7 @@ export function renderPayCard(project, cart) {
     if (state.mode !== 'pay' && state.mode !== 'addbalance') { status.textContent = 'Choose Pay or Add to balance.'; return; }
     if (state.mode === 'pay' && !state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Retry to verify NFT minting.'; return; }
     if (state.mode === 'pay') {
-      if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable; return; }
+      if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable('genericPay'); return; }
       try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
     }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
@@ -11035,7 +11048,7 @@ function renderResolvedTokenPanel(project, identity) {
     var empty = el('div', 'token-empty-state');
     var emptyTitle = el('div', 'token-empty-title'); emptyTitle.textContent = isNativeInventory(identity) ? 'Defifa NFTs' : 'No ERC-20 yet'; empty.appendChild(emptyTitle);
     var emptyCopy = el('div', 'token-empty-copy');
-    emptyCopy.textContent = isNativeInventory(identity) ? 'Defifa uses NFTs for participation and payouts. Payouts follow the ratified scorecard and Defifa lifecycle. This interface shows NFT tiers but does not execute Defifa NFT transactions.' : 'Your project tokens are recorded as Juicebox credits and can still be cashed out under the project’s rules. Deploying a standard token contract (ERC-20) lets holders claim transferable tokens that trading pools can use.';
+    emptyCopy.textContent = isNativeInventory(identity) ? 'Defifa uses NFTs for participation and payouts. Payouts follow the ratified scorecard and Defifa lifecycle. Use Shop to mint, transfer or cash out NFTs.' : 'Your project tokens are recorded as Juicebox credits and can still be cashed out under the project’s rules. Deploying a standard token contract (ERC-20) lets holders claim transferable tokens that trading pools can use.';
     empty.appendChild(emptyCopy);
     card.appendChild(empty);
   } else {
@@ -16002,7 +16015,7 @@ async function applyDraftShop(state, project, sources, warnings) {
   }
   if (shops.some(function (shop) { return !shop; })) throw new Error('The shop is not present on every project chain.');
   var home = shops[0];
-  if (shops.some(isNativeInventory)) throw new Error(nativeActionUnavailable);
+  if (shops.some(isNativeInventory)) throw new Error(nativeActionUnavailable('manageTiers'));
   var knownShops = await Promise.all(shops.map(function (shop, index) {
     return isKnown721HookClone(shop.hook, sources[index].chainId, sources[index].projectId);
   }));
@@ -26687,7 +26700,7 @@ function opsActionsRow(project, opts) {
   [
     ['Cash out', async function () {
       var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
-      if (isNativeInventory(shop)) { var native = el('div', 'modal-body'); native.textContent = nativeActionUnavailable; openModal('Defifa NFT transactions', native); return; }
+      if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop)); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.

@@ -48,7 +48,11 @@ export function rememberProjectInventory(project, inventory) {
   project.nftInventoryProtocol = inventory ? inventory.protocol : null;
   updateProjectFlavor(project);
 }
-export const nativeActionUnavailable = 'Defifa NFT transactions are not supported in this interface.';
+export function nativeActionUnavailable(capability) {
+  if (capability === 'genericPay') return 'Defifa NFT purchases require native payment instructions. Choose NFTs in Shop.';
+  if (capability === 'genericCashOut') return 'Defifa refunds and payouts redeem NFTs. Use NFT cash out in Shop.';
+  return 'Defifa collections do not use the JB721 shop editor.';
+}
 
 // One SDK owner recognizes protocols. Keep every page at the first page's block;
 // store category ordering is not necessarily numeric tier-ID ordering.
@@ -74,7 +78,7 @@ export async function requireGenericInventory(client, args, capability) {
   // Defifa markets cannot be revnets; keep revnet-only writer paths unchanged.
   if (args.isRevnet) return null;
   var inventory = await getProjectNftInventory(client, Object.assign({}, args, { tierLimit: 1 }));
-  if (inventory && !inventory.capabilities[capability]) throw new Error(nativeActionUnavailable);
+  if (inventory && !inventory.capabilities[capability]) throw new Error(nativeActionUnavailable(capability));
   return inventory;
 }
 

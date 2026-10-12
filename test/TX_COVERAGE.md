@@ -11,6 +11,7 @@ Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg a
 | App action | Contract function | Builder | Test |
 |---|---|---|---|
 | Pay | `JBMultiTerminal.pay` | `buildPayArgs` | **U** (+ slippage-floor regression) |
+| Defifa NFT mint / transfer / cash out | `JBMultiTerminal.pay` / `cashOutTokensOf`, `DefifaHook.safeTransferFrom` | Shared SDK native preparations and canonical receipt verifier, `src/defifa-nft-actions.js` | Controlled UI/execution tests cover fresh checks, ownership, delegation review, pending verification recovery and Safe proposal states; SDK owns calldata/effects qualification. No public wallet writes. |
 | Add to balance | `JBMultiTerminal.addToBalanceOf` / `JBRouterTerminalRegistry.addToBalanceOf` | `buildAddToBalanceArgs` | **U** (both canonical ABIs; exact native/ERC-20 value + approval semantics) |
 | Cash out | `JBMultiTerminal.cashOutTokensOf` | `buildCashOutArgs` / `cashOutMinReclaimed` | **U** |
 | Send payouts | `JBMultiTerminal.sendPayoutsOf` | `buildSendPayoutsArgs` | **U** |

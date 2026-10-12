@@ -35,7 +35,7 @@ it('native identification exposes Add to balance without allowing incompatible g
   await vi.waitFor(() => expect(document.querySelector('.paybox-mode').value).toBe('addbalance'));
   expect([...document.querySelectorAll('.paybox-mode option')].map(x=>x.value)).toEqual(['addbalance']);
   expect(document.querySelector('.paybox-btn').textContent).toBe('Add');
-  expect(document.body.textContent).not.toContain('Defifa NFT transactions are not supported');
+  expect(document.body.textContent).not.toContain('Defifa NFT purchases require native payment instructions');
   expect(document.querySelector('a[href*="metalog.money"]')).toBeNull();
   expect(document.querySelector('.paybox-amount-row').hidden).toBe(false);
   expect(document.querySelector('.paybox-top').hidden).toBe(false);
@@ -43,7 +43,7 @@ it('native identification exposes Add to balance without allowing incompatible g
   expect(document.querySelector('.paybox-feedback').hidden).toBe(false);
   const mode=document.querySelector('.paybox-mode');const stalePay=document.createElement('option');stalePay.value='pay';mode.appendChild(stalePay);mode.value='pay';mode.dispatchEvent(new Event('change'));
   document.querySelector('.paybox-btn').click();
-  await vi.waitFor(()=>expect(document.querySelector('.paybox-status').textContent).toContain('Defifa NFT transactions are not supported'));
+  await vi.waitFor(()=>expect(document.querySelector('.paybox-status').textContent).toContain('Defifa NFT purchases require native payment instructions'));
 });
 it('keeps plain JB721 payment available when optional shop detail reads fail', async () => {
   runtime.read.mockImplementation((client, args) => args.tierLimit === 1 ? Promise.resolve({ protocol: 'jb721' }) : Promise.reject(new Error('Resolver unavailable')));

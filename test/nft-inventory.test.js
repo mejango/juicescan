@@ -26,7 +26,7 @@ describe('shared protocol inventory adoption', () => {
   });
   it.each(['genericPay', 'genericCashOut', 'manageTiers'])('blocks native %s before writer execution', async capability => {
     getProjectNftInventory.mockResolvedValueOnce(native);
-    await expect(requireGenericInventory({}, args, capability)).rejects.toThrow(nativeActionUnavailable);
+    await expect(requireGenericInventory({}, args, capability)).rejects.toThrow(nativeActionUnavailable(capability));
   });
   it('retains ordinary JB721 transaction context and allows its compatible calldata', async () => {
     const shop = { ...native, protocol: 'jb721', metadataIdTarget: '0xabc', capabilities: { genericPay: true, genericCashOut: true, manageTiers: true } };
