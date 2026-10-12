@@ -19,6 +19,9 @@ test('malformed creator artwork falls back without rewriting it or breaking vali
       const box = document.createElement('div'); box.dataset.mode = mode; main.append(box);
       window.renderMedia(box, { image: broken }, 'Blue Team', mode);
     }
+    const selected = document.createElement('span'); selected.className = 'paybox-nft-thumb'; main.append(selected);
+    window.renderMedia(selected, { image: broken }, 'A long selected NFT name', 'thumb');
+    const label = document.createElement('span'); label.className = 'paybox-nft-label'; label.textContent = 'A long selected NFT name'; main.append(label);
     const good = document.createElement('div'); good.dataset.mode = 'valid'; main.append(good);
     window.renderMedia(good, { image: valid }, 'Orange Team', 'thumb');
   });
@@ -26,5 +29,9 @@ test('malformed creator artwork falls back without rewriting it or breaking vali
     await expect(page.locator(`[data-mode="${mode}"] .shop-tier-ph`)).toHaveText('Blue Team');
     await expect(page.locator(`[data-mode="${mode}"] img`)).toHaveCount(0);
   }
+  await expect(page.locator('.paybox-nft-thumb .shop-tier-ph')).toHaveText('A long selected NFT name');
+  await expect(page.locator('.paybox-nft-label')).toHaveText('A long selected NFT name');
+  expect(await page.locator('.paybox-nft-thumb .shop-tier-ph').evaluate(node => ({ whiteSpace: getComputedStyle(node).whiteSpace, height: node.getBoundingClientRect().height, scrollHeight: node.scrollHeight }))).toMatchObject({ whiteSpace: 'nowrap' });
+  expect(await page.locator('.paybox-nft-thumb .shop-tier-ph').evaluate(node => node.scrollHeight)).toBeLessThanOrEqual(34);
   await expect.poll(() => page.locator('[data-mode="valid"] img').evaluate(image => image.naturalWidth)).toBe(150);
 });
