@@ -254,3 +254,15 @@ Fallback review: independent83focused tests and4viewport browser regressions pas
 Screenshot correction: shared selected-thumb placeholder needs compact single-line styling in its existing34px box. Scope .paybox-nft-thumb .shop-tier-ph to9px/ellipsis/nowrap, preserving full adjacent NFT name and all valid-image styles. Browser gate asserts compact selected fallback plus intact name; refresh recorded-art PNG before final exacthead gates.
 
 Final CSS qualification: source/deployment/generated/schema/transaction/dependency/audit gates and1,972unit/coverage cases passed before the screenshot-only style delta. The superseded browser run was intentionally interrupted (exit130), not qualified as full success. Final CSS build/budget and4focused viewport cases pass; complete browser matrix reruns finalCSS and exact-head hosted CI runs every gate. Final total2,312,880gzip stays below unchanged2,313,000cap. Recorded failed-art replay refreshed all4screenshots with compact selected placeholder and adjacent full name intact.
+
+
+## 2026-10-12 — compact Pay mode and empty loading notice
+
+- **Objective:** Native and ordinary Pay mode chevrons hug their label; pending identity renders no empty bordered error bar while real errors stay visible.
+- **System fit:** Existing renderPayCard owns mode changes and funding diagnostics; sizeSelectToText owns option sizing and shared .paybox-contract-warning owns warning presentation. Native preparation/phase/review/journal/receipt owners remain unchanged.
+- **Reuse and simplicity:** Native full-inventory transition sets Add to balance back to Pay without invoking the existing sizing helper. Centralize that call in updateModeUi and keep empty warning boxes hidden in the shared CSS owner, without new state or dependencies.
+- **Evidence and unknowns:** Source identifies stale Add-width and initially empty terminalNotice before first diagnostics render. Reproduce pending identity and native fixture transition in real Chromium before changes; source investigation is not live verification.
+- **Verification:** Extend existing delayed-identity browser harness with compact Pay width native/ordinary parity, no empty warning geometry, and real error visibility. Run owning control regressions, required local/hosted gates, exact merged artifact publication and8byte comparisons before root Center pointer.
+- **Resource budget:** Two shared presentation owners, existing harness, no live RPC fanout/wallet signing or sends. Scope strictly these2bugs; narrow measured caps only if required by final bytes.
+
+Before/after qualification: original native Pay width111px and empty warning height16px fail both regressions. Shared-owner fixes pass4desktop/mobile cases: native Pay matches ordinary compact width before/after Pay→Add→Pay, pending warning has0height, genuine funding error is visible. Owning17control unit tests pass. Final total2,312,885gzip remains under all existing caps, no budget changes. Source action/preparation/phase/recovery/journal/metadata owners are unchanged. Required full exacthead checks/CI and verified publication remain.

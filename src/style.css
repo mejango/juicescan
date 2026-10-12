@@ -5541,6 +5541,7 @@ th[data-tip]:hover::after {
   font-size: 11px;
   line-height: 1.45;
 }
+.paybox-contract-warning:empty { display: none; }
 .paybox-contract-warning.blocked {
   border-color: var(--c-pink);
   color: var(--c-pink);

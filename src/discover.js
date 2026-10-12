@@ -9783,7 +9783,7 @@ export function renderPayCard(project, cart) {
     var payOption = modeSel.querySelector('option[value="pay"]');
     if (payOption) payOption.remove();
     amountRow.hidden = false; topRow.hidden = false; memo.hidden = false; feedback.hidden = false;
-    modeSel.value = state.mode; sizeSelectToText(modeSel); updateModeUi();
+    modeSel.value = state.mode; updateModeUi();
     var countdown = card.querySelector('.paybox-countdown'); if (countdown) countdown.remove();
   }
   card.appendChild(renderPayShopStrip(project, cart, {
@@ -9842,7 +9842,6 @@ export function renderPayCard(project, cart) {
   modeSel.value = state.mode;
   modeSel.addEventListener('change', function () {
     state.mode = modeSel.value;
-    sizeSelectToText(modeSel);
     updateModeUi();
     schedulePreview();
   });
@@ -9963,6 +9962,7 @@ export function renderPayCard(project, cart) {
 
   // Reflect the selected action across the button label (Pay → Add) and feedback. NFTs only mint on a Pay.
   function updateModeUi() {
+    sizeSelectToText(modeSel);
     var nativePay = isNativeInventory(state.shop) && state.mode === 'pay' && nativeCheckout;
     nativeCheckoutWrap.hidden = !nativePay;
     if (nativeChainLabel) nativeChainLabel.hidden = !nativePay;

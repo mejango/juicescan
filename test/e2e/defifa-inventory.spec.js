@@ -208,3 +208,40 @@ test('fixture closed entry keeps tier facts visible and balance funding availabl
   await expect(page.locator('.paybox > .paybox-amount-row')).toBeVisible();
   await expect(page.locator('.paybox > .paybox-amount-row').getByRole('button', { name: 'Add', exact: true })).toBeVisible();
 });
+
+test('pending identity has no empty warning outline and real funding errors remain visible', async ({ page }, testInfo) => {
+  await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+  await page.route('**/inventory-controls.js', async route => route.fulfill({ contentType: 'text/javascript', body: await controlsSource() }));
+  await page.goto('/index.html#learn'); await page.addScriptTag({ url: '/inventory-controls.js', type: 'module' });
+  await page.evaluate(() => { window.inventoryPromise = new Promise(resolve => window.finishModeIdentity = resolve); window.renderControls(28); });
+  const warning = page.locator('.paybox > .paybox-contract-warning');
+  await expect(warning).toHaveText('');
+  expect(await warning.evaluate(node => node.getBoundingClientRect().height)).toBe(0);
+  await page.screenshot({path: testInfo.outputPath('pending-identity.png'), fullPage: true});
+  await page.evaluate(() => window.finishModeIdentity(null));
+  await expect(warning).toContainText('Could not verify which tokens');
+  await expect(warning).toBeVisible();
+  expect(await warning.evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThan(0);
+});
+
+test('native Pay mode caret matches ordinary compact sizing after full inventory and mode changes', async ({ page }, testInfo) => {
+  await page.route('**/*', route => new URL(route.request().url()).hostname === '127.0.0.1' ? route.continue() : route.abort());
+  await page.route('**/inventory-controls.js', async route => route.fulfill({ contentType: 'text/javascript', body: await controlsSource() }));
+  await page.goto('/index.html#learn'); await page.addScriptTag({ url: '/inventory-controls.js', type: 'module' });
+  await page.evaluate(() => { window.inventoryPromise = Promise.resolve(null); window.renderControls(529); });
+  const mode = page.locator('.paybox-mode'); await expect(mode).toBeVisible();
+  const ordinaryWidth = await mode.evaluate(node => node.getBoundingClientRect().width);
+  await page.evaluate(() => {
+    window.fullInventory = { protocol: 'defifa', hook: '0x' + '12'.repeat(20), blockNumber: 1n, phase: 1, pricing: { currency: 1, decimals: 18 }, nextStartingId: null, tiers: [{ id: 1, name: 'Blue Team', price: 1000000000000n, currentSupply: 2n, remainingSupply: 100n }] };
+    window.inventoryPromise = Promise.resolve({ ...window.fullInventory, tiers: window.fullInventory.tiers.slice(0, 1) }); window.renderControls(28);
+  });
+  await expect(mode).toHaveValue('pay');
+  expect(await mode.evaluate(node => node.getBoundingClientRect().width)).toBeLessThan(60);
+  expect(Math.abs(await mode.evaluate(node => node.getBoundingClientRect().width) - ordinaryWidth)).toBeLessThanOrEqual(1);
+  await testInfo.attach('mode-widths', {body: JSON.stringify({ordinaryWidth, nativeWidth: await mode.evaluate(node => node.getBoundingClientRect().width)}), contentType: 'application/json'});
+  await page.screenshot({path: testInfo.outputPath('native-compact-pay.png'), fullPage: true});
+  await mode.selectOption('addbalance');
+  expect(await mode.evaluate(node => node.getBoundingClientRect().width)).toBeGreaterThan(ordinaryWidth);
+  await mode.selectOption('pay');
+  expect(Math.abs(await mode.evaluate(node => node.getBoundingClientRect().width) - ordinaryWidth)).toBeLessThanOrEqual(1);
+});
