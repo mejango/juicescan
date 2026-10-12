@@ -26,7 +26,7 @@ describe('shared protocol inventory adoption', () => {
   });
   it.each(['genericPay', 'genericCashOut', 'manageTiers'])('blocks native %s before writer execution', async capability => {
     getProjectNftInventory.mockResolvedValueOnce(native);
-    await expect(requireGenericInventory({}, args, capability)).rejects.toThrow(nativeActionUnavailable);
+    await expect(requireGenericInventory({}, args, capability)).rejects.toThrow(nativeActionUnavailable(capability));
   });
   it('retains ordinary JB721 transaction context and allows its compatible calldata', async () => {
     const shop = { ...native, protocol: 'jb721', metadataIdTarget: '0xabc', capabilities: { genericPay: true, genericCashOut: true, manageTiers: true } };
@@ -123,4 +123,16 @@ it.each([false, true])('does not let an older page overwrite verified flavor aft
   reject(new Error('Older page failed'));
   await expect(first).rejects.toThrow('Older page failed');
   expect(document.querySelector('[data-project-flavor]').textContent).toBe('Defifa');
+});
+
+
+it('uses native NFT participation labels without hiding independently existing ERC20 details', async () => {
+ const {projectTokenType,rememberProjectInventory}=await import('../src/nft-inventory.js');
+ const project={id:27,chainId:8453};
+ document.body.innerHTML='<span data-project-token-type="8453:27">Credits</span>';
+ rememberProjectInventory(project,native);
+ expect(projectTokenType(project)).toBe('NFTs');
+ expect(document.querySelector('[data-project-token-type]').textContent).toBe('NFTs');
+ expect(projectTokenType({...project,tokenAddress:'0x123'})).toBe('ERC-20');
+ expect(projectTokenType({id:28,chainId:8453})).toBe('Credits');
 });

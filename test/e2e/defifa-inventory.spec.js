@@ -39,7 +39,8 @@ async function controlsSource() {
     bundle: true, format: 'esm', write: false, define: { __BENDYSTRAW_API_KEY__: '""', __PINATA_JWT__: '""' },
     plugins: [{ name: 'controlled-identity', setup(build) {
       build.onResolve({ filter: /^@bananapus\/nana-sdk-core\/v6$/ }, () => ({ path: 'sdk', namespace: 'identity' }));
-      build.onLoad({ filter: /.*/, namespace: 'identity' }, () => ({ contents: "export async function getProjectNftInventory(client, args) { if (args.tierLimit === 1) return window.inventoryPromise; throw new Error('Resolver unavailable'); }", loader: 'js' }));
+      build.onResolve({filter:/^\//,namespace:'identity'},args=>({path:args.path,namespace:'file'}));
+      build.onLoad({ filter: /.*/, namespace: 'identity' }, () => ({ contents: "export * from " + JSON.stringify(process.cwd() + "/node_modules/@bananapus/nana-sdk-core/dist/esm/v6/index.js") + "; export async function getProjectNftInventory(client, args) { if (args.tierLimit === 1) return window.inventoryPromise; throw new Error('Resolver unavailable'); }", loader: 'js' }));
     } }],
   }).then(result => result.outputFiles[0].text);
   return controlHarness;
@@ -51,16 +52,35 @@ test('protocol identification gates visible controls and preserves ordinary paym
   await page.addScriptTag({ url: '/inventory-controls.js', type: 'module' });
   await page.evaluate(() => { window.inventoryPromise = new Promise(resolve => window.resolveIdentity = resolve); window.renderControls(501); });
   await expect(page.locator('.paybox-amount-row')).toBeHidden();
+  await expect(page.locator('.paybox-memo')).toBeHidden();
+  await expect(page.locator('.paybox-feedback')).toBeHidden();
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeHidden();
   await page.evaluate(() => window.resolveIdentity({ protocol: 'jb721' }));
   await expect(page.locator('.paybox-amount-row')).toBeVisible();
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeVisible();
   await expect(page.getByText(/Resolver unavailable/).first()).toBeVisible();
   await page.evaluate(() => { window.inventoryPromise = Promise.resolve({ protocol: 'defifa', hook: '0x123', pricing: { currency: 61166, decimals: 18 }, blockNumber: 1n, phase: 1, tiers: [], nextStartingId: null }); window.renderControls(502); });
-  await expect(page.getByText('Defifa NFT transactions are not supported in this interface.', {exact:true})).toBeVisible();
+  await expect(page.locator('.paybox-mode')).toHaveValue('addbalance');
+  await expect(page.locator('.paybox-mode option[value="pay"]')).toHaveCount(0);
+  await expect(page.getByRole('button', {name:'Add',exact:true})).toBeVisible();
+  await expect(page.locator('.paybox-memo')).toBeVisible();
   await expect(page.locator('a[href*="metalog.money"]')).toHaveCount(0);
-  await expect(page.locator('.paybox-amount-row')).toBeHidden();
+  await expect(page.locator('.paybox-amount-row')).toBeVisible();
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeHidden();
+});
+
+test('failed NFT identity leaves intentional balance funding and Retry available without offering mint', async ({page})=>{
+ await page.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort());
+ await page.route('**/inventory-controls.js',async route=>route.fulfill({contentType:'text/javascript',body:await controlsSource()}));
+ await page.goto('/index.html#learn');await page.addScriptTag({url:'/inventory-controls.js',type:'module'});
+ await page.evaluate(()=>{window.inventoryPromise=new Promise((resolve,reject)=>window.rejectFundingIdentity=reject);window.renderControls(504)});
+ await expect(page.locator('.paybox-amount-row')).toBeHidden();
+ await page.evaluate(()=>window.rejectFundingIdentity(new Error('NFT identity unavailable')));
+ await expect(page.locator('.paybox-mode')).toHaveValue('addbalance');
+ await expect(page.locator('.paybox-mode option[value="pay"]')).toHaveCount(0);
+ await expect(page.locator('.paybox-memo')).toBeVisible();
+ await expect(page.locator('.paybox-status').getByRole('button',{name:'Retry',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Add',exact:true})).toBeVisible();
 });
 
 test('initial Tokens keeps failed identity unverified and retries Defifa guidance without a wallet send', async ({ page }) => {

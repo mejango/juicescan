@@ -133,3 +133,58 @@ User requested no visible middot separators, a plain Onchain ranges caption, and
 - **Evidence and unknowns:** Nonnumeric names and mixed prices must render unchanged. The hidden inventory block enables release proof without technical caption text. Existing ordinary JB721 behavior remains covered.
 - **Verification:** Run focused native/control/copy tests, source/transaction checks, complete required npm check and final hosted CI. Root verifies published source and desktop/mobile after coordinated release.
 - **Resource budget:** Remove all curve request, asset and budget additions. Measure any remaining generic-flavor growth with pinned Node22.23.1 and keep enforced narrow ceilings. No new chain scans or public writes.
+
+## Defifa basic Juicebox actions (2026-10-12)
+
+## Plan refinement
+- **Objective:** Make verified Defifa projects usable for ordinary Add to balance, remove inactive payment fragments, then integrate generic native NFT checkout/transfer/cashout without Metalog-specific data or public wallet writes.
+- **System fit:** Existing SDK owns identity and protocol metadata; Juicescan owns rendering and existing terminal/accounting/simulation/review/receipt execution. Defifa mint and cashout require native calldata, while Add to balance is independent of NFT minting.
+- **Reuse and simplicity:** Preserve the existing Add-to-balance transaction builder and quote/review protections. Keep genericPay false and scope its guard to actual generic Pay. Reuse the forthcoming SDK native encoder instead of copying Metalog.
+- **Evidence and unknowns:** Baseline origin/main95cdc21 is clean; prior blanket native guards prevent Add to balance and leave memo/feedback visible. Native mint delegate defaults, phase, ownership and exact prices must be checked before subsequent integration.
+- **Verification:** Focused control/action regressions prove unknown/error states hide all unused controls, verified Defifa exposes Add to balance, and generic Pay remains blocked. Required full checks and native simulated/reviewed action tests precede publication; no public wallet execution.
+- **Resource budget:** Separate clean worktree preserves parent drafts. Finish basic-funds/UI behavior separately before native NFT integration. Use focused tests while iterating, one required full check after final source freeze, and coordinate SDK ownership.
+
+- [x] Enable verified native Add to balance using existing execution owner and clean unused fragments.
+- [x] Prove focused UI/action guard and ordinary/Revnet parity.
+- [x] Integrate shared SDK native NFT actions with fresh identity/phase/price/ownership simulation.
+- [ ] Run required checks and independent review before release.
+
+Basic-funds review: focused 35 tests across inventory-controls, nft-inventory and discover-calldata-gaps pass on Node22.23.1; source syntax gate280 passes; ten focused desktop/mobile native browser cases pass. Unknown identity hides unused fields; verified native exposes Add to balance and keeps incompatible Pay guarded. No public wallet writes. Required final full checks/publication remain pending after shared native NFT integration.
+
+Review correction: payment mode is validated as exactly Pay or Add to balance before any protocol guard or calldata preparation. Empty/unknown forged select values fail closed; focused suite now37 tests. Shared hook metadata decoder refactor preserves the installed SDK2.28 generic shop/swap/buyback/redemption outputs and passes existing10 review decoder tests plus source280 gate before native decoder changes.
+
+Funding refinement: NFT identity is not authority for hook-free addToBalanceOf. Failed NFT reads keep minting unavailable and Retry visible but permit intentional funding after independent accounting-context, attached-terminal, wallet-balance and exact transaction checks. Direct top-ups do not call the mint preview hook. Root refined plan authorizes this correction; generic Pay remains blocked until authenticated.
+
+Failed-identity funding review: focused actual-renderer test reaches an Add-to-balance review despite NFT RPC failure, while attached terminal/accounting/wallet checks remain required; twelve desktop/mobile native browser cases pass. Optional transaction receipt verification has three meaningful engine cases (await before success, retain submitted pending on failed verification/no resend, ordinary caller parity). Full final gates remain pending SDK/native integration.
+
+## Native NFT actions and durable recovery refinement
+
+## Plan refinement
+- **Objective:** Support native Defifa NFT mint, transfer and cashout through the existing review/execution engine, preserving unknown submitted attempts across tab changes and reload while leaving independent funding available.
+- **System fit:** Shared SDK preparations own phase, selected prices, delegation, ownership, canonical call/receipt proof and holdings. Shared SDK browser write recovery owns reservations, exact call persistence, locks and recovery; the app only renders controls and existing execution callbacks.
+- **Reuse and simplicity:** Reuse SDK action bounds/phase predicates, selected tier snapshots, typed finalized failure, shared recovery journal and existing Safe execution lookup. Existing engine optional receipt/reverify hooks are extended narrowly; no duplicate calldata, token-ID arithmetic or second journal.
+- **Evidence and unknowns:** Official SDK publication remains a release prerequisite; an integrity-checked local SDK preview only supports development builds. Self-payment delegation applies to all existing selected-tier holdings. Unknown receipt/proposal outcomes never authorize another send.
+- **Verification:** Test mixed tier selections/prices, ERC20 approval rechecks/newer snapshot simulation, zero reclaim plus rewards, exact canonical receipt effects, Safe proposal/check, per-action pending reservation and unmount/reload recovery. Require final qualified SDK install, full repository gates/CI and read-only published desktop/mobile verification.
+- **Resource budget:** SDK calls are bounded to128 action NFTs and explicit holdings continuations. Separate panel/tests ownership avoids discover edits racing; one final build/check follows frozen official dependencies. No public wallet writes or publication before parent coordination.
+
+### Development review
+Pinned Node22.23.1/npm10.9.8 with the SHA256-verified checked SDK preview passes 1,906 unit tests, 95 focused action/control cases and 18 desktop/mobile browser cases. Browser cases use the actual SDK journal for remount/reload, mock wallet execution and receipt preparation, and prove unknown submissions cannot resend while independent actions remain available. The execution boundary awaits durable reservation after simulation/gas, permits exact pre-wallet cleanup and numeric4001 refusal cleanup, and keeps all uncertain answers pending. Disposed panels preserve original receipt proof and clear only the matching record without new background reads.
+
+Same-runtime/environment baseline95cdc21/core2.28 measures 10,408,036 B app raw / 1,508,387 B app gzip and 2,280,560 B total gzip. The checked development preview plus native integration measures 10,590,337 B / 1,536,512 B and 2,308,685 B total. Existing budgets intentionally fail until official package bytes are installed and narrow measured ceilings are reviewed. Official dependency pin, clean installation, required complete check, hosted CI and final read-only signed-out/connected publication proof remain outstanding. No public wallet writes or publication occurred.
+
+## Safe native approval and final wallet boundary refinement
+
+## Plan refinement
+- **Objective:** Authenticate every native Safe payment as one exact call, with a separate verified ERC20 approval when needed, and stop wallet invocation when the reviewed account, chain, View as or route changes.
+- **System fit:** Existing component allowance and execution owners prepare ordinary approvals; the SDK generic reviewed-write verifier proves approval receipts while native helpers prove NFT calls. The existing per-project pay journal retains successive legs and recovery.
+- **Reuse and simplicity:** Extract one allowance reader with behavior-preserving caller changes first; native-only single-call mode preserves ordinary Safe atomic batches. Reuse shared journal and receipt proofs, adding no SDK batch API or second transaction store.
+- **Evidence and unknowns:** Independent review reproduced immediate-execution-hash failure for a pay-only saved record of an approval-plus-pay Safe batch, and actor/route changes during the final awaited chain check. Proposal hashes and immediate execution hashes remain separately authenticated by shared owners.
+- **Verification:** Regress final account, View as, route and chain changes, reviewed route versus persisted Safe flag, exact approval-only Safe review, canonical approval recovery then fresh mint review, immediate execution receipt lookup, unknown receipt errors and ordinary batch parity. Run final official SDK pin/full gates after review.
+- **Resource budget:** Approval is a deliberate separate wallet action under the existing pay scope; recovery probes a returned hash once before one bounded Safe lookup. No public transactions, speculative batch decoder or additional journal.
+
+### Final release qualification
+Official core2.29.0 is pinned with the publisher-verified SHA512 integrity, and a clean Node22.23.1/npm10.9.8 installation changes no other dependencies. Required npm check passes 1,925 unit tests and 116 browser cases, production audit, source/deployment/generated/schema/transaction gates and measured bundle ceilings. Final independent review approved the separate Safe approval and final wallet-boundary corrections. Evidence: /tmp/juicescan-defifa-actions-official-check-final.log.
+
+The first required run intentionally remains recorded at /tmp/juicescan-defifa-actions-official-check.log: an older SDK deployment checkout had the correct content digest but Git revisiona6ab40c, while this consumer and its CI pin c62b3ac. The successful rerun used /Users/jango/Documents/jb/v6/evm/deploy-all-v6/deployments at exact c62b3ac, with no gate changes. SDK and app deployment pins have different scopes.
+
+Official final bundle measures 10,594,759 B app raw / 1,537,367 B app gzip and 2,309,541 B total gzip. Caps round only these measured values to the next1KB; no unrelated asset allowance changes. Hosted CI, immutable merged artifact publication, Center pointer deployment and actual signed-out/100-NFT-wallet read-only verification remain separate release gates. No public wallet writes occurred.

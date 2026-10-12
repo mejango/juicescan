@@ -244,6 +244,14 @@
       "actions": [
         "Wallet connection / network request"
       ]
+    },
+    "src/defifa-nft-actions.js": {
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Defifa NFT mint / transfer / cash out"
+      ]
     }
   }
 }
