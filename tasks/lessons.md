@@ -13,3 +13,5 @@
 - **Audit ancillary RPC clients as well as the main project reader.** ENS lookups in address fields and connected headers must use the shared mainnet client, preserving explicit user overrides. Real viem forward/reverse HTTP regressions enforce Center defaults and prevent a dedicated provider from bypassing the policy. (2026-10-12, connected-wallet live proof.)
 
 - **Protocol-specific calldata does not imply protocol-specific checkout styling.** Native Defifa uses the existing shop preview, cart, tier cards and payment layout; isolate differences in the submission adapter, phase/quote evidence and review text. Enforce a preview-and-cart parity regression rather than replacing the purchase surface with a navigation-only link or quantity table. (2026-10-12, user checkout correction.)
+
+- **Qualify action-absence regressions in a phase where the old action would exist.** A closed mint phase cannot prove removal of a duplicate mint form. Revert the owning caller and confirm the regression fails, then restore it; source review and passing fixtures alone do not prove the gate catches the bug. (2026-10-12, Cash out presentation review.)

@@ -225,7 +225,7 @@ it('keeps generic funding errors scoped to Add mode while native checkout uses i
 });
 
 it('Cash out opens only owned native NFT actions without a second mint quantity form',async()=>{
- runtime.account='0x1111111111111111111111111111111111111111';const inventory={...nativeInventory(),phase:2};runtime.read.mockResolvedValue(inventory);
+ runtime.account='0x1111111111111111111111111111111111111111';const inventory={...nativeInventory(),phase:1};runtime.read.mockResolvedValue(inventory);
  runtime.holdings.mockResolvedValue({tokens:[{tokenId:1000000001n,tierId:1}],totalOwned:1n,complete:true,nextCursor:null,blockNumber:inventory.blockNumber});
  document.body.append(opsActionsRow(project(422),{noLoans:true}));document.querySelector('.ops-action-btn').click();
  await vi.waitFor(()=>expect(document.body.textContent).toContain('Your NFTs'));
