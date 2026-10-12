@@ -46,7 +46,8 @@ const budgets = {
   // Shared native/ordinary checkout, bounded cosmetic URI media and final synchronous intent guards:
   // Node22 same-env222c5f baseline10,594,623 raw /1,537,295 gzip; final10,608,959 /1,540,607.
   // Growth +14,336 raw /+3,312 gzip, no new dependency; keep the next1KB ceilings.
-  'dist/app.js': { raw: 10_609_000, gzip: 1_541_000 },
+  // Shared exhausted-image fallback: 10,609,107 raw /1,540,684 gzip, +148/+77 B; only raw next1KB changes.
+  'dist/app.js': { raw: 10_610_000, gzip: 1_541_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },

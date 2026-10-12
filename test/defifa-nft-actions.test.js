@@ -32,6 +32,16 @@ describe('native Defifa NFT action boundary', () => {
     const cart = cartFixture(), options = mintOptions(cart), root = await render(options);
     expect(root.querySelector('.paybox-amount-row .paybox-field .paybox-amount').value).toBe('13 ETH'); expect(root.querySelector('.paybox-btn').textContent).toBe('Pay'); expect(root.querySelector('.paybox-feedback').textContent).toContain('Orange Team ×2'); expect(root.querySelector('.paybox-feedback').textContent).toContain('Blue Team'); expect(root.querySelector('input[type=number]')).toBeNull(); expect(root.textContent).not.toContain('Your NFTs'); expect(h.inventory).not.toHaveBeenCalled(); expect(h.holdings).not.toHaveBeenCalled(); expect(options.cartTotal).toHaveBeenCalledWith(native, cart); expect(options.onInventory).toHaveBeenCalledWith(native);
   });
+  it('delegates selected artwork to the shared media renderer without a raw image path', async () => {
+    const cart = cartFixture(); cart.image = () => 'data:image/svg+xml;base64,YnJva2Vu';
+    const options = mintOptions(cart); options.renderMedia = vi.fn((container, media, label) => { container.textContent = label; });
+    const root = await render(options);
+    expect(options.renderMedia).toHaveBeenCalledTimes(2);
+    expect(options.renderMedia.mock.calls.map(([, , label]) => label)).toEqual(['Blue Team', 'Orange Team']);
+    expect(root.querySelectorAll('.paybox-nft-thumb img')).toHaveLength(0);
+    expect(root.querySelector('.paybox-nft-thumb').textContent).toBe('Blue Team');
+  });
+
   it('captures shared cart IDs and note into native preparation without a second selection form', async () => {
     const root = await render(mintOptions(cartFixture())); root.querySelector('.paybox-memo').value = 'Shared checkout'; click(root, 'Pay'); await flush(); expect(h.preparePay.mock.lastCall[1]).toMatchObject({ tierIdsToMint: [1n, 7n, 7n], memo: 'Shared checkout' }); expect(h.execute.mock.lastCall[0].confirmSummary.rows).toContainEqual(['Memo', 'Shared checkout']);
   });
