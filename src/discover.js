@@ -3,6 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
+import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from '@bananapus/nana-sdk-core/v6';
 import { renderDefifaNftActions } from './defifa-nft-actions.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
@@ -509,10 +510,12 @@ async function readAllActiveTiers(client, store, hook) {
   return out;
 }
 
-async function readActiveTier(client, store, hook, tierId) {
+async function readActiveTier(client, store, hook, tierId, options) {
+  options = options || {};
   var rows = await client.readContract({
     address: store, abi: TIER721_STORE_ABI, functionName: 'tiersOf',
-    args: [hook, [], false, BigInt(tierId), 1n],
+    args: [hook, [], !!options.includeResolvedUri, BigInt(tierId), 1n],
+    blockNumber: options.blockNumber,
   });
   var tier = rows && rows[0];
   return tier && Number(tier.id) === Number(tierId) ? tier : null;
@@ -1037,8 +1040,8 @@ async function fetchProjectTiersUncached(project) {
 // Resolve a tier's display { name, image, category } — prefer the onchain tokenUriResolver (it returns
 // productName + categoryName + image uniformly for every tier, even ones that also carry an IPFS URI),
 // falling back to the tier's IPFS metadata when no resolver is set. Best-effort.
+var nativeTierMedia = new WeakMap(), nativeTierMediaQueue = Promise.resolve();
 function resolveTierMedia(shop, tier, chainId) {
-  if (isNativeInventory(shop)) return Promise.resolve({ name: tier.name, image: '' });
   // The resolver sometimes returns an SVG that merely wraps an EXTERNAL <image href="…"> (Banny
   // accessories) — browsers block external loads inside an <img> data URI, so pull the href out and
   // load the bitmap directly. Inline-vector SVGs (Banny bodies) are self-contained and used as-is.
@@ -1060,6 +1063,22 @@ function resolveTierMedia(shop, tier, chainId) {
       category: j.categoryName,
     };
   };
+  if (isNativeInventory(shop)) {
+    if (!nativeTierMedia.has(shop)) nativeTierMedia.set(shop, new Map());
+    var cached = nativeTierMedia.get(shop), key = Number(tier.id);
+    if (!cached.has(key)) {
+      var pending = nativeTierMediaQueue.then(function () {
+        return readActiveTier(clientFor(chainId), shop.store, shop.hook, tier.id, { includeResolvedUri: true, blockNumber: shop.blockNumber });
+      }).then(function (resolved) {
+        var match = /^data:application\/json;base64,(.*)$/.exec(resolved && resolved.resolvedUri || '');
+        var media = match ? pick(JSON.parse(decodeURIComponent(escape(atob(match[1]))))) : {};
+        return Object.assign({}, media, { name: tier.name });
+      }).catch(function () { return { name: tier.name, image: '' }; });
+      nativeTierMediaQueue = pending.then(function () {});
+      cached.set(key, pending);
+    }
+    return cached.get(key);
+  }
   // Bendystraw stores parsed tier metadata when available. It is the display source of truth; the verified
   // onchain resolver/IPFS value below remains the fallback for indexer gaps or older rows.
   var indexed = tier.indexedMetadata;
@@ -1496,7 +1515,7 @@ function compressImageFile(file, maxBytes) {
 // the Pay-card strip and the Shop tab stay in sync (selecting in either place updates both). Qty changes
 // notify `subscribe` listeners; name resolutions notify `onName` listeners (kept separate so a late name
 // fetch re-renders labels without disturbing a user-typed pay amount).
-function makeNftCart() {
+export function makeNftCart() {
   var sel = {}, names = {}, imgs = {}, subs = [], nameSubs = [];
   return {
     get: function (id) { return sel[id] || 0; },
@@ -1517,15 +1536,25 @@ function makeNftCart() {
   };
 }
 
-function renderDefifaActionsForProject(project, inventory) {
+export function nftCartSubtotal(shop, cart) {
+  var total = 0n, selection = cart.entries();
+  Object.keys(selection).forEach(function (id) {
+    var tier = shop && shop.tiers.find(function (item) { return item.id === Number(id); });
+    if (tier) total += tierEffectivePrice(tier.price, tier.discountPercent) * BigInt(selection[id]);
+  });
+  return total;
+}
+
+function renderDefifaActionsForProject(project, inventory, options) {
   return renderDefifaNftActions(inventory, project.chainId, pidOn(project, project.chainId), function (price, pricing) {
     var fresh = Object.assign({}, inventory.pricing, pricing || {});
     if (pricing && (Number(pricing.currency) !== Number(inventory.pricing.currency) || Number(pricing.decimals) !== Number(inventory.pricing.decimals) || String(pricing.token).toLowerCase() !== String(inventory.pricing.token).toLowerCase())) fresh.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
     return formatShopPrice(Object.assign({}, inventory, { pricing: fresh }), price, project.chainId);
-  });
+  }, options);
 }
 
 export function renderShopSection(project, shop, cart) {
+  cart = cart || makeNftCart();
   var wrap = el('div', 'detail-section');
   var card = el('div', 'detail-card shop-card');
   var head = el('div', 'shop-card-head');
@@ -1556,7 +1585,7 @@ export function renderShopSection(project, shop, cart) {
     var old = card.querySelector('.shop-credits');
     if (old) old.remove();
     var acct = getEffectiveAccount();
-    if (!acct || !s || !s.hook || !s.tiers.length) return;
+    if (!acct || !s || isNativeInventory(s) || !s.hook || !s.tiers.length) return;
     clientFor(project.chainId).readContract({ address: s.hook, abi: TIER721_PAY_CREDITS_ABI, functionName: 'payCreditsOf', args: [acct] }).then(toBigInt).then(function (credit) {
       if (!credit || credit <= 0n || !wrap.isConnected || card.querySelector('.shop-credits')) return;
       var row = el('div', 'about-link-row shop-credits');
@@ -1637,8 +1666,14 @@ export function renderShopSection(project, shop, cart) {
     if (isNativeInventory(s)) {
       title.textContent = 'Defifa NFT tiers';
       headAdd.remove(); if (typeof mgr !== 'undefined' && mgr) mgr.remove();
-      body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri)));
-      body.appendChild(renderDefifaActionsForProject(project, s));
+      var refreshers = {};
+      body.appendChild(renderNativeInventory(s, project.chainId, pidOn(project, project.chainId), function (price) { return formatShopPrice(s, price, project.chainId); }, ipfsToHttp(s.contractUri), function () {
+        var grid = el('div', 'shop-grid');
+        s.tiers.forEach(function (tier) { grid.appendChild(renderTierCard(project, s, tier, null, cart, refreshers)); });
+        return grid;
+      }));
+      cart.subscribe(function () { Object.keys(refreshers).forEach(function (id) { if (body.isConnected) refreshers[id](); }); });
+      body.appendChild(renderDefifaActionsForProject(project, s, { mode: 'holdings', cart: cart, cartTotal: nftCartSubtotal }));
       return;
     }
     if (!s || !s.tiers.length) {
@@ -1697,7 +1732,7 @@ export function renderShopSection(project, shop, cart) {
       body.appendChild(group);
     });
     applyFilter();
-    if (cart) cart.subscribe(function (id) { if (refreshers[id]) refreshers[id](); });
+    if (cart) cart.subscribe(function (id) { if (isNativeInventory(shop)) Object.keys(refreshers).forEach(function (key) { refreshers[key](); }); else if (refreshers[id]) refreshers[id](); });
 
     // Focus hook: clicking a tier in the Pay-card strip scrolls to (and briefly highlights) its card here.
     function focusTier(id) {
@@ -2972,9 +3007,27 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   return newIds;
 }
 
+function shopTierSelectionCap(shop, tier, cart) {
+  if (!isNativeInventory(shop)) return tier.initial >= TIER_UNLIMITED_SUPPLY ? Infinity : tier.remaining;
+  if (!defifaPhaseAllowsPay(shop.phase)) return 0;
+  var other = 0, selection = cart ? cart.entries() : {};
+  Object.keys(selection).forEach(function (id) { if (Number(id) !== Number(tier.id)) other += selection[id]; });
+  var remaining = Number(tier.remainingSupply);
+  return Number.isFinite(remaining) ? Math.max(0, Math.min(remaining, MAX_DEFIFA_ACTION_NFTS - other)) : 0;
+}
+function shopTierSoldOut(shop, tier) { return Number(isNativeInventory(shop) ? tier.remainingSupply : tier.remaining) === 0; }
+
+function whenTierVisible(shop, node, load) {
+  if (!isNativeInventory(shop) || typeof IntersectionObserver === 'undefined') { load(); return; }
+  var observer = new IntersectionObserver(function (entries) {
+    if (entries.some(function (entry) { return entry.isIntersecting; })) { observer.disconnect(); load(); }
+  }, { rootMargin: '200px' });
+  observer.observe(node);
+}
+
 function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
-  var soldOut = tier.remaining === 0;
-  var cap = (tier.initial >= TIER_UNLIMITED_SUPPLY) ? Infinity : tier.remaining; // unlimited tiers have no per-tx cap
+  var soldOut = shopTierSoldOut(shop, tier);
+  var cap = shopTierSelectionCap(shop, tier, cart); // protocol-owned phase and bounded native action size
   var c = el('div', 'shop-tier');
   c.setAttribute('data-tier-id', String(tier.id));
   var imgWrap = el('div', 'shop-tier-img'); var ph = el('span', 'shop-tier-ph'); ph.textContent = '#' + tier.id; imgWrap.appendChild(ph); c.appendChild(imgWrap);
@@ -2983,7 +3036,8 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   if (discLabel) { var badge = el('span', 'shop-tier-discount'); badge.textContent = discLabel; imgWrap.appendChild(badge); }
 
   var info = el('div', 'shop-tier-info');
-  var nameEl = el('div', 'shop-tier-name'); nameEl.textContent = 'Item ' + tier.id; info.appendChild(nameEl);
+  var nameEl = el('div', 'shop-tier-name'); nameEl.textContent = isNativeInventory(shop) ? tier.name : 'Item ' + tier.id; info.appendChild(nameEl);
+  if (isNativeInventory(shop) && cart) cart.setName(tier.id, tier.name);
   var descEl = el('div', 'shop-tier-description'); descEl.style.display = 'none'; info.appendChild(descEl);
   var row = el('div', 'shop-tier-row');
   var left = el('div', 'shop-tier-pricecol');
@@ -2991,7 +3045,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   var priceEl = el('span', 'shop-tier-price'); priceEl.textContent = formatShopPrice(shop, tierEffectivePrice(tier.price, tier.discountPercent), project.chainId); left.appendChild(priceEl);
   if (discLabel) { var origEl = el('span', 'shop-tier-price-orig'); origEl.textContent = formatShopPrice(shop, tier.price, project.chainId); left.appendChild(origEl); }
   var supplyEl = el('span', 'shop-tier-supply');
-  supplyEl.textContent = soldOut ? 'sold out' : (tier.initial >= TIER_UNLIMITED_SUPPLY ? 'unlimited' : tier.remaining + ' left');
+  supplyEl.textContent = isNativeInventory(shop) ? String(tier.currentSupply) + ' NFTs' + (tier.remainingSupply == null ? '' : ', ' + (soldOut ? 'sold out' : String(tier.remainingSupply) + ' left')) : soldOut ? 'sold out' : (tier.initial >= TIER_UNLIMITED_SUPPLY ? 'unlimited' : tier.remaining + ' left');
   left.appendChild(supplyEl);
   if (shop.transfersPaused === true && tier.flags && tier.flags.transfersPausable) {
     var pausedEl = el('span', 'shop-tier-transfer-paused'); pausedEl.textContent = 'transfers paused'; left.appendChild(pausedEl);
@@ -3012,9 +3066,9 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
     c.classList.toggle('selected', q > 0);
     qtyEl.textContent = String(q);
     minus.disabled = q <= 0;
-    plus.disabled = soldOut || q >= cap;
+    plus.disabled = soldOut || q >= shopTierSelectionCap(shop, tier, cart);
   }
-  function set(q) { if (cart) cart.set(tier.id, Math.max(0, Math.min(cap, q))); } // cart subscription redraws
+  function set(q) { if (cart) cart.set(tier.id, Math.max(0, Math.min(shopTierSelectionCap(shop, tier, cart), q))); } // cart subscription redraws
   if (refreshers) refreshers[tier.id] = refresh;
   if (!soldOut) {
     minus.addEventListener('click', function () { set((cart ? cart.get(tier.id) : 0) - 1); });
@@ -3022,7 +3076,7 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
   } else { minus.disabled = true; plus.disabled = true; }
   refresh();
 
-  resolveTierMedia(shop, tier, project.chainId).then(function (m) {
+  whenTierVisible(shop, c, function () { resolveTierMedia(shop, tier, project.chainId).then(function (m) {
     if (!c.isConnected) return;
     var nm = m.name || ('Item ' + tier.id);
     if (cart) { cart.setImage(tier.id, m.image); if (m.name) cart.setName(tier.id, nm); }
@@ -3030,10 +3084,15 @@ function renderTierCard(project, shop, tier, onCat, cart, refreshers) {
     if (m.description) { descEl.textContent = htmlToText(m.description); descEl.style.display = ''; }
     if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'full');
     if (m.category && onCat) onCat(tier.category, m.category);
-  });
+  }); });
 
   // Click the art or name to open the full item detail (per-chain supply, config, operator edit/remove).
-  function openDetail() { openTierDetail(project, shop, tier, cart, refreshers); }
+  function openDetail() {
+    if (!isNativeInventory(shop)) { openTierDetail(project, shop, tier, cart, refreshers); return; }
+    var detail = el('div', 'modal-body');
+    [['Name', tier.name], ['Price per NFT', formatShopPrice(shop, tierEffectivePrice(tier.price, tier.discountPercent), project.chainId)], ['Current NFTs', String(tier.currentSupply)], ['Remaining', String(tier.remainingSupply)]].forEach(function (fact) { var line = el('p'); line.textContent = fact[0] + ': ' + fact[1]; detail.appendChild(line); });
+    openModal(tier.name, detail);
+  }
   imgWrap.style.cursor = 'pointer'; imgWrap.addEventListener('click', openDetail);
   nameEl.style.cursor = 'pointer'; nameEl.addEventListener('click', openDetail);
   return c;
@@ -3144,7 +3203,7 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
   // Buy controls — add this item to the shared cart right from the popup (stays in sync with the shop card +
   // pay strip via the cart subscription; sold-out tiers are inert; unlimited tiers have no per-tx cap).
   if (cart) {
-    var soldOut = tier.remaining === 0;
+    var soldOut = shopTierSoldOut(shop, tier);
     var cap = (tier.initial >= TIER_UNLIMITED_SUPPLY) ? Infinity : tier.remaining;
     var buyRow = el('div', 'tier-detail-buy');
     var minus = el('button', 'shop-tier-stepbtn'); minus.textContent = '−';
@@ -3778,17 +3837,11 @@ function renderPayShopStrip(project, cart, opts) {
   readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, project).then(function (identity) {
     if (!wrap.isConnected) return null;
     if (opts.onIdentity) opts.onIdentity(identity);
-    return isNativeInventory(identity) ? identity : fetchProjectTiers(project);
+    return fetchProjectTiers(project);
   }).then(function (shop) {
     if (!wrap.isConnected) return;
     if (opts.onShop) opts.onShop(shop);
     if (!shop) return;
-    if (isNativeInventory(shop)) {
-      wrap.style.display = '';
-      var choose = el('button', 'paybox-shop-all'); choose.type = 'button'; choose.textContent = 'Choose NFTs';
-      choose.addEventListener('click', function () { if (opts.onViewAll) opts.onViewAll(); }); wrap.appendChild(choose);
-      return;
-    }
     if (!shop.tiers.length) return;
     wrap.style.display = '';
     var head = el('div', 'paybox-shop-head');
@@ -3813,8 +3866,9 @@ function renderPayShopStrip(project, cart, opts) {
 // and a − [qty] + stepper once selected, plus a green count badge. Backed by the shared cart; sold-out
 // tiers are inert. Registers its refresh in `refreshers` so cart changes from the Shop tab redraw it.
 function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
-  var soldOut = tier.remaining === 0;
+  var soldOut = shopTierSoldOut(shop, tier);
   var it = el('div', 'paybox-shop-item' + (soldOut ? ' soldout' : ''));
+  if (isNativeInventory(shop)) { it.title = tier.name + ' | ' + formatShopPrice(shop, tier.price, project.chainId); cart.setName(tier.id, tier.name); }
   var badge = el('span', 'paybox-shop-badge'); it.appendChild(badge);
   var imgWrap = el('div', 'paybox-shop-thumb'); var ph = el('span'); ph.textContent = '#' + tier.id; imgWrap.appendChild(ph); it.appendChild(imgWrap);
   var discLabel = tierDiscountLabel(tier);
@@ -3830,7 +3884,7 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
   step.appendChild(minus); step.appendChild(qtyEl); step.appendChild(plus); foot.appendChild(step);
   it.appendChild(foot);
 
-  var cap = (tier.initial >= TIER_UNLIMITED_SUPPLY) ? Infinity : tier.remaining; // unlimited tiers have no per-tx cap
+  var cap = shopTierSelectionCap(shop, tier, cart); // protocol-owned phase and bounded native action size
   function refresh() {
     var q = cart.get(tier.id);
     it.classList.toggle('selected', q > 0);
@@ -3838,13 +3892,13 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
     price.style.display = q > 0 ? 'none' : '';
     step.style.display = q > 0 ? '' : 'none';
     qtyEl.textContent = String(q);
-    plus.disabled = q >= cap;
+    plus.disabled = q >= shopTierSelectionCap(shop, tier, cart);
   }
-  function set(q) { cart.set(tier.id, Math.max(0, Math.min(cap, q))); } // cart subscription redraws
+  function set(q) { cart.set(tier.id, Math.max(0, Math.min(shopTierSelectionCap(shop, tier, cart), q))); } // cart subscription redraws
   if (refreshers) refreshers[tier.id] = refresh;
   if (!soldOut) {
     imgWrap.addEventListener('click', function () {
-      if (cart.get(tier.id) === 0) set(1);
+      if (cart.get(tier.id) === 0 && shopTierSelectionCap(shop, tier, cart) > 0) set(1);
       if (focusInShop) focusInShop(tier.id); // jump to the Shop tab and scroll to this tier
     });
     minus.addEventListener('click', function (e) { e.stopPropagation(); set(cart.get(tier.id) - 1); });
@@ -3852,13 +3906,13 @@ function makePayShopItem(project, shop, tier, cart, refreshers, focusInShop) {
   }
   refresh();
 
-  resolveTierMedia(shop, tier, project.chainId).then(function (m) {
+  whenTierVisible(shop, it, function () { resolveTierMedia(shop, tier, project.chainId).then(function (m) {
     if (!it.isConnected) return;
     var nm = m.name || ('Item ' + tier.id);
     cart.setImage(tier.id, m.image); cart.setName(tier.id, nm);
     it.title = nm + ' | ' + formatShopPrice(shop, tier.price, project.chainId);
     if (m.image || m.animationUrl) renderTierMediaInto(imgWrap, m, nm, 'thumb');
-  });
+  }); });
   return it;
 }
 
@@ -9501,7 +9555,7 @@ export function renderPayCard(project, cart) {
   }
   function nftRouteForToken(t) { return t ? state.nftRoutes[nftTokenKey(t)] : null; }
   function nftCheckoutTokens() {
-    if (!selectedTierIds().length) return state.tokens || [];
+    if (isNativeInventory(state.shop) || !selectedTierIds().length) return state.tokens || [];
     if (state.nftRoutesLoading) return [];
     return (state.tokens || []).filter(function (t) { var route = nftRouteForToken(t); return route && route.supported; });
   }
@@ -9568,12 +9622,7 @@ export function renderPayCard(project, cart) {
       }).catch(function () { return null; });
   }
   function nftTierById(id) { return state.shop ? state.shop.tiers.filter(function (t) { return t.id === id; })[0] : null; }
-  function nftTotalWei() {
-    var s = 0n, sel = cart.entries();
-    // Charge the DISCOUNTED price the store actually applies at mint, not the raw tier price.
-    Object.keys(sel).forEach(function (id) { var t = nftTierById(Number(id)); if (t) s += tierEffectivePrice(t.price, t.discountPercent) * BigInt(sel[id]); });
-    return s;
-  }
+  function nftTotalWei() { return nftCartSubtotal(state.shop, cart); }
   function selectedTierIds() {
     var a = [], sel = cart.entries();
     Object.keys(sel).forEach(function (id) { for (var i = 0; i < sel[id]; i++) a.push(Number(id)); });
@@ -9586,7 +9635,7 @@ export function renderPayCard(project, cart) {
   var nftRouteGeneration = 0;
   function refreshNftCheckoutRoutes() {
     var tierIds = selectedTierIds();
-    if (!tierIds.length || !state.shop) {
+    if (isNativeInventory(state.shop) || !tierIds.length || !state.shop) {
       state.nftRoutes = {};
       state.nftRoutesLoading = false;
       rebuildCurrency();
@@ -9641,10 +9690,10 @@ export function renderPayCard(project, cart) {
     var acct = getEffectiveAccount();
     var shop = state.shop;
     var gen = ++nftCreditGeneration;
-    if (!acct || !shop || !shop.hook) {
+    if (!acct || !shop || isNativeInventory(shop) || !shop.hook) {
       state.nftCredits = 0n;
       state.nftCreditsLoading = false;
-      if (selectedTierIds().length) syncNftAmountForSelection();
+      if (!isNativeInventory(shop) && selectedTierIds().length) syncNftAmountForSelection();
       renderFeedback();
       return Promise.resolve(0n);
     }
@@ -9678,6 +9727,10 @@ export function renderPayCard(project, cart) {
   }
   // Selecting NFTs drives the pay flow: use the 721 hook's pricing context, not a hard-coded ETH amount.
   function onNftChange() {
+    if (isNativeInventory(state.shop)) {
+      if (selectedTierIds().length) { state.mode = 'pay'; modeSel.value = 'pay'; updateModeUi(); }
+      return;
+    }
     if (selectedTierIds().length) {
       refreshNftCheckoutRoutes();
       refreshNftCredits();
@@ -9690,6 +9743,8 @@ export function renderPayCard(project, cart) {
   }
 
   var card = el('div', 'detail-card paybox');
+  var nativeCheckout = null;
+  var nativeCheckoutWrap = el('div'); nativeCheckoutWrap.hidden = true;
 
   // Absolute start of the project's first ruleset. When in the future, the Pay button idles
   // behind a live countdown (paying before start reverts in the terminal).
@@ -9739,7 +9794,17 @@ export function renderPayCard(project, cart) {
     },
     onShop: function (shop) {
       state.shop = shop;
-      if (isNativeInventory(shop)) return;
+      if (isNativeInventory(shop)) {
+        if (!modeSel.querySelector('option[value="pay"]')) {
+          var nativePay = document.createElement('option'); nativePay.value = 'pay'; nativePay.textContent = 'Pay'; modeSel.prepend(nativePay);
+        }
+        if (nativeCheckout) nativeCheckout.dispose();
+        nativeCheckoutWrap.replaceChildren();
+        nativeCheckout = renderDefifaActionsForProject(project, shop, { mode: 'mint', cart: cart, cartTotal: nftCartSubtotal });
+        nativeCheckoutWrap.appendChild(nativeCheckout);
+        state.mode = 'pay'; modeSel.value = 'pay'; updateModeUi();
+        return;
+      }
       refreshNftCredits();
       if (selectedTierIds().length) refreshNftCheckoutRoutes();
     },
@@ -9776,6 +9841,7 @@ export function renderPayCard(project, cart) {
     schedulePreview();
   });
   payOn.appendChild(modeSel);
+  var nativeChainLabel = el('span', 'paybox-chain-static'); nativeChainLabel.hidden = true; nativeChainLabel.textContent = payChainName(project.chainId, chainNameFor(project.chainId));
   var payOnLabel = el('span', 'paybox-payon-label');
   payOnLabel.textContent = 'on';
   payOn.appendChild(payOnLabel);
@@ -9817,8 +9883,10 @@ export function renderPayCard(project, cart) {
     applyPayChainFontSize(chainStatic, chainStatic.textContent);
     payOn.appendChild(chainStatic);
   }
+  payOn.appendChild(nativeChainLabel);
   topRow.appendChild(payOn);
   card.appendChild(topRow);
+  card.appendChild(nativeCheckoutWrap);
   sizeSelectToText(modeSel);
 
   // Currency control lives inline inside the amount field (appended to the amount row below).
@@ -9889,7 +9957,15 @@ export function renderPayCard(project, cart) {
 
   // Reflect the selected action across the button label (Pay → Add) and feedback. NFTs only mint on a Pay.
   function updateModeUi() {
-    if (state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { payBtn.textContent = 'Not started'; renderFeedback(); return; }
+    var nativePay = isNativeInventory(state.shop) && state.mode === 'pay' && nativeCheckout;
+    nativeCheckoutWrap.hidden = !nativePay;
+    if (nativeChainLabel) nativeChainLabel.hidden = !nativePay;
+    if (chainSel) chainSel.hidden = !!nativePay;
+    if (chainStatic) chainStatic.hidden = !!nativePay;
+    if (nativeCheckout && nativeCheckout.setActive) nativeCheckout.setActive(!!nativePay);
+    amountRow.hidden = !!nativePay; memo.hidden = !!nativePay; feedback.hidden = !!nativePay;
+    if (terminalNotice) renderTerminalNotice();
+    if (!nativePay && state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { payBtn.textContent = 'Not started'; renderFeedback(); return; }
     if (state.mode === 'addbalance') { payBtn.disabled = false; payBtn.classList.remove('paybox-btn-idle'); }
     payBtn.textContent = state.mode === 'addbalance' ? 'Add' : 'Pay';
     renderFeedback();
@@ -9915,6 +9991,7 @@ export function renderPayCard(project, cart) {
   function renderTerminalNotice() {
     terminalNotice.innerHTML = '';
     terminalNotice.style.display = 'none';
+    if (isNativeInventory(state.shop) && state.mode === 'pay') return;
     if (state.contextsError) {
       terminalNotice.style.display = '';
       terminalNotice.className = 'paybox-contract-warning blocked';
@@ -26692,7 +26769,7 @@ function renderOpsSection(project) {
 }
 
 // The row of wallet actions (cash out, borrow, move, add liquidity), each opening a modal.
-function opsActionsRow(project, opts) {
+export function opsActionsRow(project, opts) {
   opts = opts || {};
   var row = el('div', 'ops-actions');
   var multiChain = (project.chains || []).length > 1;
@@ -26700,7 +26777,7 @@ function opsActionsRow(project, opts) {
   [
     ['Cash out', async function () {
       var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
-      if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop)); return; }
+      if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop, { mode: 'holdings' })); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
