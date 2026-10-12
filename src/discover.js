@@ -9732,6 +9732,10 @@ export function renderPayCard(project, cart) {
     },
     onError: function (error, retryRead) {
       status.textContent = errMessage(error, 'Could not verify NFT inventory.');
+      if (!state.inventoryKnown) {
+        showFundingOnly();
+        loadAcceptedTokens(state.chainId); loadPaymentSurface(state.chainId);
+      }
       var retry = el('button'); retry.type = 'button'; retry.textContent = 'Retry';
       retry.addEventListener('click', function () {
         retry.disabled = true;
@@ -10143,7 +10147,7 @@ export function renderPayCard(project, cart) {
   }
 
   function schedulePreview() {
-    if (!state.inventoryKnown || (isNativeInventory(state.shop) && state.mode === 'pay')) return;
+    if (state.mode === 'pay' && (!state.inventoryKnown || isNativeInventory(state.shop))) return;
     if (previewTimer) clearTimeout(previewTimer);
     state.payAfterPreview = false;
     state.preview = null;
@@ -10215,7 +10219,7 @@ export function renderPayCard(project, cart) {
   function loadPreview() {
     if (!state.amount || !state.token) return;
     // Direct top-ups do not run the pay hook and do not mint project tokens.
-    if (isNativeInventory(state.shop) && state.mode === 'addbalance' && !state.token.viaRouter) { state.phase = 'ready'; renderFeedback(); return; }
+    if (state.mode === 'addbalance' && !state.token.viaRouter) { state.phase = 'ready'; renderFeedback(); return; }
     var amt;
     try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { return; }
     var previewTierIds = state.mode === 'pay' ? selectedTierIds() : [];
@@ -10291,7 +10295,7 @@ export function renderPayCard(project, cart) {
     status.className = 'paybox-status';
     status.textContent = '';
     if (state.mode !== 'pay' && state.mode !== 'addbalance') { status.textContent = 'Choose Pay or Add to balance.'; return; }
-    if (!state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Reload to try again.'; return; }
+    if (state.mode === 'pay' && !state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Retry to verify NFT minting.'; return; }
     if (state.mode === 'pay') {
       if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable; return; }
       try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }

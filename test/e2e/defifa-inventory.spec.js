@@ -68,6 +68,20 @@ test('protocol identification gates visible controls and preserves ordinary paym
   await expect(page.getByRole('button', { name: '+ Add manager', exact: true })).toBeHidden();
 });
 
+test('failed NFT identity leaves intentional balance funding and Retry available without offering mint', async ({page})=>{
+ await page.route('**/*',route=>new URL(route.request().url()).hostname==='127.0.0.1'?route.continue():route.abort());
+ await page.route('**/inventory-controls.js',async route=>route.fulfill({contentType:'text/javascript',body:await controlsSource()}));
+ await page.goto('/index.html#learn');await page.addScriptTag({url:'/inventory-controls.js',type:'module'});
+ await page.evaluate(()=>{window.inventoryPromise=new Promise((resolve,reject)=>window.rejectFundingIdentity=reject);window.renderControls(504)});
+ await expect(page.locator('.paybox-amount-row')).toBeHidden();
+ await page.evaluate(()=>window.rejectFundingIdentity(new Error('NFT identity unavailable')));
+ await expect(page.locator('.paybox-mode')).toHaveValue('addbalance');
+ await expect(page.locator('.paybox-mode option[value="pay"]')).toHaveCount(0);
+ await expect(page.locator('.paybox-memo')).toBeVisible();
+ await expect(page.locator('.paybox-status').getByRole('button',{name:'Retry',exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Add',exact:true})).toBeVisible();
+});
+
 test('initial Tokens keeps failed identity unverified and retries Defifa guidance without a wallet send', async ({ page }) => {
   const writes = [];
   page.on('request', request => { if (/eth_send|wallet_send|personal_sign|eth_sign/.test(request.postData() || '')) writes.push(request.url()); });
