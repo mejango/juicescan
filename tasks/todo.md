@@ -188,3 +188,18 @@ Official core2.29.0 is pinned with the publisher-verified SHA512 integrity, and 
 The first required run intentionally remains recorded at /tmp/juicescan-defifa-actions-official-check.log: an older SDK deployment checkout had the correct content digest but Git revisiona6ab40c, while this consumer and its CI pin c62b3ac. The successful rerun used /Users/jango/Documents/jb/v6/evm/deploy-all-v6/deployments at exact c62b3ac, with no gate changes. SDK and app deployment pins have different scopes.
 
 Official final bundle measures 10,594,759 B app raw / 1,537,367 B app gzip and 2,309,541 B total gzip. Caps round only these measured values to the next1KB; no unrelated asset allowance changes. Hosted CI, immutable merged artifact publication, Center pointer deployment and actual signed-out/100-NFT-wallet read-only verification remain separate release gates. No public wallet writes occurred.
+
+## Center-owned ENS reads
+
+## Plan refinement
+- **Objective:** Route forward and reverse ENS reads through the existing Center mainnet client while preserving normalization, caches, address hints and explicit custom RPC preferences. Native actions are unchanged.
+- **System fit:** The create-flow ENS helper serves address fields and the connected-account header; discover already uses the shared Center client. The wallet/chain owners choose supported default and explicit user transports.
+- **Reuse and simplicity:** Remove the dedicated PublicNode client and unused viem constructor imports. Reuse existing createPublicClientForChain(1), without a new resolver abstraction or provider fallback.
+- **Evidence and unknowns:** Actual connected-wallet production proof identified UniversalResolver RPC at PublicNode. Grep shows this is the only direct provider constructor; remaining PublicNode constants are unreachable default fallback entries on the eight Center-supported chains.
+- **Verification:** Meaningful constructor/transport regressions exercise normalized forward and reverse APIs, failure retry and explicit custom RPC parity; full required checks, narrow size measurement, hosted CI and merged-byte publication precede final live ENS verification.
+- **Resource budget:** One clean branch preserves the previous immutable release. Reuse source and transport owners; one bounded live ENS proof after deployment with no wallet writes.
+
+### ENS review
+Three real viem HTTP regressions fail on the original dedicated provider and pass with the shared client, including normalized forward/reverse resolution, cache/alias behavior and explicit custom RPC isolation. Required npm check passes on Node22.23.1/npm10.9.8: 1,928 unit tests, 116 browser cases, production audit, source/deployment/generated/schema/transaction and bundle gates. Bundle decreases to 10,594,623 B app raw / 1,537,295 B app gzip and 2,309,470 B total gzip, with unchanged caps. Evidence: /tmp/juicescan-center-ens-before.log and /tmp/juicescan-center-ens-check.log.
+
+Native action, inventory, identity and transaction-engine source files are byte-equivalent to approved75f0553. Root reviewed the narrow transport change. Hosted CI, exact merged publication/byte proof, Center directory update and narrow actual forward/reverse/connected-wallet verification remain release gates; the completed native production proof is retained. No public wallet writes.
