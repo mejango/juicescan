@@ -1547,12 +1547,13 @@ export function executeTransaction(opts) {
     // leave waitForTransactionReceipt pending forever even though a direct
     // receipt lookup already sees the mined transaction.
     return waitForTrackedTransactionReceipt(pub, hash, wallet, opts.chainId);
-  }).then(function(receipt) {
+  }).then(async function(receipt) {
     if (!receipt || receipt.status !== 'success') {
       var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
       reverted.onchainRevert = true;
       throw reverted;
     }
+    if (opts.verifyReceipt) await opts.verifyReceipt(receipt);
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(function(err) {
     if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {
