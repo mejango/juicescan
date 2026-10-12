@@ -1460,9 +1460,26 @@ export function executeTransaction(opts) {
 
   function sendNow() {
   var submittedHash = null;
+  var reverifiedBlock = null;
+  var beforeWriteComplete = false, walletInvoked = false;
+  async function reportWriteBoundaryFailure(err) {
+    var callback = beforeWriteComplete && !walletInvoked ? opts.onBeforeWriteAborted : null;
+    if (walletInvoked && !submittedHash) {
+      for (var cause = err, depth = 0; cause && depth < 8; cause = cause.cause, depth++) {
+        if (cause.code === 4001) { callback = opts.onWriteRejected; break; }
+      }
+    }
+    // Recovery storage refusal retains uncertainty; it never turns into a resend.
+    if (callback) await callback({ error: err, chainId: opts.chainId, account: account });
+  }
   function reverifyReviewedState() {
     if (!opts.reverify) return Promise.resolve();
-    return Promise.resolve(opts.reverify()).then(function () {
+    return Promise.resolve(opts.reverify()).then(function (result) {
+      if (result && result.simulationBlockNumber != null) {
+        var block = BigInt(result.simulationBlockNumber);
+        if (block < 0n) throw new Error('Reverified simulation block is invalid.');
+        if (reverifiedBlock == null || block > reverifiedBlock) reverifiedBlock = block;
+      }
       var current = getAccount();
       if (!current || current.toLowerCase() !== account.toLowerCase()) {
         throw new Error('Connected account changed. Review the transaction again.');
@@ -1475,7 +1492,7 @@ export function executeTransaction(opts) {
   if (isSafeConnected()) {
     var current0 = getAccount();
     if (!current0 || current0.toLowerCase() !== account.toLowerCase()) { cbs.onError('Connected account changed. Review the transaction again.'); return; }
-    reverifyReviewedState().then(function () {
+    reverifyReviewedState().then(async function () {
       var txs = [];
       var isNativeApprovalToken = opts.tokenAddr && (opts.tokenAddr.toLowerCase() === NATIVE_TOKEN.toLowerCase() || opts.tokenAddr === ZERO_ADDRESS);
       if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount && !isNativeApprovalToken) {
@@ -1483,11 +1500,16 @@ export function executeTransaction(opts) {
       }
       txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
       cbs.onStatus('Proposing to your Safe…', 'pending');
-      if (opts.onSending) opts.onSending();
+      if (opts.onSending) await opts.onSending();
+      beforeWriteComplete = true;
+      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+      if (!isSafeConnected()) throw new Error('Safe connection changed. Review the transaction again.');
+      walletInvoked = true;
       return proposeSafeTransactions(txs).then(function (safeTxHash) {
         cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
       });
-    }).catch(function (err) {
+    }).catch(async function (err) {
+      try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
       cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'), { userRejected: isWalletUserRejection(err) });
     });
     return;
@@ -1510,6 +1532,7 @@ export function executeTransaction(opts) {
     }
   }).then(function(receipt) {
     approvalReceipt = receipt || null;
+    if (approvalReceipt) return reverifyReviewedState();
   }).then(function() {
     var current = getAccount();
     if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
@@ -1529,11 +1552,17 @@ export function executeTransaction(opts) {
     // prerequisite write (for example Permit2.approve) pass that receipt block explicitly.
     var approvalBlock = approvalReceipt && approvalReceipt.blockNumber != null ? approvalReceipt.blockNumber : null;
     var callerBlock = opts.simulationBlockNumber == null ? null : BigInt(opts.simulationBlockNumber);
+    if (reverifiedBlock != null && (callerBlock == null || reverifiedBlock > callerBlock)) callerBlock = reverifiedBlock;
     if (callerBlock != null && (approvalBlock == null || callerBlock > approvalBlock)) approvalBlock = callerBlock;
     if (approvalBlock != null) simulationRequest.blockNumber = approvalBlock;
     return pub.simulateContract(simulationRequest).then(async function(simulation) {
       cbs.onStatus('Awaiting wallet confirmation…', 'pending');
       var gas = await contractGasWithHeadroom(pub, simulation.request);
+      if (opts.onSending) await opts.onSending();
+      beforeWriteComplete = true;
+      if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+      if (opts.onSending && await wallet.getChainId() !== opts.chainId) throw new Error('Wallet network changed. Review the transaction again.');
+      walletInvoked = true;
       return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
     });
   }).then(function(hash) {
@@ -1555,7 +1584,8 @@ export function executeTransaction(opts) {
     }
     if (opts.verifyReceipt) await opts.verifyReceipt(receipt);
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
-  }).catch(function(err) {
+  }).catch(async function(err) {
+    try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
     if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {
       cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'submitted', hash: submittedHash, chainId: opts.chainId, trackingError: true });
       return;
