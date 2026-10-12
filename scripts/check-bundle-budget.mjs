@@ -44,8 +44,8 @@ const budgets = {
   // Same Node22/env baseline95cdc21: 10,408,036 / 1,508,387 B; growth +186,723 / +28,980 B.
   // Round each measured ceiling to the next1KB; no other asset allowance changes.
   // Shared native/ordinary checkout, bounded cosmetic URI media and final synchronous intent guards:
-  // Node22 same-env222c5f baseline10,594,623 raw /1,537,295 gzip; final10,608,884 /1,540,590.
-  // Growth +14,261 raw /+3,295 gzip, no new dependency; keep the next1KB ceilings.
+  // Node22 same-env222c5f baseline10,594,623 raw /1,537,295 gzip; final10,608,959 /1,540,607.
+  // Growth +14,336 raw /+3,312 gzip, no new dependency; keep the next1KB ceilings.
   'dist/app.js': { raw: 10_609_000, gzip: 1_541_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
@@ -85,7 +85,7 @@ const totalGzip = (await Promise.all(distributionFiles.map(async file =>
 // SDK/native inventory measured total: 2,278,700 B gzip.
 // Verification feedback measured total: 2,280,560 B gzip; round to the next 1 KB.
 // Official SDK2.29/native actions measured total2,309,541 B gzip, +28,981 B versus the same-env baseline.
-// Shared checkout measured2,312,771 B gzip, +3,301 B versus222c5f same-env distribution.
+// Shared checkout measured2,312,787 B gzip, +3,317 B versus222c5f same-env distribution.
 const totalGzipBudget = 2_313_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {

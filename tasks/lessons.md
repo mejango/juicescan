@@ -15,3 +15,5 @@
 - **Protocol-specific calldata does not imply protocol-specific checkout styling.** Native Defifa uses the existing shop preview, cart, tier cards and payment layout; isolate differences in the submission adapter, phase/quote evidence and review text. Enforce a preview-and-cart parity regression rather than replacing the purchase surface with a navigation-only link or quantity table. (2026-10-12, user checkout correction.)
 
 - **Qualify action-absence regressions in a phase where the old action would exist.** A closed mint phase cannot prove removal of a duplicate mint form. Revert the owning caller and confirm the regression fails, then restore it; source review and passing fixtures alone do not prove the gate catches the bug. (2026-10-12, Cash out presentation review.)
+
+- **Connection is part of the draft lifecycle.** Never restore values captured before an awaited wallet connection over edits made while it waits. Preserve the existing visible draft through redraws and prepare from its latest getter; event and no-event regressions enforce this without another state machine. (2026-10-12, shared checkout connection review.)

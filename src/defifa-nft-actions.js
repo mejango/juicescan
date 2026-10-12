@@ -190,6 +190,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
     } catch (err) { error(err); }
   }
   function drawCartMint() {
+    var previousDraft = readMintDraft();
     if (!options.cart || typeof options.cartTotal !== 'function') throw new Error('Shared NFT cart is unavailable.');
     if (!defifaPhaseAllowsPay(current.phase) || records.has('mint')) { text(body, 'p', records.has('mint') ? 'NFT mint is pending verification.' : 'NFT minting is not open.'); return; }
     var row = document.createElement('div'); row.className = 'paybox-amount-row';
@@ -198,13 +199,12 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
     var currency = document.createElement('span'); currency.className = 'paybox-curr-static'; field.appendChild(currency);
     var pay = button(row, holder ? 'Pay' : 'Connect', async function () {
       try {
-        var delegateAddress = delegate.value.trim(), note = memo.value;
         if (!holder) {
           await connect(); if (!await refresh()) return;
           var freshMemo = body.querySelector('.paybox-memo'), freshDelegate = body.querySelector('input[aria-label="Voting power recipient (optional)"]');
           if (!freshMemo || !freshDelegate) throw new Error('NFT checkout view changed. Review again.');
-          freshMemo.value = note; freshDelegate.value = delegateAddress;
         }
+        var draft = readMintDraft(), delegateAddress = draft.delegate, note = draft.memo;
         if (delegateAddress && !isAddr(delegateAddress)) throw new Error('Enter a valid voting power recipient address.');
         var entries = options.cart.entries(), ids = [];
         Object.keys(entries).forEach(function (id) {
@@ -217,8 +217,8 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
         submit('mint', { tierIdsToMint: ids, attestationDelegate: delegateAddress || ZERO_ADDRESS, memo: note });
       } catch (err) { message(err.message || String(err)); }
     }); pay.className = 'paybox-btn'; body.appendChild(row);
-    var memo = document.createElement('input'); memo.type = 'text'; memo.className = 'paybox-memo'; memo.placeholder = 'Add a note (optional)'; memo.setAttribute('aria-label', 'Payment note'); body.appendChild(memo);
-    var delegate = input(body, 'Voting power recipient (optional)', 'text', ''); delegate.placeholder = '0x…';
+    var memo = document.createElement('input'); memo.type = 'text'; memo.className = 'paybox-memo'; memo.placeholder = 'Add a note (optional)'; memo.setAttribute('aria-label', 'Payment note'); memo.value = previousDraft ? previousDraft.memo : ''; body.appendChild(memo);
+    var delegate = input(body, 'Voting power recipient (optional)', 'text', previousDraft ? previousDraft.delegate : ''); delegate.placeholder = '0x…';
     readMintDraft = function () { return { memo: memo.value, delegate: delegate.value.trim() }; };
     var feedback = document.createElement('div'); feedback.className = 'paybox-feedback'; body.appendChild(feedback);
     updateCartView = function () {

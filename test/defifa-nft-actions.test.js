@@ -42,6 +42,14 @@ describe('native Defifa NFT action boundary', () => {
   it('shows signed-out cart and connects before reviewing the same native selection', async () => {
     h.account = null; const root = await render(mintOptions(cartFixture())); expect(root.querySelector('.paybox-amount').value).toBe('13 ETH'); expect(root.querySelector('.paybox-feedback').textContent).toContain('Orange Team ×2'); root.querySelector('.paybox-memo').value = 'Before connection'; root.querySelector('input[aria-label="Voting power recipient (optional)"]').value = hook; click(root, 'Connect'); await flush(); expect(h.connect).toHaveBeenCalledTimes(1); expect(h.preparePay.mock.lastCall[1]).toMatchObject({ tierIdsToMint: [1n, 7n, 7n], memo: 'Before connection', attestationDelegate: hook }); expect(root.querySelector('.paybox-memo').value).toBe('Before connection'); expect(root.querySelector('input[aria-label="Voting power recipient (optional)"]').value).toBe(hook); expect(h.holdings).not.toHaveBeenCalled();
   });
+  it.each([false, true])('preserves draft edits during pending Connect, with wallet redraw %s', async emitChange => {
+    h.account = null; let finish; h.connect.mockImplementationOnce(() => new Promise(resolve => { finish = () => { h.account = '0x1111111111111111111111111111111111111111'; resolve(); }; }));
+    const root = await render(mintOptions(cartFixture())); root.querySelector('.paybox-memo').value = 'Original note'; root.querySelector('input[aria-label="Voting power recipient (optional)"]').value = hook; click(root, 'Connect');
+    if (emitChange) { h.account = '0x1111111111111111111111111111111111111111'; h.change(); await flush(); expect(root.querySelector('.paybox-memo').value).toBe('Original note'); }
+    root.querySelector('.paybox-memo').value = 'New note during connection'; root.querySelector('input[aria-label="Voting power recipient (optional)"]').value = '0x3333333333333333333333333333333333333333';
+    expect(h.preparePay).not.toHaveBeenCalled(); expect(h.execute).not.toHaveBeenCalled(); finish(); await flush();
+    expect(root.querySelector('.paybox-memo').value).toBe('New note during connection'); expect(root.querySelector('input[aria-label="Voting power recipient (optional)"]').value).toBe('0x3333333333333333333333333333333333333333'); expect(h.preparePay.mock.lastCall[1]).toMatchObject({ memo: 'New note during connection', attestationDelegate: '0x3333333333333333333333333333333333333333' }); expect(h.execute).toHaveBeenCalledTimes(1);
+  });
   it('limits native cart units through the shared SDK bound before preparation', async () => {
     const root = await render(mintOptions(cartFixture({ 1: 129 }))); click(root, 'Pay'); await flush(); expect(h.preparePay).not.toHaveBeenCalled(); expect(h.execute).not.toHaveBeenCalled(); expect(root.textContent).toContain('128');
   });
