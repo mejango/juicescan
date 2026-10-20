@@ -3,7 +3,9 @@
 // Uses viem chain definitions for RPC URLs and chain metadata
 
 import { mainnet, optimism, arbitrum, base, sepolia, optimismSepolia, baseSepolia, arbitrumSepolia } from 'viem/chains';
-import manifest from '../data/manifest.json';
+// The registry carries the deployment manifest's chains and per-contract addresses (meta), so chain.js
+// reads them there instead of shipping data/manifest.json a second time.
+import { chains as manifestChains, meta as manifestContracts } from './abi-registry.js';
 import tokens from '../data/tokens.json';
 
 export const CHAINS = {
@@ -60,7 +62,7 @@ export function onChainChange(fn) {
 }
 
 export function getManifestChains() {
-  return manifest.chains;
+  return manifestChains;
 }
 
 // Display order for the chains we ship UI for. This is an ORDER hint, not a membership list: chains present in
@@ -70,7 +72,7 @@ const CHAIN_DISPLAY_ORDER = [1, 10, 42161, 8453, 11155111, 11155420, 84532, 4216
 
 /** Every chain in the deployment manifest as `{ id, name, testnet }`, in display order. */
 export function chainList() {
-  const chains = manifest.chains || {};
+  const chains = manifestChains || {};
   const rank = id => {
     const index = CHAIN_DISPLAY_ORDER.indexOf(id);
     return index === -1 ? CHAIN_DISPLAY_ORDER.length : index;
@@ -83,13 +85,13 @@ export function chainList() {
 
 /** The manifest's display name for a chain, or a plain `chain <id>` for anything it doesn't carry. */
 export function chainNameFor(chainId) {
-  const row = (manifest.chains || {})[String(chainId)];
+  const row = (manifestChains || {})[String(chainId)];
   return (row && row.name) || ('chain ' + chainId);
 }
 
 /** Manifest-declared testnet flag. Keyed off the deployment data so a new testnet is never treated as mainnet. */
 export function isTestnetChain(chainId) {
-  const row = (manifest.chains || {})[String(chainId)];
+  const row = (manifestChains || {})[String(chainId)];
   return !!(row && row.testnet);
 }
 
@@ -134,7 +136,7 @@ export function contractNameByAddress(address) {
   if (a === '0x000000000000000000000000000000000000eeee') return 'Native token (ETH)';
   if (!_addrToName) {
     _addrToName = {};
-    const cs = manifest.contracts || {};
+    const cs = manifestContracts || {};
     for (const name in cs) {
       const addrs = cs[name] && cs[name].addresses;
       if (!addrs) continue;
