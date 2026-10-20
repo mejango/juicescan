@@ -5210,7 +5210,7 @@ function buildTerminalConfigs(chainId, state, swapRouter) {
   // Returning [] here launched a project with ZERO terminals — permanently unable to accept a
   // payment, and unfixable after the fact. Block the deploy like the deployer-address check
   // above does. Dormant today (all manifest chains have a terminal) and must stay that way.
-  if (!terminal) throw new Error('No JBMultiTerminal is deployed on ' + chainNameOf(chainId) + ', so a project launched there could never accept payments. Deselect that chain.');
+  if (!terminal) throw new Error('No JBMultiTerminal is deployed on ' + chainName(chainId) + ', so a project launched there could never accept payments. Deselect that chain.');
   var accepts = state.accepts || [];
   var contexts = [];
   // Custom ERC-20 accounting token (same address on every chain; its own currency id, no feed).
