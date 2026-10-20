@@ -1,6 +1,7 @@
 // build/bundle.js
 // Bundles src/ → dist/ as static, CSP-friendly assets
-// No minification — readable output for auditability
+// Minified: the readable source is this repo at the commit in the page footer, and `npm run bundle`
+// reproduces the published bytes from it.
 
 const esbuild = require('esbuild');
 const fs = require('fs');
@@ -17,7 +18,7 @@ async function build() {
     bundle: true,
     format: 'iife',
     write: false,
-    minify: false,
+    minify: true,
     sourcemap: false,
     define: {
       __BENDYSTRAW_API_KEY__: JSON.stringify(process.env.BENDYSTRAW_API_KEY || ENV.BENDYSTRAW_API_KEY || ''),

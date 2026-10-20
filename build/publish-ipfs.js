@@ -44,8 +44,7 @@ function filebaseToken() {
 }
 
 // Guard against pinning non-runtime files (tests, source maps, editor litter) — users download the
-// pinned set on every load. The bundle is intentionally NOT minified so the IPFS-loaded code stays
-// inspectable (see the audit-prompt feature) — that's runtime, kept.
+// pinned set on every load.
 function isRuntimeFile(name) {
   if (name === '.DS_Store' || name.startsWith('.')) return false;
   return !/\.(test|spec)\.[cm]?js$|\.map$|\.bak$|\.ts$|\.md$/i.test(name);
