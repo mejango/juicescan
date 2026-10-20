@@ -9850,6 +9850,17 @@ export function renderPayCard(project, cart) {
     var checkoutSummary = nftCheckoutSummary();
     if (checkoutSummary) feedback.appendChild(checkoutSummary);
 
+    // A quote that failed for a known reason says so, whatever the payment amount (credits can cover all of it).
+    if (p && p.unavailable && p.explained && state.phase !== 'previewing') {
+      var whyRow = el('div', 'paybox-yg-row');
+      var why = el('div', 'paybox-yg-val muted');
+      why.textContent = p.reason;
+      whyRow.appendChild(why);
+      feedback.appendChild(whyRow);
+      var nbW = nftBlock(); if (nbW) feedback.appendChild(nbW);
+      return;
+    }
+
     // A verified payment can intentionally mint no project tokens (for example, a balance-funding project with
     // weight 0). Keep selected NFT receipts, but omit "0 tokens" and "Splits get 0 tokens" entirely.
     if (!payTokenOutputVisible(project.ruleset && project.ruleset.weight, state.phase, p)) {
@@ -9878,7 +9889,7 @@ export function renderPayCard(project, cart) {
     var val = el('div', 'paybox-yg-val');
     if (p && p.unavailable) {
       val.className = 'paybox-yg-val muted';
-      val.textContent = p.explained ? p.reason : 'preview unavailable';
+      val.textContent = 'preview unavailable';
       valRow.appendChild(val);
       feedback.appendChild(valRow);
       var nbU = nftBlock(); if (nbU) feedback.appendChild(nbU);
@@ -10087,6 +10098,16 @@ export function renderPayCard(project, cart) {
       return;
     }
     if (!addBalance && (!payPreviewCanSubmit(state.phase, state.preview) || state.preview.identity !== payIdentity(amt, beneficiary))) {
+      // A quote that failed for a known reason is tried again by this click: it goes on to the review if it now
+      // passes, and says why if it fails again.
+      var failed = state.preview;
+      var retryQuote = state.phase === 'ready' && failed && failed.unavailable && failed.explained && failed.identity === payIdentity(amt, beneficiary);
+      if (retryQuote) {
+        schedulePreview();
+        state.payAfterPreview = true;
+        status.className = 'paybox-status pending'; status.textContent = 'Refreshing the quote…';
+        return;
+      }
       status.textContent = tierIds.length
         ? 'A verified live quote is required before buying these items. Wait for the preview and try again.'
         : 'A verified live quote is required before paying. Wait for the preview and try again.';

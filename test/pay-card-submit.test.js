@@ -423,3 +423,45 @@ it('says a mined revert reverted, and Review again quotes and simulates it afres
   confirmButton().click();
   await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(2));
 });
+
+const pausedError = () => Object.assign(new Error('Execution reverted.'), { data: encodeErrorResult({ abi: pausedAbi, errorName: 'JBTerminalStore_RulesetPaymentPaused', args: [1n, 2n] }) });
+const PAUSED_LINE = 'This project is not accepting payments right now.';
+
+it('says why a credit-covered checkout cannot be quoted, and Pay says it again after a fresh quote', async () => {
+  vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+  runtime.inventory.mockResolvedValue({ protocol: 'jb721', hook: HOOK, store: STORE, metadataIdTarget: ID_TARGET, blockNumber: 1n, nextStartingId: null,
+    pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
+    capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] });
+  const base = runtime.contractRead.getMockImplementation();
+  runtime.contractRead.mockImplementation(async call => {
+    switch (call.functionName) {
+      case 'controllerOf': return '0x' + '75'.repeat(20);
+      case 'currentRulesetOf': return [{ id: 1n }, { useDataHookForPay: true, dataHook: HOOK, useDataHookForCashOut: false, metadata: 0 }];
+      case 'tokenUriResolverOf': return '0x' + '00'.repeat(20);
+      case 'maxTierIdOf': return 2n;
+      case 'tiersOf': return TIERS;
+      case 'payCreditsOf': return 10n ** 18n; // credits cover the cart: nothing to pay
+      default: return base(call);
+    }
+  });
+  runtime.prepare.mockRejectedValue(pausedError());
+  await card(630);
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2));
+  document.querySelector('.paybox-shop-item .paybox-shop-thumb').click();
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain(PAUSED_LINE));
+  const calls = runtime.prepare.mock.calls.length;
+  payButton().click();
+  await vi.waitFor(() => expect(document.querySelector('.paybox-status').textContent).toBe(PAUSED_LINE));
+  expect(runtime.prepare.mock.calls.length).toBe(calls + 1);
+  expect(confirmButton()).toBeFalsy();
+});
+
+it('quotes again on Pay after a quote failed, and opens the review in that one click once it passes', async () => {
+  runtime.prepare.mockRejectedValue(pausedError());
+  await card(631); type('1');
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain(PAUSED_LINE));
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  payButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  expect(document.querySelector('.paybox-feedback').textContent).not.toContain(PAUSED_LINE);
+});
