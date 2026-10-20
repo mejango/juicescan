@@ -286,6 +286,19 @@ it('drops a loosened tolerance when the payment changed before Review again', as
   expect(runtime.execute).toHaveBeenCalledTimes(1);
 });
 
+it('opens the review in one click after a memo edit, with the memo sent', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(620); type('1'); await quoted('900');
+  const calls = runtime.prepare.mock.calls.length;
+  const memo = document.querySelector('.paybox-memo');
+  memo.value = 'hello'; memo.dispatchEvent(new Event('input'));
+  await review(); // one press of Pay opens it: the memo leaves the quote as it was
+  expect(runtime.prepare.mock.calls.length).toBe(calls);
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(runtime.execute.mock.lastCall[0].args[5]).toBe('hello');
+});
+
 it('ends a loosened tolerance when the memo changes while it is being prepared', async () => {
   runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
   runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
