@@ -6,7 +6,7 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const isFn = n => ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n)
-  || ts.isConstructorDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n);
+  || ts.isConstructorDeclaration(n) || ts.isGetAccessor(n) || ts.isSetAccessor(n) || ts.isClassStaticBlockDeclaration(n);
 
 // Every identifier a binding name declares, destructuring included.
 function namesIn(name, out) {
@@ -32,6 +32,8 @@ function varsOf(scope) {
 function bindingsOf(scope) {
   const names = new Set();
   for (const p of scope.parameters || []) for (const id of namesIn(p.name, [])) names.add(id.text);
+  // A named function expression binds its own name inside itself.
+  if (ts.isFunctionExpression(scope) && scope.name) names.add(scope.name.text);
   (function walk(n) {
     if (n !== scope && isFn(n)) { if (ts.isFunctionDeclaration(n) && n.name) names.add(n.name.text); return; }
     if (ts.isVariableDeclaration(n)) for (const id of namesIn(n.name, [])) names.add(id.text);
@@ -49,6 +51,8 @@ function isRead(id) {
   if ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p) || ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name === id) return false;
   if (ts.isBindingElement(p) && p.propertyName === id) return false;
   if (ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) return false;
+  // A plain assignment target is written, not read.
+  if (ts.isBinaryExpression(p) && p.left === id && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) return false;
   return true;
 }
 
@@ -58,7 +62,12 @@ function shadowedEarlyReads(file, text) {
   (function visit(n, outer) {
     if (!isFn(n)) return ts.forEachChild(n, c => visit(c, outer));
     const vars = varsOf(n);
+    // Parameters and local function declarations are bound before any line runs: a later var keeps their value.
     const params = new Set((n.parameters || []).flatMap(p => namesIn(p.name, []).map(id => id.text)));
+    (function hoisted(m) {
+      if (m !== n && isFn(m)) { if (ts.isFunctionDeclaration(m) && m.name) params.add(m.name.text); return; }
+      ts.forEachChild(m, hoisted);
+    })(n);
     (function walk(m) {
       if (m !== n && isFn(m)) return;
       if (ts.isIdentifier(m) && isRead(m) && outer.some(scope => scope.has(m.text)) && !params.has(m.text) && vars.has(m.text) && m.getStart() < vars.get(m.text)) {
@@ -83,6 +92,12 @@ describe('no function reads an outer name before its own var shadows it', () => 
     // Keys, member names and a parameter the var redeclares are not early reads.
     expect(shadowedEarlyReads('x.js', 'var slip; function g() { var o = { slip: 1 }; o.slip = 2; var slip = 3; }')).toEqual([]);
     expect(shadowedEarlyReads('x.js', 'var slip; function g(slip) { slip.sync(); var slip = 1; }')).toEqual([]);
+    expect(shadowedEarlyReads('x.js', 'var slip; function g() { slip = 1; var slip; }')).toEqual([]);
+    expect(shadowedEarlyReads('x.js', 'var slip; function g() { slip(); function slip() {} var slip; }')).toEqual([]);
+    // A named function expression's own name, and a class static block as its own scope.
+    expect(shadowedEarlyReads('x.js', 'const f = function slip() { return () => { slip(); var slip; }; };')).toEqual(['x.js:1 slip']);
+    expect(shadowedEarlyReads('x.js', 'var slip = {}; function g() { slip.sync(); class C { static { var slip; } } }')).toEqual([]);
+    expect(shadowedEarlyReads('x.js', 'var slip = {}; class C { static { slip.sync(); var slip; } }')).toEqual(['x.js:1 slip']);
   });
   it('holds across src', { timeout: 120_000 }, () => {
     const dir = path.resolve(__dirname, '../src');
