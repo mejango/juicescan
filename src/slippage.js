@@ -29,6 +29,8 @@ export var PAY_DEFAULT_SLIPPAGE_BPS = 100;
 export var PAY_SLIPPAGE_LIMIT_PERCENT = 50;
 
 /**
+ * Only the terminal's and the buyback hook's minimums answer to this tolerance; the router's conversion check
+ * (ROUTER_SLIPPAGE_EXCEEDED) is not this minimum, so it is never offered.
  * The tolerance that would have let a payment through which fell short of the minimum prepareUserPay set from
  * `currentBps`, rounded up to a half percent, or null when a lower minimum is not the fix (the buyback hook's own
  * TWAP floor, the router's own quote, or another failure). `failure` is decodePayFailure's result.
@@ -36,7 +38,10 @@ export var PAY_SLIPPAGE_LIMIT_PERCENT = 50;
 export function payRetrySlippageBps(failure, currentBps) {
   var reason = failure && failure.reason;
   if (reason !== 'TERMINAL_UNDER_MIN' && reason !== 'BUYBACK_SLIPPAGE_EXCEEDED') return null;
-  var received = failure.received, minimum = failure.minimum;
+  var received = typeof failure.received === 'bigint' ? failure.received : null;
+  var minimum = typeof failure.minimum === 'bigint' ? failure.minimum : null;
+  // Nothing would be returned: no tolerance under the limit fixes that, so none is suggested.
+  if (received === 0n) return null;
   var shortfallBps = received != null && minimum != null && minimum > 0n && received < minimum
     ? Number(((minimum - received) * 10000n + minimum - 1n) / minimum)
     : 100;

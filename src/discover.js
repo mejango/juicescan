@@ -9914,9 +9914,7 @@ export function renderPayCard(project, cart) {
     return loosened ? loosened.bps : PAY_DEFAULT_SLIPPAGE_BPS;
   }
   function dropLoosenedSlippage() {
-    if (!state.payerSlippage) return;
-    state.payerSlippage = null;
-    schedulePreview();
+    if (state.payerSlippage) schedulePreview();
   }
 
   // Everything a prepared payment depends on. A preview is only sent with the exact inputs it was prepared for.
@@ -9926,6 +9924,7 @@ export function renderPayCard(project, cart) {
 
   function schedulePreview() {
     previewGen++; // an in-flight preview for the old inputs can no longer land
+    state.payerSlippage = null; // any input change ends a loosened tolerance; a retry sets it again after this
     if (state.mode === 'pay' && (!state.inventoryKnown || isNativeInventory(state.shop))) return;
     if (previewTimer) clearTimeout(previewTimer);
     state.payAfterPreview = false;
@@ -10177,8 +10176,8 @@ export function renderPayCard(project, cart) {
     var sendOpts = { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, slippageBps: reviewedSlippage,
       retryWithSlippage: function (bps) {
         if (!requirePayInputs()) return;
-        state.payerSlippage = { bps: bps, key: reviewedInputsKey };
         schedulePreview();
+        state.payerSlippage = { bps: bps, key: reviewedInputsKey };
         state.payAfterPreview = true;
         status.className = 'paybox-status pending'; status.textContent = 'Refreshing the quote…';
       } };
@@ -10344,7 +10343,7 @@ export function renderPayCard(project, cart) {
       onError: function (m, meta) {
         // The revert's own reason when known; a shortfall offers a looser minimum and a fresh quote.
         var failure = add ? null : decodePayFailure(meta && meta.error);
-        if (failure) m = failure.message;
+        if (failure) m = failure.received === 0n ? 'This payment would return no tokens right now, so it was not sent.' : failure.message;
         status.className = 'paybox-status error'; status.textContent = m;
         var retryBps = add || !opts.retryWithSlippage ? null : payRetrySlippageBps(failure, opts.slippageBps);
         if (confirmCtx && retryBps != null) {
@@ -26455,6 +26454,8 @@ function openTxConfirm(payload, onConfirm, opts) {
     }
   }
   function unlockWithResult(message, kind, meta) {
+    // A failed send is over: closing now is a dismissal again.
+    if (kind === 'error') confirmed = false;
     if (kind === 'success' && sequenceUi) setSequenceActive(sequenceUi.items.length, true);
     showStatus(message, kind, meta);
     confirm.style.display = 'none';
@@ -26462,7 +26463,7 @@ function openTxConfirm(payload, onConfirm, opts) {
     cancel.textContent = kind === 'success' ? 'Done' : 'Close';
   }
   confirm.addEventListener('click', function () {
-    if (retryAction) { var again = retryAction; retryAction = null; modal.close(); again(); return; }
+    if (retryAction) { var again = retryAction; retryAction = null; confirmed = true; modal.close(); again(); return; }
     confirmed = true;
     if (opts.closeOnConfirm !== false) modal.close();
     else {

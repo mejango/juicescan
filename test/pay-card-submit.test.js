@@ -303,3 +303,40 @@ it('ends a loosened tolerance when its review is cancelled, and after its paymen
   type('2'); type('1');
   await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 10n ** 18n, slippageBps: 100n }));
 });
+
+it('ends a loosened tolerance when a failed retry is closed', async () => {
+  const closeButton = () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Close');
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(615); type('1'); await quoted('900');
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  reviewAgainButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(350n);
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Transaction rejected by wallet', {}));
+  confirmButton().click();
+  await vi.waitFor(() => expect(closeButton()).toBeTruthy());
+  closeButton().click();
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n));
+});
+
+it('ends a loosened tolerance when the amount is cleared and typed again during its quote', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(617); type('1'); await quoted('900');
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  reviewAgainButton().click();
+  type(''); type('1');
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 10n ** 18n, slippageBps: 100n }));
+});
+
+it('says a payment that would return no tokens was not sent, and offers no looser minimum', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(0n, 900n * 10n ** 18n) }));
+  await card(616); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe('This payment would return no tokens right now, so it was not sent.'));
+  expect(reviewAgainButton()).toBeFalsy();
+});

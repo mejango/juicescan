@@ -20,4 +20,9 @@ describe('payRetrySlippageBps', () => {
     expect(payRetrySlippageBps({ reason: 'BUYBACK_DERIVED_FLOOR_NOT_MET', received: 1n, minimum: 2n }, 100)).toBeNull();
     expect(payRetrySlippageBps({ reason: 'ROUTER_SLIPPAGE_EXCEEDED', received: 1n, minimum: 2n }, 100)).toBeNull();
   });
+  it('suggests nothing when the payment would return no tokens, and reads only bigint amounts', () => {
+    expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN', received: 0n, minimum: 1000n }, 100)).toBeNull();
+    expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN', received: '880', minimum: '900' }, 100)).toBe(200);
+    expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN', received: null, minimum: null }, 100)).toBe(200);
+  });
 });
