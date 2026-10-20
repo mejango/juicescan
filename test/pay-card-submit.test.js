@@ -299,6 +299,36 @@ it('opens the review in one click after a memo edit, with the memo sent', async 
   expect(runtime.execute.mock.lastCall[0].args[5]).toBe('hello');
 });
 
+it('says why a re-quote failed after Review again, and stops there', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(621); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  const paused = Object.assign(new Error('Execution reverted.'), { data: encodeErrorResult({ abi: pausedAbi, errorName: 'JBTerminalStore_RulesetPaymentPaused', args: [1n, 2n] }) });
+  runtime.prepare.mockRejectedValue(paused);
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click(); await settle(600);
+  expect(document.querySelector('.paybox-status').textContent).toBe('This project is not accepting payments right now.');
+  expect(document.querySelector('.paybox-feedback').textContent).toContain('This project is not accepting payments right now.');
+  expect(runtime.prepare.mock.calls.length).toBe(calls + 1);
+  expect(confirmButton()).toBeFalsy();
+});
+
+it('quotes the next payment at the default tolerance once a loosened one went through', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(622); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  reviewAgainButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  runtime.execute.mockImplementationOnce(tx => tx.onSuccess('Paid.', {}));
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n));
+});
+
 it('ends a loosened tolerance when the memo changes while it is being prepared', async () => {
   runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
   runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));

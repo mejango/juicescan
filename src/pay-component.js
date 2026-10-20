@@ -125,8 +125,9 @@ export function resolveBestPayRoute(opts) {
     }
     if (best && best.preview && !best.preview.unavailable && best.preview.received != null && BigInt(best.preview.received) >= 0n) return best;
     // Never turn an unavailable preview into a minReturnedTokens=0 payment. An exact, verified zero quote is a
-    // legitimate zero-issuance payment; an RPC or terminal failure is not.
-    return null;
+    // legitimate zero-issuance payment; an RPC or terminal failure is not. A known revert says why.
+    var explained = resolved.find(function (r) { return r.preview && r.preview.unavailable && r.preview.explained; });
+    return explained ? { unavailable: true, reason: explained.preview.reason } : null;
   });
 }
 
@@ -504,10 +505,10 @@ export function renderPayComponent() {
       beneficiary: beneficiary,
     }).then(function (route) {
       if (gen !== previewGeneration) return;
-      if (!route) {
+      if (!route || route.unavailable) {
         state.phase = 'ready';
         state.preview = null;
-        state.error = 'No payment contract is available on this chain';
+        state.error = route ? route.reason : 'No payment contract is available on this chain';
         updateUI();
         return;
       }
@@ -585,9 +586,9 @@ export function renderPayComponent() {
       beneficiary: beneficiary,
     }).then(function (route) {
       if (!unchanged()) { state.phase = 'ready'; state.error = CHANGED; updateUI(); return; }
-      if (!route) {
+      if (!route || route.unavailable) {
         state.phase = 'ready';
-        state.error = 'No payment contract is available on this chain';
+        state.error = route ? route.reason : 'No payment contract is available on this chain';
         updateUI();
         return;
       }

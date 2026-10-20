@@ -9878,7 +9878,7 @@ export function renderPayCard(project, cart) {
     var val = el('div', 'paybox-yg-val');
     if (p && p.unavailable) {
       val.className = 'paybox-yg-val muted';
-      val.textContent = 'preview unavailable';
+      val.textContent = p.explained ? p.reason : 'preview unavailable';
       valRow.appendChild(val);
       feedback.appendChild(valRow);
       var nbU = nftBlock(); if (nbU) feedback.appendChild(nbU);
@@ -9943,7 +9943,7 @@ export function renderPayCard(project, cart) {
     try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { return; }
     var previewTierIds = state.mode === 'pay' ? selectedTierIds() : [];
     if (previewTierIds.length && (!nftRouteForToken(state.token) || !nftRouteForToken(state.token).supported)) {
-      state.preview = { received: null, reserved: null, unavailable: true, reason: 'This payment currency cannot be converted into the shop pricing currency.' };
+      state.preview = { received: null, reserved: null, unavailable: true, explained: true, reason: 'This payment currency cannot be converted into the shop pricing currency.' };
       state.phase = 'ready';
       renderFeedback();
       return;
@@ -9984,10 +9984,12 @@ export function renderPayCard(project, cart) {
       state.previewAt = Date.now();
       state.conversion = null;
       renderFeedback();
-      // A Pay click that found the quote stale retries once the refreshed preview is in.
+      // A Pay click that found the quote stale retries once the refreshed preview is in; one that cannot be quoted
+      // stops there and says why.
       if (state.payAfterPreview) {
         state.payAfterPreview = false;
-        doPay();
+        if (p.unavailable) { status.className = 'paybox-status error'; status.textContent = p.explained ? p.reason : 'This payment could not be quoted. Try again.'; }
+        else doPay();
       }
       // Add-to-balance via router: derive the accepted-token amount that lands after the swap. The
       // simulated pay's total mint ÷ the per-unit issuance rate = the swap output (route must be issuance).
@@ -10329,12 +10331,12 @@ export function renderPayCard(project, cart) {
       },
       onSuccess: function (m, meta) {
         if (meta && meta.phase === 'safe-proposed') {
-          state.payerSlippage = null;
+          dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
           setPayStatus('paybox-status pending', m, meta);
           if (confirmCtx) confirmCtx.pending(m, meta);
           return;
         }
-        state.payerSlippage = null;
+        dropLoosenedSlippage();
         setPayStatus('paybox-status success', confirmed, meta);
         if (confirmCtx) confirmCtx.complete(confirmed, meta);
         if (opts.clearCartOnSuccess) clearPurchasedNfts();

@@ -107,6 +107,12 @@ describe('pay route trust boundary', () => {
       chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY,
     })).resolves.toBeNull();
 
+    // A known revert keeps its plain reason, still with no route to send.
+    payState.prepare.mockResolvedValue({ received: null, reserved: null, unavailable: true, explained: true, reason: 'This project is not accepting payments right now.' });
+    await expect(resolveBestPayRoute({
+      chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY,
+    })).resolves.toEqual({ unavailable: true, reason: 'This project is not accepting payments right now.' });
+
     payState.prepare.mockResolvedValue({ received: -1n, reserved: 0n, unavailable: false });
     await expect(resolveBestPayRoute({
       chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY,

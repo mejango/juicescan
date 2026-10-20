@@ -249,7 +249,8 @@ export async function computePayPreview(opts) {
 // preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
 export function prepareCardPay(opts) {
   var tierIds = opts.tierIds || [];
-  function unavailable(reason) { return { received: null, reserved: null, unavailable: true, reason: reason }; }
+  // `explained`: the reason is a plain sentence for the payer (a decoded revert), not a raw error.
+  function unavailable(reason, explained) { return { received: null, reserved: null, unavailable: true, reason: reason, explained: !!explained }; }
   if (!opts.terminal) return Promise.resolve(unavailable('No payment contract on this chain'));
   return prepareUserPay(createPublicClientForChain(opts.chainId), {
     chainId: opts.chainId,
@@ -266,6 +267,6 @@ export function prepareCardPay(opts) {
     return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
   }, function (error) {
     var failure = decodePayFailure(error);
-    return unavailable(failure ? failure.message : errMessage(error, 'preview unavailable'));
+    return failure ? unavailable(failure.message, true) : unavailable(errMessage(error, 'preview unavailable'));
   });
 }
