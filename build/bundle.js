@@ -46,7 +46,8 @@ async function build() {
     fs.writeFileSync(file.path, file.contents);
   }
   const outputs = jsResult.metafile.outputs;
-  const entry = Object.keys(outputs).find(key => outputs[key].entryPoint);
+  // Dynamic-import chunks carry an entryPoint too, so match the app entry by its source path.
+  const entry = Object.keys(outputs).find(key => outputs[key].entryPoint === 'src/app.js');
   const startup = staticImportClosure(outputs, entry).map(key => path.relative(DIST, path.resolve(__dirname, '..', key)).split(path.sep).join('/'));
 
   // Read HTML shell

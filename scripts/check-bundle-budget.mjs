@@ -46,6 +46,7 @@ const entries = attribute(/<script[^>]*type="module"[^>]*src="([^"]+)"/g);
 const preloads = attribute(/<link[^>]*rel="modulepreload"[^>]*href="([^"]+)"/g);
 const stylesheets = attribute(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"/g);
 if (entries.length !== 1) failures.push(`index.html must load exactly one module entry, found ${entries.length}`);
+if (entries.some(file => !/^dist\/app-[A-Z0-9]+\.js$/.test(file))) failures.push(`index.html must load the app entry (dist/app-<hash>.js), found ${entries.join(', ')}`);
 if (/<script(?![^>]*type="module")[^>]*src=/.test(html)) failures.push('index.html loads a classic script; the app ships as one ESM entry');
 
 const closure = [];
