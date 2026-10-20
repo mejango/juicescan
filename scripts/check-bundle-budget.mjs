@@ -47,7 +47,9 @@ const budgets = {
   // Node22 same-env222c5f baseline10,594,623 raw /1,537,295 gzip; final10,608,959 /1,540,607.
   // Growth +14,336 raw /+3,312 gzip, no new dependency; keep the next1KB ceilings.
   // Shared exhausted-image fallback: 10,609,107 raw /1,540,684 gzip, +148/+77 B; only raw next1KB changes.
-  'dist/app.js': { raw: 10_610_000, gzip: 1_541_000 },
+  // SDK3.0.0 (held-write recovery, prepareUserPay) replaces the direct Uniswap buy route:
+  // final 10,649,225 raw /1,545,610 gzip with the pay identity guard. Next1KB ceilings.
+  'dist/app.js': { raw: 10_650_000, gzip: 1_546_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
@@ -87,7 +89,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(async file =>
 // Verification feedback measured total: 2,280,560 B gzip; round to the next 1 KB.
 // Official SDK2.29/native actions measured total2,309,541 B gzip, +28,981 B versus the same-env baseline.
 // Shared checkout measured2,312,787 B gzip, +3,317 B versus222c5f same-env distribution.
-const totalGzipBudget = 2_313_000;
+// SDK3.0.0 with the direct buy route removed: 2,313,459 B gzip.
+const totalGzipBudget = 2_314_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
