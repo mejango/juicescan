@@ -60,7 +60,7 @@ var ACCOUNT_ACTIVITY_QUERY = 'query($from: String!, $version: Int!, $limit: Int!
   + 'id chainId projectId timestamp txHash from beneficiary projectTokenCount terminalTokenAmount } } '
   + 'holderCashOutEvents: cashOutTokensEvents(where: { holder: $from, from_not: $from, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "desc", limit: $limit, offset: $offset) { totalCount items { '
-  + 'id chainId projectId timestamp txHash from holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd } } }';
+  + 'id chainId projectId timestamp txHash from holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd token decimals tokenSymbol } } }';
 var ACCOUNT_ACTIVITY_ROOTS = [
   'activityEvents',
   'beneficiaryPayEvents',

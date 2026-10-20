@@ -14053,13 +14053,14 @@ export function mergeSameTxActivityRows(rows, project) {
         total += toBigInt(r.rawAmount);
         if (r.rawAmountUsd == null) usdKnown = false; else totalUsd += toBigInt(r.rawAmountUsd);
       });
-      var first = pays[0].rawEvent || {};
-      var oneToken = pays.every(function (r) {
-        var ev = r.rawEvent || {};
-        return ev.token === first.token && ev.decimals === first.decimals && ev.tokenSymbol === first.tokenSymbol;
+      var tokens = pays.map(function (r) { return eventTokenMeta(project, r.chainId, r.rawEvent); });
+      var oneToken = tokens.every(function (t) {
+        return t && tokens[0] && t.address.toLowerCase() === tokens[0].address.toLowerCase() && t.decimals === tokens[0].decimals;
       });
       merged.account = pays[0].from; merged.from = pays[0].from;
-      merged.baseAmount = eventFlowAmount(project, pays[0].chainId, oneToken ? first : null, total, usdKnown ? totalUsd : null);
+      merged.baseAmount = oneToken && total > 0n
+        ? formatActivityAmount(total, tokens[0].symbol, tokens[0].decimals)
+        : indexedActivityAmount(usdKnown ? totalUsd : null);
     }
     return merged;
   });
@@ -20710,11 +20711,17 @@ export function indexedActivityAmount(scaledUsd) {
 // pay, cash out, payout and add to balance; a known token fills a missing symbol or decimals. An unresolved
 // token falls back to the indexed USD value, never to the project's accounting token.
 export function eventFlowAmount(project, chainId, ev, raw, scaledUsd) {
-  var meta = ev && ev.token ? sourceTokenMeta(project, chainId, ev.token) : null;
-  var decimals = ev && ev.decimals != null ? Number(ev.decimals) : (meta ? meta.decimals : null);
-  var symbol = (ev && ev.tokenSymbol) || (meta && meta.symbol);
-  if (ev && ev.token && decimals != null && symbol && toBigInt(raw) > 0n) return formatActivityAmount(raw, symbol, decimals);
+  var token = eventTokenMeta(project, chainId, ev);
+  if (token && toBigInt(raw) > 0n) return formatActivityAmount(raw, token.symbol, token.decimals);
   return indexedActivityAmount(scaledUsd);
+}
+
+function eventTokenMeta(project, chainId, ev) {
+  if (!ev || !ev.token) return null;
+  var meta = sourceTokenMeta(project, chainId, ev.token);
+  var decimals = ev.decimals != null ? Number(ev.decimals) : (meta ? meta.decimals : null);
+  var symbol = ev.tokenSymbol || (meta && meta.symbol);
+  return decimals != null && symbol ? { address: String(ev.token), decimals: decimals, symbol: symbol } : null;
 }
 
 // Swap events index no token. When every chain accounts in the same single token (project._flowToken,
@@ -20725,10 +20732,10 @@ function swapFlowAmount(project, raw) {
 }
 
 // A raw cross-chain amount (a swap, a group balance) may only be read in one token when EVERY chain has
-// exactly one accounting context and all of them agree on the same token shape (kind, symbol, decimals);
-// a project accounting in 6-dec USDC on one chain and an 18-dec token on another would otherwise mislabel
-// remote amounts by 1e12. `contextLists` is one context list per chain; any missing/failed/multi-context
-// chain disqualifies the label.
+// exactly one accounting context and all of them are the same token (native, USDC, or one address) with the
+// same decimals; a project accounting in 6-dec USDC on one chain and an 18-dec token on another would
+// otherwise mislabel remote amounts by 1e12. `contextLists` is one context list per chain, each context
+// carrying its chainId; any missing/failed/multi-context chain disqualifies the label.
 export function flowTokenFromContexts(contextLists) {
   if (!contextLists || !contextLists.length) return null;
   var agreed = null;
@@ -20736,10 +20743,9 @@ export function flowTokenFromContexts(contextLists) {
     var contexts = contextLists[i];
     if (!contexts || contexts.length !== 1) return null;
     var context = contexts[0];
-    var native = !!(context.address && context.address.toLowerCase() === NATIVE_TOKEN.toLowerCase());
-    var shape = { native: native, symbol: context.symbol, decimals: Number(context.decimals) };
+    var shape = { key: accountingTokenContextKey(context.address, Number(context.chainId)), symbol: context.symbol, decimals: Number(context.decimals) };
     if (!agreed) agreed = shape;
-    else if (agreed.native !== shape.native || agreed.symbol !== shape.symbol || agreed.decimals !== shape.decimals) return null;
+    else if (agreed.key !== shape.key || agreed.symbol !== shape.symbol || agreed.decimals !== shape.decimals) return null;
   }
   return agreed ? { symbol: agreed.symbol, decimals: agreed.decimals } : null;
 }
@@ -20750,17 +20756,25 @@ export function accountingContextsFromRow(project, chainId, row) {
   if (!row || Number(row.accountingTokenCount) !== 1 || !row.token || row.decimals == null) return null;
   var meta = sourceTokenMeta(project, chainId, row.token);
   var symbol = row.tokenSymbol || (meta && meta.symbol);
-  return symbol ? [{ address: row.token, decimals: Number(row.decimals), symbol: symbol }] : null;
+  return symbol ? [{ address: row.token, chainId: Number(chainId), decimals: Number(row.decimals), symbol: symbol }] : null;
 }
 
 // The single accounting token every chain of this project shares, from the Bendystraw project rows, or null.
+// A failed row lookup is retried on the next call rather than remembered as "no single token".
 function projectFlowToken(project) {
   if (!project._flowTokenP) {
-    project._flowTokenP = Promise.all(projectDeployments(project).map(function (deployment) {
-      return fetchFreshBendystrawProjectRecord(deployment.projectId, deployment.chainId).then(function (row) {
-        return accountingContextsFromRow(project, deployment.chainId, row);
-      });
-    })).then(flowTokenFromContexts, function () { return null; }).then(function (token) {
+    var rows = Promise.all(projectDeployments(project).map(function (deployment) {
+      return fetchFreshBendystrawProjectRecord(deployment.projectId, deployment.chainId);
+    }));
+    project._flowTokenP = rows.then(function (records) {
+      if (records.some(function (row) { return !row; })) delete project._flowTokenP;
+      return flowTokenFromContexts(projectDeployments(project).map(function (deployment, i) {
+        return accountingContextsFromRow(project, deployment.chainId, records[i]);
+      }));
+    }, function () {
+      delete project._flowTokenP;
+      return null;
+    }).then(function (token) {
       project._flowToken = token;
       return token;
     });

@@ -908,10 +908,10 @@
         {
           "id": "participants-top-contributors",
           "title": "Top contributors",
-          "hint": "Participants ordered by lifetime volume paid in.",
+          "hint": "Participants ordered by lifetime USD paid in.",
           "kind": "list",
           "path": "participants",
-          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"volume\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address volume volumeUsd balance paymentsCount lastPaidTimestamp } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"volumeUsd\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address volume volumeUsd balance paymentsCount lastPaidTimestamp } totalCount } }",
           "variables": [
             {
               "name": "projectId",

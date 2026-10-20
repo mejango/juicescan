@@ -60,6 +60,8 @@ describe('indexed amount provenance', () => {
   it('labels an event row with its own indexed token', () => {
     expect(amount('2500000', { decimals: 6, tokenSymbol: 'USDC' }).textContent).toBe('2.5000 USDC');
     expect(amount('2500000', { decimals: null, tokenSymbol: 'USDC' }).textContent).toContain('raw');
+    expect(amount('1000000000000000000', { decimals: 18, token: '0x000000000000000000000000000000000000EEEe', tokenSymbol: null }).textContent).toBe('1.0000 ETH');
+    expect(amount('2500000', { decimals: 6, chainId: 8453, token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', tokenSymbol: null }).textContent).toBe('2.5000 USDC');
   });
 });
 

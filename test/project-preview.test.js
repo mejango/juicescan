@@ -26,10 +26,18 @@ describe('project link previews', () => {
   it('keeps different accounting tokens separate', () => {
     expect(
       formatPreviewBalance([
-        { balance: '1500000000000000000', decimals: 18, tokenSymbol: 'ETH' },
-        { balance: '2500000', decimals: 6, tokenSymbol: 'USDC' },
+        { projectTokenBalances: { items: [
+          { balance: '1500000000000000000', decimals: 18, tokenSymbol: 'ETH' },
+          { balance: '0', decimals: 6, tokenSymbol: 'USDC' },
+        ] } },
+        { projectTokenBalances: { items: [{ balance: '2500000', decimals: 6, tokenSymbol: 'USDC' }] } },
       ]),
     ).toBe('1.5 ETH + 2.5 USDC');
+    expect(formatPreviewBalance([
+      { projectTokenBalances: { items: [{ balance: '0', decimals: 18, tokenSymbol: 'ETH' }, { balance: '1', decimals: 6, tokenSymbol: 'USDC' }] } },
+    ])).toBe('0 USDC');
+    expect(formatPreviewBalance([{ projectTokenBalances: { items: [{ balance: '0', decimals: 18, tokenSymbol: 'ETH' }] } }])).toBe('0 ETH');
+    expect(formatPreviewBalance([{ balance: '1', decimals: 18, tokenSymbol: 'ETH' }])).toBe('Unavailable');
   });
 
   it('uses a plain-text description when a project has no tagline', () => {

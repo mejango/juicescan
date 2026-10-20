@@ -24,14 +24,15 @@ const IPFS_GATEWAYS = [
 
 const PROJECT_QUERY = `query ProjectPreview($projectId: Float!, $chainId: Float!, $version: Float!) {
   project(projectId: $projectId, chainId: $chainId, version: $version) {
-    suckerGroupId balance paymentsCount name description projectTagline logoUri metadataUri metadata tokenSymbol decimals
+    suckerGroupId paymentsCount name description projectTagline logoUri metadataUri metadata
+    projectTokenBalances { items { balance tokenSymbol decimals } }
   }
 }`;
 
 const GROUP_QUERY = `query ProjectPreviewGroup($id: String!) {
   suckerGroup(id: $id) {
     paymentsCount
-    projects(limit: 100) { items { balance tokenSymbol decimals } }
+    projects(limit: 100) { items { projectTokenBalances { items { balance tokenSymbol decimals } } } }
   }
 }`;
 
@@ -130,9 +131,11 @@ function formatRawAmount(raw, decimals) {
   return `${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''}`;
 }
 
+// One line per held token across the deployments, each in its own symbol and decimals.
 export function formatPreviewBalance(deployments) {
   const buckets = new Map();
-  for (const row of deployments || []) {
+  const rows = (deployments || []).flatMap((deployment) => deployment?.projectTokenBalances?.items || []);
+  for (const row of rows) {
     const symbol = typeof row?.tokenSymbol === 'string' ? row.tokenSymbol.trim() : '';
     const decimals = Number(row?.decimals);
     if (!symbol || !Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) continue;
@@ -148,7 +151,8 @@ export function formatPreviewBalance(deployments) {
       // Unknown stays unknown.
     }
   }
-  const values = [...buckets.values()]
+  const held = [...buckets.values()].filter((bucket) => bucket.amount > 0n);
+  const values = (held.length ? held : [...buckets.values()])
     .sort((left, right) => left.symbol.localeCompare(right.symbol))
     .map((bucket) => `${formatRawAmount(bucket.amount, bucket.decimals)} ${bucket.symbol}`);
   if (!values.length) return 'Unavailable';

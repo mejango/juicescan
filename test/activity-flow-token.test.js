@@ -7,10 +7,10 @@ import { describe, it, expect } from 'vitest';
 import { accountingContextsFromRow, activityRowFromEvent, flowTokenFromContexts, isProjectFeedActivityRow, mergeSameTxActivityRows } from '../src/discover.js';
 import { NATIVE_TOKEN } from '../src/component-base.js';
 
-const USDC_BASE = { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6, symbol: 'USDC', currency: 1n };
-const USDC_OP = { address: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', decimals: 6, symbol: 'USDC', currency: 1n };
+const USDC_BASE = { address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', chainId: 8453, decimals: 6, symbol: 'USDC', currency: 1n };
+const USDC_OP = { address: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', chainId: 10, decimals: 6, symbol: 'USDC', currency: 1n };
 const NATIVE = { address: NATIVE_TOKEN, decimals: 18, symbol: 'ETH', currency: 1n };
-const CUSTOM_18 = { address: '0x1111111111111111111111111111111111111111', decimals: 18, symbol: 'JBX', currency: 5n };
+const CUSTOM_18 = { address: '0x1111111111111111111111111111111111111111', chainId: 8453, decimals: 18, symbol: 'JBX', currency: 5n };
 
 function payEventOn(chainId, token) {
   return {
@@ -49,7 +49,7 @@ function buybackEventOn(chainId) {
 describe('accountingContextsFromRow', () => {
   it('reads a single-token Bendystraw row as one context, symbol filled from known tokens', () => {
     const row = { accountingTokenCount: 1, token: USDC_BASE.address.toLowerCase(), decimals: 6, tokenSymbol: null };
-    expect(accountingContextsFromRow({}, 8453, row)).toEqual([{ address: row.token, decimals: 6, symbol: 'USDC' }]);
+    expect(accountingContextsFromRow({}, 8453, row)).toEqual([{ address: row.token, chainId: 8453, decimals: 6, symbol: 'USDC' }]);
     expect(flowTokenFromContexts([
       accountingContextsFromRow({}, 8453, row),
       accountingContextsFromRow({}, 10, { accountingTokenCount: 1, token: USDC_OP.address.toLowerCase(), decimals: 6, tokenSymbol: 'USDC' }),
@@ -81,6 +81,12 @@ describe('flowTokenFromContexts', () => {
 
   it('rejects a native context on one chain vs an ERC-20 on another', () => {
     expect(flowTokenFromContexts([[NATIVE], [CUSTOM_18]])).toBeNull();
+  });
+
+  it('rejects two different tokens that share a symbol and decimals', () => {
+    const lookalike = { ...CUSTOM_18, address: '0x2222222222222222222222222222222222222222', chainId: 10 };
+    expect(flowTokenFromContexts([[CUSTOM_18], [lookalike]])).toBeNull();
+    expect(flowTokenFromContexts([[CUSTOM_18], [{ ...CUSTOM_18, chainId: 10 }]])).toEqual({ symbol: 'JBX', decimals: 18 });
   });
 
   it('rejects when any chain has multiple contexts, a failed read, or no contexts', () => {
@@ -147,6 +153,10 @@ describe('activity rows across chains with differing contexts', () => {
     const pay = (token, beneficiary) => activityRowFromEvent({ ...payEventOn(8453, token), payEvent: { ...payEventOn(8453, token).payEvent, beneficiary, from: '0xpayer' } }, project);
     expect(mergeSameTxActivityRows([pay(usdc, '0x1'), pay(usdc, '0x2')], project)[0].baseAmount).toBe('5 USDC');
     expect(mergeSameTxActivityRows([pay(usdc, '0x1'), pay(eth, '0x2')], project)[0].baseAmount).toBe('$5.00');
+    // Same token, one row without its symbol: the known token fills it, so the total keeps its unit.
+    const bare = { token: USDC_BASE.address.toLowerCase(), decimals: 6, tokenSymbol: null };
+    const noUsd = (token, beneficiary) => { const row = pay(token, beneficiary); row.rawAmountUsd = null; return row; };
+    expect(mergeSameTxActivityRows([noUsd(usdc, '0x1'), noUsd(bare, '0x2')], project)[0].baseAmount).toBe('5 USDC');
   });
 
   it('shows the terminal-token amount paid for a buyback order', () => {
