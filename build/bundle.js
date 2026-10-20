@@ -1,6 +1,7 @@
 // build/bundle.js
 // Bundles src/ → dist/ as static, CSP-friendly assets
-// No minification — readable output for auditability
+// Minified: the readable source is this repo at the commit in the page footer, and `npm run bundle`
+// reproduces the published bytes from it.
 
 const esbuild = require('esbuild');
 const fs = require('fs');
@@ -11,13 +12,25 @@ const DIST = path.join(__dirname, '..', 'dist');
 const ENV = loadEnvFile(path.join(__dirname, '..', '.env'));
 
 async function build() {
-  // Bundle JS
+  // A clean dist/ keeps chunks from earlier builds out of the published CID directory.
+  fs.rmSync(DIST, { recursive: true, force: true });
+  fs.mkdirSync(DIST, { recursive: true });
+
+  // ESM with code splitting: the entry and its static imports load at startup; everything behind an
+  // import() is a hashed chunk in dist/chunks/, fetched on first use. Chunk imports are relative, so the
+  // whole set resolves inside one CID directory on path and subdomain gateways alike.
   const jsResult = await esbuild.build({
-    entryPoints: [path.join(SRC, 'app.js')],
+    entryPoints: { app: path.join(SRC, 'app.js') },
     bundle: true,
-    format: 'iife',
+    format: 'esm',
+    splitting: true,
+    outdir: DIST,
+    entryNames: '[name]-[hash]',
+    chunkNames: 'chunks/[name]-[hash]',
+    metafile: true,
+    absWorkingDir: path.join(__dirname, '..'),
     write: false,
-    minify: false,
+    minify: true,
     sourcemap: false,
     define: {
       __BENDYSTRAW_API_KEY__: JSON.stringify(process.env.BENDYSTRAW_API_KEY || ENV.BENDYSTRAW_API_KEY || ''),
@@ -28,7 +41,14 @@ async function build() {
       __PINATA_JWT__: JSON.stringify(process.env.PINATA_PUBLIC_JWT || ENV.PINATA_PUBLIC_JWT || ''),
     },
   });
-  const js = jsResult.outputFiles[0].text;
+  for (const file of jsResult.outputFiles) {
+    fs.mkdirSync(path.dirname(file.path), { recursive: true });
+    fs.writeFileSync(file.path, file.contents);
+  }
+  const outputs = jsResult.metafile.outputs;
+  // Dynamic-import chunks carry an entryPoint too, so match the app entry by its source path.
+  const entry = Object.keys(outputs).find(key => outputs[key].entryPoint === 'src/app.js');
+  const startup = staticImportClosure(outputs, entry).map(key => path.relative(DIST, path.resolve(__dirname, '..', key)).split(path.sep).join('/'));
 
   // Read HTML shell
   const html = fs.readFileSync(path.join(SRC, 'index.html'), 'utf8');
@@ -36,20 +56,20 @@ async function build() {
   // Fill build metadata. JS and CSS are emitted as same-origin files so IPFS
   // gateways with default-src 'self' CSP can still run the app.
   const final = html
+    .replace('__APP_JS__', startup[0])
+    .replace('<!--__MODULE_PRELOADS__-->', startup.slice(1).map(file => `<link rel="modulepreload" href="${file}">`).join('\n'))
     .replace('__BUILD_DATE__', getBuildDate())
     .replace('__GIT_HASH__', getGitHash())
     .replace('__IPFS_CID__', process.env.IPFS_CID || 'not pinned');
 
-  fs.mkdirSync(DIST, { recursive: true });
   fs.writeFileSync(path.join(DIST, 'index.html'), final);
-  fs.writeFileSync(path.join(DIST, 'app.js'), js);
   fs.copyFileSync(path.join(SRC, 'style.css'), path.join(DIST, 'style.css'));
   await require('./render-guides.js').renderGuides(DIST);
 
   // Copy static assets. manifest.json makes the site a recognizable Safe App (Safe fetches <root>/manifest.json
   // for name/description/icon before it will add a custom app).
   // llms.txt (llmstxt.org) tells an agent what is readable without running the bundle.
-  for (const asset of ['jblogo.gif', 'favicon.svg', 'manifest.json', 'llms.txt', 'robots.txt']) {
+  for (const asset of ['jblogo.gif', 'jblogo-400.gif', 'favicon.svg', 'manifest.json', 'llms.txt', 'robots.txt']) {
     const src = path.join(SRC, asset);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(DIST, asset));
   }
@@ -61,7 +81,20 @@ async function build() {
     fs.copyFileSync(path.join(PDFJS, asset), path.join(DIST, asset));
   }
 
-  console.log(`Built dist/index.html (${(final.length / 1024).toFixed(0)} KB), dist/app.js (${(js.length / 1024).toFixed(0)} KB)`);
+  const startupBytes = startup.reduce((sum, file) => sum + fs.statSync(path.join(DIST, file)).size, 0);
+  console.log(`Built dist/index.html, ${startup.length} startup modules (${(startupBytes / 1024).toFixed(0)} KB), ${jsResult.outputFiles.length} JS files in all`);
+}
+
+// The entry first, then every chunk it reaches through static imports: what the browser must fetch
+// before the app runs. Dynamic import() targets are left out.
+function staticImportClosure(outputs, entry) {
+  const seen = [];
+  (function walk(key) {
+    if (seen.includes(key)) return;
+    seen.push(key);
+    for (const dep of outputs[key].imports || []) if (dep.kind === 'import-statement' && outputs[dep.path]) walk(dep.path);
+  })(entry);
+  return seen;
 }
 
 function loadEnvFile(file) {

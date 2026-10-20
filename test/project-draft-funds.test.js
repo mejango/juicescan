@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readDraftFunds } from '../src/discover.js';
+import { readDraftFunds } from '../src/project-draft.js';
 
 const NATIVE_TOKEN = '0x000000000000000000000000000000000000EEEe';
 const CUSTOM_TOKEN = '0x0000000000000000000000000000000000001234';

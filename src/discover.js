@@ -5,7 +5,6 @@
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
 import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
-import { renderDefifaNftActions } from './defifa-nft-actions.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
@@ -30,7 +29,9 @@ import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, exe
 import { buildStep, loadTray, saveTray, upsertStep, registerPowerKinds, multiSendBatchCalls, simulateBatchCalls } from './safe-batch.js';
 import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, toggleRow, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, deploySalt, build721Config, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, pinShopItemsMetadata, fundAccessAmountDecimals, fillSplits, isEnsName, SPLIT_SALES_TOKEN_CREDIT_TITLE, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel, noticeClashIssue, stageStartOk } from './create-flow.js';
+import { toggleRow, deploySalt, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, fillSplits, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-shared.js';
+import { isEnsName } from './ens.js';
+import { CHUNK_FAILED_TEXT, chunkFailure, chunkReloadButton } from './chunk-failure.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -43,6 +44,23 @@ import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle
 import { contractGasWithHeadroom, gasWithinCap } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
+
+// The create wizard, the queue-ruleset editor and the .jb draft export run on create-flow.js, which loads on
+// first use. Code that reads `createFlow` runs only after loadCreateFlow() resolved.
+var createFlow = null;
+function loadCreateFlow() {
+  return import('./create-flow.js').then(function (mod) { createFlow = mod; return mod; });
+}
+// Defifa NFT actions load only for a native Defifa inventory. Every path that renders them passes its
+// inventory through afterDefifaActions first, so `defifaActions` is set by the time they render.
+var defifaActions = null;
+function afterDefifaActions(inventory) {
+  if (!isNativeInventory(inventory)) return inventory;
+  return import('./defifa-nft-actions.js').then(function (mod) { defifaActions = mod; return inventory; }, function () { throw chunkFailure(); });
+}
+function withCreateFlow(action) {
+  return loadCreateFlow().then(action, function () { alert(CHUNK_FAILED_TEXT); });
+}
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
@@ -1323,9 +1341,11 @@ function removeLightEdgeMatteFromImage(img) {
 var _pdfjsPromise = null;
 function loadPdfjs() {
   if (!_pdfjsPromise) {
-    var moduleUrl = './pdf.min.mjs'; // non-literal arg keeps esbuild from trying to bundle the lazy module
+    // Resolve against the page, not this module: the code may live in a chunk under dist/chunks/.
+    // A non-literal arg also keeps esbuild from trying to bundle the lazy module.
+    var moduleUrl = new URL('pdf.min.mjs', document.baseURI).href;
     _pdfjsPromise = import(moduleUrl).then(function (lib) {
-      lib.GlobalWorkerOptions.workerSrc = './pdf.worker.min.mjs';
+      lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', document.baseURI).href;
       return lib;
     });
   }
@@ -1575,7 +1595,7 @@ export function nftCartSubtotal(shop, cart) {
 }
 
 function renderDefifaActionsForProject(project, inventory, options) {
-  return renderDefifaNftActions(inventory, project.chainId, pidOn(project, project.chainId), function (price, pricing) {
+  return defifaActions.renderDefifaNftActions(inventory, project.chainId, pidOn(project, project.chainId), function (price, pricing) {
     var fresh = Object.assign({}, inventory.pricing, pricing || {});
     if (pricing && (Number(pricing.currency) !== Number(inventory.pricing.currency) || Number(pricing.decimals) !== Number(inventory.pricing.decimals) || String(pricing.token).toLowerCase() !== String(inventory.pricing.token).toLowerCase())) fresh.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
     return formatShopPrice(Object.assign({}, inventory, { pricing: fresh }), price, project.chainId);
@@ -1684,7 +1704,7 @@ export function renderShopSection(project, shop, cart) {
   readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }).then(function (identity) {
     if (wrap.isConnected && typeof mgr !== 'undefined' && mgr) mgr.hidden = isNativeInventory(identity);
   }).catch(function () {});
-  var ready = shop ? Promise.resolve(shop) : fetchProjectTiers(project);
+  var ready = (shop ? Promise.resolve(shop) : fetchProjectTiers(project)).then(afterDefifaActions);
   body.textContent = 'Loading items…';
   ready.then(function (s) {
     if (!wrap.isConnected) return;
@@ -1772,7 +1792,7 @@ export function renderShopSection(project, shop, cart) {
       setTimeout(function () { cardEl.classList.remove('shop-tier-focus'); }, 1500);
     }
     if (_activeDetail) _activeDetail.shopFocus = focusTier;
-  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; } });
+  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; if (error && error.chunkFailed) { body.textContent = CHUNK_FAILED_TEXT + ' '; body.appendChild(chunkReloadButton()); } else body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; } });
 
   // Mobile checkout bar — on phones the Pay card (where the purchase is completed) is a separate stacked
   // section above the tabs, so once items are in the cart show a bar that scrolls up to it. Hidden on
@@ -3863,7 +3883,7 @@ function renderPayShopStrip(project, cart, opts) {
   wrap.style.display = 'none';
   function load() {
   wrap.innerHTML = ''; wrap.style.display = 'none';
-  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, project).then(function (identity) {
+  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, project).then(afterDefifaActions).then(function (identity) {
     if (!wrap.isConnected) return null;
     if (opts.onIdentity) opts.onIdentity(identity);
     return fetchProjectTiers(project);
@@ -4311,12 +4331,6 @@ var jbSetPermissionsAbi = [{
     { name: 'permissionsData', type: 'tuple', components: [
       { name: 'operator', type: 'address' }, { name: 'projectId', type: 'uint64' }, { name: 'permissionIds', type: 'uint8[]' }] },
   ], outputs: [],
-}];
-// Packed permissions bitmap an operator holds for (account, projectId). Bit N set → permission id N granted.
-var jbPermissionsOfAbi = [{
-  type: 'function', name: 'permissionsOf', stateMutability: 'view',
-  inputs: [{ name: 'operator', type: 'address' }, { name: 'account', type: 'address' }, { name: 'projectId', type: 'uint256' }],
-  outputs: [{ type: 'uint256' }],
 }];
 // JBPermissionIds (nana-permission-ids-v6) → human labels. id == bit position in the packed bitmap.
 var JB_PERMISSION_LABELS = {
@@ -6936,7 +6950,6 @@ function splitAccountNode(sp, project, chainId, opts) {
   return node;
 }
 
-
 function chainById(chainId) {
   var cid = Number(chainId);
   return { id: cid, name: chainNameFor(cid) };
@@ -8308,7 +8321,7 @@ function renderGrid() {
   var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
   createBtn.title = 'Create a project';
-  createBtn.addEventListener('click', function () { openCreateFlow(); });
+  createBtn.addEventListener('click', function () { withCreateFlow(function (mod) { mod.openCreateFlow(); }); });
   rightCtrls.appendChild(createBtn);
   topRow.appendChild(rightCtrls);
   _gridWrapper.appendChild(topRow);
@@ -9553,6 +9566,7 @@ export function renderPayCard(project, cart) {
         showFundingOnly();
         loadAcceptedTokens(state.chainId); loadPaymentSurface(state.chainId);
       }
+      if (error && error.chunkFailed) { status.appendChild(document.createTextNode(' ')); status.appendChild(chunkReloadButton()); return; }
       var retry = el('button'); retry.type = 'button'; retry.textContent = 'Retry';
       retry.addEventListener('click', function () {
         retry.disabled = true;
@@ -10366,7 +10380,6 @@ export function renderPayCard(project, cart) {
   card.appendChild(promptFoot('Pay', 'pay'));
   return card;
 }
-
 
 // Compact rich header: symbol + name + chains, a balance/supply stat line, and an owner/operator/site line.
 function renderDetailHeader(project) {
@@ -14442,7 +14455,6 @@ export function isProjectFeedActivityRow(row) {
   return !!row && row.type !== 'operator_perms';
 }
 
-
 var WEIGHT_CUT_DEN = 1000000000; // 1e9
 
 // Full decoded ruleset rows grouped by section. r = ruleset tuple, m = decoded metadata tuple.
@@ -15151,47 +15163,10 @@ export async function runProjectPayerRelayrDeploys(calls, setStatus, pendingScop
   return fundRelayrQuotedSession(bundle, session, setStatus, { pendingScope: pendingScope });
 }
 
-// ---------------------------------------------------------------------------
-// Existing project -> canonical .jb create draft
-// ---------------------------------------------------------------------------
-
-var PROJECT_DRAFT_SPLITS_TOTAL = 1000000000;
-var PROJECT_DRAFT_UNLIMITED = 2n ** 200n;
 var PROJECT_DRAFT_721_META_ABI = [
   { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
   { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
 ];
-var PROJECT_DRAFT_721_FLAGS_ABI = [{
-  type: 'function', name: 'flagsOf', stateMutability: 'view', inputs: [{ type: 'address' }],
-  outputs: [{ type: 'tuple', components: [
-    { name: 'noNewTiersWithReserves', type: 'bool' }, { name: 'noNewTiersWithVotes', type: 'bool' },
-    { name: 'noNewTiersWithOwnerMinting', type: 'bool' }, { name: 'preventOverspending', type: 'bool' },
-    { name: 'issueTokensForSplits', type: 'bool' },
-  ] }],
-}];
-var PROJECT_DRAFT_SUCKER_PAIRS_ABI = [{
-  type: 'function', name: 'suckerPairsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }],
-  outputs: [{ type: 'tuple[]', components: [
-    { name: 'local', type: 'address' }, { name: 'remote', type: 'bytes32' }, { name: 'remoteChainId', type: 'uint256' },
-  ] }],
-}];
-var PROJECT_DRAFT_SUCKER_DEPLOYER_ABI = [{ type: 'function', name: 'deployer', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }];
-
-function draftFingerprint(value) {
-  return JSON.stringify(value, function (_, v) { return typeof v === 'bigint' ? v.toString() : v; });
-}
-
-function draftCanonChainId(chainId) {
-  var map = { 11155111: 1, 11155420: 10, 84532: 8453, 421614: 42161 };
-  return map[Number(chainId)] || Number(chainId);
-}
-
-function draftPerChainSet(state, chainId, key, value) {
-  var cid = draftCanonChainId(chainId);
-  if (!state.perChain[cid]) state.perChain[cid] = {};
-  if (!state.perChain[cid].addr) state.perChain[cid].addr = {};
-  state.perChain[cid].addr[key] = value;
-}
 
 function draftRecipientFromSplit(split, percent, amount) {
   var projectId = Number(split && split.projectId || 0);
@@ -15223,668 +15198,6 @@ export function draftDeadlineFor(address, chainId) {
   return { key: 'custom', address: address };
 }
 
-function draftStageFromLive(ruleset, metadata, reservedSplits, chainId) {
-  var stage = createStage();
-  stage.expanded = true;
-  stage.durationSeconds = Number(ruleset.duration || 0);
-  var weight = toBigInt(ruleset.weight || 0);
-  stage.tokenMode = weight > 0n ? 'custom' : 'none';
-  stage.weight = weight > 0n ? formatEther(weight) : '0';
-  stage.weightCutPercent = Number(ruleset.weightCutPercent || 0) / 1e7;
-  stage.issuanceCutOn = stage.weightCutPercent > 0;
-  stage.baseCurrency = Number(metadata.baseCurrency || 1);
-  stage.cashOutEnabled = Number(metadata.cashOutTaxRate || 0) < 10000;
-  stage.cashOutTaxRate = Number(metadata.cashOutTaxRate || 0) / 100;
-  stage.allowOwnerMinting = !!metadata.allowOwnerMinting;
-  stage.pauseTransfers = !!metadata.pauseCreditTransfers;
-  stage.metadataExtra = Number(metadata.metadata || 0);
-  stage.pause721Transfers = decode721RulesetMetadata(stage.metadataExtra).pauseTransfers;
-  stage.pausePay = !!metadata.pausePay;
-  stage.holdFees = !!metadata.holdFees;
-  stage.allowSetTerminals = !!metadata.allowSetTerminals;
-  stage.allowSetController = !!metadata.allowSetController;
-  stage.allowTerminalMigration = !!metadata.allowTerminalMigration;
-  stage.allowSetCustomToken = !!metadata.allowSetCustomToken;
-  stage.allowAddAccountingContext = !!metadata.allowAddAccountingContext;
-  stage.allowAddPriceFeed = !!metadata.allowAddPriceFeed;
-  var deadline = draftDeadlineFor(ruleset.approvalHook, chainId);
-  stage.deadline = deadline.key;
-  var reservedRate = Number(metadata.reservedPercent || 0) / 100;
-  stage.reservedRecipients = (reservedSplits || []).map(function (split) {
-    return draftRecipientFromSplit(split, Number(split.percent || 0) / PROJECT_DRAFT_SPLITS_TOTAL * reservedRate, '');
-  });
-  return { stage: stage, customApproval: deadline.address };
-}
-
-function draftPayoutState(limit, splits, decimals, owner) {
-  if (!limit || toBigInt(limit.amount) === 0n) return { mode: 'none', recipients: [] };
-  var total = toBigInt(limit.amount);
-  if (total >= PROJECT_DRAFT_UNLIMITED) {
-    return { mode: 'unlimited', recipients: (splits || []).map(function (split) {
-      return draftRecipientFromSplit(split, Number(split.percent || 0) / PROJECT_DRAFT_SPLITS_TOTAL * 100, '');
-    }) };
-  }
-  var recipients = [], allocated = 0n;
-  (splits || []).forEach(function (split) {
-    var amount = total * toBigInt(split.percent || 0) / BigInt(PROJECT_DRAFT_SPLITS_TOTAL);
-    allocated += amount;
-    if (amount > 0n) recipients.push(draftRecipientFromSplit(split, 0, formatAmount(amount, decimals)));
-  });
-  // A finite payout's unallocated group remainder goes to the owner. Make it explicit in the new draft so
-  // the reconstructed payout limit remains byte-for-byte the same total instead of silently shrinking.
-  if (allocated < total) {
-    recipients.push({ type: 'wallet', address: owner || ZERO_ADDRESS, projectId: 0, percent: 0,
-      amountEth: formatAmount(total - allocated, decimals), lockedUntil: 0, preferAddToBalance: false,
-      _ownerRemainder: true });
-  }
-  return { mode: 'limited', recipients: recipients };
-}
-
-async function draftLiveProjectChain(project, chain) {
-  var chainId = Number(chain.id), pid = pidOn(project, chainId);
-  var controller = await controllerAddressFor(chainId, pid);
-  var canonicalController = getAddress('JBController', chainId);
-  if (!canonicalController || !sameAddr(controller, canonicalController)) {
-    throw new Error('This project uses a non-standard controller on ' + (chain.name || chainNameOf(chainId)) + ', which the create wizard cannot reproduce.');
-  }
-  var current = await clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] });
-  if (!current || !current[0] || toBigInt(current[0].id || 0) === 0n) {
-    current = await clientFor(chainId).readContract({ address: controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [pid] });
-  }
-  if (!current || !current[0] || toBigInt(current[0].id || 0) === 0n || !current[1]) throw new Error('No live ruleset could be verified on ' + (chain.name || chainNameOf(chainId)) + '.');
-  var contexts = await resolveAcctTokens(chainId, pid);
-  var terminals = await read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]);
-  var owner = project.isRevnet
-    ? await revnetOperatorOf(Number(pid), chainId)
-    : await read(chainId, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]);
-  return { chain: chain, chainId: chainId, projectId: pid, controller: controller, ruleset: current[0], metadata: current[1], contexts: contexts, terminals: terminals || [], owner: owner };
-}
-
-async function draftUpcomingProjectChain(source, project) {
-  var upcoming = await clientFor(source.chainId).readContract({ address: source.controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [source.projectId] });
-  if (!upcoming || !upcoming[0] || toBigInt(upcoming[0].id || 0) === 0n || String(upcoming[0].id) === String(source.ruleset.id)) return null;
-  return Object.assign({}, source, { ruleset: upcoming[0], metadata: upcoming[1] });
-}
-
-function draftContextKind(context, chainId) {
-  if (sameAddr(context.address, NATIVE_TOKEN)) return 'eth';
-  if (USDC_BY_CHAIN[chainId] && sameAddr(context.address, USDC_BY_CHAIN[chainId])) return 'usdc';
-  return 'custom';
-}
-
-function draftRulesetFingerprint(source) {
-  var r = source.ruleset, m = source.metadata;
-  var hookRole = isZeroishAddress(m.dataHook) ? 'none'
-    : (sameAddr(m.dataHook, getAddress('REVOwner', source.chainId)) ? 'revowner'
-      : (sameAddr(m.dataHook, getAddress('JBOmnichainDeployer', source.chainId)) ? 'omnichain' : 'direct'));
-  return draftFingerprint({
-    duration: r.duration, weight: r.weight, weightCutPercent: r.weightCutPercent,
-    approval: draftDeadlineFor(r.approvalHook, source.chainId).key,
-    metadata: {
-      reservedPercent: m.reservedPercent, cashOutTaxRate: m.cashOutTaxRate, baseCurrency: m.baseCurrency,
-      pausePay: m.pausePay, pauseCreditTransfers: m.pauseCreditTransfers, allowOwnerMinting: m.allowOwnerMinting,
-      allowSetCustomToken: m.allowSetCustomToken, allowTerminalMigration: m.allowTerminalMigration,
-      allowSetTerminals: m.allowSetTerminals, allowSetController: m.allowSetController,
-      allowAddAccountingContext: m.allowAddAccountingContext, allowAddPriceFeed: m.allowAddPriceFeed,
-      ownerMustSendPayouts: m.ownerMustSendPayouts, holdFees: m.holdFees,
-      scopeCashOutsToLocalBalances: m.scopeCashOutsToLocalBalances, metadata: m.metadata,
-      useDataHookForPay: m.useDataHookForPay, useDataHookForCashOut: m.useDataHookForCashOut, hookRole: hookRole,
-    },
-    contexts: source.contexts.map(function (ctx) { var kind = draftContextKind(ctx, source.chainId); return [kind, kind === 'custom' ? String(ctx.address).toLowerCase() : '', ctx.decimals]; })
-      .sort(function (a, b) { return a[0].localeCompare(b[0]); }),
-  });
-}
-
-function draftSplitFingerprint(split) {
-  return [String(split.percent || 0), String(split.projectId || 0), String(split.beneficiary || '').toLowerCase(),
-    !!split.preferAddToBalance, String(split.lockedUntil || 0), String(split.hook || '').toLowerCase()];
-}
-
-// Read each ruleset's fund-access state once. The same verified snapshot is used for both cross-chain
-// comparison and draft construction, avoiding a second identical batch of splits/limits RPC calls.
-export async function readDraftFunds(project, source, readContract) {
-  readContract = readContract || read;
-  var pid = source.projectId != null ? BigInt(source.projectId) : pidOn(project, source.chainId), rid = toBigInt(source.ruleset.id), terminal = getAddress('JBMultiTerminal', source.chainId);
-  var reserved = await readContract(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, RESERVED_TOKEN_SPLIT_GROUP]);
-  var funds = await Promise.all(source.contexts.map(async function (context) {
-    var values = await Promise.all([
-      readContract(source.chainId, 'JBFundAccessLimits', payoutLimitsAbi, 'payoutLimitsOf', [pid, rid, terminal, context.address]),
-      readContract(source.chainId, 'JBFundAccessLimits', surplusAllowancesAbi, 'surplusAllowancesOf', [pid, rid, terminal, context.address]),
-      readContract(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pid, rid, BigInt(context.address)]),
-    ]);
-    return { context: context, payouts: values[0] || [], allowances: values[1] || [], splits: values[2] || [] };
-  }));
-  return { reserved: reserved || [], funds: funds };
-}
-
-function draftFundsFingerprint(source, snapshot) {
-  var rows = snapshot.funds.map(function (fund) {
-    var context = fund.context;
-    var tokenCurrency = tokenCurrencyIdForAccounting(context.address);
-    function limits(list) { return (list || []).map(function (limit) {
-      return [String(limit.amount), toBigInt(limit.currency) === tokenCurrency ? 'token' : String(limit.currency)];
-    }); }
-    var kind = draftContextKind(context, source.chainId);
-    return { kind: kind, custom: kind === 'custom' ? String(context.address).toLowerCase() : '',
-      payouts: limits(fund.payouts), allowances: limits(fund.allowances), splits: fund.splits.map(draftSplitFingerprint) };
-  });
-  rows.sort(function (a, b) { return a.kind.localeCompare(b.kind); });
-  return draftFingerprint({ reserved: snapshot.reserved.map(draftSplitFingerprint), rows: rows });
-}
-
-function applyDraftOwnerRemainders(state, sources, project) {
-  if (!state.stages || !state.stages.length || sources.length < 2) return;
-  state.stages.forEach(function (stage, stageIndex) {
-    (stage.reservedRecipients || []).forEach(function (recipient, index) {
-      if (!recipient._ownerRemainder) return;
-      sources.slice(1).forEach(function (source) {
-        var owner = project.isRevnet ? getAddress('REVOwner', source.chainId) : source.owner;
-        if (!sameAddr(owner, recipient.address)) draftPerChainSet(state, source.chainId, 'r:' + stageIndex + ':' + index, owner || ZERO_ADDRESS);
-      });
-      delete recipient._ownerRemainder;
-    });
-    (stage.payoutRecipients || []).forEach(function (recipient, index) {
-      if (!recipient._ownerRemainder) return;
-      sources.slice(1).forEach(function (source) {
-        if (!sameAddr(source.owner, sources[0].owner)) draftPerChainSet(state, source.chainId, 'p:' + stageIndex + ':' + index, source.owner || ZERO_ADDRESS);
-      });
-      delete recipient._ownerRemainder;
-    });
-    Object.keys(stage.payoutByKind || {}).forEach(function (kind) {
-      ((stage.payoutByKind[kind] || {}).recipients || []).forEach(function (recipient, index) {
-        if (!recipient._ownerRemainder) return;
-        sources.slice(1).forEach(function (source) {
-          if (!sameAddr(source.owner, sources[0].owner)) draftPerChainSet(state, source.chainId, 'pk:' + kind + ':' + index, source.owner || ZERO_ADDRESS);
-        });
-        delete recipient._ownerRemainder;
-      });
-    });
-  });
-}
-
-function applyDraftDetails(state, project) {
-  var meta = project.projectMetadata || {};
-  state.details.name = meta.name || project.name || '';
-  state.details.ticker = String(meta.symbol || meta.ticker || project.tokenSymbol || project.metaSymbol || '').replace(/^\$/, '');
-  state.details.tagline = meta.projectTagline || meta.tagline || project.tagline || '';
-  state.details.description = meta.description || project.descriptionHtml || project.description || '';
-  state.details.logoUri = meta.logoUri || '';
-  state.details.coverImageUri = meta.coverImageUri || '';
-  state.details.website = meta.infoUri || meta.domain || project.infoUri || '';
-  state.details.twitter = meta.twitter || project.twitter || '';
-  state.details.discord = meta.discord || project.discord || '';
-  state.details.telegram = meta.telegram || project.telegram || '';
-  state.details.whatsapp = meta.whatsapp || project.whatsapp || '';
-  state.details.payDisclosure = meta.payDisclosure || project.payDisclosure || '';
-  state.details.tags = Array.isArray(meta.tags) ? meta.tags.slice() : (project.tags || []).slice();
-  state.storeCategories = Object.keys(project.storeCategories || {}).map(Number).filter(function (id) { return id > 0; })
-    .sort(function (a, b) { return a - b; }).map(function (id) { return { id: id, name: String(project.storeCategories[id]) }; });
-}
-
-async function applyDraftAccountingAndTerminals(state, project, sources) {
-  var home = sources[0];
-  var kinds = home.contexts.map(function (ctx) { return draftContextKind(ctx, home.chainId); });
-  if (kinds.filter(function (kind) { return kind === 'custom'; }).length) {
-    if (home.contexts.length !== 1 || kinds[0] !== 'custom') throw new Error('The project mixes a custom accounting token with other contexts, which the .jb editor cannot reproduce.');
-    state.accepts = ['custom'];
-    state.customToken = { address: home.contexts[0].address, symbol: home.contexts[0].symbol || '', name: '', decimals: home.contexts[0].decimals, status: 'ok', error: '' };
-  } else {
-    state.accepts = ['eth', 'usdc'].filter(function (kind) { return kinds.indexOf(kind) !== -1; });
-  }
-  if (!state.accepts.length) throw new Error('No supported accounting context was found.');
-
-  var routerModes = await Promise.all(sources.map(async function (source) {
-    var multi = getAddress('JBMultiTerminal', source.chainId);
-    var router = getAddress('JBRouterTerminalRegistry', source.chainId);
-    var lower = source.terminals.map(function (address) { return String(address).toLowerCase(); });
-    if (!multi || lower.indexOf(multi.toLowerCase()) === -1) throw new Error('The canonical terminal is missing on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
-    var allowed = [multi.toLowerCase()]; if (router) allowed.push(router.toLowerCase());
-    var unknown = lower.filter(function (address) { return allowed.indexOf(address) === -1; });
-    if (unknown.length) throw new Error('The project uses a custom terminal on ' + (source.chain.name || chainNameOf(source.chainId)) + ', which the .jb editor cannot reproduce.');
-    var usesRouter = !!(router && lower.indexOf(router.toLowerCase()) !== -1);
-    if (usesRouter) {
-      var target = await read(source.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [source.projectId]);
-      var canonicalTarget = getAddress('JBRouterTerminalGateway', source.chainId) || getAddress('JBRouterTerminal', source.chainId);
-      if (!canonicalTarget || !sameAddr(target, canonicalTarget)) throw new Error('The project uses a custom router-terminal target on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
-    }
-    return usesRouter;
-  }));
-  if (routerModes.some(function (mode) { return mode !== routerModes[0]; })) throw new Error('Router-terminal use differs by chain, which one .jb draft cannot reproduce.');
-  state.swapRouter = routerModes[0];
-}
-
-function draftChainFamily(chainId) {
-  chainId = Number(chainId);
-  if (chainId === 1 || chainId === 11155111) return 'ETH';
-  if (chainId === 10 || chainId === 11155420) return 'OP';
-  if (chainId === 8453 || chainId === 84532) return 'BASE';
-  if (chainId === 42161 || chainId === 421614) return 'ARB';
-  return '';
-}
-
-function draftSuckerDeployer(chainId, remoteChainId, type) {
-  var localFamily = draftChainFamily(chainId), remoteFamily = draftChainFamily(remoteChainId);
-  if (!localFamily || !remoteFamily) return null;
-  if (type === 'native') {
-    if (localFamily !== 'ETH' && remoteFamily !== 'ETH') return null;
-    var rollup = localFamily === 'ETH' ? remoteFamily : localFamily;
-    var name = rollup === 'OP' ? 'JBOptimismSuckerDeployer' : rollup === 'BASE' ? 'JBBaseSuckerDeployer' : rollup === 'ARB' ? 'JBArbitrumSuckerDeployer' : null;
-    return name ? getAddress(name, chainId) : null;
-  }
-  var testnet = [11155111, 11155420, 84532, 421614].indexOf(Number(remoteChainId)) !== -1;
-  return getAddress('JBCCIPSuckerDeployer__' + remoteFamily + (testnet ? '_SEP' : ''), chainId) || null;
-}
-
-async function applyDraftSuckers(state, project, sources, warnings) {
-  var sourceIds = sources.map(function (source) { return source.chainId; });
-  var rows = await Promise.all(sources.map(async function (source) {
-    var registry = getAddress('JBSuckerRegistry', source.chainId);
-    if (!registry) return { source: source, pairs: [] };
-    var pairs = await clientFor(source.chainId).readContract({ address: registry, abi: PROJECT_DRAFT_SUCKER_PAIRS_ABI, functionName: 'suckerPairsOf', args: [source.projectId] });
-    var classified = await Promise.all((pairs || []).map(async function (pair) {
-      var remoteId = Number(pair.remoteChainId);
-      if (sourceIds.indexOf(remoteId) === -1) throw new Error('An active bridge points outside the project’s exported chain set.');
-      // Suckers expose their factory directly; unlike 721/split-hook clones they predate Address Registry
-      // registration, so this is the instance-native provenance proof for their bridge family.
-      var deployer = await clientFor(source.chainId).readContract({ address: pair.local, abi: PROJECT_DRAFT_SUCKER_DEPLOYER_ABI, functionName: 'deployer', args: [] });
-      var type = sameAddr(deployer, draftSuckerDeployer(source.chainId, remoteId, 'native')) ? 'native'
-        : (sameAddr(deployer, draftSuckerDeployer(source.chainId, remoteId, 'ccip')) ? 'ccip' : null);
-      if (!type) throw new Error('An active bridge instance was not produced by a known native or CCIP sucker deployer.');
-      return { remoteId: remoteId, type: type };
-    }));
-    return { source: source, pairs: classified };
-  }));
-  if (sources.length === 1) {
-    if (rows[0].pairs.length) throw new Error('The project has active bridges outside its visible chain set.');
-    return;
-  }
-  var types = {};
-  rows.forEach(function (row) { row.pairs.forEach(function (pair) { types[pair.type] = true; }); });
-  state.suckerType = types.native && types.ccip ? 'both' : (types.ccip ? 'ccip' : (types.native ? 'native' : ''));
-  if (!state.suckerType) throw new Error('The project spans multiple chains but has no reproducible active bridge topology.');
-  rows.forEach(function (row) {
-    var actual = row.pairs.map(function (pair) { return pair.remoteId + ':' + pair.type; }).sort();
-    var expected = [];
-    sourceIds.filter(function (remoteId) { return remoteId !== row.source.chainId; }).forEach(function (remoteId) {
-      (state.suckerType === 'both' ? ['native', 'ccip'] : [state.suckerType]).forEach(function (type) {
-        if (draftSuckerDeployer(row.source.chainId, remoteId, type)) expected.push(remoteId + ':' + type);
-      });
-    });
-    expected.sort();
-    if (draftFingerprint(actual) !== draftFingerprint(expected)) throw new Error('The active bridge topology cannot be reproduced by one .jb bridge setting.');
-  });
-  warnings.push('The .jb recreates the verified active bridge types; later custom token-mapping or deprecation changes are not included.');
-}
-
-function applyDraftFunds(state, project, source, stage, snapshot) {
-  var reserved = snapshot.reserved;
-  var built = draftStageFromLive(source.ruleset, source.metadata, reserved, source.chainId);
-  Object.assign(stage, built.stage);
-  if (built.customApproval) {
-    if (state.approvalAddress && !sameAddr(state.approvalAddress, built.customApproval)) throw new Error('Rulesets use different custom approval-hook addresses, which one .jb draft cannot reproduce.');
-    state.approvalAddress = built.customApproval;
-  }
-  var reservedShare = (reserved || []).reduce(function (sum, split) { return sum + Number(split.percent || 0); }, 0);
-  var reservedRate = Number(source.metadata.reservedPercent || 0) / 100;
-  if (reservedRate > 0 && reservedShare < PROJECT_DRAFT_SPLITS_TOTAL) {
-    var reserveOwner = project.isRevnet ? getAddress('REVOwner', source.chainId) : source.owner;
-    stage.reservedRecipients.push({ type: 'wallet', address: reserveOwner || ZERO_ADDRESS, projectId: 0,
-      percent: (PROJECT_DRAFT_SPLITS_TOTAL - reservedShare) / PROJECT_DRAFT_SPLITS_TOTAL * reservedRate,
-      amountEth: '', lockedUntil: 0, preferAddToBalance: false, _ownerRemainder: true });
-  }
-
-  var fundRows = snapshot.funds.map(function (fund) {
-    if (fund.payouts.length > 1 || fund.allowances.length > 1) throw new Error('A ruleset has multiple fund-access currencies for one token, which the .jb editor cannot reproduce.');
-    return { context: fund.context, kind: draftContextKind(fund.context, source.chainId),
-      limit: fund.payouts[0], allowance: fund.allowances[0], splits: fund.splits };
-  });
-  if (Number(stage.durationSeconds || 0) <= 0 && [reserved].concat(fundRows.map(function (row) { return row.splits; }))
-    .some(function (rows) { return (rows || []).some(function (split) { return Number(split.lockedUntil || 0) > 0; }); })) {
-    throw new Error('A flexible live ruleset contains locked splits, which the .jb editor cannot preserve.');
-  }
-
-  var perToken = state.projectType === 'custom' && (state.accepts.length > 1 || state.accepts[0] === 'custom');
-  if (perToken) {
-    var allowanceModes = [];
-    fundRows.forEach(function (row) {
-      var expectedCurrency = tokenCurrencyIdForAccounting(row.context.address);
-      if (row.limit && toBigInt(row.limit.amount) > 0n && toBigInt(row.limit.currency) !== expectedCurrency) {
-        throw new Error('A per-token payout limit uses a different pricing currency, which the .jb editor cannot reproduce.');
-      }
-      var key = row.kind === 'custom' ? 'custom' : row.kind;
-      stage.payoutByKind[key] = draftPayoutState(row.limit, row.splits, row.context.decimals, source.owner);
-      var allowanceAmount = row.allowance ? toBigInt(row.allowance.amount) : 0n;
-      if (allowanceAmount > 0n && allowanceAmount < PROJECT_DRAFT_UNLIMITED) throw new Error('A finite per-token surplus allowance cannot be reproduced by the .jb editor.');
-      allowanceModes.push(allowanceAmount >= PROJECT_DRAFT_UNLIMITED);
-    });
-    if (allowanceModes.some(function (on) { return on !== allowanceModes[0]; })) throw new Error('Surplus allowance settings differ by accounting token.');
-    stage.surplusAllowanceOn = !!allowanceModes[0]; stage.surplusAllowanceUnlimited = !!allowanceModes[0];
-  } else {
-    // The create flow configures revnet fund access against its first accounting context. Do not silently
-    // discard live limits/splits on another accepted token which the .jb form cannot express.
-    var row = fundRows.find(function (candidate) { return candidate.kind === state.accepts[0]; }) || fundRows[0];
-    var unrepresentable = fundRows.filter(function (candidate) { return candidate !== row; }).some(function (candidate) {
-      return (candidate.limit && toBigInt(candidate.limit.amount) > 0n)
-        || (candidate.allowance && toBigInt(candidate.allowance.amount) > 0n)
-        || (candidate.splits && candidate.splits.length);
-    });
-    if (unrepresentable) throw new Error('This revnet has fund access or payout splits on more than one accounting token, which the .jb editor cannot reproduce.');
-    var payoutDecimals = row && row.limit ? fundAccessAmountDecimals(row.limit.currency, row.context) : row.context.decimals;
-    var payout = draftPayoutState(row.limit, row.splits, payoutDecimals, source.owner);
-    stage.payoutMode = payout.mode; stage.payoutRecipients = payout.recipients;
-    if (row.limit) stage.payoutCurrency = Number(row.limit.currency);
-    if (row.allowance && toBigInt(row.allowance.amount) > 0n) {
-      stage.surplusAllowanceOn = true;
-      stage.surplusAllowanceUnlimited = toBigInt(row.allowance.amount) >= PROJECT_DRAFT_UNLIMITED;
-      stage.surplusAllowanceCurrency = Number(row.allowance.currency);
-      if (!stage.surplusAllowanceUnlimited) {
-        stage.surplusAllowanceAmount = formatAmount(row.allowance.amount, fundAccessAmountDecimals(row.allowance.currency, row.context));
-      }
-    }
-  }
-  return { reserved: reserved, funds: fundRows };
-}
-
-function draftTierFingerprint(tier) {
-  return draftFingerprint({ id: tier.id, price: tier.price, initial: tier.initial, category: tier.category,
-    encodedIpfsUri: tier.encodedIpfsUri, discountPercent: tier.discountPercent, reserveFrequency: tier.reserveFrequency,
-    votingUnits: tier.votingUnits, reserveBeneficiary: String(tier.reserveBeneficiary || '').toLowerCase(),
-    splitPercent: tier.splitPercent, flags: tier.flags });
-}
-
-async function applyDraftShop(state, project, sources, warnings) {
-  var chainProjects = sources.map(function (source) { return Object.assign({}, project, { id: Number(source.projectId), chainId: source.chainId }); });
-  var shops = await Promise.all(chainProjects.map(function (p) { return fetchProjectTiers(p); }));
-  var any = shops.some(Boolean);
-  if (!any) {
-    if (!project.isRevnet && sources.some(function (source) { return !isZeroishAddress(source.metadata.dataHook); })) throw new Error('The project uses a custom data hook which the .jb editor cannot reproduce.');
-    return;
-  }
-  if (shops.some(function (shop) { return !shop; })) throw new Error('The shop is not present on every project chain.');
-  var home = shops[0];
-  if (shops.some(isNativeInventory)) throw new Error(nativeActionUnavailable('manageTiers'));
-  var knownShops = await Promise.all(shops.map(function (shop, index) {
-    return isKnown721HookClone(shop.hook, sources[index].chainId, sources[index].projectId);
-  }));
-  if (knownShops.some(function (known) { return !known; })) {
-    throw new Error('A shop hook is not a verified 721 instance from a known deployer in the Address Registry.');
-  }
-  shops.slice(1).forEach(function (shop) {
-    if (Number(shop.pricing.currency) !== Number(home.pricing.currency) || Number(shop.pricing.decimals) !== Number(home.pricing.decimals)
-      || draftFingerprint(shop.tiers.map(draftTierFingerprint)) !== draftFingerprint(home.tiers.map(draftTierFingerprint))) {
-      throw new Error('The shop configuration differs by chain, which one .jb draft cannot reproduce.');
-    }
-  });
-
-  var expectedShopDecimals = Number(home.pricing.currency) === 1 ? 18 : (Number(home.pricing.currency) === 2 ? 6 : null);
-  if (state.accepts[0] === 'custom' && Number(home.pricing.currency) === Number(tokenCurrencyIdForAccounting(state.customToken.address))) {
-    expectedShopDecimals = Number(state.customToken.decimals);
-  }
-  if (home.tiers.length && expectedShopDecimals == null) throw new Error('The shop uses a pricing currency the .jb editor cannot reproduce.');
-  if (home.tiers.length && Number(home.pricing.decimals) !== expectedShopDecimals) throw new Error('The shop uses non-standard pricing decimals which the .jb editor cannot reproduce.');
-
-  // Verify the per-tier permanent split groups on every chain too; tier structs only carry splitPercent, not
-  // the destinations. Omitting this check could silently clone the right prices with the wrong recipients.
-  var tierSplitFingerprints = await Promise.all(shops.map(async function (shop, sourceIndex) {
-    var source = sources[sourceIndex];
-    var rows = await Promise.all(shop.tiers.map(async function (tier) {
-      if (!tier.splitPercent) return [tier.id, []];
-      var group = BigInt(shop.hook) | (BigInt(tier.id) << 160n);
-      var splits = await read(source.chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pidOn(project, source.chainId), 0n, group]);
-      return [tier.id, (splits || []).map(draftSplitFingerprint)];
-    }));
-    return draftFingerprint(rows);
-  }));
-  if (tierSplitFingerprints.some(function (fingerprint) { return fingerprint !== tierSplitFingerprints[0]; })) {
-    throw new Error('Shop item split recipients differ by chain, which one .jb draft cannot reproduce safely.');
-  }
-
-  if (project.isRevnet) {
-    sources.forEach(function (source) {
-      var expected = getAddress('REVOwner', source.chainId);
-      if (!expected || !sameAddr(source.metadata.dataHook, expected)) throw new Error('The revnet data hook is not the verified REVOwner on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
-    });
-    var permissionRows = await Promise.all(sources.map(function (source) {
-      var revOwner = getAddress('REVOwner', source.chainId);
-      return read(source.chainId, 'JBPermissions', jbPermissionsOfAbi, 'permissionsOf', [source.owner || ZERO_ADDRESS, revOwner, source.projectId]);
-    }));
-    var permissionFingerprint = permissionRows.map(function (packed) {
-      var bits = toBigInt(packed || 0); return [24, 25, 26, 27].map(function (id) { return ((bits >> BigInt(id)) & 1n) === 1n; });
-    });
-    if (permissionFingerprint.slice(1).some(function (row) { return draftFingerprint(row) !== draftFingerprint(permissionFingerprint[0]); })) {
-      throw new Error('Revnet shop operator permissions differ by chain.');
-    }
-    state.collection.opCanAdjustTiers = permissionFingerprint[0][0];
-    state.collection.opCanUpdateMetadata = permissionFingerprint[0][1];
-    state.collection.opCanMint = permissionFingerprint[0][2];
-    state.collection.opCanIncreaseDiscount = permissionFingerprint[0][3];
-  } else {
-    var redemptionModes = await Promise.all(sources.map(async function (source, index) {
-      var dataHook = source.metadata.dataHook, omni = getAddress('JBOmnichainDeployer', source.chainId), shop = shops[index];
-      if (omni && sameAddr(dataHook, omni)) {
-        var extra = await clientFor(source.chainId).readContract({ address: omni, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [source.projectId, toBigInt(source.ruleset.id)] });
-        var extraHook = extra && (extra.dataHook || extra[0]);
-        if (!isZeroishAddress(extraHook)) throw new Error('This shop is composed with another custom data hook, which the .jb editor cannot reproduce.');
-        var tierCfg = await clientFor(source.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [source.projectId, toBigInt(source.ruleset.id)] });
-        var configuredHook = tierCfg && (tierCfg.hook || tierCfg[0]);
-        if (!sameAddr(configuredHook, shop.hook)) throw new Error('The omnichain wrapper’s shop hook could not be verified.');
-        return !!(tierCfg && (tierCfg.useDataHookForCashOut != null ? tierCfg.useDataHookForCashOut : tierCfg[1]));
-      }
-      if (!sameAddr(dataHook, shop.hook)) throw new Error('The live data hook is not the verified shop hook.');
-      return !!source.metadata.useDataHookForCashOut;
-    }));
-    if (redemptionModes.some(function (mode) { return mode !== redemptionModes[0]; })) throw new Error('Shop cash out behavior differs by chain.');
-    state.collection.useForRedemptions = redemptionModes[0];
-  }
-
-  var metas = await Promise.all(shops.map(function (shop, index) {
-    var client = clientFor(sources[index].chainId);
-    return Promise.all([
-      client.readContract({ address: shop.hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'name', args: [] }).catch(function () { return ''; }),
-      client.readContract({ address: shop.hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'symbol', args: [] }).catch(function () { return ''; }),
-      client.readContract({ address: shop.store, abi: PROJECT_DRAFT_721_FLAGS_ABI, functionName: 'flagsOf', args: [shop.hook] }).catch(function () { return null; }),
-    ]);
-  }));
-  if (metas.slice(1).some(function (meta) { return draftFingerprint(meta) !== draftFingerprint(metas[0]); })) throw new Error('Shop collection metadata or flags differ by chain.');
-  var meta = metas[0];
-  state.shopEnabled = true; state.storePricingCurrency = Number(home.pricing.currency);
-  state.collection.name = meta[0] || ''; state.collection.symbol = meta[1] || '';
-  state.collection.nameTouched = !!meta[0]; state.collection.symbolTouched = !!meta[1];
-  var flags = meta[2] || {};
-  ['noNewTiersWithReserves', 'noNewTiersWithVotes', 'noNewTiersWithOwnerMinting', 'preventOverspending', 'issueTokensForSplits'].forEach(function (key) { state.collection[key] = !!flags[key]; });
-
-  state.nfts = await Promise.all(home.tiers.map(async function (tier) {
-    var media = await resolveTierMedia(home, tier, sources[0].chainId).catch(function () { return {}; });
-    if (!media.name && !media.description && !media.image && !media.animationUrl) {
-      warnings.push('Metadata for shop item #' + tier.id + ' could not be resolved. Its encoded IPFS value is preserved, but review the item name and media before deploying.');
-    }
-    var splitRows = [];
-    if (tier.splitPercent > 0) {
-      var group = BigInt(home.hook) | (BigInt(tier.id) << 160n);
-      // 721 tier split groups are permanent shop configuration and are stored under ruleset ID 0.
-      var splits = await read(sources[0].chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pidOn(project, sources[0].chainId), 0n, group]);
-      var splitShare = (splits || []).reduce(function (sum, split) { return sum + Number(split.percent || 0); }, 0);
-      if (splitShare !== PROJECT_DRAFT_SPLITS_TOTAL) {
-        throw new Error('Shop item #' + tier.id + ' has an implicit split remainder, which the .jb shop editor cannot reproduce.');
-      }
-      splitRows = (splits || []).map(function (split) {
-        if (!isZeroishAddress(split.hook) || split.preferAddToBalance || Number(split.lockedUntil || 0) > 0) {
-          throw new Error('Shop item #' + tier.id + ' uses advanced split behavior which the .jb shop editor cannot reproduce.');
-        }
-        var pct = Number(tier.splitPercent) / PROJECT_DRAFT_SPLITS_TOTAL * 100 * Number(split.percent) / PROJECT_DRAFT_SPLITS_TOTAL;
-        return { pct: pct, recip: Number(split.projectId || 0) > 0 ? String(split.projectId) : (split.beneficiary || ZERO_ADDRESS), benef: Number(split.projectId || 0) > 0 ? (split.beneficiary || ZERO_ADDRESS) : '' };
-      });
-    }
-    var unlimited = Number(tier.initial) >= TIER_UNLIMITED_SUPPLY;
-    var effectiveVotes = toBigInt(tier.votingUnits || 0);
-    if (toBigInt(tier.price || 0) > 0n && effectiveVotes === 0n) {
-      throw new Error('Shop item #' + tier.id + ' explicitly has zero voting units, which the .jb shop editor cannot reproduce.');
-    }
-    // The store returns effective voting units, not the `useVotingUnits` flag. Bendystraw retains the raw
-    // AddTier votingUnits value, so use it to disambiguate an explicit value from price-based voting and
-    // verify it against the live result. If the index row is unavailable, only infer cases which are provable.
-    var indexedVotes = tier.indexedMetadata && tier.indexedMetadata.votingUnits != null
-      ? toBigInt(tier.indexedMetadata.votingUnits) : null;
-    var explicitVotes;
-    if (indexedVotes != null) {
-      explicitVotes = indexedVotes > 0n;
-      var expectedVotes = explicitVotes ? indexedVotes : toBigInt(tier.price || 0);
-      if (expectedVotes !== effectiveVotes) throw new Error('Indexed voting units for shop item #' + tier.id + ' do not match the live hook.');
-    } else if (effectiveVotes > 0xffffffffn) {
-      explicitVotes = false; // explicit values are stored as uint32
-    } else if (effectiveVotes !== toBigInt(tier.price || 0)) {
-      explicitVotes = true;
-    } else {
-      throw new Error('Shop item #' + tier.id + ' has ambiguous voting-unit configuration and no indexed creation value; exporting would risk changing it.');
-    }
-    return {
-      expanded: false, advOpen: false, name: media.name || ('Item ' + tier.id), description: media.description || '',
-      imageUri: media.image || media.animationUrl || '', mediaType: media.mediaType || '', metaUri: '', encodedIpfsUri: tier.encodedIpfsUri || '',
-      price: formatAmount(tier.price, home.pricing.decimals), limited: !unlimited, supply: unlimited ? '' : String(tier.initial),
-      splitOn: tier.splitPercent > 0, splitRecipients: splitRows,
-      discountOn: Number(tier.discountPercent || 0) > 0, discountPct: String(Number(tier.discountPercent || 0) / 2), category: Number(tier.category || 0),
-      reserveOn: Number(tier.reserveFrequency || 0) > 0, reserveFrequency: String(tier.reserveFrequency || ''), reserveBeneficiary: tier.reserveBeneficiary || '',
-      votingOn: explicitVotes, votingUnits: explicitVotes ? String(effectiveVotes) : '',
-      flags: { allowOwnerMint: !!(tier.flags && tier.flags.allowOwnerMint), transfersPausable: !!(tier.flags && tier.flags.transfersPausable),
-        cantBeRemoved: !!(tier.flags && tier.flags.cantBeRemoved), allowCredits: !(tier.flags && tier.flags.cantBuyWithCredits),
-        ownerCanEditDiscount: !(tier.flags && tier.flags.cantIncreaseDiscountPercent) },
-      _resolvedCategoryName: media.category || '',
-    };
-  }));
-  state.nfts.forEach(function (item) {
-    var categoryId = Number(item.category || 0), resolvedCategoryName = String(item._resolvedCategoryName || '').trim();
-    var categoryName = resolvedCategoryName || (categoryId > 0 ? ('Category ' + categoryId) : '');
-    if (categoryId > 0 && categoryName && !state.storeCategories.some(function (entry) { return Number(entry.id) === categoryId; })) {
-      state.storeCategories.push({ id: categoryId, name: categoryName });
-      if (!resolvedCategoryName) warnings.push('No stored label was available for shop category #' + categoryId + '; the .jb uses “' + categoryName + '” as an editable fallback.');
-    }
-    delete item._resolvedCategoryName;
-  });
-  state.storeCategories.sort(function (a, b) { return Number(a.id) - Number(b.id); });
-  if (home.resolver) warnings.push('Dynamic shop resolver output was copied as the current item name/media; review those fields before deploying.');
-}
-
-// Reconstruct the configuration which the current create wizard can faithfully represent. Transaction-critical
-// values come from contracts; Bendystraw-first project metadata is used only for display fields.
-async function buildProjectCreateDraft(project) {
-  var state = newCreateDraftState(), warnings = [];
-  var chains = projectChains(project);
-  var testnetIds = [11155111, 11155420, 84532, 421614];
-  var testnetCount = chains.filter(function (chain) { return testnetIds.indexOf(Number(chain.id)) !== -1; }).length;
-  if (testnetCount && testnetCount !== chains.length) throw new Error('A .jb draft cannot mix mainnet and testnet chains.');
-  state.network = testnetCount ? 'testnet' : 'mainnet';
-  state.chainIds = chains.map(function (chain) { return Number(chain.id); });
-  state.projectType = project.isRevnet ? 'revnet' : 'custom';
-  applyDraftDetails(state, project);
-  var sources = await Promise.all(chains.map(function (chain) { return draftLiveProjectChain(project, chain); }));
-  if (sources.some(function (source) { return isZeroishAddress(source.owner); })) {
-    throw new Error('The ' + (project.isRevnet ? 'operator' : 'project owner') + ' could not be verified on every project chain.');
-  }
-  if (sources.slice(1).some(function (source) { return draftRulesetFingerprint(source) !== draftRulesetFingerprint(sources[0]); })) {
-    throw new Error('Ruleset or accounting configuration differs by chain, which one .jb draft cannot reproduce safely.');
-  }
-  await applyDraftAccountingAndTerminals(state, project, sources);
-  await applyDraftSuckers(state, project, sources, warnings);
-  var fundSnapshots = await Promise.all(sources.map(function (source) { return readDraftFunds(project, source); }));
-  var fundFingerprints = sources.map(function (source, index) { return draftFundsFingerprint(source, fundSnapshots[index]); });
-  if (fundFingerprints.some(function (fingerprint) { return fingerprint !== fundFingerprints[0]; })) {
-    throw new Error('Fund access, reserved splits, or payout splits differ by chain, which one .jb draft cannot reproduce safely.');
-  }
-  state.details.owner = sources[0].owner || '';
-  state.revOperator = sources[0].owner || '';
-  sources.slice(1).forEach(function (source) {
-    if (!sameAddr(source.owner, sources[0].owner)) draftPerChainSet(state, source.chainId, project.isRevnet ? 'op' : 'owner', source.owner || '');
-  });
-  var stageSourceSets = [sources];
-
-  if (project.isRevnet) {
-    // The current stage is reproducible from the live ruleset. Earlier stage history is useful context but cannot
-    // enumerate unclaimed auto-issuance beneficiaries, so keep one current stage and disclose that limitation.
-    var currentStage = createStage();
-    applyDraftFunds(state, project, sources[0], currentStage, fundSnapshots[0]);
-    currentStage.cutFreqDays = String(Number(currentStage.durationSeconds || 0) / 86400);
-    currentStage.issuanceCutOn = Number(currentStage.durationSeconds || 0) > 0;
-    currentStage.autoIssuances = [];
-    state.stages = [currentStage]; state.afterMode = currentStage.durationSeconds > 0 ? 'cycle' : 'wait';
-    state.revBaseCurrency = Number(sources[0].metadata.baseCurrency || 1);
-    warnings.push('Revnet auto-issuance beneficiaries and earlier completed stages are not enumerable from the current ruleset, so this .jb starts from the live stage.');
-    warnings.push('Any later revnet buyback-pool or registry-routing changes are not part of the .jb create form; review the new revnet’s market setup after deployment.');
-  } else {
-    var stage = createStage();
-    applyDraftFunds(state, project, sources[0], stage, fundSnapshots[0]);
-    state.stages = [stage]; state.afterMode = stage.durationSeconds > 0 ? 'cycle' : 'wait';
-    var upcomingSources = await Promise.all(sources.map(function (source) { return draftUpcomingProjectChain(source, project); }));
-    var upcomingCount = upcomingSources.filter(Boolean).length;
-    if (upcomingCount && upcomingCount !== sources.length) throw new Error('The queued upcoming ruleset is not present on every project chain.');
-    if (upcomingCount) {
-      if (Number(stage.durationSeconds || 0) <= 0) throw new Error('A distinct ruleset is queued after a flexible current ruleset, which the .jb sequencer cannot reproduce safely.');
-      if (upcomingSources.slice(1).some(function (source) { return draftRulesetFingerprint(source) !== draftRulesetFingerprint(upcomingSources[0]); })) {
-        throw new Error('The queued upcoming ruleset differs by chain.');
-      }
-      var upcomingFundSnapshots = await Promise.all(upcomingSources.map(function (source) { return readDraftFunds(project, source); }));
-      var upcomingFundFingerprints = upcomingSources.map(function (source, index) { return draftFundsFingerprint(source, upcomingFundSnapshots[index]); });
-      if (upcomingFundFingerprints.some(function (fingerprint) { return fingerprint !== upcomingFundFingerprints[0]; })) throw new Error('Upcoming fund access or splits differ by chain.');
-      sources.forEach(function (currentSource, index) {
-        var nextSource = upcomingSources[index];
-        var currentRole = isZeroishAddress(currentSource.metadata.dataHook) ? 'none'
-          : (sameAddr(currentSource.metadata.dataHook, getAddress('JBOmnichainDeployer', currentSource.chainId)) ? 'omnichain' : 'direct');
-        var nextRole = isZeroishAddress(nextSource.metadata.dataHook) ? 'none'
-          : (sameAddr(nextSource.metadata.dataHook, getAddress('JBOmnichainDeployer', nextSource.chainId)) ? 'omnichain' : 'direct');
-        if (currentRole !== nextRole || !!currentSource.metadata.useDataHookForPay !== !!nextSource.metadata.useDataHookForPay
-          || !!currentSource.metadata.useDataHookForCashOut !== !!nextSource.metadata.useDataHookForCashOut
-          || (currentRole === 'direct' && !sameAddr(currentSource.metadata.dataHook, nextSource.metadata.dataHook))) {
-          throw new Error('The queued ruleset changes data-hook behavior, which the .jb create form cannot reproduce.');
-        }
-      });
-      await Promise.all(upcomingSources.map(async function (nextSource, index) {
-        var omni = getAddress('JBOmnichainDeployer', nextSource.chainId);
-        if (!omni || !sameAddr(nextSource.metadata.dataHook, omni)) return;
-        var currentSource = sources[index];
-        var configs = await Promise.all([
-          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_EXTRA_HOOK_ABI, functionName: 'extraDataHookOf', args: [nextSource.projectId, toBigInt(nextSource.ruleset.id)] }),
-          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [currentSource.projectId, toBigInt(currentSource.ruleset.id)] }),
-          clientFor(nextSource.chainId).readContract({ address: omni, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [nextSource.projectId, toBigInt(nextSource.ruleset.id)] }),
-        ]);
-        var extraHook = configs[0] && (configs[0].dataHook || configs[0][0]);
-        var currentHook = configs[1] && (configs[1].hook || configs[1][0]);
-        var nextHook = configs[2] && (configs[2].hook || configs[2][0]);
-        var currentRedeem = !!(configs[1] && (configs[1].useDataHookForCashOut != null ? configs[1].useDataHookForCashOut : configs[1][1]));
-        var nextRedeem = !!(configs[2] && (configs[2].useDataHookForCashOut != null ? configs[2].useDataHookForCashOut : configs[2][1]));
-        if (!isZeroishAddress(extraHook) || !sameAddr(currentHook, nextHook) || currentRedeem !== nextRedeem) {
-          throw new Error('The queued ruleset changes omnichain hook composition, which the .jb create form cannot reproduce.');
-        }
-      }));
-      var nextStage = createStage();
-      applyDraftFunds(state, project, upcomingSources[0], nextStage, upcomingFundSnapshots[0]);
-      state.stages.push(nextStage); state.afterMode = nextStage.durationSeconds > 0 ? 'cycle' : 'wait';
-      stageSourceSets.push(upcomingSources);
-    }
-  }
-  if (state.stages.some(function (stage) { return stage.deadline === 'custom'; })) {
-    var customApprovalByChain = {};
-    stageSourceSets.forEach(function (sourceSet) {
-      sourceSet.forEach(function (source) {
-        if (draftDeadlineFor(source.ruleset.approvalHook, source.chainId).key !== 'custom') return;
-        var prior = customApprovalByChain[source.chainId];
-        if (prior && !sameAddr(prior, source.ruleset.approvalHook)) throw new Error('Custom approval hooks differ between rulesets on one chain.');
-        customApprovalByChain[source.chainId] = source.ruleset.approvalHook;
-      });
-    });
-    sources.slice(1).forEach(function (source) {
-      var address = customApprovalByChain[source.chainId];
-      if (address && !sameAddr(address, state.approvalAddress)) draftPerChainSet(state, source.chainId, 'approval', address);
-    });
-  }
-  applyDraftOwnerRemainders(state, sources, project);
-  if (sources[0].metadata.ownerMustSendPayouts) throw new Error('The live ruleset requires owner-sent payouts, a flag the .jb editor cannot reproduce.');
-  if (sources[0].metadata.scopeCashOutsToLocalBalances) throw new Error('The live ruleset scopes cash outs to local balances, which the .jb editor cannot reproduce.');
-  if ((Number(sources[0].metadata.metadata || 0) & ~1) !== 0) warnings.push('The live ruleset contains additional custom metadata bits. They are preserved by the .jb draft but are not directly editable.');
-  await applyDraftShop(state, project, sources, warnings);
-  if (state.shopEnabled && state.collection.useForRedemptions) state.stages.forEach(function (stage) { stage.cashOutEnabled = false; });
-  state.step = 0; state.tos = false;
-  return { state: state, warnings: warnings };
-}
-
 function renderProjectDraftExport(project) {
   var card = el('div', 'detail-card extras-export-card');
   var title = el('div', 'detail-card-title'); title.textContent = 'Export deployment'; card.appendChild(title);
@@ -15900,11 +15213,14 @@ function renderProjectDraftExport(project) {
   button.addEventListener('click', function (event) {
     event.preventDefault(); if (busy) return; busy = true; button.classList.add('disabled');
     status.className = 'operator-edit-status pending'; status.textContent = 'Verifying live rules, funds, splits, terminals, and shop…';
-    buildProjectCreateDraft(project).then(function (result) {
+    import('./project-draft.js').catch(function () { throw new Error(CHUNK_FAILED_TEXT); }).then(function (draft) {
+      return draft.buildProjectCreateDraft(project).then(function (result) { return { draft: draft, result: result }; });
+    }).then(function (built) {
+      var result = built.result;
       if (result.warnings.length && !window.confirm(result.warnings.join('\n\n') + '\n\nExport this editable .jb anyway?')) {
         status.className = 'operator-edit-status'; status.textContent = 'Cancelled'; return;
       }
-      exportDraftFile(result.state);
+      built.draft.exportDraftFile(result.state);
       status.className = 'operator-edit-status success'; status.textContent = 'Exported .jb. Import it from New project to review and edit.';
     }).catch(function (error) {
       status.className = 'operator-edit-status error'; status.textContent = errMessage(error, 'Could not safely reconstruct this project.');
@@ -17180,9 +16496,15 @@ export function projectAuthoritySafeQueueGroups(rows, authorityRole) {
   });
 }
 
-// The batch tray renderer registers itself (safe-batch-ui.js imports this module, so it can't be imported here).
-var _safeBatchTray = null;
-export function setSafeBatchTrayRenderer(render) { _safeBatchTray = render; }
+// The Safe batch tray loads with its own chunk (safe-batch-ui.js imports this module, so only a dynamic import
+// works here). A placeholder holds its place until then.
+function renderSafeBatchTraySlot(project) {
+  var slot = el('div');
+  import('./safe-batch-ui.js').then(function (mod) { slot.replaceWith(mod.renderSafeBatchTray(project)); }, function () {
+    slot.className = 'error-box error'; slot.textContent = CHUNK_FAILED_TEXT + ' '; slot.appendChild(chunkReloadButton());
+  });
+  return slot;
+}
 
 function renderBackOfficeSection(project) {
   var section = el('div', 'detail-section');
@@ -17190,7 +16512,7 @@ function renderBackOfficeSection(project) {
   section.appendChild(renderAccountCard(project));
   // Queued batch steps sit under the account they'll be proposed from; the section is cached across tab
   // switches, so the tray re-renders itself on the tray-updated event instead of being rebuilt here.
-  if (_safeBatchTray) section.appendChild(_safeBatchTray(project));
+  section.appendChild(renderSafeBatchTraySlot(project));
   // One human-readable ENS alias for the exact deployment selected in the URL. The card writes only Ethereum's
   // JBProjectHandles entry for that chainId:projectId; it never fans one ENS record across sibling deployments.
   section.appendChild(renderProjectHandleCard(project));
@@ -19245,7 +18567,6 @@ function rulesetSignature(r, m) {
   ].map(String).join('|');
 }
 
-
 function rfDiffRow(label, oldVal, newVal) {
   var row = el('div', 'detail-ruleset-row');
   var k = el('span', 'detail-ruleset-key'); k.textContent = label; row.appendChild(k);
@@ -20111,7 +19432,6 @@ function buildFundsTokenBlock(project, kind, showHead, onBalance) {
   return wrap;
 }
 
-
 // Revnet stages = the queued rulesets, oldest→newest. Each stage's issuance (weight),
 // issuance cut, and duration are read straight off the ruleset; the current stage is marked.
 function renderStagesSection(project) {
@@ -20382,7 +19702,6 @@ function conceptHeader(text, note) {
   th.appendChild(wrap);
   return th;
 }
-
 
 export function cashOutFloorTip(price, pairSym, sym) {
   // This chart reference is gross; actual cash outs require an amount-specific quote.
@@ -22099,7 +21418,6 @@ async function loadAutoIssuanceRows(project, chains, stagesForChain) {
   return rows;
 }
 
-
 function renderAutoIssuanceTable(rows, sym, distribute) {
   var table = el('div', 'autoissue-table');
   var head = el('div', 'autoissue-row autoissue-head');
@@ -22701,7 +22019,6 @@ async function fetchProjectActivity(project) {
   var rsRows = await fetchRulesetQueueRows(project);
   return bendyRows.concat(rsRows);
 }
-
 
 // Synthesize "queued Ruleset with ID N" activity rows from chain state (bendystraw doesn't index ruleset
 // queueing — there is no RulesetQueued ActivityEvent type). JBRulesets.allOf(pid, 0, 8) gives the configured
@@ -24401,6 +23718,10 @@ function ensureNewShopState(state, allChains) {
 }
 
 function openQueueRulesetModal(project, preferredQueueAction) {
+  withCreateFlow(function () { renderQueueRulesetModal(project, preferredQueueAction); });
+}
+
+function renderQueueRulesetModal(project, preferredQueueAction) {
   var pid = pidOn(project, project.chainId);
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
@@ -24912,7 +24233,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       accessWarning.textContent = state.unsupportedQueueReason || 'This ruleset contains settings this editor cannot preserve safely, so queueing is disabled to avoid changing them.';
       body.appendChild(accessWarning);
     }
-    if (state.stages.length) body.appendChild(renderStages(state, renderEditor, { noHead: true }));
+    if (state.stages.length) body.appendChild(createFlow.renderStages(state, renderEditor, { noHead: true }));
 
     // 721 shop choice. A prior direct collection is not destroyed when a ruleset detaches it, so verified hooks
     // from the ruleset history are offered alongside keep/remove/new. Reactivation reuses the exact collection,
@@ -24963,7 +24284,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       if (state.shopChoice === 'new') {
         ensureNewShopState(state, allChains);
         var nftWrap = el('div', 'queue-new-shop-form'); nftWrap.style.marginTop = '12px';
-        nftWrap.appendChild(renderNfts(state, renderEditor)); body.appendChild(nftWrap);
+        nftWrap.appendChild(createFlow.renderNfts(state, renderEditor)); body.appendChild(nftWrap);
       }
     }
     if (omnichain) {
@@ -25101,7 +24422,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
   // Build one create-flow `stage` from the base ruleset (ruleset struct `r` + decoded metadata `m`).
   function stageFromBaseRuleset(r, m, payoutLims, surplusAllows, payoutSplits, reservedSplits, acct, chainId) {
     acct = normalizeQueueAcct(acct);
-    var s = createStage();
+    var s = createFlow.createStage();
     s.expanded = true;
     var defaultCurrency = queueDefaultCurrency(acct, chainId);
     s.baseCurrency = defaultCurrency;
@@ -25170,7 +24491,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       s.payoutMode = 'limited';
       s.payoutCurrency = Number(lim.currency) || 1;
       var total = BigInt(lim.amount);
-      var payoutDec = fundAccessAmountDecimals(s.payoutCurrency, acct);
+      var payoutDec = createFlow.fundAccessAmountDecimals(s.payoutCurrency, acct);
       s.payoutRecipients = (payoutSplits || []).map(function (sp) {
         return recFromSplit(sp, lpHook, 0, formatAmount(total * BigInt(sp.percent) / BigInt(SPLITS_TOTAL), payoutDec));
       });
@@ -25184,7 +24505,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       else {
         s.surplusAllowanceUnlimited = false;
         s.surplusAllowanceCurrency = Number(sa.currency) || 1;
-        s.surplusAllowanceAmount = formatAmount(BigInt(sa.amount), fundAccessAmountDecimals(s.surplusAllowanceCurrency, acct));
+        s.surplusAllowanceAmount = formatAmount(BigInt(sa.amount), createFlow.fundAccessAmountDecimals(s.surplusAllowanceCurrency, acct));
       }
     }
     return s;
@@ -25276,9 +24597,9 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   }
   if (state.shopChoice === 'remove' && !state.canRemoveShop) throw new Error('This shop cannot be safely removed through the queue editor.');
   if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
-  var badStart = (state.stages || []).findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
+  var badStart = (state.stages || []).findIndex(function (s, i) { return i > 0 && !createFlow.stageStartOk(s); });
   if (badStart !== -1) { setStatus('Ruleset #' + (badStart + 1) + ' needs a valid start — a whole number of cycles or a date.', 'error'); return; }
-  var noticeClash = noticeClashIssue(state);
+  var noticeClash = createFlow.noticeClashIssue(state);
   if (noticeClash) { setStatus(noticeClash, 'error'); return; }
   if (typeof state.verifyQueuePosition !== 'function') throw new Error('The live queue recheck is unavailable. Nothing was sent.');
   setStatus('Rechecking the live queue…');
@@ -25304,7 +24625,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var cid = chain.id;
     var bases = [];
     try {
-      buildQueueRulesetConfigs(state, cid, 0).forEach(function (cfg) {
+      createFlow.buildQueueRulesetConfigs(state, cid, 0).forEach(function (cfg) {
         var cur = Number(cfg.metadata && cfg.metadata.baseCurrency) || 1;
         if (bases.indexOf(cur) === -1) bases.push(cur);
       });
@@ -25321,8 +24642,8 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
           var symbol = t === NATIVE_TOKEN.toLowerCase() ? 'ETH' : (t === usdc ? 'USDC' : acctTokenLabel(ctx.token));
           return { token: ctx.token, currency: ctx.currency, symbol: symbol };
         });
-        var pairs = requiredFeedPairs(labeled, bases, true);
-        return verifyFeedCoverage(cid, pairs, function (cur) { return feedCurrencyLabel(cur, labeled); }, { projectId: localPid });
+        var pairs = createFlow.requiredFeedPairs(labeled, bases, true);
+        return createFlow.verifyFeedCoverage(cid, pairs, function (cur) { return createFlow.feedCurrencyLabel(cur, labeled); }, { projectId: localPid });
       },
       function () { throw new Error('Couldn’t verify price feed coverage on ' + chainNameOf(cid) + ' right now — nothing was sent. Try again.'); }
     );
@@ -25347,7 +24668,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // Omnichain wrappers retain one shared deterministic salt so their hook addresses match across chains.
   var newShopSalt = newShop ? newShopDeploymentSalt(state, operatorAddr, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
   var projUri = project.metadataUri || project.uri || '';
-  if (newShop) { setStatus('Pinning new shop items…', 'pending'); await pinShopItemsMetadata(state); }
+  if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); }
 
   // Route through JBOmnichainDeployer only when the LIVE ruleset already uses it as its data-hook wrapper.
   // Multi-chain revnets use REVOwner, so they must queue directly through each JBController; routing them through
@@ -25356,9 +24677,9 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var localPid = pidOn(project, cid);
     var liveController = state.controllerByChain && state.controllerByChain[cid];
     if (!liveController) throw new Error('The project controller is not verified on ' + chainNameOf(cid) + '.');
-    var cfgs = buildQueueRulesetConfigs(state, cid, plannedStartFor(cid), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
+    var cfgs = createFlow.buildQueueRulesetConfigs(state, cid, plannedStartFor(cid), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
     if (newShop) {
-      var nc = buildNewShopQueueCall({ projectId: localPid, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
+      var nc = buildNewShopQueueCall({ projectId: localPid, deployConfig: createFlow.build721Config(state, projUri, cid), cfgs: cfgs,
         useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
         controller: liveController, projectDeployer: getAddress('JB721TiersHookProjectDeployer', cid),
         omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: usesOmnichainWrapper, memo: memo });
@@ -25413,12 +24734,12 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var liveController0 = state.controllerByChain && state.controllerByChain[cid0];
     if (!liveController0) { setStatus('The project controller is not verified on this chain.', 'error'); return; }
     var configs;
-    try { configs = buildQueueRulesetConfigs(state, cid0, plannedStartFor(cid0), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
+    try { configs = createFlow.buildQueueRulesetConfigs(state, cid0, plannedStartFor(cid0), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var exec;
     if (newShop) {
       var dep = getAddress('JB721TiersHookProjectDeployer', cid0);
       if (!usesOmnichainWrapper && !dep) { setStatus('No 721 deployer on this chain', 'error'); return; }
-      var nc1 = buildNewShopQueueCall({ projectId: localPid0, deployConfig: build721Config(state, projUri, cid0), cfgs: configs, controller: liveController0, projectDeployer: dep, omnichainDeployer: getAddress('JBOmnichainDeployer', cid0), salt: newShopSalt, isOmnichain: usesOmnichainWrapper });
+      var nc1 = buildNewShopQueueCall({ projectId: localPid0, deployConfig: createFlow.build721Config(state, projUri, cid0), cfgs: configs, controller: liveController0, projectDeployer: dep, omnichainDeployer: getAddress('JBOmnichainDeployer', cid0), salt: newShopSalt, isOmnichain: usesOmnichainWrapper });
       exec = { address: nc1.to, abi: nc1.abi, functionName: nc1.functionName, args: nc1.args, contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JB721TiersHookProjectDeployer', label: 'Start a new shop' };
     } else {
       var target = usesOmnichainWrapper ? getAddress('JBOmnichainDeployer', cid0) : liveController0;
@@ -26278,6 +25599,16 @@ function renderOpsSection(project) {
   return section;
 }
 
+// The move and add-liquidity modals load their module on first use; a failed load says so in the modal.
+function openOpsModal(project, title, builder) {
+  import('./project-ops-modals.js').then(function (mod) { openModal(title, mod[builder](project)); }, function () {
+    var message = el('div', 'modal-body');
+    message.textContent = CHUNK_FAILED_TEXT + ' ';
+    message.appendChild(chunkReloadButton());
+    openModal(title, message);
+  });
+}
+
 // The row of wallet actions (cash out, borrow, move, add liquidity), each opening a modal.
 export function opsActionsRow(project, opts) {
   opts = opts || {};
@@ -26286,15 +25617,15 @@ export function opsActionsRow(project, opts) {
   var capabilities = tokenUiCapabilities(project);
   [
     ['Cash out', async function () {
-      var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
+      var shop; try { shop = await fetchProjectTiers(project).then(afterDefifaActions); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); if (error && error.chunkFailed) { message.appendChild(document.createTextNode(' ')); message.appendChild(chunkReloadButton()); } openModal('Could not verify NFT protocol', message); return; }
       if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop, { mode: 'holdings' })); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
     opts.noLoans ? null : ['Get a loan', function () { var h = {}; var content = buildLoanModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Get a loan', content).close; }],
     // Moving funds only makes sense when the project lives on more than one chain.
-    multiChain ? ['Move between chains', function () { openModal('Move between chains', buildMoveModal(project)); }] : null,
-    capabilities.canAddMarketLiquidity ? ['Add liquidity', function () { openModal('Add liquidity', buildAddLiquidityModal(project)); }] : null,
+    multiChain ? ['Move between chains', function () { openOpsModal(project, 'Move between chains', 'buildMoveModal'); }] : null,
+    capabilities.canAddMarketLiquidity ? ['Add liquidity', function () { openOpsModal(project, 'Add liquidity', 'buildAddLiquidityModal'); }] : null,
   ].filter(Boolean).forEach(function (a) {
     var b = document.createElement('button');
     b.className = 'ops-action-btn';
@@ -29511,23 +28842,6 @@ function fetchProjectSuckerMap(project) {
     });
 }
 
-// The connected wallet's CLAIMED ERC-20 balance — the only kind a sucker can bridge — plus the token
-// address. `verified` distinguishes a confirmed missing ERC-20 from an RPC/deployment read failure; those must
-// never share a UI state because only the former can safely tell a user to claim tokens first.
-function readBridgeableBalance(project, chainId) {
-  var acct = getEffectiveAccount();
-  var tokens = getAddress('JBTokens', chainId);
-  if (!acct || !tokens) return Promise.resolve({ verified: false, token: null, balance: null });
-  var client = clientFor(chainId);
-  return client.readContract({ address: tokens, abi: tokenOfAbi, functionName: 'tokenOf', args: [pidOn(project, chainId)] })
-    .then(function (erc20) {
-      if (!erc20 || erc20 === ZERO_ADDRESS) return { verified: true, token: null, balance: 0n };
-      return client.readContract({ address: erc20, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] })
-        .then(function (b) { return { verified: true, token: erc20, balance: BigInt(b) }; });
-    })
-    .catch(function () { return { verified: false, token: null, balance: null }; });
-}
-
 // syncAccountingData() snapshots the LOCAL chain's accounting and bridges it to the peer (payable AMB fee).
 var suckerSyncAbi = [{ type: 'function', name: 'syncAccountingData', stateMutability: 'payable', inputs: [], outputs: [] }];
 // Emitted on the SOURCE sucker each time a snapshot is pushed. We scan this (like the Movement table scans
@@ -29649,406 +28963,6 @@ async function findToRemoteValue(chainId, sucker, token, account) {
   return null;
 }
 
-function buildMoveModal(project) {
-  var sym = project.tokenSymbol || 'tokens';
-  var wrap = el('div', 'modal-body');
-  var chains = project.chains || [];
-  var state = { from: chains[0] && chains[0].id, to: chains[1] && chains[1].id, balance: null, balanceVerified: false, token: null, pairs: null, sucker: null, kinds: null, backingKey: null };
-
-  // Per-chain balances at the top (card) — your tokens + the project's accounting balances.
-  var moveBalTable = el('div', 'cashout-bal-table'); wrap.appendChild(moveBalTable);
-
-  // "From [chain] to [chain] with [token]" — one sentence. The "with [token]" backing picker shows only for
-  // multi-token projects (the sucker reclaims + bridges that specific token; it must be mapped on the route).
-  var sent = el('div', 'cashout-selrow');
-  sent.appendChild(document.createTextNode('From'));
-  var fromSel = opsChainSelect(project, function (cid) { state.from = cid; onFromChange(); }); sent.appendChild(fromSel);
-  sent.appendChild(document.createTextNode('to'));
-  var toSel = opsChainSelect(project, function (cid) { state.to = cid; resolveRoute(); }); if (chains[1]) toSel.value = String(chains[1].id); sent.appendChild(toSel);
-  var withWrap = el('span', 'cashout-reclaim'); withWrap.style.display = 'none';
-  withWrap.appendChild(document.createTextNode('with'));
-  var bringSel = el('select', 'field create-input'); bringSel.style.width = 'auto'; bringSel.style.minWidth = '0';
-  bringSel.addEventListener('change', function () { state.backingKey = bringSel.value; loadBacking(); updateBacking(); });
-  withWrap.appendChild(bringSel); sent.appendChild(withWrap);
-  wrap.appendChild(sent);
-
-  // Bridge route — and when a pair carries both a native and a CCIP sucker, a picker + tradeoff blurb.
-  var route = el('div', 'modal-status modal-route'); wrap.appendChild(route);
-  var bridgeRow = el('div', 'ops-bridge-row'); bridgeRow.style.display = 'none';
-  var bridgeSel = el('select', 'field create-input'); bridgeSel.style.width = 'auto'; bridgeSel.style.minWidth = '0'; bridgeRow.appendChild(bridgeSel);
-  var bridgeNote = el('div', 'ops-bridge-note'); bridgeRow.appendChild(bridgeNote);
-  bridgeSel.addEventListener('change', function () {
-    var m = state._matches && state._matches[Number(bridgeSel.value)];
-    if (m) state.sucker = m.local;
-    updateBridgeNote(); updateMoveBtn();
-  });
-  wrap.appendChild(bridgeRow);
-
-  var lbl = el('div', 'modal-label move-label'); lbl.textContent = 'Amount'; lbl.style.marginTop = '12px'; wrap.appendChild(lbl);
-  var bal = el('div', 'modal-balance'); wrap.appendChild(bal);
-  var inRow = el('div', 'ops-inrow');
-  var amtField = el('div', 'ops-field');
-  var amt = el('input', 'ops-amount'); amt.type = 'number'; amt.step = 'any'; amt.placeholder = '0.00'; amtField.appendChild(amt);
-  var unit = el('span', 'ops-unit'); unit.textContent = sym; amtField.appendChild(unit);
-  inRow.appendChild(amtField);
-  wrap.appendChild(inRow);
-  wrap.appendChild(opsPercentButtons(amt, function () { return state.balance; }));
-
-  var note = el('div', 'modal-status');
-  function updateMoveNote() { var s = (state.backing && state.backing.symbol) || sym; note.textContent = 'A proportional share of the revnet’s ' + s + ' surplus (funds beyond payouts) moves too.'; }
-  updateMoveNote();
-  wrap.appendChild(note);
-
-  // "Amount that will move" — the proportional backing (ETH) that bridges alongside the tokens.
-  var backing = el('div', 'modal-status move-backing'); backing.style.display = 'none'; wrap.appendChild(backing);
-  amt.addEventListener('input', function () { updateBacking(); updateMoveBtn(); });
-
-  var status = el('div', 'modal-status'); wrap.appendChild(status);
-
-  var hint = el('div', 'modal-status');
-  hint.textContent = 'Once it’s bridged, claim it on the destination from the Queued movements table below.';
-  wrap.appendChild(hint);
-
-  var foot = el('div', 'modal-foot');
-  var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Move ' + sym;
-  foot.appendChild(btn); wrap.appendChild(foot);
-
-  var moveBalanceSeq = 0;
-  var movePairsSeq = 0;
-  var moveBackingSeq = 0;
-  function onFromChange() { refreshBalance(); loadPairs(); loadBacking(); }
-  function refreshBalance() {
-    var from = state.from;
-    var seq = ++moveBalanceSeq;
-    state.balance = null; state.balanceVerified = false; state.token = null;
-    bal.textContent = 'Your balance: …';
-    readBridgeableBalance(project, from).then(function (r) {
-      if (seq !== moveBalanceSeq || state.from !== from) return;
-      state.balance = r.balance; state.balanceVerified = !!r.verified; state.token = r.token;
-      if (!getEffectiveAccount()) { bal.textContent = 'Connect a wallet to see your balance.'; updateMoveBtn(); return; }
-      if (!r.verified) { bal.textContent = 'Could not verify your bridgeable balance on ' + moveChainName(from) + '. Try again shortly.'; updateMoveBtn(); return; }
-      if (!r.token) { bal.textContent = 'No ERC-20 ' + sym + ' on ' + moveChainName(from) + ' — claim your tokens there first to bridge.'; updateMoveBtn(); return; }
-      bal.textContent = 'Your ' + sym + ' available on ' + moveChainName(from) + ': ' + formatTokens(r.balance) + ' ' + sym;
-      updateMoveBtn();
-    });
-  }
-  // Disable Move with a clear reason when there's nothing to bridge — otherwise the button looks active
-  // but the click silently no-ops (the #1 "I clicked and nothing happened" confusion). Suckers bridge the
-  // ERC-20, so credits-only / zero-balance / same-chain all block it.
-  function moveBlockReason() {
-    if (!getEffectiveAccount()) return ''; // allow click → connect()
-    if (state.from === state.to) return 'Pick two different chains to bridge between.';
-    if (state.pairs == null) return 'Finding a verified bridge route…';
-    if (!state.sucker) return 'No verified bridge route connects these chains.';
-    if (!state.backing) return 'Loading the verified backing token…';
-    if (!state.balanceVerified) return 'Could not verify your bridgeable balance. Try again shortly.';
-    if (!state.token) return 'No ERC-20 ' + sym + ' on ' + moveChainName(state.from) + ' yet — claim your ' + sym + ' to an ERC-20 there first, then bridge.';
-    if (state.balance != null && state.balance === 0n) return 'You have no ' + sym + ' to bridge on ' + moveChainName(state.from) + '.';
-    return '';
-  }
-  function updateMoveBtn() {
-    var why = moveBlockReason();
-    btn.disabled = !!why;
-    btn.title = why || '';
-    if (why) { status.classList.remove('pending'); status.textContent = why; }
-    else if (status.textContent === btn.title || /no ERC-20|to bridge on|Pick two different|Finding a verified|No verified bridge|Loading the verified backing|Could not verify your bridgeable/i.test(status.textContent)) status.textContent = '';
-  }
-  // The proportional backing that bridges with the tokens: terminalBalance × amount / totalSupply (suckers
-  // move the full proportional share, no cash out tax). Read on the FROM chain.
-  function loadBacking() {
-    var from = state.from;
-    var backingKey = state.backingKey;
-    var seq = ++moveBackingSeq;
-    state.fromSupply = null; state.fromBacking = null; state.backing = null; updateBacking(); updateMoveBtn();
-    var pid = pidOn(project, from); // the project's id on the SOURCE chain
-    // The chosen backing token (multi-token picker), else the project's primary accounting token.
-    var selectedKind = null;
-    if (state.kinds && backingKey) selectedKind = state.kinds.filter(function (x) { return x.key === backingKey; })[0];
-    var acctP = selectedKind
-      ? resolveFundsKindAcct(from, pid, selectedKind).then(function (acct) { if (!acct) throw new Error('This backing token is not configured on the source chain.'); return acct; })
-      : resolveAcctToken(from, pid);
-    acctP.then(function (acct) {
-      if (seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return null;
-      state.backing = acct;
-      updateMoveBtn();
-      var term = getAddress('JBMultiTerminal', from);
-      return Promise.all([
-        read(from, 'JBTokens', totalSupplyAbi, 'totalSupplyOf', [pid]).catch(function () { return null; }),
-        // What bridges = the sucker's cash out of the moved tokens, which draws from this token's SURPLUS
-        // (balance − payout limit) at 0% tax — not the full balance. A token with unlimited payouts has 0.
-        term ? read(from, 'JBTerminalStore', currentSurplusOfAbi, 'currentSurplusOf', [pid, [], [acct.address], BigInt(acct.decimals), borrowCurrencyForAccountContext(acct)]).catch(function () { return null; }) : Promise.resolve(null),
-      ]);
-    }).then(function (res) {
-      if (!res || seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return;
-      state.fromSupply = res[0] != null ? BigInt(res[0]) : null;
-      state.fromBacking = res[1] != null ? BigInt(res[1]) : null;
-      updateBacking();
-    }).catch(function () {
-      if (seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return;
-      state.backing = null; state.fromSupply = null; state.fromBacking = null; updateBacking(); updateMoveBtn();
-    });
-  }
-  function updateBacking() {
-    updateMoveNote(); // reflect the chosen backing token in the "proportional share" note
-    backing.style.display = 'none';
-    if (!state.backing || state.fromSupply == null || state.fromBacking == null || state.fromSupply === 0n) return;
-    var amount; try { amount = parseAmount(amt.value, 18); } catch (_) { return; }
-    if (amount === 0n) return;
-    var moved = state.fromBacking * amount / state.fromSupply;
-    backing.innerHTML = '';
-    var b = el('strong'); b.textContent = 'Surplus that will move: ';
-    backing.appendChild(b);
-    backing.appendChild(document.createTextNode(formatBalance(moved, state.backing.decimals, state.backing.symbol)));
-    // Explain a zero: the token's payout limit covers its whole balance, so there's no surplus to bridge.
-    if (state.fromBacking === 0n) {
-      var why = el('div', 'move-backing-why'); why.textContent = 'No ' + state.backing.symbol + ' surplus on ' + moveChainName(state.from) + ' — its payout limit covers the whole balance' + (state.kinds && state.kinds.length > 1 ? '. Try another token above.' : '.');
-      backing.appendChild(why);
-    }
-    backing.style.display = '';
-  }
-  // Tradeoff blurb under the bridge picker, with a docs link for DYOR.
-  function updateBridgeNote() {
-    var m = state._matches && state._matches[Number(bridgeSel.value)];
-    if (!m) { bridgeNote.style.display = 'none'; return; }
-    bridgeNote.innerHTML = '';
-    var txt, href, linkLabel;
-    if (m._infra === 'CCIP') {
-      txt = 'CCIP delivers in minutes by relaying through Chainlink’s cross-chain network — faster, but it depends on Chainlink.';
-      href = 'https://docs.chain.link/ccip'; linkLabel = 'About Chainlink CCIP ↗';
-    } else if (m._infra === 'native') {
-      txt = 'Native bridges route through the chain’s own canonical bridge — slower, but their security comes from the chain itself, not a third party.';
-      href = 'https://docs.juicebox.money/v4/learn/glossary/sucker/'; linkLabel = 'About suckers ↗';
-    } else {
-      txt = 'The bridge type could not be verified. Fee-sensitive actions stay unavailable until this route can be read again.';
-      href = 'https://docs.juicebox.money/v4/learn/glossary/sucker/'; linkLabel = 'About suckers ↗';
-    }
-    bridgeNote.appendChild(document.createTextNode(txt + ' '));
-    var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = linkLabel;
-    bridgeNote.appendChild(a);
-    bridgeNote.style.display = '';
-  }
-  function loadPairs() {
-    var from = state.from;
-    var seq = ++movePairsSeq;
-    state.pairs = null; resolveRoute();
-    readSuckerPairsOf(pidOn(project, from), from).then(function (pairs) {
-      if (seq !== movePairsSeq || state.from !== from) return;
-      state.pairs = pairs; resolveRoute();
-    }).catch(function () {
-      if (seq !== movePairsSeq || state.from !== from) return;
-      state.pairs = []; state.sucker = null; state._matches = null;
-      bridgeRow.style.display = 'none'; bridgeNote.style.display = 'none';
-      route.textContent = 'Could not verify bridge routes on ' + moveChainName(from) + '. Try again shortly.';
-      updateMoveBtn();
-    });
-  }
-  function resolveRoute() {
-    state.sucker = null; state._matches = null; bridgeRow.style.display = 'none'; bridgeNote.style.display = 'none';
-    updateMoveBtn();
-    if (state.from === state.to) { route.textContent = 'Pick two different chains.'; return; }
-    if (state.pairs == null) { route.textContent = 'Finding bridge route…'; return; }
-    var matches = state.pairs.filter(function (x) { return x.remoteChainId === state.to; });
-    if (!matches.length) { route.textContent = 'No bridge from ' + moveChainName(state.from) + ' to ' + moveChainName(state.to) + '.'; return; }
-    if (matches.length === 1) {
-      state.sucker = matches[0].local;
-      route.textContent = 'Bridges via sucker ' + truncAddr(matches[0].local) + '.';
-      updateMoveBtn();
-      return;
-    }
-    // Two suckers connect this pair (a native bridge and a CCIP bridge) — classify each and let the user pick.
-    route.textContent = 'Two bridges connect these chains — pick one:';
-    var from = state.from, to = state.to; // guard against chain switches mid-classification
-    Promise.all(matches.map(function (m) {
-      return m._infra ? Promise.resolve(m._infra) : classifySuckerInfra(state.from, m.local).then(function (i) { m._infra = i; return i; });
-    })).then(function (infras) {
-      if (state.from !== from || state.to !== to) return;
-      bridgeSel.innerHTML = '';
-      matches.forEach(function (m, i) {
-        var o = document.createElement('option'); o.value = String(i);
-        var infraLabel = infras[i] === 'CCIP' ? 'CCIP' : (infras[i] === 'native' ? 'Native' : 'Unverified');
-        o.textContent = infraLabel + ' bridge | ' + truncAddr(m.local);
-        bridgeSel.appendChild(o);
-      });
-      // Default to the native (canonical) bridge when one exists — it's zero-cost (only the registry fee),
-      // whereas CCIP also charges a messaging fee. EXCEPT when the backing token is an ERC-20 (USDC):
-      // native bridges can't deliver it (funds strand in escrow), so CCIP is the only working route.
-      var nativeIdx = infras.indexOf('native');
-      var erc20Backing = state.backing && state.backing.address && state.backing.address.toLowerCase() !== NATIVE_TOKEN.toLowerCase();
-      var ccipIdx = infras.indexOf('CCIP');
-      var def = erc20Backing ? (ccipIdx >= 0 ? ccipIdx : 0) : (nativeIdx >= 0 ? nativeIdx : 0);
-      bridgeSel.value = String(def);
-      state._matches = matches;
-      state.sucker = matches[def].local;
-      bridgeRow.style.display = '';
-      updateBridgeNote(); updateMoveBtn();
-    });
-  }
-
-  onFromChange();
-  onEffectiveAccountChange(function () { if (wrap.isConnected) refreshBalance(); });
-  renderBalanceTables(moveBalTable, project, sym);
-  // Multi-token projects: offer a backing-token picker (default to the primary), then recompute backing.
-  acctKindsForFunds(project).then(function (kinds) {
-    state.kinds = kinds;
-    if (kinds && kinds.length > 1) {
-      bringSel.innerHTML = '';
-      kinds.forEach(function (k) { var o = document.createElement('option'); o.value = k.key; o.textContent = k.symbol; bringSel.appendChild(o); });
-      state.backingKey = kinds[0].key; bringSel.value = state.backingKey;
-      withWrap.style.display = 'inline-flex';
-      loadBacking();
-    }
-  }).catch(function () {});
-
-  btn.addEventListener('click', function () {
-    if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
-    var acct = getAccount && getAccount();
-    if (!acct) { connect().then(refreshBalance).catch(function () {}); return; }
-    if (state.from === state.to) { status.textContent = 'Pick two different chains.'; return; }
-    if (!state.balanceVerified) { status.textContent = 'Could not verify your bridgeable balance. Try again shortly.'; return; }
-    if (!state.token) { status.textContent = 'No ERC-20 ' + sym + ' to bridge on ' + moveChainName(state.from) + '.'; return; }
-    if (!state.sucker) { status.textContent = 'No bridge route between these chains.'; return; }
-    var amount; try { amount = parseAmount(amt.value, 18); } catch (_) { status.textContent = 'Invalid amount'; return; }
-    if (amount === 0n) { status.textContent = 'Enter an amount'; return; }
-    if (amount > state.balance) { status.textContent = 'Amount exceeds your bridgeable balance'; return; }
-
-    // beneficiary is the recipient on the remote chain — the caller, left-padded to bytes32.
-    var beneficiary32 = '0x' + acct.slice(2).toLowerCase().padStart(64, '0');
-    var metadata = '0x' + '0'.repeat(64);
-    var sucker = state.sucker, token = state.token, from = state.from, to = state.to, backingKey = state.backingKey;
-    btn.disabled = true; status.textContent = '';
-    var onStatus = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
-    var fail = function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; };
-
-    // The TERMINAL (backing) token the sucker reclaims + bridges alongside the project tokens. This is the
-    // project's accounting token — USDC for a USDC project, NATIVE_TOKEN only for an ETH project. The sucker
-    // keys its token mapping/outbox tree by this address, so passing the wrong token reverts or bridges the
-    // wrong tree. Use the resolved backing token (loadBacking), re-resolving if it hasn't populated yet.
-    if (!state.backing || !state.backing.address) { fail('The backing token is still loading or could not be verified.'); return; }
-    var termP = Promise.resolve(state.backing.address);
-    termP.then(function (termToken) {
-      if (!termToken) { fail('Could not resolve the backing token to bridge.'); return; }
-      onStatus('Verifying the bridge token and previewing backing…', 'pending');
-      var terminal = getAddress('JBMultiTerminal', from);
-      if (!terminal) { fail('No terminal on the source chain.'); return; }
-      var remoteBackingP;
-      var selectedKind = state.kinds && state.backingKey
-        ? state.kinds.filter(function (kind) { return kind.key === state.backingKey; })[0]
-        : null;
-      var fromPid = pidOn(project, from); // project id on the SOURCE chain
-      var toPid = pidOn(project, to);     // project id on the DESTINATION chain (may differ for linked deployments)
-      if (selectedKind) {
-        remoteBackingP = resolveFundsKindAcct(to, toPid, selectedKind).catch(function () { return null; });
-      } else {
-        remoteBackingP = resolveAcctToken(to, toPid).catch(function () { return null; });
-      }
-      return Promise.all([
-        clientFor(from).readContract({ address: sucker, abi: suckerTokenMappingAbi, functionName: 'projectId', args: [] }),
-        clientFor(from).readContract({ address: sucker, abi: suckerTokenMappingAbi, functionName: 'remoteTokenFor', args: [termToken] }),
-        clientFor(from).readContract({ address: terminal, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [sucker, fromPid, amount, termToken, sucker, '0x'] }),
-        isFeelessAddress(from, sucker, Number(fromPid)),
-        read(from, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [fromPid, termToken]).then(toBigInt),
-        classifySuckerInfra(from, sucker),
-        remoteBackingP,
-      ]).then(function (checks) {
-        if (toBigInt(checks[0]) !== fromPid) throw new Error('The selected bridge belongs to a different project.');
-        var mapping = checks[1];
-        if (!mapping || !mapping.enabled || !mapping.addr || /^0x0+$/.test(mapping.addr)) throw new Error('This backing token is not mapped on the selected bridge.');
-        if (checks[5] === 'unknown') throw new Error('The selected bridge type could not be verified. Try again when the source RPC is available.');
-        // Canonical ERC-20s (USDC) over an OP-stack/Arbitrum NATIVE sucker strand in bridge escrow — the
-        // mapping may exist on-chain (the guards are bridge-blind) but the delivery leg can never settle.
-        if (checks[5] === 'native' && termToken.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
-          throw new Error('This pair’s native bridge can’t deliver ' + ((state.backing && state.backing.symbol) || 'this backing token') + ' — canonical tokens sent over a native bridge get stuck in escrow. Pick the CCIP bridge for this move.');
-        }
-        if (checks[3] == null) throw new Error('The bridge fee status could not be verified. Nothing was sent.');
-        var remoteBacking = checks[6];
-        if (!remoteBacking || !remoteBacking.address) throw new Error('The matching backing token is not configured on the destination chain.');
-        var mappedRemote = '0x' + String(mapping.addr).slice(-40).toLowerCase();
-        if (mappedRemote !== String(remoteBacking.address).toLowerCase()) {
-          throw new Error('The selected bridge maps this backing token to a different destination token.');
-        }
-        var cashPreview = checks[2];
-        var gross = toBigInt(cashPreview && (cashPreview.reclaimAmount != null ? cashPreview.reclaimAmount : cashPreview[1]));
-        var taxRate = Number(cashPreview && (cashPreview.cashOutTaxRate != null ? cashPreview.cashOutTaxRate : cashPreview[2]) || 0);
-        var net = gross - cashOutProtocolFee(gross, taxRate, !!checks[3], checks[4]);
-        var minReclaimed = quotedOutputFloor(net, 9900);
-        if (state.from !== from || state.to !== to || state.sucker !== sucker || state.token !== token || state.backingKey !== backingKey
-          || !state.backing || state.backing.address.toLowerCase() !== termToken.toLowerCase()
-          || amt.value.trim() === '' || parseAmount(amt.value, 18) !== amount
-          || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) {
-          throw new Error('Movement inputs or the connected account changed while the backing preview was loading. Review and try again.');
-        }
-        // Step 1: approve the sucker for the ERC-20, then prepare (cash out to terminal funds + insert outbox
-        // leaf). A positive backing preview gets a 99% onchain floor. Zero backing can still move the same project
-        // token count to the remote chain, but the confirmation calls that out explicitly instead of hiding min=0.
-        var backingText = net > 0n
-          ? '≈ ' + formatBalance(net, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + ' (at least ' + formatBalance(minReclaimed, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + ')'
-          : 'none — this chain currently contributes zero backing';
-        var moveSteps = ['Approve token access if needed', 'Prepare the movement', 'Send the queued movements to ' + moveChainName(to)];
-        executeTransaction(Object.assign(buildSuckerPrepareArgs({
-          chainId: from, sucker: sucker, projectTokenCount: amount, beneficiary32: beneficiary32, minReclaimed: minReclaimed,
-          termToken: termToken, metadata: metadata, approvalToken: token, approvalAmount: amount,
-        }), {
-          confirmTitle: 'Move ' + sym,
-          confirmText: 'Prepare',
-          confirmSteps: moveSteps, confirmStepIndex: 0, keepConfirmOpen: true,
-          confirmSummary: { action: 'Prepare the movement', rows: [
-            ['Moving', formatTokens(amount) + ' ' + sym],
-            ['From', moveChainName(from)],
-            ['To', moveChainName(to)],
-            ['Backing that moves', backingText],
-            ['Bridge', checks[5] === 'native' ? 'native bridge' : 'CCIP'],
-          ] },
-          confirmNote: net > 0n
-            ? 'The live bridge cash out preview is ' + formatBalance(net, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + '; this reverts below the 99% floor.'
-            : 'This source chain currently contributes zero backing. The same project-token count will still be minted remotely, but no backing tokens will move with it.',
-          onStatus: onStatus, onError: fail,
-          onSuccess: function (m, meta) {
-          var session = meta && meta.confirmSession;
-          // Step 2: ship the outbox root to the remote chain. Discover the exact msg.value the bridge needs
-          // by simulating toRemote at increasing values (handles native-bridge fee-only AND CCIP messaging).
-          onStatus('Prepared — finding bridge fee…', 'pending');
-          if (session) session.showStatus('Prepared. Finding the bridge fee…', 'pending');
-          findToRemoteValue(from, sucker, termToken, acct).then(function (fee) {
-            if (fee == null) {
-              var notReady = 'Prepared, but the bridge queue isn’t ready to send yet — reopen and try again shortly.';
-              if (session) session.showStatus(notReady, 'error');
-              fail(notReady); return;
-            }
-            onStatus('Sending to ' + moveChainName(to) + '…', 'pending');
-            executeTransaction(Object.assign(buildSuckerToRemoteArgs({
-              chainId: from, sucker: sucker, termToken: termToken, value: fee,
-            }), {
-              confirmTitle: 'Move ' + sym,
-              confirmText: 'Send',
-              confirmSession: session, confirmSteps: moveSteps, confirmStepIndex: 2,
-              confirmSummary: { action: 'Send the queued movements to ' + moveChainName(to), rows: [
-                ['Sends', 'every queued movement (yours and anyone else’s) in one bridge message'],
-                ['Bridge fee', formatEth(fee) + ' — paid to relay the message, not the bridged tokens'],
-                ['From', moveChainName(from)],
-                ['To', moveChainName(to)],
-              ] },
-              confirmDescription: 'The prepare step queued your move into the bridge’s outbox. '
-                + 'This step ships that queued batch to ' + moveChainName(to) + ' — it delivers every pending move in the '
-                + 'queue (yours and anyone else’s) in one bridge message, so anyone can trigger it. The small value is the '
-                + 'bridge’s messaging fee — you pay it to relay the message; it’s not the bridged tokens (those move from the '
-                + 'project’s funds). Once it lands, claim your tokens on ' + moveChainName(to) + ' from the Queued movements table.',
-              onStatus: onStatus, onError: fail,
-              onSuccess: function () {
-                status.classList.remove('pending');
-                status.textContent = 'Bridging to ' + moveChainName(to) + ' — once it delivers (a few minutes for native bridges) claim it from the Queued movements table.';
-                btn.disabled = false;
-                document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
-              },
-            }));
-          });
-          },
-        }));
-      });
-    }).catch(function (error) { fail(errMessage(error, 'Could not safely preview this movement.')); });
-  });
-  return wrap;
-}
-
 // Native ETH balance (wei) for an address on a chain. Null on failure.
 function readEthBalance(chainId, account) {
   if (!account) return Promise.resolve(null);
@@ -30065,24 +28979,6 @@ function readWalletTokenBalance(chainId, tokenAddr, account) {
   if (!c) return Promise.resolve(null);
   return c.readContract({ address: tokenAddr, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [account] })
     .then(function (b) { return BigInt(b); }).catch(function () { return null; });
-}
-
-// Concentrated-liquidity deposit counterpart. Given one side's amount, the current price `p` and the
-// range [pa, pb] (all ETH-per-token), return the other side's amount using Uniswap V3/V4 math.
-// driverIsEth=true → input is ETH, returns token; false → input is token, returns ETH.
-// Outside the range it's single-sided: returns 0 for the side that isn't needed, or null if the
-// requested side can't fund the position.
-function lpCounterpart(amount, driverIsEth, p, pa, pb) {
-  if (!(amount > 0) || !(p > 0) || !(pa > 0) || !(pb > pa)) return null;
-  var sp = Math.sqrt(p), sa = Math.sqrt(pa), sb = Math.sqrt(pb);
-  if (p <= pa) return driverIsEth ? null : 0;   // all token: no ETH side
-  if (p >= pb) return driverIsEth ? 0 : null;   // all ETH: no token side
-  if (driverIsEth) {
-    var L = amount / (sp - sa);
-    return L * (1 / sp - 1 / sb); // token amount
-  }
-  var Lx = amount / (1 / sp - 1 / sb);
-  return Lx * (sp - sa); // ETH amount
 }
 
 // Trim a float for an input field (no thousands separators; ~6 significant digits).
@@ -30181,53 +29077,6 @@ export function lpAmountsModeNote(inputs) {
   return inputs.ceilingHint && solved.maxPrice === inputs.ceilingHint
     ? 'Your ' + tokenSymbol + ' side needs more room than the cash-out floor allows, so the ceiling is anchored at the issuance price instead.'
     : 'Your ' + tokenSymbol + ' side needs more room than the cash-out floor allows, so the ceiling is set to twice the current price.';
-}
-
-// A compact number-line of the LP price range relative to the cash out floor, current pool price,
-// and issuance ceiling. All values are pair/base token per project token.
-function renderLpRangeSvg(floor, ceiling, poolP, pa, pb) {
-  var pts = [floor, ceiling, poolP, pa, pb].filter(function (v) { return v > 0; });
-  if (!pts.length) return { html: '<div class="modal-balance">Range preview unavailable.</div>', maxV: 0, W: 320, padL: 6, padR: 6 };
-  var maxV = Math.max.apply(null, pts) * 1.12;
-  var W = 320, padL = 6, padR = 6;
-  function X(v) { return padL + (W - padL - padR) * (v / maxV); }
-  var topMarkers = [
-    { value: floor, color: '#2c2018', label: 'Floor' },
-    { value: ceiling, color: '#1a8a8a', label: 'Ceiling' },
-  ].filter(function (marker) { return marker.value > 0; });
-  var topLabels = lpDepthMarkerLabelLayout(topMarkers.map(function (marker) {
-    return { x: X(marker.value), label: marker.label + ' ' + formatPrice(marker.value) };
-  }), W);
-  var topRows = topLabels.reduce(function (max, label) { return Math.max(max, label.row + 1); }, 0);
-  var topH = Math.max(24, topRows * 22 + 2), baseY = topH + 18, H = baseY + 32;
-  // Uniform scaling (no preserveAspectRatio="none") so the text labels don't render horizontally stretched.
-  var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" class="lp-graph-svg">';
-  svg += '<line x1="' + padL + '" y1="' + baseY + '" x2="' + (W - padR) + '" y2="' + baseY + '" stroke="rgba(0,0,0,0.25)" stroke-width="1"/>';
-  if (pa > 0 && pb > pa) {
-    svg += '<rect x="' + X(pa).toFixed(1) + '" y="' + (baseY - 9) + '" width="' + Math.max(1, X(pb) - X(pa)).toFixed(1) + '" height="18" fill="rgba(110,196,196,0.35)" stroke="#1a8a8a" stroke-width="1"/>';
-  }
-  function marker(v, color, label, up, layout) {
-    if (!(v > 0)) return '';
-    var xv = X(v);
-    var valStr = formatPrice(v);
-    // Keep the whole label inside the chart: anchor by where its half-width would overflow an edge.
-    // (~0.3 ≈ half the ~0.6em monospace glyph advance at font-size 8.) Use the wider of label/value.
-    var half = Math.max(label.length, valStr.length) * 8 * 0.3;
-    var anchor = 'middle', tx = layout ? layout.x : xv;
-    if (!layout && anchor === 'middle') {
-      if (xv - half < padL) { anchor = 'start'; tx = padL; }
-      else if (xv + half > W - padR) { anchor = 'end'; tx = W - padR; }
-    }
-    var x = xv.toFixed(1);
-    var labelY = up ? (10 + layout.row * 22) : H - 13, valY = up ? (20 + layout.row * 22) : H - 3;
-    return '<line x1="' + x + '" y1="' + (baseY - 13) + '" x2="' + x + '" y2="' + (baseY + 13) + '" stroke="' + color + '" stroke-width="1.5"/>'
-      + '<text x="' + tx.toFixed(1) + '" y="' + labelY + '" font-size="8" fill="' + color + '" text-anchor="' + anchor + '">' + label + '</text>'
-      + '<text x="' + tx.toFixed(1) + '" y="' + valY + '" font-size="8" font-weight="bold" fill="' + color + '" text-anchor="' + anchor + '">' + valStr + '</text>';
-  }
-  topMarkers.forEach(function (spec, index) { svg += marker(spec.value, spec.color, spec.label, true, topLabels[index]); });
-  svg += marker(poolP, '#b8602e', 'Current pool price', false, null);
-  svg += '</svg>';
-  return { html: svg, maxV: maxV, W: W, padL: padL, padR: padR };
 }
 
 // --- Uniswap V4 mint (Add liquidity) — exact encoding per v4-periphery PositionManager ---
@@ -31037,11 +29886,6 @@ function lpIsSmartWallet(chainId, acct) {
 
 // The chosen (or auto) mint-deadline window: EOAs sign immediately; a multisig queue needs weeks.
 function lpDeadlineSecs(prep) { return prep.deadlineSecs || (prep.smartWallet ? 30 * 24 * 3600 : 1200); }
-function lpFmtDuration(secs) {
-  if (secs % 86400 === 0) return (secs / 86400) + (secs === 86400 ? ' day' : ' days');
-  if (secs % 3600 === 0) return (secs / 3600) + (secs === 3600 ? ' hour' : ' hours');
-  return Math.round(secs / 60) + ' minutes';
-}
 
 // LP step calldata prefixes, for spotting an already-queued (unexecuted) duplicate in a Safe's queue.
 var LP_SEL_PERMIT2_APPROVE = '0x87517c45'; // approve(address,address,uint160,uint48)
@@ -31218,60 +30062,6 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
     return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value, smartWallet: prep.smartWallet });
   }
   return lpSendTx(chainId, Object.assign({ account: prep.acct, smartWallet: prep.smartWallet }, lpMintCall(prep, deadline)));
-}
-
-// Build the "exact transaction" preview payload (mirrors the Pay confirm), for openTxConfirm.
-function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
-  var pair = prep.pair || { symbol: 'ETH', decimals: 18, isNative: true };
-  // amount0Max/amount1Max are currency-ordered; map back to pair vs project token for display.
-  var pairMax = prep.pairIsC0 ? prep.amount0Max : prep.amount1Max;
-  var tokenMax = prep.pairIsC0 ? prep.amount1Max : prep.amount0Max;
-  // Plain-language summary shown first; the decoded call + raw unlockData hex move behind "Show raw data".
-  var deposit = [];
-  if (tokenMax > 1n) deposit.push(formatTokens(tokenMax) + ' ' + sym);
-  if (pairMax > 1n) deposit.push(formatBalance(pairMax, pair.decimals, pair.symbol));
-  var approvalRows = (prep.erc20 || []).map(function (s) {
-    var label = (s.currency || '').toLowerCase() === (pair.addr || '').toLowerCase() ? pair.symbol : sym;
-    return [label + ' approval', s.approved && s.permitReady ? 'already set — no approval step will run'
-      : s.approved ? 'token allowance reused — only the Permit2 step remains'
-      : 'runs before the mint'];
-  });
-  return {
-    summary: {
-      action: 'Add liquidity to the ' + sym + '/' + pair.symbol + ' pool',
-      rows: [
-        ['Deposit up to', deposit.join(' + ') + ' — the mint pulls only what the position needs'],
-        prep.pa > 0 && prep.pb > prep.pa ? ['Price range', formatPrice(prep.pa) + ' – ' + formatPrice(prep.pb) + ' ' + pair.symbol + ' per ' + sym] : null,
-        ['Position NFT to', prep.acct],
-        ['Mint deadline', lpFmtDuration(lpDeadlineSecs(prep)) + (prep.smartWallet ? ' — survives a multisig signing queue' : '')],
-      ].concat(approvalRows).filter(Boolean),
-    },
-    chain: chainName,
-    chainId: chainId,
-    contract: 'Uniswap V4 PositionManager',
-    address: prep.posm,
-    'function': 'modifyLiquidities',
-    txlinkUnavailableReason: 'The final liquidity calldata may include Permit2 signatures bound to the connected wallet, so it does not exist before confirmation.',
-    value: prep.value > 0n ? (prep.value.toString() + ' wei (' + formatEth(prep.value) + ')') : '0',
-    erc20Approvals: (prep.erc20 || []).map(function (s) {
-      return { token: s.currency, via: 'Permit2', spender: prep.posm, amount: s.max.toString(),
-        status: s.approved && s.permitReady ? 'already approved — no approval step will run'
-          : s.approved ? 'token allowance already set (reused) — only the Permit2 approval step remains'
-          : 'approval will run first' };
-    }),
-    position: {
-      actions: pair.isNative ? 'MINT_POSITION, CLOSE, CLOSE, SWEEP (0x02121214)' : 'MINT_POSITION, CLOSE, CLOSE (0x021212)',
-      poolFee: Number(prep.key.fee),
-      hooks: prep.key.hooks,
-      tickLower: prep.tickLower,
-      tickUpper: prep.tickUpper,
-      liquidity: prep.liquidity.toString(),
-      ['max' + pair.symbol]: formatBalance(pairMax, pair.decimals, pair.symbol),
-      maxToken: formatTokens(tokenMax) + ' ' + sym,
-      recipient: prep.acct,
-    },
-    args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + lpFmtDuration(lpDeadlineSecs(prep)) + ')' },
-  };
 }
 
 // --- Remove liquidity: find the connected user's V4 positions (across the CURRENT + OLD buyback pools) and burn them ---
@@ -31919,531 +30709,6 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
   }).catch(function () { list.innerHTML = ''; var er = el('div', 'modal-status error'); er.textContent = 'Could not load positions.'; list.appendChild(er); });
 }
 
-function buildAddLiquidityModal(project) {
-  var sym = project.tokenSymbol || 'tokens';
-  var wrap = el('div', 'modal-body');
-  var lpChains = (project.chains || []).filter(function (c) { return POSITION_MANAGER_BY_CHAIN[c.id] && POOL_MANAGER_BY_CHAIN[c.id]; });
-  if (!lpChains.length) {
-    var n = el('div', 'modal-status'); n.textContent = 'No Uniswap V4 position manager on this project’s chains.'; wrap.appendChild(n); return wrap;
-  }
-  // Issuance ceiling = base-currency units per project token at the current issuance weight (the top of
-  // the AMM band). Pool price and the cash-out floor are PAIR-token units — when the ruleset's base
-  // currency differs, the ceiling converts through JBPrices before seeding the default range; with no
-  // feed it's dropped (0) so lpDefaultRange widens around the pool price instead of consuming a
-  // wrong-unit bound.
-  var weight = project.ruleset ? Number(project.ruleset.weight) : 0;
-  var ceilingBase = weight > 0 ? 1e18 / weight : 0;
-  var ceiling = issuancePairUnitMismatch(project) ? 0 : ceilingBase;
-  // ethBal holds the PAIR-token balance (native ETH or USDC); pair is the resolved accounting/pair token.
-  var state = { chainId: lpChains[0].id, poolP: 0, floor: 0, ceiling: ceiling, revBal: null, ethBal: null, driver: null, pair: null, mode: 'amounts' };
-  if (ceilingBase > 0 && ceiling === 0) {
-    readIssuancePairRate(project, state.chainId).then(function (rate) {
-      if (!rate) return; // no feed — keep the widened default range
-      ceiling = ceilingBase * rate;
-      state.ceiling = ceiling;
-      if (state.pair) refreshPrice(); // re-seed the defaults now the economic corridor is known
-    });
-  }
-  function pairSym() { return state.pair ? state.pair.symbol : 'accounting token'; }
-  function pairDec() { return state.pair ? state.pair.decimals : 18; }
-
-  var intro = el('div', 'modal-balance');
-  intro.textContent = 'Add tokens to the trading pool so payments can buy existing project tokens. The pool’s current price sets the ratio of tokens you add.';
-  wrap.appendChild(intro);
-
-  // Your balance per chain, boxed at the top (like the cash out modal). Add-liquidity skips project balances.
-  var balTable = el('div', 'cashout-bal-table'); wrap.appendChild(balTable);
-  renderBalanceTables(balTable, project, sym, { skipProjectBalances: true });
-
-  var chainRow = el('div', 'ops-chainrow');
-  var chainSel = opsChainSelect(project, function (cid) { state.chainId = cid; refreshPair(); }, { chains: lpChains });
-  chainRow.appendChild(chainSel);
-  wrap.appendChild(chainRow);
-
-  // Slim line for the pair token (ETH/USDC) balance — the table above covers the project token.
-  var balLine = el('div', 'modal-balance'); balLine.style.marginTop = '8px'; wrap.appendChild(balLine);
-  var priceLine = el('div', 'modal-balance'); wrap.appendChild(priceLine);
-
-  // Number-line of where the selected range sits relative to floor / pool price / issuance ceiling.
-  var graphWrap = el('div', 'lp-graph'); wrap.appendChild(graphWrap);
-  var graphHolder = el('div', 'lp-graph-holder'); graphWrap.appendChild(graphHolder);
-  var graphTip = el('div', 'lp-graph-tip'); graphTip.style.display = 'none'; graphWrap.appendChild(graphTip);
-  var graphScale = null;
-  // Hover anywhere on the range bar to read the price at that point (mapping cursor x → pair-token value).
-  graphWrap.addEventListener('mousemove', function (e) {
-    if (!graphScale || !graphScale.maxV) { graphTip.style.display = 'none'; return; }
-    var rect = graphHolder.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    var svgX = (e.clientX - rect.left) / rect.width * graphScale.W;
-    var span = graphScale.W - graphScale.padL - graphScale.padR;
-    var value = span > 0 ? (svgX - graphScale.padL) / span * graphScale.maxV : 0;
-    if (!(value > 0)) { graphTip.style.display = 'none'; return; }
-    graphTip.textContent = '≈ ' + formatPrice(value) + ' ' + pairSym() + ' / ' + sym;
-    graphTip.style.display = '';
-    graphTip.style.left = Math.max(2, Math.min(rect.width - 110, e.clientX - rect.left + 8)) + 'px';
-    // Signal that the range ends are draggable when the cursor is over one.
-    var rr = currentRange();
-    var near = state.mode === 'range' && rr.pa > 0 && rr.pb > rr.pa
-      && Math.min(Math.abs(value - rr.pa), Math.abs(value - rr.pb)) <= graphScale.maxV * 14 / graphScale.W;
-    graphWrap.style.cursor = near || dragEdge ? 'ew-resize' : '';
-  });
-  graphWrap.addEventListener('mouseleave', function () { graphTip.style.display = 'none'; });
-
-  // Drag either end of the range bar. Reuses the hover tip's x -> price mapping; the scale is
-  // frozen for the duration so an edge pulled outward doesn't slide away from the pointer.
-  var dragEdge = null, dragScale = null;
-  function graphValueAt(clientX, scale) {
-    var rect = graphHolder.getBoundingClientRect();
-    if (rect.width <= 0 || !scale || !scale.maxV) return null;
-    var span = scale.W - scale.padL - scale.padR;
-    if (!(span > 0)) return null;
-    return ((clientX - rect.left) / rect.width * scale.W - scale.padL) / span * scale.maxV;
-  }
-  graphWrap.addEventListener('pointerdown', function (e) {
-    if (state.mode !== 'range' || !graphScale || !graphScale.maxV) return;
-    var r = currentRange();
-    if (!(r.pa > 0) || !(r.pb > r.pa)) return;
-    var at = graphValueAt(e.clientX, graphScale);
-    if (at == null) return;
-    // Grab whichever end is nearer, but only from within ~14px of it.
-    var grab = graphScale.maxV * 14 / graphScale.W;
-    var edge = Math.abs(at - r.pa) <= Math.abs(at - r.pb) ? 'pa' : 'pb';
-    if (Math.abs(at - r[edge]) > grab) return;
-    e.preventDefault();
-    dragEdge = edge; dragScale = graphScale;
-    if (graphWrap.setPointerCapture) graphWrap.setPointerCapture(e.pointerId);
-  });
-  graphWrap.addEventListener('pointermove', function (e) {
-    if (!dragEdge) return;
-    var raw = graphValueAt(e.clientX, dragScale);
-    if (raw == null) return;
-    var r = currentRange();
-    // Keep the ends ordered with a sliver of daylight between them.
-    var gap = dragScale.maxV / 400;
-    var next = dragEdge === 'pa' ? Math.min(raw, r.pb - gap) : Math.max(raw, r.pa + gap);
-    if (!(next > 0)) return;
-    (dragEdge === 'pa' ? minInput : maxInput).value = lpTrimNum(next);
-    onRangeChange();
-    // onRangeChange redraws with a fresh scale; keep dragging against the frozen one.
-    graphScale = dragScale;
-  });
-  function endGraphDrag() { dragEdge = null; dragScale = null; drawGraph(); }
-  graphWrap.addEventListener('pointerup', endGraphDrag);
-  graphWrap.addEventListener('pointercancel', endGraphDrag);
-
-  // Sizing mode: "By amounts" (default — type both deposits, the range is solved around them) or
-  // "By price range" (pick the range, the counterpart amount follows).
-  var modeRow = el('div', 'chain-pills-row'); modeRow.style.marginTop = '8px'; wrap.appendChild(modeRow);
-  var modeAmountsBtn = el('button', 'chain-pill'); modeAmountsBtn.type = 'button'; modeAmountsBtn.textContent = 'By amounts'; modeRow.appendChild(modeAmountsBtn);
-  var modeFullBtn = el('button', 'chain-pill'); modeFullBtn.type = 'button'; modeFullBtn.textContent = 'Full range'; modeRow.appendChild(modeFullBtn);
-  var modeRangeBtn = el('button', 'chain-pill'); modeRangeBtn.type = 'button'; modeRangeBtn.textContent = 'By price range'; modeRow.appendChild(modeRangeBtn);
-  modeAmountsBtn.addEventListener('click', function () { setMode('amounts'); });
-  modeFullBtn.addEventListener('click', function () { setMode('full'); });
-  modeRangeBtn.addEventListener('click', function () { setMode('range'); });
-
-  var lblR = el('div', 'modal-label'); lblR.textContent = 'Price range (ETH per ' + sym + ')'; wrap.appendChild(lblR);
-  var rnote = el('div', 'modal-balance'); rnote.textContent = 'Defaults span the current cash out reference and token creation price.'; wrap.appendChild(rnote);
-  var rangeRow = el('div', 'ops-rangerow');
-  var minField = el('div', 'ops-field ops-field--grow');
-  var minInput = el('input', 'ops-amount'); minInput.type = 'number'; minInput.step = 'any'; minInput.placeholder = 'Min'; minField.appendChild(minInput);
-  rangeRow.appendChild(minField);
-  var toSpan = el('span', 'ops-between'); toSpan.textContent = 'to'; rangeRow.appendChild(toSpan);
-  var maxField = el('div', 'ops-field ops-field--grow');
-  var maxInput = el('input', 'ops-amount'); maxInput.type = 'number'; maxInput.step = 'any'; maxInput.placeholder = 'Max'; maxField.appendChild(maxInput);
-  rangeRow.appendChild(maxField);
-  wrap.appendChild(rangeRow);
-  var rangeReadout = el('div', 'modal-balance'); rangeReadout.style.display = 'none'; wrap.appendChild(rangeReadout);
-  minInput.addEventListener('input', onRangeChange);
-  maxInput.addEventListener('input', onRangeChange);
-
-  // Token + ETH amounts — editing one auto-fills the other at the current price within the range.
-  // Both sides share one row (two columns).
-  var addGrid = el('div', 'lp-add-grid'); wrap.appendChild(addGrid);
-  var tokCol = el('div', 'lp-add-col'); addGrid.appendChild(tokCol);
-  var tokHead = el('div', 'lp-add-head'); tokCol.appendChild(tokHead);
-  var lbl1 = el('div', 'modal-label'); lbl1.textContent = sym + ' to add'; tokHead.appendChild(lbl1);
-  var tokMax = el('button', 'lp-max'); tokMax.textContent = 'Max'; tokHead.appendChild(tokMax);
-  var tokField = el('div', 'ops-field ops-field--grow');
-  var tokAmt = el('input', 'ops-amount'); tokAmt.type = 'number'; tokAmt.step = 'any'; tokAmt.placeholder = '0.00'; tokField.appendChild(tokAmt);
-  var tu = el('span', 'ops-unit'); tu.textContent = sym; tokField.appendChild(tu); tokCol.appendChild(tokField);
-
-  var ethCol = el('div', 'lp-add-col'); addGrid.appendChild(ethCol);
-  var ethHead = el('div', 'lp-add-head'); ethCol.appendChild(ethHead);
-  var lbl2 = el('div', 'modal-label'); lbl2.textContent = 'ETH to add'; ethHead.appendChild(lbl2);
-  var ethMax = el('button', 'lp-max'); ethMax.textContent = 'Max'; ethHead.appendChild(ethMax);
-  var ethField = el('div', 'ops-field ops-field--grow');
-  var ethAmt = el('input', 'ops-amount'); ethAmt.type = 'number'; ethAmt.step = 'any'; ethAmt.placeholder = '0.00'; ethField.appendChild(ethAmt);
-  var eu = el('span', 'ops-unit'); eu.textContent = 'ETH'; ethField.appendChild(eu); ethCol.appendChild(ethField);
-
-  var pairNote = el('div', 'modal-balance'); pairNote.style.marginTop = '6px';
-  wrap.appendChild(pairNote);
-  var sideNote = el('div', 'modal-balance'); sideNote.style.marginTop = '4px'; sideNote.style.color = '#b8602e'; sideNote.style.display = 'none';
-  wrap.appendChild(sideNote);
-
-  // Re-label everything that names the pair token (range unit, second amount, ratio note) once it's known.
-  function applyPairLabels() {
-    var ps = pairSym();
-    lblR.textContent = 'Price range (' + ps + ' per ' + sym + ')';
-    lbl2.textContent = ps + ' to add';
-    eu.textContent = ps;
-    if (state.mode !== 'amounts') {
-      pairNote.textContent = 'Enter either amount; the other is calculated at the pool price. Near Min uses more '
-        + sym + '; near Max uses more ' + ps + '.';
-    }
-  }
-  applyPairLabels();
-
-  function onAmountInput(side) {
-    if (state.mode === 'amounts') { solveAmounts(); return; }
-    state.driver = side;
-    autofill();
-  }
-  tokAmt.addEventListener('input', function () { onAmountInput('tok'); });
-  ethAmt.addEventListener('input', function () { onAmountInput('eth'); });
-  tokMax.addEventListener('click', function () {
-    if (state.revBal == null) { connect(); return; }
-    tokAmt.value = formatAmount(state.revBal, 18); onAmountInput('tok');
-  });
-  ethMax.addEventListener('click', function () {
-    if (!state.pair) { status.textContent = 'Accounting token is still loading.'; return; }
-    if (state.ethBal == null) { connect(); return; }
-    // Keep ~0.001 ETH for gas only when the pair IS native ETH; an ERC-20 pair (USDC) can go to the brim.
-    var buf = state.pair.isNative ? 1000000000000000n : 0n;
-    var v = state.ethBal > buf ? state.ethBal - buf : 0n;
-    ethAmt.value = formatAmount(v, pairDec()); onAmountInput('eth');
-  });
-
-  // Amounts mode: both deposits are free-typed; the solved range feeds the same inputs, graph, and
-  // submit path the range mode uses.
-  function solveAmounts() {
-    var t = parseFloat(tokAmt.value); t = t > 0 ? t : 0;
-    var e = parseFloat(ethAmt.value); e = e > 0 ? e : 0;
-    var solved = state.poolP > 0
-      ? lpSolveRangeFromAmounts({ price: state.poolP, tokenAmount: t, pairAmount: e, floorHint: state.floor, ceilingHint: ceiling })
-      : null;
-    if (solved) {
-      minInput.value = lpTrimNum(solved.minPrice);
-      maxInput.value = lpTrimNum(solved.maxPrice);
-      rangeReadout.textContent = 'Price range: ' + formatPrice(solved.minPrice) + ' to ' + formatPrice(solved.maxPrice) + ' ' + pairSym() + ' per ' + sym + '.';
-    } else {
-      rangeReadout.textContent = '';
-    }
-    pairNote.textContent = lpAmountsModeNote({
-      tokenAmount: t, pairAmount: e, solved: solved,
-      floorHint: state.floor, ceilingHint: ceiling,
-      tokenSymbol: sym, pairSymbol: pairSym(),
-    });
-    drawGraph();
-  }
-
-  // Full-range mode presets bounds spanning the whole curve; the classic counterpart autofill over
-  // that span then couples the amounts at the v2 pool ratio.
-  function applyFullRange() {
-    var bounds = lpFullRangeBounds(state.poolP);
-    if (bounds) {
-      minInput.value = lpTrimNum(bounds.minPrice);
-      maxInput.value = lpTrimNum(bounds.maxPrice);
-    }
-    pairNote.textContent = 'Your liquidity works at every price, like a classic v2 pool. Enter either amount; the other follows at the pool price.';
-    autofill();
-  }
-
-  function setMode(mode) {
-    state.mode = mode;
-    modeAmountsBtn.classList.toggle('selected', mode === 'amounts');
-    modeFullBtn.classList.toggle('selected', mode === 'full');
-    modeRangeBtn.classList.toggle('selected', mode === 'range');
-    var hideRange = mode !== 'range';
-    lblR.style.display = hideRange ? 'none' : '';
-    rnote.style.display = hideRange ? 'none' : '';
-    rangeRow.style.display = hideRange ? 'none' : '';
-    graphWrap.style.display = mode === 'full' ? 'none' : '';
-    rangeReadout.style.display = mode === 'amounts' ? '' : 'none';
-    if (mode === 'range') {
-      applyPairLabels();
-      onRangeChange();
-      return;
-    }
-    tokAmt.disabled = false; ethAmt.disabled = false;
-    tokCol.style.opacity = ''; ethCol.style.opacity = '';
-    tokMax.style.visibility = ''; ethMax.style.visibility = '';
-    sideNote.style.display = 'none'; sideNote.textContent = '';
-    if (mode === 'amounts') solveAmounts();
-    else applyFullRange();
-  }
-
-  // Execution deadline: how long the signed/queued mint stays executable before it reverts as stale. Price
-  // protection comes from the bounded max amounts, not from this — a long deadline only lets a queued tx wait.
-  var dlRow = el('div', 'ops-chainrow'); dlRow.style.marginTop = '8px';
-  var dlLab = el('span', 'modal-balance'); dlLab.textContent = 'Execution deadline';
-  var dlSel = el('select', 'field create-input'); dlSel.style.width = 'auto'; dlSel.style.minWidth = '0';
-  [['', 'Auto — 20 min (30 days from a multisig)'], ['1200', '20 minutes'], ['3600', '1 hour'], ['86400', '1 day'], ['604800', '7 days'], ['2592000', '30 days']].forEach(function (o) {
-    var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; dlSel.appendChild(op);
-  });
-  dlSel.title = 'The mint reverts if executed after this. Price protection comes from the bounded max amounts, not the deadline.';
-  dlRow.appendChild(dlLab); dlRow.appendChild(dlSel);
-  wrap.appendChild(dlRow);
-  // Resolve the Auto label to what it will actually pick for the connected account (EOA vs multisig).
-  function updateDlAuto() {
-    var acct = getAccount && getAccount(), cid = state.chainId;
-    if (!acct) { dlSel.options[0].textContent = 'Auto — 20 min (30 days from a multisig)'; return; }
-    lpIsSmartWallet(cid, acct).then(function (smart) {
-      if (state.chainId !== cid || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) return;
-      dlSel.options[0].textContent = smart ? 'Auto — 30 days (multisig connected)' : 'Auto — 20 minutes';
-    });
-  }
-
-  var status = el('div', 'modal-status'); wrap.appendChild(status);
-  var foot = el('div', 'modal-foot');
-  var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Add liquidity';
-  foot.appendChild(btn); wrap.appendChild(foot);
-
-  function currentRange() {
-    var pa = parseFloat(minInput.value), pb = parseFloat(maxInput.value);
-    return { pa: pa > 0 ? pa : 0, pb: pb > 0 ? pb : 0 };
-  }
-  function drawGraph() {
-    var r = currentRange();
-    var g = renderLpRangeSvg(state.floor, state.ceiling, state.poolP, r.pa, r.pb);
-    graphHolder.innerHTML = g.html;
-    graphScale = g.maxV ? g : null;
-  }
-  // Which token(s) the position actually needs at the current price + range. At/above the range top the position is
-  // single-sided in the PAIR (USDC/ETH); at/below the bottom it's single-sided in the project token; strictly inside,
-  // both. Order-independent: lpCounterpart returns 0/null on these same boundaries regardless of pool token ordering.
-  function activeSides(r) {
-    var p = state.poolP;
-    if (!(p > 0) || !(r.pa > 0) || !(r.pb > r.pa)) return { tok: true, eth: true };
-    if (p >= r.pb) return { tok: false, eth: true };   // all pair — the project token isn't part of the position here
-    if (p <= r.pa) return { tok: true, eth: false };   // all project token — the pair isn't part of the position here
-    return { tok: true, eth: true };
-  }
-  // Enable only the side(s) the position needs; disable + zero the other so typing there can't clear the active side.
-  function applySides() {
-    var s = activeSides(currentRange());
-    tokAmt.disabled = !s.tok; ethAmt.disabled = !s.eth;
-    tokCol.style.opacity = s.tok ? '' : '0.45'; ethCol.style.opacity = s.eth ? '' : '0.45';
-    tokMax.style.visibility = s.tok ? '' : 'hidden'; ethMax.style.visibility = s.eth ? '' : 'hidden';
-    if (!s.tok) tokAmt.value = '0';
-    if (!s.eth) ethAmt.value = '0';
-    if (s.tok && s.eth) { sideNote.style.display = 'none'; sideNote.textContent = ''; }
-    else {
-      sideNote.style.display = '';
-      sideNote.textContent = s.eth
-        ? 'At the current price (top of your range) the position is single-sided ' + pairSym() + ' — add ' + pairSym() + ' only. To seed ' + sym + ', the pool price has to be lower within your range (move the price down with a swap, or widen the range).'
-        : 'At the current price (bottom of your range) the position is single-sided ' + sym + ' — add ' + sym + ' only. To seed ' + pairSym() + ', the pool price has to be higher within your range.';
-    }
-  }
-  function autofill() {
-    var r = currentRange();
-    var s = activeSides(r);
-    // Single-sided: the inactive side is 0; leave the active side's user-entered amount alone (no counterpart to fill).
-    if (!(s.tok && s.eth)) { if (!s.tok) tokAmt.value = '0'; if (!s.eth) ethAmt.value = '0'; return; }
-    if (state.driver === 'eth') {
-      var eth = parseFloat(ethAmt.value);
-      if (!(eth > 0)) { tokAmt.value = ''; return; }
-      var tok = lpCounterpart(eth, true, state.poolP, r.pa, r.pb);
-      if (tok != null) tokAmt.value = lpTrimNum(tok);
-    } else if (state.driver === 'tok') {
-      var t = parseFloat(tokAmt.value);
-      if (!(t > 0)) { ethAmt.value = ''; return; }
-      var e = lpCounterpart(t, false, state.poolP, r.pa, r.pb);
-      if (e != null) ethAmt.value = lpTrimNum(e);
-    }
-  }
-  function onRangeChange() {
-    if (state.mode === 'amounts') { solveAmounts(); return; }
-    if (state.mode === 'full') { applyFullRange(); return; }
-    drawGraph(); applySides(); autofill();
-  }
-
-  // Resolve the pair (accounting) token for the selected chain, then refresh labels, balances, and price.
-  var pairSeq = 0;
-  var lpBalanceSeq = 0;
-  var lpPriceSeq = 0;
-  function refreshPair() {
-    var cid = state.chainId, seq = ++pairSeq;
-    ++lpBalanceSeq; ++lpPriceSeq;
-    state.pair = null; state.revBal = null; state.ethBal = null;
-    state.poolP = 0; state.floor = 0;
-    btn.disabled = true; balLine.textContent = 'Loading the verified accounting token…'; priceLine.textContent = '';
-    lpPairFor(project, cid).then(function (p) {
-      if (seq !== pairSeq || state.chainId !== cid) return;
-      if (!p) throw new Error('Could not resolve the project’s accounting token.');
-      state.pair = p; applyPairLabels();
-      btn.disabled = true; status.textContent = '';
-      refreshBalances(); refreshPrice();
-    }).catch(function () {
-      if (seq !== pairSeq || state.chainId !== cid) return;
-      state.pair = null; btn.disabled = true;
-      balLine.textContent = 'Could not verify the project’s accounting token on this chain.';
-    });
-  }
-
-  function refreshBalances() {
-    if (!state.pair) return;
-    var cid = state.chainId, pair = state.pair, seq = ++lpBalanceSeq;
-    var acct = getEffectiveAccount();
-    updateDlAuto();
-    if (!acct) { balLine.textContent = ''; state.revBal = null; state.ethBal = null; return; }
-    balLine.textContent = 'Your ' + pairSym() + ': …';
-    var pairTokenAddr = pair.isNative ? NATIVE_TOKEN : pair.addr;
-    Promise.all([readUserBalance(project, cid), readWalletTokenBalance(cid, pairTokenAddr, acct)]).then(function (r) {
-      if (seq !== lpBalanceSeq || state.chainId !== cid || state.pair !== pair || !getEffectiveAccount() || getEffectiveAccount().toLowerCase() !== acct.toLowerCase()) return;
-      state.revBal = r[0]; state.ethBal = r[1];
-      balLine.textContent = 'Your ' + pair.symbol + ': ' + (r[1] != null ? formatBalance(r[1], pair.decimals, pair.symbol) : '—');
-    });
-  }
-
-  function refreshPrice() {
-    if (!state.pair) return;
-    var cid = state.chainId, pair = state.pair, seq = ++lpPriceSeq;
-    priceLine.textContent = 'Pool price: …';
-    Promise.all([readAmmPrice(project, cid), readCashoutPrice(project, cid)]).then(function (res) {
-      if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;
-      var amm = res[0], floor = res[1];
-      state.poolP = (amm && amm > 0) ? amm : 0;
-      state.floor = (floor && floor > 0) ? floor : 0;
-      btn.disabled = !amm;
-      priceLine.textContent = amm ? ('Pool price: ~' + formatPrice(amm) + ' ' + pair.symbol + ' / ' + sym) : 'Pool not initialized on this chain.';
-      var poolP = state.poolP > 0 ? state.poolP : (ceiling > 0 ? ceiling / 10 : 0);
-      var defaultRange = lpDefaultRange(poolP, state.floor, ceiling);
-      if (defaultRange.min > 0) minInput.value = lpTrimNum(defaultRange.min);
-      if (defaultRange.max > 0) maxInput.value = lpTrimNum(defaultRange.max);
-      rnote.textContent = defaultRange.economic
-        ? 'Defaults span the cash out reference (' + formatPrice(state.floor) + ') and token creation price.'
-        : (state.floor > 0
-          ? 'The floor and ceiling do not straddle the pool price. The default range is widened so both tokens can be added.'
-          : 'No cash out reference yet. The default range is wider around the trading price so both tokens can be added.');
-      onRangeChange();
-    }).catch(function () {
-      if (seq !== lpPriceSeq || state.chainId !== cid || state.pair !== pair) return;
-      state.poolP = 0; state.floor = 0; btn.disabled = true;
-      priceLine.textContent = 'Could not verify the current pool price.';
-    });
-  }
-
-  setMode(state.mode);
-  refreshPair();
-
-  btn.addEventListener('click', function () {
-    if (getViewAs()) { status.className = 'modal-status error'; status.textContent = VIEW_AS_TX_ERROR; return; }
-    if (!(getAccount && getAccount())) { connect(); return; }
-    if (!state.pair) { status.className = 'modal-status error'; status.textContent = 'Could not verify the project’s accounting token.'; return; }
-    var cid = state.chainId;
-    var inputSnapshot = [minInput.value, maxInput.value, tokAmt.value, ethAmt.value, dlSel.value].join('|');
-    var pairAmount, tokenAmount;
-    try { pairAmount = ethAmt.value ? parseAmount(ethAmt.value, pairDec()) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + pairSym() + ' amount'; return; }
-    try { tokenAmount = tokAmt.value ? parseAmount(tokAmt.value, 18) : 0n; } catch (_) { status.className = 'modal-status error'; status.textContent = 'Invalid ' + sym + ' amount'; return; }
-    if (pairAmount <= 0n && tokenAmount <= 0n) { status.className = 'modal-status error'; status.textContent = 'Enter an amount'; return; }
-    if (state.revBal == null || state.ethBal == null) { status.className = 'modal-status error'; status.textContent = 'Wallet balances are still loading or could not be verified.'; return; }
-    if (tokenAmount > state.revBal) { status.className = 'modal-status error'; status.textContent = sym + ' amount exceeds your balance.'; return; }
-    if (pairAmount > state.ethBal) { status.className = 'modal-status error'; status.textContent = pairSym() + ' amount exceeds your balance.'; return; }
-    var r = currentRange();
-    if (!(r.pa > 0) || !(r.pb > r.pa)) { status.className = 'modal-status error'; status.textContent = 'Set a valid price range'; return; }
-    btn.disabled = true;
-    status.className = 'modal-status'; status.textContent = 'Preparing…';
-    var lpOpts = { project: project, chainId: cid, pairAmount: pairAmount, tokenAmount: tokenAmount, pa: r.pa, pb: r.pb, deadlineSecs: dlSel.value ? Number(dlSel.value) : null };
-    prepareAddLiquidity(lpOpts).then(function (prep) {
-      if (state.chainId !== cid || inputSnapshot !== [minInput.value, maxInput.value, tokAmt.value, ethAmt.value, dlSel.value].join('|')
-        || !state.pair || state.pair.addr !== prep.pair.addr || !getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Liquidity inputs or the connected account changed while the transaction was being prepared. Review and try again.');
-      btn.disabled = false;
-      status.textContent = '';
-      var chainName = (lpChains.filter(function (c) { return c.id === cid; })[0] || {}).name || ('Chain ' + cid);
-      // Show the exact transaction before signing — same confirm modal as the Pay flow.
-      var lpSteps = [];
-      (prep.erc20 || []).forEach(function (s) {
-        var label = prep.pair && (s.currency || '').toLowerCase() === (prep.pair.addr || '').toLowerCase() ? prep.pair.symbol : sym;
-        if (!s.approved) lpSteps.push('Approve ' + label + ' for Permit2');
-        if (!s.permitReady) lpSteps.push(prep.smartWallet ? 'Approve ' + label + ' on Permit2' : 'Sign the ' + label + ' Permit2 approval');
-      });
-      lpSteps.push('Mint the position');
-      // Inside the Safe App a multi-call sequence is proposed as ONE batch: preview every call with the exact
-      // now/deadline the submit reuses, and replace the per-step wallet list with the single proposal.
-      var payload = buildAddLiquidityPayload(cid, chainName, sym, prep);
-      var plan = null;
-      if (prep.smartWallet && isSafeConnected()) {
-        var planNow = Math.floor(Date.now() / 1000), planDl = lpDeadlineSecs(prep);
-        var planned = lpAddLiquidityCalls(prep, (prep.erc20 || []).map(function (s) { return { approve: !s.approved, permit2: !s.permitReady }; }), planNow, planDl, BigInt(planNow + planDl));
-        if (planned.length > 1) {
-          plan = { now: planNow, deadline: BigInt(planNow + planDl), calls: planned };
-          payload.transactions = planned.map(function (c) {
-            return { step: c.label, chain: chainName, chainId: cid, contract: resolveContractName(c.to, cid) || (c.to === PERMIT2_ADDRESS ? 'Permit2' : c.to === prep.posm ? 'Uniswap V4 PositionManager' : c.to),
-              address: c.to, calldata: c.data, abi: c.abi, functionName: c.functionName, rawArgs: c.args, value: String(c.value) };
-          });
-        }
-      }
-      openTxConfirm(payload, function (ctx) {
-        ctx.confirm.disabled = true; ctx.cancel.disabled = true;
-        runAddLiquidityTxs(cid, prep, function (m, kind, meta) { ctx.showStatus(m, kind, meta); }, plan).then(function (result) {
-          if (result && result.safeTxHash) {
-            // A proposal, not an execution: keep the dialog up, let it close, and watch the Safe for the executed tx.
-            ctx.cancel.disabled = false; ctx.cancel.textContent = 'Close';
-            ctx.showStatus('Proposed to your Safe as one batch of ' + result.calls + ' calls — sign and execute it in your Safe queue. This page watches for the execution.', 'pending');
-            (function watch(tries) {
-              if (tries > 40) return;
-              setTimeout(function () {
-                txHashForSafeTx(result.safeTxHash).then(function (executed) {
-                  if (!executed) { watch(tries + 1); return; }
-                  ctx.modal.close();
-                  status.className = 'modal-status success';
-                  status.innerHTML = '';
-                  status.appendChild(document.createTextNode('Liquidity added | TX: '));
-                  status.appendChild(renderExplorerTxLink(cid, executed, truncAddr(executed)));
-                  noteLocalLpWrite(cid, prep.poolId);
-                  refreshBalances(); refreshPrice();
-                });
-              }, 15000);
-            })(1);
-            return;
-          }
-          var hash = result;
-          ctx.modal.close();
-          status.className = 'modal-status success';
-          status.innerHTML = '';
-          status.appendChild(document.createTextNode('Liquidity added | TX: '));
-          status.appendChild(renderExplorerTxLink(cid, hash, truncAddr(hash)));
-          noteLocalLpWrite(cid, prep.poolId);
-          refreshBalances(); refreshPrice();
-        }).catch(function (e) {
-          ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-          if (e && e.txStatusKind === 'pending') {
-            ctx.showStatus(e.message, 'pending');
-            // Watch the step's on-chain effect for up to ~10 min so an executed Safe tx flips the stale
-            // "waiting for co-signers" state into a clear "continue" prompt.
-            if (e.recheck) (function watch(tries) {
-              if (tries > 40) return;
-              setTimeout(function () {
-                e.recheck().then(function (ok) {
-                  if (ok) ctx.showStatus('Your multisig executed this step — click Confirm & add liquidity to continue.', 'success');
-                  else watch(tries + 1);
-                }, function () { watch(tries + 1); });
-              }, 15000);
-            })(1);
-            return;
-          }
-          var msg = errMessage(e, 'Add liquidity failed');
-          ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
-        });
-      }, {
-        title: 'Confirm add liquidity', confirmText: plan ? 'Confirm & propose batch' : 'Confirm & add liquidity', closeOnConfirm: false,
-        sequenceSteps: plan ? ['Propose the batch to your Safe'] : lpSteps,
-        sequenceIntro: plan ? 'Goes to your Safe as one batch of ' + plan.calls.length + ' calls: approved once, executed together.' : undefined,
-        description: plan ? 'Execute the batch within days of queueing it: the mint’s price-drift headroom and its 30-day approvals are finite. Already-queued steps are detected and refused, so a second confirm never double-proposes.'
-          : prep.smartWallet
-          ? 'Multisig detected: this runs as up to 3 sequential Safe transactions (token approval → Permit2 approval → mint), each proposed here and executed from your Safe queue. If you leave while one is pending, come back and confirm again — completed and already-queued steps are detected and skipped. Execute the mint within days of queueing it: its price-drift headroom and 30-day approvals are finite.'
-          : undefined,
-      });
-    }).catch(function (e) {
-      btn.disabled = false;
-      status.className = 'modal-status error';
-      var msg = errMessage(e, 'Could not prepare');
-      status.textContent = msg.length > 160 ? msg.slice(0, 160) + '…' : msg;
-    });
-  });
-  return wrap;
-}
-
 function opsRow(c, s, b, u, isHead, isTotal, chainId, lp) {
   // `u === undefined` → drop the Max-loan column (custom projects). `lp` (trailing, optional) adds an LP-positions
   // column; existing callers that pass ≤7 args are unaffected. Column count drives the grid class (3 / 4 / 5).
@@ -32644,3 +30909,18 @@ function splitConfigRow(recipientNode, pct, companion) {
   row.appendChild(v);
   return row;
 }
+
+// Shared with the lazily loaded modules (project-draft.js, project-ops-modals.js).
+export {
+  OMNI_EXTRA_HOOK_ABI, OMNI_TIERED_HOOK_ABI, PERMIT2_ADDRESS, POOL_MANAGER_BY_CHAIN, POSITION_MANAGER_BY_CHAIN,
+  PROJECT_DRAFT_721_META_ABI, RESERVED_TOKEN_SPLIT_GROUP, USDC_BY_CHAIN, acctKindsForFunds, chainNameOf,
+  classifySuckerInfra, clientFor, controllerAddressFor, currentSurplusOfAbi, draftRecipientFromSplit,
+  erc20BalanceOfAbi, feeFreeSurplusOfAbi, fetchProjectTiers, findToRemoteValue, formatBalance, formatEth,
+  formatTokens, isFeelessAddress, isKnown721HookClone, isZeroishAddress, lpDeadlineSecs, lpIsSmartWallet, lpPairFor,
+  lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
+  payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
+  readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, renderBalanceTables,
+  renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
+  revnetOperatorOf, sameAddr, splitsOfAbi, suckerTokenMappingAbi, surplusAllowancesAbi, terminalOfAbi,
+  terminalsOfAbi, toBigInt, tokenOfAbi, totalSupplyAbi,
+};

@@ -2,8 +2,8 @@
 // so the guarantees the modal migration is built on are proven here, in Chromium, against the real
 // src/discover.js `openModal` and the real stylesheet the site ships.
 //
-// The helper is module-private to the IIFE bundle, so the spec serves an ES-module harness that
-// re-exports it from the same sources dist/app.js is built from. It is fulfilled from a same-origin URL
+// The helper is module-private in the bundle, so the spec serves an ES-module harness that
+// re-exports it from the same sources dist/ is built from. It is fulfilled from a same-origin URL
 // because the page's CSP is `script-src 'self'` (inline script tags are correctly refused).
 import * as esbuild from 'esbuild';
 import { expect, test } from '@playwright/test';

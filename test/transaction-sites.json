@@ -72,7 +72,7 @@
         "approveSafeHashOnChain": 1,
         "confirmSafeTx": 2,
         "executeSafeTx": 3,
-        "executeTransaction": 20,
+        "executeTransaction": 18,
         "proposeSafeTransactions": 1,
         "proposeSafeTx": 1,
         "providerRequest": 7,
@@ -157,6 +157,14 @@
       },
       "actions": [
         "Bounded exact ENS / handle reads"
+      ]
+    },
+    "src/project-ops-modals.js": {
+      "counts": {
+        "executeTransaction": 2
+      },
+      "actions": [
+        "Move between chains"
       ]
     },
     "src/queue-ruleset-component.js": {

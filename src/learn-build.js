@@ -648,7 +648,7 @@ export function renderBuildTab() {
     })(),
     (function () {
       var p = document.createElement('p'); p.className = 'guide-text';
-      p.textContent = 'The whole app is the source you are looking at — fetch the IPFS bundle and read app.js, or clone the repo. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.';
+      p.textContent = 'The whole app is open source: clone the repo at the commit in the footer and build it, or fetch the IPFS bundle. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.';
       return p;
     })()
   ]));

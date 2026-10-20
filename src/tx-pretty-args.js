@@ -8,7 +8,7 @@
 
 import { decodeAbiParameters, encodeAbiParameters, decodeFunctionData, encodeFunctionData } from 'viem';
 import { getABI } from './abi-registry.js';
-import { PERMISSION_IDS } from './permissions-component.js';
+import { PERMISSION_IDS } from './permission-ids.js';
 
 var ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 /** JBConstants.SPLITS_TOTAL_PERCENT — a split group's whole is 1e9. */

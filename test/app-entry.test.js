@@ -21,6 +21,7 @@ const entry = vi.hoisted(() => ({
   renderWhyTab: vi.fn(),
   renderAccountView: vi.fn(),
   verifiedHandleProjectRoute: vi.fn(() => null),
+  loadFunctionSourceBody: vi.fn().mockRejectedValueOnce(new Error('chunk offline')).mockResolvedValue('function readThing(uint256 id) external view returns (uint256);'),
 }));
 
 const readThing = {
@@ -50,7 +51,6 @@ vi.mock('../src/abi-registry.js', () => ({
       },
     },
   },
-  natspec: { JBExample: { readThing: { notice: 'Reads canonical state.', params: { id: 'Identifier.' } } } },
   categories: { Core: ['JBExample', 'JBDifferent'], Empty: [] },
   chains: { 1: { name: 'Ethereum' }, 10: { name: 'Optimism' } },
   commonActions: [{
@@ -60,10 +60,14 @@ vi.mock('../src/abi-registry.js', () => ({
   }],
   getFunctions: name => ['JBExample', 'JBDifferent'].includes(name) ? [readThing] : [],
   getAddress: () => '0x1111111111111111111111111111111111111111',
-  getFunctionSource: () => ({ source: 'function readThing(uint256 id) external view returns (uint256);', startLine: 10, endLine: 12 }),
+  getFunctionSource: () => ({ startLine: 10, endLine: 12 }),
+  loadFunctionSourceBody: entry.loadFunctionSourceBody,
   getGithubUrl: (_name, fn) => fn ? 'https://github.com/example/contracts/blob/main/JBExample.sol#L10' : 'https://github.com/example/contracts',
 }));
 
+vi.mock('../src/abi-natspec.js', () => ({
+  natspec: { JBExample: { readThing: { notice: 'Reads canonical state.', params: { id: 'Identifier.' } } } },
+}));
 vi.mock('../src/form.js', () => ({ renderFunctionForm: entry.renderFunctionForm }));
 vi.mock('../src/prompts.js', () => ({
   getAuditPrompt: () => 'audit the canonical V6 call',
@@ -97,7 +101,6 @@ vi.mock('../src/learn-build.js', () => ({
   renderWhyTab: entry.renderWhyTab,
 }));
 vi.mock('../src/discover.js', () => ({
-  setSafeBatchTrayRenderer: vi.fn(),
   renderDiscoverTab: entry.renderDiscoverTab,
   applyDiscoverRoute: entry.applyDiscoverRoute,
   cancelDiscoverRoute: entry.cancelDiscoverRoute,
@@ -112,8 +115,7 @@ vi.mock('../src/discover.js', () => ({
 }));
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
 vi.mock('../src/account-view.js', () => ({ renderAccountView: entry.renderAccountView }));
-vi.mock('../src/safe-batch-ui.js', () => ({ renderSafeBatchTray: vi.fn() }));
-vi.mock('../src/create-flow.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
+vi.mock('../src/ens.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
 vi.mock('../src/font-selector.js', () => ({
   mountFontSelector: entry.mountFontSelector,
   applySavedFont: entry.applySavedFont,
@@ -171,16 +173,22 @@ describe('production app entry point', () => {
     expect(entry.applySavedFont).toHaveBeenCalledOnce();
     expect(entry.mountFontSelector).toHaveBeenCalledOnce();
     expect(entry.renderDiscoverTab).toHaveBeenCalledOnce();
-    expect(entry.renderDataTab).toHaveBeenCalledOnce();
-    expect(entry.renderLearnTab).toHaveBeenCalledOnce();
-    expect(entry.renderBuildTab).toHaveBeenCalledOnce();
     expect(entry.renderAdminTab).toHaveBeenCalledOnce();
-    expect(entry.renderWhyTab).toHaveBeenCalledOnce();
+    // Only the active guide renders at startup; the others wait for their tab.
+    await vi.waitFor(() => expect(entry.renderLearnTab).toHaveBeenCalledOnce());
+    expect(entry.renderBuildTab).not.toHaveBeenCalled();
+    expect(entry.renderWhyTab).not.toHaveBeenCalled();
+    expect(entry.renderDataTab).not.toHaveBeenCalled();
     expect(document.querySelector('.tab[data-tab="learn"]').classList.contains('active')).toBe(true);
     expect(document.getElementById('tab-learn').classList.contains('active')).toBe(true);
 
+    // Actions and API render on first activation, not at startup.
     const common = document.getElementById('tab-common');
-    expect(common.textContent).toMatch(/Work in progress/);
+    expect(common.textContent).toBe('');
+    expect(document.getElementById('tab-directory').textContent).toBe('');
+    location.hash = '#actions';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await vi.waitFor(() => expect(common.textContent).toMatch(/Work in progress/));
     expect(common.textContent).toMatch(/READ THING/);
     common.querySelector('.fn-summary').click();
     expect(entry.renderFunctionForm).toHaveBeenCalledWith(
@@ -191,6 +199,9 @@ describe('production app entry point', () => {
       expect.objectContaining({ notice: 'Reads canonical state.' }),
     );
 
+    location.hash = '#api';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await vi.waitFor(() => expect(document.querySelector('.contract-section')).not.toBeNull());
     const contract = document.querySelector('.contract-section');
     expect(contract.textContent).toMatch(/Canonical example contract/);
     const address = contract.querySelector('.contract-address');
@@ -213,8 +224,12 @@ describe('production app entry point', () => {
     expect(contract.textContent).toMatch(/readThing\(uint256 id\).*view.*returns \(uint256 value\)/s);
     const sourceSection = [...contract.querySelectorAll('.fn-section')]
       .find(section => section.querySelector('.fn-section-label')?.textContent === 'source');
+    expect(entry.loadFunctionSourceBody).not.toHaveBeenCalled();
     sourceSection.querySelector('.fn-section-header').click();
-    expect(contract.querySelector('.fn-source-code').textContent).toMatch(/function readThing/);
+    // The body loads from its own chunk on first open; a failed chunk stays failed until reload, so it says so.
+    await vi.waitFor(() => expect(contract.querySelector('.fn-source-code').textContent).toMatch(/Reload the page to try again/));
+    expect(contract.querySelector('.fn-source-code button').textContent).toBe('[reload]');
+    expect(entry.loadFunctionSourceBody).toHaveBeenCalledWith('JBExample', readThing);
     const useSection = [...contract.querySelectorAll('.fn-section')]
       .find(section => section.querySelector('.fn-section-label')?.textContent === 'use');
     useSection.querySelector('.fn-section-header').click();
@@ -251,11 +266,12 @@ describe('production app entry point', () => {
     expect(new URL(location.href).searchParams.has('project')).toBe(false);
     expect(document.getElementById('tab-data').classList.contains('active')).toBe(true);
     expect(entry.cancelDiscoverRoute).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(entry.renderDataTab).toHaveBeenCalledOnce());
     entry.applyDiscoverRoute.mockClear();
 
     location.hash = '#account/0x1111111111111111111111111111111111111111';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
-    expect(entry.renderAccountView).toHaveBeenCalledWith('0x1111111111111111111111111111111111111111');
+    await vi.waitFor(() => expect(entry.renderAccountView).toHaveBeenCalledWith('0x1111111111111111111111111111111111111111'));
     expect(document.getElementById('tab-account').classList.contains('active')).toBe(true);
 
     document.getElementById('audit-prompt-link').click();

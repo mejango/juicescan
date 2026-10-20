@@ -15,7 +15,7 @@ import {
   verifyPersistedRelayrHandlePostconditions,
   BENDYSTRAW_ACTIVITY_OR, BENDYSTRAW_ACTIVITY_ITEM_FIELDS,
 } from './discover.js';
-import { isEnsName } from './create-flow.js';
+import { isEnsName } from './ens.js';
 import { safesForOwner, hasSafeService } from './safe.js';
 import { listRelayrPendingScopes, loadRelayrPendingSession, saveRelayrPendingSession, clearRelayrPendingSession, relayrPoll, relayrProgress, verifyRelayrDestinationRecords } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';

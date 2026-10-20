@@ -14,7 +14,6 @@
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, decodeEventLog } from 'viem';
 import { isSafeConnected } from './wallet.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
-import { normalize as ensNormalize } from 'viem/ens';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
   createPublicClientForChain, getWalletClient, switchChain, truncAddr, ZERO_ADDRESS as ZERO, errMessage, isAddr, addrOrZero, promptFoot,
@@ -33,16 +32,17 @@ import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
 import { gasWithHeadroom } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
+import { isEnsName, resolveEns, reverseEns, cachedEnsAddress } from './ens.js';
+import {
+  SPLIT_SALES_TOKEN_CREDIT_TITLE, SPLIT_SALES_TOKEN_CREDIT_ON, SPLIT_SALES_TOKEN_CREDIT_OFF, SPLITS_TOTAL, SPLIT_COMPONENTS,
+  METADATA_FULL, PAY_DATA_HOOK_RULESET_COMPONENTS, rulesetConfigComponents, TERMINAL_CONFIG_COMPONENTS, TIER_COMPONENTS,
+  DEPLOY_721_COMPONENTS, toggleRow, deploySalt, fillSplits,
+} from './create-shared.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-// Keep this contract flag's builder-facing language identical across the
-// create flow and project shop config (and aligned with the sibling clients).
-export var SPLIT_SALES_TOKEN_CREDIT_TITLE = 'Full token credit on split sales';
-export var SPLIT_SALES_TOKEN_CREDIT_ON = 'Buyers get project tokens for their entire payment, even the portion an item routes to splits.';
-export var SPLIT_SALES_TOKEN_CREDIT_OFF = 'Tokens are only issued for what stays in the project.';
 
 // Steps depend on the chosen project type (defaults to Custom). Type is always the first step.
 // Revnet is a reduced flow (no Shop/Settlement — ETH-only, single canonical terminal, suckers on Deploy).
@@ -101,7 +101,6 @@ var TAG_OPTIONS = ['AI', 'Art', 'Brand', 'Business', 'Charity', 'Climate', 'Coll
 var UINT224_MAX = (1n << 224n) - 1n;
 var UINT112_MAX = (1n << 112n) - 1n;
 var UINT104_MAX = (1n << 104n) - 1n;
-var SPLITS_TOTAL = 1000000000; // 1e9
 
 // Parse a user-typed token amount (whole or decimal, any size) to its 18-dec fixed-point BigInt, clamped
 // to `maxV` and never negative. Returns 0n on empty/garbage (never throws — parseEther throws on bad input).
@@ -117,99 +116,6 @@ function tokenAmount18(v, maxV) {
 // ABI building blocks (shared struct components)
 // ---------------------------------------------------------------------------
 
-// Field order MUST match the onchain JBSplit struct exactly (the selector hashes the tuple types in
-// order): percent, projectId, beneficiary, preferAddToBalance, lockedUntil, hook.
-var SPLIT_COMPONENTS = [
-  { name: 'percent', type: 'uint32' },
-  { name: 'projectId', type: 'uint64' },
-  { name: 'beneficiary', type: 'address' },
-  { name: 'preferAddToBalance', type: 'bool' },
-  { name: 'lockedUntil', type: 'uint48' },
-  { name: 'hook', type: 'address' },
-];
-var SPLIT_GROUP_COMPONENTS = [
-  { name: 'groupId', type: 'uint256' },
-  { name: 'splits', type: 'tuple[]', components: SPLIT_COMPONENTS },
-];
-var FUND_ACCESS_COMPONENTS = [
-  { name: 'terminal', type: 'address' },
-  { name: 'token', type: 'address' },
-  { name: 'payoutLimits', type: 'tuple[]', components: [
-    { name: 'amount', type: 'uint224' }, { name: 'currency', type: 'uint32' }] },
-  { name: 'surplusAllowances', type: 'tuple[]', components: [
-    { name: 'amount', type: 'uint224' }, { name: 'currency', type: 'uint32' }] },
-];
-var METADATA_FULL = [
-  { name: 'reservedPercent', type: 'uint16' }, { name: 'cashOutTaxRate', type: 'uint16' },
-  { name: 'baseCurrency', type: 'uint32' }, { name: 'pausePay', type: 'bool' },
-  { name: 'pauseCreditTransfers', type: 'bool' }, { name: 'allowOwnerMinting', type: 'bool' },
-  { name: 'allowSetCustomToken', type: 'bool' }, { name: 'allowTerminalMigration', type: 'bool' },
-  { name: 'allowSetTerminals', type: 'bool' }, { name: 'allowSetController', type: 'bool' },
-  { name: 'allowAddAccountingContext', type: 'bool' }, { name: 'allowAddPriceFeed', type: 'bool' },
-  { name: 'ownerMustSendPayouts', type: 'bool' }, { name: 'holdFees', type: 'bool' },
-  { name: 'scopeCashOutsToLocalBalances', type: 'bool' }, { name: 'useDataHookForPay', type: 'bool' },
-  { name: 'useDataHookForCashOut', type: 'bool' }, { name: 'dataHook', type: 'address' },
-  { name: 'metadata', type: 'uint16' },
-];
-var METADATA_PAYHOOK = [
-  { name: 'reservedPercent', type: 'uint16' }, { name: 'cashOutTaxRate', type: 'uint16' },
-  { name: 'baseCurrency', type: 'uint32' }, { name: 'pausePay', type: 'bool' },
-  { name: 'pauseCreditTransfers', type: 'bool' }, { name: 'allowOwnerMinting', type: 'bool' },
-  { name: 'allowSetCustomToken', type: 'bool' }, { name: 'allowTerminalMigration', type: 'bool' },
-  { name: 'allowSetTerminals', type: 'bool' }, { name: 'allowSetController', type: 'bool' },
-  { name: 'allowAddAccountingContext', type: 'bool' }, { name: 'allowAddPriceFeed', type: 'bool' },
-  { name: 'ownerMustSendPayouts', type: 'bool' }, { name: 'holdFees', type: 'bool' },
-  { name: 'scopeCashOutsToLocalBalances', type: 'bool' }, { name: 'useDataHookForCashOut', type: 'bool' },
-  { name: 'metadata', type: 'uint16' },
-];
-function rulesetConfigComponents(metaComponents) {
-  return [
-    { name: 'mustStartAtOrAfter', type: 'uint48' }, { name: 'duration', type: 'uint32' },
-    { name: 'weight', type: 'uint112' }, { name: 'weightCutPercent', type: 'uint32' },
-    { name: 'approvalHook', type: 'address' },
-    { name: 'metadata', type: 'tuple', components: metaComponents },
-    { name: 'splitGroups', type: 'tuple[]', components: SPLIT_GROUP_COMPONENTS },
-    { name: 'fundAccessLimitGroups', type: 'tuple[]', components: FUND_ACCESS_COMPONENTS },
-  ];
-}
-// JBPayDataHookRulesetConfig is the reduced ruleset shape accepted by the single-chain 721 project deployer.
-// Export the canonical tuple components so queue builders cannot accidentally substitute a full
-// JBRulesetConfig[] (which has a different selector even though most fields look identical).
-export var PAY_DATA_HOOK_RULESET_COMPONENTS = rulesetConfigComponents(METADATA_PAYHOOK);
-var TERMINAL_CONFIG_COMPONENTS = [
-  { name: 'terminal', type: 'address' },
-  { name: 'accountingContextsToAccept', type: 'tuple[]', components: [
-    { name: 'token', type: 'address' }, { name: 'decimals', type: 'uint8' }, { name: 'currency', type: 'uint32' }] },
-];
-// 721
-var TIER_FLAGS = [
-  { name: 'allowOwnerMint', type: 'bool' }, { name: 'useReserveBeneficiaryAsDefault', type: 'bool' },
-  { name: 'transfersPausable', type: 'bool' }, { name: 'useVotingUnits', type: 'bool' },
-  { name: 'cantBeRemoved', type: 'bool' }, { name: 'cantIncreaseDiscountPercent', type: 'bool' },
-  { name: 'cantBuyWithCredits', type: 'bool' },
-];
-var TIER_COMPONENTS = [
-  { name: 'price', type: 'uint104' }, { name: 'initialSupply', type: 'uint32' },
-  { name: 'votingUnits', type: 'uint32' }, { name: 'reserveFrequency', type: 'uint16' },
-  { name: 'reserveBeneficiary', type: 'address' }, { name: 'encodedIpfsUri', type: 'bytes32' },
-  { name: 'category', type: 'uint24' }, { name: 'discountPercent', type: 'uint8' },
-  { name: 'flags', type: 'tuple', components: TIER_FLAGS },
-  { name: 'splitPercent', type: 'uint32' },
-  { name: 'splits', type: 'tuple[]', components: SPLIT_COMPONENTS },
-];
-var HOOK_FLAGS = [
-  { name: 'noNewTiersWithReserves', type: 'bool' }, { name: 'noNewTiersWithVotes', type: 'bool' },
-  { name: 'noNewTiersWithOwnerMinting', type: 'bool' }, { name: 'preventOverspending', type: 'bool' },
-  { name: 'issueTokensForSplits', type: 'bool' },
-];
-export var DEPLOY_721_COMPONENTS = [
-  { name: 'name', type: 'string' }, { name: 'symbol', type: 'string' }, { name: 'baseUri', type: 'string' },
-  { name: 'tokenUriResolver', type: 'address' }, { name: 'contractUri', type: 'string' },
-  { name: 'tiersConfig', type: 'tuple', components: [
-    { name: 'tiers', type: 'tuple[]', components: TIER_COMPONENTS },
-    { name: 'currency', type: 'uint32' }, { name: 'decimals', type: 'uint8' }] },
-  { name: 'flags', type: 'tuple', components: HOOK_FLAGS },
-];
 var SUCKER_CONFIG_COMPONENTS = [
   { name: 'deployerConfigurations', type: 'tuple[]', components: [
     { name: 'deployer', type: 'address' }, { name: 'peer', type: 'bytes32' },
@@ -1206,23 +1112,6 @@ function textArea(value, placeholder, onInput) {
 // updates in place when toggled.
 // State-reflective subtext: prefix "On:"/"Off:" so the sentence reads as the current checkbox state.
 function dz(on, off) { return function (checked) { return checked ? 'On: ' + on : 'Off: ' + off; }; }
-export function toggleRow(label, desc, checked, onChange) {
-  var w = el('div', 'create-toggle-row');
-  var lbl = el('label', 'create-toggle');
-  var cb = el('input', '');
-  cb.type = 'checkbox'; cb.checked = !!checked;
-  function descAt(state) { return typeof desc === 'function' ? desc(state) : desc; }
-  var d = null;
-  cb.addEventListener('change', function () { if (d) d.textContent = descAt(cb.checked); onChange(cb.checked); });
-  lbl.appendChild(cb);
-  var t = el('span', 'create-toggle-label'); t.textContent = label;
-  lbl.appendChild(t);
-  w.appendChild(lbl);
-  var hasDesc = (typeof desc === 'function') ? (descAt(true) || descAt(false)) : desc;
-  if (hasDesc) { d = el('div', 'create-hint'); d.textContent = descAt(!!checked); w.appendChild(d); }
-  return w;
-}
-
 function infoNote(text) {
   var n = el('div', 'create-hint');
   n.textContent = text;
@@ -4576,11 +4465,6 @@ function captureDeployed(state, chainId, txHash) {
 // Chain-id → discover route slug (must match discover.js CHAIN_SLUGS exactly) for the "Go to project" link.
 var CREATE_CHAIN_SLUGS = { 1: 'eth', 11155111: 'sep', 42161: 'arb', 421614: 'arbsep', 8453: 'base', 84532: 'basesep', 10: 'op', 11155420: 'opsep' };
 function projectRouteFor(chainId, projectId) { var s = CREATE_CHAIN_SLUGS[chainId]; return (s && projectId) ? ('#' + s + ':' + projectId) : null; }
-// Deterministic salt — same on every chain (so omnichain sucker addresses match). No Math.random.
-export function deploySalt(state, owner) {
-  return keccak256(stringToHex((state.details.name || 'project') + ':' + String(owner).toLowerCase()));
-}
-
 // Build the launchProjectFor call for one chain. Returns { contract, address, abi, args, missingSuckers }.
 // Used BOTH for the onchain send (runDeploy) and the JSON payload preview, so what the user reviews is
 // byte-for-byte what they sign.
@@ -5055,22 +4939,6 @@ function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter
   return rs;
 }
 
-// Adjust a list of integer split shares so they sum to EXACTLY SPLITS_TOTAL (1e9). Per-row rounding can
-// drift a few atoms above/below; JBSplits reverts if a group EXCEEDS SPLITS_TOTAL. We correct the drift on
-// the largest share (always non-zero, can't go negative for tiny deltas). Use for groups meant to
-// distribute 100% (reserved tokens, limited payouts). Returns the same array, mutated.
-export function fillSplits(rawShares) {
-  if (!rawShares.length) return rawShares;
-  var sum = rawShares.reduce(function (s, v) { return s + v; }, 0);
-  var delta = SPLITS_TOTAL - sum;
-  if (delta !== 0) {
-    var maxI = 0;
-    for (var i = 1; i < rawShares.length; i++) if (rawShares[i] > rawShares[maxI]) maxI = i;
-    rawShares[maxI] = Math.max(0, rawShares[maxI] + delta);
-  }
-  return rawShares;
-}
-
 // Convert fixed-point payout amounts into exact 1e9 split shares without passing through JavaScript Number.
 // Amounts may be much larger than Number.MAX_SAFE_INTEGER and may carry token-specific precision. Flooring each
 // ratio and assigning the few remaining atoms through fillSplits preserves the exact relative order and sum.
@@ -5210,7 +5078,7 @@ function buildTerminalConfigs(chainId, state, swapRouter) {
   // Returning [] here launched a project with ZERO terminals — permanently unable to accept a
   // payment, and unfixable after the fact. Block the deploy like the deployer-address check
   // above does. Dormant today (all manifest chains have a terminal) and must stay that way.
-  if (!terminal) throw new Error('No JBMultiTerminal is deployed on ' + chainNameOf(chainId) + ', so a project launched there could never accept payments. Deselect that chain.');
+  if (!terminal) throw new Error('No JBMultiTerminal is deployed on ' + chainName(chainId) + ', so a project launched there could never accept payments. Deselect that chain.');
   var accepts = state.accepts || [];
   var contexts = [];
   // Custom ERC-20 accounting token (same address on every chain; its own currency id, no feed).
@@ -5462,28 +5330,6 @@ function durationIssue(state) {
 }
 function uint256FromAddress(addr) { return BigInt(addr).toString(); }
 function uint32FromAddress(addr) { return (BigInt(addr) & 0xFFFFFFFFn).toString(); }
-// --- ENS resolution for address fields (resolves on mainnet, regardless of the deploy chain) ---
-// Reuse the shared mainnet read transport: Center by default, explicit user RPC when configured.
-var _ensCache = {};
-function ensClient() {
-  return createPublicClientForChain(1);
-}
-export function isEnsName(v) { v = (v || '').trim(); return /\.[a-z]{2,}$/i.test(v) && !/^0x/i.test(v); }
-function resolveEns(name) {
-  name = (name || '').trim().toLowerCase();
-  if (_ensCache[name] !== undefined) return Promise.resolve(_ensCache[name]);
-  var norm; try { norm = ensNormalize(name); } catch (_) { return Promise.resolve(null); }
-  return ensClient().getEnsAddress({ name: norm }).then(function (addr) { _ensCache[name] = addr || null; return addr || null; })
-    .catch(function () { return null; });
-}
-// Reverse ENS: a 0x address → its primary ENS name (or null). Cached.
-var _ensRevCache = {};
-export function reverseEns(address) {
-  var a = (address || '').toLowerCase();
-  if (_ensRevCache[a] !== undefined) return Promise.resolve(_ensRevCache[a]);
-  return ensClient().getEnsName({ address: address }).then(function (name) { _ensRevCache[a] = name || null; return name || null; })
-    .catch(function () { return null; });
-}
 // The usable 0x address for a recipient: the resolved ENS address if it still matches the typed name, else
 // the raw value (a 0x address or unresolved name).
 function pickResolved(name, rec) {
@@ -5495,7 +5341,7 @@ function pickResolved(name, rec) {
 function resolvedStr(str) {
   str = (str || '').trim();
   if (isAddr(str)) return str;
-  if (isEnsName(str)) { var c = _ensCache[str.toLowerCase()]; return c || ''; }
+  if (isEnsName(str)) { var c = cachedEnsAddress(str); return c || ''; }
   return str;
 }
 function createKnownAddressLabel(chainId, addr) {

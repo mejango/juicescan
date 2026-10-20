@@ -92,6 +92,9 @@ describe('fillSplits — group always sums to a single SPLITS_TOTAL', () => {
 });
 
 describe('accounting contexts — terminal + revnet', () => {
+  it('refuses a chain with no JBMultiTerminal with a named error, not a ReferenceError', () => {
+    expect(() => buildTerminalConfigs(999, baseState({ accepts: ['eth'] }), false)).toThrow(/No JBMultiTerminal is deployed on chain 999/);
+  });
   it('ETH-only terminal context: native token, 18 dec, native currency', () => {
     const ctx = buildTerminalConfigs(1, baseState({ accepts: ['eth'] }), false)[0].accountingContextsToAccept;
     expect(ctx).toHaveLength(1);

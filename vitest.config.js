@@ -31,6 +31,13 @@ export default defineConfig({
           functions: 55,
           lines: 60,
         },
+        // The contract directory and Actions rows moved out of app.js with its floor.
+        'src/contracts-directory.js': {
+          statements: 55,
+          branches: 43,
+          functions: 55,
+          lines: 60,
+        },
         'src/component-base.js': {
           statements: 32,
           branches: 27,

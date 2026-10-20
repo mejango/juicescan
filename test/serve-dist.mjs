@@ -47,7 +47,8 @@ const server = createServer(async (request, response) => {
       response.end(image);
       return;
     }
-    const relative = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
+    // /ipfs/<cid>/… serves dist/ the way a path gateway serves the published directory.
+    const relative = decodeURIComponent(url.pathname).replace(/^\/ipfs\/[^/]+(?=\/)/, '').replace(/^\/+/, '') || 'index.html';
     const file = resolve(join(root, relative));
     if (file !== root && !file.startsWith(root + sep)) throw new Error('outside dist');
     if (!(await stat(file)).isFile()) throw new Error('not a file');

@@ -44,8 +44,7 @@ function filebaseToken() {
 }
 
 // Guard against pinning non-runtime files (tests, source maps, editor litter) — users download the
-// pinned set on every load. The bundle is intentionally NOT minified so the IPFS-loaded code stays
-// inspectable (see the audit-prompt feature) — that's runtime, kept.
+// pinned set on every load.
 function isRuntimeFile(name) {
   if (name === '.DS_Store' || name.startsWith('.')) return false;
   return !/\.(test|spec)\.[cm]?js$|\.map$|\.bak$|\.ts$|\.md$/i.test(name);
@@ -130,7 +129,7 @@ async function main() {
   console.log(`eth.sucks: https://${cid}.eth.sucks/`);
 
   // Filebase announces to routing, so gateways CAN find the content — warming just saves the first
-  // visitor the ~50s cold retrieval of the 8MB app.js. Retries resume from partial gateway caches.
+  // visitor the cold retrieval of the entry and its chunks. Retries resume from partial gateway caches.
   console.log('\nWarming gateways…');
   const rels = [];
   (function walk(dir, base) {
