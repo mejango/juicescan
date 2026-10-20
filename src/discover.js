@@ -31,7 +31,6 @@ import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { toggleRow, deploySalt, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, fillSplits, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-shared.js';
 import { isEnsName } from './ens.js';
-import { buildProjectCreateDraft, exportDraftFile } from './project-draft.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -15217,11 +15216,14 @@ function renderProjectDraftExport(project) {
   button.addEventListener('click', function (event) {
     event.preventDefault(); if (busy) return; busy = true; button.classList.add('disabled');
     status.className = 'operator-edit-status pending'; status.textContent = 'Verifying live rules, funds, splits, terminals, and shop…';
-    buildProjectCreateDraft(project).then(function (result) {
+    import('./project-draft.js').then(function (draft) {
+      return draft.buildProjectCreateDraft(project).then(function (result) { return { draft: draft, result: result }; });
+    }).then(function (built) {
+      var result = built.result;
       if (result.warnings.length && !window.confirm(result.warnings.join('\n\n') + '\n\nExport this editable .jb anyway?')) {
         status.className = 'operator-edit-status'; status.textContent = 'Cancelled'; return;
       }
-      exportDraftFile(result.state);
+      built.draft.exportDraftFile(result.state);
       status.className = 'operator-edit-status success'; status.textContent = 'Exported .jb. Import it from New project to review and edit.';
     }).catch(function (error) {
       status.className = 'operator-edit-status error'; status.textContent = errMessage(error, 'Could not safely reconstruct this project.');
