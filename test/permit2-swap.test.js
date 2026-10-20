@@ -73,5 +73,18 @@ describe('direct pool sale Permit2 authorization', () => {
       tx.args[1][0],
     );
     expect(decoded[0]).toBe('0x060c0e');
+    var swap = decodeAbiParameters(
+      [{ type: 'tuple', components: [
+        { type: 'tuple', components: [{ type: 'address' }, { type: 'address' }, { type: 'uint24' }, { type: 'int24' }, { type: 'address' }] },
+        { type: 'bool' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' },
+      ] }],
+      decoded[1][0],
+    )[0];
+    expect(swap[1]).toBe(false);
+    expect([swap[2], swap[3]]).toEqual([25_000_000n, 100n]);
+    var settle = decodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], decoded[1][1]);
+    expect(settle).toEqual(['0x2222222222222222222222222222222222222222', 25_000_000n]);
+    var take = decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], decoded[1][2]);
+    expect(take).toEqual(['0x0000000000000000000000000000000000000000', '0x3333333333333333333333333333333333333333', 0n]);
   });
 });

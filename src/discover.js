@@ -664,8 +664,7 @@ export function addToHookMetadata(metadata, id, data) {
 var PREVIEW_PAYER = '0x000000000000000000000000000000000000dEaD';
 export function prepareCardPay(opts) {
   var tierIds = opts.tierIds || [];
-  var tierKey = tierIds.join(',');
-  function unavailable(reason) { return { received: null, reserved: null, unavailable: true, reason: reason, tierKey: tierKey }; }
+  function unavailable(reason) { return { received: null, reserved: null, unavailable: true, reason: reason }; }
   if (!opts.terminal) return Promise.resolve(unavailable('No payment contract on this chain'));
   return prepareUserPay(clientFor(opts.chainId), {
     chainId: opts.chainId,
@@ -679,7 +678,7 @@ export function prepareCardPay(opts) {
       : undefined,
     slippageBps: BigInt(opts.slippageBps || 0),
   }).then(function (r) {
-    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata, tierKey: tierKey };
+    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
   }, function (error) { return unavailable(errMessage(error, 'preview unavailable')); });
 }
 
@@ -9907,7 +9906,16 @@ export function renderPayCard(project, cart) {
 
   }
 
+  // Everything a prepared payment depends on. A preview is only sent with the exact inputs it was prepared for.
+  function payIdentity(amount, beneficiary) {
+    var t = state.token || {};
+    return [state.mode, state.chainId, String(t.address || '').toLowerCase(), t.decimals, !!t.viaRouter,
+      t.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId),
+      String(beneficiary || '').toLowerCase(), String(amount), selectedTierIds().join(','), state.slippageBps || 0].join('|');
+  }
+
   function schedulePreview() {
+    previewGen++; // an in-flight preview for the old inputs can no longer land
     if (state.mode === 'pay' && (!state.inventoryKnown || isNativeInventory(state.shop))) return;
     if (previewTimer) clearTimeout(previewTimer);
     state.payAfterPreview = false;
@@ -9936,6 +9944,7 @@ export function renderPayCard(project, cart) {
     renderFeedback();
 
     var gen = ++previewGen;
+    var identity = payIdentity(amt, getEffectiveAccount());
     var terminal = state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
     var request = state.mode === 'addbalance'
       ? computePayPreview({
@@ -9959,6 +9968,7 @@ export function renderPayCard(project, cart) {
       });
     request.then(function (p) {
       if (gen !== previewGen) return;
+      p = Object.assign({}, p, { identity: identity });
       state.phase = 'ready';
       state.preview = p;
       state.previewAt = Date.now();
@@ -10064,7 +10074,7 @@ export function renderPayCard(project, cart) {
       status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no onchain minimum-output field for this action.';
       return;
     }
-    if (!addBalance && (!payPreviewCanSubmit(state.phase, state.preview) || state.preview.tierKey !== tierIds.join(','))) {
+    if (!addBalance && (!payPreviewCanSubmit(state.phase, state.preview) || state.preview.identity !== payIdentity(amt, beneficiary))) {
       status.textContent = tierIds.length
         ? 'A verified live quote is required before buying these items. Wait for the preview and try again.'
         : 'A verified live quote is required before paying. Wait for the preview and try again.';
@@ -10099,7 +10109,7 @@ export function renderPayCard(project, cart) {
         && !!state.token.viaRouter === !!reviewedToken.viaRouter && current === amt
         && selectedTierIds().join(',') === reviewedTierKey && (state.slippageBps || 0) === reviewedSlippage
         && (!tierIds.length || state.nftCredits === reviewedNftCredits)
-        && (addBalance || state.preview === reviewedPreview)
+        && (addBalance || (state.preview === reviewedPreview && reviewedPreview.identity === payIdentity(current, beneficiary)))
         && state.contextsReady && getAccount() && getAccount().toLowerCase() === beneficiary.toLowerCase();
     }
     function requirePayInputs() {
@@ -10229,6 +10239,7 @@ export function renderPayCard(project, cart) {
         var accountError = 'Connected account changed. Review the payment again.';
         status.className = 'paybox-status error'; status.textContent = accountError; confirmCtx.fail(accountError); return;
       }
+      if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return; }
       // Native ETH (even via the router) is paid with msg.value — no Permit2. Only ERC20 swap currencies
       // authorize through Permit2; reading allowance on the native pseudo-address returns "0x".
       if (!viaRouter || isNative) { sendPay(txParams, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx }); return; }

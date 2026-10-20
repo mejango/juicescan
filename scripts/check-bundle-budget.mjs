@@ -48,8 +48,8 @@ const budgets = {
   // Growth +14,336 raw /+3,312 gzip, no new dependency; keep the next1KB ceilings.
   // Shared exhausted-image fallback: 10,609,107 raw /1,540,684 gzip, +148/+77 B; only raw next1KB changes.
   // SDK3.0.0 (held-write recovery, prepareUserPay) replaces the direct Uniswap buy route:
-  // final 10,647,975 raw /1,545,290 gzip. Next1KB ceilings.
-  'dist/app.js': { raw: 10_648_000, gzip: 1_546_000 },
+  // final 10,649,225 raw /1,545,610 gzip with the pay identity guard. Next1KB ceilings.
+  'dist/app.js': { raw: 10_650_000, gzip: 1_546_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },

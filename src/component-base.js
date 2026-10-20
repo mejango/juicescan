@@ -1879,7 +1879,7 @@ COMPONENT_SPECS.pay.cases = [
 ];
 COMPONENT_SPECS.pay.tests = [
   'test/components-tx.test.js', 'test/pay-route-ui.test.js', 'test/pay-submit.test.js',
-  'test/pay-token-default.test.js', 'test/nft-checkout.test.js', 'test/pay-card-prepare.test.js',
+  'test/pay-token-default.test.js', 'test/nft-checkout.test.js', 'test/pay-card-prepare.test.js', 'test/pay-card-submit.test.js',
 ];
 
 COMPONENT_SPECS.cashout.file = 'discover.js (buildCashOutModal, buildRedeemItemsModal, resolveCashOutPreviewRoute, cashOutProtocolFee, buildDirectSwap*) + cashout-component.js (buildCashOutArgs)';

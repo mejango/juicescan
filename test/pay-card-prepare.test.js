@@ -24,7 +24,7 @@ describe('pay card payment preparation', () => {
     expect(args).toMatchObject({ chainId: 8453, terminal, projectId: 6n, token, amount: 25_000_000n, slippageBps: 100n });
     expect(args.beneficiary).toBe('0x000000000000000000000000000000000000dEaD');
     expect(args.tiers).toEqual({ metadataIdTarget: '0x3333333333333333333333333333333333333333', tierIdsToMint: [4n, 4n], allowOverspending: true });
-    expect(prepared).toEqual({ received: 990n, reserved: 0n, minReturnedTokens: 980n, metadata: '0xabcd', tierKey: '4,4' });
+    expect(prepared).toEqual({ received: 990n, reserved: 0n, minReturnedTokens: 980n, metadata: '0xabcd' });
   });
 
   it('reads a reverting preview as unavailable and sends no tiers for a plain payment', async () => {
