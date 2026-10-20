@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-const runtime = vi.hoisted(() => ({ prepare: vi.fn(), execute: vi.fn(), contractRead: vi.fn(), sign: vi.fn(), account: '0x1111111111111111111111111111111111111111' }));
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: async () => null, prepareUserPay: runtime.prepare }));
+const runtime = vi.hoisted(() => ({ prepare: vi.fn(), execute: vi.fn(), contractRead: vi.fn(), sign: vi.fn(), inventory: vi.fn(), account: '0x1111111111111111111111111111111111111111' }));
+vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: (...args) => runtime.inventory(...args), prepareUserPay: runtime.prepare }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account, getViewAs: () => null, isSafeConnected: () => false,
   executeTransaction: runtime.execute,
@@ -8,6 +8,8 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
   createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => '0x', getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
 import { getAddress } from '../src/abi-registry.js';
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6';
+import { hookMetadataId } from '@bananapus/nana-sdk-core';
+import { decodeAbiParameters } from 'viem';
 import { renderPayCard } from '../src/discover.js';
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
@@ -20,9 +22,9 @@ const deferred = () => { let resolve, reject; const promise = new Promise((a, b)
 const prepared = (metadata, minReturnedTokens) => ({ metadata, minReturnedTokens, preview: { beneficiaryTokenCount: minReturnedTokens + 10n, reservedTokenCount: 0n } });
 
 beforeEach(() => {
-  document.body.innerHTML = '';
+  document.body.innerHTML = ''; vi.unstubAllGlobals();
   contexts = [{ token: NATIVE, decimals: 18, currency: 61166 }]; terminals = [terminal];
-  runtime.prepare.mockReset(); runtime.execute.mockReset(); runtime.sign.mockReset();
+  runtime.prepare.mockReset(); runtime.execute.mockReset(); runtime.sign.mockReset(); runtime.inventory.mockReset().mockResolvedValue(null);
   runtime.contractRead.mockReset().mockImplementation(async call => {
     if (call.functionName === 'accountingContextsOf') return contexts;
     if (call.functionName === 'terminalsOf') return terminals;
@@ -175,4 +177,53 @@ it('guards execution waits with the reviewed inputs', async () => {
   expect(() => assertWriteState()).not.toThrow();
   type('2');
   expect(() => assertWriteState()).toThrow('changed');
+});
+
+// Synthetic JB721 shop: tiers priced in the project's native accounting currency, so no price feed is needed.
+const HOOK = '0x' + '72'.repeat(20), STORE = '0x' + '73'.repeat(20), ID_TARGET = '0x' + '74'.repeat(20);
+const TIERS = [{ id: 1n, price: 10n ** 16n }, { id: 2n, price: 3n * 10n ** 16n }].map(t => ({ ...t, initialSupply: 100, remainingSupply: 100, category: 1, discountPercent: 0, encodedIpfsUri: '0x' + '00'.repeat(32), flags: {} }));
+// The 721 hook's tier ids in JBMetadataResolver pay metadata, as the hook reads them.
+function mintedTierIds(metadata) {
+  const body = metadata.slice(2), want = hookMetadataId(ID_TARGET, 'pay').slice(2);
+  const tableEnd = parseInt(body.slice(72, 74), 16) * 64;
+  for (let i = 64; i + 10 <= tableEnd; i += 10) {
+    if (body.slice(i, i + 8) !== want) continue;
+    const [, ids] = decodeAbiParameters([{ type: 'bool' }, { type: 'uint16[]' }], '0x' + body.slice(parseInt(body.slice(i + 8, i + 10), 16) * 64));
+    return ids.map(Number);
+  }
+  return null;
+}
+
+it('mints the rendered cart selection: its tier ids reach preparation and the submitted pay metadata', async () => {
+  vi.stubGlobal('fetch', async () => { throw new Error('offline'); }); // indexer tier metadata is optional
+  runtime.inventory.mockResolvedValue({ protocol: 'jb721', hook: HOOK, store: STORE, metadataIdTarget: ID_TARGET, blockNumber: 1n, nextStartingId: null,
+    pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
+    capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] });
+  const base = runtime.contractRead.getMockImplementation();
+  runtime.contractRead.mockImplementation(async call => {
+    switch (call.functionName) {
+      case 'controllerOf': return '0x' + '75'.repeat(20);
+      case 'currentRulesetOf': return [{ id: 1n }, { useDataHookForPay: true, dataHook: HOOK, useDataHookForCashOut: false, metadata: 0 }];
+      case 'tokenUriResolverOf': return '0x' + '00'.repeat(20);
+      case 'maxTierIdOf': return 2n;
+      case 'tiersOf': return TIERS;
+      case 'payCreditsOf': return 0n;
+      default: return base(call);
+    }
+  });
+  runtime.prepare.mockImplementation(async (_, args) => prepared(buildUserPayMetadata({ chainId: 8453, tiers: args.tiers, minimumSwapAmountOut: 0n }), 1n));
+  await card(610);
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2));
+  const [first, second] = document.querySelectorAll('.paybox-shop-item');
+  first.querySelector('.paybox-shop-thumb').click();
+  first.querySelectorAll('.paybox-shop-stepbtn')[1].click(); // two of tier 1
+  second.querySelector('.paybox-shop-thumb').click();
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall?.[1].tiers?.tierIdsToMint).toEqual([1n, 1n, 2n]));
+  expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ terminal, token: NATIVE, amount: 5n * 10n ** 16n, tiers: { metadataIdTarget: ID_TARGET, allowOverspending: true } });
+  await quoted('1');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  const tx = runtime.execute.mock.lastCall[0];
+  expect(tx.args.slice(0, 5)).toEqual([610n, NATIVE, 5n * 10n ** 16n, runtime.account, 1n]);
+  expect(mintedTierIds(tx.args[6])).toEqual([1, 1, 2]);
 });
