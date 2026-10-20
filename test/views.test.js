@@ -57,6 +57,10 @@ describe('indexed amount provenance', () => {
     expect(amount('1250000', { decimals: 6, currency: 2 }).textContent).toBe('1.25 USD');
     expect(amount('-1250000', { decimals: 6, currency: 2 }).textContent).toBe('-1.25 USD');
   });
+  it('labels an event row with its own indexed token', () => {
+    expect(amount('2500000', { decimals: 6, tokenSymbol: 'USDC' }).textContent).toBe('2.5000 USDC');
+    expect(amount('2500000', { decimals: null, tokenSymbol: 'USDC' }).textContent).toContain('raw');
+  });
 });
 
 describe('indexed link and SVG safety', () => {

@@ -110,6 +110,12 @@ for (const { file, source } of sources) {
   inspect(source)
 }
 
+// The Data tab's query catalog is shipped GraphQL too.
+const catalog = JSON.parse(fs.readFileSync(path.resolve('data/bendystraw-queries.json'), 'utf8'))
+for (const section of catalog.sections) {
+  for (const query of section.queries) documents.set(query.query, `data/bendystraw-queries.json:${query.id}`)
+}
+
 if (unresolved.length) throw new Error(`Unvalidated generated GraphQL documents:\n${unresolved.join('\n')}`)
 if (documents.size < minimumDocuments) throw new Error(`Found ${documents.size} GraphQL documents; expected at least ${minimumDocuments}`)
 

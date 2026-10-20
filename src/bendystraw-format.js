@@ -114,8 +114,8 @@ export function rawAmount(value) {
   return span;
 }
 
-// Format an amount only when its precision is actually present in the row/column metadata. Currency 1 is
-// ETH and currency 2 is USD; USDC accounting currencies are address-derived IDs, never the number 2.
+// Format an amount only when its precision is actually present in the row/column metadata. An event row's own
+// tokenSymbol labels it; currency 1 is ETH and currency 2 is USD (USDC currencies are address-derived IDs).
 export function amount(value, row, opts) {
   const span = document.createElement('span');
   if (value == null || value === '') { span.textContent = '—'; return span; }
@@ -126,6 +126,7 @@ export function amount(value, row, opts) {
     : (row && row.currency != null ? Number(row.currency) : null);
   const symbol = (opts && opts.symbol)
     || (opts && opts.symbolKey && row && row[opts.symbolKey])
+    || (row && row.tokenSymbol)
     || (currency === 1 ? 'ETH' : (currency === 2 ? 'USD' : ''));
   const precision = opts && opts.precision != null ? Number(opts.precision) : (symbol === 'USD' ? 2 : 4);
   try {
