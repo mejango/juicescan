@@ -288,3 +288,6 @@ Final CSS qualification: source/deployment/generated/schema/transaction/dependen
 - **Resource budget:** Two shared presentation owners, existing harness, no live RPC fanout/wallet signing or sends. Scope strictly these2bugs; narrow measured caps only if required by final bytes.
 
 Before/after qualification: original native Pay width111px and empty warning height16px fail both regressions. Shared-owner fixes pass4desktop/mobile cases: native Pay matches ordinary compact width before/after Pay→Add→Pay, pending warning has0height, genuine funding error is visible. Owning17control unit tests pass. Final total2,312,885gzip remains under all existing caps, no budget changes. Source action/preparation/phase/recovery/journal/metadata owners are unchanged. Required full exacthead checks/CI and verified publication remain.
+
+### Allowed decrease (jango ruling 2026-10-20)
+- [x] The tolerance control reads "Allowed decrease" in every client: `slippageControl`'s label and custom-input name (pay and cash out), the pay and cash-out minimum lines and the buyback-floor message. Presets stay juicescan's 0.5/1/3/5. The cash-out minimum line drops its em dash.

@@ -309,7 +309,7 @@ export function cashOutDirectRouteWins(directQuote, terminalExpected, slippageBp
 export function cashOutExecutionErrorMessage(message) {
   var text = String(message || 'Cash out failed.');
   if (text.indexOf('0xe2d708a9') !== -1 || text.toLowerCase().indexOf('jbbuybackhook_specifiedslippageexceeded') !== -1) {
-    return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.';
+    return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger allowed decrease, then try again.';
   }
   if (text.indexOf('0x6b2bb382') !== -1 || text.toLowerCase().indexOf('jbmultiterminal_undermin') !== -1) {
     // UnderMin also fires when the hook flips a treasury-route cash out to the AMM at
@@ -10231,7 +10231,7 @@ export function renderPayCard(project, cart) {
     } else {
       confirmArgs.beneficiary = beneficiary;
       confirmArgs.minReturnedTokens = minTokens.toString() + (minTokens > 0n
-        ? ' (' + formatTokenCount(minTokens) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% max slippage)'
+        ? ' (' + formatTokenCount(minTokens) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% allowed decrease)'
         : '');
     }
     confirmArgs.memo = reviewedMemo;
@@ -26851,12 +26851,12 @@ function buildRedeemItemsModal(project, requestClose) {
   return wrap;
 }
 
-// "Max slippage" presets plus a custom percent below `limitPercent` (default 100). `setBps` receives the chosen
+// "Allowed decrease" presets plus a custom percent below `limitPercent` (default 100). `setBps` receives the chosen
 // tolerance in basis points; `sync` redraws the row from `getBps` after the tolerance changes elsewhere.
 function slippageControl(getBps, setBps, limitPercent) {
   limitPercent = limitPercent || 100;
   var row = el('div', 'ops-percent ops-slippage');
-  var lbl = el('span', 'ops-slippage-lbl'); lbl.textContent = 'Max slippage'; row.appendChild(lbl);
+  var lbl = el('span', 'ops-slippage-lbl'); lbl.textContent = 'Allowed decrease'; row.appendChild(lbl);
   [50, 100, 300, 500].forEach(function (bps) {
     var b = document.createElement('button'); b.className = 'ops-percent-btn'; b.textContent = (bps / 100) + '%';
     b.setAttribute('data-bps', String(bps));
@@ -26864,7 +26864,7 @@ function slippageControl(getBps, setBps, limitPercent) {
     row.appendChild(b);
   });
   var custom = document.createElement('label'); custom.className = 'ops-slippage-custom';
-  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = String(limitPercent - 0.01); input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom max slippage percent');
+  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = String(limitPercent - 0.01); input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom allowed decrease percent');
   custom.appendChild(input); custom.appendChild(document.createTextNode('%')); row.appendChild(custom);
   input.addEventListener('change', function () {
     var pct = Number(input.value);
@@ -27238,7 +27238,7 @@ function buildCashOutModal(project, requestClose) {
       var activeRoute = state.cashOutRoute || {};
       var floor = activeRoute.minimum != null ? activeRoute.minimum : cashOutExecutableMinimum(f.net, slip);
       var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
-      floorLine.textContent = 'Stops if the return falls below ' + formatBalance(floor, a.decimals, a.symbol) + ' (' + (slip / 100) + '% max slippage)';
+      floorLine.textContent = 'Stops if the return falls below ' + formatBalance(floor, a.decimals, a.symbol) + ' (' + (slip / 100) + '% allowed decrease)';
       preview.appendChild(floorLine);
       if (f.route === 'amm' && activeRoute.rawSwapQuote > 0n && activeRoute.hookMinimum != null) {
         var poolBps = cashOutPoolBufferBps(activeRoute.rawSwapQuote, activeRoute.hookMinimum);
@@ -27491,7 +27491,7 @@ function buildCashOutModal(project, requestClose) {
               rows: [
                 ['Selling', formatBalance(count, 18, sym)],
                 ['You receive', '≈ ' + formatBalance(fresh, reviewedAcct.decimals, reviewedAcct.symbol) + ' (actual set by the pool)'],
-                ['Minimum', formatBalance(minOut, reviewedAcct.decimals, reviewedAcct.symbol) + ' — reverts below this (' + (reviewedSlippage / 100) + '% max slippage)'],
+                ['Minimum', formatBalance(minOut, reviewedAcct.decimals, reviewedAcct.symbol) + ', reverts below this (' + (reviewedSlippage / 100) + '% allowed decrease)'],
                 ['Route', 'Uniswap Universal Router — bypasses the terminal (no 2.5% cash out fee)'],
                 ['To', acct],
               ],
