@@ -7,33 +7,22 @@ import { contracts, meta, categories, chains, commonActions, getFunctions, getAd
 import { renderFunctionForm } from './form.js';
 import { getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl } from './component-base.js';
+import { buildEmbedUrl, errMessage } from './component-base.js';
 
-// Component renderers for pretty mode
-import { renderPayComponent } from './pay-component.js';
-import { renderCashOutComponent } from './cashout-component.js';
-import { renderPayoutsComponent } from './payouts-component.js';
-import { renderMintComponent } from './mint-component.js';
-import { renderReservedComponent } from './reserved-component.js';
-import { renderDeployERC20Component } from './deploy-erc20-component.js';
-import { renderBurnComponent } from './burn-component.js';
-import { renderLaunchComponent } from './launch-component.js';
-import { renderQueueRulesetComponent } from './queue-ruleset-component.js';
-import { renderPermissionsComponent } from './permissions-component.js';
 
-// Map contract.function to pretty component renderer
+// Map contract.function to a loader for its pretty component renderer; each widget loads with its own chunk.
 var PRETTY_COMPONENTS = {
-  'JBMultiTerminal.pay': renderPayComponent,
-  'JBMultiTerminal.cashOutTokensOf': renderCashOutComponent,
-  'JBMultiTerminal.sendPayoutsOf': renderPayoutsComponent,
-  'JBController.mintTokensOf': renderMintComponent,
-  'JBController.sendReservedTokensToSplitsOf': renderReservedComponent,
-  'JBController.deployERC20For': renderDeployERC20Component,
-  'JBController.burnTokensOf': renderBurnComponent,
-  'JBController.launchProjectFor': renderLaunchComponent,
-  'JBController.queueRulesetsOf': renderQueueRulesetComponent,
-  'JBOmnichainDeployer.launchProjectFor': renderLaunchComponent,
-  'JBPermissions.setPermissionsFor': renderPermissionsComponent,
+  'JBMultiTerminal.pay': function () { return import('./pay-component.js').then(function (m) { return m.renderPayComponent; }); },
+  'JBMultiTerminal.cashOutTokensOf': function () { return import('./cashout-component.js').then(function (m) { return m.renderCashOutComponent; }); },
+  'JBMultiTerminal.sendPayoutsOf': function () { return import('./payouts-component.js').then(function (m) { return m.renderPayoutsComponent; }); },
+  'JBController.mintTokensOf': function () { return import('./mint-component.js').then(function (m) { return m.renderMintComponent; }); },
+  'JBController.sendReservedTokensToSplitsOf': function () { return import('./reserved-component.js').then(function (m) { return m.renderReservedComponent; }); },
+  'JBController.deployERC20For': function () { return import('./deploy-erc20-component.js').then(function (m) { return m.renderDeployERC20Component; }); },
+  'JBController.burnTokensOf': function () { return import('./burn-component.js').then(function (m) { return m.renderBurnComponent; }); },
+  'JBController.launchProjectFor': function () { return import('./launch-component.js').then(function (m) { return m.renderLaunchComponent; }); },
+  'JBController.queueRulesetsOf': function () { return import('./queue-ruleset-component.js').then(function (m) { return m.renderQueueRulesetComponent; }); },
+  'JBOmnichainDeployer.launchProjectFor': function () { return import('./launch-component.js').then(function (m) { return m.renderLaunchComponent; }); },
+  'JBPermissions.setPermissionsFor': function () { return import('./permissions-component.js').then(function (m) { return m.renderPermissionsComponent; }); },
 };
 
 // --- Common Actions tab ---
@@ -395,7 +384,7 @@ function renderContractSection(contractName) {
 
 // --- Shared: collapsible function row ---
 
-function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, prettyRenderer) {
+function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, loadPretty) {
   var row = document.createElement('div');
   row.className = 'fn-row';
 
@@ -434,126 +423,139 @@ function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, 
   var expanded = false;
   var contentEl = null;
 
+  var failedEl = null;
   summary.addEventListener('click', function() {
+    if (failedEl) { failedEl.remove(); failedEl = null; }
     expanded = !expanded;
     arrowEl.textContent = expanded ? '\u25BE' : '\u25B8';
     if (expanded && !contentEl) {
       contentEl = document.createElement('div');
       contentEl.style.padding = '0 12px 12px';
 
-      if (prettyRenderer) {
-        // Toolbar: pretty/raw + [style] + [embed] + [ask your assistant]
-        var selectorWrap = document.createElement('div');
-        selectorWrap.className = 'fn-view-selector';
+      if (loadPretty) {
+        contentEl.textContent = 'Loading…';
+        loadPretty().then(function(prettyRenderer) {
+          contentEl.textContent = '';
+          // Toolbar: pretty/raw + [style] + [embed] + [ask your assistant]
+          var selectorWrap = document.createElement('div');
+          selectorWrap.className = 'fn-view-selector';
 
-        var componentEl = prettyRenderer();
-        var compPrefix = componentEl._compPrefix || '';
-        var compGetEmbedParams = componentEl._compGetEmbedParams || null;
+          var componentEl = prettyRenderer();
+          var compPrefix = componentEl._compPrefix || '';
+          var compGetEmbedParams = componentEl._compGetEmbedParams || null;
 
-        var viewSelect = document.createElement('select');
-        viewSelect.className = 'fn-view-dropdown';
-        var prettyOpt = document.createElement('option');
-        prettyOpt.value = 'pretty';
-        prettyOpt.textContent = 'pretty';
-        viewSelect.appendChild(prettyOpt);
-        var rawOpt = document.createElement('option');
-        rawOpt.value = 'raw';
-        rawOpt.textContent = 'raw';
-        viewSelect.appendChild(rawOpt);
-        selectorWrap.appendChild(viewSelect);
+          var viewSelect = document.createElement('select');
+          viewSelect.className = 'fn-view-dropdown';
+          var prettyOpt = document.createElement('option');
+          prettyOpt.value = 'pretty';
+          prettyOpt.textContent = 'pretty';
+          viewSelect.appendChild(prettyOpt);
+          var rawOpt = document.createElement('option');
+          rawOpt.value = 'raw';
+          rawOpt.textContent = 'raw';
+          viewSelect.appendChild(rawOpt);
+          selectorWrap.appendChild(viewSelect);
 
-        // Style toggle next to pretty/raw dropdown
-        var styleToggle = document.createElement('button');
-        styleToggle.type = 'button';
-        styleToggle.className = 'style-toggle-btn';
-        styleToggle.textContent = '[style]';
-        selectorWrap.appendChild(styleToggle);
+          // Style toggle next to pretty/raw dropdown
+          var styleToggle = document.createElement('button');
+          styleToggle.type = 'button';
+          styleToggle.className = 'style-toggle-btn';
+          styleToggle.textContent = '[style]';
+          selectorWrap.appendChild(styleToggle);
 
-        if (compGetEmbedParams) {
-          var copyEmbedBtn = document.createElement('button');
-          copyEmbedBtn.type = 'button';
-          copyEmbedBtn.className = 'style-toggle-btn';
-          copyEmbedBtn.textContent = '[embed]';
-          copyEmbedBtn.addEventListener('click', function(e) {
+          if (compGetEmbedParams) {
+            var copyEmbedBtn = document.createElement('button');
+            copyEmbedBtn.type = 'button';
+            copyEmbedBtn.className = 'style-toggle-btn';
+            copyEmbedBtn.textContent = '[embed]';
+            copyEmbedBtn.addEventListener('click', function(e) {
+              e.preventDefault();
+              var src = buildEmbedUrl(compPrefix, compGetEmbedParams());
+              var snippet = '<iframe src="' + src + '" width="540" height="600" frameborder="0"></iframe>';
+              navigator.clipboard.writeText(snippet).then(function() {
+                copyEmbedBtn.textContent = '[copied]';
+                setTimeout(function() { copyEmbedBtn.textContent = '[embed]'; }, 1500);
+              });
+            });
+            selectorWrap.appendChild(copyEmbedBtn);
+          }
+
+          var copyPromptLink = document.createElement('button');
+          copyPromptLink.type = 'button';
+          copyPromptLink.className = 'fn-copy-prompt';
+          copyPromptLink.textContent = '[ask your assistant]';
+          copyPromptLink.addEventListener('click', function(e) {
             e.preventDefault();
-            var src = buildEmbedUrl(compPrefix, compGetEmbedParams());
-            var snippet = '<iframe src="' + src + '" width="540" height="600" frameborder="0"></iframe>';
-            navigator.clipboard.writeText(snippet).then(function() {
-              copyEmbedBtn.textContent = '[copied]';
-              setTimeout(function() { copyEmbedBtn.textContent = '[embed]'; }, 1500);
+            var fnNs = natspec[contractName] ? natspec[contractName][fn.name] : null;
+            var prompt = getComponentAuditPrompt(fn, contractName, fnNs, componentEl);
+            navigator.clipboard.writeText(prompt).then(function() {
+              copyPromptLink.textContent = '[copied]';
+              setTimeout(function() { copyPromptLink.textContent = '[ask your assistant]'; }, 2000);
             });
           });
-          selectorWrap.appendChild(copyEmbedBtn);
-        }
+          selectorWrap.appendChild(copyPromptLink);
 
-        var copyPromptLink = document.createElement('button');
-        copyPromptLink.type = 'button';
-        copyPromptLink.className = 'fn-copy-prompt';
-        copyPromptLink.textContent = '[ask your assistant]';
-        copyPromptLink.addEventListener('click', function(e) {
-          e.preventDefault();
-          var fnNs = natspec[contractName] ? natspec[contractName][fn.name] : null;
-          var prompt = getComponentAuditPrompt(fn, contractName, fnNs, componentEl);
-          navigator.clipboard.writeText(prompt).then(function() {
-            copyPromptLink.textContent = '[copied]';
-            setTimeout(function() { copyPromptLink.textContent = '[ask your assistant]'; }, 2000);
-          });
-        });
-        selectorWrap.appendChild(copyPromptLink);
+          contentEl.appendChild(selectorWrap);
 
-        contentEl.appendChild(selectorWrap);
+          // Inline style editor panel (above component, hidden by default)
+          var stylePanel = null;
+          var styleVisible = false;
+          var styleInlineWrap = document.createElement('div');
+          styleInlineWrap.className = 'style-inline-wrap';
+          styleInlineWrap.style.display = 'none';
+          contentEl.appendChild(styleInlineWrap);
 
-        // Inline style editor panel (above component, hidden by default)
-        var stylePanel = null;
-        var styleVisible = false;
-        var styleInlineWrap = document.createElement('div');
-        styleInlineWrap.className = 'style-inline-wrap';
-        styleInlineWrap.style.display = 'none';
-        contentEl.appendChild(styleInlineWrap);
+          var prettyContent = document.createElement('div');
+          prettyContent.className = 'pretty-content-wrap';
+          prettyContent.appendChild(componentEl);
+          contentEl.appendChild(prettyContent);
 
-        var prettyContent = document.createElement('div');
-        prettyContent.className = 'pretty-content-wrap';
-        prettyContent.appendChild(componentEl);
-        contentEl.appendChild(prettyContent);
-
-        styleToggle.addEventListener('click', function(e) {
-          e.preventDefault();
-          styleVisible = !styleVisible;
-          if (styleVisible && !stylePanel) {
-            stylePanel = renderStyleEditor(prettyContent, function() {
-              styleVisible = false;
-              styleInlineWrap.style.display = 'none';
-              styleToggle.textContent = '[style]';
-            });
-            stylePanel.className = 'style-editor-inline';
-            styleInlineWrap.appendChild(stylePanel);
-          }
-          styleInlineWrap.style.display = styleVisible ? '' : 'none';
-          styleToggle.textContent = styleVisible ? '[hide style]' : '[style]';
-        });
-
-        var rawContent = document.createElement('div');
-        rawContent.style.display = 'none';
-        var rawForm = null;
-        contentEl.appendChild(rawContent);
-
-        viewSelect.addEventListener('change', function() {
-          if (viewSelect.value === 'pretty') {
-            prettyContent.style.display = '';
-            rawContent.style.display = 'none';
-            styleToggle.style.display = '';
-            if (styleVisible) styleInlineWrap.style.display = '';
-          } else {
-            prettyContent.style.display = 'none';
-            rawContent.style.display = '';
-            styleToggle.style.display = 'none';
-            styleInlineWrap.style.display = 'none';
-            if (!rawForm) {
-              var fnNatspec = natspec[contractName] ? natspec[contractName][fn.name] : null;
-              rawForm = renderFunctionForm(fn, contractName, getContractAddr, abi, fnNatspec);
-              rawContent.appendChild(rawForm);
+          styleToggle.addEventListener('click', function(e) {
+            e.preventDefault();
+            styleVisible = !styleVisible;
+            if (styleVisible && !stylePanel) {
+              stylePanel = renderStyleEditor(prettyContent, function() {
+                styleVisible = false;
+                styleInlineWrap.style.display = 'none';
+                styleToggle.textContent = '[style]';
+              });
+              stylePanel.className = 'style-editor-inline';
+              styleInlineWrap.appendChild(stylePanel);
             }
-          }
+            styleInlineWrap.style.display = styleVisible ? '' : 'none';
+            styleToggle.textContent = styleVisible ? '[hide style]' : '[style]';
+          });
+
+          var rawContent = document.createElement('div');
+          rawContent.style.display = 'none';
+          var rawForm = null;
+          contentEl.appendChild(rawContent);
+
+          viewSelect.addEventListener('change', function() {
+            if (viewSelect.value === 'pretty') {
+              prettyContent.style.display = '';
+              rawContent.style.display = 'none';
+              styleToggle.style.display = '';
+              if (styleVisible) styleInlineWrap.style.display = '';
+            } else {
+              prettyContent.style.display = 'none';
+              rawContent.style.display = '';
+              styleToggle.style.display = 'none';
+              styleInlineWrap.style.display = 'none';
+              if (!rawForm) {
+                var fnNatspec = natspec[contractName] ? natspec[contractName][fn.name] : null;
+                rawForm = renderFunctionForm(fn, contractName, getContractAddr, abi, fnNatspec);
+                rawContent.appendChild(rawForm);
+              }
+            }
+          });
+        }, function(error) {
+          // Keep the message visible; the next click on the row clears it and loads again.
+          contentEl.textContent = errMessage(error, 'Could not load this form.') + ' Click the row to try again.';
+          failedEl = contentEl;
+          contentEl = null;
+          expanded = false;
+          arrowEl.textContent = '\u25B8';
         });
       } else {
         // No component — just render raw form directly

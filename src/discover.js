@@ -5,7 +5,6 @@
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
 import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
-import { renderDefifaNftActions } from './defifa-nft-actions.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
@@ -50,6 +49,13 @@ import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProje
 var createFlow = null;
 function loadCreateFlow() {
   return import('./create-flow.js').then(function (mod) { createFlow = mod; return mod; });
+}
+// Defifa NFT actions load only for a native Defifa inventory. Every path that renders them passes its
+// inventory through afterDefifaActions first, so `defifaActions` is set by the time they render.
+var defifaActions = null;
+function afterDefifaActions(inventory) {
+  if (!isNativeInventory(inventory)) return inventory;
+  return import('./defifa-nft-actions.js').then(function (mod) { defifaActions = mod; return inventory; });
 }
 function withCreateFlow(action) {
   return loadCreateFlow().then(action, function (error) {
@@ -1590,7 +1596,7 @@ export function nftCartSubtotal(shop, cart) {
 }
 
 function renderDefifaActionsForProject(project, inventory, options) {
-  return renderDefifaNftActions(inventory, project.chainId, pidOn(project, project.chainId), function (price, pricing) {
+  return defifaActions.renderDefifaNftActions(inventory, project.chainId, pidOn(project, project.chainId), function (price, pricing) {
     var fresh = Object.assign({}, inventory.pricing, pricing || {});
     if (pricing && (Number(pricing.currency) !== Number(inventory.pricing.currency) || Number(pricing.decimals) !== Number(inventory.pricing.decimals) || String(pricing.token).toLowerCase() !== String(inventory.pricing.token).toLowerCase())) fresh.symbol = pricingSymbol(pricing.currency, pricing.decimals, project.chainId);
     return formatShopPrice(Object.assign({}, inventory, { pricing: fresh }), price, project.chainId);
@@ -1699,7 +1705,7 @@ export function renderShopSection(project, shop, cart) {
   readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }).then(function (identity) {
     if (wrap.isConnected && typeof mgr !== 'undefined' && mgr) mgr.hidden = isNativeInventory(identity);
   }).catch(function () {});
-  var ready = shop ? Promise.resolve(shop) : fetchProjectTiers(project);
+  var ready = (shop ? Promise.resolve(shop) : fetchProjectTiers(project)).then(afterDefifaActions);
   body.textContent = 'Loading items…';
   ready.then(function (s) {
     if (!wrap.isConnected) return;
@@ -3878,7 +3884,7 @@ function renderPayShopStrip(project, cart, opts) {
   wrap.style.display = 'none';
   function load() {
   wrap.innerHTML = ''; wrap.style.display = 'none';
-  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, project).then(function (identity) {
+  readProjectNftIdentity(clientFor(project.chainId), { chainId: Number(project.chainId), projectId: pidOn(project, project.chainId), isRevnet: !!project.isRevnet }, project).then(afterDefifaActions).then(function (identity) {
     if (!wrap.isConnected) return null;
     if (opts.onIdentity) opts.onIdentity(identity);
     return fetchProjectTiers(project);
@@ -17196,9 +17202,15 @@ export function projectAuthoritySafeQueueGroups(rows, authorityRole) {
   });
 }
 
-// The batch tray renderer registers itself (safe-batch-ui.js imports this module, so it can't be imported here).
-var _safeBatchTray = null;
-export function setSafeBatchTrayRenderer(render) { _safeBatchTray = render; }
+// The Safe batch tray loads with its own chunk (safe-batch-ui.js imports this module, so only a dynamic import
+// works here). A placeholder holds its place until then.
+function renderSafeBatchTraySlot(project) {
+  var slot = el('div');
+  import('./safe-batch-ui.js').then(function (mod) { slot.replaceWith(mod.renderSafeBatchTray(project)); }, function (error) {
+    slot.className = 'error-box error'; slot.textContent = errMessage(error, 'Could not load the batch tray.') + ' Reload to try again.';
+  });
+  return slot;
+}
 
 function renderBackOfficeSection(project) {
   var section = el('div', 'detail-section');
@@ -17206,7 +17218,7 @@ function renderBackOfficeSection(project) {
   section.appendChild(renderAccountCard(project));
   // Queued batch steps sit under the account they'll be proposed from; the section is cached across tab
   // switches, so the tray re-renders itself on the tray-updated event instead of being rebuilt here.
-  if (_safeBatchTray) section.appendChild(_safeBatchTray(project));
+  section.appendChild(renderSafeBatchTraySlot(project));
   // One human-readable ENS alias for the exact deployment selected in the URL. The card writes only Ethereum's
   // JBProjectHandles entry for that chainId:projectId; it never fans one ENS record across sibling deployments.
   section.appendChild(renderProjectHandleCard(project));
@@ -26306,7 +26318,7 @@ export function opsActionsRow(project, opts) {
   var capabilities = tokenUiCapabilities(project);
   [
     ['Cash out', async function () {
-      var shop; try { shop = await fetchProjectTiers(project); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
+      var shop; try { shop = await fetchProjectTiers(project).then(afterDefifaActions); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
       if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop, { mode: 'holdings' })); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],

@@ -6,16 +6,12 @@ import { erc20Abi, formatUnits } from 'viem';
 import { getAddress } from './abi-registry.js';
 import { getAuditPrompt } from './prompts.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
-import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet, verifiedHandleProjectRoute, setSafeBatchTrayRenderer } from './discover.js';
-import { renderSafeBatchTray } from './safe-batch-ui.js';
+import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet, verifiedHandleProjectRoute } from './discover.js';
 
-// The Owner/Operator tab mounts the Safe batch tray; the tray module imports discover, so it is wired here.
-setSafeBatchTrayRenderer(renderSafeBatchTray);
 import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
 import { reverseEns } from './ens.js';
-import { renderAccountView } from './account-view.js';
 import { CHAINS, getChainTokens } from './chain.js';
 
 
@@ -476,6 +472,22 @@ function initTabs() {
   initSafeApp().then(function (safe) { if (!safe) eagerConnect(); });
 }
 
+// The account view loads with its own chunk. Only the latest account route renders once it arrives.
+var accountRouteSeq = 0;
+function renderAccountRoute(route) {
+  var seq = ++accountRouteSeq;
+  import('./account-view.js').then(function (mod) {
+    if (seq === accountRouteSeq && document.getElementById('tab-account').classList.contains('active')) mod.renderAccountView(route);
+  }, function (error) {
+    var panel = document.getElementById('tab-account');
+    panel.innerHTML = '';
+    var box = document.createElement('div');
+    box.className = 'error-box error';
+    box.textContent = errMessage(error) + ' Reload to try again.';
+    panel.appendChild(box);
+  });
+}
+
 // Parse the hash and apply it: pick the nav tab, and (for discover) open the project route.
 function applyHash() {
   var raw = (location.hash || '').replace(/^#\/?/, '');
@@ -489,7 +501,7 @@ function applyHash() {
   var activeTab = NAV_TO_TAB[nav] || 'discover';
   if (activeTab !== 'discover') cancelDiscoverRoute();
   activateNavTab(activeTab);
-  if (accountRoute != null) renderAccountView(accountRoute);
+  if (accountRoute != null) renderAccountRoute(accountRoute);
   else if (activeTab === 'discover') applyDiscoverRoute(projectRoute);
   renderTabOnce(activeTab).then(function () {
     // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit

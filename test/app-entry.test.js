@@ -101,7 +101,6 @@ vi.mock('../src/learn-build.js', () => ({
   renderWhyTab: entry.renderWhyTab,
 }));
 vi.mock('../src/discover.js', () => ({
-  setSafeBatchTrayRenderer: vi.fn(),
   renderDiscoverTab: entry.renderDiscoverTab,
   applyDiscoverRoute: entry.applyDiscoverRoute,
   cancelDiscoverRoute: entry.cancelDiscoverRoute,
@@ -116,7 +115,6 @@ vi.mock('../src/discover.js', () => ({
 }));
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: entry.renderDataTab }));
 vi.mock('../src/account-view.js', () => ({ renderAccountView: entry.renderAccountView }));
-vi.mock('../src/safe-batch-ui.js', () => ({ renderSafeBatchTray: vi.fn() }));
 vi.mock('../src/ens.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
 vi.mock('../src/font-selector.js', () => ({
   mountFontSelector: entry.mountFontSelector,
@@ -274,7 +272,7 @@ describe('production app entry point', () => {
 
     location.hash = '#account/0x1111111111111111111111111111111111111111';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
-    expect(entry.renderAccountView).toHaveBeenCalledWith('0x1111111111111111111111111111111111111111');
+    await vi.waitFor(() => expect(entry.renderAccountView).toHaveBeenCalledWith('0x1111111111111111111111111111111111111111'));
     expect(document.getElementById('tab-account').classList.contains('active')).toBe(true);
 
     document.getElementById('audit-prompt-link').click();
