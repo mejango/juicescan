@@ -1,5 +1,6 @@
 import sharp from 'sharp';
 import { BENDYSTRAW_MAINNET_HOST as MAINNET_HOST, BENDYSTRAW_TESTNET_HOST as TESTNET_HOST } from './bendystraw-endpoints.js';
+import tokens from '../data/tokens.json' with { type: 'json' };
 
 const CHAIN_IDS = Object.freeze({
   eth: 1,
@@ -24,15 +25,15 @@ const IPFS_GATEWAYS = [
 
 const PROJECT_QUERY = `query ProjectPreview($projectId: Float!, $chainId: Float!, $version: Float!) {
   project(projectId: $projectId, chainId: $chainId, version: $version) {
-    suckerGroupId paymentsCount name description projectTagline logoUri metadataUri metadata
-    projectTokenBalances { items { balance tokenSymbol decimals } }
+    chainId suckerGroupId paymentsCount name description projectTagline logoUri metadataUri metadata
+    projectTokenBalances { items { token balance balanceUsd tokenSymbol decimals } }
   }
 }`;
 
 const GROUP_QUERY = `query ProjectPreviewGroup($id: String!) {
   suckerGroup(id: $id) {
     paymentsCount
-    projects(limit: 100) { items { projectTokenBalances { items { balance tokenSymbol decimals } } } }
+    projects(limit: 100) { items { chainId projectTokenBalances { items { token balance balanceUsd tokenSymbol decimals } } } }
   }
 }`;
 
@@ -131,16 +132,33 @@ function formatRawAmount(raw, decimals) {
   return `${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''}`;
 }
 
-// One line per held token across the deployments, each in its own symbol and decimals.
+// Listed tokens (ETH, USDC, ...) by chain, so the same token on several chains reads as one line.
+const KNOWN_TOKENS = new Map(Object.entries(tokens).flatMap(([chainId, list]) =>
+  list.map((token) => [`${chainId}:${token.address.toLowerCase()}`, token])));
+
+function formatUsdScaled(raw) {
+  const cents = BigInt(raw) / 10n ** 16n;
+  return `$${(cents / 100n).toLocaleString('en-US')}.${(cents % 100n).toString().padStart(2, '0')}`;
+}
+
+// One line per held token across the deployments, each in its own symbol and decimals. Listed tokens merge
+// across chains by symbol; any other token stays its own line, and one with no readable symbol counts in USD.
 export function formatPreviewBalance(deployments) {
   const buckets = new Map();
-  const rows = (deployments || []).flatMap((deployment) => deployment?.projectTokenBalances?.items || []);
+  let unnamedUsd = 0n;
+  const rows = (deployments || []).flatMap((deployment) =>
+    (deployment?.projectTokenBalances?.items || []).map((row) => ({ ...row, chainId: deployment.chainId })));
   for (const row of rows) {
-    const symbol = typeof row?.tokenSymbol === 'string' ? row.tokenSymbol.trim() : '';
-    const decimals = Number(row?.decimals);
-    if (!symbol || !Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) continue;
     try {
-      const key = `${symbol.toUpperCase()}:${decimals}`;
+      const address = String(row?.token || '').toLowerCase();
+      const known = KNOWN_TOKENS.get(`${Number(row?.chainId)}:${address}`);
+      const symbol = (typeof row?.tokenSymbol === 'string' ? row.tokenSymbol.trim() : '') || known?.symbol || '';
+      const decimals = Number(row?.decimals ?? known?.decimals);
+      if (!symbol || !Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) {
+        unnamedUsd += BigInt(row?.balanceUsd || 0);
+        continue;
+      }
+      const key = known ? `${known.symbol}:${decimals}` : `${row.chainId}:${address}:${decimals}`;
       const current = buckets.get(key);
       buckets.set(key, {
         symbol,
@@ -152,9 +170,10 @@ export function formatPreviewBalance(deployments) {
     }
   }
   const held = [...buckets.values()].filter((bucket) => bucket.amount > 0n);
-  const values = (held.length ? held : [...buckets.values()])
+  const values = (held.length || unnamedUsd > 0n ? held : [...buckets.values()])
     .sort((left, right) => left.symbol.localeCompare(right.symbol))
     .map((bucket) => `${formatRawAmount(bucket.amount, bucket.decimals)} ${bucket.symbol}`);
+  if (unnamedUsd > 0n) values.push(formatUsdScaled(unnamedUsd));
   if (!values.length) return 'Unavailable';
   if (values.length <= 2) return values.join(' + ');
   return `${values.slice(0, 2).join(' + ')} + ${values.length - 2} more`;
