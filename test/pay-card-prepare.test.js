@@ -3,7 +3,8 @@ const h = vi.hoisted(() => ({ prepareUserPay: vi.fn() }));
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await importOriginal(), prepareUserPay: h.prepareUserPay }));
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6';
-import { addToHookMetadata, prepareCardPay } from '../src/discover.js';
+import { addToHookMetadata } from '../src/discover.js';
+import { prepareCardPay } from '../src/pay-preview.js';
 
 const terminal = '0x1111111111111111111111111111111111111111';
 const token = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';

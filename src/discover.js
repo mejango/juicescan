@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
+import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from '@bananapus/nana-sdk-core/v6';
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
@@ -13,7 +13,7 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
-import { computePayPreview, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
+import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
@@ -675,29 +675,6 @@ export function addToHookMetadata(metadata, id, data) {
   }
   var datas = offsets.map(function (start, k) { return '0x' + body.slice(start, offsets[k + 1] || body.length); });
   return createHookMetadata(ids.concat(id), datas.concat(data));
-}
-
-// The pay card's whole payment from the SDK: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
-// preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
-var PREVIEW_PAYER = '0x000000000000000000000000000000000000dEaD';
-export function prepareCardPay(opts) {
-  var tierIds = opts.tierIds || [];
-  function unavailable(reason) { return { received: null, reserved: null, unavailable: true, reason: reason }; }
-  if (!opts.terminal) return Promise.resolve(unavailable('No payment contract on this chain'));
-  return prepareUserPay(clientFor(opts.chainId), {
-    chainId: opts.chainId,
-    terminal: opts.terminal,
-    projectId: BigInt(opts.projectId),
-    token: opts.token,
-    amount: opts.amount,
-    beneficiary: opts.beneficiary || PREVIEW_PAYER,
-    tiers: tierIds.length && opts.shop
-      ? { metadataIdTarget: opts.shop.idTarget || opts.shop.hook, tierIdsToMint: tierIds.map(BigInt), allowOverspending: true }
-      : undefined,
-    slippageBps: BigInt(opts.slippageBps || 0),
-  }).then(function (r) {
-    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
-  }, function (error) { return unavailable(errMessage(error, 'preview unavailable')); });
 }
 
 // JBMetadataResolver envelope for a 721 REDEMPTION: id = getId("cashOut", idTarget); data = abi.encode(uint256[] tokenIds).
@@ -26811,6 +26788,35 @@ function buildRedeemItemsModal(project, requestClose) {
   return wrap;
 }
 
+// "Max slippage" presets plus a custom percent. `setBps` receives the chosen tolerance in basis points; `sync`
+// redraws the row from `getBps` after the tolerance changes elsewhere.
+function slippageControl(getBps, setBps) {
+  var row = el('div', 'ops-percent ops-slippage');
+  var lbl = el('span', 'ops-slippage-lbl'); lbl.textContent = 'Max slippage'; row.appendChild(lbl);
+  [50, 100, 300, 500].forEach(function (bps) {
+    var b = document.createElement('button'); b.className = 'ops-percent-btn'; b.textContent = (bps / 100) + '%';
+    b.setAttribute('data-bps', String(bps));
+    b.addEventListener('click', function () { setBps(bps); sync(); });
+    row.appendChild(b);
+  });
+  var custom = document.createElement('label'); custom.className = 'ops-slippage-custom';
+  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = '99.99'; input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom max slippage percent');
+  custom.appendChild(input); custom.appendChild(document.createTextNode('%')); row.appendChild(custom);
+  input.addEventListener('change', function () {
+    var pct = Number(input.value);
+    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) { input.value = String(getBps() / 100); return; }
+    setBps(Math.round(pct * 100)); sync();
+  });
+  function sync() {
+    Array.prototype.forEach.call(row.querySelectorAll('.ops-percent-btn'), function (b) {
+      b.classList.toggle('active', Number(b.getAttribute('data-bps')) === getBps());
+    });
+    input.value = String(getBps() / 100);
+  }
+  sync();
+  return { node: row, sync: sync };
+}
+
 function buildCashOutModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
@@ -26853,29 +26859,8 @@ function buildCashOutModal(project, requestClose) {
   // Max-slippage control for the pool routes (direct sell / buyback). Hidden until a pool route is active — the
   // treasury reclaim has no swap and ignores it. Changing it re-runs the route comparison so a tolerance
   // which makes the protected pool floor fall below the treasury cannot leave a stale AMM route on screen.
-  var slipRow = el('div', 'ops-percent ops-slippage'); slipRow.style.display = 'none'; wrap.appendChild(slipRow);
-  var slipLbl = el('span', 'ops-slippage-lbl'); slipLbl.textContent = 'Max slippage'; slipRow.appendChild(slipLbl);
-  [50, 100, 300, 500].forEach(function (bps) {
-    var b = document.createElement('button'); b.className = 'ops-percent-btn'; b.textContent = (bps / 100) + '%';
-    b.setAttribute('data-bps', String(bps));
-    b.addEventListener('click', function () { state.slippageBps = bps; syncSlip(); updatePreview(); });
-    slipRow.appendChild(b);
-  });
-  var customSlip = document.createElement('label'); customSlip.className = 'ops-slippage-custom';
-  var customSlipInput = document.createElement('input'); customSlipInput.type = 'number'; customSlipInput.min = '0.01'; customSlipInput.max = '99.99'; customSlipInput.step = '0.1'; customSlipInput.inputMode = 'decimal'; customSlipInput.setAttribute('aria-label', 'Custom max slippage percent');
-  customSlip.appendChild(customSlipInput); customSlip.appendChild(document.createTextNode('%')); slipRow.appendChild(customSlip);
-  customSlipInput.addEventListener('change', function () {
-    var pct = Number(customSlipInput.value);
-    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) { customSlipInput.value = String((state.slippageBps || 100) / 100); return; }
-    state.slippageBps = Math.round(pct * 100); syncSlip(); updatePreview();
-  });
-  function syncSlip() {
-    Array.prototype.forEach.call(slipRow.querySelectorAll('.ops-percent-btn'), function (b) {
-      b.classList.toggle('active', Number(b.getAttribute('data-bps')) === (state.slippageBps || 100));
-    });
-    customSlipInput.value = String((state.slippageBps || 100) / 100);
-  }
-  syncSlip();
+  var slip = slippageControl(function () { return state.slippageBps || 100; }, function (bps) { state.slippageBps = bps; updatePreview(); });
+  var slipRow = slip.node; slipRow.style.display = 'none'; wrap.appendChild(slipRow);
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Cash out';
@@ -27161,7 +27146,7 @@ function buildCashOutModal(project, requestClose) {
     applyCashOutPreviewQuote(state, f, a);
     var poolRoute = f.route === 'amm' || f.route === 'directsell';
     slipRow.style.display = poolRoute ? '' : 'none';
-    if (poolRoute) syncSlip();
+    if (poolRoute) slip.sync();
     preview.innerHTML = '';
     var recv = el('div', 'ops-preview-line ops-preview-recv');
     recv.textContent = 'You’ll receive ~ ' + formatBalance(f.net, a.decimals, a.symbol)

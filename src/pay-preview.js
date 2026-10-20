@@ -13,6 +13,7 @@
 // real beneficiary/reserved counts live in the decoded metadata.
 
 import { decodeAbiParameters, formatUnits } from 'viem';
+import { prepareUserPay } from '@bananapus/nana-sdk-core/v6';
 import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
 // Format an 18-decimal token count (bigint) for display, trimming to a few significant digits.
@@ -242,4 +243,26 @@ export async function computePayPreview(opts) {
     result.reason = errMessage(err, 'preview unavailable');
     return result;
   }
+}
+
+// The pay card's whole payment from the SDK: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
+// preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
+export function prepareCardPay(opts) {
+  var tierIds = opts.tierIds || [];
+  function unavailable(reason) { return { received: null, reserved: null, unavailable: true, reason: reason }; }
+  if (!opts.terminal) return Promise.resolve(unavailable('No payment contract on this chain'));
+  return prepareUserPay(createPublicClientForChain(opts.chainId), {
+    chainId: opts.chainId,
+    terminal: opts.terminal,
+    projectId: BigInt(opts.projectId),
+    token: opts.token,
+    amount: opts.amount,
+    beneficiary: opts.beneficiary || PREVIEW_BENEFICIARY,
+    tiers: tierIds.length && opts.shop
+      ? { metadataIdTarget: opts.shop.idTarget || opts.shop.hook, tierIdsToMint: tierIds.map(BigInt), allowOverspending: true }
+      : undefined,
+    slippageBps: BigInt(opts.slippageBps || 0),
+  }).then(function (r) {
+    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
+  }, function (error) { return unavailable(errMessage(error, 'preview unavailable')); });
 }
