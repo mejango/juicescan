@@ -31,7 +31,6 @@ import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { toggleRow, deploySalt, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, fillSplits, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-shared.js';
 import { isEnsName } from './ens.js';
-import { buildAddLiquidityModal, buildMoveModal } from './project-ops-modals.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -25600,6 +25599,15 @@ function renderOpsSection(project) {
   return section;
 }
 
+// The move and add-liquidity modals load their module on first use; a failed load says so in the modal.
+function openOpsModal(project, title, builder) {
+  import('./project-ops-modals.js').then(function (mod) { openModal(title, mod[builder](project)); }, function (error) {
+    var message = el('div', 'modal-body');
+    message.textContent = errMessage(error, 'Could not load this part of the app.') + ' Check your connection and try again.';
+    openModal(title, message);
+  });
+}
+
 // The row of wallet actions (cash out, borrow, move, add liquidity), each opening a modal.
 export function opsActionsRow(project, opts) {
   opts = opts || {};
@@ -25615,8 +25623,8 @@ export function opsActionsRow(project, opts) {
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
     opts.noLoans ? null : ['Get a loan', function () { var h = {}; var content = buildLoanModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Get a loan', content).close; }],
     // Moving funds only makes sense when the project lives on more than one chain.
-    multiChain ? ['Move between chains', function () { openModal('Move between chains', buildMoveModal(project)); }] : null,
-    capabilities.canAddMarketLiquidity ? ['Add liquidity', function () { openModal('Add liquidity', buildAddLiquidityModal(project)); }] : null,
+    multiChain ? ['Move between chains', function () { openOpsModal(project, 'Move between chains', 'buildMoveModal'); }] : null,
+    capabilities.canAddMarketLiquidity ? ['Add liquidity', function () { openOpsModal(project, 'Add liquidity', 'buildAddLiquidityModal'); }] : null,
   ].filter(Boolean).forEach(function (a) {
     var b = document.createElement('button');
     b.className = 'ops-action-btn';
