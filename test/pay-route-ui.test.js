@@ -55,7 +55,7 @@ vi.mock('../src/pay-preview.js', () => ({
   computePayPreview: payState.preview,
   prepareCardPay: payState.prepare,
   formatTokenCount: value => String(value),
-  renderRoutingTag: () => document.createElement('span'),
+  renderRoutingTag: () => Object.assign(document.createElement('span'), { className: 'pay-routing-tag' }),
   renderAmmSub: () => null,
 }));
 
@@ -152,6 +152,21 @@ describe('pay route trust boundary', () => {
     expect(payState.preview).toHaveBeenCalledWith(expect.objectContaining({ terminal: TERMINAL, metadata: '0xaa' }));
     payState.preview.mockRejectedValue(new Error('RPC unavailable'));
     await expect(payRouteLabels(opts, route)).resolves.toBeNull();
+  });
+
+  it('drops a routing tag read for other metadata when the payment is prepared again', async () => {
+    payState.prepare.mockResolvedValue(quote(120n));
+    const component = renderPayComponent();
+    document.body.appendChild(component);
+    const amount = component.querySelector('.pay-amount-input');
+    amount.value = '2'; amount.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(component.querySelector('.pay-routing-tag')).toBeTruthy());
+    payState.prepare.mockResolvedValue({ ...quote(120n), metadata: '0xbb' });
+    payState.execute.mockImplementation(tx => tx.onStatus('Confirm in your wallet.'));
+    component.querySelector('.pay-btn').click();
+    await vi.waitFor(() => expect(payState.execute).toHaveBeenCalledOnce());
+    expect(payState.execute.mock.calls[0][0].args[6]).toBe('0xbb');
+    expect(component.querySelector('.pay-routing-tag')).toBeFalsy();
   });
 
   it('sends nothing when the amount changes while the route is prepared', async () => {

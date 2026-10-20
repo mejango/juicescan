@@ -510,7 +510,12 @@ export function renderPayComponent() {
       amount: amountParsed,
       beneficiary: beneficiary,
     };
+    // The preview shows with its routing tag in one render (as before); only the submit path skips the tag.
     resolveBestPayRoute(request).then(function (route) {
+      if (!route || route.unavailable || !route.preview || route.preview.unavailable) return { route: route, labels: null };
+      return payRouteLabels(request, route).then(function (labels) { return { route: route, labels: labels }; });
+    }).then(function (found) {
+      var route = found.route, labels = found.labels;
       if (gen !== previewGeneration) return;
       if (!route || route.unavailable) {
         state.phase = 'ready';
@@ -521,11 +526,12 @@ export function renderPayComponent() {
       }
       var p = route.preview;
       state.phase = 'ready';
-      var shown = state.preview = (!p || p.unavailable) ? null : {
+      state.preview = (!p || p.unavailable) ? null : {
         beneficiaryTokens: formatTokenCount(p.received),
         reservedTokens: formatTokenCount(p.reserved),
-        routing: null,
-        amm: null,
+        routing: labels ? labels.routing : null,
+        amm: labels ? labels.amm : null,
+        metadata: p.metadata,
         route: {
           address: route.address,
           contractName: route.contractName,
@@ -534,12 +540,6 @@ export function renderPayComponent() {
       };
       state.error = null;
       updateUI();
-      if (shown) payRouteLabels(request, route).then(function (labels) {
-        if (!labels || gen !== previewGeneration || state.preview !== shown) return;
-        shown.routing = labels.routing;
-        shown.amm = labels.amm;
-        updateUI();
-      });
     }).catch(function () {
       if (gen !== previewGeneration) return;
       state.preview = null;
@@ -606,13 +606,15 @@ export function renderPayComponent() {
         return;
       }
       if (route.preview && !route.preview.unavailable) {
-        // Keep the labels already shown for this route; they are display only.
-        var prior = state.preview && state.preview.route && sameAddress(state.preview.route.address, route.address) ? state.preview : null;
+        // The tag already shown stays only if it was read for exactly this route and metadata; display only.
+        var prior = state.preview && state.preview.route && sameAddress(state.preview.route.address, route.address)
+          && state.preview.metadata === route.preview.metadata ? state.preview : null;
         state.preview = {
           beneficiaryTokens: formatTokenCount(route.preview.received),
           reservedTokens: formatTokenCount(route.preview.reserved),
           routing: prior ? prior.routing : null,
           amm: prior ? prior.amm : null,
+          metadata: route.preview.metadata,
           route: {
             address: route.address,
             contractName: route.contractName,
