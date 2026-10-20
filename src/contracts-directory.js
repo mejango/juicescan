@@ -2,7 +2,8 @@
 // The API tab's contract directory and the Actions tab: collapsible function rows with their natspec,
 // source and transaction forms.
 
-import { contracts, meta, natspec, categories, chains, commonActions, getFunctions, getAddress, getFunctionSource, loadFunctionSourceBody, getGithubUrl } from './abi-registry.js';
+import { natspec } from './abi-natspec.js';
+import { contracts, meta, categories, chains, commonActions, getFunctions, getAddress, getFunctionSource, loadFunctionSourceBody, getGithubUrl } from './abi-registry.js';
 import { renderFunctionForm } from './form.js';
 import { getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';

@@ -5,7 +5,6 @@
 import { erc20Abi, formatUnits } from 'viem';
 import { getAddress } from './abi-registry.js';
 import { getAuditPrompt } from './prompts.js';
-import { renderCommonActions, renderDirectory } from './contracts-directory.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
 import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet, verifiedHandleProjectRoute, setSafeBatchTrayRenderer } from './discover.js';
@@ -105,12 +104,51 @@ function activateNavTab(dataTab) {
   if (content) content.classList.add('active');
 }
 
+// Panels that render on first activation. `load` fetches the panel's chunk (also used to prefetch on hover
+// or focus); `render` fills the panel from the loaded module.
+var LAZY_TABS = {
+  common: { load: function () { return import('./contracts-directory.js'); }, render: function (mod) { mod.renderCommonActions(); } },
+  directory: { load: function () { return import('./contracts-directory.js'); }, render: function (mod) { mod.renderDirectory(); } },
+};
+var tabRenders = {};
+
+// Resolves once the tab's panel is rendered. A failed load shows a retry in the panel and is not cached.
+function renderTabOnce(dataTab) {
+  var lazy = LAZY_TABS[dataTab];
+  if (!lazy) return Promise.resolve();
+  if (tabRenders[dataTab]) return tabRenders[dataTab];
+  var panel = document.getElementById('tab-' + dataTab);
+  panel.innerHTML = '<div class="error-box muted">Loading…</div>';
+  tabRenders[dataTab] = lazy.load().then(lazy.render, function (error) {
+    delete tabRenders[dataTab];
+    panel.innerHTML = '';
+    var box = document.createElement('div');
+    box.className = 'error-box error';
+    box.textContent = 'This tab failed to load. ';
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'style-toggle-btn';
+    retry.textContent = '[retry]';
+    retry.addEventListener('click', function () { renderTabOnce(dataTab).catch(function () {}); });
+    box.appendChild(retry);
+    panel.appendChild(box);
+    throw error;
+  });
+  return tabRenders[dataTab];
+}
+
 function initTabs() {
   document.querySelectorAll('.tab').forEach(function(btn) {
     btn.addEventListener('click', function() {
       // Update the hash; the hashchange handler applies the route (keeps URL and UI in sync).
       location.hash = '#' + (TAB_TO_NAV[btn.dataset.tab] || btn.dataset.tab);
     });
+    var lazy = LAZY_TABS[btn.dataset.tab];
+    if (lazy) {
+      var prefetch = function () { lazy.load().catch(function () {}); };
+      btn.addEventListener('pointerenter', prefetch, { once: true });
+      btn.addEventListener('focus', prefetch, { once: true });
+    }
   });
   // The Create button now lives inside the Discover tab (rendered by renderDiscoverTab), wired there.
 
@@ -448,6 +486,7 @@ function applyHash() {
   var activeTab = NAV_TO_TAB[nav] || 'discover';
   if (activeTab !== 'discover') cancelDiscoverRoute();
   activateNavTab(activeTab);
+  renderTabOnce(activeTab).catch(function () {});
   if (accountRoute != null) renderAccountView(accountRoute);
   else if (activeTab === 'discover') applyDiscoverRoute(projectRoute);
   // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit these).
@@ -499,8 +538,6 @@ function init() {
   initTabs();
   initAuditPrompt();
   renderDiscoverTab();
-  renderCommonActions();
-  renderDirectory();
   renderDataTab();
   renderLearnTab();
   renderBuildTab();

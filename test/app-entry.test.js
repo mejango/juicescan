@@ -51,7 +51,6 @@ vi.mock('../src/abi-registry.js', () => ({
       },
     },
   },
-  natspec: { JBExample: { readThing: { notice: 'Reads canonical state.', params: { id: 'Identifier.' } } } },
   categories: { Core: ['JBExample', 'JBDifferent'], Empty: [] },
   chains: { 1: { name: 'Ethereum' }, 10: { name: 'Optimism' } },
   commonActions: [{
@@ -66,6 +65,9 @@ vi.mock('../src/abi-registry.js', () => ({
   getGithubUrl: (_name, fn) => fn ? 'https://github.com/example/contracts/blob/main/JBExample.sol#L10' : 'https://github.com/example/contracts',
 }));
 
+vi.mock('../src/abi-natspec.js', () => ({
+  natspec: { JBExample: { readThing: { notice: 'Reads canonical state.', params: { id: 'Identifier.' } } } },
+}));
 vi.mock('../src/form.js', () => ({ renderFunctionForm: entry.renderFunctionForm }));
 vi.mock('../src/prompts.js', () => ({
   getAuditPrompt: () => 'audit the canonical V6 call',
@@ -181,8 +183,13 @@ describe('production app entry point', () => {
     expect(document.querySelector('.tab[data-tab="learn"]').classList.contains('active')).toBe(true);
     expect(document.getElementById('tab-learn').classList.contains('active')).toBe(true);
 
+    // Actions and API render on first activation, not at startup.
     const common = document.getElementById('tab-common');
-    expect(common.textContent).toMatch(/Work in progress/);
+    expect(common.textContent).toBe('');
+    expect(document.getElementById('tab-directory').textContent).toBe('');
+    location.hash = '#actions';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await vi.waitFor(() => expect(common.textContent).toMatch(/Work in progress/));
     expect(common.textContent).toMatch(/READ THING/);
     common.querySelector('.fn-summary').click();
     expect(entry.renderFunctionForm).toHaveBeenCalledWith(
@@ -193,6 +200,9 @@ describe('production app entry point', () => {
       expect.objectContaining({ notice: 'Reads canonical state.' }),
     );
 
+    location.hash = '#api';
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    await vi.waitFor(() => expect(document.querySelector('.contract-section')).not.toBeNull());
     const contract = document.querySelector('.contract-section');
     expect(contract.textContent).toMatch(/Canonical example contract/);
     const address = contract.querySelector('.contract-address');
