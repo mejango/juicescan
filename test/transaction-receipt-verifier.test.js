@@ -146,15 +146,12 @@ it('invokes approval synchronously after the native intent guard without a promi
  await vi.waitFor(()=>expect(validAtApproval).toBe(true));
  await vi.waitFor(()=>expect(onError).toHaveBeenCalled());expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
-it('passes the failure itself, and a mined revert re-simulated at its block, to the caller',async()=>{
- const revert=Object.assign(new Error('Execution reverted.'),{data:'0x6b2bb382'});
+it('passes the failure itself to the caller, and never replays a mined revert at its block',async()=>{
  h.client.getTransactionReceipt=vi.fn(async()=>({...receipt,status:'reverted'}));
- h.client.simulateContract=vi.fn(async request=>{if(request.blockNumber===10n)throw revert;return {request};});
  const onError=vi.fn();executeTransaction({...args,onError});
  await vi.waitFor(()=>expect(onError).toHaveBeenCalledTimes(1));
- const meta=onError.mock.lastCall[1];
- expect(meta.error.onchainRevert).toBe(true);expect(meta.error.cause).toBe(revert);
- expect(h.client.simulateContract).toHaveBeenLastCalledWith(expect.objectContaining({functionName:'noop',blockNumber:10n}));
+ expect(onError.mock.lastCall[1].error.onchainRevert).toBe(true);
+ expect(h.client.simulateContract).toHaveBeenCalledTimes(1);
  expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
 it('names a failure with describeFailure in the open dialog and to the caller',async()=>{

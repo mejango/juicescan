@@ -10344,9 +10344,14 @@ export function renderPayCard(project, cart) {
         // The revert's own reason when known; a shortfall offers a looser minimum and a fresh quote.
         var failure = add ? null : decodePayFailure(meta && meta.error);
         if (failure) m = failure.received === 0n ? 'This payment would return no tokens right now, so it was not sent.' : failure.message;
+        // A mined revert's cause is not knowable from its receipt: quote and simulate it again, and show that reason.
+        var mined = !add && !!(meta && meta.error && meta.error.onchainRevert);
+        if (mined) m = 'The payment reverted.';
         status.className = 'paybox-status error'; status.textContent = m;
         var retryBps = add || !opts.retryWithSlippage ? null : payRetrySlippageBps(failure, opts.slippageBps);
-        if (confirmCtx && retryBps != null) {
+        if (confirmCtx && mined && opts.retryWithSlippage) {
+          confirmCtx.retry(m, null, 'Review again', function () { opts.retryWithSlippage(opts.slippageBps); });
+        } else if (confirmCtx && retryBps != null) {
           var slip = slippageControl(function () { return retryBps; }, function (bps) { retryBps = bps; }, PAY_SLIPPAGE_LIMIT_PERCENT);
           slip.node.classList.add('pay-retry-slippage');
           confirmCtx.retry(m, slip.node, 'Review again', function () { opts.retryWithSlippage(retryBps); });

@@ -340,3 +340,20 @@ it('says a payment that would return no tokens was not sent, and offers no loose
   await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe('This payment would return no tokens right now, so it was not sent.'));
   expect(reviewAgainButton()).toBeFalsy();
 });
+
+it('says a mined revert reverted, and Review again quotes and simulates it afresh', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Transaction reverted onchain. No state changes were applied.', { error: Object.assign(new Error('reverted'), { onchainRevert: true }) }));
+  await card(618); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  expect(document.querySelector('.tx-confirm-status').textContent).toBe('The payment reverted.');
+  expect(document.querySelector('.pay-retry-slippage')).toBeNull();
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  expect(runtime.prepare.mock.calls.length).toBe(calls + 1);
+  expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n);
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(2));
+});

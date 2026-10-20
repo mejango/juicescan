@@ -1468,7 +1468,6 @@ export function executeTransaction(opts) {
     cbs.onError('Wallet route changed. Review the transaction again.'); return;
   }
   var submittedHash = null;
-  var sentRequest = null;
   var reverifiedBlock = null;
   var beforeWriteComplete = false, walletInvoked = false;
   function assertWalletInvocation(expectedSafe) {
@@ -1581,7 +1580,6 @@ export function executeTransaction(opts) {
       if (opts.onSending && await wallet.getChainId() !== opts.chainId) throw new Error('Wallet network changed. Review the transaction again.');
       assertWalletInvocation(false);
       walletInvoked = true;
-      sentRequest = simulation.request;
       return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
     });
   }).then(function(hash) {
@@ -1599,12 +1597,6 @@ export function executeTransaction(opts) {
     if (!receipt || receipt.status !== 'success') {
       var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
       reverted.onchainRevert = true;
-      // A receipt carries no reason: the same call at its block says why it reverts there.
-      if (receipt && receipt.blockNumber != null && sentRequest) {
-        reverted.cause = await createPublicClientForChain(opts.chainId)
-          .simulateContract(Object.assign({}, sentRequest, { blockNumber: receipt.blockNumber }))
-          .then(function () { return undefined; }, function (e) { return e; });
-      }
       throw reverted;
     }
     if (opts.verifyReceipt) await opts.verifyReceipt(receipt);
