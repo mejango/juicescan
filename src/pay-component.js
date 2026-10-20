@@ -302,7 +302,8 @@ export function renderPayComponent() {
     var payBtn = el('button', 'pay-btn');
     payBtn.textContent = 'PAY';
     payBtn.addEventListener('click', function() {
-      if (state.phase === 'ready' || state.phase === 'idle') {
+      // A preview still loading never blocks Pay: executePay drops it and prepares the payment itself.
+      if (state.phase === 'ready' || state.phase === 'idle' || state.phase === 'previewing') {
         executePay();
       } else {
         alert('Please wait for the current step to finish.');

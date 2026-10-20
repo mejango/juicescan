@@ -169,6 +169,21 @@ describe('pay route trust boundary', () => {
     expect(component.querySelector('.pay-routing-tag')).toBeFalsy();
   });
 
+  it('pays at once when Pay is pressed while the preview is still loading', async () => {
+    payState.prepare.mockResolvedValue(quote(120n));
+    payState.preview.mockReturnValue(new Promise(() => {})); // the preview's routing read never finishes
+    const component = renderPayComponent();
+    document.body.appendChild(component);
+    const amount = component.querySelector('.pay-amount-input');
+    amount.value = '2'; amount.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(payState.preview).toHaveBeenCalled());
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    component.querySelector('.pay-btn').click();
+    await vi.waitFor(() => expect(payState.execute).toHaveBeenCalledOnce());
+    expect(alert).not.toHaveBeenCalled();
+    expect(payState.execute.mock.calls[0][0].args[2]).toBe(2n * 10n ** 18n);
+  });
+
   it('sends nothing when the amount changes while the route is prepared', async () => {
     const pending = [];
     payState.prepare.mockImplementation(() => new Promise(resolve => pending.push(() => resolve(quote(120n)))));
