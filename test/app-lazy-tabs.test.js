@@ -48,7 +48,7 @@ vi.mock('../src/discover.js', () => ({
 vi.mock('../src/data-tab.js', () => ({ renderDataTab: vi.fn() }));
 vi.mock('../src/account-view.js', () => ({ renderAccountView: vi.fn() }));
 vi.mock('../src/safe-batch-ui.js', () => ({ renderSafeBatchTray: vi.fn() }));
-vi.mock('../src/create-flow.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
+vi.mock('../src/ens.js', () => ({ reverseEns: vi.fn().mockResolvedValue(null) }));
 vi.mock('../src/font-selector.js', () => ({ mountFontSelector: vi.fn(), applySavedFont: vi.fn() }));
 
 const tabs = ['discover', 'common', 'learn', 'build', 'directory', 'data', 'admin', 'why'];

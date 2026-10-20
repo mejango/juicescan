@@ -11,7 +11,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { toFunctionSelector } from 'viem';
 import { launchProjectAbi } from '../src/launch-component.js';
-import { DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS } from '../src/create-flow.js';
+import { DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS } from '../src/create-shared.js';
 
 const ROOT = process.cwd();
 

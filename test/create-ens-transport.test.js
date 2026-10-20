@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { decodeFunctionData, encodeFunctionResult, parseAbi } from 'viem';
-import { reverseEns, __test } from '../src/create-flow.js';
+import { __test } from '../src/create-flow.js';
+import { resolveEns, reverseEns } from '../src/ens.js';
 import { setCustomRpc } from '../src/chain.js';
 
 const OWNER = '0x1111111111111111111111111111111111111111';
@@ -32,23 +33,23 @@ beforeEach(()=>{
 function answer(body){expect(body.method).toBe('eth_call');return {jsonrpc:'2.0',id:body.id,result:resultFor(body.params[0].data)};}
 afterEach(()=>vi.unstubAllGlobals());
 it('routes real normalized forward and reverse UniversalResolver HTTP reads through Center',async()=>{
-  await expect(__test.resolveEns('  Center-Reader.ETH ')).resolves.toBe(OWNER);
+  await expect(resolveEns('  Center-Reader.ETH ')).resolves.toBe(OWNER);
   await expect(reverseEns(OWNER)).resolves.toBe('reverse-reader.eth');
   expect(requests.length).toBeGreaterThan(0);
   expect(requests.every(request=>request.url==='https://juicebox.center/v1/rpc/1')).toBe(true);
   const count=requests.length;
-  await expect(__test.resolveEns('center-reader.eth')).resolves.toBe(OWNER);
+  await expect(resolveEns('center-reader.eth')).resolves.toBe(OWNER);
   await expect(reverseEns(OWNER)).resolves.toBe('reverse-reader.eth');
   expect(requests).toHaveLength(count);
 });
 it('preserves explicit custom RPC transport without adding a provider fallback',async()=>{
   setCustomRpc(1,'https://user-rpc.example/ethereum');
-  await expect(__test.resolveEns('custom-reader.eth')).resolves.toBe(OWNER);
+  await expect(resolveEns('custom-reader.eth')).resolves.toBe(OWNER);
   expect(requests.length).toBeGreaterThan(0);
   expect(requests.every(request=>request.url==='https://user-rpc.example/ethereum')).toBe(true);
 });
 it('preserves resolved recipient aliases and sends no request for invalid names',async()=>{
-  await expect(__test.resolveEns('invalid_.eth')).resolves.toBeNull();expect(requests).toHaveLength(0);
+  await expect(resolveEns('invalid_.eth')).resolves.toBeNull();expect(requests).toHaveLength(0);
   const input=document.createElement('input');input.value='alias-reader.eth';const store=vi.fn();
   const hint=__test.attachEns(input,store,{chainId:8453});
   await vi.waitFor(()=>expect(store).toHaveBeenCalledWith('alias-reader.eth',OWNER));

@@ -16,7 +16,7 @@ import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js'
 import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
-import { reverseEns } from './create-flow.js';
+import { reverseEns } from './ens.js';
 import { renderAccountView } from './account-view.js';
 import { CHAINS, getChainTokens } from './chain.js';
 
