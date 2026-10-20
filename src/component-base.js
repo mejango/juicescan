@@ -543,7 +543,7 @@ function buildTxAuditPrompt(payload) {
   var site = currentSiteRef();
   lines.push('Audit the exact app build I am using:');
   if (site) {
-    lines.push('- This UI was loaded from IPFS CID `' + site.cid + '` — fetch it (e.g. ' + site.gateway + ' or ipfs://' + site.cid + ') and inspect src/app.js / the create + transaction code to confirm the button I clicked builds exactly this payload and nothing hidden.');
+    lines.push('- This UI was loaded from IPFS CID `' + site.cid + '` — fetch it (e.g. ' + site.gateway + ' or ipfs://' + site.cid + '), rebuild the repo at the commit in its footer to compare, and inspect the create + transaction code in src/ to confirm the button I clicked builds exactly this payload and nothing hidden.');
   } else {
     lines.push('- This UI was loaded from ' + currentOrigin() + ' (not an IPFS gateway). If it claims to be the Juicebox V6 app but is not served from a known IPFS build, treat that as a red flag.');
   }

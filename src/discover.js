@@ -1323,9 +1323,11 @@ function removeLightEdgeMatteFromImage(img) {
 var _pdfjsPromise = null;
 function loadPdfjs() {
   if (!_pdfjsPromise) {
-    var moduleUrl = './pdf.min.mjs'; // non-literal arg keeps esbuild from trying to bundle the lazy module
+    // Resolve against the page, not this module: the code may live in a chunk under dist/chunks/.
+    // A non-literal arg also keeps esbuild from trying to bundle the lazy module.
+    var moduleUrl = new URL('pdf.min.mjs', document.baseURI).href;
     _pdfjsPromise = import(moduleUrl).then(function (lib) {
-      lib.GlobalWorkerOptions.workerSrc = './pdf.worker.min.mjs';
+      lib.GlobalWorkerOptions.workerSrc = new URL('pdf.worker.min.mjs', document.baseURI).href;
       return lib;
     });
   }

@@ -19,7 +19,7 @@ npm run test:ci      # every deterministic CI gate
 npm run check        # production dependency audit + every deterministic gate
 ```
 
-`dist/` is the entire deployable app: `index.html` + `app.js` (the bundle, with all ABIs/data inlined) + `style.css` + a couple of static assets.
+`dist/` is the entire deployable app: `index.html`, the minified ESM entry `app-<hash>.js` plus the chunks it loads from `chunks/` (startup modules are preloaded; tab, dialog and source-viewer code loads on first use), `style.css` and a few static assets. Every file resolves relative to the page, so the directory deploys as one IPFS CID.
 
 `npm run serve` serves the existing `dist/` without rebuilding it. Set `PORT` to override its default port; Playwright does this automatically so its isolated test server remains on port 4181.
 
@@ -30,7 +30,7 @@ read-only Bendystraw/IPFS data and no transaction path moves server-side.
 
 ## Architecture
 
-Vanilla ES modules, no framework, bundled with esbuild. State lives in plain objects; views are built with a tiny `el()` DOM helper and re-rendered on change. The whole app is one IIFE in `dist/app.js`.
+Vanilla ES modules, no framework, bundled with esbuild. State lives in plain objects; views are built with a tiny `el()` DOM helper and re-rendered on change. esbuild splits the app into an ESM entry and lazy chunks.
 
 ```
 src/
@@ -63,7 +63,7 @@ test/                     vitest unit/encoding tests + a CDP UI-smoke runner
 1. `sync-deployments` — pull ABIs + addresses from `../../deploy-all-v6/deployments` into `data/`.
 2. `extract-sources` — pull verified contract sources (for the in-app source viewer).
 3. `generate-registry` — fold everything into `src/abi-registry.js` (one importable module).
-4. `bundle` — esbuild → `dist/app.js`; `style.css` is copied verbatim.
+4. `bundle` — esbuild → `dist/app-<hash>.js` + `dist/chunks/`, with `index.html` pointing at the entry and preloading its static imports; `style.css` is copied verbatim.
 
 > `src/abi-registry.js` and `data/*.json` are generated. Regenerate with `npm run build`; never hand-edit them. They change only when `deploy-all-v6/deployments` changes (e.g. a new chain or a redeploy).
 

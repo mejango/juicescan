@@ -1,55 +1,13 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
+// Startup is what the browser fetches before the app runs: index.html, its stylesheet, the module entry
+// and every chunk the entry reaches through static imports. Lazy chunks (import()) count only in the total.
+// Monolithic IIFE baseline (bd900bb): app.js 10,649,557 B raw / 1,545,664 B gzip, startup 1,597,189 B gzip.
+const startupBudget = { raw: 10_650_000, gzip: 1_598_000 };
+
 const budgets = {
-  // Verified ENS-handle routing, the resumable two-transaction editor, indexer-independent authority lookup,
-  // strict Safe/queue lifecycle checks, and authenticated Relayr payments add to the monolithic bundle
-  // (3fcb1da: 1,209,174 B; handle review: 1,226,879 B; queue-bound handle verifier: 1,239,966 B;
-  // persisted exact Relayr/Safe completion proof: 8,667,995 B raw / 1,246,408 B gzip;
-  // EIP-7702 authority support + exact pending-Safe-call reuse: 8,684,397 B raw / 1,249,797 B gzip;
-  // complete Permissions card — owner row, wildcard-scope grants, per-chain sets: 8,695,219 B raw;
-  // amounts-first LP sizing — range solver + mode toggle in the add-liquidity modal: 8,700,528 B raw;
-  // later-ruleset start control (N cycles / date) + JBDeadline launch-queue gate: 8,761,482 B raw / 1,266,105 B gzip;
-  // queue-editor follow-on rulesets + JB Center read-RPC fallback: 8,564 KB raw / 1,268,292 B gzip;
-  // Pay-style stepped confirm for every write — step lists, showNext sessions, friendly rows: 8,799,344 B raw / 1,275,448 B gzip;
-  // Relayr funding choice, exact final simulation, and durable sequential recovery: 8,854,367 B raw / 1,290,323 B gzip.
-  // Local metadata preservation and destination-safe setters: 8,880,480 B raw / 1,294,346 B gzip (+26,113 / +4,023).
-  // Same-dependency/env HEAD checkout: 8,837,216 B raw / 1,280,195 B gzip; total feature delta +43,264 B raw / +14,151 B gzip).
-  // Six operational groups + frozen rounds, cross-action nonce guards, and exact external Safe reconciliation:
-  // 9,000,252 B raw / 1,322,865 B gzip (+119,772 / +28,519 versus the previous setters build).
-  // Total delta versus same-dependency/env HEAD: +163,036 B raw / +42,670 B gzip.
-  // Testnet Relayr, same-family funding, and preservation of prior direct journals:
-  // 9,004,301 B raw / 1,323,697 B gzip (+4,049 / +832 versus the six-group build).
-  // Safe operator batch — per-chain tray, MultiSend codec, operation-1 proposal, preset resolver, batch dialog:
-  // 9,055,913 B raw / 1,335,883 B gzip (+51,612 / +12,186 versus the testnet Relayr build); style.css 245,639 B raw.
-  // Add-liquidity through the Safe App as one batch: 9,062,911 B raw / 1,337,326 B gzip (+6,998 / +1,443).
-  // Learn/Build links, corrected economics and readable prompt: 9,064,085 B raw / 1,340,210 B gzip.
-  // Script-free guides are separate, optional page downloads, not added to the app's initial response.
-  // Executed testnet gateway/feed, retired router/hook ABI + source history, and exact chain ABI variants:
-  // 9,805,853 B raw / 1,421,394 B gzip (+741,768 / +81,184 versus Learn/Build).
-  // Executed mainnets restore canonical buyback-hook source and preserve retired mainnet identities:
-  // 9,915,280 B raw / 1,457,456 B gzip (+107,306 / +35,494 versus the completed testnet rollout).
-  // Pending-payment forms, canonical commitment/receipt verification, and durable direct/Safe retries:
-  // 9,950,161 B raw / 1,464,061 B gzip (+34,881 / +6,605 versus the production rollout above).
-  // Live fee-buyback execution receipts and wait/ready review controls:
-  // 9,963,295 B raw / 1,468,745 B gzip (+13,134 / +4,684 versus the pending-payment build).
-  // Revnet item transfer copy — non-transferable wording at add-item, item modal, shop config: 9,967,611 B raw / 1,468,831 B gzip.
-  // Safe batch tabs + queued-proposal view, buyback pool setter, item sale/split-share activity, Safe App queue handoff: 9,980,290 B raw / 1,471,877 B gzip.
-  // Published SDK2.28.0 protocol inventory + native Defifa view: 10,400,410 B raw / 1,506,547 B gzip.
-  // Same dependency graph/env HEAD baseline: 9,982,000 B raw / 1,472,309 B gzip.
-  // Shared ABI/discovery adds 418,410 B raw / 34,238 B gzip; keep enforceable rounded ceilings.
-  // Retryable identity/provenance feedback and native token copy: +3,426 B raw / +729 B gzip.
-  // SDK2.29.0 native NFT actions, canonical recovery and Safe approval: 10,594,759 B raw / 1,537,367 B gzip.
-  // Same Node22/env baseline95cdc21: 10,408,036 / 1,508,387 B; growth +186,723 / +28,980 B.
-  // Round each measured ceiling to the next1KB; no other asset allowance changes.
-  // Shared native/ordinary checkout, bounded cosmetic URI media and final synchronous intent guards:
-  // Node22 same-env222c5f baseline10,594,623 raw /1,537,295 gzip; final10,608,959 /1,540,607.
-  // Growth +14,336 raw /+3,312 gzip, no new dependency; keep the next1KB ceilings.
-  // Shared exhausted-image fallback: 10,609,107 raw /1,540,684 gzip, +148/+77 B; only raw next1KB changes.
-  // SDK3.0.0 (held-write recovery, prepareUserPay) replaces the direct Uniswap buy route:
-  // final 10,649,225 raw /1,545,610 gzip with the pay identity guard. Next1KB ceilings.
-  'dist/app.js': { raw: 10_650_000, gzip: 1_546_000 },
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   'dist/build.html': { raw: 53_000, gzip: 14_200 },
@@ -60,13 +18,61 @@ const budgets = {
 };
 
 const failures = [];
+const gzipOf = async file => gzipSync(await readFile(file), { level: 9 }).byteLength;
 for (const [file, budget] of Object.entries(budgets)) {
   const raw = (await stat(file)).size;
-  const gzip = gzipSync(await readFile(file), { level: 9 }).byteLength;
+  const gzip = await gzipOf(file);
   console.log(`${file}: ${raw.toLocaleString()} B raw, ${gzip.toLocaleString()} B gzip`);
   if (raw > budget.raw) failures.push(`${file} raw ${raw} > ${budget.raw}`);
   if (gzip > budget.gzip) failures.push(`${file} gzip ${gzip} > ${budget.gzip}`);
 }
+
+// esbuild hoists every static import to the top of a module, so reading the leading import statements
+// gives a module's static dependencies exactly.
+function leadingImports(code) {
+  const specifiers = [];
+  const statement = /^\s*import\s*(?:[^;"']*?from\s*)?["']([^"']+)["'];?/;
+  let rest = code;
+  for (let match = statement.exec(rest); match; match = statement.exec(rest)) {
+    specifiers.push(match[1]);
+    rest = rest.slice(match[0].length);
+  }
+  return specifiers;
+}
+
+const html = await readFile('dist/index.html', 'utf8');
+const attribute = (pattern) => [...html.matchAll(pattern)].map(match => join('dist', match[1].split('?')[0]));
+const entries = attribute(/<script[^>]*type="module"[^>]*src="([^"]+)"/g);
+const preloads = attribute(/<link[^>]*rel="modulepreload"[^>]*href="([^"]+)"/g);
+const stylesheets = attribute(/<link[^>]*rel="stylesheet"[^>]*href="([^"]+)"/g);
+if (entries.length !== 1) failures.push(`index.html must load exactly one module entry, found ${entries.length}`);
+if (/<script(?![^>]*type="module")[^>]*src=/.test(html)) failures.push('index.html loads a classic script; the app ships as one ESM entry');
+
+const closure = [];
+async function walk(file) {
+  if (closure.includes(file)) return;
+  closure.push(file);
+  for (const specifier of leadingImports(await readFile(file, 'utf8'))) {
+    if (!specifier.startsWith('.')) failures.push(`${file} statically imports a non-relative module ${specifier}`);
+    else await walk(join(dirname(file), specifier));
+  }
+}
+for (const entry of entries) await walk(entry);
+const unpreloaded = closure.slice(1).filter(file => !preloads.includes(file));
+const unneeded = preloads.filter(file => !closure.includes(file));
+if (unpreloaded.length) failures.push(`startup chunks without modulepreload: ${unpreloaded.join(', ')}`);
+if (unneeded.length) failures.push(`modulepreload of chunks the entry does not import: ${unneeded.join(', ')}`);
+
+const startupFiles = ['dist/index.html', ...stylesheets, ...closure];
+let startupRaw = 0;
+let startupGzip = 0;
+for (const file of startupFiles) {
+  startupRaw += (await stat(file)).size;
+  startupGzip += await gzipOf(file);
+}
+console.log(`Startup (${startupFiles.length} files, ${closure.length} JS modules): ${startupRaw.toLocaleString()} B raw, ${startupGzip.toLocaleString()} B gzip (budget ${startupBudget.gzip.toLocaleString()} B).`);
+if (startupRaw > startupBudget.raw) failures.push(`startup raw ${startupRaw} > ${startupBudget.raw}`);
+if (startupGzip > startupBudget.gzip) failures.push(`startup gzip ${startupGzip} > ${startupBudget.gzip}`);
 
 async function filesBelow(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -78,9 +84,7 @@ async function filesBelow(directory) {
 }
 
 const distributionFiles = await filesBelow('dist');
-const totalGzip = (await Promise.all(distributionFiles.map(async file =>
-  gzipSync(await readFile(file), { level: 9 }).byteLength
-))).reduce((sum, size) => sum + size, 0);
+const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum, size) => sum + size, 0);
 // Live fee-buyback reviews: measured 2,238,685 B gzip.
 // Revnet transfer copy + project 7 fixed TWAP window in the batch preset: measured 2,241,951 B gzip.
 // Pinned Node 22.23.1 duration release: 2,244,789 B gzip; shared endpoints + official testnet origin:

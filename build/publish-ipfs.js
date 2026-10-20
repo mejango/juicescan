@@ -129,7 +129,7 @@ async function main() {
   console.log(`eth.sucks: https://${cid}.eth.sucks/`);
 
   // Filebase announces to routing, so gateways CAN find the content — warming just saves the first
-  // visitor the ~50s cold retrieval of the 8MB app.js. Retries resume from partial gateway caches.
+  // visitor the cold retrieval of the entry and its chunks. Retries resume from partial gateway caches.
   console.log('\nWarming gateways…');
   const rels = [];
   (function walk(dir, base) {
