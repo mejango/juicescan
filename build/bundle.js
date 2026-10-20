@@ -69,7 +69,7 @@ async function build() {
   // Copy static assets. manifest.json makes the site a recognizable Safe App (Safe fetches <root>/manifest.json
   // for name/description/icon before it will add a custom app).
   // llms.txt (llmstxt.org) tells an agent what is readable without running the bundle.
-  for (const asset of ['jblogo.gif', 'favicon.svg', 'manifest.json', 'llms.txt', 'robots.txt']) {
+  for (const asset of ['jblogo.gif', 'jblogo-400.gif', 'favicon.svg', 'manifest.json', 'llms.txt', 'robots.txt']) {
     const src = path.join(SRC, asset);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(DIST, asset));
   }

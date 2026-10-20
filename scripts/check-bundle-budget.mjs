@@ -14,7 +14,8 @@ const budgets = {
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },
   'dist/pdf.worker.min.mjs': { raw: 1_350_000, gzip: 400_000 },
-  'dist/jblogo.gif': { raw: 220_000, gzip: 205_000 },
+  'dist/jblogo.gif': { raw: 220_000, gzip: 205_000 }, // og:image / twitter:image only
+  'dist/jblogo-400.gif': { raw: 60_000, gzip: 60_000 }, // footer logo (2x of its 200px box)
 };
 
 const failures = [];
