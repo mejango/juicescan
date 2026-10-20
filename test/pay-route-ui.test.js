@@ -153,5 +153,7 @@ describe('pay route trust boundary', () => {
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(payState.execute).not.toHaveBeenCalled();
     expect(component.textContent).toContain('The payment details changed. Review and try again.');
+    // Let the new amount's scheduled preview run inside this test.
+    await new Promise(resolve => setTimeout(resolve, 450));
   });
 });
