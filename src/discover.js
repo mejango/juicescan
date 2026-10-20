@@ -30,7 +30,6 @@ import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, exe
 import { buildStep, loadTray, saveTray, upsertStep, registerPowerKinds, multiSendBatchCalls, simulateBatchCalls } from './safe-batch.js';
 import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
-import { openCreateFlow, newCreateDraftState, exportDraftFile, renderStages, createStage, buildQueueRulesetConfigs, renderNfts, build721Config, pinShopItemsMetadata, fundAccessAmountDecimals, requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel, noticeClashIssue, stageStartOk } from './create-flow.js';
 import { toggleRow, deploySalt, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, fillSplits, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-shared.js';
 import { isEnsName } from './ens.js';
 import { launchProjectAbi } from './launch-component.js';
@@ -45,6 +44,18 @@ import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle
 import { contractGasWithHeadroom, gasWithinCap } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
+
+// The create wizard, the queue-ruleset editor and the .jb draft export run on create-flow.js, which loads on
+// first use. Code that reads `createFlow` runs only after loadCreateFlow() resolved.
+var createFlow = null;
+function loadCreateFlow() {
+  return import('./create-flow.js').then(function (mod) { createFlow = mod; return mod; });
+}
+function withCreateFlow(action) {
+  return loadCreateFlow().then(action, function (error) {
+    alert(errMessage(error, 'Could not load this part of the app.') + ' Check your connection and try again.');
+  });
+}
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
 // Batched read clients come from the shared `createPublicClientForChain` (wallet.js, re-exported by
@@ -8312,7 +8323,7 @@ function renderGrid() {
   var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
   createBtn.title = 'Create a project';
-  createBtn.addEventListener('click', function () { openCreateFlow(); });
+  createBtn.addEventListener('click', function () { withCreateFlow(function (mod) { mod.openCreateFlow(); }); });
   rightCtrls.appendChild(createBtn);
   topRow.appendChild(rightCtrls);
   _gridWrapper.appendChild(topRow);
@@ -15228,7 +15239,7 @@ export function draftDeadlineFor(address, chainId) {
 }
 
 function draftStageFromLive(ruleset, metadata, reservedSplits, chainId) {
-  var stage = createStage();
+  var stage = createFlow.createStage();
   stage.expanded = true;
   stage.durationSeconds = Number(ruleset.duration || 0);
   var weight = toBigInt(ruleset.weight || 0);
@@ -15573,7 +15584,7 @@ function applyDraftFunds(state, project, source, stage, snapshot) {
         || (candidate.splits && candidate.splits.length);
     });
     if (unrepresentable) throw new Error('This revnet has fund access or payout splits on more than one accounting token, which the .jb editor cannot reproduce.');
-    var payoutDecimals = row && row.limit ? fundAccessAmountDecimals(row.limit.currency, row.context) : row.context.decimals;
+    var payoutDecimals = row && row.limit ? createFlow.fundAccessAmountDecimals(row.limit.currency, row.context) : row.context.decimals;
     var payout = draftPayoutState(row.limit, row.splits, payoutDecimals, source.owner);
     stage.payoutMode = payout.mode; stage.payoutRecipients = payout.recipients;
     if (row.limit) stage.payoutCurrency = Number(row.limit.currency);
@@ -15582,7 +15593,7 @@ function applyDraftFunds(state, project, source, stage, snapshot) {
       stage.surplusAllowanceUnlimited = toBigInt(row.allowance.amount) >= PROJECT_DRAFT_UNLIMITED;
       stage.surplusAllowanceCurrency = Number(row.allowance.currency);
       if (!stage.surplusAllowanceUnlimited) {
-        stage.surplusAllowanceAmount = formatAmount(row.allowance.amount, fundAccessAmountDecimals(row.allowance.currency, row.context));
+        stage.surplusAllowanceAmount = formatAmount(row.allowance.amount, createFlow.fundAccessAmountDecimals(row.allowance.currency, row.context));
       }
     }
   }
@@ -15771,7 +15782,8 @@ async function applyDraftShop(state, project, sources, warnings) {
 // Reconstruct the configuration which the current create wizard can faithfully represent. Transaction-critical
 // values come from contracts; Bendystraw-first project metadata is used only for display fields.
 async function buildProjectCreateDraft(project) {
-  var state = newCreateDraftState(), warnings = [];
+  await loadCreateFlow();
+  var state = createFlow.newCreateDraftState(), warnings = [];
   var chains = projectChains(project);
   var testnetIds = [11155111, 11155420, 84532, 421614];
   var testnetCount = chains.filter(function (chain) { return testnetIds.indexOf(Number(chain.id)) !== -1; }).length;
@@ -15804,7 +15816,7 @@ async function buildProjectCreateDraft(project) {
   if (project.isRevnet) {
     // The current stage is reproducible from the live ruleset. Earlier stage history is useful context but cannot
     // enumerate unclaimed auto-issuance beneficiaries, so keep one current stage and disclose that limitation.
-    var currentStage = createStage();
+    var currentStage = createFlow.createStage();
     applyDraftFunds(state, project, sources[0], currentStage, fundSnapshots[0]);
     currentStage.cutFreqDays = String(Number(currentStage.durationSeconds || 0) / 86400);
     currentStage.issuanceCutOn = Number(currentStage.durationSeconds || 0) > 0;
@@ -15814,7 +15826,7 @@ async function buildProjectCreateDraft(project) {
     warnings.push('Revnet auto-issuance beneficiaries and earlier completed stages are not enumerable from the current ruleset, so this .jb starts from the live stage.');
     warnings.push('Any later revnet buyback-pool or registry-routing changes are not part of the .jb create form; review the new revnet’s market setup after deployment.');
   } else {
-    var stage = createStage();
+    var stage = createFlow.createStage();
     applyDraftFunds(state, project, sources[0], stage, fundSnapshots[0]);
     state.stages = [stage]; state.afterMode = stage.durationSeconds > 0 ? 'cycle' : 'wait';
     var upcomingSources = await Promise.all(sources.map(function (source) { return draftUpcomingProjectChain(source, project); }));
@@ -15858,7 +15870,7 @@ async function buildProjectCreateDraft(project) {
           throw new Error('The queued ruleset changes omnichain hook composition, which the .jb create form cannot reproduce.');
         }
       }));
-      var nextStage = createStage();
+      var nextStage = createFlow.createStage();
       applyDraftFunds(state, project, upcomingSources[0], nextStage, upcomingFundSnapshots[0]);
       state.stages.push(nextStage); state.afterMode = nextStage.durationSeconds > 0 ? 'cycle' : 'wait';
       stageSourceSets.push(upcomingSources);
@@ -15908,7 +15920,7 @@ function renderProjectDraftExport(project) {
       if (result.warnings.length && !window.confirm(result.warnings.join('\n\n') + '\n\nExport this editable .jb anyway?')) {
         status.className = 'operator-edit-status'; status.textContent = 'Cancelled'; return;
       }
-      exportDraftFile(result.state);
+      createFlow.exportDraftFile(result.state);
       status.className = 'operator-edit-status success'; status.textContent = 'Exported .jb. Import it from New project to review and edit.';
     }).catch(function (error) {
       status.className = 'operator-edit-status error'; status.textContent = errMessage(error, 'Could not safely reconstruct this project.');
@@ -24405,6 +24417,10 @@ function ensureNewShopState(state, allChains) {
 }
 
 function openQueueRulesetModal(project, preferredQueueAction) {
+  withCreateFlow(function () { renderQueueRulesetModal(project, preferredQueueAction); });
+}
+
+function renderQueueRulesetModal(project, preferredQueueAction) {
   var pid = pidOn(project, project.chainId);
   var authorityLabel = (projectAuthorityLabel(project) || 'Operator').toLowerCase();
   var operatorAddr = projectAuthorityAddress(project);
@@ -24916,7 +24932,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       accessWarning.textContent = state.unsupportedQueueReason || 'This ruleset contains settings this editor cannot preserve safely, so queueing is disabled to avoid changing them.';
       body.appendChild(accessWarning);
     }
-    if (state.stages.length) body.appendChild(renderStages(state, renderEditor, { noHead: true }));
+    if (state.stages.length) body.appendChild(createFlow.renderStages(state, renderEditor, { noHead: true }));
 
     // 721 shop choice. A prior direct collection is not destroyed when a ruleset detaches it, so verified hooks
     // from the ruleset history are offered alongside keep/remove/new. Reactivation reuses the exact collection,
@@ -24967,7 +24983,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       if (state.shopChoice === 'new') {
         ensureNewShopState(state, allChains);
         var nftWrap = el('div', 'queue-new-shop-form'); nftWrap.style.marginTop = '12px';
-        nftWrap.appendChild(renderNfts(state, renderEditor)); body.appendChild(nftWrap);
+        nftWrap.appendChild(createFlow.renderNfts(state, renderEditor)); body.appendChild(nftWrap);
       }
     }
     if (omnichain) {
@@ -25105,7 +25121,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
   // Build one create-flow `stage` from the base ruleset (ruleset struct `r` + decoded metadata `m`).
   function stageFromBaseRuleset(r, m, payoutLims, surplusAllows, payoutSplits, reservedSplits, acct, chainId) {
     acct = normalizeQueueAcct(acct);
-    var s = createStage();
+    var s = createFlow.createStage();
     s.expanded = true;
     var defaultCurrency = queueDefaultCurrency(acct, chainId);
     s.baseCurrency = defaultCurrency;
@@ -25174,7 +25190,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       s.payoutMode = 'limited';
       s.payoutCurrency = Number(lim.currency) || 1;
       var total = BigInt(lim.amount);
-      var payoutDec = fundAccessAmountDecimals(s.payoutCurrency, acct);
+      var payoutDec = createFlow.fundAccessAmountDecimals(s.payoutCurrency, acct);
       s.payoutRecipients = (payoutSplits || []).map(function (sp) {
         return recFromSplit(sp, lpHook, 0, formatAmount(total * BigInt(sp.percent) / BigInt(SPLITS_TOTAL), payoutDec));
       });
@@ -25188,7 +25204,7 @@ function openQueueRulesetModal(project, preferredQueueAction) {
       else {
         s.surplusAllowanceUnlimited = false;
         s.surplusAllowanceCurrency = Number(sa.currency) || 1;
-        s.surplusAllowanceAmount = formatAmount(BigInt(sa.amount), fundAccessAmountDecimals(s.surplusAllowanceCurrency, acct));
+        s.surplusAllowanceAmount = formatAmount(BigInt(sa.amount), createFlow.fundAccessAmountDecimals(s.surplusAllowanceCurrency, acct));
       }
     }
     return s;
@@ -25280,9 +25296,9 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   }
   if (state.shopChoice === 'remove' && !state.canRemoveShop) throw new Error('This shop cannot be safely removed through the queue editor.');
   if (!selected.length) { setStatus('Select at least one chain', 'error'); return; }
-  var badStart = (state.stages || []).findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
+  var badStart = (state.stages || []).findIndex(function (s, i) { return i > 0 && !createFlow.stageStartOk(s); });
   if (badStart !== -1) { setStatus('Ruleset #' + (badStart + 1) + ' needs a valid start — a whole number of cycles or a date.', 'error'); return; }
-  var noticeClash = noticeClashIssue(state);
+  var noticeClash = createFlow.noticeClashIssue(state);
   if (noticeClash) { setStatus(noticeClash, 'error'); return; }
   if (typeof state.verifyQueuePosition !== 'function') throw new Error('The live queue recheck is unavailable. Nothing was sent.');
   setStatus('Rechecking the live queue…');
@@ -25308,7 +25324,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var cid = chain.id;
     var bases = [];
     try {
-      buildQueueRulesetConfigs(state, cid, 0).forEach(function (cfg) {
+      createFlow.buildQueueRulesetConfigs(state, cid, 0).forEach(function (cfg) {
         var cur = Number(cfg.metadata && cfg.metadata.baseCurrency) || 1;
         if (bases.indexOf(cur) === -1) bases.push(cur);
       });
@@ -25325,8 +25341,8 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
           var symbol = t === NATIVE_TOKEN.toLowerCase() ? 'ETH' : (t === usdc ? 'USDC' : acctTokenLabel(ctx.token));
           return { token: ctx.token, currency: ctx.currency, symbol: symbol };
         });
-        var pairs = requiredFeedPairs(labeled, bases, true);
-        return verifyFeedCoverage(cid, pairs, function (cur) { return feedCurrencyLabel(cur, labeled); }, { projectId: localPid });
+        var pairs = createFlow.requiredFeedPairs(labeled, bases, true);
+        return createFlow.verifyFeedCoverage(cid, pairs, function (cur) { return createFlow.feedCurrencyLabel(cur, labeled); }, { projectId: localPid });
       },
       function () { throw new Error('Couldn’t verify price feed coverage on ' + chainNameOf(cid) + ' right now — nothing was sent. Try again.'); }
     );
@@ -25351,7 +25367,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // Omnichain wrappers retain one shared deterministic salt so their hook addresses match across chains.
   var newShopSalt = newShop ? newShopDeploymentSalt(state, operatorAddr, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
   var projUri = project.metadataUri || project.uri || '';
-  if (newShop) { setStatus('Pinning new shop items…', 'pending'); await pinShopItemsMetadata(state); }
+  if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); }
 
   // Route through JBOmnichainDeployer only when the LIVE ruleset already uses it as its data-hook wrapper.
   // Multi-chain revnets use REVOwner, so they must queue directly through each JBController; routing them through
@@ -25360,9 +25376,9 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var localPid = pidOn(project, cid);
     var liveController = state.controllerByChain && state.controllerByChain[cid];
     if (!liveController) throw new Error('The project controller is not verified on ' + chainNameOf(cid) + '.');
-    var cfgs = buildQueueRulesetConfigs(state, cid, plannedStartFor(cid), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
+    var cfgs = createFlow.buildQueueRulesetConfigs(state, cid, plannedStartFor(cid), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined);
     if (newShop) {
-      var nc = buildNewShopQueueCall({ projectId: localPid, deployConfig: build721Config(state, projUri, cid), cfgs: cfgs,
+      var nc = buildNewShopQueueCall({ projectId: localPid, deployConfig: createFlow.build721Config(state, projUri, cid), cfgs: cfgs,
         useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
         controller: liveController, projectDeployer: getAddress('JB721TiersHookProjectDeployer', cid),
         omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: usesOmnichainWrapper, memo: memo });
@@ -25417,12 +25433,12 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var liveController0 = state.controllerByChain && state.controllerByChain[cid0];
     if (!liveController0) { setStatus('The project controller is not verified on this chain.', 'error'); return; }
     var configs;
-    try { configs = buildQueueRulesetConfigs(state, cid0, plannedStartFor(cid0), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
+    try { configs = createFlow.buildQueueRulesetConfigs(state, cid0, plannedStartFor(cid0), newShop && !usesOmnichainWrapper ? { payDataHookVariant: true } : undefined); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var exec;
     if (newShop) {
       var dep = getAddress('JB721TiersHookProjectDeployer', cid0);
       if (!usesOmnichainWrapper && !dep) { setStatus('No 721 deployer on this chain', 'error'); return; }
-      var nc1 = buildNewShopQueueCall({ projectId: localPid0, deployConfig: build721Config(state, projUri, cid0), cfgs: configs, controller: liveController0, projectDeployer: dep, omnichainDeployer: getAddress('JBOmnichainDeployer', cid0), salt: newShopSalt, isOmnichain: usesOmnichainWrapper });
+      var nc1 = buildNewShopQueueCall({ projectId: localPid0, deployConfig: createFlow.build721Config(state, projUri, cid0), cfgs: configs, controller: liveController0, projectDeployer: dep, omnichainDeployer: getAddress('JBOmnichainDeployer', cid0), salt: newShopSalt, isOmnichain: usesOmnichainWrapper });
       exec = { address: nc1.to, abi: nc1.abi, functionName: nc1.functionName, args: nc1.args, contractName: usesOmnichainWrapper ? 'JBOmnichainDeployer' : 'JB721TiersHookProjectDeployer', label: 'Start a new shop' };
     } else {
       var target = usesOmnichainWrapper ? getAddress('JBOmnichainDeployer', cid0) : liveController0;
