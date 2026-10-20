@@ -296,3 +296,4 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - [x] Bump @bananapus/nana-sdk-core 3.3.0 -> 3.4.1; delete juicescan's payRetrySlippageBps and pay tolerance constants for the SDK's `payRetrySlippageBps`, `PAY_DEFAULT_SLIPPAGE_BPS` and `PAY_MAX_SLIPPAGE_BPS`. A retry is offered only when the SDK marks the failure `adjustable` with a nonzero shortfall.
 - [x] The zero-fill line is the SDK's ("This payment would return no tokens.").
 - [x] The custom allowed-decrease field is bounded by the SDK cap (49.5% for pay), checked after rounding.
+- [x] Codex final pass: the cash-out preview's `var slip` (a bps number) shadowed the shared `slip` control, so `slip.sync()` threw on pool routes (from the refactor commit). Renamed the local `slipBps`; `test/var-before-declaration.test.js` fails any function that reads a name before its own `var` shadows it.

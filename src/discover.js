@@ -27236,11 +27236,11 @@ function buildCashOutModal(project, requestClose) {
     // Pool routes: the ~ amount is the quote; the onchain floor = quote × (1 − max slippage). The swap REVERTS
     // below it (protection, not an expected loss). Reads state.slippageBps so the slippage control updates it live.
     if (poolRoute && f.net != null) {
-      var slip = state.slippageBps || 100;
+      var slipBps = state.slippageBps || 100;
       var activeRoute = state.cashOutRoute || {};
-      var floor = activeRoute.minimum != null ? activeRoute.minimum : cashOutExecutableMinimum(f.net, slip);
+      var floor = activeRoute.minimum != null ? activeRoute.minimum : cashOutExecutableMinimum(f.net, slipBps);
       var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
-      floorLine.textContent = 'Stops if the return falls below ' + formatBalance(floor, a.decimals, a.symbol) + ' (' + (slip / 100) + '% allowed decrease)';
+      floorLine.textContent = 'Stops if the return falls below ' + formatBalance(floor, a.decimals, a.symbol) + ' (' + (slipBps / 100) + '% allowed decrease)';
       preview.appendChild(floorLine);
       if (f.route === 'amm' && activeRoute.rawSwapQuote > 0n && activeRoute.hookMinimum != null) {
         var poolBps = cashOutPoolBufferBps(activeRoute.rawSwapQuote, activeRoute.hookMinimum);
