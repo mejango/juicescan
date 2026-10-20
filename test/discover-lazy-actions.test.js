@@ -41,7 +41,7 @@ describe('click-time modules', () => {
     const move = [...row.querySelectorAll('button')].find(button => button.textContent === 'Move between chains');
 
     move.click();
-    await vi.waitFor(() => expect(document.body.textContent).toMatch(/Check your connection and try again/));
+    await vi.waitFor(() => expect(document.body.textContent).toMatch(/Reload the page to try again/));
     expect(ops.buildMoveModal).not.toHaveBeenCalled();
 
     move.click();

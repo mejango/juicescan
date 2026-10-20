@@ -15,7 +15,7 @@ async function open(page, hash) {
   }, CHAIN_IDS);
   await page.route('**/*', route => {
     const url = new URL(route.request().url());
-    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return route.continue();
+    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') return route.fallback();
     return route.abort('blockedbyclient');
   });
   page.on('pageerror', error => failures.push(error.message));
@@ -59,4 +59,21 @@ test('lazy surfaces load from same-directory chunks under a gateway path', async
     expect(script.path.startsWith(`${ROOT}/`), script.path).toBe(true);
     expect(script.status, script.path).toBe(200);
   }
+});
+
+test('a chunk that failed to load recovers through the reload button', async ({ page }) => {
+  // The first request for the guides chunk fails. Browsers keep a failed module import failed, so the
+  // panel asks for a reload, and the reload fetches the chunk again.
+  let failed = 0;
+  await page.route(/\/chunks\/learn-build-[^/]+\.js$/, route => {
+    if (failed++ === 0) return route.abort('failed');
+    return route.continue();
+  });
+  const { failures } = await open(page, 'learn');
+  const panel = page.locator('#tab-learn');
+  await expect(panel).toContainText('Reload the page to try again');
+  await panel.getByRole('button', { name: '[reload]' }).click();
+  await expect(panel.locator('#learn-glossary')).toHaveCount(1);
+  expect(failed).toBe(2);
+  expect(failures).toEqual([]);
 });

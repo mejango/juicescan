@@ -117,7 +117,7 @@ describe('lazy tab panels', () => {
     await vi.waitFor(() => expect(lazy.renderDataTab).toHaveBeenCalledOnce());
   });
 
-  it('render on first activation, retry a failed chunk, and render once', async () => {
+  it('render on first activation, ask for a reload when a chunk fails, and render once', async () => {
     await go('#discover');
 
     const panel = document.getElementById('tab-directory');
@@ -129,13 +129,16 @@ describe('lazy tab panels', () => {
     await vi.waitFor(() => expect(lazy.directoryLoads).toBe(1));
     expect(panel.textContent).toBe('');
 
-    // A failed prefetch is not cached: activation loads again. That load fails too, so the panel offers a retry.
+    // A failed prefetch is not cached: activation loads again. That load fails too, so the panel asks for a
+    // reload (browsers keep a failed module import failed until the page reloads).
     await go('#api');
     expect(panel.classList.contains('active')).toBe(true);
     expect(panel.textContent).toBe('Loading…');
-    await vi.waitFor(() => expect(panel.textContent).toMatch(/This tab failed to load/));
+    await vi.waitFor(() => expect(panel.textContent).toMatch(/Reload the page to try again/));
+    expect(panel.querySelector('button').textContent).toBe('[reload]');
     expect(lazy.directoryLoads).toBe(2);
-    panel.querySelector('button').click();
+    await go('#discover');
+    await go('#api');
     await vi.waitFor(() => expect(panel.textContent).toBe('contract directory'));
     expect(lazy.directoryLoads).toBe(3);
     expect(lazy.renderDirectory).toHaveBeenCalledOnce();

@@ -27,7 +27,7 @@ vi.mock('../src/components.js', () => ({ renderStyleEditor: () => document.creat
 vi.mock('../src/component-base.js', () => ({ buildEmbedUrl: () => '', errMessage: (error, fallback) => (error && error.message) || fallback }));
 
 describe('Actions widget rows', () => {
-  it('load the widget on first expand and retry a failed load', async () => {
+  it('load the widget on first expand and ask for a reload when the chunk fails', async () => {
     document.body.innerHTML = '<section id="tab-common"></section>';
     const { renderCommonActions } = await import('../src/contracts-directory.js');
     renderCommonActions();
@@ -35,10 +35,11 @@ describe('Actions widget rows', () => {
     expect(pay.loads).toBe(0);
 
     summary.click();
-    await vi.waitFor(() => expect(document.querySelector('.fn-row').textContent).toMatch(/Click the row to try again/));
+    await vi.waitFor(() => expect(document.querySelector('.fn-row').textContent).toMatch(/Reload the page to try again/));
+    expect(document.querySelector('.fn-row button').textContent).toBe('[reload]');
     summary.click();
     await vi.waitFor(() => expect(document.querySelector('.pay-widget')).not.toBeNull());
-    expect(document.querySelector('.fn-row').textContent).not.toMatch(/try again/);
+    expect(document.querySelector('.fn-row').textContent).not.toMatch(/did not load/);
     expect(pay.loads).toBe(2);
   });
 });

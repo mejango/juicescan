@@ -31,6 +31,7 @@ import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { toggleRow, deploySalt, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, fillSplits, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-shared.js';
 import { isEnsName } from './ens.js';
+import { CHUNK_FAILED_TEXT, chunkReloadButton } from './chunk-failure.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -58,9 +59,7 @@ function afterDefifaActions(inventory) {
   return import('./defifa-nft-actions.js').then(function (mod) { defifaActions = mod; return inventory; });
 }
 function withCreateFlow(action) {
-  return loadCreateFlow().then(action, function (error) {
-    alert(errMessage(error, 'Could not load this part of the app.') + ' Check your connection and try again.');
-  });
+  return loadCreateFlow().then(action, function () { alert(CHUNK_FAILED_TEXT); });
 }
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
@@ -15213,7 +15212,7 @@ function renderProjectDraftExport(project) {
   button.addEventListener('click', function (event) {
     event.preventDefault(); if (busy) return; busy = true; button.classList.add('disabled');
     status.className = 'operator-edit-status pending'; status.textContent = 'Verifying live rules, funds, splits, terminals, and shop…';
-    import('./project-draft.js').then(function (draft) {
+    import('./project-draft.js').catch(function () { throw new Error(CHUNK_FAILED_TEXT); }).then(function (draft) {
       return draft.buildProjectCreateDraft(project).then(function (result) { return { draft: draft, result: result }; });
     }).then(function (built) {
       var result = built.result;
@@ -16500,8 +16499,8 @@ export function projectAuthoritySafeQueueGroups(rows, authorityRole) {
 // works here). A placeholder holds its place until then.
 function renderSafeBatchTraySlot(project) {
   var slot = el('div');
-  import('./safe-batch-ui.js').then(function (mod) { slot.replaceWith(mod.renderSafeBatchTray(project)); }, function (error) {
-    slot.className = 'error-box error'; slot.textContent = errMessage(error, 'Could not load the batch tray.') + ' Reload to try again.';
+  import('./safe-batch-ui.js').then(function (mod) { slot.replaceWith(mod.renderSafeBatchTray(project)); }, function () {
+    slot.className = 'error-box error'; slot.textContent = CHUNK_FAILED_TEXT + ' '; slot.appendChild(chunkReloadButton());
   });
   return slot;
 }
@@ -25601,9 +25600,10 @@ function renderOpsSection(project) {
 
 // The move and add-liquidity modals load their module on first use; a failed load says so in the modal.
 function openOpsModal(project, title, builder) {
-  import('./project-ops-modals.js').then(function (mod) { openModal(title, mod[builder](project)); }, function (error) {
+  import('./project-ops-modals.js').then(function (mod) { openModal(title, mod[builder](project)); }, function () {
     var message = el('div', 'modal-body');
-    message.textContent = errMessage(error, 'Could not load this part of the app.') + ' Check your connection and try again.';
+    message.textContent = CHUNK_FAILED_TEXT + ' ';
+    message.appendChild(chunkReloadButton());
     openModal(title, message);
   });
 }

@@ -226,10 +226,9 @@ describe('production app entry point', () => {
       .find(section => section.querySelector('.fn-section-label')?.textContent === 'source');
     expect(entry.loadFunctionSourceBody).not.toHaveBeenCalled();
     sourceSection.querySelector('.fn-section-header').click();
-    // The body loads from its own chunk on first open; a failed load offers a retry.
-    await vi.waitFor(() => expect(contract.querySelector('.fn-source-code').textContent).toMatch(/Source failed to load/));
-    contract.querySelector('.fn-source-code button').click();
-    await vi.waitFor(() => expect(contract.querySelector('.fn-source-code').textContent).toMatch(/function readThing/));
+    // The body loads from its own chunk on first open; a failed chunk stays failed until reload, so it says so.
+    await vi.waitFor(() => expect(contract.querySelector('.fn-source-code').textContent).toMatch(/Reload the page to try again/));
+    expect(contract.querySelector('.fn-source-code button').textContent).toBe('[reload]');
     expect(entry.loadFunctionSourceBody).toHaveBeenCalledWith('JBExample', readThing);
     const useSection = [...contract.querySelectorAll('.fn-section')]
       .find(section => section.querySelector('.fn-section-label')?.textContent === 'use');

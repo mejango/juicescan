@@ -7,7 +7,8 @@ import { contracts, meta, categories, chains, commonActions, getFunctions, getAd
 import { renderFunctionForm } from './form.js';
 import { getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
-import { buildEmbedUrl, errMessage } from './component-base.js';
+import { buildEmbedUrl } from './component-base.js';
+import { CHUNK_FAILED_TEXT, chunkReloadButton } from './chunk-failure.js';
 
 
 // Map contract.function to a loader for its pretty component renderer; each widget loads with its own chunk.
@@ -550,8 +551,9 @@ function renderFunctionRow(fn, contractName, getContractAddr, abi, label, hint, 
             }
           });
         }, function(error) {
-          // Keep the message visible; the next click on the row clears it and loads again.
-          contentEl.textContent = errMessage(error, 'Could not load this form.') + ' Click the row to try again.';
+          // Keep the message visible until the next click on the row collapses it.
+          contentEl.textContent = CHUNK_FAILED_TEXT + ' ';
+          contentEl.appendChild(chunkReloadButton());
           failedEl = contentEl;
           contentEl = null;
           expanded = false;
@@ -798,13 +800,8 @@ function buildSourceSection(contractName, fn, srcInfo) {
       loadFunctionSourceBody(contractName, fn).then(function(body) {
         code.textContent = body || 'Source unavailable.';
       }, function() {
-        code.textContent = 'Source failed to load. ';
-        var retry = document.createElement('button');
-        retry.type = 'button';
-        retry.className = 'style-toggle-btn';
-        retry.textContent = '[retry]';
-        retry.addEventListener('click', load);
-        code.appendChild(retry);
+        code.textContent = CHUNK_FAILED_TEXT + ' ';
+        code.appendChild(chunkReloadButton());
       });
     }
     load();
