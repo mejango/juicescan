@@ -9907,9 +9907,16 @@ export function renderPayCard(project, cart) {
 
   // The tolerance prepareUserPay floors its quote by: the default, or the one the payer loosened after this same
   // payment fell short.
+  // A loosened tolerance ends once its payment changes, is sent, or its review is dismissed.
   function paySlippageBps(amount, beneficiary) {
     var loosened = state.payerSlippage;
-    return loosened && loosened.key === payInputsKey(amount, beneficiary) ? loosened.bps : PAY_DEFAULT_SLIPPAGE_BPS;
+    if (loosened && loosened.key !== payInputsKey(amount, beneficiary)) state.payerSlippage = loosened = null;
+    return loosened ? loosened.bps : PAY_DEFAULT_SLIPPAGE_BPS;
+  }
+  function dropLoosenedSlippage() {
+    if (!state.payerSlippage) return;
+    state.payerSlippage = null;
+    schedulePreview();
   }
 
   // Everything a prepared payment depends on. A preview is only sent with the exact inputs it was prepared for.
@@ -10281,7 +10288,7 @@ export function renderPayCard(project, cart) {
           var message = errMessage(e, 'Could not authorize the payment.');
           status.className = 'paybox-status error'; status.textContent = message; confirmCtx.fail(message);
         });
-    }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : null);
+    }, Object.assign({ onDismiss: dropLoosenedSlippage }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : {}));
     } // proceed()
   }
 
@@ -10322,10 +10329,12 @@ export function renderPayCard(project, cart) {
       },
       onSuccess: function (m, meta) {
         if (meta && meta.phase === 'safe-proposed') {
+          state.payerSlippage = null;
           setPayStatus('paybox-status pending', m, meta);
           if (confirmCtx) confirmCtx.pending(m, meta);
           return;
         }
+        state.payerSlippage = null;
         setPayStatus('paybox-status success', confirmed, meta);
         if (confirmCtx) confirmCtx.complete(confirmed, meta);
         if (opts.clearCartOnSuccess) clearPurchasedNfts();
@@ -26412,9 +26421,12 @@ function openTxConfirm(payload, onConfirm, opts) {
   // `closeOnConfirm: false` callers keep the modal open while they send, locking BOTH buttons for the
   // duration and re-enabling them on failure. Escape / ✕ / backdrop follow that same lock, so a
   // dismissal can't orphan an in-flight transaction's status display (matches confirmTransactionModal).
+  var confirmed = false;
   var modal = openModal(opts.title || 'Confirm transaction', content, {
     noPrompt: true,
     canClose: function () { return !(confirm.disabled && cancel.disabled); },
+    // Closed without Confirm (Cancel, Escape, the close button): the caller may undo what it set up for this review.
+    onClose: function () { if (!confirmed && opts.onDismiss) opts.onDismiss(); },
   });
   cancel.addEventListener('click', modal.close);
   // After a failure the confirm button can offer one follow-up action instead of the send.
@@ -26451,6 +26463,7 @@ function openTxConfirm(payload, onConfirm, opts) {
   }
   confirm.addEventListener('click', function () {
     if (retryAction) { var again = retryAction; retryAction = null; modal.close(); again(); return; }
+    confirmed = true;
     if (opts.closeOnConfirm !== false) modal.close();
     else {
       confirm.disabled = true;
@@ -26500,6 +26513,7 @@ function openPayConfirm(payload, onConfirm, opts) {
     confirmText: opts.confirmText || 'Confirm & Pay',
     closeOnConfirm: false,
     sequenceSteps: steps,
+    onDismiss: opts.onDismiss,
   });
 }
 

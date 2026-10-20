@@ -278,3 +278,28 @@ it('drops a loosened tolerance when the payment changed before Review again', as
   expect(runtime.prepare.mock.calls.slice(calls).every(([, args]) => args.slippageBps === 100n)).toBe(true);
   expect(runtime.execute).toHaveBeenCalledTimes(1);
 });
+
+it('ends a loosened tolerance when its review is cancelled, and after its payment is sent', async () => {
+  const cancelButton = () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Cancel');
+  async function shortfallThenReviewAgain() {
+    runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+    await review(); confirmButton().click();
+    await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+    reviewAgainButton().click();
+    await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+    expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(350n);
+  }
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(614); type('1'); await quoted('900');
+  await shortfallThenReviewAgain();
+  cancelButton().click();
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n));
+
+  await quoted('900');
+  await shortfallThenReviewAgain();
+  runtime.execute.mockImplementationOnce(tx => tx.onSuccess('Confirmed', { phase: 'confirmed', hash: '0x' + '1'.repeat(64), chainId: 8453 }));
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(3));
+  type('2'); type('1');
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 10n ** 18n, slippageBps: 100n }));
+});
