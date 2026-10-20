@@ -7,6 +7,7 @@ const payState = vi.hoisted(() => ({
   BENEFICIARY: '0x3333333333333333333333333333333333333333',
   execute: vi.fn(),
   preview: vi.fn(),
+  prepare: vi.fn(),
 }));
 
 vi.mock('../src/component-base.js', () => ({
@@ -52,6 +53,7 @@ vi.mock('../src/component-base.js', () => ({
 
 vi.mock('../src/pay-preview.js', () => ({
   computePayPreview: payState.preview,
+  prepareCardPay: payState.prepare,
   formatTokenCount: value => String(value),
   renderRoutingTag: () => document.createElement('span'),
   renderAmmSub: () => null,
@@ -62,14 +64,15 @@ import { buildPayArgs, renderPayComponent, resolveBestPayRoute } from '../src/pa
 const { BENEFICIARY, NATIVE, ROUTER, TERMINAL } = payState;
 
 function quote(received, reserved = 0n) {
-  return { received, reserved, unavailable: false, routing: 'issuance' };
+  return { received, reserved, minReturnedTokens: received * 99n / 100n, metadata: '0xaa', unavailable: false };
 }
 
 describe('pay route trust boundary', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
     payState.execute.mockReset();
-    payState.preview.mockReset();
+    payState.prepare.mockReset();
+    payState.preview.mockReset().mockResolvedValue({ routing: 'amm', amm: null });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       font: '',
       measureText: text => ({ width: String(text).length * 8 }),
@@ -77,7 +80,7 @@ describe('pay route trust boundary', () => {
   });
 
   it('selects the best verified route and prefers direct when quotes tie', async () => {
-    payState.preview.mockImplementation(({ terminal }) => Promise.resolve(
+    payState.prepare.mockImplementation(({ terminal }) => Promise.resolve(
       terminal === ROUTER ? quote(100n, 50n) : quote(101n, 0n),
     ));
     await expect(resolveBestPayRoute({
@@ -88,7 +91,7 @@ describe('pay route trust boundary', () => {
       beneficiary: BENEFICIARY,
     })).resolves.toMatchObject({ address: TERMINAL, contractName: 'JBMultiTerminal', viaRouter: false });
 
-    payState.preview.mockResolvedValue(quote(100n, 5n));
+    payState.prepare.mockResolvedValue(quote(100n, 5n));
     await expect(resolveBestPayRoute({
       chainId: 1,
       projectId: '7',
@@ -99,12 +102,12 @@ describe('pay route trust boundary', () => {
   });
 
   it('never converts unavailable, rejected, negative, or missing quotes into a zero slippage floor', async () => {
-    payState.preview.mockRejectedValue(new Error('RPC unavailable'));
+    payState.prepare.mockRejectedValue(new Error('RPC unavailable'));
     await expect(resolveBestPayRoute({
       chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY,
     })).resolves.toBeNull();
 
-    payState.preview.mockResolvedValue({ received: -1n, reserved: 0n, unavailable: false });
+    payState.prepare.mockResolvedValue({ received: -1n, reserved: 0n, unavailable: false });
     await expect(resolveBestPayRoute({
       chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY,
     })).resolves.toBeNull();
@@ -114,7 +117,7 @@ describe('pay route trust boundary', () => {
   });
 
   it('re-resolves immediately before submit and sends only the reviewed route and slippage floor', async () => {
-    payState.preview.mockImplementation(({ terminal }) => Promise.resolve(
+    payState.prepare.mockImplementation(({ terminal }) => Promise.resolve(
       terminal === TERMINAL ? quote(120n, 3n) : quote(100n, 1n),
     ));
     const component = renderPayComponent();
@@ -132,6 +135,8 @@ describe('pay route trust boundary', () => {
       tokenAddr: null,
       spenderAddr: null,
     });
-    expect(request.args).toEqual([7n, NATIVE, 10n ** 18n, BENEFICIARY, 118n, '', '0x']);
+    expect(request.args).toEqual([7n, NATIVE, 10n ** 18n, BENEFICIARY, 118n, '', '0xaa']);
+    // The routing tag reads the hook's choice for the metadata that is sent.
+    expect(payState.preview).toHaveBeenCalledWith(expect.objectContaining({ terminal: TERMINAL, metadata: '0xaa' }));
   });
 });

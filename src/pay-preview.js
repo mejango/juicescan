@@ -13,7 +13,7 @@
 // real beneficiary/reserved counts live in the decoded metadata.
 
 import { decodeAbiParameters, formatUnits } from 'viem';
-import { prepareUserPay } from '@bananapus/nana-sdk-core/v6';
+import { decodePayFailure, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
 import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
 // Format an 18-decimal token count (bigint) for display, trimming to a few significant digits.
@@ -264,5 +264,8 @@ export function prepareCardPay(opts) {
     slippageBps: BigInt(opts.slippageBps || 0),
   }).then(function (r) {
     return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
-  }, function (error) { return unavailable(errMessage(error, 'preview unavailable')); });
+  }, function (error) {
+    var failure = decodePayFailure(error);
+    return unavailable(failure ? failure.message : errMessage(error, 'preview unavailable'));
+  });
 }

@@ -3,14 +3,14 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from '@bananapus/nana-sdk-core/v6';
+import { MAX_DEFIFA_ACTION_NFTS, decodePayFailure, defifaPhaseAllowsPay } from '@bananapus/nana-sdk-core/v6';
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
-import { quotedOutputFloor } from './slippage.js';
+import { quotedOutputFloor, payRetrySlippageBps, PAY_DEFAULT_SLIPPAGE_BPS, PAY_SLIPPAGE_LIMIT_PERCENT } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
@@ -9243,7 +9243,7 @@ export function renderPayCard(project, cart) {
     memo: '',
     phase: 'idle',
     preview: null,
-    slippageBps: 100, // max slippage on the pay quote (default 1%)
+    payerSlippage: null, // { bps, key }: a tolerance the payer loosened after a shortfall, for that payment only
     shop: null,       // { hook, tiers, ... } once the strip loads
     inventoryKnown: false,
     mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
@@ -9897,12 +9897,24 @@ export function renderPayCard(project, cart) {
 
   }
 
-  // Everything a prepared payment depends on. A preview is only sent with the exact inputs it was prepared for.
-  function payIdentity(amount, beneficiary) {
+  // The payment a preview or a loosened tolerance belongs to.
+  function payInputsKey(amount, beneficiary) {
     var t = state.token || {};
     return [state.mode, state.chainId, String(t.address || '').toLowerCase(), t.decimals, !!t.viaRouter,
       t.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId),
-      String(beneficiary || '').toLowerCase(), String(amount), selectedTierIds().join(','), state.slippageBps || 0].join('|');
+      String(beneficiary || '').toLowerCase(), String(amount), selectedTierIds().join(',')].join('|');
+  }
+
+  // The tolerance prepareUserPay floors its quote by: the default, or the one the payer loosened after this same
+  // payment fell short.
+  function paySlippageBps(amount, beneficiary) {
+    var loosened = state.payerSlippage;
+    return loosened && loosened.key === payInputsKey(amount, beneficiary) ? loosened.bps : PAY_DEFAULT_SLIPPAGE_BPS;
+  }
+
+  // Everything a prepared payment depends on. A preview is only sent with the exact inputs it was prepared for.
+  function payIdentity(amount, beneficiary) {
+    return payInputsKey(amount, beneficiary) + '|' + paySlippageBps(amount, beneficiary);
   }
 
   function schedulePreview() {
@@ -9955,7 +9967,7 @@ export function renderPayCard(project, cart) {
         beneficiary: getEffectiveAccount(),
         shop: state.shop,
         tierIds: previewTierIds,
-        slippageBps: state.slippageBps,
+        slippageBps: paySlippageBps(amt, getEffectiveAccount()),
       });
     request.then(function (p) {
       if (gen !== previewGen) return;
@@ -10086,7 +10098,7 @@ export function renderPayCard(project, cart) {
     var reviewedMode = state.mode;
     var reviewedMemo = state.memo || '';
     var reviewedPreview = state.preview;
-    var reviewedSlippage = state.slippageBps || 0;
+    var reviewedSlippage = paySlippageBps(amt, beneficiary);
     var reviewedTierKey = tierIds.join(',');
     var reviewedConversion = state.conversion;
     var reviewedNfts = tierIds.length ? nftSelectionList() : [];
@@ -10098,7 +10110,7 @@ export function renderPayCard(project, cart) {
       return state.chainId === reviewedChainId && state.mode === reviewedMode && (state.memo || '') === reviewedMemo
         && state.token && state.token.address.toLowerCase() === reviewedToken.address.toLowerCase()
         && !!state.token.viaRouter === !!reviewedToken.viaRouter && current === amt
-        && selectedTierIds().join(',') === reviewedTierKey && (state.slippageBps || 0) === reviewedSlippage
+        && selectedTierIds().join(',') === reviewedTierKey && paySlippageBps(current, beneficiary) === reviewedSlippage
         && (!tierIds.length || state.nftCredits === reviewedNftCredits)
         && (addBalance || (state.preview === reviewedPreview && reviewedPreview.identity === payIdentity(current, beneficiary)))
         && state.contextsReady && getAccount() && getAccount().toLowerCase() === beneficiary.toLowerCase();
@@ -10153,6 +10165,14 @@ export function renderPayCard(project, cart) {
     // minimum. Add-to-balance has no returned-token floor by design.
     var minTokens = addBalance ? 0n : reviewedPreview.minReturnedTokens;
     var metadata = addBalance ? '0x' : reviewedPreview.metadata;
+    // A payment that fell short of its minimum is quoted again with the tolerance the payer chose, then reviewed.
+    var sendOpts = { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, slippageBps: reviewedSlippage,
+      retryWithSlippage: function (bps) {
+        state.payerSlippage = { bps: bps, key: payInputsKey(amt, beneficiary) };
+        schedulePreview();
+        state.payAfterPreview = true;
+        status.className = 'paybox-status pending'; status.textContent = 'Refreshing the quote…';
+      } };
 
     // pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) — metadata at index 6.
     // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
@@ -10237,7 +10257,7 @@ export function renderPayCard(project, cart) {
       if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return; }
       // Native ETH (even via the router) is paid with msg.value — no Permit2. Only ERC20 swap currencies
       // authorize through Permit2; reading allowance on the native pseudo-address returns "0x".
-      if (!viaRouter || isNative) { sendPay(txParams, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx }); return; }
+      if (!viaRouter || isNative) { sendPay(txParams, Object.assign({ confirmCtx: confirmCtx }, sendOpts)); return; }
       // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then send.
       var statusCb = function (m, kind, meta) {
         status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
@@ -10253,7 +10273,7 @@ export function renderPayCard(project, cart) {
             p.args = args.slice();
             p.args[metaIdx] = meta;
           }
-          sendPay(p, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx });
+          sendPay(p, Object.assign({ confirmCtx: confirmCtx }, sendOpts));
         })
         .catch(function (e) {
           var message = errMessage(e, 'Could not authorize the payment.');
@@ -10311,8 +10331,16 @@ export function renderPayCard(project, cart) {
         status.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true }));
       },
       onError: function (m, meta) {
+        // The revert's own reason when known; a shortfall offers a looser minimum and a fresh quote.
+        var failure = add ? null : decodePayFailure(meta && meta.error);
+        if (failure) m = failure.message;
         status.className = 'paybox-status error'; status.textContent = m;
-        if (confirmCtx) confirmCtx.fail(m, meta);
+        var retryBps = add || !opts.retryWithSlippage ? null : payRetrySlippageBps(failure, opts.slippageBps);
+        if (confirmCtx && retryBps != null) {
+          var slip = slippageControl(function () { return retryBps; }, function (bps) { retryBps = bps; }, PAY_SLIPPAGE_LIMIT_PERCENT);
+          slip.node.classList.add('pay-retry-slippage');
+          confirmCtx.retry(m, slip.node, 'Review again', function () { opts.retryWithSlippage(retryBps); });
+        } else if (confirmCtx) confirmCtx.fail(m, meta);
       },
     }));
   }
@@ -26387,6 +26415,8 @@ function openTxConfirm(payload, onConfirm, opts) {
     canClose: function () { return !(confirm.disabled && cancel.disabled); },
   });
   cancel.addEventListener('click', modal.close);
+  // After a failure the confirm button can offer one follow-up action instead of the send.
+  var retryAction = null;
   function setSequenceActive(index, allComplete) { if (sequenceUi) sequenceUi.setActive(index, allComplete); }
   function updateSequenceFromStatus(message, meta) {
     if (!sequenceUi || !sequenceUi.items.length || !message) return;
@@ -26418,6 +26448,7 @@ function openTxConfirm(payload, onConfirm, opts) {
     cancel.textContent = kind === 'success' ? 'Done' : 'Close';
   }
   confirm.addEventListener('click', function () {
+    if (retryAction) { var again = retryAction; retryAction = null; modal.close(); again(); return; }
     if (opts.closeOnConfirm !== false) modal.close();
     else {
       confirm.disabled = true;
@@ -26436,6 +26467,16 @@ function openTxConfirm(payload, onConfirm, opts) {
       complete: function (message, meta) { unlockWithResult(message || 'Payment complete.', 'success', meta); },
       pending: function (message, meta) { unlockWithResult(message || 'Waiting for confirmation.', 'pending', meta); },
       fail: function (message, meta) { unlockWithResult(message || 'The payment could not be completed.', 'error', meta); },
+      // Fail with `message`, show `node` above the buttons, and turn Confirm into `actionText`, which closes
+      // this dialog and runs `onRetry`.
+      retry: function (message, node, actionText, onRetry) {
+        unlockWithResult(message, 'error');
+        if (node) content.insertBefore(node, foot);
+        retryAction = onRetry;
+        confirm.textContent = actionText;
+        confirm.disabled = false;
+        confirm.style.display = '';
+      },
       confirm: confirm,
       cancel: cancel,
     });
@@ -26788,9 +26829,10 @@ function buildRedeemItemsModal(project, requestClose) {
   return wrap;
 }
 
-// "Max slippage" presets plus a custom percent. `setBps` receives the chosen tolerance in basis points; `sync`
-// redraws the row from `getBps` after the tolerance changes elsewhere.
-function slippageControl(getBps, setBps) {
+// "Max slippage" presets plus a custom percent below `limitPercent` (default 100). `setBps` receives the chosen
+// tolerance in basis points; `sync` redraws the row from `getBps` after the tolerance changes elsewhere.
+function slippageControl(getBps, setBps, limitPercent) {
+  limitPercent = limitPercent || 100;
   var row = el('div', 'ops-percent ops-slippage');
   var lbl = el('span', 'ops-slippage-lbl'); lbl.textContent = 'Max slippage'; row.appendChild(lbl);
   [50, 100, 300, 500].forEach(function (bps) {
@@ -26800,11 +26842,11 @@ function slippageControl(getBps, setBps) {
     row.appendChild(b);
   });
   var custom = document.createElement('label'); custom.className = 'ops-slippage-custom';
-  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = '99.99'; input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom max slippage percent');
+  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = String(limitPercent - 0.01); input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom max slippage percent');
   custom.appendChild(input); custom.appendChild(document.createTextNode('%')); row.appendChild(custom);
   input.addEventListener('change', function () {
     var pct = Number(input.value);
-    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) { input.value = String(getBps() / 100); return; }
+    if (!Number.isFinite(pct) || pct <= 0 || pct >= limitPercent) { input.value = String(getBps() / 100); return; }
     setBps(Math.round(pct * 100)); sync();
   });
   function sync() {

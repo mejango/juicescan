@@ -1,3 +1,25 @@
+# Pay minimum: SDK 3.3.0 quote, failure reason, adjustable minimum (2026-10-20)
+
+Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum. Matches jbm's pay card (scratchpad wt-jbm-paymin).
+
+- [x] 1. Refactor (no behavior change): the cash-out "Max slippage" row becomes one `slippageControl` helper; `prepareCardPay` moves to pay-preview.js so the COMPONENTS widget can share it.
+- [x] 2. Bump @bananapus/nana-sdk-core 3.1.0 -> 3.3.0 (Node 22, npm 10.9).
+- [x] 3. executeTransaction passes the raw error in its failure meta; a mined revert re-simulates the sent call at its block so the reason is known.
+- [x] 4. Pay card: decodePayFailure's line on failure; a shortfall (TERMINAL_UNDER_MIN, BUYBACK_SLIPPAGE_EXCEEDED) shows the Max slippage row prefilled with the tolerance that would have passed and "Review again", which re-quotes with it. The tolerance holds only for the payment it was set on; 1% otherwise.
+- [x] 5. COMPONENTS widget: prepareUserPay sets minimum + metadata per route; failures read through decodePayFailure.
+- [ ] 6. Tests, full `npm run check`, screenshot of the failure state, PR, two Codex passes, no merge.
+
+### Review
+SDK 3.3.0 installed and its typings match the source. `npm run test:ci` (with DEPLOY_ALL_DEPLOYMENTS_DIR at the pinned deploy-all c62b3ac) passes: 200 files / 2000 unit tests, bundle budget (startup 710,683 / 722,000 B gzip, total 2,019,990 / 2,060,000 B), 148 browser tests. Rendered the shortfall state in Chromium with the real modules (decoded line, Max slippage prefilled 3.5%, Review again). Cross-client: same SDK calls, retry math and "Review again" as jbm; the row keeps juicescan's own "Max slippage" label and 0.5/1/3/5 presets from cash out.
+
+## Plan refinement
+- **Objective:** Juicescan's pay card and pay widget send SDK 3.3.0's quote-based minimum and metadata, show the decoded reason when a pay fails, and let the payer loosen the minimum and retry after a shortfall; the happy path is unchanged.
+- **System fit:** Outcome (most tokens, understood failure) -> capability (SDK prepareUserPay, decodePayFailure) -> evidence (simulation error, or mined revert re-simulated at its block) -> prepared action (prepareUserPay with slippageBps) -> authority (existing pay confirm + executeTransaction) -> verified result (receipt). SDK owns minimum and reason text; juicescan owns the slippage row and retry wiring. Cash-out, Safe proposals and other flows keep their behavior.
+- **Reuse and simplicity:** Reuse the cash-out Max slippage row (extracted, not copied), prepareCardPay (moved to the shared pay-preview module), SDK messages, the pay card's existing stale-quote re-run (payAfterPreview). New: one retry-tolerance helper mirroring jbm's payRetrySlippageBps, one retry hook on the confirm context.
+- **Evidence and unknowns:** SDK source wt-sdk-paymin (executionErrors.ts, pay.ts); published 3.3.0 typings re-read after install. Unknown: a mined revert re-simulated at its block may not revert again (then the generic line stays).
+- **Verification:** Unit tests for the retry helper, decoded messages through the pay card, widget args from prepareUserPay; full `npm run check` (source, deployments, generated, schema, transaction inventory, bundle, coverage, budget, browser); Playwright screenshot of the shortfall state.
+- **Resource budget:** One worktree, one SDK bump, refactor commit first then behavior commit; replan if 3.3.0's API differs from the SDK source or the bundle budget moves more than the new code.
+
 # Thorough test coverage — transactions + views
 
 ## 2026-10-03 — publication endpoint recovery

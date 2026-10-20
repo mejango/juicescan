@@ -10,8 +10,8 @@ import {
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
-import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
-import { quotedOutputFloor } from './slippage.js';
+import { decodePayFailure } from '@bananapus/nana-sdk-core/v6';
+import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 
 export var payAbi = [{
   type: 'function', name: 'pay', stateMutability: 'payable',
@@ -36,23 +36,22 @@ var accountingContextsAbi = [{
 
 // Pure builder for the JBMultiTerminal.pay transaction — returns the executeTransaction config (no callbacks).
 // `o`: { chainId, projectId, token, amount (bigint), beneficiary, memo, route } where route carries the
-// resolved terminal/router address and a `preview.received` (raw, BigInt-able) token estimate.
-// minReturnedTokens is a 1% slippage floor off positive previewed output. A verified zero quote is valid for a
-// zero-issuance project and deliberately encodes a zero floor; a missing/unavailable quote is still rejected.
+// resolved terminal/router address and the SDK's prepared payment (`preview.minReturnedTokens` and
+// `preview.metadata`, from prepareUserPay). A verified zero minimum is valid for a zero-issuance project; a
+// missing/unavailable preparation is rejected.
 export function buildPayArgs(o) {
   var isNative = sameAddress(String(o.token), NATIVE_TOKEN);
   var pv = o.route && o.route.preview;
-  if (!pv || pv.unavailable || pv.received == null) throw new Error('A live pay preview is required.');
-  var quoted = BigInt(pv.received);
-  if (quoted < 0n) throw new Error('The pay preview returned an invalid project-token count.');
-  var minReturned = quotedOutputFloor(quoted, 9900);
+  if (!pv || pv.unavailable || pv.received == null || pv.minReturnedTokens == null || !pv.metadata) throw new Error('A live pay preview is required.');
+  var minReturned = BigInt(pv.minReturnedTokens);
+  if (minReturned < 0n || BigInt(pv.received) < 0n) throw new Error('The pay preview returned an invalid project-token count.');
   return {
     chainId: o.chainId,
     address: o.route.address,
     contractName: o.route.contractName,
     abi: payAbi,
     functionName: 'pay',
-    args: [BigInt(o.projectId), o.token, o.amount, o.beneficiary, minReturned, o.memo || '', '0x'],
+    args: [BigInt(o.projectId), o.token, o.amount, o.beneficiary, minReturned, o.memo || '', pv.metadata],
     value: isNative ? o.amount : 0n,
     tokenAddr: isNative ? null : o.token,
     spenderAddr: isNative ? null : o.route.address,
@@ -101,15 +100,21 @@ export function resolveBestPayRoute(opts) {
   if (!routes.length) return Promise.resolve(null);
 
   return Promise.all(routes.map(function (route) {
-    return computePayPreview({
+    var request = {
       chainId: opts.chainId,
       projectId: opts.projectId,
       token: opts.token,
       amount: opts.amount,
       beneficiary: opts.beneficiary,
       terminal: route.address,
-    }).then(function (preview) {
-      return Object.assign({}, route, { preview: preview });
+    };
+    // The SDK prepares the payment (metadata, preview, minimum); the routing tag reads the hook's choice for
+    // that metadata.
+    return prepareCardPay(request).then(function (prepared) {
+      if (prepared.unavailable) return Object.assign({}, route, { preview: prepared });
+      return computePayPreview(Object.assign({ metadata: prepared.metadata }, request)).then(function (shown) {
+        return Object.assign({}, route, { preview: Object.assign({}, prepared, { routing: shown.routing, amm: shown.amm }) });
+      });
     }).catch(function () {
       return Object.assign({}, route, { preview: { unavailable: true } });
     });
@@ -597,13 +602,16 @@ export function renderPayComponent() {
         confirmSummary: { action: 'Pay project #' + String(state.projectId), rows: [
           ['Paying', state.amount + ' ' + (state.selectedToken.symbol || '')],
           ['You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
-          ['Minimum', formatTokenCount(quotedOutputFloor(BigInt(route.preview.received), 9900)) + ' tokens — fails if you receive less'],
+          ['Minimum', formatTokenCount(route.preview.minReturnedTokens) + ' tokens — fails if you receive less'],
           ['To', beneficiary],
           state.memo ? ['Memo', state.memo] : null,
         ].filter(Boolean) },
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
-        onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },
+        onError: function(msg, meta) {
+          var failure = decodePayFailure(meta && meta.error);
+          state.phase = 'ready'; state.error = failure ? failure.message : msg; state.txStatus = null; updateUI();
+        },
       }));
     }).catch(function (err) {
       state.phase = 'ready';

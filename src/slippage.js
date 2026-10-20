@@ -22,3 +22,23 @@ export function quotedOutputFloor(quoted, bps) {
   var floor = quoted * bps / 10000n;
   return floor > 0n ? floor : 1n;
 }
+
+/** prepareUserPay's own default tolerance on its quote and fallback minimum. */
+export var PAY_DEFAULT_SLIPPAGE_BPS = 100;
+/** A payer's loosened pay tolerance stays below this percent, so the minimum never nears zero. */
+export var PAY_SLIPPAGE_LIMIT_PERCENT = 50;
+
+/**
+ * The tolerance that would have let a payment through which fell short of the minimum prepareUserPay set from
+ * `currentBps`, rounded up to a half percent, or null when a lower minimum is not the fix (the buyback hook's own
+ * TWAP floor, the router's own quote, or another failure). `failure` is decodePayFailure's result.
+ */
+export function payRetrySlippageBps(failure, currentBps) {
+  var reason = failure && failure.reason;
+  if (reason !== 'TERMINAL_UNDER_MIN' && reason !== 'BUYBACK_SLIPPAGE_EXCEEDED') return null;
+  var received = failure.received, minimum = failure.minimum;
+  var shortfallBps = received != null && minimum != null && minimum > 0n && received < minimum
+    ? Number(((minimum - received) * 10000n + minimum - 1n) / minimum)
+    : 100;
+  return Math.min(Math.ceil((currentBps + shortfallBps) / 50) * 50, PAY_SLIPPAGE_LIMIT_PERCENT * 100 - 50);
+}
