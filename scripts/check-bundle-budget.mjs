@@ -4,8 +4,9 @@ import { gzipSync } from 'node:zlib';
 
 // Startup is what the browser fetches before the app runs: index.html, its stylesheet, the module entry
 // and every chunk the entry reaches through static imports. Lazy chunks (import()) count only in the total.
-// Monolithic IIFE baseline (bd900bb): app.js 10,649,557 B raw / 1,545,664 B gzip, startup 1,597,189 B gzip.
-const startupBudget = { raw: 10_650_000, gzip: 1_598_000 };
+// Budgets sit about 2% above the measured build (startup 706,990 B gzip, total 2,016,156 B gzip). Raise them
+// only with a reason in the commit.
+const startupBudget = { raw: 3_640_000, gzip: 722_000 };
 
 const budgets = {
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
@@ -96,7 +97,7 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // Official SDK2.29/native actions measured total2,309,541 B gzip, +28,981 B versus the same-env baseline.
 // Shared checkout measured2,312,787 B gzip, +3,317 B versus222c5f same-env distribution.
 // SDK3.0.0 with the direct buy route removed: 2,313,459 B gzip.
-const totalGzipBudget = 2_314_000;
+const totalGzipBudget = 2_060_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
