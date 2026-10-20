@@ -9,7 +9,7 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
 import { getAddress } from '../src/abi-registry.js';
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6';
 import { hookMetadataId } from '@bananapus/nana-sdk-core';
-import { decodeAbiParameters } from 'viem';
+import { decodeAbiParameters, encodeErrorResult } from 'viem';
 import { renderPayCard } from '../src/discover.js';
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
@@ -226,4 +226,242 @@ it('mints the rendered cart selection: its tier ids reach preparation and the su
   const tx = runtime.execute.mock.lastCall[0];
   expect(tx.args.slice(0, 5)).toEqual([610n, NATIVE, 5n * 10n ** 16n, runtime.account, 1n]);
   expect(mintedTierIds(tx.args[6])).toEqual([1, 1, 2]);
+});
+
+const shortfallAbi = [{ type: 'error', name: 'JBMultiTerminal_UnderMin', inputs: [{ name: 'received', type: 'uint256' }, { name: 'minimum', type: 'uint256' }] }];
+const underMin = (received, minimum) => ({ shortMessage: 'Execution reverted.', data: encodeErrorResult({ abi: shortfallAbi, errorName: 'JBMultiTerminal_UnderMin', args: [received, minimum] }) });
+const reviewAgainButton = () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Review again');
+
+it('says why a payment fell short and re-quotes it with the tolerance the payer chose', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(611); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  expect(document.querySelector('.tx-confirm-status').textContent).toBe('This payment would get fewer tokens than your minimum, so lower your minimum or try again.');
+  // 1% plus the 2.3% shortfall, rounded up to a half percent.
+  const custom = document.querySelector('.pay-retry-slippage input');
+  expect(custom.value).toBe('3.5');
+  // The SDK's 49.5% cap bounds the custom field, checked once rounded.
+  custom.value = '49.999'; custom.dispatchEvent(new Event('change'));
+  expect(custom.value).toBe('3.5');
+  custom.value = '5'; custom.dispatchEvent(new Event('change'));
+  runtime.prepare.mockResolvedValue(prepared('0xbb', 860n * 10n ** 18n));
+  reviewAgainButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 10n ** 18n, slippageBps: 500n });
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(2));
+  expect(runtime.execute.mock.lastCall[0].args).toEqual([611n, NATIVE, 10n ** 18n, runtime.account, 860n * 10n ** 18n, '', '0xbb']);
+  // The loosened tolerance belongs to that payment: another amount is quoted at the default again.
+  type('2');
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 2n * 10n ** 18n, slippageBps: 100n }));
+});
+
+const pausedAbi = [{ type: 'error', name: 'JBTerminalStore_RulesetPaymentPaused', inputs: [{ type: 'uint256' }, { type: 'uint256' }] }];
+it.each([
+  ['a known revert with its reason', encodeErrorResult({ abi: pausedAbi, errorName: 'JBTerminalStore_RulesetPaymentPaused', args: [1n, 2n] }), 'This project is not accepting payments right now.'],
+  ['a truncated revert as unknown', '0x8dc14446', 'Execution reverted.'],
+])('shows %s, without offering a looser minimum', async (_, data, line) => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: { shortMessage: 'reverted', data } }));
+  await card(612); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe(line));
+  expect(reviewAgainButton()).toBeFalsy();
+  expect(document.querySelector('.pay-retry-slippage')).toBeNull();
+});
+
+it('drops a loosened tolerance when the payment changed before Review again', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(613); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  type('3'); // the payment changes under the open dialog
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click(); await settle(500);
+  expect(confirmButton()).toBeFalsy();
+  expect(runtime.prepare.mock.calls.slice(calls).every(([, args]) => args.slippageBps === 100n)).toBe(true);
+  expect(runtime.execute).toHaveBeenCalledTimes(1);
+});
+
+it('opens the review in one click after a memo edit, with the memo sent', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(620); type('1'); await quoted('900');
+  const calls = runtime.prepare.mock.calls.length;
+  const memo = document.querySelector('.paybox-memo');
+  memo.value = 'hello'; memo.dispatchEvent(new Event('input'));
+  await review(); // one press of Pay opens it: the memo leaves the quote as it was
+  expect(runtime.prepare.mock.calls.length).toBe(calls);
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(runtime.execute.mock.lastCall[0].args[5]).toBe('hello');
+});
+
+it('says why a re-quote failed after Review again, and stops there', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(621); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  const paused = Object.assign(new Error('Execution reverted.'), { data: encodeErrorResult({ abi: pausedAbi, errorName: 'JBTerminalStore_RulesetPaymentPaused', args: [1n, 2n] }) });
+  runtime.prepare.mockRejectedValue(paused);
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click(); await settle(600);
+  expect(document.querySelector('.paybox-status').textContent).toBe('This project is not accepting payments right now.');
+  expect(document.querySelector('.paybox-feedback').textContent).toContain('This project is not accepting payments right now.');
+  expect(runtime.prepare.mock.calls.length).toBe(calls + 1);
+  expect(confirmButton()).toBeFalsy();
+});
+
+it('quotes the next payment at the default tolerance once a loosened one went through', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(622); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  reviewAgainButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  runtime.execute.mockImplementationOnce(tx => tx.onSuccess('Paid.', {}));
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n));
+});
+
+it('ends a loosened tolerance when the memo changes while it is being prepared', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(619); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click();
+  const memo = document.querySelector('.paybox-memo');
+  memo.value = 'another note'; memo.dispatchEvent(new Event('input'));
+  await settle(500);
+  expect(runtime.prepare.mock.calls.length).toBeGreaterThan(calls);
+  expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n);
+  expect(runtime.execute).toHaveBeenCalledTimes(1);
+});
+
+it('ends a loosened tolerance when its review is cancelled, and after its payment is sent', async () => {
+  const cancelButton = () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Cancel');
+  async function shortfallThenReviewAgain() {
+    runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+    await review(); confirmButton().click();
+    await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+    reviewAgainButton().click();
+    await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+    expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(350n);
+  }
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(614); type('1'); await quoted('900');
+  await shortfallThenReviewAgain();
+  cancelButton().click();
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n));
+
+  await quoted('900');
+  await shortfallThenReviewAgain();
+  runtime.execute.mockImplementationOnce(tx => tx.onSuccess('Confirmed', { phase: 'confirmed', hash: '0x' + '1'.repeat(64), chainId: 8453 }));
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(3));
+  type('2'); type('1');
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 10n ** 18n, slippageBps: 100n }));
+});
+
+it('ends a loosened tolerance when a failed retry is closed', async () => {
+  const closeButton = () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Close');
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(615); type('1'); await quoted('900');
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  reviewAgainButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(350n);
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Transaction rejected by wallet', {}));
+  confirmButton().click();
+  await vi.waitFor(() => expect(closeButton()).toBeTruthy());
+  closeButton().click();
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n));
+});
+
+it('ends a loosened tolerance when the amount is cleared and typed again during its quote', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(617); type('1'); await quoted('900');
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  reviewAgainButton().click();
+  type(''); type('1');
+  await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 10n ** 18n, slippageBps: 100n }));
+});
+
+it('says a payment that would return no tokens was not sent, and offers no looser minimum', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(0n, 900n * 10n ** 18n) }));
+  await card(616); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe('This payment would return no tokens.'));
+  expect(reviewAgainButton()).toBeFalsy();
+});
+
+it('says a mined revert reverted, and Review again quotes and simulates it afresh', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Transaction reverted onchain. No state changes were applied.', { error: Object.assign(new Error('reverted'), { onchainRevert: true }) }));
+  await card(618); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  expect(document.querySelector('.tx-confirm-status').textContent).toBe('The payment reverted.');
+  expect(document.querySelector('.pay-retry-slippage')).toBeNull();
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  expect(runtime.prepare.mock.calls.length).toBe(calls + 1);
+  expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n);
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(2));
+});
+
+const pausedError = () => Object.assign(new Error('Execution reverted.'), { data: encodeErrorResult({ abi: pausedAbi, errorName: 'JBTerminalStore_RulesetPaymentPaused', args: [1n, 2n] }) });
+const PAUSED_LINE = 'This project is not accepting payments right now.';
+
+it('says why a credit-covered checkout cannot be quoted, and Pay says it again after a fresh quote', async () => {
+  vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+  runtime.inventory.mockResolvedValue({ protocol: 'jb721', hook: HOOK, store: STORE, metadataIdTarget: ID_TARGET, blockNumber: 1n, nextStartingId: null,
+    pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
+    capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] });
+  const base = runtime.contractRead.getMockImplementation();
+  runtime.contractRead.mockImplementation(async call => {
+    switch (call.functionName) {
+      case 'controllerOf': return '0x' + '75'.repeat(20);
+      case 'currentRulesetOf': return [{ id: 1n }, { useDataHookForPay: true, dataHook: HOOK, useDataHookForCashOut: false, metadata: 0 }];
+      case 'tokenUriResolverOf': return '0x' + '00'.repeat(20);
+      case 'maxTierIdOf': return 2n;
+      case 'tiersOf': return TIERS;
+      case 'payCreditsOf': return 10n ** 18n; // credits cover the cart: nothing to pay
+      default: return base(call);
+    }
+  });
+  runtime.prepare.mockRejectedValue(pausedError());
+  await card(630);
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2));
+  document.querySelector('.paybox-shop-item .paybox-shop-thumb').click();
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain(PAUSED_LINE));
+  const calls = runtime.prepare.mock.calls.length;
+  payButton().click();
+  await vi.waitFor(() => expect(document.querySelector('.paybox-status').textContent).toBe(PAUSED_LINE));
+  expect(runtime.prepare.mock.calls.length).toBe(calls + 1);
+  expect(confirmButton()).toBeFalsy();
+});
+
+it('quotes again on Pay after a quote failed, and opens the review in that one click once it passes', async () => {
+  runtime.prepare.mockRejectedValue(pausedError());
+  await card(631); type('1');
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain(PAUSED_LINE));
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  payButton().click();
+  await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
+  expect(document.querySelector('.paybox-feedback').textContent).not.toContain(PAUSED_LINE);
 });

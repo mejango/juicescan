@@ -21,7 +21,7 @@ const SALT32 = '0x' + '00'.repeat(32);
 const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const BOB = '0x2222222222222222222222222222222222222222';
 const TERMINAL = '0x3333333333333333333333333333333333333333';
-const okRoute = (received) => ({ address: TERMINAL, contractName: 'JBMultiTerminal', preview: received != null ? { received, unavailable: false } : null });
+const okRoute = (received, minReturnedTokens = received == null ? null : received * 99n / 100n, metadata = '0x') => ({ address: TERMINAL, contractName: 'JBMultiTerminal', preview: received != null ? { received, minReturnedTokens, metadata, unavailable: false } : null });
 const roundTrips = (abi, fn, args) => decodeFunctionData({ abi, data: encodeFunctionData({ abi, functionName: fn, args }) }).args.length === args.length;
 
 describe('pay — JBMultiTerminal.pay', () => {
@@ -35,11 +35,11 @@ describe('pay — JBMultiTerminal.pay', () => {
     expect(tx.args[3]).toBe(BOB);
     expect(roundTrips(payAbi, 'pay', tx.args)).toBe(true);
   });
-  it('slippage floor = 99% of previewed received (regression — was 0n via missing state.preview.received)', () => {
-    const tx = buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(parseEther('100')) });
-    expect(tx.args[4]).toBe((parseEther('100') * 99n) / 100n);
-    expect(tx.args[4]).toBeGreaterThan(0n);
-    expect(buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: 1n, beneficiary: BOB, memo: '', route: okRoute(1n) }).args[4]).toBe(1n);
+  it('sends the SDK-prepared minimum and metadata, not an app-side floor', () => {
+    const tx = buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(parseEther('100'), parseEther('97'), '0xabcd') });
+    expect(tx.args[4]).toBe(parseEther('97'));
+    expect(tx.args[6]).toBe('0xabcd');
+    expect(() => buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: 1n, beneficiary: BOB, memo: '', route: okRoute(1n, null) })).toThrow(/preview/i);
   });
   it('refuses an unpriced payment but allows a verified zero-token payment', () => {
     expect(() => buildPayArgs({ chainId: 1, projectId: 5, token: NATIVE_TOKEN, amount: parseEther('1'), beneficiary: BOB, memo: '', route: okRoute(null) })).toThrow(/preview/i);

@@ -1,3 +1,25 @@
+# Pay minimum: SDK 3.3.0 quote, failure reason, adjustable minimum (2026-10-20)
+
+Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum. Matches jbm's pay card (scratchpad wt-jbm-paymin).
+
+- [x] 1. Refactor (no behavior change): the cash-out "Max slippage" row becomes one `slippageControl` helper; `prepareCardPay` moves to pay-preview.js so the COMPONENTS widget can share it.
+- [x] 2. Bump @bananapus/nana-sdk-core 3.1.0 -> 3.3.0 (Node 22, npm 10.9).
+- [x] 3. executeTransaction passes the raw error in its failure meta; a mined revert re-simulates the sent call at its block so the reason is known.
+- [x] 4. Pay card: decodePayFailure's line on failure; a shortfall (TERMINAL_UNDER_MIN, BUYBACK_SLIPPAGE_EXCEEDED) shows the Max slippage row prefilled with the tolerance that would have passed and "Review again", which re-quotes with it. The tolerance holds only for the payment it was set on; 1% otherwise.
+- [x] 5. COMPONENTS widget: prepareUserPay sets minimum + metadata per route; failures read through decodePayFailure.
+- [ ] 6. Tests, full `npm run check`, screenshot of the failure state, PR, two Codex passes, no merge.
+
+### Review
+SDK 3.3.0 installed and its typings match the source. `npm run test:ci` (with DEPLOY_ALL_DEPLOYMENTS_DIR at the pinned deploy-all c62b3ac) passes: 200 files / 2000 unit tests, bundle budget (startup 710,683 / 722,000 B gzip, total 2,019,990 / 2,060,000 B), 148 browser tests. Rendered the shortfall state in Chromium with the real modules (decoded line, Max slippage prefilled 3.5%, Review again). Cross-client: same SDK calls, retry math and "Review again" as jbm; the row keeps juicescan's own "Max slippage" label and 0.5/1/3/5 presets from cash out.
+
+## Plan refinement
+- **Objective:** Juicescan's pay card and pay widget send SDK 3.3.0's quote-based minimum and metadata, show the decoded reason when a pay fails, and let the payer loosen the minimum and retry after a shortfall; the happy path is unchanged.
+- **System fit:** Outcome (most tokens, understood failure) -> capability (SDK prepareUserPay, decodePayFailure) -> evidence (simulation error, or mined revert re-simulated at its block) -> prepared action (prepareUserPay with slippageBps) -> authority (existing pay confirm + executeTransaction) -> verified result (receipt). SDK owns minimum and reason text; juicescan owns the slippage row and retry wiring. Cash-out, Safe proposals and other flows keep their behavior.
+- **Reuse and simplicity:** Reuse the cash-out Max slippage row (extracted, not copied), prepareCardPay (moved to the shared pay-preview module), SDK messages, the pay card's existing stale-quote re-run (payAfterPreview). New: one retry-tolerance helper mirroring jbm's payRetrySlippageBps, one retry hook on the confirm context.
+- **Evidence and unknowns:** SDK source wt-sdk-paymin (executionErrors.ts, pay.ts); published 3.3.0 typings re-read after install. Unknown: a mined revert re-simulated at its block may not revert again (then the generic line stays).
+- **Verification:** Unit tests for the retry helper, decoded messages through the pay card, widget args from prepareUserPay; full `npm run check` (source, deployments, generated, schema, transaction inventory, bundle, coverage, budget, browser); Playwright screenshot of the shortfall state.
+- **Resource budget:** One worktree, one SDK bump, refactor commit first then behavior commit; replan if 3.3.0's API differs from the SDK source or the bundle budget moves more than the new code.
+
 # Thorough test coverage — transactions + views
 
 ## 2026-10-03 — publication endpoint recovery
@@ -266,3 +288,16 @@ Final CSS qualification: source/deployment/generated/schema/transaction/dependen
 - **Resource budget:** Two shared presentation owners, existing harness, no live RPC fanout/wallet signing or sends. Scope strictly these2bugs; narrow measured caps only if required by final bytes.
 
 Before/after qualification: original native Pay width111px and empty warning height16px fail both regressions. Shared-owner fixes pass4desktop/mobile cases: native Pay matches ordinary compact width before/after Pay→Add→Pay, pending warning has0height, genuine funding error is visible. Owning17control unit tests pass. Final total2,312,885gzip remains under all existing caps, no budget changes. Source action/preparation/phase/recovery/journal/metadata owners are unchanged. Required full exacthead checks/CI and verified publication remain.
+
+### Allowed decrease (jango ruling 2026-10-20)
+- [x] The tolerance control reads "Allowed decrease" in every client: `slippageControl`'s label and custom-input name (pay and cash out), the pay and cash-out minimum lines and the buyback-floor message. Presets stay juicescan's 0.5/1/3/5. The cash-out minimum line drops its em dash.
+
+### SDK 3.4.1 (2026-10-20)
+- [x] Bump @bananapus/nana-sdk-core 3.3.0 -> 3.4.1; delete juicescan's payRetrySlippageBps and pay tolerance constants for the SDK's `payRetrySlippageBps`, `PAY_DEFAULT_SLIPPAGE_BPS` and `PAY_MAX_SLIPPAGE_BPS`. A retry is offered only when the SDK marks the failure `adjustable` with a nonzero shortfall.
+- [x] The zero-fill line is the SDK's ("This payment would return no tokens.").
+- [x] The custom allowed-decrease field is bounded by the SDK cap (49.5% for pay), checked after rounding.
+- [x] Codex final pass: the cash-out preview's `var slip` (a bps number) shadowed the shared `slip` control, so `slip.sync()` threw on pool routes (from the refactor commit). Renamed the local `slipBps`; `test/var-before-declaration.test.js` fails any function that reads a name before its own `var` shadows it.
+- [x] Codex passes 2 and 3: the gate now counts named function expressions, class static blocks, module bindings, imports and destructuring as outer names, skips keys, member names and parameters a var redeclares (fixtures for each), and still catches the original cash-out shadow; the known-revert pay test encodes a complete revert and asserts its line, with the truncated selector kept as an unknown-failure case.
+- [x] Codex passes 4 and 5: a memo edit ends a loosened tolerance but leaves the quote, so Pay still opens the review in one click (both tested); the gate also models a function expression's own name, named class expressions, block-scoped functions (not hoisted) and destructuring and loop targets as writes.
+- [x] Codex pass 6 (UX): a quote that fails with a known reason shows that sentence in the card (and in the COMPONENTS widget) instead of "preview unavailable" or "No payment contract"; after Review again such a failure stops with the reason, no second quote or "Wait for the preview" dead end; a loosened payment that went through re-quotes the next one at the default tolerance so Pay is one click. Each tested, with negative controls.
+- [x] Codex passes 7-9 (UX): a known quote-failure reason shows before any zero-amount early return (credit-covered NFT checkout), and Pay on such a quote re-quotes in that click; the widget's routing tag no longer holds up review (shown with its preview in one render, kept on submit only for the same route and metadata), and Pay works while a preview loads. Pass 10: SHIP. `npm run check` on 5649052: 2018 unit, budgets, 148 browser.

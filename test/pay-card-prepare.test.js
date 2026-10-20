@@ -3,7 +3,8 @@ const h = vi.hoisted(() => ({ prepareUserPay: vi.fn() }));
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await importOriginal(), prepareUserPay: h.prepareUserPay }));
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6';
-import { addToHookMetadata, prepareCardPay } from '../src/discover.js';
+import { addToHookMetadata } from '../src/discover.js';
+import { prepareCardPay } from '../src/pay-preview.js';
 
 const terminal = '0x1111111111111111111111111111111111111111';
 const token = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -25,6 +26,12 @@ describe('pay card payment preparation', () => {
     expect(args.beneficiary).toBe('0x000000000000000000000000000000000000dEaD');
     expect(args.tiers).toEqual({ metadataIdTarget: '0x3333333333333333333333333333333333333333', tierIdsToMint: [4n, 4n], allowOverspending: true });
     expect(prepared).toEqual({ received: 990n, reserved: 0n, minReturnedTokens: 980n, metadata: '0xabcd' });
+  });
+
+  it("leaves the SDK's 1% tolerance in place when the caller names none", async () => {
+    h.prepareUserPay.mockResolvedValueOnce({ metadata: '0x', preview: { beneficiaryTokenCount: 1n, reservedTokenCount: 0n }, minReturnedTokens: 1n });
+    await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n });
+    expect(h.prepareUserPay.mock.lastCall[1].slippageBps).toBe(100n);
   });
 
   it('reads a reverting preview as unavailable and sends no tiers for a plain payment', async () => {

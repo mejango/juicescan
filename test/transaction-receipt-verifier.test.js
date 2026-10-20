@@ -146,3 +146,18 @@ it('invokes approval synchronously after the native intent guard without a promi
  await vi.waitFor(()=>expect(validAtApproval).toBe(true));
  await vi.waitFor(()=>expect(onError).toHaveBeenCalled());expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
+it('passes the failure itself to the caller, and never replays a mined revert at its block',async()=>{
+ h.client.getTransactionReceipt=vi.fn(async()=>({...receipt,status:'reverted'}));
+ const onError=vi.fn();executeTransaction({...args,onError});
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalledTimes(1));
+ expect(onError.mock.lastCall[1].error.onchainRevert).toBe(true);
+ expect(h.client.simulateContract).toHaveBeenCalledTimes(1);
+ expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});
+it('names a failure with describeFailure in the open dialog and to the caller',async()=>{
+ h.client.simulateContract=vi.fn(async()=>{throw Object.assign(new Error('Execution reverted.'),{data:'0x8dc14446'});});
+ const onError=vi.fn(),describeFailure=vi.fn(error=>error.data==='0x8dc14446'?'Paused.':null);
+ executeTransaction({...args,onError,describeFailure});
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith('Paused.',expect.objectContaining({error:expect.any(Error)})));
+ expect(h.wallet.writeContract).not.toHaveBeenCalled();
+});

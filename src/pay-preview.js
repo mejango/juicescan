@@ -13,6 +13,7 @@
 // real beneficiary/reserved counts live in the decoded metadata.
 
 import { decodeAbiParameters, formatUnits } from 'viem';
+import { PAY_DEFAULT_SLIPPAGE_BPS, decodePayFailure, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
 import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
 // Format an 18-decimal token count (bigint) for display, trimming to a few significant digits.
@@ -242,4 +243,30 @@ export async function computePayPreview(opts) {
     result.reason = errMessage(err, 'preview unavailable');
     return result;
   }
+}
+
+// The pay card's whole payment from the SDK: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
+// preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
+export function prepareCardPay(opts) {
+  var tierIds = opts.tierIds || [];
+  // `explained`: the reason is a plain sentence for the payer (a decoded revert), not a raw error.
+  function unavailable(reason, explained) { return { received: null, reserved: null, unavailable: true, reason: reason, explained: !!explained }; }
+  if (!opts.terminal) return Promise.resolve(unavailable('No payment contract on this chain'));
+  return prepareUserPay(createPublicClientForChain(opts.chainId), {
+    chainId: opts.chainId,
+    terminal: opts.terminal,
+    projectId: BigInt(opts.projectId),
+    token: opts.token,
+    amount: opts.amount,
+    beneficiary: opts.beneficiary || PREVIEW_BENEFICIARY,
+    tiers: tierIds.length && opts.shop
+      ? { metadataIdTarget: opts.shop.idTarget || opts.shop.hook, tierIdsToMint: tierIds.map(BigInt), allowOverspending: true }
+      : undefined,
+    slippageBps: opts.slippageBps == null ? PAY_DEFAULT_SLIPPAGE_BPS : BigInt(opts.slippageBps),
+  }).then(function (r) {
+    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
+  }, function (error) {
+    var failure = decodePayFailure(error);
+    return failure ? unavailable(failure.message, true) : unavailable(errMessage(error, 'preview unavailable'));
+  });
 }

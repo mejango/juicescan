@@ -3,7 +3,7 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
+import { MAX_DEFIFA_ACTION_NFTS, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, decodePayFailure, defifaPhaseAllowsPay, payRetrySlippageBps } from '@bananapus/nana-sdk-core/v6';
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
@@ -13,7 +13,7 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
-import { computePayPreview, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
+import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
@@ -309,7 +309,7 @@ export function cashOutDirectRouteWins(directQuote, terminalExpected, slippageBp
 export function cashOutExecutionErrorMessage(message) {
   var text = String(message || 'Cash out failed.');
   if (text.indexOf('0xe2d708a9') !== -1 || text.toLowerCase().indexOf('jbbuybackhook_specifiedslippageexceeded') !== -1) {
-    return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.';
+    return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger allowed decrease, then try again.';
   }
   if (text.indexOf('0x6b2bb382') !== -1 || text.toLowerCase().indexOf('jbmultiterminal_undermin') !== -1) {
     // UnderMin also fires when the hook flips a treasury-route cash out to the AMM at
@@ -675,29 +675,6 @@ export function addToHookMetadata(metadata, id, data) {
   }
   var datas = offsets.map(function (start, k) { return '0x' + body.slice(start, offsets[k + 1] || body.length); });
   return createHookMetadata(ids.concat(id), datas.concat(data));
-}
-
-// The pay card's whole payment from the SDK: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
-// preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
-var PREVIEW_PAYER = '0x000000000000000000000000000000000000dEaD';
-export function prepareCardPay(opts) {
-  var tierIds = opts.tierIds || [];
-  function unavailable(reason) { return { received: null, reserved: null, unavailable: true, reason: reason }; }
-  if (!opts.terminal) return Promise.resolve(unavailable('No payment contract on this chain'));
-  return prepareUserPay(clientFor(opts.chainId), {
-    chainId: opts.chainId,
-    terminal: opts.terminal,
-    projectId: BigInt(opts.projectId),
-    token: opts.token,
-    amount: opts.amount,
-    beneficiary: opts.beneficiary || PREVIEW_PAYER,
-    tiers: tierIds.length && opts.shop
-      ? { metadataIdTarget: opts.shop.idTarget || opts.shop.hook, tierIdsToMint: tierIds.map(BigInt), allowOverspending: true }
-      : undefined,
-    slippageBps: BigInt(opts.slippageBps || 0),
-  }).then(function (r) {
-    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
-  }, function (error) { return unavailable(errMessage(error, 'preview unavailable')); });
 }
 
 // JBMetadataResolver envelope for a 721 REDEMPTION: id = getId("cashOut", idTarget); data = abi.encode(uint256[] tokenIds).
@@ -9266,7 +9243,7 @@ export function renderPayCard(project, cart) {
     memo: '',
     phase: 'idle',
     preview: null,
-    slippageBps: 100, // max slippage on the pay quote (default 1%)
+    payerSlippage: null, // { bps, key }: a tolerance the payer loosened after a shortfall, for that payment only
     shop: null,       // { hook, tiers, ... } once the strip loads
     inventoryKnown: false,
     mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
@@ -9728,7 +9705,8 @@ export function renderPayCard(project, cart) {
   var memo = el('input', 'paybox-memo'); memo.hidden = true;
   memo.type = 'text';
   memo.placeholder = 'Add a note (optional)';
-  memo.addEventListener('input', function () { state.memo = memo.value; });
+  // A memo leaves the quote as it is, but ends a tolerance loosened for the payment before the edit.
+  memo.addEventListener('input', function () { state.memo = memo.value; dropLoosenedSlippage(); });
   card.appendChild(memo);
 
   // Feedback block — "You get" / routing tag / AMM subtext / "Splits get".
@@ -9872,6 +9850,17 @@ export function renderPayCard(project, cart) {
     var checkoutSummary = nftCheckoutSummary();
     if (checkoutSummary) feedback.appendChild(checkoutSummary);
 
+    // A quote that failed for a known reason says so, whatever the payment amount (credits can cover all of it).
+    if (p && p.unavailable && p.explained && state.phase !== 'previewing') {
+      var whyRow = el('div', 'paybox-yg-row');
+      var why = el('div', 'paybox-yg-val muted');
+      why.textContent = p.reason;
+      whyRow.appendChild(why);
+      feedback.appendChild(whyRow);
+      var nbW = nftBlock(); if (nbW) feedback.appendChild(nbW);
+      return;
+    }
+
     // A verified payment can intentionally mint no project tokens (for example, a balance-funding project with
     // weight 0). Keep selected NFT receipts, but omit "0 tokens" and "Splits get 0 tokens" entirely.
     if (!payTokenOutputVisible(project.ruleset && project.ruleset.weight, state.phase, p)) {
@@ -9920,16 +9909,34 @@ export function renderPayCard(project, cart) {
 
   }
 
-  // Everything a prepared payment depends on. A preview is only sent with the exact inputs it was prepared for.
-  function payIdentity(amount, beneficiary) {
+  // The payment a preview or a loosened tolerance belongs to.
+  function payInputsKey(amount, beneficiary) {
     var t = state.token || {};
     return [state.mode, state.chainId, String(t.address || '').toLowerCase(), t.decimals, !!t.viaRouter,
       t.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId),
-      String(beneficiary || '').toLowerCase(), String(amount), selectedTierIds().join(','), state.slippageBps || 0].join('|');
+      String(beneficiary || '').toLowerCase(), String(amount), selectedTierIds().join(',')].join('|');
+  }
+
+  // The tolerance prepareUserPay floors its quote by: the default, or the one the payer loosened after this same
+  // payment fell short.
+  // A loosened tolerance ends once its payment changes, is sent, or its review is dismissed.
+  function paySlippageBps(amount, beneficiary) {
+    var loosened = state.payerSlippage;
+    if (loosened && loosened.key !== payInputsKey(amount, beneficiary)) state.payerSlippage = loosened = null;
+    return loosened ? loosened.bps : Number(PAY_DEFAULT_SLIPPAGE_BPS);
+  }
+  function dropLoosenedSlippage() {
+    if (state.payerSlippage) schedulePreview();
+  }
+
+  // Everything a prepared payment depends on. A preview is only sent with the exact inputs it was prepared for.
+  function payIdentity(amount, beneficiary) {
+    return payInputsKey(amount, beneficiary) + '|' + paySlippageBps(amount, beneficiary);
   }
 
   function schedulePreview() {
     previewGen++; // an in-flight preview for the old inputs can no longer land
+    state.payerSlippage = null; // any input change ends a loosened tolerance; a retry sets it again after this
     if (state.mode === 'pay' && (!state.inventoryKnown || isNativeInventory(state.shop))) return;
     if (previewTimer) clearTimeout(previewTimer);
     state.payAfterPreview = false;
@@ -9947,7 +9954,7 @@ export function renderPayCard(project, cart) {
     try { amt = parseAmount(state.amount, state.token.decimals == null ? 18 : state.token.decimals); } catch (_) { return; }
     var previewTierIds = state.mode === 'pay' ? selectedTierIds() : [];
     if (previewTierIds.length && (!nftRouteForToken(state.token) || !nftRouteForToken(state.token).supported)) {
-      state.preview = { received: null, reserved: null, unavailable: true, reason: 'This payment currency cannot be converted into the shop pricing currency.' };
+      state.preview = { received: null, reserved: null, unavailable: true, explained: true, reason: 'This payment currency cannot be converted into the shop pricing currency.' };
       state.phase = 'ready';
       renderFeedback();
       return;
@@ -9978,7 +9985,7 @@ export function renderPayCard(project, cart) {
         beneficiary: getEffectiveAccount(),
         shop: state.shop,
         tierIds: previewTierIds,
-        slippageBps: state.slippageBps,
+        slippageBps: paySlippageBps(amt, getEffectiveAccount()),
       });
     request.then(function (p) {
       if (gen !== previewGen) return;
@@ -9988,10 +9995,12 @@ export function renderPayCard(project, cart) {
       state.previewAt = Date.now();
       state.conversion = null;
       renderFeedback();
-      // A Pay click that found the quote stale retries once the refreshed preview is in.
+      // A Pay click that found the quote stale retries once the refreshed preview is in; one that cannot be quoted
+      // stops there and says why.
       if (state.payAfterPreview) {
         state.payAfterPreview = false;
-        doPay();
+        if (p.unavailable) { status.className = 'paybox-status error'; status.textContent = p.explained ? p.reason : 'This payment could not be quoted. Try again.'; }
+        else doPay();
       }
       // Add-to-balance via router: derive the accepted-token amount that lands after the swap. The
       // simulated pay's total mint ÷ the per-unit issuance rate = the swap output (route must be issuance).
@@ -10089,6 +10098,16 @@ export function renderPayCard(project, cart) {
       return;
     }
     if (!addBalance && (!payPreviewCanSubmit(state.phase, state.preview) || state.preview.identity !== payIdentity(amt, beneficiary))) {
+      // A quote that failed for a known reason is tried again by this click: it goes on to the review if it now
+      // passes, and says why if it fails again.
+      var failed = state.preview;
+      var retryQuote = state.phase === 'ready' && failed && failed.unavailable && failed.explained && failed.identity === payIdentity(amt, beneficiary);
+      if (retryQuote) {
+        schedulePreview();
+        state.payAfterPreview = true;
+        status.className = 'paybox-status pending'; status.textContent = 'Refreshing the quote…';
+        return;
+      }
       status.textContent = tierIds.length
         ? 'A verified live quote is required before buying these items. Wait for the preview and try again.'
         : 'A verified live quote is required before paying. Wait for the preview and try again.';
@@ -10109,7 +10128,8 @@ export function renderPayCard(project, cart) {
     var reviewedMode = state.mode;
     var reviewedMemo = state.memo || '';
     var reviewedPreview = state.preview;
-    var reviewedSlippage = state.slippageBps || 0;
+    var reviewedSlippage = paySlippageBps(amt, beneficiary);
+    var reviewedInputsKey = payInputsKey(amt, beneficiary);
     var reviewedTierKey = tierIds.join(',');
     var reviewedConversion = state.conversion;
     var reviewedNfts = tierIds.length ? nftSelectionList() : [];
@@ -10121,7 +10141,7 @@ export function renderPayCard(project, cart) {
       return state.chainId === reviewedChainId && state.mode === reviewedMode && (state.memo || '') === reviewedMemo
         && state.token && state.token.address.toLowerCase() === reviewedToken.address.toLowerCase()
         && !!state.token.viaRouter === !!reviewedToken.viaRouter && current === amt
-        && selectedTierIds().join(',') === reviewedTierKey && (state.slippageBps || 0) === reviewedSlippage
+        && selectedTierIds().join(',') === reviewedTierKey && paySlippageBps(current, beneficiary) === reviewedSlippage
         && (!tierIds.length || state.nftCredits === reviewedNftCredits)
         && (addBalance || (state.preview === reviewedPreview && reviewedPreview.identity === payIdentity(current, beneficiary)))
         && state.contextsReady && getAccount() && getAccount().toLowerCase() === beneficiary.toLowerCase();
@@ -10176,6 +10196,15 @@ export function renderPayCard(project, cart) {
     // minimum. Add-to-balance has no returned-token floor by design.
     var minTokens = addBalance ? 0n : reviewedPreview.minReturnedTokens;
     var metadata = addBalance ? '0x' : reviewedPreview.metadata;
+    // A payment that fell short of its minimum is quoted again with the tolerance the payer chose, then reviewed.
+    var sendOpts = { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, slippageBps: reviewedSlippage,
+      retryWithSlippage: function (bps) {
+        if (!requirePayInputs()) return;
+        schedulePreview();
+        state.payerSlippage = { bps: bps, key: reviewedInputsKey };
+        state.payAfterPreview = true;
+        status.className = 'paybox-status pending'; status.textContent = 'Refreshing the quote…';
+      } };
 
     // pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) — metadata at index 6.
     // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
@@ -10226,7 +10255,7 @@ export function renderPayCard(project, cart) {
     } else {
       confirmArgs.beneficiary = beneficiary;
       confirmArgs.minReturnedTokens = minTokens.toString() + (minTokens > 0n
-        ? ' (' + formatTokenCount(minTokens) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% max slippage)'
+        ? ' (' + formatTokenCount(minTokens) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% allowed decrease)'
         : '');
     }
     confirmArgs.memo = reviewedMemo;
@@ -10260,7 +10289,7 @@ export function renderPayCard(project, cart) {
       if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return; }
       // Native ETH (even via the router) is paid with msg.value — no Permit2. Only ERC20 swap currencies
       // authorize through Permit2; reading allowance on the native pseudo-address returns "0x".
-      if (!viaRouter || isNative) { sendPay(txParams, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx }); return; }
+      if (!viaRouter || isNative) { sendPay(txParams, Object.assign({ confirmCtx: confirmCtx }, sendOpts)); return; }
       // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then send.
       var statusCb = function (m, kind, meta) {
         status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
@@ -10276,13 +10305,13 @@ export function renderPayCard(project, cart) {
             p.args = args.slice();
             p.args[metaIdx] = meta;
           }
-          sendPay(p, { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, confirmCtx: confirmCtx });
+          sendPay(p, Object.assign({ confirmCtx: confirmCtx }, sendOpts));
         })
         .catch(function (e) {
           var message = errMessage(e, 'Could not authorize the payment.');
           status.className = 'paybox-status error'; status.textContent = message; confirmCtx.fail(message);
         });
-    }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : null);
+    }, Object.assign({ onDismiss: dropLoosenedSlippage }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : {}));
     } // proceed()
   }
 
@@ -10323,10 +10352,12 @@ export function renderPayCard(project, cart) {
       },
       onSuccess: function (m, meta) {
         if (meta && meta.phase === 'safe-proposed') {
+          dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
           setPayStatus('paybox-status pending', m, meta);
           if (confirmCtx) confirmCtx.pending(m, meta);
           return;
         }
+        dropLoosenedSlippage();
         setPayStatus('paybox-status success', confirmed, meta);
         if (confirmCtx) confirmCtx.complete(confirmed, meta);
         if (opts.clearCartOnSuccess) clearPurchasedNfts();
@@ -10334,8 +10365,22 @@ export function renderPayCard(project, cart) {
         status.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true }));
       },
       onError: function (m, meta) {
+        // The revert's own reason when known; a shortfall offers a looser minimum and a fresh quote.
+        var failure = add ? null : decodePayFailure(meta && meta.error);
+        if (failure) m = failure.message;
+        // A mined revert's cause is not knowable from its receipt: quote and simulate it again, and show that reason.
+        var mined = !add && !!(meta && meta.error && meta.error.onchainRevert);
+        if (mined) m = 'The payment reverted.';
         status.className = 'paybox-status error'; status.textContent = m;
-        if (confirmCtx) confirmCtx.fail(m, meta);
+        var retryBps = add || !opts.retryWithSlippage ? null : payRetrySlippageBps(failure, BigInt(opts.slippageBps));
+        if (retryBps != null) retryBps = Number(retryBps);
+        if (confirmCtx && mined && opts.retryWithSlippage) {
+          confirmCtx.retry(m, null, 'Review again', function () { opts.retryWithSlippage(opts.slippageBps); });
+        } else if (confirmCtx && retryBps != null) {
+          var slip = slippageControl(function () { return retryBps; }, function (bps) { retryBps = bps; }, Number(PAY_MAX_SLIPPAGE_BPS));
+          slip.node.classList.add('pay-retry-slippage');
+          confirmCtx.retry(m, slip.node, 'Review again', function () { opts.retryWithSlippage(retryBps); });
+        } else if (confirmCtx) confirmCtx.fail(m, meta);
       },
     }));
   }
@@ -26405,11 +26450,16 @@ function openTxConfirm(payload, onConfirm, opts) {
   // `closeOnConfirm: false` callers keep the modal open while they send, locking BOTH buttons for the
   // duration and re-enabling them on failure. Escape / ✕ / backdrop follow that same lock, so a
   // dismissal can't orphan an in-flight transaction's status display (matches confirmTransactionModal).
+  var confirmed = false;
   var modal = openModal(opts.title || 'Confirm transaction', content, {
     noPrompt: true,
     canClose: function () { return !(confirm.disabled && cancel.disabled); },
+    // Closed without Confirm (Cancel, Escape, the close button): the caller may undo what it set up for this review.
+    onClose: function () { if (!confirmed && opts.onDismiss) opts.onDismiss(); },
   });
   cancel.addEventListener('click', modal.close);
+  // After a failure the confirm button can offer one follow-up action instead of the send.
+  var retryAction = null;
   function setSequenceActive(index, allComplete) { if (sequenceUi) sequenceUi.setActive(index, allComplete); }
   function updateSequenceFromStatus(message, meta) {
     if (!sequenceUi || !sequenceUi.items.length || !message) return;
@@ -26434,6 +26484,8 @@ function openTxConfirm(payload, onConfirm, opts) {
     }
   }
   function unlockWithResult(message, kind, meta) {
+    // A failed send is over: closing now is a dismissal again.
+    if (kind === 'error') confirmed = false;
     if (kind === 'success' && sequenceUi) setSequenceActive(sequenceUi.items.length, true);
     showStatus(message, kind, meta);
     confirm.style.display = 'none';
@@ -26441,6 +26493,8 @@ function openTxConfirm(payload, onConfirm, opts) {
     cancel.textContent = kind === 'success' ? 'Done' : 'Close';
   }
   confirm.addEventListener('click', function () {
+    if (retryAction) { var again = retryAction; retryAction = null; confirmed = true; modal.close(); again(); return; }
+    confirmed = true;
     if (opts.closeOnConfirm !== false) modal.close();
     else {
       confirm.disabled = true;
@@ -26459,6 +26513,16 @@ function openTxConfirm(payload, onConfirm, opts) {
       complete: function (message, meta) { unlockWithResult(message || 'Payment complete.', 'success', meta); },
       pending: function (message, meta) { unlockWithResult(message || 'Waiting for confirmation.', 'pending', meta); },
       fail: function (message, meta) { unlockWithResult(message || 'The payment could not be completed.', 'error', meta); },
+      // Fail with `message`, show `node` above the buttons, and turn Confirm into `actionText`, which closes
+      // this dialog and runs `onRetry`.
+      retry: function (message, node, actionText, onRetry) {
+        unlockWithResult(message, 'error');
+        if (node) content.insertBefore(node, foot);
+        retryAction = onRetry;
+        confirm.textContent = actionText;
+        confirm.disabled = false;
+        confirm.style.display = '';
+      },
       confirm: confirm,
       cancel: cancel,
     });
@@ -26480,6 +26544,7 @@ function openPayConfirm(payload, onConfirm, opts) {
     confirmText: opts.confirmText || 'Confirm & Pay',
     closeOnConfirm: false,
     sequenceSteps: steps,
+    onDismiss: opts.onDismiss,
   });
 }
 
@@ -26811,6 +26876,37 @@ function buildRedeemItemsModal(project, requestClose) {
   return wrap;
 }
 
+// "Allowed decrease" presets plus a custom percent up to `maxBps` (default 99.99%). `setBps` receives the chosen
+// tolerance in basis points; `sync` redraws the row from `getBps` after the tolerance changes elsewhere.
+function slippageControl(getBps, setBps, maxBps) {
+  maxBps = maxBps || 9999;
+  var row = el('div', 'ops-percent ops-slippage');
+  var lbl = el('span', 'ops-slippage-lbl'); lbl.textContent = 'Allowed decrease'; row.appendChild(lbl);
+  [50, 100, 300, 500].forEach(function (bps) {
+    var b = document.createElement('button'); b.className = 'ops-percent-btn'; b.textContent = (bps / 100) + '%';
+    b.setAttribute('data-bps', String(bps));
+    b.addEventListener('click', function () { setBps(bps); sync(); });
+    row.appendChild(b);
+  });
+  var custom = document.createElement('label'); custom.className = 'ops-slippage-custom';
+  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = String(maxBps / 100); input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom allowed decrease percent');
+  custom.appendChild(input); custom.appendChild(document.createTextNode('%')); row.appendChild(custom);
+  input.addEventListener('change', function () {
+    // Checked once rounded, so 49.999% can't round past the limit.
+    var bps = Math.round(Number(input.value) * 100);
+    if (!Number.isFinite(bps) || bps <= 0 || bps > maxBps) { input.value = String(getBps() / 100); return; }
+    setBps(bps); sync();
+  });
+  function sync() {
+    Array.prototype.forEach.call(row.querySelectorAll('.ops-percent-btn'), function (b) {
+      b.classList.toggle('active', Number(b.getAttribute('data-bps')) === getBps());
+    });
+    input.value = String(getBps() / 100);
+  }
+  sync();
+  return { node: row, sync: sync };
+}
+
 function buildCashOutModal(project, requestClose) {
   var sym = project.tokenSymbol || 'tokens';
   var wrap = el('div', 'modal-body');
@@ -26853,29 +26949,8 @@ function buildCashOutModal(project, requestClose) {
   // Max-slippage control for the pool routes (direct sell / buyback). Hidden until a pool route is active — the
   // treasury reclaim has no swap and ignores it. Changing it re-runs the route comparison so a tolerance
   // which makes the protected pool floor fall below the treasury cannot leave a stale AMM route on screen.
-  var slipRow = el('div', 'ops-percent ops-slippage'); slipRow.style.display = 'none'; wrap.appendChild(slipRow);
-  var slipLbl = el('span', 'ops-slippage-lbl'); slipLbl.textContent = 'Max slippage'; slipRow.appendChild(slipLbl);
-  [50, 100, 300, 500].forEach(function (bps) {
-    var b = document.createElement('button'); b.className = 'ops-percent-btn'; b.textContent = (bps / 100) + '%';
-    b.setAttribute('data-bps', String(bps));
-    b.addEventListener('click', function () { state.slippageBps = bps; syncSlip(); updatePreview(); });
-    slipRow.appendChild(b);
-  });
-  var customSlip = document.createElement('label'); customSlip.className = 'ops-slippage-custom';
-  var customSlipInput = document.createElement('input'); customSlipInput.type = 'number'; customSlipInput.min = '0.01'; customSlipInput.max = '99.99'; customSlipInput.step = '0.1'; customSlipInput.inputMode = 'decimal'; customSlipInput.setAttribute('aria-label', 'Custom max slippage percent');
-  customSlip.appendChild(customSlipInput); customSlip.appendChild(document.createTextNode('%')); slipRow.appendChild(customSlip);
-  customSlipInput.addEventListener('change', function () {
-    var pct = Number(customSlipInput.value);
-    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) { customSlipInput.value = String((state.slippageBps || 100) / 100); return; }
-    state.slippageBps = Math.round(pct * 100); syncSlip(); updatePreview();
-  });
-  function syncSlip() {
-    Array.prototype.forEach.call(slipRow.querySelectorAll('.ops-percent-btn'), function (b) {
-      b.classList.toggle('active', Number(b.getAttribute('data-bps')) === (state.slippageBps || 100));
-    });
-    customSlipInput.value = String((state.slippageBps || 100) / 100);
-  }
-  syncSlip();
+  var slip = slippageControl(function () { return state.slippageBps || 100; }, function (bps) { state.slippageBps = bps; updatePreview(); });
+  var slipRow = slip.node; slipRow.style.display = 'none'; wrap.appendChild(slipRow);
   var status = el('div', 'modal-status'); wrap.appendChild(status);
   var foot = el('div', 'modal-foot');
   var btn = document.createElement('button'); btn.className = 'modal-submit'; btn.textContent = 'Cash out';
@@ -27161,7 +27236,7 @@ function buildCashOutModal(project, requestClose) {
     applyCashOutPreviewQuote(state, f, a);
     var poolRoute = f.route === 'amm' || f.route === 'directsell';
     slipRow.style.display = poolRoute ? '' : 'none';
-    if (poolRoute) syncSlip();
+    if (poolRoute) slip.sync();
     preview.innerHTML = '';
     var recv = el('div', 'ops-preview-line ops-preview-recv');
     recv.textContent = 'You’ll receive ~ ' + formatBalance(f.net, a.decimals, a.symbol)
@@ -27185,11 +27260,11 @@ function buildCashOutModal(project, requestClose) {
     // Pool routes: the ~ amount is the quote; the onchain floor = quote × (1 − max slippage). The swap REVERTS
     // below it (protection, not an expected loss). Reads state.slippageBps so the slippage control updates it live.
     if (poolRoute && f.net != null) {
-      var slip = state.slippageBps || 100;
+      var slipBps = state.slippageBps || 100;
       var activeRoute = state.cashOutRoute || {};
-      var floor = activeRoute.minimum != null ? activeRoute.minimum : cashOutExecutableMinimum(f.net, slip);
+      var floor = activeRoute.minimum != null ? activeRoute.minimum : cashOutExecutableMinimum(f.net, slipBps);
       var floorLine = el('div', 'ops-preview-line ops-preview-feetok');
-      floorLine.textContent = 'Stops if the return falls below ' + formatBalance(floor, a.decimals, a.symbol) + ' (' + (slip / 100) + '% max slippage)';
+      floorLine.textContent = 'Stops if the return falls below ' + formatBalance(floor, a.decimals, a.symbol) + ' (' + (slipBps / 100) + '% allowed decrease)';
       preview.appendChild(floorLine);
       if (f.route === 'amm' && activeRoute.rawSwapQuote > 0n && activeRoute.hookMinimum != null) {
         var poolBps = cashOutPoolBufferBps(activeRoute.rawSwapQuote, activeRoute.hookMinimum);
@@ -27442,7 +27517,7 @@ function buildCashOutModal(project, requestClose) {
               rows: [
                 ['Selling', formatBalance(count, 18, sym)],
                 ['You receive', '≈ ' + formatBalance(fresh, reviewedAcct.decimals, reviewedAcct.symbol) + ' (actual set by the pool)'],
-                ['Minimum', formatBalance(minOut, reviewedAcct.decimals, reviewedAcct.symbol) + ' — reverts below this (' + (reviewedSlippage / 100) + '% max slippage)'],
+                ['Minimum', formatBalance(minOut, reviewedAcct.decimals, reviewedAcct.symbol) + ', reverts below this (' + (reviewedSlippage / 100) + '% allowed decrease)'],
                 ['Route', 'Uniswap Universal Router — bypasses the terminal (no 2.5% cash out fee)'],
                 ['To', acct],
               ],

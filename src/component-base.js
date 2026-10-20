@@ -1400,7 +1400,12 @@ export function executeTransaction(opts) {
 
   // Status/result callbacks. When the confirm modal is shown (not skipConfirm), these get wrapped so tx
   // progress renders INSIDE the modal (which stays open after Confirm) — callers no longer show it elsewhere.
-  var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onError: opts.onError || function () {} };
+  // `opts.describeFailure(error)` may name a failure better than its generic line; both the dialog and the caller get it.
+  var callerOnError = opts.onError || function () {};
+  function failureLine(m, meta) {
+    return (opts.describeFailure && meta && meta.error && opts.describeFailure(meta.error)) || m;
+  }
+  var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onError: opts.describeFailure ? function (m, meta) { callerOnError(failureLine(m, meta), meta); } : callerOnError };
 
   // Build the review payload and require explicit confirmation, unless the caller already showed its own.
   var confirmStep;
@@ -1450,7 +1455,7 @@ export function executeTransaction(opts) {
           r.showStatus(m, 'success', meta);
           base.onSuccess(m, Object.assign({}, meta || {}, { confirmSession: r }));
         },
-        onError: function (m, meta) { r.showStatus(m, 'error', meta); base.onError(m, meta); },
+        onError: function (m, meta) { m = failureLine(m, meta); r.showStatus(m, 'error', meta); base.onError(m, meta); },
       };
     }
     waitForSafeInitialization().then(sendNow).catch(function (err) {
@@ -1522,7 +1527,7 @@ export function executeTransaction(opts) {
       });
     }).catch(async function (err) {
       try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
-      cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'), { userRejected: isWalletUserRejection(err) });
+      cbs.onError(errMessage(err, 'Could not propose the transaction to your Safe.'), { userRejected: isWalletUserRejection(err), error: err });
     });
     return;
   }
@@ -1606,7 +1611,7 @@ export function executeTransaction(opts) {
     var full = ((err.shortMessage || '') + ' ' + (err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
     var chainName = chainNameFor(opts.chainId);
     var friendly = friendlyTransactionError(full);
-    var failureMeta = { userRejected: isWalletUserRejection(err), submittedHash: submittedHash || null };
+    var failureMeta = { userRejected: isWalletUserRejection(err), submittedHash: submittedHash || null, error: err };
     if (friendly) {
       cbs.onError(friendly, failureMeta);
     } else if (msg.indexOf('rejected') !== -1 || msg.indexOf('User rejected') !== -1 || /user rejected|denied transaction/i.test(full)) {
@@ -1870,7 +1875,7 @@ COMPONENT_SPECS.pay.file = 'discover.js (renderPayCard, prepareCardPay, buildAdd
 COMPONENT_SPECS.pay.fn = 'JBMultiTerminal/JBRouterTerminalRegistry.pay(uint256,address,uint256,address,uint256,string,bytes) or addToBalanceOf(uint256,address,uint256,bool,string,bytes)';
 COMPONENT_SPECS.pay.desc = "Rebuild the complete payment decision surface. Resolve the selected chain’s local projectId, active ruleset, verified terminal accounting contexts, and the project’s actually-listed recognized terminals before offering a token. Payment is permissionless, but a not-yet-started or pausePay ruleset and an unreadable/unknown terminal surface must block. Payment amounts use the input token’s decimals; project-token output and minReturnedTokens use 18 decimals and protect the beneficiary’s output (reserved tokens are separate). Never reuse an amount parsed for one token after the chain/token changes. A verified zero-token preview is a legitimate zero-issuance payment; a missing, failed, stale, or malformed preview is not.";
 COMPONENT_SPECS.pay.cases = [
-  'DIRECT PAY: call pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) in exactly that order. Native input uses the NATIVE_TOKEN sentinel plus msg.value=amount. A directly accepted ERC-20 uses value=0 and an allowance to the exact reviewed JBMultiTerminal. Refresh previewPayFor for the final beneficiary. JuiceScan’s standalone component uses a 99% floor; the project card sends the metadata and minReturnedTokens from the SDK’s prepareUserPay unchanged.',
+  'DIRECT PAY: call pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) in exactly that order. Native input uses the NATIVE_TOKEN sentinel plus msg.value=amount. A directly accepted ERC-20 uses value=0 and an allowance to the exact reviewed JBMultiTerminal. Refresh previewPayFor for the final beneficiary. JuiceScan’s standalone component and project card both send the metadata and minReturnedTokens from the SDK’s prepareUserPay unchanged; when a pay reverts, decodePayFailure says why, and a shortfall can be quoted again with a looser slippageBps.',
   'ROUTER PAY: offer a non-accounting token only if a recognized JBRouterTerminalRegistry is listed for this project and its live preview proves the route works. Native input still uses msg.value. ERC-20 router input uses a one-time ERC20→Permit2 approval when needed plus a wallet-bound Permit2 signature added to the pay metadata next to the buyback quote; do not approve the router as if it were a direct terminal. A rejected signature is final; only a genuine wallet capability/parameter failure may fall back to an onchain Permit2 approval.',
   'ADD TO BALANCE: call addToBalanceOf(projectId, token, amount, false, memo, metadata). It mints no project tokens, ignores selected shop items, and has no min-output argument. JuiceScan therefore permits only a verified directly accepted accounting token and does not silently use a router swap whose landed amount cannot be floored.',
   'NFT CHECKOUT: repeat each selected uint16 tier id by quantity in the 721 pay-metadata envelope addressed to the exact hook metadata-id target. Price in the shop’s pricing context, apply only eligible pay credits, honor cantBuyWithCredits, discounts, supply caps, and the hook’s minimum fresh-payment rules. Prove any cross-currency conversion with JBPrices, use directly accepted currencies, allow a zero payment only when verified credits cover the order, and pass the tiers to prepareUserPay so one metadata carries both the tiers and the buyback quote.',

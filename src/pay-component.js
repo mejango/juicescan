@@ -10,8 +10,8 @@ import {
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
-import { computePayPreview, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
-import { quotedOutputFloor } from './slippage.js';
+import { decodePayFailure } from '@bananapus/nana-sdk-core/v6';
+import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 
 export var payAbi = [{
   type: 'function', name: 'pay', stateMutability: 'payable',
@@ -36,23 +36,22 @@ var accountingContextsAbi = [{
 
 // Pure builder for the JBMultiTerminal.pay transaction — returns the executeTransaction config (no callbacks).
 // `o`: { chainId, projectId, token, amount (bigint), beneficiary, memo, route } where route carries the
-// resolved terminal/router address and a `preview.received` (raw, BigInt-able) token estimate.
-// minReturnedTokens is a 1% slippage floor off positive previewed output. A verified zero quote is valid for a
-// zero-issuance project and deliberately encodes a zero floor; a missing/unavailable quote is still rejected.
+// resolved terminal/router address and the SDK's prepared payment (`preview.minReturnedTokens` and
+// `preview.metadata`, from prepareUserPay). A verified zero minimum is valid for a zero-issuance project; a
+// missing/unavailable preparation is rejected.
 export function buildPayArgs(o) {
   var isNative = sameAddress(String(o.token), NATIVE_TOKEN);
   var pv = o.route && o.route.preview;
-  if (!pv || pv.unavailable || pv.received == null) throw new Error('A live pay preview is required.');
-  var quoted = BigInt(pv.received);
-  if (quoted < 0n) throw new Error('The pay preview returned an invalid project-token count.');
-  var minReturned = quotedOutputFloor(quoted, 9900);
+  if (!pv || pv.unavailable || pv.received == null || pv.minReturnedTokens == null || !pv.metadata) throw new Error('A live pay preview is required.');
+  var minReturned = BigInt(pv.minReturnedTokens);
+  if (minReturned < 0n || BigInt(pv.received) < 0n) throw new Error('The pay preview returned an invalid project-token count.');
   return {
     chainId: o.chainId,
     address: o.route.address,
     contractName: o.route.contractName,
     abi: payAbi,
     functionName: 'pay',
-    args: [BigInt(o.projectId), o.token, o.amount, o.beneficiary, minReturned, o.memo || '', '0x'],
+    args: [BigInt(o.projectId), o.token, o.amount, o.beneficiary, minReturned, o.memo || '', pv.metadata],
     value: isNative ? o.amount : 0n,
     tokenAddr: isNative ? null : o.token,
     spenderAddr: isNative ? null : o.route.address,
@@ -101,15 +100,18 @@ export function resolveBestPayRoute(opts) {
   if (!routes.length) return Promise.resolve(null);
 
   return Promise.all(routes.map(function (route) {
-    return computePayPreview({
+    var request = {
       chainId: opts.chainId,
       projectId: opts.projectId,
       token: opts.token,
       amount: opts.amount,
       beneficiary: opts.beneficiary,
       terminal: route.address,
-    }).then(function (preview) {
-      return Object.assign({}, route, { preview: preview });
+    };
+    // The SDK prepares the payment (metadata, preview, minimum); the routing labels load afterwards
+    // (payRouteLabels), so a slow display read never holds up the review.
+    return prepareCardPay(request).then(function (prepared) {
+      return Object.assign({}, route, { preview: prepared });
     }).catch(function () {
       return Object.assign({}, route, { preview: { unavailable: true } });
     });
@@ -120,9 +122,19 @@ export function resolveBestPayRoute(opts) {
     }
     if (best && best.preview && !best.preview.unavailable && best.preview.received != null && BigInt(best.preview.received) >= 0n) return best;
     // Never turn an unavailable preview into a minReturnedTokens=0 payment. An exact, verified zero quote is a
-    // legitimate zero-issuance payment; an RPC or terminal failure is not.
-    return null;
+    // legitimate zero-issuance payment; an RPC or terminal failure is not. A known revert says why.
+    var explained = resolved.find(function (r) { return r.preview && r.preview.unavailable && r.preview.explained; });
+    return explained ? { unavailable: true, reason: explained.preview.reason } : null;
   });
+}
+
+// The hook's routing choice for a prepared route's metadata (the "Create new tokens" / "Buy on Uniswap" tag);
+// display only, so a failed read shows no tag.
+export function payRouteLabels(opts, route) {
+  return computePayPreview({
+    chainId: opts.chainId, projectId: opts.projectId, token: opts.token, amount: opts.amount,
+    beneficiary: opts.beneficiary, terminal: route.address, metadata: route.preview.metadata,
+  }).then(function (shown) { return shown.unavailable ? null : { routing: shown.routing, amm: shown.amm }; }, function () { return null; });
 }
 
 export function renderPayComponent() {
@@ -290,7 +302,8 @@ export function renderPayComponent() {
     var payBtn = el('button', 'pay-btn');
     payBtn.textContent = 'PAY';
     payBtn.addEventListener('click', function() {
-      if (state.phase === 'ready' || state.phase === 'idle') {
+      // A preview still loading never blocks Pay: executePay drops it and prepares the payment itself.
+      if (state.phase === 'ready' || state.phase === 'idle' || state.phase === 'previewing') {
         executePay();
       } else {
         alert('Please wait for the current step to finish.');
@@ -491,18 +504,24 @@ export function renderPayComponent() {
     updateUI();
 
     var gen = ++previewGeneration;
-    resolveBestPayRoute({
+    var request = {
       chainId: state.selectedChain,
       projectId: state.projectId,
       token: state.selectedToken.address,
       amount: amountParsed,
       beneficiary: beneficiary,
-    }).then(function (route) {
+    };
+    // The preview shows with its routing tag in one render (as before); only the submit path skips the tag.
+    resolveBestPayRoute(request).then(function (route) {
+      if (!route || route.unavailable || !route.preview || route.preview.unavailable) return { route: route, labels: null };
+      return payRouteLabels(request, route).then(function (labels) { return { route: route, labels: labels }; });
+    }).then(function (found) {
+      var route = found.route, labels = found.labels;
       if (gen !== previewGeneration) return;
-      if (!route) {
+      if (!route || route.unavailable) {
         state.phase = 'ready';
         state.preview = null;
-        state.error = 'No payment contract is available on this chain';
+        state.error = route ? route.reason : 'No payment contract is available on this chain';
         updateUI();
         return;
       }
@@ -511,8 +530,9 @@ export function renderPayComponent() {
       state.preview = (!p || p.unavailable) ? null : {
         beneficiaryTokens: formatTokenCount(p.received),
         reservedTokens: formatTokenCount(p.reserved),
-        routing: p.routing,
-        amm: p.amm,
+        routing: labels ? labels.routing : null,
+        amm: labels ? labels.amm : null,
+        metadata: p.metadata,
         route: {
           address: route.address,
           contractName: route.contractName,
@@ -558,25 +578,44 @@ export function renderPayComponent() {
     state.phase = 'confirming';
     updateUI();
 
+    // The payment as it was when Pay was pressed: the route is prepared for it, and the review and calldata show it.
+    var reviewed = {
+      chainId: state.selectedChain, projectId: state.projectId, token: state.selectedToken.address,
+      symbol: state.selectedToken.symbol || '', amountText: state.amount, decimals: state.decimals,
+      memo: state.memo || '', beneficiary: beneficiary,
+    };
+    function unchanged() {
+      return state.selectedChain === reviewed.chainId && state.projectId === reviewed.projectId
+        && !!state.selectedToken && sameAddress(state.selectedToken.address, reviewed.token)
+        && state.amount === reviewed.amountText && state.decimals === reviewed.decimals
+        && (state.memo || '') === reviewed.memo && sameAddress(getBeneficiaryAddress(state), reviewed.beneficiary);
+    }
+    var CHANGED = 'The payment details changed. Review and try again.';
+
     resolveBestPayRoute({
-      chainId: state.selectedChain,
-      projectId: state.projectId,
-      token: state.selectedToken.address,
+      chainId: reviewed.chainId,
+      projectId: reviewed.projectId,
+      token: reviewed.token,
       amount: amountParsed,
       beneficiary: beneficiary,
     }).then(function (route) {
-      if (!route) {
+      if (!unchanged()) { state.phase = 'ready'; state.error = CHANGED; updateUI(); return; }
+      if (!route || route.unavailable) {
         state.phase = 'ready';
-        state.error = 'No payment contract is available on this chain';
+        state.error = route ? route.reason : 'No payment contract is available on this chain';
         updateUI();
         return;
       }
       if (route.preview && !route.preview.unavailable) {
+        // The tag already shown stays only if it was read for exactly this route and metadata; display only.
+        var prior = state.preview && state.preview.route && sameAddress(state.preview.route.address, route.address)
+          && state.preview.metadata === route.preview.metadata ? state.preview : null;
         state.preview = {
           beneficiaryTokens: formatTokenCount(route.preview.received),
           reservedTokens: formatTokenCount(route.preview.reserved),
-          routing: route.preview.routing,
-          amm: route.preview.amm,
+          routing: prior ? prior.routing : null,
+          amm: prior ? prior.amm : null,
+          metadata: route.preview.metadata,
           route: {
             address: route.address,
             contractName: route.contractName,
@@ -586,20 +625,23 @@ export function renderPayComponent() {
       }
 
       executeTransaction(Object.assign(buildPayArgs({
-        chainId: state.selectedChain,
-        projectId: state.projectId,
-        token: state.selectedToken.address,
+        chainId: reviewed.chainId,
+        projectId: reviewed.projectId,
+        token: reviewed.token,
         amount: amountParsed,
         beneficiary: beneficiary,
-        memo: state.memo || '',
+        memo: reviewed.memo,
         route: route,
       }), {
-        confirmSummary: { action: 'Pay project #' + String(state.projectId), rows: [
-          ['Paying', state.amount + ' ' + (state.selectedToken.symbol || '')],
+        assertWriteState: function () { if (!unchanged()) throw new Error(CHANGED); },
+        // The confirm dialog shows why a pay reverted, when the revert says.
+        describeFailure: function (error) { var failure = decodePayFailure(error); return failure && failure.message; },
+        confirmSummary: { action: 'Pay project #' + String(reviewed.projectId), rows: [
+          ['Paying', reviewed.amountText + ' ' + reviewed.symbol],
           ['You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
-          ['Minimum', formatTokenCount(quotedOutputFloor(BigInt(route.preview.received), 9900)) + ' tokens — fails if you receive less'],
+          ['Minimum', formatTokenCount(route.preview.minReturnedTokens) + ' tokens — fails if you receive less'],
           ['To', beneficiary],
-          state.memo ? ['Memo', state.memo] : null,
+          reviewed.memo ? ['Memo', reviewed.memo] : null,
         ].filter(Boolean) },
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
