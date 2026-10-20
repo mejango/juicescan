@@ -10181,6 +10181,10 @@ export function renderPayCard(project, cart) {
         spenderAddr: (isNative || viaRouter) ? null : terminal,
         approvalAmount: (isNative || viaRouter) ? null : amt,
       };
+    // Approval, authorization and simulation waits must not outlive the reviewed inputs.
+    txParams.assertWriteState = function () {
+      if (!payInputsUnchanged()) throw new Error('The payment details, network, quote, or wallet changed. Review and try again.');
+    };
     var fnName = txParams.functionName;
     var fnAbi = txParams.abi;
     var args = txParams.args;
@@ -10250,6 +10254,7 @@ export function renderPayCard(project, cart) {
       };
       buildRouterPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb, metadata)
         .then(function (meta) {
+          if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return; }
           var p = Object.assign({}, txParams);
           // A null meta means the router was approved directly (contract wallet) — the pay
           // carries its original metadata and the router pulls on the plain ERC20 allowance.
