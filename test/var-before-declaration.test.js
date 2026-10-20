@@ -37,7 +37,7 @@ function bindingsOf(scope) {
   (function walk(n) {
     if (n !== scope && isFn(n)) { if (ts.isFunctionDeclaration(n) && n.name) names.add(n.name.text); return; }
     if (ts.isVariableDeclaration(n)) for (const id of namesIn(n.name, [])) names.add(id.text);
-    if ((ts.isClassDeclaration(n) || ts.isImportClause(n) || ts.isImportSpecifier(n) || ts.isNamespaceImport(n)) && n.name) names.add(n.name.text);
+    if ((ts.isClassDeclaration(n) || ts.isClassExpression(n) || ts.isImportClause(n) || ts.isImportSpecifier(n) || ts.isNamespaceImport(n)) && n.name) names.add(n.name.text);
     ts.forEachChild(n, walk);
   })(scope);
   return names;
@@ -51,9 +51,22 @@ function isRead(id) {
   if ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p) || ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name === id) return false;
   if (ts.isBindingElement(p) && p.propertyName === id) return false;
   if (ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) return false;
-  // A plain assignment target is written, not read.
-  if (ts.isBinaryExpression(p) && p.left === id && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) return false;
-  return true;
+  return !isAssignedTo(id);
+}
+
+// A target an assignment or a for-in/of loop writes, destructuring included (its defaults and member bases are reads).
+function isAssignedTo(id) {
+  let node = id;
+  for (;;) {
+    const p = node.parent;
+    const assigns = ts.isBinaryExpression(p) && p.left === node && p.operatorToken.kind === ts.SyntaxKind.EqualsToken;
+    if (assigns && (ts.isArrayLiteralExpression(p.parent) || ts.isObjectLiteralExpression(p.parent) || ts.isPropertyAssignment(p.parent))) { node = p; continue; }
+    if (assigns) return true;
+    if ((ts.isForOfStatement(p) || ts.isForInStatement(p)) && p.initializer === node) return true;
+    if (ts.isArrayLiteralExpression(p) || ts.isObjectLiteralExpression(p) || ts.isSpreadElement(p) || ts.isSpreadAssignment(p) || ts.isParenthesizedExpression(p)
+      || (ts.isShorthandPropertyAssignment(p) && p.name === node) || (ts.isPropertyAssignment(p) && p.initializer === node)) { node = p; continue; }
+    return false;
+  }
 }
 
 function shadowedEarlyReads(file, text) {
@@ -64,13 +77,12 @@ function shadowedEarlyReads(file, text) {
     const vars = varsOf(n);
     // Parameters and local function declarations are bound before any line runs: a later var keeps their value.
     const params = new Set((n.parameters || []).flatMap(p => namesIn(p.name, []).map(id => id.text)));
-    (function hoisted(m) {
-      if (m !== n && isFn(m)) { if (ts.isFunctionDeclaration(m) && m.name) params.add(m.name.text); return; }
-      ts.forEachChild(m, hoisted);
-    })(n);
+    // Only a function declared directly in this body is bound up front; one in a nested block is not.
+    for (const s of (n.body && ts.isBlock(n.body) ? n.body.statements : [])) if (ts.isFunctionDeclaration(s) && s.name) params.add(s.name.text);
     (function walk(m) {
       if (m !== n && isFn(m)) return;
-      if (ts.isIdentifier(m) && isRead(m) && outer.some(scope => scope.has(m.text)) && !params.has(m.text) && vars.has(m.text) && m.getStart() < vars.get(m.text)) {
+      const ownName = ts.isFunctionExpression(n) && n.name && n.name !== m && n.name.text === m.text;
+      if (ts.isIdentifier(m) && isRead(m) && (ownName || outer.some(scope => scope.has(m.text))) && !params.has(m.text) && vars.has(m.text) && m.getStart() < vars.get(m.text)) {
         found.push(file + ':' + (src.getLineAndCharacterOfPosition(m.getStart()).line + 1) + ' ' + m.text);
       }
       ts.forEachChild(m, walk);
@@ -98,6 +110,13 @@ describe('no function reads an outer name before its own var shadows it', () => 
     expect(shadowedEarlyReads('x.js', 'const f = function slip() { return () => { slip(); var slip; }; };')).toEqual(['x.js:1 slip']);
     expect(shadowedEarlyReads('x.js', 'var slip = {}; function g() { slip.sync(); class C { static { var slip; } } }')).toEqual([]);
     expect(shadowedEarlyReads('x.js', 'var slip = {}; class C { static { slip.sync(); var slip; } }')).toEqual(['x.js:1 slip']);
+    expect(shadowedEarlyReads('x.js', 'const f = function slip() { slip.name; var slip; };')).toEqual(['x.js:1 slip']);
+    expect(shadowedEarlyReads('x.js', 'const C = class Slip { m() { Slip.x; var Slip; } };')).toEqual(['x.js:1 Slip']);
+    // A function declared in a nested block is not bound up front.
+    expect(shadowedEarlyReads('x.js', 'var slip = {}; function g() { slip.sync(); if (x) { function slip() {} } var slip; }')).toEqual(['x.js:1 slip']);
+    // Destructuring and loop targets are writes; their defaults and member bases are reads.
+    expect(shadowedEarlyReads('x.js', 'var slip; function g() { [slip] = [1]; ({ slip } = o); for (slip of xs); var slip; }')).toEqual([]);
+    expect(shadowedEarlyReads('x.js', 'var slip, o; function g() { [o.a = slip] = []; var slip; }')).toEqual(['x.js:1 slip']);
   });
   it('holds across src', { timeout: 120_000 }, () => {
     const dir = path.resolve(__dirname, '../src');

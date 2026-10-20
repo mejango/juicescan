@@ -9705,7 +9705,8 @@ export function renderPayCard(project, cart) {
   var memo = el('input', 'paybox-memo'); memo.hidden = true;
   memo.type = 'text';
   memo.placeholder = 'Add a note (optional)';
-  memo.addEventListener('input', function () { state.memo = memo.value; });
+  // A memo edit is another payment: a tolerance loosened for the last one ends.
+  memo.addEventListener('input', function () { state.memo = memo.value; dropLoosenedSlippage(); });
   card.appendChild(memo);
 
   // Feedback block — "You get" / routing tag / AMM subtext / "Splits get".
@@ -9902,7 +9903,7 @@ export function renderPayCard(project, cart) {
     var t = state.token || {};
     return [state.mode, state.chainId, String(t.address || '').toLowerCase(), t.decimals, !!t.viaRouter,
       t.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId),
-      String(beneficiary || '').toLowerCase(), String(amount), selectedTierIds().join(',')].join('|');
+      String(beneficiary || '').toLowerCase(), String(amount), selectedTierIds().join(','), state.memo || ''].join('|');
   }
 
   // The tolerance prepareUserPay floors its quote by: the default, or the one the payer loosened after this same

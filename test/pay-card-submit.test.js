@@ -286,6 +286,22 @@ it('drops a loosened tolerance when the payment changed before Review again', as
   expect(runtime.execute).toHaveBeenCalledTimes(1);
 });
 
+it('ends a loosened tolerance when the memo changes while it is being prepared', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(619); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click();
+  const memo = document.querySelector('.paybox-memo');
+  memo.value = 'another note'; memo.dispatchEvent(new Event('input'));
+  await settle(500);
+  expect(runtime.prepare.mock.calls.length).toBeGreaterThan(calls);
+  expect(runtime.prepare.mock.lastCall[1].slippageBps).toBe(100n);
+  expect(runtime.execute).toHaveBeenCalledTimes(1);
+});
+
 it('ends a loosened tolerance when its review is cancelled, and after its payment is sent', async () => {
   const cancelButton = () => [...document.querySelectorAll('button')].find(b => b.textContent === 'Cancel');
   async function shortfallThenReviewAgain() {
