@@ -77,3 +77,16 @@ test('a chunk that failed to load recovers through the reload button', async ({ 
   expect(failed).toBe(2);
   expect(failures).toEqual([]);
 });
+
+test('the first view loads only the entry and its preloaded chunks', async ({ page }) => {
+  // check:bundle budgets the static import closure; this catches an eager import() at startup that the
+  // closure would miss.
+  const { failures, scripts } = await open(page, 'discover');
+  await page.waitForLoadState('networkidle');
+  const preloaded = await page.evaluate(() => [...document.querySelectorAll('script[type="module"][src], link[rel="modulepreload"]')]
+    .map(node => new URL(node.src || node.href).pathname));
+  expect(failures).toEqual([]);
+  // viem's call() imports its CCIP-read helper (a 223 B chunk) when an eth_call fails, as fixture reads do.
+  const viemOnError = path => /\/chunks\/ccip-[^/]+\.js$/.test(path);
+  expect(scripts.map(script => script.path).filter(path => !preloaded.includes(path) && !viemOnError(path))).toEqual([]);
+});

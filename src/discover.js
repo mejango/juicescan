@@ -31,7 +31,7 @@ import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
 import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { toggleRow, deploySalt, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, fillSplits, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-shared.js';
 import { isEnsName } from './ens.js';
-import { CHUNK_FAILED_TEXT, chunkReloadButton } from './chunk-failure.js';
+import { CHUNK_FAILED_TEXT, chunkFailure, chunkReloadButton } from './chunk-failure.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
@@ -56,7 +56,7 @@ function loadCreateFlow() {
 var defifaActions = null;
 function afterDefifaActions(inventory) {
   if (!isNativeInventory(inventory)) return inventory;
-  return import('./defifa-nft-actions.js').then(function (mod) { defifaActions = mod; return inventory; });
+  return import('./defifa-nft-actions.js').then(function (mod) { defifaActions = mod; return inventory; }, function () { throw chunkFailure(); });
 }
 function withCreateFlow(action) {
   return loadCreateFlow().then(action, function () { alert(CHUNK_FAILED_TEXT); });
@@ -1792,7 +1792,7 @@ export function renderShopSection(project, shop, cart) {
       setTimeout(function () { cardEl.classList.remove('shop-tier-focus'); }, 1500);
     }
     if (_activeDetail) _activeDetail.shopFocus = focusTier;
-  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; } });
+  }).catch(function (error) { if (wrap.isConnected) { body.className = 'detail-card-body owners-empty'; if (error && error.chunkFailed) { body.textContent = CHUNK_FAILED_TEXT + ' '; body.appendChild(chunkReloadButton()); } else body.textContent = errMessage(error, 'Could not verify NFT inventory.') + ' Reload to try again.'; } });
 
   // Mobile checkout bar — on phones the Pay card (where the purchase is completed) is a separate stacked
   // section above the tabs, so once items are in the cart show a bar that scrolls up to it. Hidden on
@@ -9566,6 +9566,7 @@ export function renderPayCard(project, cart) {
         showFundingOnly();
         loadAcceptedTokens(state.chainId); loadPaymentSurface(state.chainId);
       }
+      if (error && error.chunkFailed) { status.appendChild(document.createTextNode(' ')); status.appendChild(chunkReloadButton()); return; }
       var retry = el('button'); retry.type = 'button'; retry.textContent = 'Retry';
       retry.addEventListener('click', function () {
         retry.disabled = true;
@@ -25616,7 +25617,7 @@ export function opsActionsRow(project, opts) {
   var capabilities = tokenUiCapabilities(project);
   [
     ['Cash out', async function () {
-      var shop; try { shop = await fetchProjectTiers(project).then(afterDefifaActions); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); openModal('Could not verify NFT protocol', message); return; }
+      var shop; try { shop = await fetchProjectTiers(project).then(afterDefifaActions); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); if (error && error.chunkFailed) { message.appendChild(document.createTextNode(' ')); message.appendChild(chunkReloadButton()); } openModal('Could not verify NFT protocol', message); return; }
       if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop, { mode: 'holdings' })); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
     }],
