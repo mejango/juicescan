@@ -21,6 +21,7 @@ const entry = vi.hoisted(() => ({
   renderWhyTab: vi.fn(),
   renderAccountView: vi.fn(),
   verifiedHandleProjectRoute: vi.fn(() => null),
+  loadFunctionSourceBody: vi.fn().mockRejectedValueOnce(new Error('chunk offline')).mockResolvedValue('function readThing(uint256 id) external view returns (uint256);'),
 }));
 
 const readThing = {
@@ -60,7 +61,8 @@ vi.mock('../src/abi-registry.js', () => ({
   }],
   getFunctions: name => ['JBExample', 'JBDifferent'].includes(name) ? [readThing] : [],
   getAddress: () => '0x1111111111111111111111111111111111111111',
-  getFunctionSource: () => ({ source: 'function readThing(uint256 id) external view returns (uint256);', startLine: 10, endLine: 12 }),
+  getFunctionSource: () => ({ startLine: 10, endLine: 12 }),
+  loadFunctionSourceBody: entry.loadFunctionSourceBody,
   getGithubUrl: (_name, fn) => fn ? 'https://github.com/example/contracts/blob/main/JBExample.sol#L10' : 'https://github.com/example/contracts',
 }));
 
@@ -213,8 +215,13 @@ describe('production app entry point', () => {
     expect(contract.textContent).toMatch(/readThing\(uint256 id\).*view.*returns \(uint256 value\)/s);
     const sourceSection = [...contract.querySelectorAll('.fn-section')]
       .find(section => section.querySelector('.fn-section-label')?.textContent === 'source');
+    expect(entry.loadFunctionSourceBody).not.toHaveBeenCalled();
     sourceSection.querySelector('.fn-section-header').click();
-    expect(contract.querySelector('.fn-source-code').textContent).toMatch(/function readThing/);
+    // The body loads from its own chunk on first open; a failed load offers a retry.
+    await vi.waitFor(() => expect(contract.querySelector('.fn-source-code').textContent).toMatch(/Source failed to load/));
+    contract.querySelector('.fn-source-code button').click();
+    await vi.waitFor(() => expect(contract.querySelector('.fn-source-code').textContent).toMatch(/function readThing/));
+    expect(entry.loadFunctionSourceBody).toHaveBeenCalledWith('JBExample', readThing);
     const useSection = [...contract.querySelectorAll('.fn-section')]
       .find(section => section.querySelector('.fn-section-label')?.textContent === 'use');
     useSection.querySelector('.fn-section-header').click();

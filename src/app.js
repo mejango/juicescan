@@ -3,7 +3,7 @@
 // Chain selection is per-function-form, not global.
 
 import { erc20Abi, formatUnits } from 'viem';
-import { contracts, meta, natspec, categories, chains, commonActions, getFunctions, getAddress, getFunctionSource, getGithubUrl } from './abi-registry.js';
+import { contracts, meta, natspec, categories, chains, commonActions, getFunctions, getAddress, getFunctionSource, loadFunctionSourceBody, getGithubUrl } from './abi-registry.js';
 import { renderFunctionForm } from './form.js';
 import { getAuditPrompt, getComponentAuditPrompt } from './prompts.js';
 import { renderStyleEditor } from './components.js';
@@ -1121,8 +1121,8 @@ function renderFunctionRowLazy(fn, contractName, getContractAddr, abi) {
       expandedContent.appendChild(buildOverviewSection(fn, fnNatspec));
 
       // 2. SOURCE \u2014 function body
-      if (srcInfo && srcInfo.source) {
-        expandedContent.appendChild(buildSourceSection(srcInfo));
+      if (srcInfo) {
+        expandedContent.appendChild(buildSourceSection(contractName, fn, srcInfo));
       }
 
       // 3. TRANSACTION \u2014 actionable form (lazy: only render on first open)
@@ -1264,13 +1264,28 @@ function buildOverviewSection(fn, fnNatspec) {
   }, { defaultOpen: true });
 }
 
-function buildSourceSection(srcInfo) {
+// The body comes from the lazy abi-sources chunk the first time the section opens.
+function buildSourceSection(contractName, fn, srcInfo) {
   return buildFnSection('source', function() {
     var pre = document.createElement('pre');
     pre.className = 'fn-source-code';
     var code = document.createElement('code');
-    code.textContent = srcInfo.source;
     pre.appendChild(code);
+    function load() {
+      code.textContent = 'Loading source…';
+      loadFunctionSourceBody(contractName, fn).then(function(body) {
+        code.textContent = body || 'Source unavailable.';
+      }, function() {
+        code.textContent = 'Source failed to load. ';
+        var retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'style-toggle-btn';
+        retry.textContent = '[retry]';
+        retry.addEventListener('click', load);
+        code.appendChild(retry);
+      });
+    }
+    load();
     return pre;
   }, {
     meta: 'L' + srcInfo.startLine + '–L' + srcInfo.endLine,

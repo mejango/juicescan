@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'vitest';
-import { getFunctionSource, sources } from '../src/abi-registry.js';
+import { getABI, getFunctionSource, loadFunctionSourceBody, sources } from '../src/abi-registry.js';
 import contractSources from '../data/contract-sources.json';
 import deploymentIndex from '../data/deployments.json';
 
@@ -152,5 +152,35 @@ describe('contract-sources.json is pinned to the deployed refs', () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0].paramTypes).toEqual(['uint256', 'uint256']);
     expect(candidates[0].source).toContain('uint256 minCashOutReturn');
+  });
+});
+
+describe('function source bodies load lazily', () => {
+  const overloads = getABI('JB721TiersHook').filter(entry => entry.type === 'function' && entry.name === 'mintPendingReservesFor');
+
+  test('the startup registry carries locations, not bodies', () => {
+    const located = getFunctionSource('JB721TiersHook', overloads[0]);
+    expect(located.startLine).toBeGreaterThan(0);
+    expect(located).not.toHaveProperty('source');
+    for (const contract of Object.values(sources)) {
+      for (const candidates of Object.values(contract.functionsByName || {})) {
+        for (const candidate of candidates) expect(candidate).not.toHaveProperty('source');
+      }
+    }
+  });
+
+  test('each overload loads its own body from the lazy module', async () => {
+    expect(overloads).toHaveLength(2);
+    for (const entry of overloads) {
+      const located = getFunctionSource('JB721TiersHook', entry);
+      const expected = contractSources.JB721TiersHook.functionsByName.mintPendingReservesFor
+        .find(candidate => candidate.startLine === located.startLine);
+      await expect(loadFunctionSourceBody('JB721TiersHook', entry)).resolves.toBe(expected.source);
+    }
+  });
+
+  test('an unmatched function loads no body', async () => {
+    await expect(loadFunctionSourceBody('JB721TiersHook', { name: 'mintPendingReservesFor', inputs: [] })).resolves.toBe(null);
+    await expect(loadFunctionSourceBody('NoSuchContract', overloads[0])).resolves.toBe(null);
   });
 });
