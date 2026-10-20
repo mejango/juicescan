@@ -6,14 +6,12 @@ import { erc20Abi, formatUnits } from 'viem';
 import { getAddress } from './abi-registry.js';
 import { getAuditPrompt } from './prompts.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, eagerConnect, truncAddr, getProviders, refreshProviders, errMessage, initSafeApp } from './component-base.js';
-import { renderLearnTab, renderBuildTab, renderWhyTab } from './learn-build.js';
 import { renderDiscoverTab, applyDiscoverRoute, cancelDiscoverRoute, renderAdminTab, classifyAccountQuery, ensAddressOf, activeProjectForWallet, verifiedHandleProjectRoute, setSafeBatchTrayRenderer } from './discover.js';
 import { renderSafeBatchTray } from './safe-batch-ui.js';
 
 // The Owner/Operator tab mounts the Safe batch tray; the tray module imports discover, so it is wired here.
 setSafeBatchTrayRenderer(renderSafeBatchTray);
 import { getViewAs, setViewAs, clearViewAs, onViewAsChange } from './view-as.js';
-import { renderDataTab } from './data-tab.js';
 import { mountFontSelector, applySavedFont } from './font-selector.js';
 import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links.js';
 import { reverseEns } from './ens.js';
@@ -106,7 +104,12 @@ function activateNavTab(dataTab) {
 
 // Panels that render on first activation. `load` fetches the panel's chunk (also used to prefetch on hover
 // or focus); `render` fills the panel from the loaded module.
+function learnBuild() { return import('./learn-build.js'); }
 var LAZY_TABS = {
+  learn: { load: learnBuild, render: function (mod) { mod.renderLearnTab(); } },
+  build: { load: learnBuild, render: function (mod) { mod.renderBuildTab(); } },
+  why: { load: learnBuild, render: function (mod) { mod.renderWhyTab(); } },
+  data: { load: function () { return import('./data-tab.js'); }, render: function (mod) { mod.renderDataTab(); } },
   common: { load: function () { return import('./contracts-directory.js'); }, render: function (mod) { mod.renderCommonActions(); } },
   directory: { load: function () { return import('./contracts-directory.js'); }, render: function (mod) { mod.renderDirectory(); } },
 };
@@ -486,11 +489,15 @@ function applyHash() {
   var activeTab = NAV_TO_TAB[nav] || 'discover';
   if (activeTab !== 'discover') cancelDiscoverRoute();
   activateNavTab(activeTab);
-  renderTabOnce(activeTab).catch(function () {});
   if (accountRoute != null) renderAccountView(accountRoute);
   else if (activeTab === 'discover') applyDiscoverRoute(projectRoute);
-  // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit these).
-  else if (sectionId) setTimeout(function () { var t = document.getElementById(sectionId); if (t) t.scrollIntoView({ block: 'start' }); }, 60);
+  renderTabOnce(activeTab).then(function () {
+    // Scroll to a deep-linked guide section once the tab's content has rendered (copy-link buttons emit
+    // these), unless the reader navigated elsewhere while the tab's chunk loaded.
+    if (!sectionId || (location.hash || '').replace(/^#\/?/, '') !== raw) return;
+    var target = document.getElementById(sectionId);
+    if (target) target.scrollIntoView({ block: 'start' });
+  }, function () {});
 }
 
 function onHashChange() {
@@ -538,11 +545,7 @@ function init() {
   initTabs();
   initAuditPrompt();
   renderDiscoverTab();
-  renderDataTab();
-  renderLearnTab();
-  renderBuildTab();
   renderAdminTab();
-  renderWhyTab();
   onViewAsChange(function () {
     applyHash(); // re-render the active route so every "your …" read reflects the new effective account
   });

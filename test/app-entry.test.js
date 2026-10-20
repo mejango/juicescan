@@ -175,11 +175,12 @@ describe('production app entry point', () => {
     expect(entry.applySavedFont).toHaveBeenCalledOnce();
     expect(entry.mountFontSelector).toHaveBeenCalledOnce();
     expect(entry.renderDiscoverTab).toHaveBeenCalledOnce();
-    expect(entry.renderDataTab).toHaveBeenCalledOnce();
-    expect(entry.renderLearnTab).toHaveBeenCalledOnce();
-    expect(entry.renderBuildTab).toHaveBeenCalledOnce();
     expect(entry.renderAdminTab).toHaveBeenCalledOnce();
-    expect(entry.renderWhyTab).toHaveBeenCalledOnce();
+    // Only the active guide renders at startup; the others wait for their tab.
+    await vi.waitFor(() => expect(entry.renderLearnTab).toHaveBeenCalledOnce());
+    expect(entry.renderBuildTab).not.toHaveBeenCalled();
+    expect(entry.renderWhyTab).not.toHaveBeenCalled();
+    expect(entry.renderDataTab).not.toHaveBeenCalled();
     expect(document.querySelector('.tab[data-tab="learn"]').classList.contains('active')).toBe(true);
     expect(document.getElementById('tab-learn').classList.contains('active')).toBe(true);
 
@@ -268,6 +269,7 @@ describe('production app entry point', () => {
     expect(new URL(location.href).searchParams.has('project')).toBe(false);
     expect(document.getElementById('tab-data').classList.contains('active')).toBe(true);
     expect(entry.cancelDiscoverRoute).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(entry.renderDataTab).toHaveBeenCalledOnce());
     entry.applyDiscoverRoute.mockClear();
 
     location.hash = '#account/0x1111111111111111111111111111111111111111';

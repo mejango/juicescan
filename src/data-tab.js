@@ -91,7 +91,7 @@ function csvDownloadButton(q, getRows) {
   return btn;
 }
 
-// The tab renders once at init, so follow the shared network toggle wherever it's flipped (the Discover
+// The tab renders once, on first open, so follow the shared network toggle wherever it's flipped (the Discover
 // header, this tab's own strip) — otherwise the endpoint note and chain pills keep the stale network.
 if (typeof document !== 'undefined') {
   document.addEventListener('jb:network-changed', function () { renderDataTab(); });
