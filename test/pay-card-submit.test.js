@@ -242,6 +242,9 @@ it('says why a payment fell short and re-quotes it with the tolerance the payer 
   // 1% plus the 2.3% shortfall, rounded up to a half percent.
   const custom = document.querySelector('.pay-retry-slippage input');
   expect(custom.value).toBe('3.5');
+  // The SDK's 49.5% cap bounds the custom field, checked once rounded.
+  custom.value = '49.999'; custom.dispatchEvent(new Event('change'));
+  expect(custom.value).toBe('3.5');
   custom.value = '5'; custom.dispatchEvent(new Event('change'));
   runtime.prepare.mockResolvedValue(prepared('0xbb', 860n * 10n ** 18n));
   reviewAgainButton().click();
@@ -337,7 +340,7 @@ it('says a payment that would return no tokens was not sent, and offers no loose
   runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(0n, 900n * 10n ** 18n) }));
   await card(616); type('1'); await quoted('900');
   await review(); confirmButton().click();
-  await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe('This payment would return no tokens right now, so it was not sent.'));
+  await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe('This payment would return no tokens.'));
   expect(reviewAgainButton()).toBeFalsy();
 });
 

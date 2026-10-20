@@ -291,3 +291,8 @@ Before/after qualification: original native Pay width111px and empty warning hei
 
 ### Allowed decrease (jango ruling 2026-10-20)
 - [x] The tolerance control reads "Allowed decrease" in every client: `slippageControl`'s label and custom-input name (pay and cash out), the pay and cash-out minimum lines and the buyback-floor message. Presets stay juicescan's 0.5/1/3/5. The cash-out minimum line drops its em dash.
+
+### SDK 3.4.1 (2026-10-20)
+- [x] Bump @bananapus/nana-sdk-core 3.3.0 -> 3.4.1; delete juicescan's payRetrySlippageBps and pay tolerance constants for the SDK's `payRetrySlippageBps`, `PAY_DEFAULT_SLIPPAGE_BPS` and `PAY_MAX_SLIPPAGE_BPS`. A retry is offered only when the SDK marks the failure `adjustable` with a nonzero shortfall.
+- [x] The zero-fill line is the SDK's ("This payment would return no tokens.").
+- [x] The custom allowed-decrease field is bounded by the SDK cap (49.5% for pay), checked after rounding.

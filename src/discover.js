@@ -3,14 +3,14 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { MAX_DEFIFA_ACTION_NFTS, decodePayFailure, defifaPhaseAllowsPay } from '@bananapus/nana-sdk-core/v6';
+import { MAX_DEFIFA_ACTION_NFTS, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, decodePayFailure, defifaPhaseAllowsPay, payRetrySlippageBps } from '@bananapus/nana-sdk-core/v6';
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
-import { quotedOutputFloor, payRetrySlippageBps, PAY_DEFAULT_SLIPPAGE_BPS, PAY_SLIPPAGE_LIMIT_PERCENT } from './slippage.js';
+import { quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
@@ -9911,7 +9911,7 @@ export function renderPayCard(project, cart) {
   function paySlippageBps(amount, beneficiary) {
     var loosened = state.payerSlippage;
     if (loosened && loosened.key !== payInputsKey(amount, beneficiary)) state.payerSlippage = loosened = null;
-    return loosened ? loosened.bps : PAY_DEFAULT_SLIPPAGE_BPS;
+    return loosened ? loosened.bps : Number(PAY_DEFAULT_SLIPPAGE_BPS);
   }
   function dropLoosenedSlippage() {
     if (state.payerSlippage) schedulePreview();
@@ -10343,16 +10343,17 @@ export function renderPayCard(project, cart) {
       onError: function (m, meta) {
         // The revert's own reason when known; a shortfall offers a looser minimum and a fresh quote.
         var failure = add ? null : decodePayFailure(meta && meta.error);
-        if (failure) m = failure.received === 0n ? 'This payment would return no tokens right now, so it was not sent.' : failure.message;
+        if (failure) m = failure.message;
         // A mined revert's cause is not knowable from its receipt: quote and simulate it again, and show that reason.
         var mined = !add && !!(meta && meta.error && meta.error.onchainRevert);
         if (mined) m = 'The payment reverted.';
         status.className = 'paybox-status error'; status.textContent = m;
-        var retryBps = add || !opts.retryWithSlippage ? null : payRetrySlippageBps(failure, opts.slippageBps);
+        var retryBps = add || !opts.retryWithSlippage ? null : payRetrySlippageBps(failure, BigInt(opts.slippageBps));
+        if (retryBps != null) retryBps = Number(retryBps);
         if (confirmCtx && mined && opts.retryWithSlippage) {
           confirmCtx.retry(m, null, 'Review again', function () { opts.retryWithSlippage(opts.slippageBps); });
         } else if (confirmCtx && retryBps != null) {
-          var slip = slippageControl(function () { return retryBps; }, function (bps) { retryBps = bps; }, PAY_SLIPPAGE_LIMIT_PERCENT);
+          var slip = slippageControl(function () { return retryBps; }, function (bps) { retryBps = bps; }, Number(PAY_MAX_SLIPPAGE_BPS));
           slip.node.classList.add('pay-retry-slippage');
           confirmCtx.retry(m, slip.node, 'Review again', function () { opts.retryWithSlippage(retryBps); });
         } else if (confirmCtx) confirmCtx.fail(m, meta);
@@ -26851,10 +26852,10 @@ function buildRedeemItemsModal(project, requestClose) {
   return wrap;
 }
 
-// "Allowed decrease" presets plus a custom percent below `limitPercent` (default 100). `setBps` receives the chosen
+// "Allowed decrease" presets plus a custom percent up to `maxBps` (default 99.99%). `setBps` receives the chosen
 // tolerance in basis points; `sync` redraws the row from `getBps` after the tolerance changes elsewhere.
-function slippageControl(getBps, setBps, limitPercent) {
-  limitPercent = limitPercent || 100;
+function slippageControl(getBps, setBps, maxBps) {
+  maxBps = maxBps || 9999;
   var row = el('div', 'ops-percent ops-slippage');
   var lbl = el('span', 'ops-slippage-lbl'); lbl.textContent = 'Allowed decrease'; row.appendChild(lbl);
   [50, 100, 300, 500].forEach(function (bps) {
@@ -26864,12 +26865,13 @@ function slippageControl(getBps, setBps, limitPercent) {
     row.appendChild(b);
   });
   var custom = document.createElement('label'); custom.className = 'ops-slippage-custom';
-  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = String(limitPercent - 0.01); input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom allowed decrease percent');
+  var input = document.createElement('input'); input.type = 'number'; input.min = '0.01'; input.max = String(maxBps / 100); input.step = '0.1'; input.inputMode = 'decimal'; input.setAttribute('aria-label', 'Custom allowed decrease percent');
   custom.appendChild(input); custom.appendChild(document.createTextNode('%')); row.appendChild(custom);
   input.addEventListener('change', function () {
-    var pct = Number(input.value);
-    if (!Number.isFinite(pct) || pct <= 0 || pct >= limitPercent) { input.value = String(getBps() / 100); return; }
-    setBps(Math.round(pct * 100)); sync();
+    // Checked once rounded, so 49.999% can't round past the limit.
+    var bps = Math.round(Number(input.value) * 100);
+    if (!Number.isFinite(bps) || bps <= 0 || bps > maxBps) { input.value = String(getBps() / 100); return; }
+    setBps(bps); sync();
   });
   function sync() {
     Array.prototype.forEach.call(row.querySelectorAll('.ops-percent-btn'), function (b) {
