@@ -108,13 +108,10 @@ export function resolveBestPayRoute(opts) {
       beneficiary: opts.beneficiary,
       terminal: route.address,
     };
-    // The SDK prepares the payment (metadata, preview, minimum); the routing tag reads the hook's choice for
-    // that metadata.
+    // The SDK prepares the payment (metadata, preview, minimum); the routing labels load afterwards
+    // (payRouteLabels), so a slow display read never holds up the review.
     return prepareCardPay(request).then(function (prepared) {
-      if (prepared.unavailable) return Object.assign({}, route, { preview: prepared });
-      return computePayPreview(Object.assign({ metadata: prepared.metadata }, request)).then(function (shown) {
-        return Object.assign({}, route, { preview: Object.assign({}, prepared, { routing: shown.routing, amm: shown.amm }) });
-      });
+      return Object.assign({}, route, { preview: prepared });
     }).catch(function () {
       return Object.assign({}, route, { preview: { unavailable: true } });
     });
@@ -129,6 +126,15 @@ export function resolveBestPayRoute(opts) {
     var explained = resolved.find(function (r) { return r.preview && r.preview.unavailable && r.preview.explained; });
     return explained ? { unavailable: true, reason: explained.preview.reason } : null;
   });
+}
+
+// The hook's routing choice for a prepared route's metadata (the "Create new tokens" / "Buy on Uniswap" tag);
+// display only, so a failed read shows no tag.
+export function payRouteLabels(opts, route) {
+  return computePayPreview({
+    chainId: opts.chainId, projectId: opts.projectId, token: opts.token, amount: opts.amount,
+    beneficiary: opts.beneficiary, terminal: route.address, metadata: route.preview.metadata,
+  }).then(function (shown) { return shown.unavailable ? null : { routing: shown.routing, amm: shown.amm }; }, function () { return null; });
 }
 
 export function renderPayComponent() {
@@ -497,13 +503,14 @@ export function renderPayComponent() {
     updateUI();
 
     var gen = ++previewGeneration;
-    resolveBestPayRoute({
+    var request = {
       chainId: state.selectedChain,
       projectId: state.projectId,
       token: state.selectedToken.address,
       amount: amountParsed,
       beneficiary: beneficiary,
-    }).then(function (route) {
+    };
+    resolveBestPayRoute(request).then(function (route) {
       if (gen !== previewGeneration) return;
       if (!route || route.unavailable) {
         state.phase = 'ready';
@@ -514,11 +521,11 @@ export function renderPayComponent() {
       }
       var p = route.preview;
       state.phase = 'ready';
-      state.preview = (!p || p.unavailable) ? null : {
+      var shown = state.preview = (!p || p.unavailable) ? null : {
         beneficiaryTokens: formatTokenCount(p.received),
         reservedTokens: formatTokenCount(p.reserved),
-        routing: p.routing,
-        amm: p.amm,
+        routing: null,
+        amm: null,
         route: {
           address: route.address,
           contractName: route.contractName,
@@ -527,6 +534,12 @@ export function renderPayComponent() {
       };
       state.error = null;
       updateUI();
+      if (shown) payRouteLabels(request, route).then(function (labels) {
+        if (!labels || gen !== previewGeneration || state.preview !== shown) return;
+        shown.routing = labels.routing;
+        shown.amm = labels.amm;
+        updateUI();
+      });
     }).catch(function () {
       if (gen !== previewGeneration) return;
       state.preview = null;
@@ -593,11 +606,13 @@ export function renderPayComponent() {
         return;
       }
       if (route.preview && !route.preview.unavailable) {
+        // Keep the labels already shown for this route; they are display only.
+        var prior = state.preview && state.preview.route && sameAddress(state.preview.route.address, route.address) ? state.preview : null;
         state.preview = {
           beneficiaryTokens: formatTokenCount(route.preview.received),
           reservedTokens: formatTokenCount(route.preview.reserved),
-          routing: route.preview.routing,
-          amm: route.preview.amm,
+          routing: prior ? prior.routing : null,
+          amm: prior ? prior.amm : null,
           route: {
             address: route.address,
             contractName: route.contractName,

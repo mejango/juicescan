@@ -59,7 +59,7 @@ vi.mock('../src/pay-preview.js', () => ({
   renderAmmSub: () => null,
 }));
 
-import { buildPayArgs, renderPayComponent, resolveBestPayRoute } from '../src/pay-component.js';
+import { buildPayArgs, payRouteLabels, renderPayComponent, resolveBestPayRoute } from '../src/pay-component.js';
 
 const { BENEFICIARY, NATIVE, ROUTER, TERMINAL } = payState;
 
@@ -126,6 +126,7 @@ describe('pay route trust boundary', () => {
     payState.prepare.mockImplementation(({ terminal }) => Promise.resolve(
       terminal === TERMINAL ? quote(120n, 3n) : quote(100n, 1n),
     ));
+    payState.preview.mockReturnValue(new Promise(() => {})); // a stalled display-only read never holds up the payment
     const component = renderPayComponent();
     document.body.appendChild(component);
 
@@ -142,8 +143,15 @@ describe('pay route trust boundary', () => {
       spenderAddr: null,
     });
     expect(request.args).toEqual([7n, NATIVE, 10n ** 18n, BENEFICIARY, 118n, '', '0xaa']);
-    // The routing tag reads the hook's choice for the metadata that is sent.
+  });
+
+  it('reads the routing tag for the prepared metadata, and shows none when that read fails', async () => {
+    const opts = { chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY };
+    const route = { address: TERMINAL, preview: quote(120n, 3n) };
+    await expect(payRouteLabels(opts, route)).resolves.toEqual({ routing: 'amm', amm: null });
     expect(payState.preview).toHaveBeenCalledWith(expect.objectContaining({ terminal: TERMINAL, metadata: '0xaa' }));
+    payState.preview.mockRejectedValue(new Error('RPC unavailable'));
+    await expect(payRouteLabels(opts, route)).resolves.toBeNull();
   });
 
   it('sends nothing when the amount changes while the route is prepared', async () => {
