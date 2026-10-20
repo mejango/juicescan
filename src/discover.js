@@ -3,7 +3,8 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from '@bananapus/nana-sdk-core/v6';
+import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
+import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { renderDefifaNftActions } from './defifa-nft-actions.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
@@ -13,7 +14,7 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
-import { computePayPreview, formatTokenCount, formatRawAdaptive, renderRoutingTag, shortHex } from './pay-preview.js';
+import { computePayPreview, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
@@ -566,7 +567,7 @@ export function encodedIpfsCandidates(b32) {
 // Permit2 swap-pay metadata: replaces the scary ERC20 "approve the router" tx with a one-time ERC20→Permit2
 // approval + a GASLESS Permit2 signature. The router's `_acceptFundsFor` reads a JBSingleAllowance from the
 // pay metadata (keyed to the router via getId("permit2", router)), calls PERMIT2.permit with it, then pulls
-// via PERMIT2.transferFrom. Returns the metadata hex; signs along the way (one approve tx if Permit2 is short).
+// via PERMIT2.transferFrom. Returns `metadata` with the allowance added; signs along the way (one approve tx if Permit2 is short).
 function permit2MetadataId(target) {
   var k = keccak256('0x7065726d697432'); // keccak256(utf8 "permit2")
   var a = target.slice(2, 10).toLowerCase(), b = k.slice(2, 10), out = '';
@@ -579,7 +580,7 @@ async function latestChainTimestamp(client) {
   if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw new Error('Could not read the chain timestamp for authorization.');
   return timestamp;
 }
-async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount, onStatus) {
+async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount, onStatus, metadata) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amount = BigInt(amount);
   if (amount <= 0n || amount > (1n << 160n) - 1n) throw new Error('Payment amount is outside Permit2’s uint160 range.');
@@ -640,26 +641,49 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     [{ type: 'tuple', components: [{ type: 'uint256' }, { type: 'uint160' }, { type: 'uint48' }, { type: 'uint48' }, { type: 'bytes' }] }],
     [[sigDeadline, amount, expiration, nonce, signature]]
   );
-  // 5. JBMetadataResolver envelope, keyed to the router (the contract that calls PERMIT2.permit/transferFrom).
-  return '0x' + '00'.repeat(32) + permit2MetadataId(spender) + '02' + '00'.repeat(27) + data.slice(2);
+  // 5. Add it to the pay metadata, keyed to the router (the contract that calls PERMIT2.permit/transferFrom).
+  return addToHookMetadata(metadata, '0x' + permit2MetadataId(spender), data);
 }
 
-// JB721 pay-metadata id: bytes4(bytes20(hook) ^ bytes20(keccak256("pay"))) — V6 purpose is "pay".
-// The 4-byte JBMetadataResolver id = bytes4(bytes20(target) ^ bytes20(keccak256("pay"))). `target` is the
-// hook's METADATA_ID_TARGET (the 721 implementation address shared by all clones), NOT the clone hook.
-function tier721MetadataId(idTarget) {
-  var k = keccak256('0x706179'); // keccak256(utf8 "pay")
-  var a = idTarget.slice(2, 10).toLowerCase(), b = k.slice(2, 10), out = '';
-  for (var i = 0; i < 8; i += 2) out += (parseInt(a.substr(i, 2), 16) ^ parseInt(b.substr(i, 2), 16)).toString(16).padStart(2, '0');
-  return out;
+// JBMetadataResolver.addToMetadata: unpack the (id, word offset) table, then repack with one more entry.
+export function addToHookMetadata(metadata, id, data) {
+  var body = (metadata || '0x').slice(2), ids = [], offsets = [];
+  var tableEnd = body.length ? parseInt(body.slice(72, 74), 16) * 64 : 0;
+  for (var i = 64; i + 10 <= tableEnd; i += 10) {
+    var offset = parseInt(body.slice(i + 8, i + 10), 16);
+    if (!offset) break;
+    ids.push('0x' + body.slice(i, i + 8));
+    offsets.push(offset * 64);
+  }
+  var datas = offsets.map(function (start, k) { return '0x' + body.slice(start, offsets[k + 1] || body.length); });
+  return createHookMetadata(ids.concat(id), datas.concat(data));
 }
-// JBMetadataResolver envelope: [reserved word][lookup: id(4B)+offset(0x02)+pad][data]. data = (bool allowOverspending, uint16[] tierIds).
-function buildTierMintMetadata(idTarget, tierIds) {
-  var nftId = tier721MetadataId(idTarget);
-  var data = encodeAbiParameters([{ type: 'bool' }, { type: 'uint16[]' }], [true, tierIds]);
-  return '0x' + '00'.repeat(32) + nftId + '02' + '00'.repeat(27) + data.slice(2);
+
+// The pay card's whole payment from the SDK: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
+// preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
+var PREVIEW_PAYER = '0x000000000000000000000000000000000000dEaD';
+export function prepareCardPay(opts) {
+  var tierIds = opts.tierIds || [];
+  var tierKey = tierIds.join(',');
+  function unavailable(reason) { return { received: null, reserved: null, unavailable: true, reason: reason, tierKey: tierKey }; }
+  if (!opts.terminal) return Promise.resolve(unavailable('No payment contract on this chain'));
+  return prepareUserPay(clientFor(opts.chainId), {
+    chainId: opts.chainId,
+    terminal: opts.terminal,
+    projectId: BigInt(opts.projectId),
+    token: opts.token,
+    amount: opts.amount,
+    beneficiary: opts.beneficiary || PREVIEW_PAYER,
+    tiers: tierIds.length && opts.shop
+      ? { metadataIdTarget: opts.shop.idTarget || opts.shop.hook, tierIdsToMint: tierIds.map(BigInt), allowOverspending: true }
+      : undefined,
+    slippageBps: BigInt(opts.slippageBps || 0),
+  }).then(function (r) {
+    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata, tierKey: tierKey };
+  }, function (error) { return unavailable(errMessage(error, 'preview unavailable')); });
 }
-// Same envelope for a 721 REDEMPTION: id = getId("cashOut", idTarget); data = abi.encode(uint256[] tokenIds).
+
+// JBMetadataResolver envelope for a 721 REDEMPTION: id = getId("cashOut", idTarget); data = abi.encode(uint256[] tokenIds).
 // The 721 hook's beforeCashOutRecordedWith reads these token IDs, sums their cash out weight, and burns them.
 export function buildTierCashOutMetadata(idTarget, tokenIds) {
   var id = cashOutMetadataId(idTarget); // bytes4(idTarget ^ keccak256("cashOut"))
@@ -4439,36 +4463,8 @@ var V4_QUOTER_BY_CHAIN = {
   421614: '0x7de51022d70a725b508085468052e25e22b5c4c9',
 };
 // v4-periphery Actions + Universal Router Commands (canonical byte values).
-var V4_ACTION = { SWAP_EXACT_IN_SINGLE: 0x06, SETTLE: 0x0b, SETTLE_ALL: 0x0c, TAKE: 0x0e };
-var UR_CMD = { V3_SWAP_EXACT_IN: 0x00, PERMIT2_PERMIT: 0x0a, WRAP_ETH: 0x0b, UNWRAP_WETH: 0x0c, V4_SWAP: 0x10 };
-var NATIVE_SWAP_BY_CHAIN = {
-  1: {
-    wrappedNative: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
-    bridgeToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-    v3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
-  },
-  10: {
-    wrappedNative: '0x4200000000000000000000000000000000000006',
-    bridgeToken: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
-    v3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
-  },
-  8453: {
-    wrappedNative: '0x4200000000000000000000000000000000000006',
-    bridgeToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-    v3Quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
-  },
-  42161: {
-    wrappedNative: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
-    bridgeToken: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
-    v3Quoter: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
-  },
-};
-export function nativeSwapConfigForChain(chainId) {
-  return NATIVE_SWAP_BY_CHAIN[Number(chainId)] || null;
-}
-var V3_FEES = [100, 500, 3000, 10000];
-var ADDRESS_THIS = '0x0000000000000000000000000000000000000002';
-var CONTRACT_BALANCE = 1n << 255n;
+var V4_ACTION = { SWAP_EXACT_IN_SINGLE: 0x06, SETTLE_ALL: 0x0c, TAKE: 0x0e };
+var UR_CMD = { PERMIT2_PERMIT: 0x0a, V4_SWAP: 0x10 };
 var v4QuoterAbi = [{
   type: 'function', name: 'quoteExactInputSingle', stateMutability: 'nonpayable',
   inputs: [{ name: 'params', type: 'tuple', components: [
@@ -4479,17 +4475,6 @@ var v4QuoterAbi = [{
     { name: 'zeroForOne', type: 'bool' }, { name: 'exactAmount', type: 'uint128' }, { name: 'hookData', type: 'bytes' },
   ]}],
   outputs: [{ name: 'amountOut', type: 'uint256' }, { name: 'gasEstimate', type: 'uint256' }],
-}];
-var v3QuoterAbi = [{
-  type: 'function', name: 'quoteExactInputSingle', stateMutability: 'nonpayable',
-  inputs: [{ name: 'params', type: 'tuple', components: [
-    { name: 'tokenIn', type: 'address' }, { name: 'tokenOut', type: 'address' },
-    { name: 'amountIn', type: 'uint256' }, { name: 'fee', type: 'uint24' }, { name: 'sqrtPriceLimitX96', type: 'uint160' },
-  ]}],
-  outputs: [
-    { name: 'amountOut', type: 'uint256' }, { name: 'sqrtPriceX96After', type: 'uint160' },
-    { name: 'initializedTicksCrossed', type: 'uint32' }, { name: 'gasEstimate', type: 'uint256' },
-  ],
 }];
 var urExecuteAbi = [{
   type: 'function', name: 'execute', stateMutability: 'payable',
@@ -4897,31 +4882,7 @@ async function readAmmPrice(project, chainId) {
   } catch (e) { return null; }
 }
 
-// ── Direct AMM swap (bypass `pay`) ──────────────────────────────────────────────────────────────
-// Paying through the buyback hook skims the reserved % even on the swap route. Swapping the pool
-// directly via Uniswap's Universal Router instead lets the hook hand the swapper the BETTER of the
-// full pool output (no reserved cut) or the JB issuance beneficiary — so the user keeps the "split tax"
-// whenever the AMM wins. The hook intercepts every pool swap (no sender gate) and routes optimally.
-
-// Resolve the buyback pool + swap direction for buying the project token with its pair token.
-function directSwapPoolFor(project, chainId) {
-  if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId] || !V4_QUOTER_BY_CHAIN[chainId]) return Promise.resolve(null);
-  return Promise.all([projectBuybackHook(project, chainId), lpPairFor(project, chainId)]).then(function (r) {
-    var hook = r[0], pair = r[1];
-    if (!hook || !pair) return null;
-    return clientFor(chainId).readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), pair.addr] })
-      .then(function (key) {
-        var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
-        var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
-        if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null; // pool not set
-        var pairAddr = pair.addr; // pool-currency form: native = 0x0
-        // Buying the project token: input = pair token, output = the project token (the non-pair currency).
-        var zeroForOne = (c0 === pairAddr); // swapping currency0(pair) → currency1(token)
-        var tokenOut = zeroForOne ? key.currency1 : key.currency0;
-        return { key: key, pair: pair, pairAddr: pairAddr, zeroForOne: zeroForOne, tokenOut: tokenOut };
-      }).catch(function () { return null; });
-  });
-}
+// ── Direct AMM sell (bypass the terminal cash out) ─────────────────────────────────────────────────
 
 // True expected output of swapping `amountIn` of the pair token directly through the pool — runs the V4
 // Quoter, which executes the hook's beforeSwap, so the result already reflects the hook's optimal routing
@@ -4935,72 +4896,7 @@ function quoteDirectSwap(chainId, pool, amountIn) {
   }).then(function (r) { return toBigInt(Array.isArray(r) ? r[0] : r); }).catch(function () { return null; });
 }
 
-// Quote the chain's liquid WETH/USDC V3 pools and keep the best live fee tier.
-// This is the bridge leg used when the payment and buyback-pool pair currencies differ.
-function quoteV3ExactInput(chainId, tokenIn, tokenOut, amountIn) {
-  var config = nativeSwapConfigForChain(chainId);
-  if (!config || amountIn <= 0n) return Promise.resolve(null);
-  var client = clientFor(chainId);
-  return Promise.all(
-    V3_FEES.map(function (fee) {
-      return client
-        .call({
-          to: config.v3Quoter,
-          data: encodeFunctionData({
-            abi: v3QuoterAbi,
-            functionName: "quoteExactInputSingle",
-            args: [
-              {
-                tokenIn: tokenIn,
-                tokenOut: tokenOut,
-                amountIn: amountIn,
-                fee: fee,
-                sqrtPriceLimitX96: 0n,
-              },
-            ],
-          }),
-        })
-        .then(function (call) {
-          if (!call.data) return null;
-          var decoded = decodeFunctionResult({
-            abi: v3QuoterAbi,
-            functionName: "quoteExactInputSingle",
-            data: call.data,
-          });
-          var amountOut = toBigInt(decoded[0]);
-          return amountOut > 0n ? { fee: fee, amountOut: amountOut } : null;
-        })
-        .catch(function () {
-          return null;
-        });
-    }),
-  ).then(function (quotes) {
-    return quotes.reduce(function (best, quote) {
-      return !quote || (best && best.amountOut >= quote.amountOut)
-        ? best
-        : quote;
-    }, null);
-  });
-}
-
-// A direct Universal Router swap must be compared using the direct V4 Quoter
-// result. `previewPayFor` describes the terminal/hook route; adding its
-// beneficiary and reserved counts does not reconstruct the output of a call
-// that bypasses `pay`, and materially underquoted Base USDC buys.
-export function directPaySwapQuoteIfBetter(
-  payOutput,
-  directQuote,
-  slippageBps,
-) {
-  if (directQuote == null) return null;
-  var quoted = toBigInt(directQuote);
-  var bps = slippageBps == null ? 100 : Number(slippageBps);
-  if (!Number.isFinite(bps) || bps < 0 || bps >= 10000) return null;
-  var minimum = quotedOutputFloor(quoted, 10000 - bps);
-  return minimum > toBigInt(payOutput || 0n) ? quoted : null;
-}
-
-// Resolve the buyback pool + swap direction for SELLING the project token (the mirror of directSwapPoolFor). The
+// Resolve the buyback pool + swap direction for SELLING the project token. The
 // returned object plugs into quoteDirectSwap / encodeV4SwapInput / buildDirectSwapErc20Tx unchanged: `pairAddr` is
 // the swap INPUT (here the project token being sold) and `tokenOut` the output (the pool's pair, USDC/ETH). Used
 // both to quote a sell and to execute a direct pool sell that bypasses the terminal (no 2.5% cash out fee).
@@ -5029,7 +4925,7 @@ function directSellPoolFor(project, chainId, tokenToReclaim) {
   }).catch(function () { return null; });
 }
 
-// Encode the V4_SWAP command input for an exact-in single swap (pair token → project token), output to
+// Encode the V4_SWAP command input for an exact-in single swap (`pool.pairAddr` → `pool.tokenOut`), output to
 // the user. Actions: SWAP_EXACT_IN_SINGLE (amountOutMinimum enforces slippage) → SETTLE_ALL (pay the
 // input; native from msg.value, ERC-20 pulled via the router's Permit2 allowance) → TAKE (output to user).
 function encodeV4SwapInput(pool, amountIn, minOut, recipient) {
@@ -5048,134 +4944,6 @@ function encodeV4SwapInput(pool, amountIn, minOut, recipient) {
   var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], [pool.tokenOut, recipient, 0n]); // TAKE(currencyOut, recipient, OPEN_DELTA)
   var actions = '0x' + pad1(V4_ACTION.SWAP_EXACT_IN_SINGLE) + pad1(V4_ACTION.SETTLE_ALL) + pad1(V4_ACTION.TAKE);
   return encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], [actions, [swapParams, settleParams, takeParams]]);
-}
-
-// Consume the router's entire bridge-token balance inside V4. SETTLE first
-// creates PoolManager credit; SWAP with OPEN_DELTA consumes exactly that
-// credit, so the preceding V3 hop does not need to know its output onchain.
-function encodeV4SwapFromRouterBalance(pool, minOut, recipient, bridgeToken) {
-  minOut = BigInt(minOut);
-  var max128 = (1n << 128n) - 1n;
-  if (minOut <= 0n || minOut > max128)
-    throw new Error("Swap minimum is outside Uniswap V4’s uint128 range.");
-  var poolKeyParam = [
-    pool.key.currency0,
-    pool.key.currency1,
-    pool.key.fee,
-    pool.key.tickSpacing,
-    pool.key.hooks,
-  ];
-  var settleParams = encodeAbiParameters(
-    [{ type: "address" }, { type: "uint256" }, { type: "bool" }],
-    [bridgeToken, CONTRACT_BALANCE, false],
-  );
-  var swapParams = encodeAbiParameters(
-    [
-      {
-        type: "tuple",
-        components: [
-          {
-            type: "tuple",
-            components: [
-              { type: "address" },
-              { type: "address" },
-              { type: "uint24" },
-              { type: "int24" },
-              { type: "address" },
-            ],
-          },
-          { type: "bool" },
-          { type: "uint128" },
-          { type: "uint128" },
-          { type: "bytes" },
-        ],
-      },
-    ],
-    [[poolKeyParam, pool.zeroForOne, 0n, minOut, "0x"]],
-  );
-  var takeParams = encodeAbiParameters(
-    [{ type: "address" }, { type: "address" }, { type: "uint256" }],
-    [pool.tokenOut, recipient, 0n],
-  );
-  var actions =
-    "0x" +
-    pad1(V4_ACTION.SETTLE) +
-    pad1(V4_ACTION.SWAP_EXACT_IN_SINGLE) +
-    pad1(V4_ACTION.TAKE);
-  return encodeAbiParameters(
-    [{ type: "bytes" }, { type: "bytes[]" }],
-    [actions, [settleParams, swapParams, takeParams]],
-  );
-}
-
-// Native pair token → project token: single V4_SWAP, input paid via msg.value.
-export function buildDirectSwapNativeTx(
-  chainId,
-  pool,
-  amountIn,
-  minOut,
-  recipient,
-  inputRoute,
-) {
-  if (inputRoute && inputRoute.kind === "native-v3-v4") {
-    var config = nativeSwapConfigForChain(chainId);
-    if (!config
-      || !sameAddr(inputRoute.wrappedNative, config.wrappedNative)
-      || !sameAddr(inputRoute.bridgeToken, config.bridgeToken)) {
-      throw new Error("This native bridge route is not supported on this chain.");
-    }
-    if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId])
-      throw new Error("No supported Uniswap Universal Router on this chain.");
-    var wrapInput = encodeAbiParameters(
-      [{ type: "address" }, { type: "uint256" }],
-      [ADDRESS_THIS, amountIn],
-    );
-    var v3Input = encodeAbiParameters(
-      [
-        { type: "address" },
-        { type: "uint256" },
-        { type: "uint256" },
-        { type: "bytes" },
-        { type: "bool" },
-      ],
-      [
-        ADDRESS_THIS,
-        amountIn,
-        0n,
-        encodePacked(
-          ["address", "uint24", "address"],
-          [inputRoute.wrappedNative, inputRoute.v3Fee, inputRoute.bridgeToken],
-        ),
-        false,
-      ],
-    );
-    var v4Input = encodeV4SwapFromRouterBalance(
-      pool,
-      minOut,
-      recipient,
-      inputRoute.bridgeToken,
-    );
-    return {
-      chainId: chainId,
-      address: UNIVERSAL_ROUTER_BY_CHAIN[chainId],
-      abi: urExecuteAbi,
-      functionName: "execute",
-      args: [
-        "0x" +
-          pad1(UR_CMD.WRAP_ETH) +
-          pad1(UR_CMD.V3_SWAP_EXACT_IN) +
-          pad1(UR_CMD.V4_SWAP),
-        [wrapInput, v3Input, v4Input],
-        swapExecutionDeadline(),
-      ],
-      value: amountIn,
-    };
-  }
-  return {
-    chainId: chainId, address: UNIVERSAL_ROUTER_BY_CHAIN[chainId], abi: urExecuteAbi, functionName: 'execute',
-    args: ['0x' + pad1(UR_CMD.V4_SWAP), [encodeV4SwapInput(pool, amountIn, minOut, recipient)], swapExecutionDeadline()],
-    value: amountIn,
-  };
 }
 
 // Universal Router execution deadline, stamped when the swap is PROPOSED. An EOA reviews and signs in one
@@ -5328,40 +5096,7 @@ async function prepareDirectSwapErc20Authorization(chainId, token, amountIn, rec
   return plan;
 }
 
-export function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber, inputRoute) {
-  if (inputRoute && inputRoute.kind === 'erc20-v3-native-v4') {
-    var config = nativeSwapConfigForChain(chainId);
-    if (!config
-      || !sameAddr(inputRoute.inputToken, config.bridgeToken)
-      || !sameAddr(inputRoute.wrappedNative, config.wrappedNative)) {
-      throw new Error('This ERC-20 bridge route is not supported on this chain.');
-    }
-    if (!UNIVERSAL_ROUTER_BY_CHAIN[chainId])
-      throw new Error('No supported Uniswap Universal Router on this chain.');
-    var v3Input = encodeAbiParameters(
-      [{ type: 'address' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'bytes' }, { type: 'bool' }],
-      [
-        ADDRESS_THIS, amountIn, 0n,
-        encodePacked(['address', 'uint24', 'address'], [inputRoute.inputToken, inputRoute.v3Fee, inputRoute.wrappedNative]),
-        true,
-      ]
-    );
-    var unwrapInput = encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [ADDRESS_THIS, 0n]);
-    var v4Input = encodeV4SwapFromRouterBalance(pool, minOut, recipient, ZERO_ADDRESS);
-    return {
-      chainId: chainId,
-      address: UNIVERSAL_ROUTER_BY_CHAIN[chainId],
-      abi: urExecuteAbi,
-      functionName: 'execute',
-      args: [
-        '0x' + pad1(UR_CMD.V3_SWAP_EXACT_IN) + pad1(UR_CMD.UNWRAP_WETH) + pad1(UR_CMD.V4_SWAP),
-        [v3Input, unwrapInput, v4Input],
-        swapExecutionDeadline(now),
-      ],
-      value: 0n,
-      simulationBlockNumber: simulationBlockNumber,
-    };
-  }
+export function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber) {
   return {
     chainId: chainId,
     address: UNIVERSAL_ROUTER_BY_CHAIN[chainId],
@@ -5377,11 +5112,11 @@ export function buildDirectSwapErc20ExecuteTx(chainId, pool, amountIn, minOut, r
   };
 }
 
-// ERC-20 pair token (e.g. USDC for ART) → project token. Ensures a one-time USDC→Permit2 approval, then reuses
+// ERC-20 input (the project token being sold) → pool pair. Ensures a one-time token→Permit2 approval, then reuses
 // a live Permit2→Universal Router allowance or signs a gasless single allowance. Wallets which cannot sign that
-// EIP-712 payload fall back to on-chain Permit2.approve. The swap's SETTLE pulls USDC through whichever live
+// EIP-712 payload fall back to on-chain Permit2.approve. The swap's SETTLE pulls the token through whichever live
 // allowance was established.
-async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus, preparedPlan, inputRoute) {
+async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, recipient, onStatus, preparedPlan) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amountIn = BigInt(amountIn); minOut = BigInt(minOut);
   var max128 = (1n << 128n) - 1n;
@@ -5410,7 +5145,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   var now = plan.now;
   function v4OnlyTx(simulationBlockNumber) {
     return buildDirectSwapErc20ExecuteTx(
-      chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber, inputRoute,
+      chainId, pool, amountIn, minOut, recipient, now, simulationBlockNumber,
     );
   }
   if (plan.permit2Covered) return v4OnlyTx();
@@ -9434,8 +9169,8 @@ export function payTokenOutputVisible(rulesetWeight, phase, preview) {
 }
 
 // Inline pay card (revnet.app-style) for the project detail page. The project is already known, so it
-// only needs a chain (when omnichain), a currency, and an amount. Live feedback — tokens received,
-// reserved/splits, and the Issuance-vs-AMM routing tag — comes from the shared computePayPreview.
+// only needs a chain (when omnichain), a currency, and an amount. Live feedback (tokens received and
+// reserved/splits) comes from the SDK's prepareUserPay, which also sets the pay metadata and minimum.
 export function renderPayCard(project, cart) {
   var sym = project.tokenSymbol ? project.tokenSymbol : 'tokens';
   cart = cart || makeNftCart();
@@ -9519,8 +9254,7 @@ export function renderPayCard(project, cart) {
     memo: '',
     phase: 'idle',
     preview: null,
-    directSwap: null, // { pool, out } when a direct AMM swap beats paying (no split-tax)
-    slippageBps: 100, // AMM-route max slippage (default 1%)
+    slippageBps: 100, // max slippage on the pay quote (default 1%)
     shop: null,       // { hook, tiers, ... } once the strip loads
     inventoryKnown: false,
     mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
@@ -10104,7 +9838,6 @@ export function renderPayCard(project, cart) {
   function renderFeedback() {
     feedback.innerHTML = '';
     var p = state.preview;
-    var isAmm = !!(p && p.routing === 'amm');
 
     // Add-to-balance mints nothing — describe the balance effect rather than a meaningless "You get 0 tokens".
     // For a swap-via-router top-up, show how much of the project's accepted token lands onchain after the swap.
@@ -10125,42 +9858,6 @@ export function renderPayCard(project, cart) {
 
     var checkoutSummary = nftCheckoutSummary();
     if (checkoutSummary) feedback.appendChild(checkoutSummary);
-
-    // Direct AMM swap beats paying: the buyback hook would skim the reserved % even on its swap route, so
-    // we route the buy through Uniswap directly — the user keeps 100% of the output, splits get nothing.
-    var ds = state.directSwap;
-    if (ds && state.phase === 'ready' && p && p.received != null) {
-      var dLabel = el('div', 'paybox-yg-label'); dLabel.textContent = 'You get at least'; feedback.appendChild(dLabel);
-      var dRow = el('div', 'paybox-yg-row');
-      var dVal = el('div', 'paybox-yg-val');
-      dVal.textContent = formatTokenCount(quotedOutputFloor(ds.out, 10000 - (state.slippageBps || 0))) + ' ' + sym;
-      dRow.appendChild(dVal);
-      var dTag = el('button', 'paybox-route-tag paybox-route-direct'); dTag.type = 'button'; dTag.textContent = 'Swap';
-      dTag.title = 'Compare the selected swap with project issuance';
-      dTag.setAttribute('aria-expanded', state.routeComparisonOpen ? 'true' : 'false');
-      dTag.addEventListener('click', function () {
-        state.routeComparisonOpen = !state.routeComparisonOpen;
-        renderFeedback();
-      });
-      dRow.appendChild(dTag);
-      feedback.appendChild(dRow);
-      if (state.routeComparisonOpen) {
-        var comparison = el('div', 'paybox-route-comparison');
-        var swapValue = el('div', 'paybox-route-comparison-item');
-        var swapLabel = el('span'); swapLabel.textContent = 'Swap'; swapValue.appendChild(swapLabel);
-        var swapCount = el('strong'); swapCount.textContent = formatTokenCount(quotedOutputFloor(ds.out, 10000 - (state.slippageBps || 0))) + ' ' + sym; swapValue.appendChild(swapCount);
-        comparison.appendChild(swapValue);
-        var issuanceValue = el('div', 'paybox-route-comparison-item');
-        var issuanceLabel = el('span'); issuanceLabel.textContent = 'Issuance'; issuanceValue.appendChild(issuanceLabel);
-        var issuanceCount = el('strong'); issuanceCount.textContent = formatTokenCount(p.received) + ' ' + sym; issuanceValue.appendChild(issuanceCount);
-        comparison.appendChild(issuanceValue);
-        var comparisonNote = el('div', 'paybox-route-comparison-note');
-        comparisonNote.textContent = 'The route with the higher minimum return is selected automatically.';
-        comparison.appendChild(comparisonNote);
-        feedback.appendChild(comparison);
-      }
-      return;
-    }
 
     // A verified payment can intentionally mint no project tokens (for example, a balance-funding project with
     // weight 0). Keep selected NFT receipts, but omit "0 tokens" and "Splits get 0 tokens" entirely.
@@ -10183,7 +9880,7 @@ export function renderPayCard(project, cart) {
     }
 
     var label = el('div', 'paybox-yg-label');
-    label.textContent = isAmm ? 'You get at least' : 'You get';
+    label.textContent = 'You get';
     feedback.appendChild(label);
 
     var valRow = el('div', 'paybox-yg-row');
@@ -10197,10 +9894,9 @@ export function renderPayCard(project, cart) {
       return;
     }
     if (state.phase === 'previewing') val.textContent = '…';
-    else if (p && p.received != null) val.textContent = formatTokenCount(payMinTokens(p, state.slippageBps)) + ' ' + sym;
+    else if (p && p.received != null) val.textContent = formatTokenCount(p.received) + ' ' + sym;
     else val.textContent = '0.00 ' + sym;
     valRow.appendChild(val);
-    if (p && p.routing) valRow.appendChild(renderRoutingTag(p.routing));
     feedback.appendChild(valRow);
 
     var nb = nftBlock(); if (nb) feedback.appendChild(nb);
@@ -10209,37 +9905,6 @@ export function renderPayCard(project, cart) {
     splits.textContent = 'Splits get ' + (p && p.reserved != null ? formatTokenCount(p.reserved) : '0') + ' ' + sym;
     feedback.appendChild(splits);
 
-    // AMM route: where it filled + how the AMM quote compares to plain issuance (why this route won).
-    if (isAmm && p.amm) {
-      var fill = el('div', 'paybox-amm-fill');
-      fill.appendChild(document.createTextNode('Filled via Uniswap pool '));
-      // A Uniswap V4 poolId is a hash, not a contract — link to the chain's V4 PoolManager (where the pool
-      // lives) on the block explorer.
-      var pmAddr = POOL_MANAGER_BY_CHAIN[state.chainId];
-      var explorer = CHAINS[state.chainId] && CHAINS[state.chainId].blockExplorers && CHAINS[state.chainId].blockExplorers.default && CHAINS[state.chainId].blockExplorers.default.url;
-      if (pmAddr && explorer) {
-        var a = document.createElement('a');
-        a.href = explorer.replace(/\/$/, '') + '/address/' + pmAddr;
-        a.target = '_blank'; a.rel = 'noopener';
-        a.textContent = shortHex(p.amm.poolId);
-        a.title = 'Uniswap V4 PoolManager ' + pmAddr + ' — V4 pools live in the singleton (the poolId is a hash, not an address)';
-        fill.appendChild(a);
-      } else {
-        fill.appendChild(document.createTextNode(shortHex(p.amm.poolId)));
-      }
-      feedback.appendChild(fill);
-      if (p.amm.wouldMintByIssuance != null) {
-        // Both sides as the BENEFICIARY's "You get" (excludes splits). The AMM side already is
-        // (p.received = minimumBeneficiaryTokenCount); `wouldMintByIssuance` is GROSS issuance (incl.
-        // reserved), so scale it by the same beneficiary fraction the swap split exposes.
-        var benef = p.received || 0n, reserved = p.reserved || 0n, swapTotal = benef + reserved;
-        var issuanceBenef = swapTotal > 0n ? (p.amm.wouldMintByIssuance * benef / swapTotal) : p.amm.wouldMintByIssuance;
-        var cmp = el('div', 'paybox-amm-cmp');
-        cmp.textContent = 'AMM: ' + formatTokenCount(payMinTokens(p, state.slippageBps)) + ' ' + sym
-          + ' vs. Issuance: ' + formatTokenCount(issuanceBenef) + ' ' + sym;
-        feedback.appendChild(cmp);
-      }
-    }
   }
 
   function schedulePreview() {
@@ -10247,69 +9912,9 @@ export function renderPayCard(project, cart) {
     if (previewTimer) clearTimeout(previewTimer);
     state.payAfterPreview = false;
     state.preview = null;
-    state.directSwap = null;
     state.phase = 'idle';
     renderFeedback();
     previewTimer = setTimeout(loadPreview, 400);
-  }
-
-  // Decide whether a direct AMM swap beats paying. For a USDC-paired pool,
-  // native ETH can first bridge through the best live WETH/USDC V3 fee
-  // tier and feed the resulting USDC into the hooked V4 pool atomically.
-  // The direct V4 Quoter is always authoritative. A terminal preview's
-  // received+reserved figures describe `pay` and cannot stand in for the
-  // direct Universal Router output.
-  function maybeOfferDirectSwap(gen, amt, p) {
-    if (state.mode === 'addbalance' || selectedTierIds().length) return;
-    if (!state.token) return;
-    if (!p || p.unavailable || p.received == null) return;
-    var payOut = p.received;
-    var isNativeIn = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
-    var inputCur = isNativeIn ? ZERO_ADDRESS : state.token.address.toLowerCase();
-    return directSwapPoolFor(project, state.chainId).then(function (pool) {
-      if (gen !== previewGen || !pool) return;
-      function decide(directOut, inputRoute) {
-        if (gen !== previewGen) return;
-        var winner = directPaySwapQuoteIfBetter(payOut, directOut, state.slippageBps);
-        if (winner != null) {
-          state.directSwap = { pool: pool, out: winner, inputRoute: inputRoute || { kind: 'single-v4' } };
-          renderFeedback();
-        }
-      }
-      if (pool.pairAddr === inputCur) {
-        return quoteDirectSwap(state.chainId, pool, amt).then(function (out) { decide(out, { kind: 'single-v4' }); });
-      }
-      var config = nativeSwapConfigForChain(state.chainId);
-      var canBridgeNative = !!config && isNativeIn
-        && pool.pairAddr.toLowerCase() === config.bridgeToken.toLowerCase();
-      var canBridgeUsdcToNative = !!config && !isNativeIn
-        && inputCur === config.bridgeToken.toLowerCase() && pool.pairAddr.toLowerCase() === ZERO_ADDRESS;
-      if (!config || (!canBridgeNative && !canBridgeUsdcToNative)) return;
-      var tokenIn = canBridgeNative ? config.wrappedNative : config.bridgeToken;
-      var tokenOut = canBridgeNative ? config.bridgeToken : config.wrappedNative;
-      return quoteV3ExactInput(state.chainId, tokenIn, tokenOut, amt).then(function (bridge) {
-        if (!bridge || gen !== previewGen) return;
-        return quoteDirectSwap(state.chainId, pool, bridge.amountOut).then(function (out) {
-          decide(out, canBridgeNative ? {
-            kind: 'native-v3-v4',
-            wrappedNative: config.wrappedNative,
-            bridgeToken: config.bridgeToken,
-            bridgeTokenSymbol: 'USDC',
-            bridgeTokenDecimals: 6,
-            v3Fee: bridge.fee,
-            quotedBridgeAmount: bridge.amountOut,
-          } : {
-            kind: 'erc20-v3-native-v4',
-            inputToken: config.bridgeToken,
-            wrappedNative: config.wrappedNative,
-            bridgeTokenSymbol: 'ETH',
-            bridgeTokenDecimals: 18,
-            v3Fee: bridge.fee,
-            quotedBridgeAmount: bridge.amountOut,
-          });
-        });
-      });
-    }).catch(function () {});
   }
 
   function loadPreview() {
@@ -10326,37 +9931,44 @@ export function renderPayCard(project, cart) {
       return;
     }
     if (amt === 0n && !previewTierIds.length) { state.preview = null; renderFeedback(); return; }
-    var previewMetadata = previewTierIds.length && state.shop
-      ? buildTierMintMetadata(state.shop.idTarget || state.shop.hook, previewTierIds)
-      : '0x';
 
     state.phase = 'previewing';
     renderFeedback();
 
     var gen = ++previewGen;
-    computePayPreview({
-      chainId: state.chainId,
-      projectId: pidOn(project, state.chainId),
-      token: state.token.address,
-      amount: amt,
-      beneficiary: getEffectiveAccount() || undefined,
-      terminal: state.token.viaRouter ? routerTerminalFor(state.chainId) : undefined,
-      metadata: previewMetadata,
-      allowZero: previewTierIds.length > 0,
-    }).then(function (p) {
+    var terminal = state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
+    var request = state.mode === 'addbalance'
+      ? computePayPreview({
+        chainId: state.chainId,
+        projectId: pidOn(project, state.chainId),
+        token: state.token.address,
+        amount: amt,
+        beneficiary: getEffectiveAccount() || undefined,
+        terminal: terminal,
+      })
+      : prepareCardPay({
+        chainId: state.chainId,
+        terminal: terminal,
+        projectId: pidOn(project, state.chainId),
+        token: state.token.address,
+        amount: amt,
+        beneficiary: getEffectiveAccount(),
+        shop: state.shop,
+        tierIds: previewTierIds,
+        slippageBps: state.slippageBps,
+      });
+    request.then(function (p) {
       if (gen !== previewGen) return;
       state.phase = 'ready';
       state.preview = p;
       state.previewAt = Date.now();
       state.conversion = null;
-      state.directSwap = null;
       renderFeedback();
-      // A Pay click that found the quote stale retries once the refreshed preview and any direct-swap offer are in.
-      Promise.resolve(maybeOfferDirectSwap(gen, amt, p)).catch(function () {}).then(function () {
-        if (gen !== previewGen || !state.payAfterPreview) return;
+      // A Pay click that found the quote stale retries once the refreshed preview is in.
+      if (state.payAfterPreview) {
         state.payAfterPreview = false;
         doPay();
-      });
+      }
       // Add-to-balance via router: derive the accepted-token amount that lands after the swap. The
       // simulated pay's total mint ÷ the per-unit issuance rate = the swap output (route must be issuance).
       var acc = acceptedToken();
@@ -10408,7 +10020,6 @@ export function renderPayCard(project, cart) {
     // Selected 721 tiers mint via the pay metadata; the amount must cover their pricing-context total.
     // Add-to-balance mints nothing, so NFTs are ignored entirely on that path.
     var tierIds = addBalance ? [] : selectedTierIds();
-    var metadata = '0x';
     if (tierIds.length && state.shop) {
       if (state.nftRoutesLoading) { status.textContent = 'Payment currencies are still being checked…'; return; }
       if (state.nftCreditsLoading) { status.textContent = 'Your shop credit is still loading…'; return; }
@@ -10430,7 +10041,6 @@ export function renderPayCard(project, cart) {
         status.textContent = 'Amount adjusted to cover the selected NFTs. Review the refreshed quote, then click Pay again.';
         return;
       }
-      metadata = buildTierMintMetadata(state.shop.idTarget || state.shop.hook, tierIds);
     }
     if (amt === 0n && !tierIds.length) { status.textContent = 'Enter an amount'; return; }
 
@@ -10444,10 +10054,9 @@ export function renderPayCard(project, cart) {
       return;
     }
 
-    var willDirectSwap = !!(state.directSwap && !addBalance && !tierIds.length);
     // USDC and other swap currencies route through the router (JBRouterTerminalRegistry); direct tokens go to the terminal.
     var terminal = state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
-    if (!willDirectSwap && !terminal) { status.textContent = 'No router terminal on this chain'; return; }
+    if (!terminal) { status.textContent = 'No router terminal on this chain'; return; }
 
     var isNative = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     var viaRouter = !!state.token.viaRouter; // swap currency → authorize via a gasless Permit2 signature, not a router approve
@@ -10455,7 +10064,7 @@ export function renderPayCard(project, cart) {
       status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no onchain minimum-output field for this action.';
       return;
     }
-    if (!addBalance && !payPreviewCanSubmit(state.phase, state.preview)) {
+    if (!addBalance && (!payPreviewCanSubmit(state.phase, state.preview) || state.preview.tierKey !== tierIds.join(','))) {
       status.textContent = tierIds.length
         ? 'A verified live quote is required before buying these items. Wait for the preview and try again.'
         : 'A verified live quote is required before paying. Wait for the preview and try again.';
@@ -10476,7 +10085,6 @@ export function renderPayCard(project, cart) {
     var reviewedMode = state.mode;
     var reviewedMemo = state.memo || '';
     var reviewedPreview = state.preview;
-    var reviewedDirectSwap = state.directSwap;
     var reviewedSlippage = state.slippageBps || 0;
     var reviewedTierKey = tierIds.join(',');
     var reviewedConversion = state.conversion;
@@ -10491,7 +10099,7 @@ export function renderPayCard(project, cart) {
         && !!state.token.viaRouter === !!reviewedToken.viaRouter && current === amt
         && selectedTierIds().join(',') === reviewedTierKey && (state.slippageBps || 0) === reviewedSlippage
         && (!tierIds.length || state.nftCredits === reviewedNftCredits)
-        && (addBalance || (state.preview === reviewedPreview && state.directSwap === reviewedDirectSwap))
+        && (addBalance || state.preview === reviewedPreview)
         && state.contextsReady && getAccount() && getAccount().toLowerCase() === beneficiary.toLowerCase();
     }
     function requirePayInputs() {
@@ -10519,11 +10127,6 @@ export function renderPayCard(project, cart) {
       }).catch(function (error) { status.className = 'paybox-status error'; status.textContent = errMessage(error, 'Could not verify your wallet balance. Try again.'); });
     }
 
-    if (willDirectSwap) {
-      checkBalanceThenProceed();
-      return;
-    }
-
     status.className = 'paybox-status pending'; status.textContent = 'Checking project terminal…';
     readProjectPaymentSurface(project, reviewedChainId).then(function (surface) {
       if (!requirePayInputs()) return;
@@ -10545,114 +10148,10 @@ export function renderPayCard(project, cart) {
 
     function proceed() {
     if (!requirePayInputs()) return;
-    // Direct AMM swap: bypass `pay` (which skims the reserved % even on its swap route) and swap the pool
-    // directly via Uniswap's Universal Router, so the user keeps 100% of the output. Only for plain native
-    // buys with no NFTs; the buyback hook still routes the swap at the best of AMM vs issuance. The swap's
-    // amountOutMinimum makes an adverse move revert (not lose funds).
-    if (reviewedDirectSwap && !addBalance && !tierIds.length) {
-      var ds = reviewedDirectSwap;
-      var dsMinOut = quotedOutputFloor(ds.out, 10000 - reviewedSlippage);
-      var dChain = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
-      var dSymClean = (reviewedToken.symbol || (isNative ? 'ETH' : 'token')).replace(/\s*\(native\)/i, '');
-      var dHuman = formatAmount(amt, reviewedToken.decimals == null ? 18 : reviewedToken.decimals) + ' ' + dSymClean;
-      // Native swaps are fully determined before review, so reuse this exact call after confirmation and expose
-      // its calldata to txlink. ERC-20 swaps still need a wallet-bound Permit2 signature and cannot be shared yet.
-      var directReviewTx = isNative ? buildDirectSwapNativeTx(reviewedChainId, ds.pool, amt, dsMinOut, beneficiary, ds.inputRoute) : null;
-      var directPaymentPayload = {
-        chain: dChain,
-        chainId: reviewedChainId,
-        contract: 'Uniswap Universal Router',
-        address: UNIVERSAL_ROUTER_BY_CHAIN[reviewedChainId],
-        'function': 'execute',
-        abi: abiSignature(urExecuteAbi, 'execute'),
-        calldata: directReviewTx ? encodeFunctionData({ abi: directReviewTx.abi, functionName: directReviewTx.functionName, args: directReviewTx.args }) : undefined,
-        txlinkUnavailableReason: directReviewTx ? null : 'This swap needs a Permit2 signature bound to the connected wallet before its exact calldata exists.',
-        value: isNative ? (amt.toString() + ' wei (' + dHuman + ')') : '0',
-        erc20Approval: isNative ? null : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless); one-time approval to Permit2 only if needed', spender: UNIVERSAL_ROUTER_BY_CHAIN[reviewedChainId] },
-        args: {
-          action: 'Direct AMM swap — bypasses pay so splits/reserved take nothing',
-          route: ds.inputRoute && ds.inputRoute.kind !== 'single-v4'
-            ? dSymClean + ' → ' + ds.inputRoute.bridgeTokenSymbol + ' → ' + sym
-            : dSymClean + ' → ' + sym,
-          buy: sym,
-          amountIn: amt.toString() + ' (' + dHuman + ')',
-          minReturnedTokens: dsMinOut.toString() + ' (' + formatTokenCount(dsMinOut) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% max slippage)',
-          beneficiary: beneficiary,
-          note: 'Swaps the buyback pool directly via the Universal Router; the hook fills at the best of AMM vs issuance.',
-        },
-      };
-      function executePayload(tx) {
-        return Object.assign({}, directPaymentPayload, {
-          calldata: encodeFunctionData({ abi: tx.abi, functionName: tx.functionName, args: tx.args }),
-          txlinkUnavailableReason: null,
-        });
-      }
-      function openDirectSwapConfirm(plan) {
-        var coveredTx = !isNative && plan && plan.permit2Covered
-          ? buildDirectSwapErc20ExecuteTx(
-              reviewedChainId, ds.pool, amt, dsMinOut, beneficiary, plan.now, undefined, ds.inputRoute,
-            )
-          : null;
-        var initialPayload = isNative
-          ? directPaymentPayload
-          : (plan.firstPayload || executePayload(coveredTx));
-        var sequenceSteps = [];
-        if (!isNative && plan.needsTokenApproval) sequenceSteps.push('Approve token access');
-        if (!isNative && !plan.permit2Covered) {
-          sequenceSteps.push(plan.mustApproveOnchain
-            ? 'Authorize the Uniswap swap router'
-            : 'Sign the swap authorization');
-        }
-        sequenceSteps.push('Execute the swap');
-        openPayConfirm(initialPayload, function send(confirmCtx) {
-        if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
-          var accountError = 'Connected account changed. Review the payment again.';
-          status.className = 'paybox-status error'; status.textContent = accountError; confirmCtx.fail(accountError); return;
-        }
-        if (isNative) { sendPay(directReviewTx, { addBalance: false, confirmCtx: confirmCtx }); return; }
-        // ERC-20 (USDC) input → Permit2 approval/signature, then PERMIT2_PERMIT + V4_SWAP in one tx.
-        var statusCb = function (m, kind, meta) {
-          if (meta && meta.reviewPayload) confirmCtx.showAction(meta.reviewPayload);
-          status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
-          confirmCtx.showStatus(m, kind, meta);
-          return meta && meta.reviewPayload ? confirmCtx.afterPaint() : undefined;
-        };
-        buildDirectSwapErc20Tx(reviewedChainId, ds.pool, reviewedToken.address, amt, dsMinOut, beneficiary, statusCb, plan, ds.inputRoute)
-          .then(function (tx) {
-            confirmCtx.showAction(executePayload(tx));
-            confirmCtx.showStatus('Review and execute the swap.', 'pending');
-            return confirmCtx.afterPaint().then(function () {
-              sendPay(tx, { addBalance: false, confirmCtx: confirmCtx });
-            });
-          })
-          .catch(function (e) {
-            var message = errMessage(e, 'Could not authorize the swap.');
-            status.className = 'paybox-status error'; status.textContent = message; confirmCtx.fail(message);
-          });
-        }, { sequenceSteps: sequenceSteps });
-      }
-      if (isNative) {
-        openDirectSwapConfirm(null);
-      } else {
-        status.className = 'paybox-status pending';
-        status.textContent = 'Preparing the first wallet action…';
-        prepareDirectSwapErc20Authorization(
-          reviewedChainId, reviewedToken.address, amt, beneficiary,
-        ).then(function (plan) {
-          if (!requirePayInputs()) return;
-          status.className = 'paybox-status'; status.textContent = '';
-          openDirectSwapConfirm(plan);
-        }).catch(function (error) {
-          status.className = 'paybox-status error';
-          status.textContent = errMessage(error, 'Could not prepare the wallet actions.');
-        });
-      }
-      return;
-    }
-
-    // A normal pay never proceeds without a live non-zero quote (guarded above). Issuance is exact; AMM
-    // routes use the user's slippage setting. Add-to-balance has no returned-token floor by design.
-    var minTokens = addBalance ? 0n : payMinTokens(reviewedPreview, reviewedSlippage);
+    // A normal pay never proceeds without a live quote (guarded above); prepareUserPay set its metadata and
+    // minimum. Add-to-balance has no returned-token floor by design.
+    var minTokens = addBalance ? 0n : reviewedPreview.minReturnedTokens;
+    var metadata = addBalance ? '0x' : reviewedPreview.metadata;
 
     // pay(projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata) — metadata at index 6.
     // addToBalanceOf(projectId, token, amount, shouldReturnHeldFees, memo, metadata) — metadata at index 5.
@@ -10699,13 +10198,11 @@ export function renderPayCard(project, cart) {
     } else {
       confirmArgs.beneficiary = beneficiary;
       confirmArgs.minReturnedTokens = minTokens.toString() + (minTokens > 0n
-        ? ' (' + formatTokenCount(minTokens) + ' ' + sym
-          + (reviewedPreview && reviewedPreview.routing === 'amm' ? ', ' + (reviewedSlippage / 100) + '% max slippage' : '')
-          + ')'
+        ? ' (' + formatTokenCount(minTokens) + ' ' + sym + ', ' + (reviewedSlippage / 100) + '% max slippage)'
         : '');
     }
     confirmArgs.memo = reviewedMemo;
-    confirmArgs.metadata = (viaRouter && !isNative) ? 'Permit2 single-allowance signature (added when you sign)' : metadata;
+    confirmArgs.metadata = (viaRouter && !isNative) ? metadata + ' (plus a Permit2 signature added when you sign)' : metadata;
     openPayConfirm({
       chain: chainName,
       chainId: reviewedChainId,
@@ -10740,7 +10237,7 @@ export function renderPayCard(project, cart) {
         status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
         confirmCtx.showStatus(m, kind, meta);
       };
-      buildRouterPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb)
+      buildRouterPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb, metadata)
         .then(function (meta) {
           var p = Object.assign({}, txParams);
           // A null meta means the router was approved directly (contract wallet) — the pay
@@ -10775,7 +10272,6 @@ export function renderPayCard(project, cart) {
     amtInput.value = '';
     state.amount = '';
     state.preview = null;
-    state.directSwap = null;
     state.phase = 'idle';
     if (cart && cart.clear) cart.clear();
     renderFeedback();
@@ -10855,14 +10351,6 @@ export function renderPayCard(project, cart) {
   return card;
 }
 
-// Minimum project tokens to require back from a pay (the `minReturnedTokens` arg). Issuance is exact
-// (the quote is deterministic); the AMM route discounts the quote by the chosen slippage. The terminal
-// enforces this against the beneficiary's realized balance delta (mint OR swap output), so it's a valid
-// floor for both routes.
-function payMinTokens(p, slippageBps) {
-  if (!p || p.received == null) return 0n;
-  return quotedOutputFloor(p.received, p.routing === 'amm' ? 10000 - (slippageBps || 0) : 10000);
-}
 
 // Compact rich header: symbol + name + chains, a balance/supply stat line, and an owner/operator/site line.
 function renderDetailHeader(project) {

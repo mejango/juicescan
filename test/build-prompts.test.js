@@ -31,15 +31,15 @@ describe('copy build prompts', () => {
     expect(prompt).toContain('ADD TO BALANCE');
     expect(prompt).toContain('NFT CHECKOUT');
     expect(prompt).toContain('TERMINAL BUYBACK');
-    expect(prompt).toContain('DIRECT POOL BUY');
+    expect(prompt).not.toContain('DIRECT POOL BUY');
     expect(prompt).toContain('SUBMIT-TIME CONSISTENCY');
     expect(prompt).toContain('verified zero-token preview');
     expect(prompt).toContain('do not approve the router as if it were a direct terminal');
-    expect(prompt).toContain('treasury and reserved splits receive nothing');
+    expect(prompt).toContain('skipSplits=true');
     expect(prompt).toContain('buildPayTx');
     expect(prompt).toContain('previewPay');
-    expect(prompt).toContain('@bananapus/nana-sdk-core/v6/direct-pay');
-    expect(prompt).toContain('quoteDirectPaySwap');
+    expect(prompt).toContain('prepareUserPay');
+    expect(prompt).not.toContain('direct-pay');
   });
 
   it('spells out the three Cash out routes, item redemption, and route locking', () => {

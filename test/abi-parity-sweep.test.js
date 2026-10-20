@@ -148,7 +148,6 @@ const NO_CANONICAL_ARTIFACT = {
     'SAFE_TO_L2_SETUP_ABI.setupToL2',
   ],
   'src/discover.js': [
-    'v3QuoterAbi.quoteExactInputSingle',
     'v4QuoterAbi.quoteExactInputSingle',
     'urExecuteAbi.execute',
     'extsloadAbi.extsload',
