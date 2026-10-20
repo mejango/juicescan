@@ -1400,7 +1400,12 @@ export function executeTransaction(opts) {
 
   // Status/result callbacks. When the confirm modal is shown (not skipConfirm), these get wrapped so tx
   // progress renders INSIDE the modal (which stays open after Confirm) — callers no longer show it elsewhere.
-  var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onError: opts.onError || function () {} };
+  // `opts.describeFailure(error)` may name a failure better than its generic line; both the dialog and the caller get it.
+  var callerOnError = opts.onError || function () {};
+  function failureLine(m, meta) {
+    return (opts.describeFailure && meta && meta.error && opts.describeFailure(meta.error)) || m;
+  }
+  var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onError: opts.describeFailure ? function (m, meta) { callerOnError(failureLine(m, meta), meta); } : callerOnError };
 
   // Build the review payload and require explicit confirmation, unless the caller already showed its own.
   var confirmStep;
@@ -1450,7 +1455,7 @@ export function executeTransaction(opts) {
           r.showStatus(m, 'success', meta);
           base.onSuccess(m, Object.assign({}, meta || {}, { confirmSession: r }));
         },
-        onError: function (m, meta) { r.showStatus(m, 'error', meta); base.onError(m, meta); },
+        onError: function (m, meta) { m = failureLine(m, meta); r.showStatus(m, 'error', meta); base.onError(m, meta); },
       };
     }
     waitForSafeInitialization().then(sendNow).catch(function (err) {

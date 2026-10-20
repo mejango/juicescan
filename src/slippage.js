@@ -40,5 +40,7 @@ export function payRetrySlippageBps(failure, currentBps) {
   var shortfallBps = received != null && minimum != null && minimum > 0n && received < minimum
     ? Number(((minimum - received) * 10000n + minimum - 1n) / minimum)
     : 100;
-  return Math.min(Math.ceil((currentBps + shortfallBps) / 50) * 50, PAY_SLIPPAGE_LIMIT_PERCENT * 100 - 50);
+  var suggested = Math.min(Math.ceil((currentBps + shortfallBps) / 50) * 50, PAY_SLIPPAGE_LIMIT_PERCENT * 100 - 50);
+  // Already at the limit: a looser minimum is not on offer.
+  return suggested > currentBps ? suggested : null;
 }

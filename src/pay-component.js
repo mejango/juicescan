@@ -563,13 +563,28 @@ export function renderPayComponent() {
     state.phase = 'confirming';
     updateUI();
 
+    // The payment as it was when Pay was pressed: the route is prepared for it, and the review and calldata show it.
+    var reviewed = {
+      chainId: state.selectedChain, projectId: state.projectId, token: state.selectedToken.address,
+      symbol: state.selectedToken.symbol || '', amountText: state.amount, decimals: state.decimals,
+      memo: state.memo || '', beneficiary: beneficiary,
+    };
+    function unchanged() {
+      return state.selectedChain === reviewed.chainId && state.projectId === reviewed.projectId
+        && !!state.selectedToken && sameAddress(state.selectedToken.address, reviewed.token)
+        && state.amount === reviewed.amountText && state.decimals === reviewed.decimals
+        && (state.memo || '') === reviewed.memo && sameAddress(getBeneficiaryAddress(state), reviewed.beneficiary);
+    }
+    var CHANGED = 'The payment details changed. Review and try again.';
+
     resolveBestPayRoute({
-      chainId: state.selectedChain,
-      projectId: state.projectId,
-      token: state.selectedToken.address,
+      chainId: reviewed.chainId,
+      projectId: reviewed.projectId,
+      token: reviewed.token,
       amount: amountParsed,
       beneficiary: beneficiary,
     }).then(function (route) {
+      if (!unchanged()) { state.phase = 'ready'; state.error = CHANGED; updateUI(); return; }
       if (!route) {
         state.phase = 'ready';
         state.error = 'No payment contract is available on this chain';
@@ -591,27 +606,27 @@ export function renderPayComponent() {
       }
 
       executeTransaction(Object.assign(buildPayArgs({
-        chainId: state.selectedChain,
-        projectId: state.projectId,
-        token: state.selectedToken.address,
+        chainId: reviewed.chainId,
+        projectId: reviewed.projectId,
+        token: reviewed.token,
         amount: amountParsed,
         beneficiary: beneficiary,
-        memo: state.memo || '',
+        memo: reviewed.memo,
         route: route,
       }), {
-        confirmSummary: { action: 'Pay project #' + String(state.projectId), rows: [
-          ['Paying', state.amount + ' ' + (state.selectedToken.symbol || '')],
+        assertWriteState: function () { if (!unchanged()) throw new Error(CHANGED); },
+        // The confirm dialog shows why a pay reverted, when the revert says.
+        describeFailure: function (error) { var failure = decodePayFailure(error); return failure && failure.message; },
+        confirmSummary: { action: 'Pay project #' + String(reviewed.projectId), rows: [
+          ['Paying', reviewed.amountText + ' ' + reviewed.symbol],
           ['You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
           ['Minimum', formatTokenCount(route.preview.minReturnedTokens) + ' tokens — fails if you receive less'],
           ['To', beneficiary],
-          state.memo ? ['Memo', state.memo] : null,
+          reviewed.memo ? ['Memo', reviewed.memo] : null,
         ].filter(Boolean) },
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
-        onError: function(msg, meta) {
-          var failure = decodePayFailure(meta && meta.error);
-          state.phase = 'ready'; state.error = failure ? failure.message : msg; state.txStatus = null; updateUI();
-        },
+        onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },
       }));
     }).catch(function (err) {
       state.phase = 'ready';

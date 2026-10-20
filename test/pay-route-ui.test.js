@@ -139,4 +139,19 @@ describe('pay route trust boundary', () => {
     // The routing tag reads the hook's choice for the metadata that is sent.
     expect(payState.preview).toHaveBeenCalledWith(expect.objectContaining({ terminal: TERMINAL, metadata: '0xaa' }));
   });
+
+  it('sends nothing when the amount changes while the route is prepared', async () => {
+    const pending = [];
+    payState.prepare.mockImplementation(() => new Promise(resolve => pending.push(() => resolve(quote(120n)))));
+    const component = renderPayComponent();
+    document.body.appendChild(component);
+    component.querySelector('.pay-btn').click();
+    await vi.waitFor(() => expect(pending.length).toBeGreaterThan(0));
+    const amount = [...component.querySelectorAll('input')].find(input => input.value === '1');
+    amount.value = '2'; amount.dispatchEvent(new Event('input', { bubbles: true }));
+    pending.splice(0).forEach(finish => finish());
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(payState.execute).not.toHaveBeenCalled();
+    expect(component.textContent).toContain('The payment details changed. Review and try again.');
+  });
 });

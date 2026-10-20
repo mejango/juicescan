@@ -157,3 +157,10 @@ it('passes the failure itself, and a mined revert re-simulated at its block, to 
  expect(h.client.simulateContract).toHaveBeenLastCalledWith(expect.objectContaining({functionName:'noop',blockNumber:10n}));
  expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
+it('names a failure with describeFailure in the open dialog and to the caller',async()=>{
+ h.client.simulateContract=vi.fn(async()=>{throw Object.assign(new Error('Execution reverted.'),{data:'0x8dc14446'});});
+ const onError=vi.fn(),describeFailure=vi.fn(error=>error.data==='0x8dc14446'?'Paused.':null);
+ executeTransaction({...args,onError,describeFailure});
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith('Paused.',expect.objectContaining({error:expect.any(Error)})));
+ expect(h.wallet.writeContract).not.toHaveBeenCalled();
+});

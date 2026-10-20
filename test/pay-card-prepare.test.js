@@ -28,6 +28,12 @@ describe('pay card payment preparation', () => {
     expect(prepared).toEqual({ received: 990n, reserved: 0n, minReturnedTokens: 980n, metadata: '0xabcd' });
   });
 
+  it("leaves the SDK's 1% tolerance in place when the caller names none", async () => {
+    h.prepareUserPay.mockResolvedValueOnce({ metadata: '0x', preview: { beneficiaryTokenCount: 1n, reservedTokenCount: 0n }, minReturnedTokens: 1n });
+    await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n });
+    expect(h.prepareUserPay.mock.lastCall[1].slippageBps).toBe(100n);
+  });
+
   it('reads a reverting preview as unavailable and sends no tiers for a plain payment', async () => {
     h.prepareUserPay.mockRejectedValueOnce(new Error('JBPrices_PriceFeedNotFound'));
     const prepared = await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n, beneficiary: terminal, shop: null, tierIds: [], slippageBps: 100 });

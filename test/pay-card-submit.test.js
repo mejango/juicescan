@@ -264,3 +264,17 @@ it('shows a known revert reason without offering a looser minimum', async () => 
   expect(reviewAgainButton()).toBeFalsy();
   expect(document.querySelector('.pay-retry-slippage')).toBeNull();
 });
+
+it('drops a loosened tolerance when the payment changed before Review again', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: underMin(880n * 10n ** 18n, 900n * 10n ** 18n) }));
+  await card(613); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(reviewAgainButton()).toBeTruthy());
+  type('3'); // the payment changes under the open dialog
+  const calls = runtime.prepare.mock.calls.length;
+  reviewAgainButton().click(); await settle(500);
+  expect(confirmButton()).toBeFalsy();
+  expect(runtime.prepare.mock.calls.slice(calls).every(([, args]) => args.slippageBps === 100n)).toBe(true);
+  expect(runtime.execute).toHaveBeenCalledTimes(1);
+});

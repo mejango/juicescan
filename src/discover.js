@@ -10099,6 +10099,7 @@ export function renderPayCard(project, cart) {
     var reviewedMemo = state.memo || '';
     var reviewedPreview = state.preview;
     var reviewedSlippage = paySlippageBps(amt, beneficiary);
+    var reviewedInputsKey = payInputsKey(amt, beneficiary);
     var reviewedTierKey = tierIds.join(',');
     var reviewedConversion = state.conversion;
     var reviewedNfts = tierIds.length ? nftSelectionList() : [];
@@ -10168,7 +10169,8 @@ export function renderPayCard(project, cart) {
     // A payment that fell short of its minimum is quoted again with the tolerance the payer chose, then reviewed.
     var sendOpts = { addBalance: addBalance, clearCartOnSuccess: tierIds.length > 0, slippageBps: reviewedSlippage,
       retryWithSlippage: function (bps) {
-        state.payerSlippage = { bps: bps, key: payInputsKey(amt, beneficiary) };
+        if (!requirePayInputs()) return;
+        state.payerSlippage = { bps: bps, key: reviewedInputsKey };
         schedulePreview();
         state.payAfterPreview = true;
         status.className = 'paybox-status pending'; status.textContent = 'Refreshing the quote…';

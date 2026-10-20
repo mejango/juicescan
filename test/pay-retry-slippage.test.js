@@ -10,6 +10,11 @@ describe('payRetrySlippageBps', () => {
     expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN' }, 100)).toBe(200);
     expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN', received: 1n, minimum: 1000n }, 100)).toBe(4950);
   });
+  it('never suggests a tolerance that does not loosen the one that failed', () => {
+    expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN', received: 990n, minimum: 1000n }, 4950)).toBeNull();
+    expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN', received: 990n, minimum: 1000n }, 4990)).toBeNull();
+    expect(payRetrySlippageBps({ reason: 'TERMINAL_UNDER_MIN', received: 990n, minimum: 1000n }, 4800)).toBe(4900);
+  });
   it('offers nothing when a lower minimum is not the fix', () => {
     expect(payRetrySlippageBps(null, 100)).toBeNull();
     expect(payRetrySlippageBps({ reason: 'BUYBACK_DERIVED_FLOOR_NOT_MET', received: 1n, minimum: 2n }, 100)).toBeNull();
