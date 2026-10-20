@@ -258,12 +258,16 @@ it('says why a payment fell short and re-quotes it with the tolerance the payer 
   await vi.waitFor(() => expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ amount: 2n * 10n ** 18n, slippageBps: 100n }));
 });
 
-it('shows a known revert reason without offering a looser minimum', async () => {
+const pausedAbi = [{ type: 'error', name: 'JBTerminalStore_RulesetPaymentPaused', inputs: [{ type: 'uint256' }, { type: 'uint256' }] }];
+it.each([
+  ['a known revert with its reason', encodeErrorResult({ abi: pausedAbi, errorName: 'JBTerminalStore_RulesetPaymentPaused', args: [1n, 2n] }), 'This project is not accepting payments right now.'],
+  ['a truncated revert as unknown', '0x8dc14446', 'Execution reverted.'],
+])('shows %s, without offering a looser minimum', async (_, data, line) => {
   runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
-  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: { shortMessage: 'reverted', data: '0x8dc14446' } }));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Execution reverted.', { error: { shortMessage: 'reverted', data } }));
   await card(612); type('1'); await quoted('900');
   await review(); confirmButton().click();
-  await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).not.toBe(''));
+  await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe(line));
   expect(reviewAgainButton()).toBeFalsy();
   expect(document.querySelector('.pay-retry-slippage')).toBeNull();
 });

@@ -297,3 +297,4 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - [x] The zero-fill line is the SDK's ("This payment would return no tokens.").
 - [x] The custom allowed-decrease field is bounded by the SDK cap (49.5% for pay), checked after rounding.
 - [x] Codex final pass: the cash-out preview's `var slip` (a bps number) shadowed the shared `slip` control, so `slip.sync()` threw on pool routes (from the refactor commit). Renamed the local `slipBps`; `test/var-before-declaration.test.js` fails any function that reads a name before its own `var` shadows it.
+- [x] Codex pass 2: the gate now counts module bindings, imports and destructuring as outer names, skips keys, member names and parameters a var redeclares (fixtures for each), and still catches the original cash-out shadow; the known-revert pay test encodes a complete revert and asserts its line, with the truncated selector kept as an unknown-failure case.
