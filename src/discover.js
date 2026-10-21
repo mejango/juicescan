@@ -14053,8 +14053,14 @@ export function mergeSameTxActivityRows(rows, project) {
         total += toBigInt(r.rawAmount);
         if (r.rawAmountUsd == null) usdKnown = false; else totalUsd += toBigInt(r.rawAmountUsd);
       });
+      var tokens = pays.map(function (r) { return eventTokenMeta(project, r.chainId, r.rawEvent); });
+      var oneToken = tokens.every(function (t) {
+        return t && tokens[0] && t.address.toLowerCase() === tokens[0].address.toLowerCase() && t.decimals === tokens[0].decimals;
+      });
       merged.account = pays[0].from; merged.from = pays[0].from;
-      merged.baseAmount = activityFlowAmount(project, total, usdKnown ? totalUsd : null);
+      merged.baseAmount = oneToken && total > 0n
+        ? formatActivityAmount(total, tokens[0].symbol, tokens[0].decimals)
+        : indexedActivityAmount(usdKnown ? totalUsd : null);
     }
     return merged;
   });
@@ -14226,8 +14232,8 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       timestamp: Number(pay.timestamp || event.timestamp),
       account: pay.beneficiary || event.from || pay.from,
       from: pay.from || event.from,
-      baseAmount: activityFlowAmount(project, pay.amount, pay.amountUsd),
-      rawAmount: pay.amount, rawAmountUsd: pay.amountUsd,
+      baseAmount: eventFlowAmount(project, chainId, pay, pay.amount, pay.amountUsd),
+      rawAmount: pay.amount, rawAmountUsd: pay.amountUsd, rawEvent: pay,
       received: minted > 0n ? formatCompactTokenAmount(minted) + ' ' + payUnit : '',
       tokenAmount: '',
       action: minted > 0n
@@ -14267,7 +14273,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       timestamp: Number(cash.timestamp || event.timestamp),
       account: cash.beneficiary || cash.holder || cash.from || event.from,
       from: cash.from || event.from,
-      baseAmount: activityFlowAmount(project, cash.reclaimAmount, cash.reclaimAmountUsd),
+      baseAmount: eventFlowAmount(project, chainId, cash, cash.reclaimAmount, cash.reclaimAmountUsd),
       tokenAmount: formatCompactTokenAmount(toBigInt(cash.cashOutCount)),
       action: 'cashed out',
       memo: '',
@@ -14295,9 +14301,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       type: 'payout', direction: 'out', chainId: chainId,
       txHash: po.txHash || event.txHash, timestamp: Number(po.timestamp || event.timestamp),
       account: po.caller || po.from || event.from, from: po.from || event.from,
-      // The event does not identify its source token, so only label the raw amount when the project has a
-      // single accounting token (activityFlowAmount); otherwise fall back to the indexed USD value.
-      baseAmount: activityFlowAmount(project, po.amountPaidOut, po.amountPaidOutUsd),
+      baseAmount: eventFlowAmount(project, chainId, po, po.amountPaidOut, po.amountPaidOutUsd),
       tokenAmount: '', action: 'paid out', memo: '',
     };
   }
@@ -14407,7 +14411,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       type: 'add_to_balance', direction: 'in', chainId: chainId,
       txHash: atb.txHash || event.txHash, timestamp: Number(atb.timestamp || event.timestamp),
       account: atb.from || event.from, from: atb.from || event.from,
-      baseAmount: activityFlowAmount(project, atb.amount, null),
+      baseAmount: eventFlowAmount(project, chainId, atb, atb.amount, atb.amountUsd),
       tokenAmount: '', action: 'added to balance', memo: atb.memo || '',
     };
   }
@@ -14457,7 +14461,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
     var reservePct = remint ? reservePercentLabel(sw.projectTokenAmount, remint) : '';
     return { type: isSell ? 'sell' : isMint ? 'issuance' : 'swap', direction: isSell ? 'out' : isBuy || isMint ? 'in' : '', chainId: chainId, txHash: sw.txHash || event.txHash, timestamp: Number(sw.timestamp || event.timestamp),
       account: sw.from || sw.caller || event.from, from: sw.from || event.from,
-      baseAmount: activityFlowAmount(project, sw.terminalTokenAmount, null),
+      baseAmount: swapFlowAmount(project, sw.terminalTokenAmount),
       tokenAmount: '',
       // Who the paired remint went to, and what it was: a fan-out row phrases the swap as their receipt.
       payee: remintPayees ? remintPayees[swapOrdinal || 0] || '' : '',
@@ -20697,28 +20701,41 @@ function formatSourceTokenAmount(raw, token, chainId, project) {
   return meta ? formatActivityAmount(raw, meta.symbol, meta.decimals) : '';
 }
 
-// Pay/cash out rows do not index their token or decimals. USD is the only denomination the source records
-// explicitly, so use it when present and leave the field blank otherwise instead of guessing ETH vs USDC.
+// A flow's indexed USD value, or blank when it has none, instead of guessing ETH vs USDC.
 export function indexedActivityAmount(scaledUsd) {
   var usd = Number(usdFromScaled(scaledUsd));
   return usd > 0 ? formatUsd(usd) : '';
 }
 
-// The amount that moved, in the flow's OWN currency. When every chain accounts in the same single token we
-// know the pay/cash-out/payout token exactly (project._flowToken, resolved once in fetchProjectActivity), so
-// label the raw amount with it. Otherwise the event only indexes a USD value — multiple accepted tokens
-// can't be told apart from the raw amount — so fall back to that.
-function activityFlowAmount(project, raw, scaledUsd) {
-  var ft = project && project._flowToken;
-  if (ft && toBigInt(raw) > 0n) return formatActivityAmount(raw, ft.symbol, ft.decimals);
+// The amount that moved, in the event's OWN token. Bendystraw indexes the token, decimals and symbol of each
+// pay, cash out, payout and add to balance; a known token fills a missing symbol or decimals. An unresolved
+// token falls back to the indexed USD value, never to the project's accounting token.
+export function eventFlowAmount(project, chainId, ev, raw, scaledUsd) {
+  var token = eventTokenMeta(project, chainId, ev);
+  if (token && toBigInt(raw) > 0n) return formatActivityAmount(raw, token.symbol, token.decimals);
   return indexedActivityAmount(scaledUsd);
 }
 
-// Activity events don't index their token, so a raw amount may only be labeled when EVERY chain's terminal
-// has exactly one accounting context and all of them agree on the same token shape (kind, symbol,
-// decimals) — a project accounting in 6-dec USDC on one chain and an 18-dec token on another would
-// otherwise mislabel remote amounts by 1e12. `contextLists` is one resolved context list per chain; any
-// missing/failed/multi-context chain disqualifies the label (the caller falls back to the indexed USD).
+function eventTokenMeta(project, chainId, ev) {
+  if (!ev || !ev.token) return null;
+  var meta = sourceTokenMeta(project, chainId, ev.token);
+  var decimals = ev.decimals != null ? Number(ev.decimals) : (meta ? meta.decimals : null);
+  var symbol = ev.tokenSymbol || (meta && meta.symbol);
+  return decimals != null && symbol ? { address: String(ev.token), decimals: decimals, symbol: symbol } : null;
+}
+
+// Swap events index no token. When every chain accounts in the same single token (project._flowToken,
+// resolved once in fetchProjectActivity) that token is the swap's terminal token; otherwise show nothing.
+function swapFlowAmount(project, raw) {
+  var ft = project && project._flowToken;
+  return ft && toBigInt(raw) > 0n ? formatActivityAmount(raw, ft.symbol, ft.decimals) : '';
+}
+
+// A raw cross-chain amount (a swap, a group balance) may only be read in one token when EVERY chain has
+// exactly one accounting context and all of them are the same token (native, USDC, or one address) with the
+// same decimals; a project accounting in 6-dec USDC on one chain and an 18-dec token on another would
+// otherwise mislabel remote amounts by 1e12. `contextLists` is one context list per chain, each context
+// carrying its chainId; any missing/failed/multi-context chain disqualifies the label.
 export function flowTokenFromContexts(contextLists) {
   if (!contextLists || !contextLists.length) return null;
   var agreed = null;
@@ -20726,12 +20743,43 @@ export function flowTokenFromContexts(contextLists) {
     var contexts = contextLists[i];
     if (!contexts || contexts.length !== 1) return null;
     var context = contexts[0];
-    var native = !!(context.address && context.address.toLowerCase() === NATIVE_TOKEN.toLowerCase());
-    var shape = { native: native, symbol: context.symbol, decimals: Number(context.decimals) };
+    var shape = { key: accountingTokenContextKey(context.address, Number(context.chainId)), symbol: context.symbol, decimals: Number(context.decimals) };
     if (!agreed) agreed = shape;
-    else if (agreed.native !== shape.native || agreed.symbol !== shape.symbol || agreed.decimals !== shape.decimals) return null;
+    else if (agreed.key !== shape.key || agreed.symbol !== shape.symbol || agreed.decimals !== shape.decimals) return null;
   }
   return agreed ? { symbol: agreed.symbol, decimals: agreed.decimals } : null;
+}
+
+// A Bendystraw project row as the context list flowTokenFromContexts checks: its one accounting token when
+// accountingTokenCount says it has exactly one, else null.
+export function accountingContextsFromRow(project, chainId, row) {
+  if (!row || Number(row.accountingTokenCount) !== 1 || !row.token || row.decimals == null) return null;
+  var meta = sourceTokenMeta(project, chainId, row.token);
+  var symbol = row.tokenSymbol || (meta && meta.symbol);
+  return symbol ? [{ address: row.token, chainId: Number(chainId), decimals: Number(row.decimals), symbol: symbol }] : null;
+}
+
+// The single accounting token every chain of this project shares, from the Bendystraw project rows, or null.
+// A failed row lookup is retried on the next call rather than remembered as "no single token".
+function projectFlowToken(project) {
+  if (!project._flowTokenP) {
+    var rows = Promise.all(projectDeployments(project).map(function (deployment) {
+      return fetchFreshBendystrawProjectRecord(deployment.projectId, deployment.chainId);
+    }));
+    project._flowTokenP = rows.then(function (records) {
+      if (records.some(function (row) { return !row; })) delete project._flowTokenP;
+      return flowTokenFromContexts(projectDeployments(project).map(function (deployment, i) {
+        return accountingContextsFromRow(project, deployment.chainId, records[i]);
+      }));
+    }, function () {
+      delete project._flowTokenP;
+      return null;
+    }).then(function (token) {
+      project._flowToken = token;
+      return token;
+    });
+  }
+  return project._flowTokenP;
 }
 
 function renderExplorerTxLink(chainId, txHash, label) {
@@ -21116,12 +21164,12 @@ function detailSubSection(title, contentNode) {
 
 export var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float!, $version: Float!) { '
   + 'project(projectId: $projectId, chainId: $chainId, version: $version) { '
-  + 'suckerGroupId tokenSupply volume volumeUsd paymentsCount contributorsCount createdAt '
+  + 'suckerGroupId tokenSupply volumeUsd paymentsCount contributorsCount createdAt accountingTokenCount token tokenSymbol decimals '
   + 'metadataUri metadata handle name description projectTagline logoUri coverImageUri infoUri payDisclosure '
   + 'tags twitter farcaster discord telegram domain tokens } }';
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($id: String!) { '
-  + 'suckerGroup(id: $id) { volume volumeUsd paymentsCount contributorsCount balance tokenSupply } }';
+  + 'suckerGroup(id: $id) { volumeUsd paymentsCount contributorsCount } }';
 // Handle authority lookup is scoped to the canonical REVOwner permission account rather than an eventually
 // consistent isRevnetOperator marker. Live REVOwner.isOperatorOf checks still decide the one trusted candidate.
 export var BENDYSTRAW_PROJECT_HANDLE_OPERATOR_QUERY = 'query($account: String!, $chainId: Int!, $projectId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
@@ -21205,10 +21253,10 @@ export var BENDYSTRAW_ACTIVITY_OR = 'OR: [{ payEvent_not: null }, { cashOutToken
   + '{ operatorPermissionsSetEvent_not: null }, { addNftTierEvent_not: null }, { removeNftTierEvent_not: null }, '
   + '{ swapEvent_not: null }, { buybackPoolEvent_not: null }, { bridgeClaimEvent_not: null }]';
 export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId timestamp txHash from type '
-  + 'payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount from txHash timestamp } '
-  + 'cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd holder beneficiary from txHash timestamp } '
+  + 'payEvent { amount amountUsd token decimals tokenSymbol beneficiary memo newlyIssuedTokenCount from txHash timestamp } '
+  + 'cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd token decimals tokenSymbol holder beneficiary from txHash timestamp } '
   + 'mintTokensEvent { beneficiary beneficiaryTokenCount caller from txHash timestamp } '
-  + 'sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd fee caller from txHash timestamp } '
+  + 'sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd token decimals tokenSymbol fee caller from txHash timestamp } '
   + 'sendReservedTokensToSplitsEvent { tokenCount from txHash timestamp } '
   + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from txHash timestamp } '
   + 'autoIssueEvent { beneficiary count stageId from txHash timestamp } '
@@ -21218,7 +21266,7 @@ export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId times
   + 'mintNftEvent { tierId tokenId beneficiary totalAmountPaid from txHash timestamp } '
   + 'deployErc20Event { symbol name token from txHash timestamp } '
   + 'projectCreateEvent { from txHash timestamp } '
-  + 'addToBalanceEvent { amount memo from txHash timestamp } '
+  + 'addToBalanceEvent { amount amountUsd token decimals tokenSymbol memo from txHash timestamp } '
   + 'setUriEvent { uri caller from txHash timestamp } '
   + 'projectTransferEvent { previousOwner owner from txHash timestamp } '
   + 'operatorPermissionsSetEvent { account operator isRevnetOperator caller from txHash timestamp } '
@@ -21611,10 +21659,11 @@ async function resolveBendystrawSuckerGroupId(project, chainIds) {
 async function fetchPriceFloorHistory(project, stages) {
   var chainIds = projectBendystrawChainIds(project);
   if (!chainIds.length) return [];
-  // suckerGroupMoment.balance is a raw sum. It cannot produce a price when contexts mix precisions or
-  // denominations (for example ETH + USDC), so suppress that history rather than plot fabricated points.
-  var breakdown = await fetchBalanceBreakdown(project).catch(function () { return null; });
-  if (!breakdown || !breakdown.contextHomogeneous) return [];
+  // suckerGroupMoment.balance is a raw sum across chains and tokens, so it is a price only when every chain
+  // holds the same single token. Mixed groups (for example ETH + USDC) get no history rather than fabricated
+  // points: balanceUsd cannot be turned back into pair units, since each moment's rate is the moved token's.
+  var flowToken = await projectFlowToken(project);
+  if (!flowToken) return [];
   var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
   if (!groupId) return [];
 
@@ -21623,9 +21672,6 @@ async function fetchPriceFloorHistory(project, stages) {
     : 0;
   var projectStart = stages && stages.length ? Number(stages[0].start) : 0;
 
-  var pair = await lpPairFor(project, project.chainId);
-  if (!pair) return [];
-  var pairDecimals = Number(pair.decimals);
   var res = await Promise.all([
     fetchBendystrawCollectionPages(BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY, 'suckerGroupMoments', {
       suckerGroupId: groupId,
@@ -21656,7 +21702,7 @@ async function fetchPriceFloorHistory(project, stages) {
     var tax = cashOutTaxAt(timestamp, taxes, currentTax);
     var balance = toBigInt(moment.balance);
     var supply = toBigInt(moment.tokenSupply);
-    var value = calculateFloorPrice(balance, supply, tax, pairDecimals);
+    var value = calculateFloorPrice(balance, supply, tax, flowToken.decimals);
     var observation = { balance: balance, tokenSupply: supply, cashOutTax: tax, price: value };
     out.push({
       timestamp: timestamp,
@@ -21836,7 +21882,6 @@ async function fetchProjectIndexedStats(id, chainId) {
     var p = await fetchBendystrawProjectRecord(id, chainId);
     if (!p) return null;
     var stats = {
-      volume: p.volume,
       volumeUsd: p.volumeUsd,
       paymentsCount: Number(p.paymentsCount) || 0,
       contributorsCount: Number(p.contributorsCount) || 0,
@@ -21846,7 +21891,6 @@ async function fetchProjectIndexedStats(id, chainId) {
         .then(function (d) { return d && d.suckerGroup; })
         .catch(function () { return null; }), INDEXED_STATS_TIMEOUT_MS, null);
       if (agg) {
-        stats.volume = agg.volume;
         stats.volumeUsd = agg.volumeUsd;
         stats.paymentsCount = Number(agg.paymentsCount) || 0;
         stats.contributorsCount = Number(agg.contributorsCount) || 0;
@@ -22016,18 +22060,8 @@ async function fetchProjectActivity(project) {
   var deployments = projectDeployments(project);
   var chainIds = deployments.map(function (deployment) { return deployment.chainId; });
   if (!deployments.length) return [];
-  // Resolve the flow currency ONCE, from EVERY chain's own accounting contexts: events land on every chain
-  // and don't index their token, so raw amounts are only labeled when all chains agree on a single shared
-  // context shape (flowTokenFromContexts). Any disagreement or failed read → fall back to the indexed USD.
-  if (project._flowToken === undefined) {
-    project._flowToken = null;
-    try {
-      var contextLists = await Promise.all(deployments.map(function (deployment) {
-        return resolveAcctTokens(deployment.chainId, deployment.projectId);
-      }));
-      project._flowToken = flowTokenFromContexts(contextLists);
-    } catch (_) {}
-  }
+  // Swaps index no token; they are labeled only when every chain shares one accounting token.
+  await projectFlowToken(project);
   var groupId = await resolveBendystrawSuckerGroupId(project, chainIds);
 
   // Query by BOTH the current sucker group and each exact deployment, then merge. Early events may carry

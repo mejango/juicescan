@@ -1,3 +1,25 @@
+# Bendystraw per-token data: event tokens, single-token check, USD balances (2026-10-20)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/7d1fdce3-54c6-4145-93c3-bfa2558645d2/scratchpad/client-round-brief.md. Bendystraw now serves each money event's `token`/`decimals`/`tokenSymbol`, `project.accountingTokenCount`, `projectTokenBalances` and USD balances at current rates.
+
+- [x] 1. Activity: select `token decimals tokenSymbol` on pay, cash out, payout and add-to-balance (feed and account receipts); each row formats its amount in its own token, symbol falling back to `sourceTokenMeta`, then USD. Fan-out totals keep a token only when every pay shares it. Add-to-balance gains its `amountUsd` fallback.
+- [x] 2. Single-token check: the project's one shared accounting token comes from the Bendystraw project rows (`accountingTokenCount`, `token`, `decimals`, `tokenSymbol`) through the existing `flowTokenFromContexts`; the per-chain onchain context reads in `fetchProjectActivity` go. Swaps (no token field) keep using it.
+- [x] 3. Floor history: gate and decimals come from that same Bendystraw single-token answer instead of the onchain balance breakdown and the home accounting-token read.
+- [x] 4. Stats: drop the unused `volume`/`balance`/`tokenSupply` from the indexed stats path.
+- [x] 5. Data tab catalog: event amount columns read their row's `tokenSymbol`/`decimals`; project and group catalogs add `balanceUsd`, `accountingTokenCount` and `projectTokenBalances`.
+- [x] 6. Tests, full `npm run check`, Codex loop until approve, PR, no merge.
+
+### Review
+`npm run check` (Node 22.23.1, DEPLOY_ALL_DEPLOYMENTS_DIR at the pinned deploy-all c62b3ac) passes: 0 production vulnerabilities, GraphQL documents valid against both live Bendystraw schemas, 200 files / 2025 unit tests with coverage floors, startup 712,765 / 722,000 B gzip, total 2,022,572 / 2,060,000 B, 148 browser tests. Codex pass 1 fixes: link previews list `projectTokenBalances` per token; token identity uses the shared context key (native, USDC, address) so lookalike symbols do not merge; a failed row lookup is retried; fan-out totals compare resolved tokens; Data tab fills ETH/USDC symbols; previews merge only listed tokens across chains, keep any other token on its own line and count unnamed tokens in USD (pass 2); holder cash-out receipts carry tokens; Top contributors and the Build guide example rank by USD. Codex gpt-6.1-sol: pass 1 and 2 requested changes (fixed above), pass 3 approved. `schema:check` now also validates the 56 Data tab catalog queries (93 documents in all); a misspelled catalog field fails it.
+
+## Plan refinement
+- **Objective:** Every Juicescan amount that Bendystraw indexes is shown in its own token or in USD, never in a guessed accounting token; nothing blanks when a field is missing (USD or the current behavior instead).
+- **System fit:** Outcome (honest amounts) -> capability (Bendystraw per-token fields) -> evidence (live schema on both endpoints, sampled rows) -> prepared action (read-only GraphQL documents validated by `schema:check`) -> verified result (unit tests plus the full gate). Bendystraw owns token identity; `formatActivityAmount`/`sourceTokenMeta`/`flowTokenFromContexts` stay the display owners. Header balances, Funds breakdown and transaction paths are unaffected.
+- **Reuse and simplicity:** Reuse `flowTokenFromContexts` by mapping Bendystraw rows to the context shape it already checks; reuse `sourceTokenMeta` for symbol fallback and the data tab's `amount` formatter (`row.decimals`, `symbolKey`). Removed: per-chain onchain context reads for activity and the floor chart's onchain gate. No new modules.
+- **Evidence and unknowns:** Introspection of mainnet and testnet shows the fields; sampled rows show `suckerGroupMoment.accountingTokenUsdRate` is the rate of whichever token moved, so `balanceUsd` cannot be turned back into pair units for a mixed group; the floor chart keeps exact raw sums for single-token groups only. Old cached project rows lack the new fields and fall back to USD.
+- **Verification:** Unit tests for per-event labels, symbol fallback, USD fallback, fan-out token agreement and the row-to-context mapping; `npm run check` (schema check against both live schemas, coverage, bundle budget, browser).
+- **Resource budget:** One worktree, one behavior commit (no extraction needed); replan if the gate shows a schema or budget surprise.
+
 # Pay minimum: SDK 3.3.0 quote, failure reason, adjustable minimum (2026-10-20)
 
 Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum. Matches jbm's pay card (scratchpad wt-jbm-paymin).

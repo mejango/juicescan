@@ -40,7 +40,7 @@
           "hint": "Single project by projectId + chain.",
           "kind": "single",
           "path": "project",
-          "query": "query($projectId: Float!, $chainId: Float!) { project(version: 6, projectId: $projectId, chainId: $chainId) { projectId chainId version name handle owner balance volume volumeUsd tokenSupply paymentsCount contributorsCount suckerGroupId createdAt } }",
+          "query": "query($projectId: Float!, $chainId: Float!) { project(version: 6, projectId: $projectId, chainId: $chainId) { projectId chainId version name handle owner balance balanceUsd accountingTokenCount projectTokenBalances { items { token tokenSymbol decimals balance balanceUsd } } volume volumeUsd tokenSupply paymentsCount contributorsCount suckerGroupId createdAt } }",
           "variables": [
             {
               "name": "projectId",
@@ -90,6 +90,21 @@
               "format": "amount"
             },
             {
+              "key": "balanceUsd",
+              "label": "Balance USD",
+              "format": "volumeUsd"
+            },
+            {
+              "key": "accountingTokenCount",
+              "label": "Tokens",
+              "format": "number"
+            },
+            {
+              "key": "projectTokenBalances",
+              "label": "Per token",
+              "format": "json"
+            },
+            {
               "key": "volumeUsd",
               "label": "Vol USD",
               "format": "volumeUsd"
@@ -127,7 +142,7 @@
           "hint": "Browse projects across one or more chains, sorted by volume USD.",
           "kind": "list",
           "path": "projects",
-          "query": "query($chainIds: [Int!], $version: Int, $limit: Int!, $offset: Int!) { projects(where: { chainId_in: $chainIds, version: $version }, orderBy: \"volumeUsd\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle owner volumeUsd balance paymentsCount contributorsCount } totalCount } }",
+          "query": "query($chainIds: [Int!], $version: Int, $limit: Int!, $offset: Int!) { projects(where: { chainId_in: $chainIds, version: $version }, orderBy: \"volumeUsd\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle owner volumeUsd balance balanceUsd paymentsCount contributorsCount } totalCount } }",
           "variables": [
             {
               "name": "chainIds",
@@ -192,6 +207,11 @@
               "key": "balance",
               "label": "Balance",
               "format": "amount"
+            },
+            {
+              "key": "balanceUsd",
+              "label": "Balance USD",
+              "format": "volumeUsd"
             },
             {
               "key": "paymentsCount",
@@ -280,7 +300,7 @@
           "hint": "All projects owned by a given address.",
           "kind": "list",
           "path": "projects",
-          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { projects(where: { version: 6, owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle volumeUsd balance createdAt } totalCount } }",
+          "query": "query($owner: String!, $limit: Int!, $offset: Int!) { projects(where: { version: 6, owner: $owner }, orderBy: \"createdAt\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { projectId chainId version name handle volumeUsd balance balanceUsd createdAt } totalCount } }",
           "variables": [
             {
               "name": "owner",
@@ -333,6 +353,11 @@
               "key": "balance",
               "label": "Balance",
               "format": "amount"
+            },
+            {
+              "key": "balanceUsd",
+              "label": "Balance USD",
+              "format": "volumeUsd"
             },
             {
               "key": "createdAt",
@@ -480,11 +505,11 @@
         {
           "id": "suckergroup-get",
           "title": "Get sucker group",
-          "hint": "Pick any project on any of its chains — aggregated cross-chain totals + per-chain breakdown.",
+          "hint": "Pick any project on any of its chains \u2014 aggregated cross-chain totals + per-chain breakdown.",
           "kind": "single",
           "path": "suckerGroup",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!) { suckerGroup(id: $suckerGroupId) { id volume volumeUsd balance tokenSupply paymentsCount contributorsCount projects { items { projectId chainId name balance volume } } } }",
+          "query": "query($suckerGroupId: String!) { suckerGroup(id: $suckerGroupId) { id volume volumeUsd balance balanceUsd tokenSupply paymentsCount contributorsCount projects { items { projectId chainId name balance balanceUsd volume } } } }",
           "variables": [
             {
               "name": "projectId",
@@ -519,6 +544,11 @@
               "format": "amount"
             },
             {
+              "key": "balanceUsd",
+              "label": "Balance USD",
+              "format": "volumeUsd"
+            },
+            {
               "key": "tokenSupply",
               "label": "Supply",
               "format": "bigint"
@@ -543,11 +573,11 @@
         {
           "id": "suckergroup-history",
           "title": "Sucker group snapshots",
-          "hint": "Pick any project on any of its chains — historical cross-chain aggregated state.",
+          "hint": "Pick any project on any of its chains \u2014 historical cross-chain aggregated state.",
           "kind": "list",
           "path": "suckerGroupMoments",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $limit: Int!, $offset: Int!) { suckerGroupMoments(where: { version: 6, suckerGroupId: $suckerGroupId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp volume volumeUsd balance tokenSupply } totalCount } }",
+          "query": "query($suckerGroupId: String!, $limit: Int!, $offset: Int!) { suckerGroupMoments(where: { version: 6, suckerGroupId: $suckerGroupId }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp volume volumeUsd balance balanceUsd tokenSupply } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -593,6 +623,11 @@
               "format": "amount"
             },
             {
+              "key": "balanceUsd",
+              "label": "Balance USD",
+              "format": "volumeUsd"
+            },
+            {
               "key": "tokenSupply",
               "label": "Supply",
               "format": "bigint"
@@ -602,7 +637,7 @@
         {
           "id": "sucker-tx-list",
           "title": "Sucker bridge transactions",
-          "hint": "Pick any project on any of its chains — cross-chain token bridging via suckers.",
+          "hint": "Pick any project on any of its chains \u2014 cross-chain token bridging via suckers.",
           "kind": "list",
           "path": "suckerTransactions",
           "resolveSuckerGroup": true,
@@ -873,10 +908,10 @@
         {
           "id": "participants-top-contributors",
           "title": "Top contributors",
-          "hint": "Participants ordered by lifetime volume paid in.",
+          "hint": "Participants ordered by lifetime USD paid in.",
           "kind": "list",
           "path": "participants",
-          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"volume\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address volume volumeUsd balance paymentsCount lastPaidTimestamp } totalCount } }",
+          "query": "query($projectId: Int!, $chainId: Int, $limit: Int!, $offset: Int!) { participants(where: { version: 6, projectId: $projectId, chainId: $chainId }, orderBy: \"volumeUsd\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { address volume volumeUsd balance paymentsCount lastPaidTimestamp } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -1019,7 +1054,7 @@
         {
           "id": "wallet-portfolio",
           "title": "Wallet portfolio",
-          "hint": "Cross-project aggregate stats for a wallet. The wallet entity has no version field, so these lifetime totals span ALL Juicebox versions — not just V6.",
+          "hint": "Cross-project aggregate stats for a wallet. The wallet entity has no version field, so these lifetime totals span ALL Juicebox versions \u2014 not just V6.",
           "kind": "single",
           "path": "wallet",
           "query": "query($address: String!) { wallet(address: $address) { address volume volumeUsd lastPaidTimestamp } }",
@@ -1184,7 +1219,7 @@
         {
           "id": "activity-project",
           "title": "Project activity feed",
-          "hint": "All events for a project across the sucker group (pay, cash out, mint, payout, loan…).",
+          "hint": "All events for a project across the sucker group (pay, cash out, mint, payout, loan\u2026).",
           "kind": "list",
           "path": "activityEvents",
           "resolveSuckerGroup": true,
@@ -1278,7 +1313,7 @@
         {
           "id": "activity-omnichain",
           "title": "Omnichain activity feed",
-          "hint": "Pick any project on any of its chains — events across the sucker group, optionally narrowed to selected chains.",
+          "hint": "Pick any project on any of its chains \u2014 events across the sucker group, optionally narrowed to selected chains.",
           "kind": "list",
           "path": "activityEvents",
           "resolveSuckerGroup": true,
@@ -1423,7 +1458,7 @@
           "kind": "list",
           "path": "payEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from beneficiary amount amountUsd memo newlyIssuedTokenCount } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from beneficiary amount amountUsd token decimals tokenSymbol memo newlyIssuedTokenCount } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -1501,7 +1536,7 @@
           "hint": "All payments made by an address (across projects).",
           "kind": "list",
           "path": "payEvents",
-          "query": "query($from: String!, $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, from: $from }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary amount amountUsd memo txHash } totalCount } }",
+          "query": "query($from: String!, $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, from: $from }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary amount amountUsd token decimals tokenSymbol memo txHash } totalCount } }",
           "variables": [
             {
               "name": "from",
@@ -1568,7 +1603,7 @@
           "hint": "All payments routed to a specific beneficiary.",
           "kind": "list",
           "path": "payEvents",
-          "query": "query($beneficiary: String!, $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, beneficiary: $beneficiary }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId from amount amountUsd memo txHash } totalCount } }",
+          "query": "query($beneficiary: String!, $limit: Int!, $offset: Int!) { payEvents(where: { version: 6, beneficiary: $beneficiary }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId from amount amountUsd token decimals tokenSymbol memo txHash } totalCount } }",
           "variables": [
             {
               "name": "beneficiary",
@@ -1636,7 +1671,7 @@
           "kind": "list",
           "path": "cashOutTokensEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash holder beneficiary cashOutCount reclaimAmount reclaimAmountUsd token decimals tokenSymbol } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -1714,7 +1749,7 @@
           "hint": "All cash outs by a specific token holder.",
           "kind": "list",
           "path": "cashOutTokensEvents",
-          "query": "query($holder: String!, $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { version: 6, holder: $holder }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary cashOutCount reclaimAmount reclaimAmountUsd txHash } totalCount } }",
+          "query": "query($holder: String!, $limit: Int!, $offset: Int!) { cashOutTokensEvents(where: { version: 6, holder: $holder }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { timestamp chainId projectId beneficiary cashOutCount reclaimAmount reclaimAmountUsd token decimals tokenSymbol txHash } totalCount } }",
           "variables": [
             {
               "name": "holder",
@@ -1782,7 +1817,7 @@
           "kind": "list",
           "path": "addToBalanceEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { addToBalanceEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from caller amount memo returnedFees } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { addToBalanceEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash from caller amount amountUsd token decimals tokenSymbol memo returnedFees } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -1838,6 +1873,11 @@
               "format": "amount"
             },
             {
+              "key": "amountUsd",
+              "label": "USD",
+              "format": "volumeUsd"
+            },
+            {
               "key": "memo",
               "label": "Memo",
               "format": "text"
@@ -1861,7 +1901,7 @@
           "kind": "list",
           "path": "useAllowanceEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { useAllowanceEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller beneficiary amount netAmountPaidOut rulesetCycleNumber } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { useAllowanceEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller beneficiary amount netAmountPaidOut token decimals tokenSymbol rulesetCycleNumber } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -1943,7 +1983,7 @@
           "title": "Buyback pool registrations",
           "hint": "Initial Uniswap V4 spot and token ordering for each registered buyback pool.",
           "notes": [
-            "initialSqrtPriceX96 is the pool's raw Uniswap V4 sqrt(currency1/currency0) × 2^96 price at registration; projectTokenIsCurrency0 tells which side is the 18-decimal project token.",
+            "initialSqrtPriceX96 is the pool's raw Uniswap V4 sqrt(currency1/currency0) \u00d7 2^96 price at registration; projectTokenIsCurrency0 tells which side is the 18-decimal project token.",
             "Both price-order fields are nullable on legacy rows. Filter results to the exact chainId and poolId before using a registration as the first point in a price series."
           ],
           "kind": "list",
@@ -2021,7 +2061,7 @@
           "title": "AMM swap price history",
           "hint": "Exact post-trade Uniswap V4 spot prices and realized buy/sell amounts.",
           "notes": [
-            "sqrtPriceX96 is the exact post-swap V4 spot. Let r = (sqrtPriceX96 / 2^96)^2; terminal raw units per project-token raw unit are r when projectTokenIsCurrency0, otherwise 1/r, then multiply by 10^(18 − terminalDecimals). V6 project tokens use 18 decimals; read terminalDecimals from the project's accounting context.",
+            "sqrtPriceX96 is the exact post-swap V4 spot. Let r = (sqrtPriceX96 / 2^96)^2; terminal raw units per project-token raw unit are r when projectTokenIsCurrency0, otherwise 1/r, then multiply by 10^(18 \u2212 terminalDecimals). V6 project tokens use 18 decimals; read terminalDecimals from the project's accounting context.",
             "sqrtPriceX96 and projectTokenIsCurrency0 are nullable for legacy rows and mint routes. A terminalTokenAmount/projectTokenAmount fallback is a realized average price, not an exact spot; direction mint does not touch the pool.",
             "A sucker group can contain several chains and superseded pools. Resolve the current onchain pool and filter rows to its exact chainId and poolId before building one price series."
           ],
@@ -2623,7 +2663,7 @@
           "kind": "list",
           "path": "sendPayoutsEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutsEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller rulesetCycleNumber amount amountPaidOut fee netLeftoverPayoutAmount } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutsEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash caller rulesetCycleNumber amount amountPaidOut fee netLeftoverPayoutAmount token decimals tokenSymbol } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -2707,7 +2747,7 @@
           "kind": "list",
           "path": "sendPayoutToSplitEvents",
           "resolveSuckerGroup": true,
-          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutToSplitEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary splitProjectId amount netAmount percent rulesetId hook } totalCount } }",
+          "query": "query($suckerGroupId: String!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { sendPayoutToSplitEvents(where: { version: 6, suckerGroupId: $suckerGroupId, chainId_in: $chainIds }, orderBy: \"timestamp\", orderDirection: \"desc\", limit: $limit, offset: $offset) { items { chainId timestamp txHash beneficiary splitProjectId amount netAmount token decimals tokenSymbol percent rulesetId hook } totalCount } }",
           "variables": [
             {
               "name": "projectId",
@@ -2754,7 +2794,7 @@
             },
             {
               "key": "splitProjectId",
-              "label": "→ Project",
+              "label": "\u2192 Project",
               "format": "number"
             },
             {
@@ -2917,7 +2957,7 @@
             },
             {
               "key": "splitProjectId",
-              "label": "→ Project",
+              "label": "\u2192 Project",
               "format": "number"
             },
             {

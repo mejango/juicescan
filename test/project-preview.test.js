@@ -24,12 +24,33 @@ describe('project link previews', () => {
   });
 
   it('keeps different accounting tokens separate', () => {
+    const ETH = '0x000000000000000000000000000000000000eeee';
     expect(
       formatPreviewBalance([
-        { balance: '1500000000000000000', decimals: 18, tokenSymbol: 'ETH' },
-        { balance: '2500000', decimals: 6, tokenSymbol: 'USDC' },
+        { chainId: 8453, projectTokenBalances: { items: [
+          { token: ETH, balance: '1500000000000000000', decimals: 18, tokenSymbol: 'ETH' },
+          { token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', balance: '0', decimals: 6, tokenSymbol: 'USDC' },
+        ] } },
+        { chainId: 10, projectTokenBalances: { items: [{ token: '0x0b2c639c533813f4aa9d7837caf62653d097ff85', balance: '2500000', decimals: 6, tokenSymbol: null }] } },
       ]),
     ).toBe('1.5 ETH + 2.5 USDC');
+    expect(formatPreviewBalance([
+      { chainId: 1, projectTokenBalances: { items: [{ token: ETH, balance: '0', decimals: 18, tokenSymbol: 'ETH' }, { token: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', balance: '1', decimals: 6, tokenSymbol: 'USDC' }] } },
+    ])).toBe('0 USDC');
+    expect(formatPreviewBalance([{ chainId: 1, projectTokenBalances: { items: [{ token: ETH, balance: '0', decimals: 18, tokenSymbol: 'ETH' }] } }])).toBe('0 ETH');
+    expect(formatPreviewBalance([{ balance: '1', decimals: 18, tokenSymbol: 'ETH' }])).toBe('Unavailable');
+  });
+
+  it('never merges lookalike tokens and counts unnamed ones in USD', () => {
+    const lookalikes = [{ chainId: 8453, projectTokenBalances: { items: [
+      { token: '0x1111111111111111111111111111111111111111', balance: '1000000', decimals: 6, tokenSymbol: 'USD' },
+      { token: '0x2222222222222222222222222222222222222222', balance: '9000000', decimals: 6, tokenSymbol: 'USD' },
+    ] } }];
+    expect(formatPreviewBalance(lookalikes)).toBe('1 USD + 9 USD');
+    expect(formatPreviewBalance([{ chainId: 8453, projectTokenBalances: { items: [
+      { token: '0x000000000000000000000000000000000000eeee', balance: '0', decimals: 18, tokenSymbol: 'ETH' },
+      { token: '0x3333333333333333333333333333333333333333', balance: '7', decimals: null, tokenSymbol: null, balanceUsd: '5000000000000000000' },
+    ] } }])).toBe('$5.00');
   });
 
   it('uses a plain-text description when a project has no tagline', () => {

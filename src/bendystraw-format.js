@@ -2,9 +2,20 @@
 // Type-aware cell formatters for Bendystraw query results.
 // Each formatter returns a DOM node so callers can append directly.
 
-import { CHAINS, ipfsHttpUrl } from './chain.js';
+import { CHAINS, ipfsHttpUrl, usdcByChain } from './chain.js';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const NATIVE_TOKEN = '0x000000000000000000000000000000000000eeee';
+const USDC_BY_CHAIN = usdcByChain();
+
+// ETH or USDC when an event row's token is one of them and the row has no symbol.
+function knownTokenSymbol(row) {
+  const token = row && row.token ? String(row.token).toLowerCase() : '';
+  if (!token) return '';
+  if (token === NATIVE_TOKEN) return 'ETH';
+  const usdc = USDC_BY_CHAIN[Number(row.chainId)];
+  return usdc && token === String(usdc).toLowerCase() ? 'USDC' : '';
+}
 
 function explorerUrl(chainId) {
   const chain = CHAINS[chainId];
@@ -114,8 +125,8 @@ export function rawAmount(value) {
   return span;
 }
 
-// Format an amount only when its precision is actually present in the row/column metadata. Currency 1 is
-// ETH and currency 2 is USD; USDC accounting currencies are address-derived IDs, never the number 2.
+// Format an amount only when its precision is actually present in the row/column metadata. An event row's own
+// tokenSymbol labels it; currency 1 is ETH and currency 2 is USD (USDC currencies are address-derived IDs).
 export function amount(value, row, opts) {
   const span = document.createElement('span');
   if (value == null || value === '') { span.textContent = '—'; return span; }
@@ -126,6 +137,8 @@ export function amount(value, row, opts) {
     : (row && row.currency != null ? Number(row.currency) : null);
   const symbol = (opts && opts.symbol)
     || (opts && opts.symbolKey && row && row[opts.symbolKey])
+    || (row && row.tokenSymbol)
+    || knownTokenSymbol(row)
     || (currency === 1 ? 'ETH' : (currency === 2 ? 'USD' : ''));
   const precision = opts && opts.precision != null ? Number(opts.precision) : (symbol === 'USD' ? 2 : 4);
   try {

@@ -97,7 +97,7 @@ describe('mergeSameTxActivityRows', () => {
   it('reads a fan-out (two pays in one tx) as the payer\'s total and who got what', () => {
     function pay(beneficiary, amount) {
       return { chainId: 8453, txHash: '0xcc', timestamp: 1, from: '0xpayer',
-        payEvent: { amount: amount, amountUsd: null, beneficiary: beneficiary, from: '0xpayer', newlyIssuedTokenCount: '0', txHash: '0xcc', timestamp: 1, memo: '' } };
+        payEvent: { amount: amount, amountUsd: null, token: '0x000000000000000000000000000000000000eeee', decimals: 18, tokenSymbol: 'ETH', beneficiary: beneficiary, from: '0xpayer', newlyIssuedTokenCount: '0', txHash: '0xcc', timestamp: 1, memo: '' } };
     }
     function swap(amount) {
       return { chainId: 8453, txHash: '0xcc', timestamp: 1, from: '0xpayer',

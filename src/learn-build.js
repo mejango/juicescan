@@ -601,8 +601,8 @@ export function renderBuildTab() {
       'A first query',
       'POST ' + BENDYSTRAW_GRAPHQL_ENDPOINTS.mainnet + '\n' +
       '{\n' +
-      '  projects(where: { chainId: 8453, version: 6 }, orderBy: "balance", orderDirection: "desc", limit: 10) {\n' +
-      '    items { projectId chainId name balance suckerGroupId }\n' +
+      '  projects(where: { chainId: 8453, version: 6 }, orderBy: "balanceUsd", orderDirection: "desc", limit: 10) {\n' +
+      '    items { projectId chainId name balanceUsd suckerGroupId }\n' +
       '    totalCount\n' +
       '  }\n' +
       '}'
