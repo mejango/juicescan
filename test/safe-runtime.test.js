@@ -173,6 +173,11 @@ describe('Safe runtime fail-closed boundaries', () => {
     vi.mocked(fetch).mockReset().mockRejectedValue(new Error('offline'));
     safeState.publicClient = { request: vi.fn().mockRejectedValue(new Error('RPC offline')) };
     await expect(listPendingSafeTxs(1, OTHER)).rejects.toThrow("Could not read your Safe's nonce");
+
+    // A contract wallet that is not a Safe: the service does not know it and it has no nonce(), so no queue.
+    vi.mocked(fetch).mockReset().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+    safeState.publicClient = { request: vi.fn().mockRejectedValue(new Error('execution reverted')) };
+    await expect(listPendingSafeTxs(1, TARGET)).resolves.toEqual([]);
   });
 
   it('reads on-chain owners/threshold and rejects when any approval read fails', async () => {

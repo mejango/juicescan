@@ -267,7 +267,12 @@ export async function listPendingSafeTxs(chainId, safe) {
   // Only nonces at/after the Safe's current nonce are executable — lower ones are dead (replaced/abandoned)
   // and the Safe app hides them. Filter server-side (also shrinks the response → fewer host errors).
   var current = await getSafeNextNonce(chainId, safe);
-  if (current == null) throw new Error('Could not read your Safe\'s nonce');
+  if (current == null) {
+    // No nonce from the service or onchain: a contract wallet the service does not know (404) has no Safe queue.
+    var known = await safeFetch(base + '/api/v1/safes/' + cs(safe) + '/', { headers: headers(false) }).catch(function () { return null; });
+    if (known && known.status === 404) return [];
+    throw new Error('Could not read your Safe\'s nonce');
+  }
   var path = '/api/v1/safes/' + cs(safe) + '/multisig-transactions/?executed=false&trusted=true&ordering=nonce&limit=' + SAFE_QUEUE_PAGE + '&nonce__gte=' + current;
   var rows = [];
   for (var page = 0; page < SAFE_QUEUE_MAX_PAGES; page++) {
