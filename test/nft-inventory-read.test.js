@@ -25,10 +25,11 @@ function keyOf(method, p) {
 }
 
 // The typed failures the capture recorded, rebuilt in the same shapes viem raises.
+// The revert data is decoded with the ABI the read itself passed, so a read ABI that lacks the error cannot recognize it.
 const nonexistentAbi = [{ name: 'ERC721NonexistentToken', type: 'error', inputs: [{ type: 'uint256', name: 'tokenId' }] }];
-function makeError(kind, message) {
+function makeError(kind, message, readAbi) {
   switch (kind) {
-    case 'nonexistent': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: nonexistentAbi, functionName: 'ownerOf', data: encodeErrorResult({ abi: nonexistentAbi, errorName: 'ERC721NonexistentToken', args: [1n] }) }) });
+    case 'nonexistent': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: readAbi, functionName: 'ownerOf', data: encodeErrorResult({ abi: nonexistentAbi, errorName: 'ERC721NonexistentToken', args: [1n] }) }) });
     case 'revert': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: [], functionName: 'f', data: '0x' }) });
     case 'zerodata': return new BaseError(message, { cause: new ContractFunctionZeroDataError({ functionName: 'STORE' }) });
     case 'transport': return new BaseError(message);
@@ -44,7 +45,7 @@ function strictClient(reads, calls) {
     calls.push(key);
     if (!(key in reads)) throw new Error('unrecorded read: ' + key);
     const value = reads[key];
-    if (value && typeof value === 'object' && '$throw' in value) throw makeError(value.$kind, value.$throw);
+    if (value && typeof value === 'object' && '$throw' in value) throw makeError(value.$kind, value.$throw, p.abi);
     return value;
   };
   return { getChainId: () => get('chainId'), getBlockNumber: () => get('blockNumber'), getBytecode: (p) => get('code', p), readContract: (p) => get('read', p) };
@@ -108,6 +109,15 @@ describe('inventory matches SDK 3.4.1 golden vectors', () => {
     // Only a proven revert or empty return on a custom hook means "no shop".
     expect(byName('a custom hook that reverts STORE is no shop').output).toBeNull();
     expect(byName('a custom hook with empty STORE is no shop').output).toBeNull();
+  });
+
+  it('recognizes a burned token only through the ERC721NonexistentToken error in its own read ABI', async () => {
+    const c = byName('holdings a minted token that was burned is skipped');
+    expect(Object.values(c.reads).some((v) => v && v.$kind === 'nonexistent')).toBe(true);
+    const client = strictClient(c.reads, []);
+    const read = client.readContract;
+    client.readContract = (p) => read(p.functionName === 'ownerOf' && p.address.toLowerCase() !== getAddress('JBProjects', c.chainId) ? { ...p, abi: p.abi.filter((e) => e.type !== 'error') } : p);
+    await expect(actions.getDefifaHoldings(client, c.input)).rejects.toThrow(/nonexistent|ERC721NonexistentToken/i);
   });
 
   it('unrecorded read fails the test', async () => {
