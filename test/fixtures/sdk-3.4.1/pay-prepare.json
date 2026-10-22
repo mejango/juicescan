@@ -141,5 +141,8 @@
 {"fn":"slippageFloor","name":"slippageFloor negative tolerance rejects","input":{"quoted":{"$bigint":"1000"},"slippageBps":{"$bigint":"-1"}},"reads":{},"trace":[],"output":{"$error":"Slippage basis points must be in [0, 10000)","$name":"Error"}},
 {"fn":"slippageFloor","name":"slippageFloor large quote","input":{"quoted":{"$bigint":"57896044618658097711785492504343953926634992332820282019728792003956564819975"},"slippageBps":{"$bigint":"4950"}},"reads":{},"trace":[],"output":{"$bigint":"29237502532422339344451673714693696732950671128074242419963039961998065234087"}},
 {"fn":"slippageFloor","name":"slippageFloor number tolerance with zero quote","input":{"quoted":{"$bigint":"0"},"slippageBps":100},"reads":{},"trace":[],"output":{"$bigint":"0"}},
-{"fn":"slippageFloor","name":"slippageFloor number tolerance throws","input":{"quoted":{"$bigint":"5"},"slippageBps":100},"reads":{},"trace":[],"output":{"$error":"Cannot mix BigInt and other types, use explicit conversions","$name":"TypeError"}}
+{"fn":"slippageFloor","name":"slippageFloor number tolerance throws","input":{"quoted":{"$bigint":"5"},"slippageBps":100},"reads":{},"trace":[],"output":{"$error":"Cannot mix BigInt and other types, use explicit conversions","$name":"TypeError"}},
+{"fn":"slippageFloor","name":"slippageFloor missing quote throws","input":{"slippageBps":{"$bigint":"100"}},"reads":{},"trace":[],"output":{"$error":"Cannot mix BigInt and other types, use explicit conversions","$name":"TypeError"}},
+{"fn":"slippageFloor","name":"slippageFloor string quote throws","input":{"quoted":"100"},"reads":{},"trace":[],"output":{"$error":"Cannot mix BigInt and other types, use explicit conversions","$name":"TypeError"}},
+{"fn":"slippageFloor","name":"slippageFloor fractional quote throws","input":{"quoted":1.5},"reads":{},"trace":[],"output":{"$error":"Cannot mix BigInt and other types, use explicit conversions","$name":"TypeError"}}
 ]}
