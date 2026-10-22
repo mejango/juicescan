@@ -4,7 +4,7 @@
 // v6/terminals.ts#getAccountingContexts/#resolvePaymentTerminal and v6/uniswapV3.ts/uniswapV4.ts quotes;
 // test/fixtures/sdk-3.4.1/pay-prepare.json pins identical metadata, previews, minimums and reads.
 
-import { BaseError, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, getAddress as checksumAddress, keccak256, zeroAddress } from 'viem';
+import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, getAddress as checksumAddress, keccak256, zeroAddress } from 'viem';
 import { getABI } from './abi-registry.js';
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { v6Address } from './nft-inventory-read.js';
@@ -390,9 +390,10 @@ export const PAY_SWAP_QUOTE_FAILED_MESSAGE = 'The swap quote could not be loaded
  * send the slippage-floored quote as an explicit minimum, re-previewed so the payment stays on the mint path if
  * the hook would not swap with it. Behind a router that converts the paid token with one swap, the pool is the
  * one in the converted token, quoted on the conversion's quote. Without a pool or quote the minimum is the
- * payer's mint entitlement when the hook would swap, else the terminal's own issuance. A read that fails, or a
- * quote that comes back empty, while the hook would swap throws PAY_SWAP_QUOTE_FAILED_MESSAGE instead: that
- * fallback can reach zero, and a failed read must never set the minimum (3.4.1 returns the fallback). A direct buyback hook
+ * payer's mint entitlement when the hook would swap, else the terminal's own issuance. While the hook would
+ * swap, a lost, empty or unreadable read throws PAY_SWAP_QUOTE_FAILED_MESSAGE instead, and so does a mint-path
+ * minimum of zero: a failed read never sets the minimum, and a swap never goes out unprotected (3.4.1 returns
+ * the fallback in both cases). A direct buyback hook
  * (ruleset data hook, or through the omnichain deployer) gets metadata keyed to itself.
  *
  * slippageBps: tolerance on the pool quote and on the fallback minimum (default 1%). skipSplits: whether the
@@ -437,9 +438,14 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     readContract: (parameters) => watch(() => client.readContract(parameters)),
     call: (parameters) => watch(() => client.call(parameters)).then((result) => { if (!result.data) readFailed = true; return result; }),
   };
+  // A swap the hook would take must carry a real minimum: its mint-path fallback is never sent as zero.
+  const mintPath = () => {
+    if (!buyback.noop && fallback.minReturnedTokens === 0n) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    return fallback;
+  };
   try {
     const pool = await buybackPoolOf(watched, { chainId, hook: buyback.hook, projectId, token, poolId: buyback.poolId });
-    if (!pool) return fallback;
+    if (!pool) return mintPath();
     let swap = buyback;
     if (pool.terminalToken !== token) {
       // A router converts the payment first, and its preview gave the hook the router's slippage floor. Quote
@@ -456,13 +462,13 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
         reservedPercent: buyback.reservedPercent,
       });
       // The floor preview must be this route's: no more than the floor reached the hook.
-      if (!routed || routed.floor < buyback.amountToSwapWith || routed.spec.poolId !== buyback.poolId) return fallback;
+      if (!routed || routed.floor < buyback.amountToSwapWith || routed.spec.poolId !== buyback.poolId) return mintPath();
       swap = routed.spec;
     }
     const quoted = await quoteUniswapV4ExactInputSingle(watched, { chainId, poolKey: pool.key, zeroForOne: !swap.projectTokenIs0, amountIn: swap.amountToSwapWith });
     const minimumSwapAmountOut = slippageFloor(quoted, slippageBps);
     // The pool loses to minting: leave the payment on the mint path.
-    if (minimumSwapAmountOut <= swap.tokenCountWithoutHook) return fallback;
+    if (minimumSwapAmountOut <= swap.tokenCountWithoutHook) return mintPath();
     const quotedMetadata = buildUserPayMetadata({ chainId, tiers, minimumSwapAmountOut, skipSplits, ...(hook ? { hook } : {}) });
     // The hook rejects a minimum it cannot route, such as on a pool with no liquidity in range.
     const [, quotedBeneficiaryCount, quotedReservedCount, quotedSpecs] = await watched.readContract({
@@ -473,7 +479,7 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     });
     // It must still swap, and in the quoted pool: a router may pick another route.
     const quotedSpec = quotedSpecs.find((s) => s.hook.toLowerCase() === buyback.hook.toLowerCase());
-    if (!quotedSpec || quotedSpec.noop || decodeBuybackPaySpec(quotedSpec, buyback.reservedPercent)?.poolId !== buyback.poolId) return fallback;
+    if (!quotedSpec || quotedSpec.noop || decodeBuybackPaySpec(quotedSpec, buyback.reservedPercent)?.poolId !== buyback.poolId) return mintPath();
     // A router folds the hook's estimate into its counts, so only the multi-terminal's own counts are its issuance.
     const issuedByTerminal = args.terminal.toLowerCase() === v6Address('JBMultiTerminal', chainId).toLowerCase()
       ? { beneficiaryTokenCount: quotedBeneficiaryCount, reservedTokenCount: quotedReservedCount }
@@ -490,11 +496,10 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     };
     return { metadata: quotedMetadata, preview: settle(quoted), minReturnedTokens: settle(minimumSwapAmountOut).beneficiaryTokenCount };
   } catch (error) {
-    // viem raises an unreadable answer (such as a truncated quote) as a BaseError, and a malformed one fails as a
-    // TypeError; only this module's own "route does not apply" errors (no quoter, no router, amount out of range)
-    // are plain.
-    if (!buyback.noop && (readFailed || error instanceof BaseError || error instanceof TypeError)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
-    return fallback;
+    // Only this module's own "route does not apply" errors (no quoter, no router, amount out of range) are plain
+    // Errors; a lost read, an unreadable answer (viem's BaseError) or a malformed one (TypeError, SyntaxError) is not.
+    if (!buyback.noop && (readFailed || Object.getPrototypeOf(error) !== Error.prototype)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    return mintPath();
   }
 }
 

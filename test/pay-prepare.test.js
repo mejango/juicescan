@@ -158,6 +158,16 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     const routerRead = routerEmpty.readContract;
     routerEmpty.readContract = async (p) => (p.functionName === 'projectIdOf' ? undefined : routerRead(p));
     await expect(prepareUserPay(routerEmpty, r.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    const malformed = client(() => ({ call: async () => { throw new SyntaxError('Cannot convert 0xzz to a BigInt'); } }));
+    await expect(prepareUserPay(malformed, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+  });
+
+  it('never sends a swap with a zero mint-path minimum, even when no read failed', async () => {
+    const c = byName('quote failure with a tiny mint entitlement');
+    const base = strictClient(c.reads, []);
+    const otherPool = { currency0: '0x0000000000000000000000000000000000000000', currency1: '0x9999999999999999999999999999999999999999', fee: 1, tickSpacing: 1, hooks: '0x0000000000000000000000000000000000000000' };
+    const noPool = { ...base, readContract: async (p) => (p.functionName === 'poolKeyOf' ? otherPool : p.functionName === 'accountingContextsOf' ? [] : base.readContract(p)) };
+    await expect(prepareUserPay(noPool, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
   });
 
   it('builds the same pay transaction the SDK does, with the terminal ABI from the registry', () => {
