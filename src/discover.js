@@ -30100,6 +30100,12 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
   var deadline = plan ? plan.deadline : BigInt(now + dlSecs);
   var permitDatas = [];
   var stepNo = 0;
+  // A held earlier mint (either entry point) settles or refuses before any approval or permit signature.
+  if (!prep.smartWallet) {
+    var mintGate = await heldWriteGate(holdForWrite(chainId, acct, lpMintCall(prep, deadline)), 'liquidity mint');
+    if (mintGate && mintGate.hash) return mintGate.hash;
+    if (mintGate) throw new Error(mintGate.line);
+  }
 
   if (prep.smartWallet && isSafeConnected()) {
     var batch = lpAddLiquidityCalls(prep, await lpLiveAllowanceNeeds(chainId, prep, acct, now), now, dlSecs, deadline);
@@ -30179,7 +30185,7 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
   if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
-    return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value, smartWallet: prep.smartWallet });
+    return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', holdAs: 'modifyLiquidities', args: [permitDatas.concat([mintData])], value: prep.value, smartWallet: prep.smartWallet });
   }
   return lpSendTx(chainId, Object.assign({ account: prep.acct, smartWallet: prep.smartWallet }, lpMintCall(prep, deadline)));
 }

@@ -1391,9 +1391,10 @@ export function confirmTransactionModal(payload, opts) {
   return waitForConfirm();
 }
 
-// The hold (write-hold.js) for one direct contract write: `request` is { address, abi, functionName, args, value }.
+// The hold (write-hold.js) for one direct contract write: `request` is { address, abi, functionName, args, value },
+// with `holdAs` naming the action when one action has more than one entry point (an LP mint's multicall).
 export function holdForWrite(chainId, account, request) {
-  return writeHold(chainId, account, { to: request.address, functionName: request.functionName, value: request.value || 0n,
+  return writeHold(chainId, account, { to: request.address, functionName: request.holdAs || request.functionName, value: request.value || 0n,
     data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) });
 }
 

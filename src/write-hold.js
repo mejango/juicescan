@@ -47,7 +47,8 @@ export function writeHold(chainId, account, call) {
       return lock ? work() : Promise.reject(new Error('This wallet action is already open in another window.'));
     });
   }
-  function mine(expected) { var current = read(); return !!current && current.id === expected.id; }
+  // The same attempt in the same state: a release queued behind a send never removes the hash it saved.
+  function mine(expected) { var current = read(); return !!current && current.id === expected.id && (current.hash || null) === (expected.hash || null); }
   // Removes only the record `expected` names, so a stale callback or dialog never ends a newer attempt.
   // Callers already inside withLock use releaseLocked; everyone else releases under the lock (release).
   function releaseLocked(expected) {

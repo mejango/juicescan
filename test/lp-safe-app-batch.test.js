@@ -2,6 +2,7 @@
 // an ordered Safe App batch after simulating it from the Safe; every other connection keeps the per-step sends.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData } from 'viem';
+import './web-locks.js';
 
 const runtime = vi.hoisted(() => ({ safeApp: true, erc20Allowance: 0n, permit2: [0n, 0n, 0n], pending: [], wallet: null, client: null }));
 const SAFE = '0x2222222222222222222222222222222222222222';
@@ -96,5 +97,22 @@ describe('runAddLiquidityTxs inside the Safe App', () => {
     expect(proposeSafeTransactions).not.toHaveBeenCalled();
     expect(runtime.wallet.writeContract.mock.calls.map(c => [c[0].address, c[0].functionName])).toEqual([[TOKEN, 'approve'], [PERMIT2, 'approve'], [POSM, 'modifyLiquidities']]);
     expect(runtime.client.simulateContract.mock.calls[1][0].args).toEqual([TOKEN, POSM, 1000n, BigInt(NOW + 30 * 24 * 3600)]);
+  });
+});
+
+describe('runAddLiquidityTxs from an ordinary wallet', () => {
+  it('holds an ambiguous mint across both mint entry points, before any permit signature', async () => {
+    runtime.safeApp = false; runtime.erc20Allowance = 10n ** 30n; runtime.permit2 = [10n ** 30n, NOW * 2, 0n];
+    runtime.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
+    runtime.wallet.signTypedData = vi.fn(async () => '0x' + '11'.repeat(65));
+    const eoa = () => ({ ...prep(), smartWallet: false, erc20: [{ currency: TOKEN, max: 1000n, approved: true, permitReady: true }] });
+    await expect(runAddLiquidityTxs(8453, eoa(), vi.fn(), plan())).rejects.toThrow(/stays pending/);
+    expect(runtime.wallet.writeContract.mock.calls[0][0].functionName).toBe('modifyLiquidities');
+    // The Permit2 allowance lapsed: the retry would mint through multicall. It is the same held action.
+    runtime.permit2 = [0n, 0n, 0n];
+    await expect(runAddLiquidityTxs(8453, eoa(), vi.fn(), plan())).rejects.toThrow(/your earlier liquidity mint/i);
+    expect(runtime.wallet.signTypedData).not.toHaveBeenCalled();
+    expect(runtime.wallet.writeContract).toHaveBeenCalledTimes(1);
+    document.querySelectorAll('dialog').forEach(d => d.remove());
   });
 });

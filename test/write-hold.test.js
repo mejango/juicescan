@@ -146,3 +146,11 @@ it('a release waits for the action lock, so it cannot interleave with another wi
   expect(remove).not.toHaveBeenCalled();expect(hold.read().id).toBe(y.id);
  }finally{remove.mockRestore();}
 });
+it('a release of the no-hash attempt shown never removes the hash its open wallet then returned',async()=>{
+ const hold=writeHold(8453,h.account,call);const tick=()=>new Promise(r=>setTimeout(r));
+ let finishA;const a=hold.withLock(()=>new Promise(resolve=>{finishA=resolve;}));await tick();
+ const shown=hold.reserve();
+ const staleRelease=hold.release(shown);await tick();
+ hold.submitted(shown,'0x'+'d'.repeat(64));finishA();await a;await staleRelease;
+ expect(hold.read().hash).toBe('0x'+'d'.repeat(64));
+});
