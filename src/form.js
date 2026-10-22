@@ -6,7 +6,7 @@ import { encodeFunctionData, toFunctionSelector } from 'viem';
 import { getABI } from './abi-registry.js';
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
-import { confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
+import { holdForWrite, heldWriteRefuses, sendHeldWrite, HELD_WRITE_LINE, confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS, chainNameFor } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
@@ -350,8 +350,10 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
     if (!ready) return;
 
     var args = inputs.map(function(inp) { return inp.getValue(); });
+    var hold = holdForWrite(chainId, reviewedAccount, { address: contractAddress, abi: [fn], functionName: fn.name, args: args, value: value || 0n });
+    if (heldWriteRefuses(hold, fn.name)) { outputArea.appendChild(renderError(HELD_WRITE_LINE)); return; }
     // Review the exact call before sending.
-    var submittedHash = null;
+    var submittedHash = null, heldReservation = null;
     confirmTransactionModal({
       action: fn.name,
       chain: chainNameFor(chainId),
@@ -383,12 +385,17 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
         if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
         setOutputMessage(outputArea, 'tx-pending', 'Awaiting wallet confirmation…');
         var gas = await contractGasWithHeadroom(pub, simulation.request);
-        return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas }));
+        var sent = await sendHeldWrite(hold, pub, function () {
+          if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+        }, function () { return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas })); });
+        heldReservation = sent.reservation;
+        return sent.hash;
       }).then(function(hash) {
         submittedHash = hash;
         setOutputMessage(outputArea, 'tx-pending', 'TX submitted: ' + hash + ' — confirming onchain…');
         return waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
       }).then(function(receipt) {
+        if (receipt) hold.release(heldReservation);
         if (!receipt || receipt.status !== 'success') {
           var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
           reverted.onchainRevert = true;
@@ -463,6 +470,7 @@ function parseEtherSafe(val) {
 }
 
 export function formatError(err, abi) {
+  if (err.heldWrite) return err.message;
   if (err.message && err.message.includes('User rejected')) return 'Transaction rejected by wallet';
   // A selector from a contract outside this call's ABI (Permit2, a hook) decodes to nothing here; the shared
   // table names the ones callers keep hitting so a raw caller gets the precondition, not four bytes.

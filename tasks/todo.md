@@ -323,3 +323,15 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - [x] Codex passes 4 and 5: a memo edit ends a loosened tolerance but leaves the quote, so Pay still opens the review in one click (both tested); the gate also models a function expression's own name, named class expressions, block-scoped functions (not hoisted) and destructuring and loop targets as writes.
 - [x] Codex pass 6 (UX): a quote that fails with a known reason shows that sentence in the card (and in the COMPONENTS widget) instead of "preview unavailable" or "No payment contract"; after Review again such a failure stops with the reason, no second quote or "Wait for the preview" dead end; a loosened payment that went through re-quotes the next one at the default tolerance so Pay is one click. Each tested, with negative controls.
 - [x] Codex passes 7-9 (UX): a known quote-failure reason shows before any zero-amount early return (credit-covered NFT checkout), and Pay on such a quote re-quotes in that click; the widget's routing tag no longer holds up review (shown with its preview in one render, kept on submit only for the same route and metadata), and Pay works while a preview loads. Pass 10: SHIP. `npm run check` on 5649052: 2018 unit, budgets, 148 browser.
+
+## 2026-10-22 — hold ambiguous direct writes
+
+## Plan refinement
+- **Objective:** A direct wallet write whose wallet errors without a hash (anything but an explicit rejection, code 4001) stays held: no second send of the same action, held across reloads, with a Check onchain / I checked my wallet exit; a hash with lost tracking is held the same way.
+- **System fit:** `executeTransaction` (component-base.js) owns every generic direct write; `lpSendTx` (discover.js) and the ABI form (form.js) are the two other direct `writeContract` sends. Defifa and Relayr keep their own journals (Defifa opts out via `onWriteRejected`); `direct-batch.js` already persists a `sending` marker. Safe proposals and approvals are unchanged.
+- **Reuse and simplicity:** Reuse SDK 3.4.1 `createBrowserWriteRecovery` + `createHeldWriteStorage` + `readReviewedWriteNonce` (writeRecovery is already in the startup chunk, no bump). One shared hold helper in component-base used by all three senders; no new journal.
+- **Evidence and unknowns:** Verified on origin/main 1a49a35: the catch at component-base.js:1604 only keeps a state with a hash; lpSendTx:29322 and form.js:387 the same. SDK semantics read from 3.5.2 source and 3.4.1 d.ts.
+- **Verification:** Failing-first vitest: ambiguous error then a second call does not open the wallet; 4001 releases; success clears; record survives a module reload (localStorage); check resolves by receipt. Then `npm run test:ci` (+ deps/audit), bundle budgets before/after.
+- **Resource budget:** Nonce read runs in parallel with gas estimation (no new happy-path waterfall). Two Codex passes. Replan if budgets fail.
+
+- [ ] Failing tests  - [ ] Shared hold helper + executeTransaction  - [ ] lpSendTx + form.js  - [ ] Gates + budgets  - [ ] Codex x2  - [ ] PR

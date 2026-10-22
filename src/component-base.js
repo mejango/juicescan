@@ -11,6 +11,7 @@ import { decodeFunctionData, encodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
 import { prettyArgSteps } from './tx-pretty-args.js';
 import { contractGasWithHeadroom } from './gas.js';
+import { writeHold, readWriteNonce, findHeldWrite } from './write-hold.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
 // address is. Suckers and other per-project deployments aren’t in the registry — callers pass contractName.
@@ -1390,6 +1391,79 @@ export function confirmTransactionModal(payload, opts) {
   return waitForConfirm();
 }
 
+export var HELD_WRITE_LINE = 'An earlier transaction for this action is not settled. Check it before sending again.';
+
+// The hold (write-hold.js) for one direct contract write: `request` is { address, abi, functionName, args, value }.
+export function holdForWrite(chainId, account, request) {
+  return writeHold(chainId, account, { to: request.address, functionName: request.functionName, value: request.value || 0n,
+    data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) });
+}
+
+// True (and shows how to settle it) when this action's earlier write is still held.
+export function heldWriteRefuses(hold, label) {
+  var record = hold.read();
+  if (!record) return false;
+  showHeldWrite(hold, record, label);
+  return true;
+}
+
+// Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
+// Only an explicit wallet rejection (EIP-1193 4001) releases the reservation; any other wallet error holds.
+export function sendHeldWrite(hold, client, check, send) {
+  var nonce = readWriteNonce(client, hold.account);
+  return hold.withLock(async function () {
+    var reservation = hold.reserve(await nonce);
+    try { check(); } catch (err) { hold.release(reservation); throw err; }
+    var hash;
+    try { hash = await send(); } catch (err) {
+      if (isWalletUserRejection(err)) { hold.release(reservation); throw err; }
+      throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it: check your wallet before trying again.', { cause: err }), { heldWrite: true });
+    }
+    return { hash: hash, reservation: hold.submitted(reservation, hash) || reservation };
+  });
+}
+
+function showHeldWrite(hold, record, label) {
+  var modal = openDialog('Earlier transaction not settled');
+  var content = el('div', 'pay-confirm');
+  var note = el('div', 'tx-confirm-note');
+  var where = (label ? label + ' ' : '') + 'on ' + chainNameFor(hold.chainId);
+  note.textContent = record.hash
+    ? 'Your earlier ' + where + ' was sent (' + truncAddr(record.hash) + ') and is not confirmed yet. Sending again could repeat it.'
+    : 'Your wallet did not say whether your earlier ' + where + ' was sent. Sending again could repeat it.';
+  var status = el('div', 'tx-confirm-note');
+  var foot = el('div', 'create-modal-foot');
+  var release = el('button', 'create-btn ghost'); release.type = 'button'; release.textContent = 'I checked my wallet, release it';
+  var check = el('button', 'create-btn primary'); check.type = 'button'; check.textContent = 'Check onchain';
+  foot.appendChild(release); foot.appendChild(check);
+  content.appendChild(note); content.appendChild(status); content.appendChild(foot);
+  modal.panel.appendChild(content);
+  check.addEventListener('click', function () {
+    check.disabled = true; status.textContent = 'Checking…';
+    var client = createPublicClientForChain(hold.chainId);
+    hold.withLock(async function () {
+      var saved = hold.read();
+      if (!saved) return 'Nothing is held now. Review the transaction again.';
+      var found = await findHeldWrite(client, saved);
+      if (found.status !== 'sent') {
+        return found.usedBy
+          ? 'Another transaction (' + truncAddr(found.usedBy) + ') used this wallet slot. If your wallet shows this action was not sent, release it.'
+          : 'Not found onchain yet. If your wallet shows no pending or sent transaction, release it.';
+      }
+      var receipt = await pollTransactionReceipt(client, null, found.hash, hold.chainId, 3, 2000);
+      hold.release(saved);
+      return receipt.status === 'success'
+        ? 'Earlier transaction confirmed in block ' + receipt.blockNumber + '. It went through; send again only to repeat it.'
+        : 'Earlier transaction failed onchain. You can send it again.';
+    }).then(function (line) {
+      status.textContent = line;
+      if (!hold.read()) foot.replaceChildren();
+    }, function (err) { status.textContent = 'Still not settled: ' + errMessage(err, 'the check failed.'); })
+      .finally(function () { check.disabled = false; });
+  });
+  release.addEventListener('click', function () { hold.abandon(); modal.close(); });
+}
+
 export function executeTransaction(opts) {
   // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, reverify, onStatus, onSuccess, onError, skipConfirm, label }
   if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
@@ -1397,6 +1471,10 @@ export function executeTransaction(opts) {
   if (!wallet) { opts.onError('Connect wallet to transact'); return; }
   var account = getAccount();
   if (!account) { opts.onError('Connect wallet to transact'); return; }
+  // A caller with its own write journal (onWriteRejected) keeps it; every other direct write is held here.
+  var hold = opts.onWriteRejected ? null : holdForWrite(opts.chainId, account, opts);
+  if (hold && heldWriteRefuses(hold, opts.label || opts.functionName)) { (opts.onError || function () {})(HELD_WRITE_LINE); return; }
+  var heldReservation = null;
 
   // Status/result callbacks. When the confirm modal is shown (not skipConfirm), these get wrapped so tx
   // progress renders INSIDE the modal (which stays open after Confirm) — callers no longer show it elsewhere.
@@ -1578,9 +1656,15 @@ export function executeTransaction(opts) {
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
       if (opts.onSending && await wallet.getChainId() !== opts.chainId) throw new Error('Wallet network changed. Review the transaction again.');
-      assertWalletInvocation(false);
-      walletInvoked = true;
-      return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
+      function send() {
+        walletInvoked = true;
+        return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
+      }
+      if (!hold) { assertWalletInvocation(false); return send(); }
+      return sendHeldWrite(hold, pub, function () { assertWalletInvocation(false); }, send).then(function (sent) {
+        heldReservation = sent.reservation;
+        return sent.hash;
+      });
     });
   }).then(function(hash) {
     submittedHash = hash;
@@ -1595,11 +1679,14 @@ export function executeTransaction(opts) {
     return waitForTrackedTransactionReceipt(pub, hash, wallet, opts.chainId);
   }).then(async function(receipt) {
     if (!receipt || receipt.status !== 'success') {
+      // A read receipt (success or revert) settles the hold.
+      if (receipt && heldReservation) hold.release(heldReservation);
       var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
       reverted.onchainRevert = true;
       throw reverted;
     }
     if (opts.verifyReceipt) await opts.verifyReceipt(receipt);
+    if (heldReservation) hold.release(heldReservation);
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(async function(err) {
     try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
@@ -1607,6 +1694,7 @@ export function executeTransaction(opts) {
       cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'submitted', hash: submittedHash, chainId: opts.chainId, trackingError: true });
       return;
     }
+    if (err && err.heldWrite) { cbs.onError(err.message, { userRejected: false, submittedHash: null, error: err }); return; }
     var msg = err.shortMessage || err.message || 'Unknown error';
     var full = ((err.shortMessage || '') + ' ' + (err.message || '') + ' ' + (err.details || '') + ' ' + (err.cause && (err.cause.message || err.cause.shortMessage) || '')).toLowerCase();
     var chainName = chainNameFor(opts.chainId);
