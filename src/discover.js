@@ -4195,7 +4195,7 @@ function routerPayRouteWorks(chainId, projectId, token, decimals) {
       address: registry, abi: feePreviewPayAbi, functionName: 'previewPayFor',
       args: [BigInt(projectId), token, 10n ** BigInt(decimals == null ? 18 : decimals), '0x0000000000000000000000000000000000000001', '0x'],
     }).then(function (o) { return toBigInt(o[0] && o[0].id) !== 0n; })
-      .catch(function () { return false; });
+      .catch(function () { delete _payRouteCache[key]; return false; }); // unverified: not offered now, read again next time
   }
   return _payRouteCache[key];
 }
@@ -9280,7 +9280,7 @@ export function renderPayCard(project, cart) {
   }
   function nftCheckoutBreakdown() { return nftCreditBreakdown(nftTotalWei(), nftRestrictedWei(), state.nftCredits); }
   function nftFloorForToken(token) {
-    if (state.nftCreditsError) return null;
+    if (state.nftCreditsError || state.nftCreditsLoading) return null;
     var due = nftCheckoutBreakdown().due;
     if (due <= 0n) return 0n;
     if (!state.shop || !token) return null;
@@ -9365,7 +9365,7 @@ export function renderPayCard(project, cart) {
             ? { supported: true, pricePerUnit: price }
             : { supported: false, reason: 'No price feed converts this token into ' + pricing.symbol + '.' }];
         })
-        .catch(function () { return [key, { supported: false, reason: 'No price feed converts this token into ' + pricing.symbol + '.' }]; });
+        .catch(function () { return [key, { supported: false, reason: 'Could not verify this token’s price in ' + pricing.symbol + '.' }]; });
     })).then(function (entries) {
       if (gen !== nftRouteGeneration || state.chainId !== chainId || state.shop !== shop) return;
       var routes = {};
@@ -9419,8 +9419,8 @@ export function renderPayCard(project, cart) {
       .then(toBigInt)
       .then(function (credits) { return settle(credits, false); }, function () { return settle(0n, true); });
   }
-  // Selected items with unread credits: the amount due is unknown, so Pay stays off until a retry reads them.
-  function nftCreditsBlockPay() { return state.nftCreditsError && state.mode === 'pay' && selectedTierIds().length > 0; }
+  // Selected items with unread credits: the amount due is unknown, so Pay stays off until a read succeeds.
+  function nftCreditsBlockPay() { return (state.nftCreditsError || state.nftCreditsLoading) && state.mode === 'pay' && selectedTierIds().length > 0; }
   function syncNftAmountForSelection() {
     var floor = nftFloorForToken(state.token);
     if (floor != null) {
@@ -9778,12 +9778,13 @@ export function renderPayCard(project, cart) {
       box.appendChild(unread);
       return box;
     }
-    if (!state.nftCreditsLoading && breakdown.applied > 0n) {
+    if (state.nftCreditsLoading) { row('Amount due', 'Checking your shop credit…', 'muted'); return box; }
+    if (breakdown.applied > 0n) {
       row('Shop credit applied', '−' + formatShopPrice(state.shop, breakdown.applied, state.chainId), 'credit');
-    } else if (!state.nftCreditsLoading && state.nftCredits > 0n) {
+    } else if (state.nftCredits > 0n) {
       row('Shop credit available', formatShopPrice(state.shop, state.nftCredits, state.chainId), 'muted');
     }
-    if (!state.nftCreditsLoading && state.nftCredits > 0n && breakdown.restrictedCost > 0n) {
+    if (state.nftCredits > 0n && breakdown.restrictedCost > 0n) {
       row(
         breakdown.restrictedCost === breakdown.subtotal ? 'These items require fresh payment' : 'Some items require fresh payment',
         formatShopPrice(state.shop, breakdown.restrictedCost, state.chainId),
@@ -10030,7 +10031,7 @@ export function renderPayCard(project, cart) {
     }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { return; }
-    if (nftCreditsBlockPay()) { status.textContent = 'Could not read your NFT credits. Retry.'; return; }
+    if (nftCreditsBlockPay()) { status.textContent = state.nftCreditsLoading ? 'Your shop credit is still loading…' : 'Could not read your NFT credits. Retry.'; return; }
     if (!state.contextsReady) { status.textContent = state.contextsError ? 'Could not verify the project’s accepted tokens.' : 'Accepted tokens are still loading…'; return; }
     if (state.amount === '' || !state.token) { status.textContent = selectedTierIds().length ? 'No supported payment currency is available for these items.' : 'Enter an amount'; return; }
     var amt;
@@ -10043,7 +10044,6 @@ export function renderPayCard(project, cart) {
     var tierIds = addBalance ? [] : selectedTierIds();
     if (tierIds.length && state.shop) {
       if (state.nftRoutesLoading) { status.textContent = 'Payment currencies are still being checked…'; return; }
-      if (state.nftCreditsLoading) { status.textContent = 'Your shop credit is still loading…'; return; }
       var nftRoute = nftRouteForToken(state.token);
       if (!nftRoute || !nftRoute.supported) {
         status.textContent = 'This payment token cannot be converted into the shop’s pricing currency. Choose a supported currency.';
@@ -17319,9 +17319,11 @@ function crossChainValues(project, field, chainAvailable) {
   if (!field || !field.crossChainRead) return Promise.resolve([]);
   var chains = ((project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }]).filter(function (c) { return !chainAvailable || chainAvailable(c.id); });
   return Promise.all(chains.map(function (c) {
-    return field.crossChainRead(project, c.id).then(function (v) { return { name: c.name || chainNameOf(c.id), value: (v && v !== ZERO_ADDRESS) ? v : null }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null }; });
+    return field.crossChainRead(project, c.id).then(function (v) { return { name: c.name || chainNameOf(c.id), value: (v && v !== ZERO_ADDRESS) ? v : null }; }).catch(function () { return { name: c.name || chainNameOf(c.id), value: null, unknown: true }; });
   }));
 }
+// One chain's current value for the cross-chain summaries: an address, 'unset', or 'unknown' when the read failed.
+function crossChainValueText(r) { return r.value ? shortAddr6(r.value) : (r.unknown ? 'unknown' : 'unset'); }
 function shortAddr6(a) { return a.slice(0, 6) + '…' + a.slice(-4); }
 function chainValue(fn) { fn._chainValue = true; return fn; }
 function materializeChainValue(value, chainId) {
@@ -17564,9 +17566,10 @@ function renderPowerCard(project, titleText, introText, actions) {
       crossChainValues(project, f, action.chainAvailable).then(function (rows) {
         var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
         var setCount = rows.filter(function (r) { return r.value; }).length;
-        if (distinct.length === 0) cur.textContent = 'Current: not set on any chain';
+        if (rows.some(function (r) { return r.unknown; })) cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + crossChainValueText(r); }).join(' | ');
+        else if (distinct.length === 0) cur.textContent = 'Current: not set on any chain';
         else if (distinct.length === 1) cur.textContent = 'Current: ' + shortAddr6(distinct[0]) + (setCount === rows.length ? ' (all chains)' : ' (' + setCount + '/' + rows.length + ' chains — rest unset)');
-        else cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' | ');
+        else cur.textContent = 'Current: ' + rows.map(function (r) { return r.name + ' ' + crossChainValueText(r); }).join(' | ');
       });
     } else if (action.poolStateRead) {
       // Pool has no scalar getter; poolStateRead returns a per-chain summary string (initialized pairs + TWAP).
@@ -18007,10 +18010,11 @@ function livePoolOf(project) {
     var probes = [ZERO_ADDRESS]; var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push(usdc);
     return Promise.all(probes.map(function (token) {
       var client = clientFor(chainId);
-      return Promise.all([
-        client.readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, token] }),
-        client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pid, token] }),
-      ]).then(function (r) { return Number(r[0]) > 0 && r[1] ? { twap: Number(r[0]), fee: Number(r[1].fee), tickSpacing: Number(r[1].tickSpacing) } : null; });
+      return client.readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, token] }).then(function (twap) {
+        if (!(Number(twap) > 0)) return null;
+        return client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pid, token] })
+          .then(function (key) { return { twap: Number(twap), fee: Number(key.fee), tickSpacing: Number(key.tickSpacing) }; });
+      });
     })).then(function (found) { return found.filter(Boolean)[0] || null; });
   });
 }
@@ -18043,8 +18047,8 @@ export var POWER_SET_BUYBACK_HOOK = {
   note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
   fields: [{ name: 'hook', label: 'Buyback hook', kind: 'address', placeholder: '0x… buyback hook',
-    defaultRead: function (project) { return projectBuybackHook(project, project.chainId).then(function (a) { return a || ''; }).catch(function () { return ''; }); },
-    crossChainRead: function (project, chainId) { return projectBuybackHook(project, chainId); } }],
+    defaultRead: function (project) { return projectBuybackHook(project, project.chainId, { strict: true }).then(function (a) { return a || ''; }); },
+    crossChainRead: function (project, chainId) { return projectBuybackHook(project, chainId, { strict: true }); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
 };
 export var POWER_SET_ROUTER_TERMINAL = {
@@ -18053,8 +18057,8 @@ export var POWER_SET_ROUTER_TERMINAL = {
   note: 'Sets the project’s entry in the router registry: the terminal router-swapped funds are deposited to. Pre-filled with the project’s current selection.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
   fields: [{ name: 'terminal', label: 'Router terminal', kind: 'address', placeholder: '0x… router terminal',
-    defaultRead: function (project) { return projectRouterTerminal(project, project.chainId).then(function (a) { return a || ''; }).catch(function () { return ''; }); },
-    crossChainRead: function (project, chainId) { return projectRouterTerminal(project, chainId); } }],
+    defaultRead: function (project) { return projectRouterTerminal(project, project.chainId, { strict: true }).then(function (a) { return a || ''; }); },
+    crossChainRead: function (project, chainId) { return projectRouterTerminal(project, chainId, { strict: true }); } }],
   buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
@@ -18216,12 +18220,15 @@ function openPowerModal(project, action) {
           nativeLabel: f.nativeLabel,
           unknownLabel: f.unknownLabel,
         });
+        var rowState = { input: input, name: name, available: avail, valueOf: valueOf, reading: !!f.crossChainRead };
         if (f.crossChainRead) {
           input.placeholder = 'reading current…';
           f.crossChainRead(project, c.id).then(function (val) {
+            rowState.reading = false;
             input.placeholder = f.placeholder || '0x… address';
             if (val && input.value === defaultForFieldChain(f, c.id)) { input.value = val; input.dispatchEvent(new Event('input')); }
           }).catch(function () {
+            rowState.reading = false;
             // An unread value is unknown: drop the default rather than submit it as if it were current.
             if (input.value && input.value === defaultForFieldChain(f, c.id)) { input.value = ''; input.dispatchEvent(new Event('input')); }
             input.placeholder = 'Could not read the current value';
@@ -18229,7 +18236,7 @@ function openPowerModal(project, action) {
         }
         field.appendChild(input); field.appendChild(name); row.appendChild(field);
         wrap.appendChild(row);
-        rows[c.id] = { input: input, name: name, available: avail, valueOf: valueOf };
+        rows[c.id] = rowState;
         chainFieldRows.push({ cid: c.id, node: row, input: input, available: avail });
       });
       content.appendChild(wrap);
@@ -18239,6 +18246,7 @@ function openPowerModal(project, action) {
         return chainValue(function (cid) {
           var row = rows[cid];
           if (!row) throw new Error('No ' + f.label + ' field for ' + chainNameOf(cid));
+          if (row.reading && row.input.value === defaultForFieldChain(f, cid)) throw new Error('Still reading the current ' + f.label + ' on ' + chainNameOf(cid) + '. Try again in a moment.');
           return row.valueOf();
         });
       } };
@@ -18301,10 +18309,12 @@ function openPowerModal(project, action) {
       crossChainValues(project, f, action.chainAvailable).then(function (rows) {
         var distinct = []; rows.forEach(function (r) { if (r.value && distinct.indexOf(r.value.toLowerCase()) < 0) distinct.push(r.value.toLowerCase()); });
         var setCount = rows.filter(function (r) { return r.value; }).length;
-        if (distinct.length <= 1) {
+        if (rows.some(function (r) { return r.unknown; })) {
+          cc.textContent = 'current value: ' + rows.map(function (r) { return r.name + ' ' + crossChainValueText(r); }).join(' | ');
+        } else if (distinct.length <= 1) {
           cc.textContent = setCount ? ('currently same on all ' + setCount + ' chain' + (setCount > 1 ? 's' : '') + ' — ' + shortAddr6(distinct[0])) : 'not set on any chain yet';
         } else {
-          cc.innerHTML = '<strong>Differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + (r.value ? shortAddr6(r.value) : 'unset'); }).join(' | ') + '. The value you set applies only to the chains you check below.';
+          cc.innerHTML = '<strong>Differs across chains:</strong> ' + rows.map(function (r) { return r.name + ' ' + crossChainValueText(r); }).join(' | ') + '. The value you set applies only to the chains you check below.';
           cc.style.color = '#b23550';
         }
       });
@@ -26889,7 +26899,8 @@ function buildRedeemItemsModal(project, requestClose) {
         var reclaim = toBigInt(pc.reclaimAmount != null ? pc.reclaimAmount : pc[1]);
         var taxRate = Number(pc.cashOutTaxRate != null ? pc.cashOutTaxRate : pc[2]) || 0;
         var feeless = res[1]; var feeFree = res[2];
-        var net = reclaim - cashOutProtocolFee(reclaim, taxRate, !!feeless, feeFree);
+        if (feeless == null) { preview.textContent = 'Could not verify the live fee status.'; return; }
+        var net = reclaim - cashOutProtocolFee(reclaim, taxRate, feeless, feeFree);
         state.net = net; state.taxRate = taxRate; state.feeless = feeless; state.feeFree = feeFree;
         preview.innerHTML = '';
         var recv = el('div', 'ops-preview-line ops-preview-recv');
@@ -30007,11 +30018,12 @@ async function prepareAddLiquidity(opts) {
 }
 
 // Contract wallet (Safe) detection — those queue txs for days, so LP deadlines/allowances must outlive the
-// signing rounds. EIP-7702-delegated EOAs (code 0xef0100…) still sign like EOAs. Unreadable code → EOA.
+// signing rounds. EIP-7702-delegated EOAs (code 0xef0100…) still sign like EOAs. Unreadable code rejects: a
+// Safe treated as an EOA would get a deadline its co-signers cannot meet and skip the queue check.
 function lpIsSmartWallet(chainId, acct) {
   return clientFor(chainId).getCode({ address: acct }).then(function (code) {
     return !!(code && code !== '0x' && !isEip7702DelegatedEoaCode(code));
-  }).catch(function () { return false; });
+  }, function () { throw new Error('Could not check whether this wallet is a multisig. Try again.'); });
 }
 
 // The chosen (or auto) mint-deadline window: EOAs sign immediately; a multisig queue needs weeks.
@@ -30679,7 +30691,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
         claim.disabled = false;
         claim.addEventListener('click', function () {
           if (claim.disabled) return;
-          openLpClaimConfirm(project, cid, pos, acct, fees, function () { if (onDone) onDone(); });
+          openLpClaimConfirm(project, cid, pos, acct, fees, function () { if (onDone) onDone(); }).catch(function (e) { feeC.textContent = errMessage(e); });
         });
       }).catch(function () { if (feeC.isConnected) feeC.textContent = 'could not read'; });
     });
@@ -30694,7 +30706,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
 // that flag — only the removal refresh does. Without this a multisig silently gets the 20-minute EOA
 // window (and a modal promising "~20 minutes") on a claim its co-signers cannot finish in time.
 function openLpClaimConfirm(project, chainId, pos, acct, claimable, onClaimed) {
-  lpIsSmartWallet(chainId, acct).then(function (smartWallet) {
+  return lpIsSmartWallet(chainId, acct).then(function (smartWallet) {
     openLpClaimConfirmFor(project, chainId, Object.assign({}, pos, { smartWallet: smartWallet }), acct, claimable, onClaimed);
   });
 }
@@ -30773,7 +30785,7 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
           rmStatus.innerHTML = ''; rmStatus.appendChild(document.createTextNode('Fees claimed | TX: ')); rmStatus.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
           claim.disabled = true; showFees();
           if (onDone) onDone();
-        });
+        }).catch(function (e) { rmStatus.className = 'modal-status error'; rmStatus.style.display = ''; rmStatus.textContent = errMessage(e); });
       });
       row.appendChild(claim);
       var mv = el('button', 'detail-check-btn'); mv.textContent = 'Move';

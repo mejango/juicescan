@@ -9,7 +9,7 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
     if (functionName === 'currentRulesetOf') return [{ id: 1n }, { dataHook: rpc.registry }];
     if (functionName === 'hookOf') return '0x' + '72'.repeat(20);
     if (functionName === 'twapWindowOf') { if (rpc.twap instanceof Error) throw rpc.twap; return rpc.twap; }
-    if (functionName === 'poolKeyOf') return { fee: 3000, tickSpacing: 60 };
+    if (functionName === 'poolKeyOf') { if (rpc.twap === 0n) throw new Error('unused pool key read failed'); return { fee: 3000, tickSpacing: 60 }; }
     throw new Error('RPC unavailable');
   } }) }));
 import { getAddress } from '../src/abi-registry.js';
@@ -163,7 +163,7 @@ describe('buyback pool probes', () => {
     expect(twapRow(card).textContent).not.toContain('not initialized');
   });
 
-  it('a successful empty read is still no pool', async () => {
+  it('a successful empty read is still no pool, without needing the pool key', async () => {
     rpc.twap = 0n;
     await expect(POWER_SET_BUYBACK_TWAP.poolStateRead(project(902), 8453)).resolves.toBe('not initialized');
     await expect(tokenField.crossChainRead(project(902), 8453)).resolves.toBe(null);

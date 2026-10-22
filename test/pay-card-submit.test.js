@@ -496,8 +496,12 @@ it('credits read failure blocks checkout amount', async () => {
   payButton().disabled = false; payButton().click(); // a forced click still stops at the same line
   await vi.waitFor(() => expect(document.querySelector('.paybox-status').textContent).toBe('Could not read your NFT credits. Retry.'));
   expect(confirmButton()).toBeFalsy();
-  credits = Promise.resolve(0n);
+  const retry = deferred(); credits = retry.promise;
   [...document.querySelectorAll('.paybox-feedback button')].find(b => b.textContent === 'Retry').click();
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain('Checking your shop credit'));
+  expect(amount.value).toBe(''); // still unknown while the retry reads
+  expect(payButton().disabled).toBe(true);
+  retry.resolve(0n);
   await vi.waitFor(() => expect(amount.value).toBe('0.01'));
   expect(document.querySelector('.paybox-feedback').textContent).not.toContain('Could not read your NFT credits');
   expect(payButton().disabled).toBe(false);
