@@ -27,10 +27,10 @@ export function quotedOutputFloor(quoted, bps) {
 export const PAY_DEFAULT_SLIPPAGE_BPS = 100n;
 
 /**
- * The floor of a quote at a slippage tolerance in basis points, rejecting a tolerance outside [0, 10000).
- * Mirrors nana-sdk-core 3.4.1 v6/cashOut.ts#slippageFloor.
+ * The floor of a quote at a slippage tolerance in basis points (default 1%), rejecting a tolerance outside
+ * [0, 10000). Mirrors nana-sdk-core 3.4.1 v6/cashOut.ts#slippageFloor.
  */
-export function slippageFloor(quoted, slippageBps) {
+export function slippageFloor(quoted, slippageBps = 100n) {
   if (slippageBps < 0n || slippageBps >= 10000n) throw new Error('Slippage basis points must be in [0, 10000)');
   if (quoted <= 0n) return 0n;
   return quotedOutputFloor(quoted, 10000n - slippageBps);

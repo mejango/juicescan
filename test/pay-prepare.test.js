@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BaseError, ContractFunctionRevertedError, keccak256, toHex } from 'viem';
 import { build721PayMetadata, buildBuybackPayMetadata, buildPayTx, buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, prepareUserPay, resolvePaymentTerminal } from '../src/pay-prepare.js';
+import { slippageFloor } from '../src/slippage.js';
 
 const revive = (_, v) => (v && typeof v === 'object' && '$bigint' in v ? BigInt(v.$bigint) : v);
 const golden = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/sdk-3.4.1/pay-prepare.json'), 'utf8'), revive);
@@ -52,6 +53,7 @@ const actions = {
   build721PayMetadata: (_, input) => build721PayMetadata(input),
   buildBuybackPayMetadata: (_, input) => buildBuybackPayMetadata(input),
   buildPayTx: (_, input) => buildPayTx(input),
+  slippageFloor: (_, input) => slippageFloor(input.quoted, input.slippageBps),
 };
 // buildPayTx carries the whole terminal ABI; its identity is the pay fragment.
 const shape = (fn, value) => (fn === 'buildPayTx' ? { ...value, abi: fragmentKey(value.abi, 'pay') } : value);
@@ -105,7 +107,7 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
   });
 
   it('fails closed: a failed preview or hook read throws, never a zero minimum', async () => {
-    for (const name of ['preview failure throws', 'preview transport failure throws', 'registry hook read failure throws', 'unreadable buyback spec throws', 'slippage 10000 rejects', 'unsupported chain throws']) {
+    for (const name of ['preview failure throws', 'preview transport failure throws', 'registry hook read failure throws', 'omnichain hook read failure throws', 'unreadable buyback spec throws', 'slippage 10000 rejects', 'unsupported chain throws']) {
       const c = byName(name);
       expect(c.output.$error, name).toBeTruthy();
       const { actual } = await run(c);
@@ -119,6 +121,8 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     expect(c.output.minReturnedTokens).toBe(1_138_500_000_000_000_000_000n);
     expect(c.output.metadata.slice(2 + 64 * 3, 2 + 64 * 4)).toBe(1_138_500_000_000_000_000_000n.toString(16).padStart(64, '0'));
     expect(byName('buyback quote below mint keeps the mint path').output.minReturnedTokens).toBe(989_999_999_999_999_999_998n);
+    // As in 3.4.1, the fallback takes two rounding units off the mint entitlement, so an entitlement of 2 floors to 0.
+    expect(byName('quote failure with a tiny mint entitlement sends a zero minimum').output.minReturnedTokens).toBe(0n);
   });
 
   it('builds the same pay transaction the SDK does, with the terminal ABI from the registry', () => {
