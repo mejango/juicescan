@@ -8,7 +8,7 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getWalletClient: () => ({ getChainId: async () => 8453, signTypedData: runtime.sign }),
   createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => '0x', getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
 import { getAddress } from '../src/abi-registry.js';
-import { buildUserPayMetadata, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
+import { buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
 import { hookMetadataId } from '../src/hook-metadata.js';
 import { decodeAbiParameters, encodeErrorResult } from 'viem';
 import { makeNftCart, renderPayCard } from '../src/discover.js';
@@ -121,6 +121,30 @@ it('blocks a payment whose swap quote failed and offers one inline Retry', async
   await review(); confirmButton().click();
   await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
   expect(runtime.execute.mock.lastCall[0].args.slice(4)).toEqual([7n * 10n ** 18n, '', '0x03']);
+});
+
+it('says inline, with Retry, when only the fallback minimum could be set, and still pays in one confirmation', async () => {
+  runtime.prepare.mockResolvedValueOnce({ ...prepared('0x04', 6n * 10n ** 18n), quoteFailed: true }).mockResolvedValue(prepared('0x05', 7n * 10n ** 18n));
+  await card(612); type('1');
+  await quoted('6.00');
+  const line = () => [...document.querySelectorAll('.paybox-yg-row')].find(r => r.textContent.includes(PAY_QUOTE_FAILED_MESSAGE));
+  const retry = () => line() && [...line().querySelectorAll('button')].find(b => b.textContent === 'Retry');
+  expect(retry()).toBeTruthy();
+  expect(document.querySelector('[role="dialog"], dialog')).toBeFalsy();
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(runtime.execute.mock.lastCall[0].args.slice(4)).toEqual([6n * 10n ** 18n, '', '0x04']);
+});
+
+it('drops the fallback-minimum line once Retry quotes the pool', async () => {
+  runtime.prepare.mockResolvedValueOnce({ ...prepared('0x04', 6n * 10n ** 18n), quoteFailed: true }).mockResolvedValue(prepared('0x05', 7n * 10n ** 18n));
+  await card(613); type('1');
+  await quoted('6.00');
+  const retry = () => [...document.querySelectorAll('.paybox-yg-row button')].find(b => b.textContent === 'Retry');
+  retry().click();
+  await quoted('7.00');
+  expect(document.body.textContent).not.toContain(PAY_QUOTE_FAILED_MESSAGE);
+  expect(retry()).toBeFalsy();
 });
 
 it('drops a late quote for an older amount', async () => {

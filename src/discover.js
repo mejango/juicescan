@@ -9916,6 +9916,18 @@ export function renderPayCard(project, cart) {
     valRow.appendChild(val);
     feedback.appendChild(valRow);
 
+    // The minimum is only the fallback: one line with Retry; Pay still goes straight to its review.
+    if (p && p.quoteFailed && state.phase !== 'previewing') {
+      var warnRow = el('div', 'paybox-yg-row');
+      var warn = el('div', 'paybox-yg-val muted');
+      warn.textContent = p.reason;
+      warnRow.appendChild(warn);
+      var requote = el('button'); requote.type = 'button'; requote.textContent = 'Retry';
+      requote.addEventListener('click', schedulePreview);
+      warnRow.appendChild(requote);
+      feedback.appendChild(warnRow);
+    }
+
     var nb = nftBlock(); if (nb) feedback.appendChild(nb);
 
     var splits = el('div', 'paybox-splits');

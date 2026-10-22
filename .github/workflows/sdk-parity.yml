@@ -1,6 +1,7 @@
 name: sdk-parity
 
-# Juicescan owns lean copies of nana-sdk-core logic, frozen at 3.4.1 by test/fixtures/sdk-3.4.1.
+# Juicescan owns lean copies of nana-sdk-core logic, frozen by golden vectors: pay preparation at SDK
+# 557a9fc (test/fixtures/sdk-557a9fc), the rest at 3.4.1 (test/fixtures/sdk-3.4.1).
 # This replays those fixtures through the latest published SDK. A failure opens nothing: it is the
 # signal for a human to decide whether juicescan follows the SDK. The SDK is never added to package.json.
 
@@ -27,7 +28,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Install the latest SDK without saving it
         run: npm i --no-save --ignore-scripts @bananapus/nana-sdk-core@latest
-      - name: Replay the 3.4.1 golden vectors through the latest SDK
+      - name: Replay the golden vectors through the latest SDK
         env:
           SDK_PARITY: '1'
         run: npx vitest run test/sdk-parity

@@ -1,14 +1,14 @@
-// The lean pay preparation must answer, and read, exactly as nana-sdk-core 3.4.1 did, case for case: metadata
-// bytes, previews, minimums, the pay transaction and every read and quote in order.
+// The lean pay preparation must answer, and read, exactly as nana-sdk-core does at 557a9fc, case for case: metadata
+// bytes, previews, minimums, refusals, the pay transaction and every read and quote in order.
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BaseError, ContractFunctionRevertedError, keccak256, toHex } from 'viem';
-import { build721PayMetadata, buildBuybackPayMetadata, buildPayTx, buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay, resolvePaymentTerminal } from '../src/pay-prepare.js';
+import { build721PayMetadata, buildBuybackPayMetadata, buildPayTx, buildUserPayMetadata, PAY_SPEC_UNREADABLE_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, PaySwapQuoteFailedError, prepareUserPay, resolvePaymentTerminal } from '../src/pay-prepare.js';
 import { slippageFloor } from '../src/slippage.js';
 
 const revive = (_, v) => (v && typeof v === 'object' && '$bigint' in v ? BigInt(v.$bigint) : v);
-const golden = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/sdk-3.4.1/pay-prepare.json'), 'utf8'), revive);
+const golden = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/sdk-557a9fc/pay-prepare.json'), 'utf8'), revive);
 
 const ser = (value) => JSON.stringify(value, (_, x) => (typeof x === 'bigint' ? { $bigint: x.toString() } : x));
 const canon = (v) => JSON.stringify(v, (_, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
@@ -24,9 +24,15 @@ function keyOf(method, p) {
     default: return `${method}|${ser(p ?? null)}`;
   }
 }
+// The V4 quoter's UnexpectedRevertBytes(NotEnoughLiquidity(poolId)), and the buyback hook's SpecifiedSlippageExceeded.
+const CANNOT_FILL = '0x6190b2b0' + '20'.padStart(64, '0') + '24'.padStart(64, '0') + '7a5ed734' + 'ab'.repeat(32) + '0'.repeat(56);
+const REJECTS_MINIMUM = '0xe2d708a9' + '1'.padStart(64, '0') + '2'.padStart(64, '0');
 function makeError(kind, message) {
   switch (kind) {
     case 'revert': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: [], functionName: 'f', data: '0x' }) });
+    case 'cannotFill': return new BaseError(message, { cause: Object.assign(new Error('execution reverted'), { code: 3, data: CANNOT_FILL }) });
+    case 'rejectsMinimum': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: [], functionName: 'previewPayFor', data: REJECTS_MINIMUM }) });
+    case 'decoderData': return new BaseError(message, { cause: Object.assign(new Error('decode failed'), { data: CANNOT_FILL }) });
     case 'transport': return new BaseError(message);
     default: return new Error(message);
   }
@@ -71,12 +77,13 @@ const byName = (name) => {
 };
 const prepared = golden.cases.filter((c) => c.fn === 'prepareUserPay');
 
-describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
+describe('prepareUserPay matches the SDK 557a9fc golden vectors', () => {
   it('replays every recorded scenario with identical results and identical reads, and never touches a wallet', async () => {
     const request = vi.fn();
     window.ethereum = { request };
     globalThis.ethereum = window.ethereum;
-    expect(golden.sdkVersion).toBe('3.4.1');
+    expect(golden.sdkCommit).toBe('557a9fc');
+    expect(golden.cases.some((c) => c.sdkOutput), 'no recorded divergence from the SDK').toBe(false);
     expect(golden.cases.length).toBeGreaterThan(110);
     for (const c of golden.cases) {
       const { actual, calls } = await run(c);
@@ -101,7 +108,7 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     expect(count((c) => Object.keys(c.reads).some((k) => k.includes('|extraDataHookOf|')))).toBeGreaterThan(2);
     expect(count((c) => Object.keys(c.reads).some((k) => k.includes('|discoverBestPool|') && JSON.stringify(c.reads[k]).includes('"isV4":false')))).toBeGreaterThan(1);
     expect(count((c) => c.input.tiers?.tierIdsToMint.length > 0)).toBeGreaterThan(4);
-    expect(count((c) => c.output.$error === PAY_QUOTE_FAILED_MESSAGE)).toBe(2);
+    expect(count((c) => c.output.$error === PAY_SPEC_UNREADABLE_MESSAGE)).toBe(2);
     expect(count((c) => c.output.minReturnedTokens === 0n)).toBeGreaterThan(2);
     for (const fn of Object.keys(actions)) expect(golden.cases.some((c) => c.fn === fn), fn).toBe(true);
   });
@@ -123,19 +130,58 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     expect(byName('buyback quote below mint keeps the mint path').output.minReturnedTokens).toBe(989_999_999_999_999_999_998n);
   });
 
-  it('diverges from 3.4.1 only where a swap route lost a read: never a fallback minimum, which can be zero', () => {
-    const divergent = golden.cases.filter((c) => c.sdkOutput);
-    expect(divergent.length).toBe(20);
-    for (const c of divergent) {
-      expect(c.output, c.name).toEqual({ $error: PAY_SWAP_QUOTE_FAILED_MESSAGE, $name: 'Error' });
+  it('refuses a swap that lost a read, never a fallback minimum, which can be zero', async () => {
+    const refused = prepared.filter((c) => c.output.$name === 'PaySwapQuoteFailedError');
+    expect(refused.length).toBeGreaterThan(20);
+    for (const c of refused) {
+      expect(c.output.$error, c.name).toBe(PAY_SWAP_QUOTE_FAILED_MESSAGE);
       const unreadableSpec = /spec unreadable/.test(c.name);
-      expect(unreadableSpec || Object.values(c.reads).some((v) => v && (v.$throw || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0))), c.name + ' lost a read').toBe(true);
+      const zeroMinimum = /tiny mint entitlement/.test(c.name);
+      expect(unreadableSpec || zeroMinimum || Object.values(c.reads).some((v) => v && (v.$throw || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0))), c.name + ' lost a read').toBe(true);
     }
-    // 3.4.1 sent a zero minimum here: an entitlement of 2 less its two rounding units.
-    expect(byName('quote failure with a tiny mint entitlement').sdkOutput.minReturnedTokens).toBe(0n);
-    // No swap route, or no quote possible on the chain: the fallback stands.
+    const error = await prepareUserPay(strictClient(byName('buyback quote failure').reads, []), byName('buyback quote failure').input).catch((e) => e);
+    expect(error).toBeInstanceOf(PaySwapQuoteFailedError);
+    expect(error.code).toBe('PAY_SWAP_QUOTE_FAILED');
+    expect(error.cause).toBeInstanceOf(BaseError);
+    // No swap route, or no quote possible: the fallback stands, flagged when a quote could not be read.
     for (const name of ['noop buyback spec mints', 'buyback quote of zero', 'buyback swap amount above uint128', 'chain with no direct buyback hook', 'router conversion on a chain with no router', 'no pool matches the spec']) {
       expect(byName(name).output.$error, name).toBeUndefined();
+    }
+    for (const name of ['buyback swap amount above uint128', 'noop buyback spec with a failed quote', 'no buyback hook, conversion quote fails', 'no buyback hook, destination preview fails']) {
+      expect(byName(name).output.quoteFailed, name).toBe(true);
+    }
+  });
+
+  it('keeps the mint minimum, unflagged, when the pool cannot fill or the hook rejects the quoted minimum', () => {
+    for (const name of ['buyback pool cannot fill keeps the mint minimum', 'quoted preview rejects the minimum', 'router conversion pool cannot fill']) {
+      const c = byName(name);
+      expect(c.output.minReturnedTokens, name).toBe(989_999_999_999_999_999_998n);
+      expect(c.output.quoteFailed, name).toBeUndefined();
+    }
+    expect(byName('buyback pool cannot fill with a tiny mint entitlement').output.$name).toBe('PaySwapQuoteFailedError');
+    expect(byName('buyback quote fails with data that is not a revert').output.$name).toBe('PaySwapQuoteFailedError');
+  });
+
+  it("requires what minting the router's quoted conversion issues when the project has no buyback hook", () => {
+    // 950 tokens minted on the quoted conversion, 1% off; the router's floor would mint 900.
+    for (const name of ['no buyback hook, router registry mints the quoted conversion', 'no buyback hook, registry routes through the gateway', 'no buyback hook, paid to the gateway', 'no buyback hook, conversion on a V3 pool']) {
+      expect(byName(name).output.minReturnedTokens, name).toBe(940_500_000_000_000_000_000n);
+    }
+    for (const name of ['no buyback hook, gateway to another router', 'no buyback hook, another terminal', 'no buyback hook, two accepted tokens', 'no buyback hook, two terminals', 'no buyback hook, native into wrapped native', 'no buyback hook, project token cashed out first', 'no buyback hook, conversion pool cannot fill', 'no buyback hook, chain with no router']) {
+      expect(byName(name).output, name).toMatchObject({ minReturnedTokens: 891_000_000_000_000_000_000n });
+      expect(byName(name).output.quoteFailed, name).toBeUndefined();
+    }
+  });
+
+  it('retries a read that fails once, on a swap and on a router payment with no buyback hook', async () => {
+    for (const name of ['buyback route chosen, slippage 100', 'no buyback hook, router registry mints the quoted conversion']) {
+      const c = byName(name);
+      const calls = [];
+      const base = strictClient(c.reads, calls);
+      let dropped = false;
+      const flaky = { ...base, call: (p) => { if (!dropped) { dropped = true; return Promise.reject(new BaseError('socket hang up')); } return base.call(p); } };
+      expect(JSON.parse(ser(await prepareUserPay(flaky, c.input)), revive), name).toEqual(c.output);
+      expect(dropped, name).toBe(true);
     }
   });
 
