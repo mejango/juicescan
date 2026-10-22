@@ -147,6 +147,17 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     await expect(prepareUserPay(syncCall, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
     const syncRead = client((base) => ({ readContract: (p) => { if (p.functionName === 'poolKeyOf') throw new Error('socket closed'); return base.readContract(p); } }));
     await expect(prepareUserPay(syncRead, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    for (const empty of [undefined, null]) {
+      const emptyCall = client(() => ({ call: async () => empty }));
+      await expect(prepareUserPay(emptyCall, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+      const emptyRead = client((base) => ({ readContract: async (p) => (p.functionName === 'poolKeyOf' ? empty : base.readContract(p)) }));
+      await expect(prepareUserPay(emptyRead, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    }
+    const r = byName('router converts and the buyback swaps');
+    const routerEmpty = { ...strictClient(r.reads, []) };
+    const routerRead = routerEmpty.readContract;
+    routerEmpty.readContract = async (p) => (p.functionName === 'projectIdOf' ? undefined : routerRead(p));
+    await expect(prepareUserPay(routerEmpty, r.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
   });
 
   it('builds the same pay transaction the SDK does, with the terminal ABI from the registry', () => {

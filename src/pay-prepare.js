@@ -426,7 +426,13 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
   // catch can tell a lost read from a route that simply does not apply.
   let readFailed = false;
   const lost = (error) => { readFailed = true; throw error; };
-  const watch = (send) => { try { return send().catch(lost); } catch (error) { return lost(error); } };
+  const watch = (send) => {
+    try {
+      return send().then((result) => (result === undefined || result === null ? lost(new Error('The read returned nothing.')) : result), lost);
+    } catch (error) {
+      return lost(error);
+    }
+  };
   const watched = {
     readContract: (parameters) => watch(() => client.readContract(parameters)),
     call: (parameters) => watch(() => client.call(parameters)).then((result) => { if (!result.data) readFailed = true; return result; }),
@@ -484,9 +490,10 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     };
     return { metadata: quotedMetadata, preview: settle(quoted), minReturnedTokens: settle(minimumSwapAmountOut).beneficiaryTokenCount };
   } catch (error) {
-    // viem raises an unreadable answer (such as a truncated quote) as a BaseError; only this module's own
-    // "route does not apply" errors (no quoter, no router, amount out of range) are plain.
-    if (!buyback.noop && (readFailed || error instanceof BaseError)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    // viem raises an unreadable answer (such as a truncated quote) as a BaseError, and a malformed one fails as a
+    // TypeError; only this module's own "route does not apply" errors (no quoter, no router, amount out of range)
+    // are plain.
+    if (!buyback.noop && (readFailed || error instanceof BaseError || error instanceof TypeError)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
     return fallback;
   }
 }
