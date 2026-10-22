@@ -9444,8 +9444,9 @@ export function renderPayCard(project, cart) {
     var done = function () {
       if (gen !== shopGeneration) return;
       refreshNftCredits();
-      if (selectedTierIds().length) refreshNftCheckoutRoutes();
-      rebuildCurrency(); renderFeedback(); schedulePreview();
+      rebuildCurrency(); renderFeedback();
+      // Only an NFT checkout depends on the shop; an ordinary payment keeps its quote and open review.
+      if (selectedTierIds().length) { refreshNftCheckoutRoutes(); schedulePreview(); }
     };
     if (Number(cid) === Number(project.chainId) || !home || isNativeInventory(home)) {
       state.shop = home; state.shopStatus = 'ready'; done(); return Promise.resolve();
@@ -9535,7 +9536,7 @@ export function renderPayCard(project, cart) {
     onIdentity: function (shop) {
       state.homeShop = shop; state.inventoryKnown = true;
       if (Number(state.chainId) === Number(project.chainId) || isNativeInventory(shop)) state.shop = shop;
-      else { state.shop = null; state.shopStatus = 'loading'; }
+      else useChainShop(); // the selected chain's shop does not wait on the home chain's tiers
       amountRow.hidden = false; topRow.hidden = false; memo.hidden = false; feedback.hidden = false;
       if (isNativeInventory(shop)) {
         showFundingOnly();
