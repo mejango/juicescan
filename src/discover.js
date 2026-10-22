@@ -15,6 +15,7 @@ import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReser
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
+import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
@@ -827,21 +828,21 @@ function nftMintsQuery(withBeneficiary) {
     + 'totalCount items { tierId beneficiary from timestamp txHash tokenId chainId hook } } }';
 }
 var NFT_MINTS_PAGE = 200;
-// Per-chain project IDs for a project (linked deployments can have DIFFERENT ids per chain — the detail
-// page's `project.chains` only carries {id,name} and assumes same-id, so resolve the real map from the
-// sucker group). Returns Promise<{chainId: projectId}>, always including the home (chainId,projectId).
+// Per-chain project IDs for a project, read from the sucker registry onchain (linked deployments can have
+// DIFFERENT ids per chain). Resolves to {chainId: projectId}, always including the home deployment, or rejects
+// when the group cannot be read. The indexer's sucker group is never an ID source.
+function chainIdMapOf(projectId, chainId) {
+  return resolveSuckerGroup(clientFor, Number(chainId), BigInt(projectId)).then(idMapFromGroup);
+}
+function homeIdMap(project) {
+  var map = {}; map[Number(project.chainId)] = Number(project.id);
+  return map;
+}
 function projectIdByChain(project) {
   if (project && project.idByChain && Object.keys(project.idByChain).length) {
     return Promise.resolve(Object.assign({}, project.idByChain));
   }
-  return resolveSplitProject(Number(project.id), Number(project.chainId))
-    .then(function (info) { return (info && info.byChain) || null; })
-    .catch(function () { return null; })
-    .then(function (byChain) {
-      var map = {}; map[Number(project.chainId)] = Number(project.id);
-      if (byChain) Object.keys(byChain).forEach(function (k) { map[Number(k)] = Number(byChain[k]); });
-      return map;
-    });
+  return chainIdMapOf(project.id, project.chainId).catch(function () { return homeIdMap(project); });
 }
 // The project's id on a specific chain. Linked deployments can differ per chain, and the grid groups by
 // matching-id (which can even merge UNRELATED same-id projects), so every per-chain read/tx must use this,
@@ -853,14 +854,16 @@ export function pidOn(project, chainId) {
   if (project && Number(chainId) === Number(project.chainId)) return BigInt(project.id);
   throw new Error('Could not verify this project’s ID on ' + chainNameOf(chainId) + '.');
 }
-// Resolve a project's AUTHORITATIVE chains from the sucker group (each with its own projectId), replacing
-// the grid's same-id grouping. Attaches { idByChain, chains:[{id,name,projectId}] }. If the group cannot be
-// verified, fail closed to the route's home deployment; showing fewer chains is safer than reading or
-// writing unrelated projects which happen to have the same numeric ID.
-function attachProjectChainIds(project) {
-  return projectIdByChain(project).then(function (map) {
+// Resolve a project's AUTHORITATIVE chains from the sucker registry (each with its own projectId). The indexer's
+// `project.chains` stays as the display seed until the chain reads land, while `idByChain` holds only the home
+// deployment. If the group cannot be verified, fail closed to the route's home deployment and mark it
+// `chainsUnverified`; showing fewer chains is safer than reading or writing an unrelated project.
+export function attachProjectChainIds(project) {
+  var home = Number(project.chainId);
+  project.idByChain = homeIdMap(project);
+  return chainIdMapOf(project.id, home).then(function (map) {
     project.idByChain = map;
-    var home = Number(project.chainId);
+    project.chainsUnverified = false;
     var ids = Object.keys(map).map(Number);
     var ordered = [home].concat(ids.filter(function (c) { return c !== home; }));
     project.chains = ordered.map(function (c) {
@@ -868,10 +871,9 @@ function attachProjectChainIds(project) {
       return { id: c, name: (existing && existing.name) || chainNameOf(c), projectId: map[c] };
     });
     return project;
-  }).catch(function () {
-    if (!project) return project;
-    var home = Number(project.chainId);
-    project.idByChain = {}; project.idByChain[home] = Number(project.id);
+  }, function () {
+    project.idByChain = homeIdMap(project);
+    project.chainsUnverified = true;
     project.chains = [{ id: home, name: chainNameOf(home), projectId: Number(project.id) }];
     return project;
   });
@@ -2047,50 +2049,10 @@ function renderRecentPurchases(project, mediaP) {
 
 // Resolve a project (by its id on `chainId`) to a display name + its projectId on each chain in its
 // sucker group. Lets a tier split route to the SAME project on every chain it's offered on, and lets us
-// confirm the project by name. Cached. Returns { name, byChain: { chainId: projectId } } or null.
+// confirm the project by name. Returns { name, byChain: { chainId: projectId }, chainsUnverified? } or null.
+// The name comes from Bendystraw; `byChain` reaches calldata, so it comes only from the sucker registry, and an
+// unreadable group leaves just the home entry. Cached; failures are retried on the next call.
 var _splitProjCache = {};
-// A sucker group can hold rows from multiple protocol versions; this explorer is V6-only, so the nested
-// selection filters server-side AND selects `version` so the parser can re-filter defensively. The limit is
-// the schema maximum; a limit-sized page may be truncated, which the parser treats as unreliable.
-var SUCKER_GROUP_PROJECTS_LIMIT = 1000;
-export var BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY =
-  'query($id: String!) { suckerGroup(id: $id) { projects(where: { version: ' + BENDYSTRAW_VERSION + ' }, limit: ' + SUCKER_GROUP_PROJECTS_LIMIT + ') { items { chainId projectId version } } } }';
-
-export function projectIdsByChainFromSuckerGroup(data, chainId, projectId) {
-  var byChain = {};
-  var homeChainId = Number(chainId);
-  var homeProjectId = Number(projectId);
-  byChain[homeChainId] = homeProjectId;
-  var conflicted = {};
-  var items = data && data.suckerGroup && data.suckerGroup.projects && data.suckerGroup.projects.items;
-  if (Array.isArray(items)) {
-    // Rows from another protocol version can never authorize a mapping for this V6 project (the server
-    // already filters; this guards older cached shapes). A limit-sized page may be truncated, so it can't
-    // prove the group's full membership — fail closed to the exact route deployment.
-    items = items.filter(function (project) {
-      return project && (project.version == null || Number(project.version) === BENDYSTRAW_VERSION);
-    });
-    if (items.length >= SUCKER_GROUP_PROJECTS_LIMIT) return byChain;
-    // If the purported group itself identifies a different deployment on the route's chain, it cannot
-    // authorize any remote mapping for this project. Preserve only the exact route deployment.
-    if (items.some(function (project) {
-      return Number(project && project.chainId) === homeChainId && Number(project && project.projectId) !== homeProjectId;
-    })) return byChain;
-    items.forEach(function (project) {
-      var cid = Number(project && project.chainId);
-      var pid = Number(project && project.projectId);
-      if (!(cid > 0) || !(pid > 0) || conflicted[cid]) return;
-      if (cid === homeChainId && pid !== homeProjectId) return;
-      if (byChain[cid] != null && byChain[cid] !== pid) {
-        delete byChain[cid];
-        conflicted[cid] = true;
-        return;
-      }
-      byChain[cid] = pid;
-    });
-  }
-  return byChain;
-}
 
 function preferredSplitProjectInfo(projectId, chainId) {
   return fetchPreferredProjectMetadata(projectId, chainId).then(function (record) {
@@ -2101,28 +2063,21 @@ function preferredSplitProjectInfo(projectId, chainId) {
 function resolveSplitProject(projectId, chainId) {
   var key = chainId + ':' + projectId;
   if (_splitProjCache[key]) return _splitProjCache[key];
-  var p = (async function () {
-    // This mapping reaches multi-chain reads and transactions. A cached
-    // suckerGroupId is useful for display, but cannot authorize another
-    // deployment until Bendystraw confirms it in this session.
-    var indexed = fetchFreshBendystrawProjectRecord(projectId, chainId);
-    var current = preferredSplitProjectInfo(projectId, chainId).catch(function () { return null; });
-    var pair = await Promise.all([indexed, current]);
-    var proj = pair[0];
-    var preferred = pair[1];
-    if (!proj) {
-      // Split routing is an onchain feature and must not disappear just because the indexer is unavailable.
-      if (!preferred) return null;
-      return { name: preferred.name || ('Project #' + projectId), byChain: projectIdsByChainFromSuckerGroup(null, chainId, projectId) };
-    }
-    var byChain = projectIdsByChainFromSuckerGroup(null, chainId, projectId);
-    if (proj.suckerGroupId) {
-      var g = await bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY, { id: proj.suckerGroupId }).catch(function () { return null; });
-      byChain = projectIdsByChainFromSuckerGroup(g, chainId, projectId);
-    }
-    return { name: (preferred && preferred.name) || proj.name || proj.handle || ('Project #' + projectId), byChain: byChain };
-  })();
+  var p = Promise.all([
+    fetchFreshBendystrawProjectRecord(projectId, chainId),
+    preferredSplitProjectInfo(projectId, chainId).catch(function () { return null; }),
+    chainIdMapOf(projectId, chainId).catch(function () { return null; }),
+  ]).then(function (r) {
+    var proj = r[0], preferred = r[1], byChain = r[2];
+    // Split routing is an onchain feature and must not disappear just because the indexer is unavailable.
+    if (!proj && !preferred) return null;
+    var name = (preferred && preferred.name) || (proj && (proj.name || proj.handle)) || ('Project #' + projectId);
+    if (byChain) return { name: name, byChain: byChain };
+    return { name: name, byChain: homeIdMap({ chainId: chainId, id: projectId }), chainsUnverified: true };
+  });
   _splitProjCache[key] = p;
+  p.then(function (info) { if (info && info.chainsUnverified && _splitProjCache[key] === p) delete _splitProjCache[key]; },
+    function () { if (_splitProjCache[key] === p) delete _splitProjCache[key]; });
   return p;
 }
 
@@ -2880,7 +2835,7 @@ async function prepareAddTiers(project, selectedChains, operatorAddr, forms, set
         if (!info) { throw new Error(label + 'couldn’t find project #' + splitDefs[di].projectId); }
         for (var ci = 0; ci < selectedChains.length; ci++) {
           var scid = selectedChains[ci].id;
-          if (!info.byChain[scid]) { throw new Error(label + 'project #' + splitDefs[di].projectId + ' isn’t on ' + (selectedChains[ci].name || scid)); }
+          if (!info.byChain[scid]) { throw new Error(label + (info.chainsUnverified ? 'couldn’t verify project #' + splitDefs[di].projectId + ' on ' : 'project #' + splitDefs[di].projectId + ' isn’t on ') + (selectedChains[ci].name || scid)); }
         }
         splitDefs[di].byChain = info.byChain;
       }
@@ -7832,9 +7787,8 @@ function applyProjectDisplayRefresh(project, fresh) {
 function prepareProjectTransactionScope(project) {
   if (project._bendystrawConfirmed) {
     if (project._transactionScopeConfirmed) return Promise.resolve(project);
-    // Grid grouping is allowed to be stale. Force projectIdByChain() through
-    // the freshly confirmed sucker-group path instead of accepting that map.
-    delete project.idByChain;
+    // Grid grouping is allowed to be stale. Read the sucker group onchain
+    // instead of accepting that map.
     return attachProjectChainIds(project).then(function (scoped) {
       scoped._transactionScopeConfirmed = true;
       return scoped;
@@ -8170,14 +8124,17 @@ export function applyDiscoverRoute(route, routeContext) {
   function applyVerifiedRouteAuthority(project) {
     return applyVerifiedProjectAuthority(project, routeContext && routeContext.authority, getAddress('REVOwner', chainId));
   }
-  function applyHandleEnrichment(project, standalone, enriched) {
-    if (!project || !enriched || seq !== _discoverRouteSeq) return;
-    project.chains = standalone.chains;
-    project.idByChain = Object.assign({}, standalone.idByChain);
-    project._transactionScopeConfirmed = true;
-    if (_activeDetail && sameProjectDeployment(_activeDetail.project, project)) {
-      showProjectDetail(project, _activeDetail.current, true, _activeDetail.subtab);
-    }
+  // The indexer found sibling deployments for a handle route still scoped to its home chain. Its grouping only
+  // prompts the lookup; the sibling IDs come from the sucker registry.
+  function applyHandleEnrichment(project) {
+    if (!project || seq !== _discoverRouteSeq || project._transactionScopeConfirmed) return;
+    attachProjectChainIds(project).then(function () {
+      if (seq !== _discoverRouteSeq) return;
+      project._transactionScopeConfirmed = true;
+      if (_activeDetail && sameProjectDeployment(_activeDetail.project, project)) {
+        showProjectDetail(project, _activeDetail.current, true, _activeDetail.subtab);
+      }
+    });
   }
   function loadProjectGroup(g) {
     var urlChain = chainId;
@@ -8205,8 +8162,8 @@ export function applyDiscoverRoute(route, routeContext) {
       if (seq !== _discoverRouteSeq) return null;
       applyVerifiedRouteAuthority(project);
       _cache[fk] = project;
-      project.chains = g.chains;
-      project.idByChain = Object.assign({}, g.idByChain);
+      // The grid's grouping is a display seed only; a scope already verified onchain is kept as is.
+      if (!project._transactionScopeConfirmed) project.chains = g.chains;
       project._urlChainId = urlChain;
       if (routeContext && routeContext.handle) project._urlHandle = routeContext.handle;
       else delete project._urlHandle;
@@ -8216,7 +8173,7 @@ export function applyDiscoverRoute(route, routeContext) {
         if (seq !== _discoverRouteSeq) return null;
         if (routeContext && routeContext.handle) {
           loadedHandleProject = project;
-          if (pendingHandleEnrichment) applyHandleEnrichment(project, pendingHandleEnrichment.standalone, pendingHandleEnrichment.enriched);
+          if (pendingHandleEnrichment) applyHandleEnrichment(project);
         }
         showProjectDetail(project, tab, true, sub);
         return project;
@@ -8246,8 +8203,8 @@ export function applyDiscoverRoute(route, routeContext) {
       Object.assign(standalone.idByChain, enriched.idByChain);
       standalone.primary = enriched.primary;
       if (loadedHandleProject) {
-        applyHandleEnrichment(loadedHandleProject, standalone, enriched);
-      } else pendingHandleEnrichment = { standalone: standalone, enriched: enriched };
+        applyHandleEnrichment(loadedHandleProject);
+      } else pendingHandleEnrichment = true;
     }).catch(function () {});
     return;
   }
@@ -28379,10 +28336,6 @@ function buildRepayModal(project, loanRow, requestClose) {
 
 // --- Cross-chain bridging (JBSucker). Verified against nana-suckers-v6/src/JBSucker.sol + JBSuckerRegistry.sol. ---
 var suckerRegistryBridgeAbi = [
-  { type: 'function', name: 'suckerPairsOf', stateMutability: 'view',
-    inputs: [{ name: 'projectId', type: 'uint256' }],
-    outputs: [{ name: 'pairs', type: 'tuple[]', components: [
-      { name: 'local', type: 'address' }, { name: 'remote', type: 'bytes32' }, { name: 'remoteChainId', type: 'uint256' }] }] },
   { type: 'function', name: 'toRemoteFee', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
 ];
 var suckerBridgeAbi = [
@@ -28420,15 +28373,6 @@ export function buildSuckerToRemoteArgs(o) {
 var erc20BalanceOfAbi = [{ type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] }];
 
 function moveChainName(cid) { return chainNameFor(cid); }
-
-// Active sucker pairs for a project on `chainId`: [{ local, remoteChainId }]. RPC failures propagate so
-// callers can distinguish "no routes" from "could not verify routes".
-function readSuckerPairsOf(projectId, chainId) {
-  var reg = getAddress('JBSuckerRegistry', chainId);
-  if (!reg) return Promise.resolve([]);
-  return clientFor(chainId).readContract({ address: reg, abi: suckerRegistryBridgeAbi, functionName: 'suckerPairsOf', args: [BigInt(projectId)] })
-    .then(function (pairs) { return (pairs || []).map(function (p) { return { local: p.local, remoteChainId: Number(p.remoteChainId), remote: '0x' + String(p.remote).slice(-40) }; }); });
-}
 
 var allSuckersOfAbi = [{ type: 'function', name: 'allSuckersOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address[]' }] }];
 var suckerPeerIdentityAbi = [
