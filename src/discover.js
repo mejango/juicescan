@@ -8521,6 +8521,8 @@ function loadGroupCard(g, skeleton, grid, onSettled, onUpdated) {
   var key = g.primary.id + '-' + g.primary.projectId;
   var current = skeleton;
   function decorate(project) {
+    // The grid's grouping is a display seed only; a scope already verified onchain is kept as is.
+    if (project._transactionScopeConfirmed) return project;
     project.chains = g.chains;
     project.idByChain = Object.assign({}, g.idByChain);
     return project;
