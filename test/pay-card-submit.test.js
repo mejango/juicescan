@@ -465,3 +465,40 @@ it('quotes again on Pay after a quote failed, and opens the review in that one c
   await vi.waitFor(() => expect(confirmButton()).toBeTruthy());
   expect(document.querySelector('.paybox-feedback').textContent).not.toContain(PAUSED_LINE);
 });
+
+it('credits read failure blocks checkout amount', async () => {
+  vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+  runtime.inventory.mockResolvedValue({ protocol: 'jb721', hook: HOOK, store: STORE, metadataIdTarget: ID_TARGET, blockNumber: 1n, nextStartingId: null,
+    pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
+    capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] });
+  const base = runtime.contractRead.getMockImplementation();
+  let credits = Promise.reject(new Error('RPC unavailable')); credits.catch(() => {});
+  runtime.contractRead.mockImplementation(async call => {
+    switch (call.functionName) {
+      case 'controllerOf': return '0x' + '75'.repeat(20);
+      case 'currentRulesetOf': return [{ id: 1n }, { useDataHookForPay: true, dataHook: HOOK, useDataHookForCashOut: false, metadata: 0 }];
+      case 'tokenUriResolverOf': return '0x' + '00'.repeat(20);
+      case 'maxTierIdOf': return 2n;
+      case 'tiersOf': return TIERS;
+      case 'payCreditsOf': return credits;
+      default: return base(call);
+    }
+  });
+  runtime.prepare.mockImplementation(async (_, args) => prepared(buildUserPayMetadata({ chainId: 8453, tiers: args.tiers, minimumSwapAmountOut: 0n }), 1n));
+  await card(632);
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2));
+  document.querySelector('.paybox-shop-item .paybox-shop-thumb').click();
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain('Could not read your NFT credits. Retry'));
+  const amount = document.querySelector('.paybox-amount-row input');
+  expect(amount.value).toBe(''); // no amount computed as if the payer had 0 credits
+  expect(document.querySelector('.paybox-feedback').textContent).not.toContain('Amount due');
+  expect(payButton().disabled).toBe(true);
+  payButton().disabled = false; payButton().click(); // a forced click still stops at the same line
+  await vi.waitFor(() => expect(document.querySelector('.paybox-status').textContent).toBe('Could not read your NFT credits. Retry.'));
+  expect(confirmButton()).toBeFalsy();
+  credits = Promise.resolve(0n);
+  [...document.querySelectorAll('.paybox-feedback button')].find(b => b.textContent === 'Retry').click();
+  await vi.waitFor(() => expect(amount.value).toBe('0.01'));
+  expect(document.querySelector('.paybox-feedback').textContent).not.toContain('Could not read your NFT credits');
+  expect(payButton().disabled).toBe(false);
+});

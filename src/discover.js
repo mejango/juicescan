@@ -9224,6 +9224,7 @@ export function renderPayCard(project, cart) {
     nftRoutesLoading: false,
     nftCredits: 0n,      // per-beneficiary 721 hook credits, denominated in the shop pricing context
     nftCreditsLoading: false,
+    nftCreditsError: false, // the credit read failed: the amount due is unknown until a retry reads it
   };
   state.token = state.tokens[0] || null;
   // Generic payment reads start only after NFT protocol identification.
@@ -9279,6 +9280,7 @@ export function renderPayCard(project, cart) {
   }
   function nftCheckoutBreakdown() { return nftCreditBreakdown(nftTotalWei(), nftRestrictedWei(), state.nftCredits); }
   function nftFloorForToken(token) {
+    if (state.nftCreditsError) return null;
     var due = nftCheckoutBreakdown().due;
     if (due <= 0n) return 0n;
     if (!state.shop || !token) return null;
@@ -9390,28 +9392,35 @@ export function renderPayCard(project, cart) {
     if (!acct || !shop || isNativeInventory(shop) || !shop.hook) {
       state.nftCredits = 0n;
       state.nftCreditsLoading = false;
+      state.nftCreditsError = false;
       if (!isNativeInventory(shop) && selectedTierIds().length) syncNftAmountForSelection();
+      rebuildCurrency();
       renderFeedback();
       return Promise.resolve(0n);
     }
     state.nftCreditsLoading = true;
+    state.nftCreditsError = false;
     renderFeedback();
+    function settle(credits, failed) {
+      var currentAccount = getEffectiveAccount();
+      if (gen !== nftCreditGeneration || state.shop !== shop || !currentAccount || currentAccount.toLowerCase() !== acct.toLowerCase()) return credits;
+      state.nftCredits = credits;
+      state.nftCreditsError = failed;
+      state.nftCreditsLoading = false;
+      if (selectedTierIds().length) {
+        syncNftAmountForSelection();
+        schedulePreview();
+      }
+      rebuildCurrency();
+      renderFeedback();
+      return credits;
+    }
     return clientFor(state.chainId).readContract({ address: shop.hook, abi: TIER721_PAY_CREDITS_ABI, functionName: 'payCreditsOf', args: [acct] })
       .then(toBigInt)
-      .catch(function () { return 0n; })
-      .then(function (credits) {
-        var currentAccount = getEffectiveAccount();
-        if (gen !== nftCreditGeneration || state.shop !== shop || !currentAccount || currentAccount.toLowerCase() !== acct.toLowerCase()) return credits;
-        state.nftCredits = credits;
-        state.nftCreditsLoading = false;
-        if (selectedTierIds().length) {
-          syncNftAmountForSelection();
-          schedulePreview();
-        }
-        renderFeedback();
-        return credits;
-      });
+      .then(function (credits) { return settle(credits, false); }, function () { return settle(0n, true); });
   }
+  // Selected items with unread credits: the amount due is unknown, so Pay stays off until a retry reads them.
+  function nftCreditsBlockPay() { return state.nftCreditsError && state.mode === 'pay' && selectedTierIds().length > 0; }
   function syncNftAmountForSelection() {
     var floor = nftFloorForToken(state.token);
     if (floor != null) {
@@ -9602,7 +9611,7 @@ export function renderPayCard(project, cart) {
       if (payBtn) payBtn.disabled = true;
       return;
     }
-    if (payBtn && (state.mode === 'addbalance' || startsAt <= Math.floor(Date.now() / 1000))) payBtn.disabled = false;
+    if (payBtn && (state.mode === 'addbalance' || startsAt <= Math.floor(Date.now() / 1000)) && !nftCreditsBlockPay()) payBtn.disabled = false;
     if (shownTokens.length > 1) {
       var sel = el('select', 'paybox-select');
       // Value by INDEX (not address) — a project can offer the same address both directly and via-router, and
@@ -9760,6 +9769,15 @@ export function renderPayCard(project, cart) {
       box.appendChild(r);
     }
     row('Items', formatShopPrice(state.shop, breakdown.subtotal, state.chainId));
+    if (state.nftCreditsError) {
+      var unread = el('div', 'paybox-nft-summary-row short');
+      unread.appendChild(document.createTextNode('Could not read your NFT credits. '));
+      var retryCredits = el('button'); retryCredits.type = 'button'; retryCredits.textContent = 'Retry';
+      retryCredits.addEventListener('click', function () { retryCredits.disabled = true; refreshNftCredits(); });
+      unread.appendChild(retryCredits);
+      box.appendChild(unread);
+      return box;
+    }
     if (!state.nftCreditsLoading && breakdown.applied > 0n) {
       row('Shop credit applied', '−' + formatShopPrice(state.shop, breakdown.applied, state.chainId), 'credit');
     } else if (!state.nftCreditsLoading && state.nftCredits > 0n) {
@@ -9796,6 +9814,7 @@ export function renderPayCard(project, cart) {
 
   function renderFeedback() {
     feedback.innerHTML = '';
+    if (payBtn && nftCreditsBlockPay()) payBtn.disabled = true;
     var p = state.preview;
 
     // Add-to-balance mints nothing — describe the balance effect rather than a meaningless "You get 0 tokens".
@@ -10011,6 +10030,7 @@ export function renderPayCard(project, cart) {
     }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { return; }
+    if (nftCreditsBlockPay()) { status.textContent = 'Could not read your NFT credits. Retry.'; return; }
     if (!state.contextsReady) { status.textContent = state.contextsError ? 'Could not verify the project’s accepted tokens.' : 'Accepted tokens are still loading…'; return; }
     if (state.amount === '' || !state.token) { status.textContent = selectedTierIds().length ? 'No supported payment currency is available for these items.' : 'Enter an amount'; return; }
     var amt;
@@ -17961,37 +17981,38 @@ function ammChainAvailable(cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; }
 
 // The pair token the project ALREADY has a pool for on a chain, so a window edit targets a live pool instead of a
 // native pool the project may never have initialized (a USDC revnet like ART has no native pool at all). Native wins
-// when both exist, and is returned as the sentinel the hook normalizes to address(0). null = no pool here.
+// when both exist, and is returned as the sentinel the hook normalizes to address(0). null = no pool here; a failed
+// read rejects, so the field is not left on the native default.
 function initializedPoolTokenOf(project, chainId) {
   var pid = pidOn(project, chainId);
-  return projectBuybackHook(project, chainId).then(function (hook) {
+  return projectBuybackHook(project, chainId, { strict: true }).then(function (hook) {
     if (!hook || hook === ZERO_ADDRESS) return null;
     var probes = [{ token: ZERO_ADDRESS, value: NATIVE_TOKEN }];
     var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ token: usdc, value: usdc });
     return Promise.all(probes.map(function (p) {
       return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, p.token] })
-        .then(function (w) { return Number(w) > 0 ? p.value : null; }).catch(function () { return null; });
+        .then(function (w) { return Number(w) > 0 ? p.value : null; });
     })).then(function (found) {
       return found.filter(Boolean)[0] || null;
     });
-  }).catch(function () { return null; });
+  });
 }
 
 // The first initialized pool on the URL's chain (fee, tick spacing, TWAP window), so Set buyback pool and Set TWAP
-// window start from what the project already has rather than generic defaults.
+// window start from what the project already has rather than generic defaults. A failed read rejects.
 function livePoolOf(project) {
   var chainId = project.chainId, pid = pidOn(project, chainId);
-  return projectBuybackHook(project, chainId).then(function (hook) {
+  return projectBuybackHook(project, chainId, { strict: true }).then(function (hook) {
     if (!hook || hook === ZERO_ADDRESS) return null;
     var probes = [ZERO_ADDRESS]; var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push(usdc);
     return Promise.all(probes.map(function (token) {
       var client = clientFor(chainId);
       return Promise.all([
-        client.readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, token] }).catch(function () { return 0n; }),
-        client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pid, token] }).catch(function () { return null; }),
+        client.readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, token] }),
+        client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pid, token] }),
       ]).then(function (r) { return Number(r[0]) > 0 && r[1] ? { twap: Number(r[0]), fee: Number(r[1].fee), tickSpacing: Number(r[1].tickSpacing) } : null; });
     })).then(function (found) { return found.filter(Boolean)[0] || null; });
-  }).catch(function () { return null; });
+  });
 }
 function livePoolField(name) {
   return function (project) { return livePoolOf(project).then(function (pool) { return pool ? String(pool[name]) : ''; }); };
@@ -17999,6 +18020,7 @@ function livePoolField(name) {
 
 // Per-chain buyback-pool summary. There is no scalar getter for the PoolKey (internal), so resolve the project's
 // hook and read twapWindowOf for the native + USDC pairs — a non-zero window means a pool is initialized there.
+// A failed read rejects, which the caller shows as unknown.
 function buybackPoolStateRead(project, chainId) {
   var pid = pidOn(project, chainId);
   return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid]).then(function (hook) {
@@ -18007,12 +18029,12 @@ function buybackPoolStateRead(project, chainId) {
     var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ label: 'USDC', token: usdc });
     return Promise.all(probes.map(function (p) {
       return clientFor(chainId).readContract({ address: hook, abi: twapWindowOfAbi, functionName: 'twapWindowOf', args: [pid, p.token] })
-        .then(function (w) { return { label: p.label, twap: Number(w) }; }).catch(function () { return { label: p.label, twap: 0 }; });
+        .then(function (w) { return { label: p.label, twap: Number(w) }; });
     })).then(function (rows) {
       var init = rows.filter(function (r) { return r.twap > 0; });
       return init.length ? init.map(function (r) { return r.label + ' pool (TWAP ' + r.twap + 's)'; }).join(', ') : 'not initialized';
     });
-  }).catch(function () { return null; });
+  });
 }
 
 export var POWER_SET_BUYBACK_HOOK = {
@@ -18197,11 +18219,13 @@ function openPowerModal(project, action) {
         if (f.crossChainRead) {
           input.placeholder = 'reading current…';
           f.crossChainRead(project, c.id).then(function (val) {
-            if (val && input.value === defaultForFieldChain(f, c.id)) {
-              input.value = val; input.placeholder = f.placeholder || '0x… address';
-              input.dispatchEvent(new Event('input'));
-            }
-          }).catch(function () { input.placeholder = f.placeholder || '0x… address'; });
+            input.placeholder = f.placeholder || '0x… address';
+            if (val && input.value === defaultForFieldChain(f, c.id)) { input.value = val; input.dispatchEvent(new Event('input')); }
+          }).catch(function () {
+            // An unread value is unknown: drop the default rather than submit it as if it were current.
+            if (input.value && input.value === defaultForFieldChain(f, c.id)) { input.value = ''; input.dispatchEvent(new Event('input')); }
+            input.placeholder = 'Could not read the current value';
+          });
         }
         field.appendChild(input); field.appendChild(name); row.appendChild(field);
         wrap.appendChild(row);
@@ -18262,7 +18286,7 @@ function openPowerModal(project, action) {
     if (f.defaultValue) inp.value = f.defaultValue;
     // Async default: pre-fill with the project's CURRENT onchain value (e.g. its registered hook/terminal),
     // unless the user has already typed. No fallback default — blank stays blank.
-    if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') { input.value = val; input.dispatchEvent(new Event('input')); } input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = f.placeholder || ''; }); })(inp); }
+    if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') { input.value = val; input.dispatchEvent(new Event('input')); } input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = 'Could not read the current value'; }); })(inp); }
     content.appendChild(inp);
     var scalarAddressValue = null;
     if (f.kind === 'address') {
@@ -27246,6 +27270,7 @@ function buildCashOutModal(project, requestClose) {
       }
       var qDirect = (pool && count > 0n) ? quoteDirectSwap(state.chainId, pool, count) : Promise.resolve(null);
       // Claimed ERC-20 balance = the pool's project-token currency held by the user (credits are excluded).
+      // An unreadable balance reads as 0n on purpose: it only withholds the direct sell, leaving the terminal route.
       var erc20P = (pool && acct) ? clientFor(state.chainId).readContract({ address: pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n);
       Promise.all([qDirect, erc20P]).then(function (q) {
         if (seq !== previewSeq) return;
@@ -29999,10 +30024,10 @@ export function lpErc20ApprovePrefix(spender) { return '0x095ea7b3' + '00'.repea
 
 // A returning multisig visit must not re-propose a step that's still awaiting signatures in the Safe queue —
 // a duplicate mint burns a whole signing round (the second reverts once the first spends the allowance).
-// Best-effort: chains without a Safe service (or a failed read) return null and the step proposes normally.
+// Chains without a Safe service return null and the step proposes normally; a failed queue read stops the step.
 async function lpQueuedSafeStep(chainId, safe, to, dataPrefix) {
   if (!hasSafeService(chainId)) return null;
-  var rows = await listPendingSafeTxs(chainId, safe).catch(function () { return []; });
+  var rows = await listPendingSafeTxs(chainId, safe).catch(function () { throw new Error('Could not check your Safe\'s queue. Try again before proposing.'); });
   function matches(t) { return String(t.to || '').toLowerCase() === String(to).toLowerCase() && String(t.data || '').toLowerCase().indexOf(dataPrefix.toLowerCase()) === 0; }
   // A step proposed through the Safe App as part of one batch sits inside a queued MultiSend record.
   return rows.filter(function (t) { return matches(t) || (multiSendBatchCalls(t) || []).some(matches); })[0] || null;
