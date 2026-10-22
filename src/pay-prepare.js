@@ -381,13 +381,18 @@ async function routedBuybackSpecOf(client, { chainId, projectId, tokenIn, tokenO
 /** Why prepareUserPay refuses a buyback spec it cannot read. */
 export const PAY_QUOTE_FAILED_MESSAGE = "The project's buyback hook swaps with an unknown specification, so no safe minimum can be set.";
 
+/** Why prepareUserPay refuses a swap it could not quote: a failed read never becomes a fallback minimum. */
+export const PAY_SWAP_QUOTE_FAILED_MESSAGE = 'The swap quote could not be loaded.';
+
 /**
  * Prepare a person's payment: preview it with buildUserPayMetadata, and set the minimum the terminal enforces
  * on the beneficiary's balance. When the buyback hook would swap, quote its pool (fee and impact included) and
  * send the slippage-floored quote as an explicit minimum, re-previewed so the payment stays on the mint path if
  * the hook would not swap with it. Behind a router that converts the paid token with one swap, the pool is the
  * one in the converted token, quoted on the conversion's quote. Without a pool or quote the minimum is the
- * payer's mint entitlement when the hook would swap, else the terminal's own issuance. A direct buyback hook
+ * payer's mint entitlement when the hook would swap, else the terminal's own issuance. A read that fails, or a
+ * quote that comes back empty, while the hook would swap throws PAY_SWAP_QUOTE_FAILED_MESSAGE instead: that
+ * fallback can reach zero, and a failed read must never set the minimum (3.4.1 returns the fallback). A direct buyback hook
  * (ruleset data hook, or through the omnichain deployer) gets metadata keyed to itself.
  *
  * slippageBps: tolerance on the pool quote and on the fallback minimum (default 1%). skipSplits: whether the
@@ -417,14 +422,22 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     ),
   };
   if (!buyback || buyback.amountToSwapWith === 0n) return fallback;
+  // Every read and quote below goes through `watched`, which records a failure so the catch can tell a lost read
+  // from a route that simply does not apply.
+  let readFailed = false;
+  const lost = (error) => { readFailed = true; throw error; };
+  const watched = {
+    readContract: (parameters) => client.readContract(parameters).catch(lost),
+    call: (parameters) => client.call(parameters).then((result) => { if (!result.data) readFailed = true; return result; }, lost),
+  };
   try {
-    const pool = await buybackPoolOf(client, { chainId, hook: buyback.hook, projectId, token, poolId: buyback.poolId });
+    const pool = await buybackPoolOf(watched, { chainId, hook: buyback.hook, projectId, token, poolId: buyback.poolId });
     if (!pool) return fallback;
     let swap = buyback;
     if (pool.terminalToken !== token) {
       // A router converts the payment first, and its preview gave the hook the router's slippage floor. Quote
       // what the hook receives when the conversion returns its quote; a conversion well below it then fails.
-      const routed = await routedBuybackSpecOf(client, {
+      const routed = await routedBuybackSpecOf(watched, {
         chainId,
         projectId,
         tokenIn: token,
@@ -439,13 +452,13 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
       if (!routed || routed.floor < buyback.amountToSwapWith || routed.spec.poolId !== buyback.poolId) return fallback;
       swap = routed.spec;
     }
-    const quoted = await quoteUniswapV4ExactInputSingle(client, { chainId, poolKey: pool.key, zeroForOne: !swap.projectTokenIs0, amountIn: swap.amountToSwapWith });
+    const quoted = await quoteUniswapV4ExactInputSingle(watched, { chainId, poolKey: pool.key, zeroForOne: !swap.projectTokenIs0, amountIn: swap.amountToSwapWith });
     const minimumSwapAmountOut = slippageFloor(quoted, slippageBps);
     // The pool loses to minting: leave the payment on the mint path.
     if (minimumSwapAmountOut <= swap.tokenCountWithoutHook) return fallback;
     const quotedMetadata = buildUserPayMetadata({ chainId, tiers, minimumSwapAmountOut, skipSplits, ...(hook ? { hook } : {}) });
     // The hook rejects a minimum it cannot route, such as on a pool with no liquidity in range.
-    const [, quotedBeneficiaryCount, quotedReservedCount, quotedSpecs] = await client.readContract({
+    const [, quotedBeneficiaryCount, quotedReservedCount, quotedSpecs] = await watched.readContract({
       address: args.terminal,
       abi: getABI('JBMultiTerminal', chainId),
       functionName: 'previewPayFor',
@@ -470,6 +483,7 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     };
     return { metadata: quotedMetadata, preview: settle(quoted), minReturnedTokens: settle(minimumSwapAmountOut).beneficiaryTokenCount };
   } catch {
+    if (readFailed && !buyback.noop) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
     return fallback;
   }
 }

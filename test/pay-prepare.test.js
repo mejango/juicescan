@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BaseError, ContractFunctionRevertedError, keccak256, toHex } from 'viem';
-import { build721PayMetadata, buildBuybackPayMetadata, buildPayTx, buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, prepareUserPay, resolvePaymentTerminal } from '../src/pay-prepare.js';
+import { build721PayMetadata, buildBuybackPayMetadata, buildPayTx, buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay, resolvePaymentTerminal } from '../src/pay-prepare.js';
 import { slippageFloor } from '../src/slippage.js';
 
 const revive = (_, v) => (v && typeof v === 'object' && '$bigint' in v ? BigInt(v.$bigint) : v);
@@ -121,8 +121,21 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     expect(c.output.minReturnedTokens).toBe(1_138_500_000_000_000_000_000n);
     expect(c.output.metadata.slice(2 + 64 * 3, 2 + 64 * 4)).toBe(1_138_500_000_000_000_000_000n.toString(16).padStart(64, '0'));
     expect(byName('buyback quote below mint keeps the mint path').output.minReturnedTokens).toBe(989_999_999_999_999_999_998n);
-    // As in 3.4.1, the fallback takes two rounding units off the mint entitlement, so an entitlement of 2 floors to 0.
-    expect(byName('quote failure with a tiny mint entitlement sends a zero minimum').output.minReturnedTokens).toBe(0n);
+  });
+
+  it('diverges from 3.4.1 only where a swap route lost a read: never a fallback minimum, which can be zero', () => {
+    const divergent = golden.cases.filter((c) => c.sdkOutput);
+    expect(divergent.length).toBe(18);
+    for (const c of divergent) {
+      expect(c.output, c.name).toEqual({ $error: PAY_SWAP_QUOTE_FAILED_MESSAGE, $name: 'Error' });
+      expect(Object.values(c.reads).some((v) => v && (v.$throw || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0))), c.name + ' lost a read').toBe(true);
+    }
+    // 3.4.1 sent a zero minimum here: an entitlement of 2 less its two rounding units.
+    expect(byName('quote failure with a tiny mint entitlement').sdkOutput.minReturnedTokens).toBe(0n);
+    // No swap route, or no quote possible on the chain: the fallback stands.
+    for (const name of ['noop buyback spec mints', 'buyback quote of zero', 'buyback swap amount above uint128', 'chain with no direct buyback hook', 'router conversion on a chain with no router', 'no pool matches the spec']) {
+      expect(byName(name).output.$error, name).toBeUndefined();
+    }
   });
 
   it('builds the same pay transaction the SDK does, with the terminal ABI from the registry', () => {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ prepareUserPay: vi.fn() }));
 vi.mock('../src/pay-prepare.js', async importOriginal => ({ ...await importOriginal(), prepareUserPay: h.prepareUserPay }));
 import { createHookMetadata } from '../src/hook-metadata.js';
-import { buildUserPayMetadata } from '../src/pay-prepare.js';
+import { buildUserPayMetadata, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
 import { addToHookMetadata } from '../src/discover.js';
 import { prepareCardPay } from '../src/pay-preview.js';
 
@@ -41,6 +41,12 @@ describe('pay card payment preparation', () => {
     expect(prepared.unavailable).toBe(true);
     expect(prepared.received).toBeNull();
     expect(prepared.metadata).toBeUndefined();
+  });
+
+  it('reads a failed swap quote as unavailable with a retry, never as a payable minimum', async () => {
+    h.prepareUserPay.mockRejectedValueOnce(new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE));
+    const prepared = await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n });
+    expect(prepared).toEqual({ received: null, reserved: null, unavailable: true, reason: PAY_SWAP_QUOTE_FAILED_MESSAGE, explained: true, retry: true });
   });
 
   it('adds the router Permit2 allowance next to the buyback quote and 721 tiers', () => {
