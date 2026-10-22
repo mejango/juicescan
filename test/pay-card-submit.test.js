@@ -19,6 +19,9 @@ const registry = getAddress('JBRouterTerminalRegistry', 8453);
 const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 let contexts, terminals;
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+// The indexer answers without tier metadata at once. A thrown network error would sit through Bendystraw's
+// 250+750 ms retry backoff, the whole default waitFor budget, before the shop renders from chain.
+const noIndexer = async () => new Response('{}', { status: 404 });
 const prepared = (metadata, minReturnedTokens) => ({ metadata, minReturnedTokens, preview: { beneficiaryTokenCount: minReturnedTokens + 10n, reservedTokenCount: 0n } });
 
 beforeEach(() => {
@@ -195,7 +198,7 @@ function mintedTierIds(metadata) {
 }
 
 it('mints the rendered cart selection: its tier ids reach preparation and the submitted pay metadata', async () => {
-  vi.stubGlobal('fetch', async () => { throw new Error('offline'); }); // indexer tier metadata is optional
+  vi.stubGlobal('fetch', noIndexer); // indexer tier metadata is optional
   runtime.inventory.mockResolvedValue({ protocol: 'jb721', hook: HOOK, store: STORE, metadataIdTarget: ID_TARGET, blockNumber: 1n, nextStartingId: null,
     pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
     capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] });
@@ -428,7 +431,7 @@ const pausedError = () => Object.assign(new Error('Execution reverted.'), { data
 const PAUSED_LINE = 'This project is not accepting payments right now.';
 
 it('says why a credit-covered checkout cannot be quoted, and Pay says it again after a fresh quote', async () => {
-  vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+  vi.stubGlobal('fetch', noIndexer);
   runtime.inventory.mockResolvedValue({ protocol: 'jb721', hook: HOOK, store: STORE, metadataIdTarget: ID_TARGET, blockNumber: 1n, nextStartingId: null,
     pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
     capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] });
