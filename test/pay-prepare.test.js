@@ -125,10 +125,11 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
 
   it('diverges from 3.4.1 only where a swap route lost a read: never a fallback minimum, which can be zero', () => {
     const divergent = golden.cases.filter((c) => c.sdkOutput);
-    expect(divergent.length).toBe(18);
+    expect(divergent.length).toBe(20);
     for (const c of divergent) {
       expect(c.output, c.name).toEqual({ $error: PAY_SWAP_QUOTE_FAILED_MESSAGE, $name: 'Error' });
-      expect(Object.values(c.reads).some((v) => v && (v.$throw || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0))), c.name + ' lost a read').toBe(true);
+      const unreadableSpec = /spec unreadable/.test(c.name);
+      expect(unreadableSpec || Object.values(c.reads).some((v) => v && (v.$throw || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0))), c.name + ' lost a read').toBe(true);
     }
     // 3.4.1 sent a zero minimum here: an entitlement of 2 less its two rounding units.
     expect(byName('quote failure with a tiny mint entitlement').sdkOutput.minReturnedTokens).toBe(0n);

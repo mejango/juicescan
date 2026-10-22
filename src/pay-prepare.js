@@ -375,6 +375,8 @@ async function routedBuybackSpecOf(client, { chainId, projectId, tokenIn, tokenO
   });
   const raw = specs.find((s) => s.hook.toLowerCase() === hook.toLowerCase());
   const spec = raw && decodeBuybackPaySpec(raw, reservedPercent);
+  // A swap the destination reports but this cannot read has no safe minimum.
+  if (raw && !raw.noop && !spec) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
   return spec ? { spec, floor: conversion.floor } : null;
 }
 
@@ -479,6 +481,7 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     });
     // It must still swap, and in the quoted pool: a router may pick another route.
     const quotedSpec = quotedSpecs.find((s) => s.hook.toLowerCase() === buyback.hook.toLowerCase());
+    if (quotedSpec && !quotedSpec.noop && !decodeBuybackPaySpec(quotedSpec, buyback.reservedPercent)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
     if (!quotedSpec || quotedSpec.noop || decodeBuybackPaySpec(quotedSpec, buyback.reservedPercent)?.poolId !== buyback.poolId) return mintPath();
     // A router folds the hook's estimate into its counts, so only the multi-terminal's own counts are its issuance.
     const issuedByTerminal = args.terminal.toLowerCase() === v6Address('JBMultiTerminal', chainId).toLowerCase()
@@ -496,9 +499,9 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     };
     return { metadata: quotedMetadata, preview: settle(quoted), minReturnedTokens: settle(minimumSwapAmountOut).beneficiaryTokenCount };
   } catch (error) {
-    // Only this module's own "route does not apply" errors (no quoter, no router, amount out of range) are plain
-    // Errors; a lost read, an unreadable answer (viem's BaseError) or a malformed one (TypeError, SyntaxError) is not.
-    if (!buyback.noop && (readFailed || Object.getPrototypeOf(error) !== Error.prototype)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    // Only this module's own "route does not apply" errors (no quoter, no router, amount out of range) fall back; a
+    // lost read, an unreadable answer (viem's BaseError, an undecodable spec) or a malformed one (TypeError) refuses.
+    if (!buyback.noop && (readFailed || Object.getPrototypeOf(error) !== Error.prototype || error.message === PAY_SWAP_QUOTE_FAILED_MESSAGE)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
     return mintPath();
   }
 }
