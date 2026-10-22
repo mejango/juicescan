@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const runtime = vi.hoisted(() => ({ read: vi.fn(), contractRead: vi.fn(), holdings: vi.fn(), account: null }));
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: runtime.read, getDefifaHoldings: runtime.holdings }));
+vi.mock('../src/nft-inventory-read.js', async original => ({ ...await original(), getProjectNftInventory: runtime.read, getDefifaHoldings: runtime.holdings }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(), getAccount:()=>runtime.account, getEffectiveAccount:()=>runtime.account, createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance:async()=>10n**18n }) }));
 import { getAddress } from '../src/abi-registry.js';
 import { renderPayCard, renderShopSection, renderTokenPanel, inspectProjectContractsOnChain, makeNftCart, opsActionsRow } from '../src/discover.js';

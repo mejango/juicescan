@@ -40,9 +40,9 @@ async function controlsSource() {
     stdin: { contents: "import { renderPayCard, renderShopSection, renderTokenPanel, makeNftCart } from './src/discover.js'; window.renderControls = function (id, multichain) { const p = { id, chainId: 8453, ruleset: { start: 0, weight: 0n }, isRevnet: false }; if(multichain){p.chains=[{id:8453,name:'Base'},{id:84532,name:'Base Sepolia'}];p.idByChain={8453:id,84532:46};} const cart=makeNftCart(); document.querySelector('main').replaceChildren(renderPayCard(p,cart), renderShopSection(p,undefined,cart)); }; window.renderTokens = function (id) { const p = { id, chainId: 8453, isRevnet: false }; const main = document.querySelector('main'); main.innerHTML = '<span data-project-flavor=\"8453:' + id + '\">CUSTOM</span>'; main.appendChild(renderTokenPanel(p)); };", resolveDir: process.cwd(), loader: 'js' },
     bundle: true, format: 'esm', write: false, define: { __BENDYSTRAW_API_KEY__: '""', __PINATA_JWT__: '""' },
     plugins: [{ name: 'controlled-identity', setup(build) {
-      build.onResolve({ filter: /^@bananapus\/nana-sdk-core\/v6$/ }, () => ({ path: 'sdk', namespace: 'identity' }));
-      build.onResolve({filter:/^\//,namespace:'identity'},args=>({path:args.path,namespace:'file'}));
-      build.onLoad({ filter: /.*/, namespace: 'identity' }, () => ({ contents: "export * from " + JSON.stringify(process.cwd() + "/node_modules/@bananapus/nana-sdk-core/dist/esm/v6/index.js") + "; export async function getProjectNftInventory(client, args) { if (args.tierLimit === 1) return window.inventoryPromise; if(window.fullInventory) return window.fullInventory; throw new Error('Resolver unavailable'); }", loader: 'js' }));
+      build.onResolve({ filter: /^\//, namespace: 'identity' }, args => ({ path: args.path, namespace: 'file' }));
+      build.onResolve({ filter: /nft-inventory-read\.js$/ }, () => ({ path: 'inventory', namespace: 'identity' }));
+      build.onLoad({ filter: /.*/, namespace: 'identity' }, () => ({ contents: "export * from " + JSON.stringify(process.cwd() + "/src/nft-inventory-read.js") + "; export async function getProjectNftInventory(client, args) { if (args.tierLimit === 1) return window.inventoryPromise; if(window.fullInventory) return window.fullInventory; throw new Error('Resolver unavailable'); }", loader: 'js' }));
     } }],
   }).then(result => result.outputFiles[0].text);
   return controlHarness;

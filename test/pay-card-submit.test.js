@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const runtime = vi.hoisted(() => ({ prepare: vi.fn(), execute: vi.fn(), contractRead: vi.fn(), sign: vi.fn(), inventory: vi.fn(), account: '0x1111111111111111111111111111111111111111' }));
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: (...args) => runtime.inventory(...args), prepareUserPay: runtime.prepare }));
+vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), prepareUserPay: runtime.prepare }));
+vi.mock('../src/nft-inventory-read.js', async original => ({ ...await original(), getProjectNftInventory: (...args) => runtime.inventory(...args) }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account, getViewAs: () => null, isSafeConnected: () => false,
   executeTransaction: runtime.execute,

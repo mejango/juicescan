@@ -1,4 +1,4 @@
-import { getDefifaHoldings } from '@bananapus/nana-sdk-core/v6';
+import { getDefifaHoldings } from './nft-inventory-read.js';
 import { prepareDefifaPay, prepareDefifaCashOut, prepareDefifaTransfer, verifyDefifaNftTransaction, restoreDefifaNftReceiptContext, DefifaNftTransactionRevertedError, MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, defifaPhaseAllowsCashOut, effectiveTierPrice } from './defifa.js';
 import { encodeFunctionData, decodeFunctionData, TransactionReceiptNotFoundError } from 'viem';
 import { createBrowserWriteRecovery, readBrowserWriteRecovery, verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review';
