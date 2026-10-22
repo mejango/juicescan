@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import './web-locks.js';
 
 const state = vi.hoisted(() => ({
   account: null,
@@ -246,9 +247,9 @@ describe('generic ABI function form', () => {
     state.client = { simulateContract: vi.fn().mockResolvedValue({ request: { address: ADDRESS, functionName: 'pay' } }), estimateContractGas: vi.fn().mockResolvedValue(50_000n) };
     transactionReview.mockResolvedValue(true);
     click(transact);
-    await vi.waitFor(() => expect(form.querySelector('.error-box').textContent).toMatch(/check your wallet/i));
+    await vi.waitFor(() => expect(form.querySelector('.error-box').textContent).toMatch(/stays pending/i));
     click(transact);
-    await vi.waitFor(() => expect(form.querySelector('.error-box').textContent).toMatch(/earlier transaction/i));
+    await vi.waitFor(() => expect(form.querySelector('.error-box').textContent).toMatch(/your earlier pay/i));
     expect(state.wallet.writeContract).toHaveBeenCalledOnce();
     document.querySelectorAll('dialog').forEach(d => d.remove());
   });

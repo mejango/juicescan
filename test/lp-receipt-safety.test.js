@@ -16,7 +16,7 @@ describe('LP transaction receipt safety', () => {
   it('sends every non-multisig LP write under the shared hold, released only by a read receipt', () => {
     const start = source.indexOf('async function lpSendTx');
     const helper = source.slice(start, source.indexOf('\nvar lpPositionViewAbi', start));
-    expect(helper).toContain('heldWriteRefuses(hold');
+    expect(helper).toContain('await heldWriteGate(hold');
     expect(helper).toContain('sendHeldWrite(hold, function');
     expect(helper.match(/wallet\.writeContract\(/g)).toHaveLength(1);
     expect(helper.indexOf('function send()')).toBeLessThan(helper.indexOf('sendHeldWrite('));

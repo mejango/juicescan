@@ -1,5 +1,6 @@
 // A direct write the wallet may have sent stays held: only an explicit wallet rejection (4001) frees the action.
 import {beforeEach,expect,it,vi} from 'vitest';
+import {webLocks} from './web-locks.js';
 const h=vi.hoisted(()=>({wallet:null,client:null,account:'0x1111111111111111111111111111111111111111'}));
 vi.mock('../src/wallet.js',async original=>({...await original(),getAccount:()=>h.account,getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>false,waitForSafeInitialization:async()=>{}}));
 import {executeTransaction} from '../src/component-base.js';
@@ -16,7 +17,7 @@ beforeEach(()=>{localStorage.clear();closeDialogs();
 
 it('holds an action after an ambiguous wallet error and never opens the wallet for it again',async()=>{
  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
- const first=await run();expect(first.error).toMatch(/check your wallet/i);
+ const first=await run();expect(first.error).toMatch(/stays pending/i);
  // A retry with a fresh quote (different calldata) is still the same action.
  const second=await run({args:[2n]});
  expect(second.error).toMatch(/earlier/i);
@@ -46,24 +47,43 @@ it('frees the action when nothing reached the wallet',async()=>{
  await run();
  expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
-it('holds a sent hash whose confirmation could not be read until its receipt settles it',async()=>{
+it('settles a held hash from the chain on the next attempt, with no extra click when it can',async()=>{
  const first=await run({verifyReceipt:async()=>{throw new Error('Receipt binding unavailable');}});
  expect(first.pending).toBeTruthy();
- const second=await run();expect(second.error).toMatch(/earlier/i);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
- // Check onchain: the receipt now reads, the hold ends and the next send goes through.
- h.client.getTransaction.mockResolvedValue({hash,from:h.account,nonce:7,blockNumber:10n,chainId:8453});
- const check=[...document.querySelectorAll('dialog[open] button')].find(b=>/check onchain/i.test(b.textContent));
- check.click();
- await vi.waitFor(()=>expect(document.querySelector('dialog[open]').textContent).toMatch(/confirmed in block/i));
- closeDialogs();
+ // Still in the mempool: held, no wallet, no dialog to click.
+ h.client.getTransaction.mockResolvedValue({hash,from:h.account,nonce:7,blockNumber:null});
+ expect((await run()).error).toMatch(/still pending/i);
+ expect(document.querySelector('dialog[open]')).toBeNull();
+ // Mined and successful: the hold settles itself and says so; nothing is sent again.
+ h.client.getTransaction.mockResolvedValue({hash,from:h.account,nonce:7,blockNumber:10n});
+ expect((await run()).error).toMatch(/went through in block 10/i);
+ expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+ // Settled: the next attempt sends normally.
  expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(2);
 });
-it('lets the user release a no-hash hold after checking their wallet',async()=>{
- h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
- await run();await run();
- const release=[...document.querySelectorAll('dialog[open] button')].find(b=>/checked my wallet/i.test(b.textContent));
- release.click();closeDialogs();
+it('a held hash that failed onchain settles and the same click sends again',async()=>{
+ await run({verifyReceipt:async()=>{throw new Error('Receipt binding unavailable');}});
+ h.client.getTransaction.mockResolvedValue({hash,from:h.account,nonce:7,blockNumber:10n});
+ h.client.getTransactionReceipt.mockResolvedValueOnce({...receipt,status:'reverted'});
  expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(2);
+});
+it('offers one release action only when the chain cannot settle the hold',async()=>{
+ h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
+ await run();expect((await run()).error).toMatch(/release it/i);
+ const buttons=[...document.querySelectorAll('dialog[open] button')].filter(b=>!b.classList.contains('modal-close'));
+ expect(buttons).toHaveLength(1);
+ buttons[0].click();
+ expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(2);
+});
+it('keeps one in-app confirmation on the normal send path',async()=>{
+ const showModal=vi.spyOn(HTMLDialogElement.prototype,'showModal');
+ const setAbi=[{type:'function',name:'setThing',inputs:[],outputs:[],stateMutability:'nonpayable'}];
+ const done=new Promise(resolve=>executeTransaction({chainId:8453,address:args.address,abi:setAbi,functionName:'setThing',args:[],onSuccess:resolve,onError:resolve}));
+ await vi.waitFor(()=>expect(document.querySelector('dialog[open] .create-btn.primary')).not.toBeNull());
+ document.querySelector('dialog[open] .create-btn.primary').click();
+ await done;
+ expect(showModal).toHaveBeenCalledTimes(1);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+ showModal.mockRestore();
 });
 it('leaves holds to a caller that keeps its own journal',async()=>{
  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
@@ -93,7 +113,21 @@ it('a stale dialog never releases a newer attempt',async()=>{
  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
  await run();await run();
  const k=Object.keys(localStorage)[0];localStorage.setItem(k,JSON.stringify({id:'newer',account:h.account}));
- [...document.querySelectorAll('dialog[open] button')].find(b=>/checked my wallet/i.test(b.textContent)).click();
+ [...document.querySelectorAll('dialog[open] .create-btn.primary')][0].click();
  expect(JSON.parse(localStorage.getItem(k)).id).toBe('newer');
- expect(writeHold(8453,h.account,call).read().id).toBe('newer');
+});
+it('sends nothing where the browser has no Web Locks to keep the send to one window',async()=>{
+ Object.defineProperty(navigator,'locks',{configurable:true,value:undefined});
+ try{expect((await run()).error).toMatch(/one window/i);}finally{Object.defineProperty(navigator,'locks',{configurable:true,value:webLocks});}
+ expect(h.wallet.writeContract).not.toHaveBeenCalled();
+});
+it('a hash kept in memory never lets an old attempt release a newer stored one',async()=>{
+ const hold=writeHold(8453,h.account,call);
+ const a=await hold.withLock(async()=>hold.reserve());
+ const set=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('quota');});
+ let withHash;try{withHash=hold.submitted(a,'0x'+'c'.repeat(64));}finally{set.mockRestore();}
+ expect(hold.read().hash).toBe('0x'+'c'.repeat(64));
+ const k=Object.keys(localStorage)[0];localStorage.setItem(k,JSON.stringify({id:'b',account:h.account,hash:null}));
+ hold.release(withHash);
+ expect(hold.read().id).toBe('b');
 });

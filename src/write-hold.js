@@ -4,14 +4,19 @@
 // wallet rejection (EIP-1193 4001) drops it before a receipt; any other outcome keeps the action held, across
 // reloads, until a read receipt or the user's own wallet check ends it.
 var PREFIX = 'juicescan-write-hold-v1:';
-// Only a hash whose save failed after the wallet answered lives here: the hold still covers this tab.
+// Only a hash whose save failed after the wallet answered lives here, and only over the stored record of the
+// same attempt: the stored record stays the authority for which attempt holds the slot.
 var memory = new Map();
-var busy = new Set();
 var STORAGE_LINE = 'Browser storage is unavailable. Enable it before sending; nothing was sent.';
 
+function idOf(raw) { try { return JSON.parse(raw).id; } catch (_) { return undefined; } }
 function getItem(key) {
-  if (memory.has(key)) return memory.get(key);
-  try { return localStorage.getItem(key); } catch (_) { throw new Error(STORAGE_LINE); }
+  var raw;
+  try { raw = localStorage.getItem(key); } catch (_) { throw new Error(STORAGE_LINE); }
+  var kept = memory.get(key);
+  if (kept != null && raw != null && idOf(raw) === idOf(kept)) return kept;
+  memory.delete(key);
+  return raw;
 }
 function saved(key, raw) {
   try { localStorage.setItem(key, raw); return localStorage.getItem(key) === raw; } catch (_) { return false; }
@@ -51,8 +56,7 @@ export function writeHold(chainId, account, call) {
       if (!saved(key, JSON.stringify(record))) throw new Error(STORAGE_LINE);
       return record;
     },
-    // Without Web Locks another tab may have overwritten the slot between read and write: re-read right before
-    // the wallet opens, so only the tab whose record is there sends.
+    // Re-read right before the wallet opens: only the attempt whose record is stored sends.
     owns: mine,
     submitted: function (expected, hash) {
       if (!mine(expected)) return expected;
@@ -62,22 +66,24 @@ export function writeHold(chainId, account, call) {
       return next;
     },
     release: release,
+    // Web Locks make reserve-then-send atomic across tabs; without them (pre-2022 browsers, insecure origins)
+    // nothing is sent rather than risk two tabs sending the same action.
     withLock: function (work) {
-      var refused = function () { return Promise.reject(new Error('This wallet action is already open in another window.')); };
-      if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
-        return navigator.locks.request(key, { ifAvailable: true }, function (lock) { return lock ? work() : refused(); });
+      if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) {
+        return Promise.reject(new Error('This browser cannot keep wallet sends to one window. Update it to send; nothing was sent.'));
       }
-      // ponytail: in-tab lock only where Web Locks are missing (pre-2022 browsers); `owns` narrows the cross-tab race.
-      if (busy.has(key)) return refused();
-      busy.add(key);
-      return Promise.resolve().then(work).finally(function () { busy.delete(key); });
+      return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
+        return lock ? work() : Promise.reject(new Error('This wallet action is already open in another window.'));
+      });
     },
   };
 }
 
-// Whether the saved hash is this account's mined transaction (its receipt then settles the hold).
-export async function heldHashMined(client, record) {
-  if (!record.hash) return false;
-  var tx = await client.getTransaction({ hash: record.hash }).catch(function () { return null; });
-  return !!tx && String(tx.from).toLowerCase() === record.account && tx.blockNumber != null;
+// What the node shows of the saved hash: 'mined' (this account's, so its receipt settles the hold), 'pending',
+// or 'unknown' (dropped, replaced, or a node without it).
+export async function heldHashState(client, record) {
+  var tx;
+  try { tx = await client.getTransaction({ hash: record.hash }); } catch (_) { return 'unknown'; }
+  if (!tx || String(tx.from).toLowerCase() !== record.account) return 'unknown';
+  return tx.blockNumber != null ? 'mined' : 'pending';
 }

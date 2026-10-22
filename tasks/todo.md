@@ -337,3 +337,5 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - [x] Failing tests (fail on origin/main source)  - [x] Shared hold + executeTransaction  - [x] lpSendTx + form.js  - [x] Gates + budgets
 - [x] Codex pass 1 (request changes): storage now fails closed before the wallet; slot re-read before the wallet opens; release only the shown attempt; 4001-only release predicate; nonce search dropped (an estimated nonce cannot bind a no-hash attempt, as in the SDK), so no-hash holds end only by the user's wallet check.
 - Direction change: local code mirroring the SDK, no new SDK imports.
+- [x] Codex pass 2 (request changes): Web Locks now required to send (no in-tab fallback); a memory-kept hash only overlays the stored record of the same attempt.
+- [x] jango rule: no extra confirmation on the normal path (tested: one dialog); a held action settles itself from the chain on the next attempt and offers one release only when the chain cannot settle it.

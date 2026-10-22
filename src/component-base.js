@@ -11,7 +11,7 @@ import { decodeFunctionData, encodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
 import { prettyArgSteps } from './tx-pretty-args.js';
 import { contractGasWithHeadroom } from './gas.js';
-import { writeHold, heldHashMined, isExplicitWalletRejection } from './write-hold.js';
+import { writeHold, heldHashState, isExplicitWalletRejection } from './write-hold.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
 // address is. Suckers and other per-project deployments aren’t in the registry — callers pass contractName.
@@ -1391,21 +1391,38 @@ export function confirmTransactionModal(payload, opts) {
   return waitForConfirm();
 }
 
-var HELD_WRITE_LINE = 'An earlier transaction for this action is not settled. Check it before sending again.';
-
 // The hold (write-hold.js) for one direct contract write: `request` is { address, abi, functionName, args, value }.
 export function holdForWrite(chainId, account, request) {
   return writeHold(chainId, account, { to: request.address, functionName: request.functionName, value: request.value || 0n,
     data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) });
 }
 
-// The line to refuse with (and a dialog to settle it) when this action's earlier write is still held, else ''.
-export function heldWriteRefuses(hold, label) {
+// Settle an action's held write from the chain before sending it again: '' when nothing holds it (or its
+// saved hash failed onchain), else the line to show. Only a hold the chain cannot settle gets one action:
+// a release, after the user checks their wallet, of exactly the attempt shown. The normal path never waits:
+// with nothing held this resolves at once without a read.
+export async function heldWriteGate(hold, label) {
   var record;
-  try { record = hold.read(); } catch (err) { return errMessage(err, HELD_WRITE_LINE); }
+  try { record = hold.read(); } catch (err) { return errMessage(err, 'Browser storage is unavailable.'); }
   if (!record) return '';
-  showHeldWrite(hold, record, label);
-  return HELD_WRITE_LINE;
+  var what = 'Your earlier ' + (label ? label + ' ' : '') + 'on ' + chainNameFor(hold.chainId);
+  var client = createPublicClientForChain(hold.chainId);
+  var found = record.hash ? await heldHashState(client, record).catch(function () { return 'unknown'; }) : 'none';
+  if (found === 'mined') {
+    var receipt = await pollTransactionReceipt(client, null, record.hash, hold.chainId, 3, 2000).catch(function () { return null; });
+    if (receipt && (receipt.status === 'success' || receipt.status === 'reverted')) {
+      try { await hold.withLock(async function () { hold.release(record); }); } catch (_) {}
+      if (receipt.status === 'reverted' && !hold.read()) return '';
+      if (receipt.status === 'success') return what + ' went through in block ' + receipt.blockNumber + ' (' + truncAddr(record.hash) + '). It was not sent again.';
+    }
+    return what + ' (' + truncAddr(record.hash) + ') is mined but its result could not be read yet. Try again shortly.';
+  }
+  if (found === 'pending') return what + ' (' + truncAddr(record.hash) + ') is still pending. Speed it up or cancel it in your wallet.';
+  var line = record.hash
+    ? what + ' (' + truncAddr(record.hash) + ') is not found onchain. Check your wallet; if it was dropped, release it.'
+    : what + ' may have been sent: your wallet did not say. Check your wallet; if it was not sent, release it.';
+  offerHeldRelease(hold, record, line);
+  return line;
 }
 
 // Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
@@ -1420,53 +1437,25 @@ export function sendHeldWrite(hold, check, send) {
     var hash;
     try { hash = await send(); } catch (err) {
       if (isExplicitWalletRejection(err)) { hold.release(reservation); throw err; }
-      throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it: check your wallet before trying again.', { cause: err }), { heldWrite: true });
+      throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it, so this action stays pending until it settles.', { cause: err }), { heldWrite: true });
     }
     return { hash: hash, reservation: hold.submitted(reservation, hash) || reservation };
   });
 }
 
-function showHeldWrite(hold, record, label) {
+function offerHeldRelease(hold, record, line) {
   var modal = openDialog('Earlier transaction not settled');
   var content = el('div', 'pay-confirm');
-  var note = el('div', 'tx-confirm-note');
-  var where = (label ? label + ' ' : '') + 'on ' + chainNameFor(hold.chainId);
-  note.textContent = record.hash
-    ? 'Your earlier ' + where + ' was sent (' + truncAddr(record.hash) + ') and is not confirmed yet. Sending again could repeat it.'
-    : 'Your wallet did not say whether your earlier ' + where + ' was sent. Sending again could repeat it.';
-  var status = el('div', 'tx-confirm-note');
+  var note = el('div', 'tx-confirm-note'); note.textContent = line;
   var foot = el('div', 'create-modal-foot');
-  var release = el('button', 'create-btn ghost'); release.type = 'button'; release.textContent = 'I checked my wallet, release it';
-  var check = el('button', 'create-btn primary'); check.type = 'button'; check.textContent = 'Check onchain';
-  foot.appendChild(release); foot.appendChild(check);
-  content.appendChild(note); content.appendChild(status); content.appendChild(foot);
+  var release = el('button', 'create-btn primary'); release.type = 'button'; release.textContent = 'It was not sent, release it';
+  foot.appendChild(release); content.appendChild(note); content.appendChild(foot);
   modal.panel.appendChild(content);
-  check.addEventListener('click', function () {
-    check.disabled = true; status.textContent = 'Checking…';
-    var client = createPublicClientForChain(hold.chainId);
-    hold.withLock(async function () {
-      var saved = hold.read();
-      if (!saved) return 'Nothing is held now. Review the transaction again.';
-      if (!await heldHashMined(client, saved)) {
-        return saved.hash ? 'Not mined yet. Speed it up or cancel it in your wallet, or check again later.'
-          : 'No transaction hash was returned. If your wallet shows no pending or sent transaction, release it.';
-      }
-      var receipt = await pollTransactionReceipt(client, null, saved.hash, hold.chainId, 3, 2000);
-      hold.release(saved);
-      return receipt.status === 'success'
-        ? 'Earlier transaction confirmed in block ' + receipt.blockNumber + '. It went through; send again only to repeat it.'
-        : 'Earlier transaction failed onchain. You can send it again.';
-    }).then(function (line) {
-      status.textContent = line;
-      if (!hold.read()) foot.replaceChildren();
-    }, function (err) { status.textContent = 'Still not settled: ' + errMessage(err, 'the check failed.'); })
-      .finally(function () { check.disabled = false; });
-  });
   release.addEventListener('click', function () {
     var current;
-    try { current = hold.read(); } catch (err) { status.textContent = errMessage(err, 'Could not release it.'); return; }
+    try { current = hold.read(); } catch (err) { note.textContent = errMessage(err, 'Could not release it.'); return; }
     // Only the attempt this dialog shows: a newer one started elsewhere stays held.
-    if (current && current.id !== record.id) { status.textContent = 'A newer attempt is held. Reopen this action to check it.'; return; }
+    if (current && current.id !== record.id) { note.textContent = 'A newer attempt is held. Try the action again to check it.'; return; }
     if (current) hold.release(current);
     modal.close();
   });
@@ -1481,8 +1470,6 @@ export function executeTransaction(opts) {
   if (!account) { opts.onError('Connect wallet to transact'); return; }
   // A caller with its own write journal (onWriteRejected) keeps it; every other direct write is held here.
   var hold = opts.onWriteRejected ? null : holdForWrite(opts.chainId, account, opts);
-  var heldLine = hold ? heldWriteRefuses(hold, opts.label || opts.functionName) : '';
-  if (heldLine) { (opts.onError || function () {})(heldLine); return; }
   var heldReservation = null;
 
   // Status/result callbacks. When the confirm modal is shown (not skipConfirm), these get wrapped so tx
@@ -1495,6 +1482,14 @@ export function executeTransaction(opts) {
   var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onError: opts.describeFailure ? function (m, meta) { callerOnError(failureLine(m, meta), meta); } : callerOnError };
 
   // Build the review payload and require explicit confirmation, unless the caller already showed its own.
+  // A held earlier attempt is settled from the chain first; the review opens only once nothing holds it.
+  var held = false, heldNow;
+  try { heldNow = !!hold && !!hold.read(); } catch (_) { heldNow = true; }
+  var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName).then(function (line) {
+    if (line) { held = true; callerOnError(line); return null; }
+    return reviewStep();
+  }) : reviewStep();
+  function reviewStep() {
   var confirmStep;
   if (opts.skipConfirm) {
     confirmStep = Promise.resolve({ ok: true });
@@ -1529,8 +1524,11 @@ export function executeTransaction(opts) {
       ? opts.confirmSession.showNext(payload, modalOpts)
       : confirmTransactionModal(payload, modalOpts);
   }
+  return confirmStep;
+  }
 
   confirmStep.then(function (r) {
+    if (held) return;
     if (!r || !r.ok) { (opts.onError || function () {})('Cancelled'); return; }
     // Modal stayed open → mirror status into it and close it on success; still call the caller’s handlers.
     if (r.showStatus) {

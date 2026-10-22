@@ -6,7 +6,7 @@ import { encodeFunctionData, toFunctionSelector } from 'viem';
 import { getABI } from './abi-registry.js';
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
-import { holdForWrite, heldWriteRefuses, sendHeldWrite, confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
+import { holdForWrite, heldWriteGate, sendHeldWrite, confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS, chainNameFor } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
@@ -346,12 +346,12 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
       outputArea.appendChild(renderError('Switch your wallet to ' + chainNameFor(chainId) + ' to continue.'));
       return false;
     });
-  }).then(function(ready) {
+  }).then(async function(ready) {
     if (!ready) return;
 
     var args = inputs.map(function(inp) { return inp.getValue(); });
     var hold = holdForWrite(chainId, reviewedAccount, { address: contractAddress, abi: [fn], functionName: fn.name, args: args, value: value || 0n });
-    var heldLine = heldWriteRefuses(hold, fn.name);
+    var heldLine = await heldWriteGate(hold, fn.name);
     if (heldLine) { outputArea.appendChild(renderError(heldLine)); return; }
     // Review the exact call before sending.
     var submittedHash = null, heldReservation = null;

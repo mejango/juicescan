@@ -1,4 +1,5 @@
 import {beforeEach,expect,it,vi} from 'vitest';
+import './web-locks.js';
 const h=vi.hoisted(()=>({wallet:null,client:null,safe:false,account:'0x1111111111111111111111111111111111111111',propose:vi.fn()}));
 vi.mock('../src/wallet.js',async original=>({...await original(),getAccount:()=>h.account,getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>h.safe,proposeSafeTransactions:(txs)=>h.propose(txs),waitForSafeInitialization:async()=>{}}));
 import {setViewAs,clearViewAs} from '../src/view-as.js';
