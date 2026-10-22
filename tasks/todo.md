@@ -339,3 +339,4 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - Direction change: local code mirroring the SDK, no new SDK imports.
 - [x] Codex pass 2 (request changes): Web Locks now required to send (no in-tab fallback); a memory-kept hash only overlays the stored record of the same attempt.
 - [x] jango rule: no extra confirmation on the normal path (tested: one dialog); a held action settles itself from the chain on the next attempt and offers one release only when the chain cannot settle it.
+- [x] Codex pass 3 (request changes): every release now runs under the action's Web Lock (queued), so a stale callback cannot interleave with another window's swap; a held write that went through is reported as success (executeTransaction onSuccess with recovered:true, LP returns its hash, form shows success) instead of an error.

@@ -29317,8 +29317,10 @@ async function lpSendTx(chainId, p) {
   if (!wallet || !acct || acct.toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   // A multisig step resumes from its Safe queue; every other LP send is held until its receipt is read.
   var hold = p.smartWallet ? null : holdForWrite(chainId, acct, p);
-  var heldLine = hold ? await heldWriteGate(hold, p.functionName) : '';
-  if (heldLine) throw new Error(heldLine);
+  var gate = hold ? await heldWriteGate(hold, p.functionName) : null;
+  // The held write went through: its hash is this step's result, nothing is sent again.
+  if (gate && gate.hash) return gate.hash;
+  if (gate) throw new Error(gate.line);
   var client = clientFor(chainId);
   var simulation = await client.simulateContract({ account: acct, address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
   if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
@@ -29330,7 +29332,7 @@ async function lpSendTx(chainId, p) {
   var hash = sent.hash;
   try {
     var receipt = await waitForTrackedTransactionReceipt(client, hash, wallet, chainId);
-    if (receipt && hold) hold.release(sent.reservation);
+    if (receipt && hold) await hold.release(sent.reservation).catch(function () {});
     if (!receipt || receipt.status !== 'success') {
       var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
       reverted.onchainRevert = true;

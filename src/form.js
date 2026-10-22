@@ -351,8 +351,9 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
 
     var args = inputs.map(function(inp) { return inp.getValue(); });
     var hold = holdForWrite(chainId, reviewedAccount, { address: contractAddress, abi: [fn], functionName: fn.name, args: args, value: value || 0n });
-    var heldLine = await heldWriteGate(hold, fn.name);
-    if (heldLine) { outputArea.appendChild(renderError(heldLine)); return; }
+    var gate = await heldWriteGate(hold, fn.name);
+    if (gate && gate.hash) { setOutputMessage(outputArea, 'tx-success', gate.line); return; }
+    if (gate) { outputArea.appendChild(renderError(gate.line)); return; }
     // Review the exact call before sending.
     var submittedHash = null, heldReservation = null;
     confirmTransactionModal({
@@ -395,8 +396,8 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
         submittedHash = hash;
         setOutputMessage(outputArea, 'tx-pending', 'TX submitted: ' + hash + ' — confirming onchain…');
         return waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
-      }).then(function(receipt) {
-        if (receipt) hold.release(heldReservation);
+      }).then(async function(receipt) {
+        if (receipt) await hold.release(heldReservation).catch(function () {});
         if (!receipt || receipt.status !== 'success') {
           var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
           reverted.onchainRevert = true;

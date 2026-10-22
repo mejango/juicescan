@@ -1397,32 +1397,32 @@ export function holdForWrite(chainId, account, request) {
     data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) });
 }
 
-// Settle an action's held write from the chain before sending it again: '' when nothing holds it (or its
-// saved hash failed onchain), else the line to show. Only a hold the chain cannot settle gets one action:
+// Settle an action's held write from the chain before sending it again: null when nothing holds it (or its
+// saved hash failed onchain), else { line }, with { hash, blockNumber } when the held write went through. Only a hold the chain cannot settle gets one action:
 // a release, after the user checks their wallet, of exactly the attempt shown. The normal path never waits:
 // with nothing held this resolves at once without a read.
 export async function heldWriteGate(hold, label) {
   var record;
-  try { record = hold.read(); } catch (err) { return errMessage(err, 'Browser storage is unavailable.'); }
-  if (!record) return '';
+  try { record = hold.read(); } catch (err) { return { line: errMessage(err, 'Browser storage is unavailable.') }; }
+  if (!record) return null;
   var what = 'Your earlier ' + (label ? label + ' ' : '') + 'on ' + chainNameFor(hold.chainId);
   var client = createPublicClientForChain(hold.chainId);
   var found = record.hash ? await heldHashState(client, record).catch(function () { return 'unknown'; }) : 'none';
   if (found === 'mined') {
     var receipt = await pollTransactionReceipt(client, null, record.hash, hold.chainId, 3, 2000).catch(function () { return null; });
     if (receipt && (receipt.status === 'success' || receipt.status === 'reverted')) {
-      try { await hold.withLock(async function () { hold.release(record); }); } catch (_) {}
-      if (receipt.status === 'reverted' && !hold.read()) return '';
-      if (receipt.status === 'success') return what + ' went through in block ' + receipt.blockNumber + ' (' + truncAddr(record.hash) + '). It was not sent again.';
+      try { await hold.release(record); } catch (_) {}
+      if (receipt.status === 'reverted' && !hold.read()) return null;
+      if (receipt.status === 'success') return { line: what + ' went through in block ' + receipt.blockNumber + ' (' + truncAddr(record.hash) + '). It was not sent again.', hash: record.hash, blockNumber: receipt.blockNumber };
     }
-    return what + ' (' + truncAddr(record.hash) + ') is mined but its result could not be read yet. Try again shortly.';
+    return { line: what + ' (' + truncAddr(record.hash) + ') is mined but its result could not be read yet. Try again shortly.' };
   }
-  if (found === 'pending') return what + ' (' + truncAddr(record.hash) + ') is still pending. Speed it up or cancel it in your wallet.';
+  if (found === 'pending') return { line: what + ' (' + truncAddr(record.hash) + ') is still pending. Speed it up or cancel it in your wallet.' };
   var line = record.hash
     ? what + ' (' + truncAddr(record.hash) + ') is not found onchain. Check your wallet; if it was dropped, release it.'
     : what + ' may have been sent: your wallet did not say. Check your wallet; if it was not sent, release it.';
   offerHeldRelease(hold, record, line);
-  return line;
+  return { line: line };
 }
 
 // Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
@@ -1433,10 +1433,10 @@ export function sendHeldWrite(hold, check, send) {
     try {
       check();
       if (!hold.owns(reservation)) throw new Error('This wallet action was started in another window. Check that window before sending again.');
-    } catch (err) { hold.release(reservation); throw err; }
+    } catch (err) { hold.releaseLocked(reservation); throw err; }
     var hash;
     try { hash = await send(); } catch (err) {
-      if (isExplicitWalletRejection(err)) { hold.release(reservation); throw err; }
+      if (isExplicitWalletRejection(err)) { hold.releaseLocked(reservation); throw err; }
       throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it, so this action stays pending until it settles.', { cause: err }), { heldWrite: true });
     }
     return { hash: hash, reservation: hold.submitted(reservation, hash) || reservation };
@@ -1456,8 +1456,8 @@ function offerHeldRelease(hold, record, line) {
     try { current = hold.read(); } catch (err) { note.textContent = errMessage(err, 'Could not release it.'); return; }
     // Only the attempt this dialog shows: a newer one started elsewhere stays held.
     if (current && current.id !== record.id) { note.textContent = 'A newer attempt is held. Try the action again to check it.'; return; }
-    if (current) hold.release(current);
-    modal.close();
+    release.disabled = true;
+    Promise.resolve(current && hold.release(current)).then(modal.close, function (err) { release.disabled = false; note.textContent = errMessage(err, 'Could not release it.'); });
   });
 }
 
@@ -1485,8 +1485,9 @@ export function executeTransaction(opts) {
   // A held earlier attempt is settled from the chain first; the review opens only once nothing holds it.
   var held = false, heldNow;
   try { heldNow = !!hold && !!hold.read(); } catch (_) { heldNow = true; }
-  var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName).then(function (line) {
-    if (line) { held = true; callerOnError(line); return null; }
+  var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName).then(function (gate) {
+    if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'confirmed', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
+    if (gate) { held = true; callerOnError(gate.line); return null; }
     return reviewStep();
   }) : reviewStep();
   function reviewStep() {
@@ -1687,13 +1688,13 @@ export function executeTransaction(opts) {
   }).then(async function(receipt) {
     if (!receipt || receipt.status !== 'success') {
       // A read receipt (success or revert) settles the hold.
-      if (receipt && heldReservation) hold.release(heldReservation);
+      if (receipt && heldReservation) await hold.release(heldReservation).catch(function () {});
       var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
       reverted.onchainRevert = true;
       throw reverted;
     }
     if (opts.verifyReceipt) await opts.verifyReceipt(receipt);
-    if (heldReservation) hold.release(heldReservation);
+    if (heldReservation) await hold.release(heldReservation).catch(function () {});
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(async function(err) {
     try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }

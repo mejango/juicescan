@@ -20,7 +20,7 @@ describe('LP transaction receipt safety', () => {
     expect(helper).toContain('sendHeldWrite(hold, function');
     expect(helper.match(/wallet\.writeContract\(/g)).toHaveLength(1);
     expect(helper.indexOf('function send()')).toBeLessThan(helper.indexOf('sendHeldWrite('));
-    expect(helper).toContain('if (receipt && hold) hold.release(sent.reservation);');
+    expect(helper).toContain('if (receipt && hold) await hold.release(sent.reservation)');
   });
 
   it('confirms the direct-swap Permit2 approval through the shared dual-source receipt poll', () => {

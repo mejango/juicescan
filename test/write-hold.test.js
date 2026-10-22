@@ -56,7 +56,8 @@ it('settles a held hash from the chain on the next attempt, with no extra click 
  expect(document.querySelector('dialog[open]')).toBeNull();
  // Mined and successful: the hold settles itself and says so; nothing is sent again.
  h.client.getTransaction.mockResolvedValue({hash,from:h.account,nonce:7,blockNumber:10n});
- expect((await run()).error).toMatch(/went through in block 10/i);
+ const recovered=await run();
+ expect(recovered.ok).toMatch(/went through in block 10/i);expect(recovered.meta).toMatchObject({phase:'confirmed',hash,recovered:true});
  expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
  // Settled: the next attempt sends normally.
  expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(2);
@@ -73,6 +74,7 @@ it('offers one release action only when the chain cannot settle the hold',async(
  const buttons=[...document.querySelectorAll('dialog[open] button')].filter(b=>!b.classList.contains('modal-close'));
  expect(buttons).toHaveLength(1);
  buttons[0].click();
+ await vi.waitFor(()=>expect(document.querySelector('dialog[open]')).toBeNull());
  expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(2);
 });
 it('keeps one in-app confirmation on the normal send path',async()=>{
@@ -130,4 +132,17 @@ it('a hash kept in memory never lets an old attempt release a newer stored one',
  const k=Object.keys(localStorage)[0];localStorage.setItem(k,JSON.stringify({id:'b',account:h.account,hash:null}));
  hold.release(withHash);
  expect(hold.read().id).toBe('b');
+});
+it('a release waits for the action lock, so it cannot interleave with another window swapping attempts',async()=>{
+ const hold=writeHold(8453,h.account,call);const tick=()=>new Promise(r=>setTimeout(r));
+ const x=await hold.withLock(async()=>hold.reserve());await tick();
+ let finishB;const b=hold.withLock(()=>new Promise(resolve=>{finishB=resolve;}));await tick();
+ const remove=vi.spyOn(Storage.prototype,'removeItem');
+ try{
+  const staleRelease=hold.release(x);await tick();
+  expect(remove).not.toHaveBeenCalled();
+  // Another window, holding the lock, settles x and reserves y.
+  hold.releaseLocked(x);remove.mockClear();const y=hold.reserve();finishB();await b;await staleRelease;
+  expect(remove).not.toHaveBeenCalled();expect(hold.read().id).toBe(y.id);
+ }finally{remove.mockRestore();}
 });
