@@ -14,7 +14,7 @@ function pairsOf(client, chainId, projectId) {
   if (!registry) return Promise.resolve([]);
   if (!client) return Promise.reject(new Error('No RPC for chain ' + chainId + '.'));
   return client.readContract({ address: registry, abi: getABI('JBSuckerRegistry', chainId), functionName: 'suckerPairsOf', args: [BigInt(projectId)] })
-    .then(function (pairs) { return (pairs || []).map(function (p) { return { local: p.local, remoteChainId: Number(p.remoteChainId), remote: '0x' + String(p.remote).slice(-40) }; }); });
+    .then(function (pairs) { return (pairs || []).map(function (p) { return { local: p.local, remoteChainId: Number(p.remoteChainId), remote: '0x' + String(p.remote).slice(-40), remote32: p.remote }; }); });
 }
 
 // Active sucker pairs for a project on `chainId`: [{ local, remoteChainId }]. RPC failures propagate so
@@ -29,6 +29,9 @@ export function readSuckerPairsOf(projectId, chainId) {
 function peersOf(clientFor, chainId, projectId) {
   return pairsOf(clientFor(chainId), chainId, projectId).then(function (pairs) {
     return Promise.all(pairs.map(function (pair) {
+      if (!/^0x0{24}[0-9a-f]{40}$/i.test(String(pair.remote32)) || /^0x0{64}$/.test(String(pair.remote32))) {
+        return Promise.reject(new Error('The registry names a non-EVM sucker on chain ' + pair.remoteChainId + '.'));
+      }
       var remote = clientFor(pair.remoteChainId);
       if (!remote) return Promise.reject(new Error('No RPC for chain ' + pair.remoteChainId + '.'));
       function read(fn) { return remote.readContract({ address: pair.remote, abi: remoteSuckerAbi, functionName: fn, args: [] }); }
@@ -66,6 +69,7 @@ export async function resolveSuckerGroup(clientFor, chainId, projectId) {
 export function idMapFromGroup(group) {
   var home = group[0];
   var map = {}; map[home.chainId] = Number(home.projectId);
+  if (!Number.isSafeInteger(map[home.chainId]) || map[home.chainId] < 1) throw new Error('Unsupported project ID ' + home.projectId + '.');
   if (group.some(function (e) { return e.chainId === home.chainId && e.projectId !== home.projectId; })) return map;
   var conflicted = {};
   group.slice(1).forEach(function (e) {

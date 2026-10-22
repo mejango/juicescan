@@ -66,6 +66,15 @@ describe('resolveSuckerGroup', () => {
     await expect(resolveSuckerGroup(w.clientFor, 1, 5n)).rejects.toThrow(/not paired back/);
   });
 
+  it('a registry remote with dirty upper bytes is never read as an EVM sucker', async () => {
+    const w = world();
+    const { b } = w.pair([1, 5], [10, 7]);
+    const client = w.clientFor(1);
+    const pairs = await client.readContract({ address: '', functionName: 'suckerPairsOf', args: [5n] });
+    pairs[0].remote = '0x' + '22'.repeat(12) + b.slice(2);
+    await expect(resolveSuckerGroup(w.clientFor, 1, 5n)).rejects.toThrow(/non-EVM sucker on chain 10/);
+  });
+
   it('transitive hop adds a chain the home does not pair directly', async () => {
     const w = world();
     w.pair([1, 5], [10, 7]);
@@ -104,6 +113,10 @@ describe('idMapFromGroup', () => {
       { chainId: 1, projectId: 5n }, { chainId: 10, projectId: 7n }, { chainId: 10, projectId: 8n },
       { chainId: 10, projectId: 7n }, { chainId: 8453, projectId: 2n ** 53n },
     ])).toEqual({ 1: 5 });
+  });
+
+  it('refuses a home ID that does not fit a safe integer', () => {
+    expect(() => idMapFromGroup([{ chainId: 1, projectId: 2n ** 53n + 1n }])).toThrow(/Unsupported project ID/);
   });
 
   it('a group naming another project on the home chain authorizes only the home entry', () => {

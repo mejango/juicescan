@@ -2076,7 +2076,7 @@ function resolveSplitProject(projectId, chainId) {
     return { name: name, byChain: homeIdMap({ chainId: chainId, id: projectId }), chainsUnverified: true };
   });
   _splitProjCache[key] = p;
-  p.then(function (info) { if (info && info.chainsUnverified && _splitProjCache[key] === p) delete _splitProjCache[key]; },
+  p.then(function (info) { if ((!info || info.chainsUnverified) && _splitProjCache[key] === p) delete _splitProjCache[key]; },
     function () { if (_splitProjCache[key] === p) delete _splitProjCache[key]; });
   return p;
 }
@@ -2909,7 +2909,8 @@ async function readAddShopTargets(project, chains, hookMap) {
       client.readContract({ address: hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] }),
     ]);
     var pricing = values[1];
-    return { chainId: chain.id, projectId: pidOn(project, chain.id), hook: hook, store: values[0],
+    // `recipientIds` marks plans whose split recipient IDs came from the sucker registry, not the indexer.
+    return { chainId: chain.id, projectId: pidOn(project, chain.id), hook: hook, store: values[0], recipientIds: 'onchain',
       pricing: { currency: Number(pricing.currency == null ? pricing[0] : pricing.currency), decimals: Number(pricing.decimals == null ? pricing[1] : pricing.decimals) } };
   }));
 }
@@ -2920,6 +2921,7 @@ async function reverifyShopAddCalls(project, calls, chainId, sender) {
   var fresh = await readAddShopTargets(project, chains, hooks);
   await Promise.all(selected.map(async function (call, index) {
     var old = call.shopAddValidation, live = fresh[index];
+    if (old && old.recipientIds !== live.recipientIds) throw new Error('This saved action predates onchain recipient checks. Start it again.');
     if (!old || BigInt(old.projectId) !== pidOn(project, call.chainId) || !sameAddr(old.hook, live.hook) || !sameAddr(old.store, live.store)
         || old.pricing.currency !== live.pricing.currency || old.pricing.decimals !== live.pricing.decimals) throw new Error('A selected shop changed. Resume only after verifying the original target and pricing.');
     if (!await accountCanShopPermissionOn(project, call.chainId, call.to, sender, 24n)) throw new Error('The execution account no longer has ADJUST_721_TIERS permission.');
@@ -7786,7 +7788,7 @@ function applyProjectDisplayRefresh(project, fresh) {
 
 function prepareProjectTransactionScope(project) {
   if (project._bendystrawConfirmed) {
-    if (project._transactionScopeConfirmed) return Promise.resolve(project);
+    if (project._transactionScopeConfirmed && !project.chainsUnverified) return Promise.resolve(project);
     // Grid grouping is allowed to be stale. Read the sucker group onchain
     // instead of accepting that map.
     return attachProjectChainIds(project).then(function (scoped) {
