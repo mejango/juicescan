@@ -9255,7 +9255,7 @@ export function renderPayCard(project, cart) {
   }
   function nftRouteForToken(t) { return t ? state.nftRoutes[nftTokenKey(t)] : null; }
   function nftCheckoutTokens() {
-    if (isNativeInventory(state.shop) || !selectedTierIds().length) return state.tokens || [];
+    if (isNativeInventory(state.shop) || !checkoutTierIds().length) return state.tokens || [];
     if (state.nftRoutesLoading) return [];
     return (state.tokens || []).filter(function (t) { var route = nftRouteForToken(t); return route && route.supported; });
   }
@@ -9324,6 +9324,8 @@ export function renderPayCard(project, cart) {
   }
   function nftTierById(id) { return state.shop ? state.shop.tiers.filter(function (t) { return t.id === id; })[0] : null; }
   function nftTotalWei() { return nftCartSubtotal(state.shop, cart); }
+  // Only a Pay mints the selected items; Add to balance ignores them, so its amount and currencies never wait on the shop.
+  function checkoutTierIds() { return state.mode === 'pay' ? selectedTierIds() : []; }
   function selectedTierIds() {
     var a = [], sel = cart.entries();
     Object.keys(sel).forEach(function (id) { for (var i = 0; i < sel[id]; i++) a.push(Number(id)); });
@@ -9395,7 +9397,7 @@ export function renderPayCard(project, cart) {
       state.nftCredits = 0n;
       state.nftCreditsLoading = false;
       state.nftCreditsError = false;
-      if (!isNativeInventory(shop) && selectedTierIds().length) syncNftAmountForSelection();
+      if (!isNativeInventory(shop) && checkoutTierIds().length) syncNftAmountForSelection();
       rebuildCurrency();
       renderFeedback();
       return Promise.resolve(0n);
@@ -9409,7 +9411,7 @@ export function renderPayCard(project, cart) {
       state.nftCredits = credits;
       state.nftCreditsError = failed;
       state.nftCreditsLoading = false;
-      if (selectedTierIds().length) {
+      if (checkoutTierIds().length) {
         syncNftAmountForSelection();
         schedulePreview();
       }
@@ -9424,7 +9426,7 @@ export function renderPayCard(project, cart) {
   // Why the selected items cannot be checked out on this chain yet, or null. The amount due is unknown until the
   // chain's own shop and the payer's credits on it are read, so Pay stays off: { text, retry }.
   function nftCheckoutBlock() {
-    var ids = state.mode === 'pay' ? selectedTierIds() : [];
+    var ids = checkoutTierIds();
     if (!ids.length || isNativeInventory(state.homeShop)) return null;
     var chainName = payChainName(state.chainId, chainNameFor(state.chainId));
     if (state.shopStatus === 'loading') return { text: 'Checking the shop on ' + chainName + '…' };
@@ -9446,7 +9448,7 @@ export function renderPayCard(project, cart) {
       refreshNftCredits();
       rebuildCurrency(); renderFeedback();
       // Only an NFT checkout depends on the shop; an ordinary payment keeps its quote and open review.
-      if (selectedTierIds().length) { refreshNftCheckoutRoutes(); schedulePreview(); }
+      if (checkoutTierIds().length) { refreshNftCheckoutRoutes(); schedulePreview(); }
     };
     if (Number(cid) === Number(project.chainId) || !home || isNativeInventory(home)) {
       state.shop = home; state.shopStatus = 'ready'; done(); return Promise.resolve();
@@ -9455,7 +9457,7 @@ export function renderPayCard(project, cart) {
     var chainProject;
     try { chainProject = Object.assign({}, project, { chainId: cid, id: Number(pidOn(project, cid)) }); }
     catch (_) { state.shopStatus = 'failed'; done(); return Promise.resolve(); }
-    if (selectedTierIds().length) syncNftAmountForSelection();
+    if (checkoutTierIds().length) syncNftAmountForSelection();
     renderFeedback();
     return fetchProjectTiers(chainProject).then(function (shop) {
       if (gen !== shopGeneration) return;
@@ -9560,7 +9562,8 @@ export function renderPayCard(project, cart) {
         state.mode = 'pay'; modeSel.value = 'pay'; updateModeUi();
         return;
       }
-      useChainShop();
+      // Another chain's checkout already reads its own shop (started from onIdentity or the chain picker).
+      if (Number(state.chainId) === Number(project.chainId)) useChainShop();
     },
     onError: function (error, retryRead) {
       status.textContent = errMessage(error, 'Could not verify NFT inventory.');
@@ -9591,6 +9594,8 @@ export function renderPayCard(project, cart) {
   modeSel.value = state.mode;
   modeSel.addEventListener('change', function () {
     state.mode = modeSel.value;
+    rebuildCurrency();
+    if (checkoutTierIds().length) { refreshNftCheckoutRoutes(); syncNftAmountForSelection(); }
     updateModeUi();
     schedulePreview();
   });
@@ -9620,11 +9625,11 @@ export function renderPayCard(project, cart) {
         chainSel,
         applyPayChainFontSize(chainSel, chainSel.options[chainSel.selectedIndex] && chainSel.options[chainSel.selectedIndex].textContent),
       );
+      useChainShop();
       rebuildCurrency();
       loadPaymentSurface(state.chainId);
       schedulePreview();
       loadAcceptedTokens(state.chainId); // refine for the newly-selected chain
-      useChainShop();
     });
     payOn.appendChild(chainSel);
     sizeSelectToText(
@@ -9649,12 +9654,12 @@ export function renderPayCard(project, cart) {
   function rebuildCurrency() {
     currWrap.innerHTML = '';
     var shownTokens = nftCheckoutTokens();
-    if (selectedTierIds().length && state.nftRoutesLoading) {
+    if (checkoutTierIds().length && state.nftRoutesLoading) {
       var checking = el('span', 'paybox-curr-static'); checking.textContent = 'Checking…'; currWrap.appendChild(checking);
       if (payBtn) payBtn.disabled = true;
       return;
     }
-    if (selectedTierIds().length && !shownTokens.length) {
+    if (checkoutTierIds().length && !shownTokens.length) {
       var unavailable = el('span', 'paybox-curr-static'); unavailable.textContent = 'Unavailable'; currWrap.appendChild(unavailable);
       if (payBtn) payBtn.disabled = true;
       return;
@@ -9678,7 +9683,7 @@ export function renderPayCard(project, cart) {
         if (t) { state.token = t; state.tokenTouched = true; }
         sizeSelectToText(sel, 13);
         renderTerminalNotice();
-        if (selectedTierIds().length) syncNftAmountForSelection();
+        if (checkoutTierIds().length) syncNftAmountForSelection();
         schedulePreview();
       });
       currWrap.appendChild(sel);

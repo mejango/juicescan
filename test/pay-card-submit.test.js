@@ -616,3 +616,36 @@ it('keeps an ordinary payment’s open review when the shop finishes loading', a
   await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
   expect(() => runtime.execute.mock.lastCall[0].assertWriteState()).not.toThrow();
 });
+
+it('keeps Add to balance usable when another chain’s shop cannot be read', async () => {
+  twoChainShop({ opInventory: () => { throw new Error('RPC unavailable'); } });
+  await twoChainCard(658);
+  const mode = document.querySelector('.paybox-mode');
+  mode.value = 'addbalance'; mode.dispatchEvent(new Event('change'));
+  type('1');
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain('Adds to the project balance'), { timeout: 5000 });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  expect(document.querySelector('.paybox-amount-row input').value).toBe('1');
+  expect(payButton().disabled).toBe(false);
+  expect(document.querySelector('.paybox-curr-wrap').textContent).not.toBe('Unavailable');
+});
+
+it('keeps an open review on another chain when the home chain’s items finish loading', async () => {
+  const homeItems = deferred();
+  twoChainShop({ opInventory: inventory => inventory });
+  const inventoryOf = runtime.inventory.getMockImplementation();
+  runtime.inventory.mockImplementation(async (client, args) => (Number(args.chainId) === 8453 && args.tierLimit !== 1
+    ? homeItems.promise.then(() => inventoryOf(client, args)) : inventoryOf(client, args)));
+  const cart = makeNftCart(); cart.set(1, 1);
+  document.body.append(renderPayCard({ id: 660, chainId: 8453, ruleset: { start: 0, weight: 10n ** 18n }, isRevnet: false,
+    idByChain: { 8453: 660, 10: 661 }, chains: [{ id: 10, name: 'Optimism' }, { id: 8453, name: 'Base' }] }, cart));
+  await vi.waitFor(() => expect(runtime.prepare.mock.calls.some(([, args]) => args.projectId === 661n && args.tiers?.metadataIdTarget === ID_TARGET_OP)).toBe(true), { timeout: 5000 });
+  await vi.waitFor(() => expect(payButton().disabled).toBe(false));
+  await review();
+  homeItems.resolve();
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2), { timeout: 5000 });
+  await new Promise(resolve => setTimeout(resolve, 600));
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(() => runtime.execute.mock.lastCall[0].assertWriteState()).not.toThrow();
+});
