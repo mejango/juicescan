@@ -3,12 +3,14 @@ import { parseAbi, encodeFunctionData } from 'viem';
 import { runSavedActionPlan, discardUnsubmittedActionPlan, hasSavedActionPlan } from '../src/action-plan.js';
 import { offerRefusedActionDiscard } from '../src/discover.js';
 import { makeStatusSetter } from '../src/component-base.js';
+import { relayrPendingRecordExists } from '../src/relayr.js';
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const TARGET = '0x2222222222222222222222222222222222222222';
 const ABI = parseAbi(['function claimTokensFor(address holder, uint256 projectId, uint256 tokenCount, address beneficiary)']);
 const SCOPE = 'action:8453:11:add-shop-items';
 const KEY = 'jb-selected-action-v1:' + ACCOUNT + ':' + SCOPE;
+const PREFIX_RELAYR = 'jb-relayr-pending-v1:';
 function call(chainId) {
   const args = [ACCOUNT, BigInt(chainId), 1n, ACCOUNT];
   return { chainId, to: TARGET, abi: ABI, functionName: 'claimTokensFor', args, data: encodeFunctionData({ abi: ABI, functionName: 'claimTokensFor', args }) };
@@ -85,5 +87,20 @@ describe('the refused-state Discard control', () => {
     box.querySelector('button').click();
     await vi.waitFor(() => expect(box.querySelector('button')).toBeNull());
     expect(setStatus.element.textContent).toMatch(/may have been sent/);
+  });
+});
+
+describe('Relayr evidence for a discard', () => {
+  it('reads the captured account’s record without repairing it, and counts an unreadable one', () => {
+    const scope = SCOPE + ':plan:round:0';
+    const key = PREFIX_RELAYR + ACCOUNT + ':' + scope;
+    expect(relayrPendingRecordExists(scope, ACCOUNT)).toBe(false);
+    localStorage.setItem(key, '{not json');
+    expect(relayrPendingRecordExists(scope, ACCOUNT)).toBe(true);
+    expect(localStorage.getItem(key)).toBe('{not json');
+    expect(relayrPendingRecordExists(scope, '0x3333333333333333333333333333333333333333')).toBe(false);
+    localStorage.clear();
+    localStorage.setItem(PREFIX_RELAYR + scope, '{}');
+    expect(relayrPendingRecordExists(scope, ACCOUNT)).toBe(true);
   });
 });

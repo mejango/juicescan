@@ -17,7 +17,7 @@ import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive 
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
@@ -11012,11 +11012,12 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
       Object.assign({}, opts, { pendingScope: scope }));
     return { relayr: true, resumed: true, session: old, completed: true };
   }
-  var preparedChecks = null;
+  var preparedChecks = null, resumedPlan = true;
   var outcome = await runSavedActionPlan({
     scope: scope, account: account, executionAccount: sender, safeMode: !!authoritySafe, gas: opts.gas,
     maxCalls: opts.maxCalls,
     prepare: async function () {
+      resumedPlan = false;
       var prepared = await prepare(sender);
       preparedChecks = opts._preparedReverify;
       return prepared;
@@ -11047,13 +11048,14 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
           if (!getAccount() || !sameAddr(getAccount(), account)) throw new Error('Connected account changed. Resume with the original wallet.');
           if (opts.reverifySaved) {
             try { await opts.reverifySaved(calls, chainId, sender); } catch (error) {
-              offerRefusedActionDiscard(setStatus, function () {
+              if (resumedPlan) offerRefusedActionDiscard(setStatus, function () {
                 return discardUnsubmittedActionPlan(scope, account, plan.id, async function () {
-                  return !loadRelayrPendingSession(roundScope) && await clearUnsubmittedDirectBatch(roundScope, account, calls);
+                  return !relayrPendingRecordExists(roundScope, account) && await clearUnsubmittedDirectBatch(roundScope, account, calls);
                 });
               });
               throw error;
             }
+            removeRefusedActionDiscard(setStatus);
           } else if (preparedChecks) await preparedChecks(chainId);
           else if (opts.reverify) await opts.reverify(chainId);
         },

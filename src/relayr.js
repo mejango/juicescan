@@ -878,6 +878,16 @@ export function saveRelayrPendingSession(scope, session) {
   return snapshot;
 }
 
+// Whether any Relayr record exists for `scope` under `account` or the legacy unkeyed slot. It never adopts, repairs or
+// deletes a record, and an unreadable one counts as present.
+export function relayrPendingRecordExists(scope, account) {
+  var keys = [relayrPendingStorageKey(scope, { account: account }), relayrLegacyStorageKey(scope)];
+  return keys.some(function (key) {
+    if (RELAYR_UNSAVED_SESSIONS[key]) return true;
+    try { return localStorage.getItem(key) != null; } catch (_) { return true; }
+  });
+}
+
 export function loadRelayrPendingSession(scope, ownerSession) {
   if (!scope) return null;
   var key = relayrPendingStorageKey(scope, ownerSession);
