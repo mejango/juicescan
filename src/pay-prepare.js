@@ -4,7 +4,7 @@
 // v6/terminals.ts#getAccountingContexts/#resolvePaymentTerminal and v6/uniswapV3.ts/uniswapV4.ts quotes;
 // test/fixtures/sdk-3.4.1/pay-prepare.json pins identical metadata, previews, minimums and reads.
 
-import { decodeFunctionResult, encodeAbiParameters, encodeFunctionData, getAddress as checksumAddress, keccak256, zeroAddress } from 'viem';
+import { BaseError, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, getAddress as checksumAddress, keccak256, zeroAddress } from 'viem';
 import { getABI } from './abi-registry.js';
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { v6Address } from './nft-inventory-read.js';
@@ -422,13 +422,14 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
     ),
   };
   if (!buyback || buyback.amountToSwapWith === 0n) return fallback;
-  // Every read and quote below goes through `watched`, which records a failure so the catch can tell a lost read
-  // from a route that simply does not apply.
+  // Every read and quote below goes through `watched`, which records a failure (thrown at once or later) so the
+  // catch can tell a lost read from a route that simply does not apply.
   let readFailed = false;
   const lost = (error) => { readFailed = true; throw error; };
+  const watch = (send) => { try { return send().catch(lost); } catch (error) { return lost(error); } };
   const watched = {
-    readContract: (parameters) => client.readContract(parameters).catch(lost),
-    call: (parameters) => client.call(parameters).then((result) => { if (!result.data) readFailed = true; return result; }, lost),
+    readContract: (parameters) => watch(() => client.readContract(parameters)),
+    call: (parameters) => watch(() => client.call(parameters)).then((result) => { if (!result.data) readFailed = true; return result; }),
   };
   try {
     const pool = await buybackPoolOf(watched, { chainId, hook: buyback.hook, projectId, token, poolId: buyback.poolId });
@@ -482,8 +483,10 @@ export async function prepareUserPay(client, { tiers, slippageBps = PAY_DEFAULT_
       };
     };
     return { metadata: quotedMetadata, preview: settle(quoted), minReturnedTokens: settle(minimumSwapAmountOut).beneficiaryTokenCount };
-  } catch {
-    if (readFailed && !buyback.noop) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+  } catch (error) {
+    // viem raises an unreadable answer (such as a truncated quote) as a BaseError; only this module's own
+    // "route does not apply" errors (no quoter, no router, amount out of range) are plain.
+    if (!buyback.noop && (readFailed || error instanceof BaseError)) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE);
     return fallback;
   }
 }

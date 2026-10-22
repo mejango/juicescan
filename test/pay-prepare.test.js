@@ -138,6 +138,17 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     }
   });
 
+  it('refuses a swap whose quote is malformed or whose client throws synchronously, never a fallback minimum', async () => {
+    const c = byName('quote failure with a tiny mint entitlement');
+    const client = (patch) => { const base = strictClient(c.reads, []); return { ...base, ...patch(base) }; };
+    const truncated = client(() => ({ call: async () => ({ data: '0x12' }) }));
+    await expect(prepareUserPay(truncated, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    const syncCall = client(() => ({ call: () => { throw new Error('socket closed'); } }));
+    await expect(prepareUserPay(syncCall, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    const syncRead = client((base) => ({ readContract: (p) => { if (p.functionName === 'poolKeyOf') throw new Error('socket closed'); return base.readContract(p); } }));
+    await expect(prepareUserPay(syncRead, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+  });
+
   it('builds the same pay transaction the SDK does, with the terminal ABI from the registry', () => {
     const c = byName('buildPayTx native');
     const tx = buildPayTx(c.input);
