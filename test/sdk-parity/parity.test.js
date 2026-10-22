@@ -107,9 +107,9 @@ async function replayAll(golden, label) {
     if (c.sdkOutput) {
       divergent += 1;
       expect([c.sdkOutput, c.output], c.name).toContainEqual(actual);
-      continue;
+    } else {
+      expect(actual, c.name).toEqual(c.output);
     }
-    expect(actual, c.name).toEqual(c.output);
     const keys = Object.keys(c.reads ?? {});
     expect(calls.map((key) => keys.indexOf(key)), c.name + ' reads, in order, once each as recorded').toEqual(c.trace ?? []);
   }
