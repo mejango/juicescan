@@ -71,21 +71,29 @@ it('leaves holds to a caller that keeps its own journal',async()=>{
  expect((await run({onSending:async()=>{},onWriteRejected:()=>{}})).ok).toBeTruthy();
 });
 
-import {writeHold,findHeldWrite} from '../src/write-hold.js';
+import {writeHold} from '../src/write-hold.js';
 const call={to:args.address,functionName:'pay',data:'0xabcd',value:1n};
-function chainAt(usedAt,tx){return {getBlockNumber:async()=>200n,getTransactionCount:async({blockNumber})=>blockNumber>=usedAt?8:7,getBlock:async({blockNumber})=>({number:blockNumber,transactions:blockNumber===usedAt?[tx]:[]})};}
-it('finds a no-hash write at its saved nonce and settles it only when the exact call is there',async()=>{
- const hold=writeHold(8453,h.account,call);const record=await hold.withLock(async()=>hold.reserve({nonce:7n,blockNumber:100n}));
- const same={hash:'0x'+'b'.repeat(64),from:h.account,nonce:7,to:args.address,input:'0xabcd',value:1n};
- expect(await findHeldWrite(chainAt(150n,same),record)).toEqual({status:'sent',hash:same.hash});
- expect(await findHeldWrite(chainAt(150n,{...same,input:'0x1234'}),record)).toEqual({status:'pending',usedBy:same.hash});
- expect(await findHeldWrite(chainAt(500n,same),record)).toEqual({status:'pending'});
-});
-it('holds in tab memory when browser storage refuses writes',async()=>{
+it('refuses to open the wallet when browser storage cannot keep the hold',async()=>{
  const set=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('quota');});
- try{
-  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
-  await run();expect((await run()).error).toMatch(/earlier/i);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
- }finally{set.mockRestore();}
- writeHold(8453,h.account,call).abandon();
+ try{expect((await run()).error).toMatch(/browser storage/i);}finally{set.mockRestore();}
+ expect(h.wallet.writeContract).not.toHaveBeenCalled();
+});
+it('holds on a non-4001 rejection code',async()=>{
+ h.wallet.writeContract.mockRejectedValueOnce(Object.assign(new Error('rejected'),{code:'ACTION_REJECTED'}));
+ await run();expect((await run()).error).toMatch(/earlier/i);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});
+it('does not open the wallet when another window took the slot before the wallet opened',async()=>{
+ const key=Object.keys(localStorage);expect(key).toHaveLength(0);
+ const takeOver=()=>{const k=Object.keys(localStorage)[0];if(k)localStorage.setItem(k,JSON.stringify({id:'other',account:h.account}));};
+ const first=await run({assertWriteState:takeOver});
+ expect(first.error).toMatch(/another window/i);expect(h.wallet.writeContract).not.toHaveBeenCalled();
+ expect(JSON.parse(localStorage.getItem(Object.keys(localStorage)[0])).id).toBe('other');
+});
+it('a stale dialog never releases a newer attempt',async()=>{
+ h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
+ await run();await run();
+ const k=Object.keys(localStorage)[0];localStorage.setItem(k,JSON.stringify({id:'newer',account:h.account}));
+ [...document.querySelectorAll('dialog[open] button')].find(b=>/checked my wallet/i.test(b.textContent)).click();
+ expect(JSON.parse(localStorage.getItem(k)).id).toBe('newer');
+ expect(writeHold(8453,h.account,call).read().id).toBe('newer');
 });

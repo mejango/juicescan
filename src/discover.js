@@ -7,7 +7,7 @@ import { MAX_DEFIFA_ACTION_NFTS, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS,
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { holdForWrite, heldWriteRefuses, sendHeldWrite, readWriteNonce, HELD_WRITE_LINE, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { holdForWrite, heldWriteRefuses, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
@@ -29317,14 +29317,14 @@ async function lpSendTx(chainId, p) {
   if (!wallet || !acct || acct.toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   // A multisig step resumes from its Safe queue; every other LP send is held until its receipt is read.
   var hold = p.smartWallet ? null : holdForWrite(chainId, acct, p);
-  if (hold && heldWriteRefuses(hold, p.functionName)) throw new Error(HELD_WRITE_LINE);
+  var heldLine = hold ? heldWriteRefuses(hold, p.functionName) : '';
+  if (heldLine) throw new Error(heldLine);
   var client = clientFor(chainId);
   var simulation = await client.simulateContract({ account: acct, address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
   if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-  var nonce = hold ? readWriteNonce(client, acct) : null;
   var gas = await contractGasWithHeadroom(client, simulation.request);
   function send() { return wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId], gas: gas })); }
-  var sent = hold ? await sendHeldWrite(hold, nonce, function () {
+  var sent = hold ? await sendHeldWrite(hold, function () {
     if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   }, send) : { hash: await send() };
   var hash = sent.hash;

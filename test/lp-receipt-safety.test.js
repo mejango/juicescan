@@ -17,7 +17,7 @@ describe('LP transaction receipt safety', () => {
     const start = source.indexOf('async function lpSendTx');
     const helper = source.slice(start, source.indexOf('\nvar lpPositionViewAbi', start));
     expect(helper).toContain('heldWriteRefuses(hold');
-    expect(helper).toContain('sendHeldWrite(hold, nonce');
+    expect(helper).toContain('sendHeldWrite(hold, function');
     expect(helper.match(/wallet\.writeContract\(/g)).toHaveLength(1);
     expect(helper.indexOf('function send()')).toBeLessThan(helper.indexOf('sendHeldWrite('));
     expect(helper).toContain('if (receipt && hold) hold.release(sent.reservation);');

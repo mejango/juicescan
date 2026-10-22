@@ -1,68 +1,73 @@
-// A lean local copy of the SDK's write hold (nana-sdk-core review/writeRecovery: createBrowserWriteRecovery,
-// readReviewedWriteNonce, checkReviewedWrite, findTransactionAtNonce). One record per account, chain, target
-// and function, saved before the wallet opens. Only an explicit wallet rejection drops it before a receipt; any
-// other outcome keeps the action held, across reloads, until a receipt or the user's own wallet check ends it.
+// A lean local copy of the SDK's write hold (nana-sdk-core review/writeRecovery: createBrowserWriteRecovery's
+// reserve/submitted/rejected/clear/abandon/withLock, and checkReviewedWrite for a saved hash). One record per
+// account, chain, target and function, saved in browser storage before the wallet opens. Only an explicit
+// wallet rejection (EIP-1193 4001) drops it before a receipt; any other outcome keeps the action held, across
+// reloads, until a read receipt or the user's own wallet check ends it.
 var PREFIX = 'juicescan-write-hold-v1:';
-// Browser storage when it can be written; this tab's memory when it can't (private mode, sandboxed frames).
+// Only a hash whose save failed after the wallet answered lives here: the hold still covers this tab.
 var memory = new Map();
 var busy = new Set();
+var STORAGE_LINE = 'Browser storage is unavailable. Enable it before sending; nothing was sent.';
 
 function getItem(key) {
   if (memory.has(key)) return memory.get(key);
-  try { return localStorage.getItem(key); } catch (_) { return null; }
+  try { return localStorage.getItem(key); } catch (_) { throw new Error(STORAGE_LINE); }
 }
-function setItem(key, raw) {
-  try { localStorage.setItem(key, raw); if (localStorage.getItem(key) === raw) { memory.delete(key); return; } } catch (_) {}
-  memory.set(key, raw);
-}
-function removeItem(key) {
-  memory.delete(key);
-  try { localStorage.removeItem(key); } catch (_) {}
+function saved(key, raw) {
+  try { localStorage.setItem(key, raw); return localStorage.getItem(key) === raw; } catch (_) { return false; }
 }
 function newId() {
   try { return crypto.randomUUID(); } catch (_) { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 }
 
+export function isExplicitWalletRejection(error) {
+  for (var cause = error, depth = 0; cause && depth < 8; cause = cause.cause, depth++) if (cause.code === 4001) return true;
+  return false;
+}
+
 export function writeHold(chainId, account, call) {
   var key = PREFIX + String(account).toLowerCase() + ':' + chainId + ':' + String(call.to).toLowerCase() + ':' + call.functionName;
-  // An unreadable record still holds: it names no call, so only the user's check can end it.
+  // An unparseable record still holds; only the user's check can end it. Unreadable storage throws.
   function read() {
     var raw = getItem(key);
     if (raw == null) return null;
     try { var record = JSON.parse(raw); return record && typeof record === 'object' ? record : {}; } catch (_) { return {}; }
   }
-  // Only the record `expected` names is touched, so a stale callback never ends a newer attempt.
-  function update(expected, fields) {
-    var current = read();
-    if (!current || current.id !== expected.id) return current;
-    var next = Object.assign({}, current, fields);
-    setItem(key, JSON.stringify(next));
-    return next;
+  function mine(expected) { var current = read(); return !!current && current.id === expected.id; }
+  // Removes only the record `expected` names, so a stale callback or dialog never ends a newer attempt.
+  function release(expected) {
+    if (!mine(expected)) return;
+    memory.delete(key);
+    try { localStorage.removeItem(key); } catch (_) {}
   }
   return {
     chainId: chainId,
     account: account,
     read: read,
-    reserve: function (evidence) {
+    // Refuses unless the record is verifiably in browser storage: a hold that cannot survive a reload is no hold.
+    reserve: function () {
       if (read()) throw new Error('An earlier transaction for this action is not settled. Check it before sending again.');
-      var record = { id: newId(), chainId: chainId, account: String(account).toLowerCase(), to: String(call.to).toLowerCase(), data: String(call.data).toLowerCase(), value: String(call.value || 0n) };
-      if (evidence) { record.nonce = String(evidence.nonce); record.fromBlock = String(evidence.blockNumber); }
-      setItem(key, JSON.stringify(record));
+      var record = { id: newId(), account: String(account).toLowerCase(), hash: null };
+      if (!saved(key, JSON.stringify(record))) throw new Error(STORAGE_LINE);
       return record;
     },
-    submitted: function (expected, hash) { return update(expected, { hash: String(hash).toLowerCase() }); },
-    release: function (expected) {
-      var current = read();
-      if (current && current.id === expected.id) removeItem(key);
+    // Without Web Locks another tab may have overwritten the slot between read and write: re-read right before
+    // the wallet opens, so only the tab whose record is there sends.
+    owns: mine,
+    submitted: function (expected, hash) {
+      if (!mine(expected)) return expected;
+      var next = Object.assign({}, expected, { hash: String(hash).toLowerCase() });
+      var raw = JSON.stringify(next);
+      if (saved(key, raw)) memory.delete(key); else memory.set(key, raw);
+      return next;
     },
-    // The user's exit after checking their wallet, or a settled check.
-    abandon: function () { removeItem(key); },
-    // One send or check per action at a time, across tabs when Web Locks exist.
+    release: release,
     withLock: function (work) {
       var refused = function () { return Promise.reject(new Error('This wallet action is already open in another window.')); };
       if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
         return navigator.locks.request(key, { ifAvailable: true }, function (lock) { return lock ? work() : refused(); });
       }
+      // ponytail: in-tab lock only where Web Locks are missing (pre-2022 browsers); `owns` narrows the cross-tab race.
       if (busy.has(key)) return refused();
       busy.add(key);
       return Promise.resolve().then(work).finally(function () { busy.delete(key); });
@@ -70,39 +75,9 @@ export function writeHold(chainId, account, call) {
   };
 }
 
-// The account's next nonce (pending included) and the block it was read at, read before the wallet opens.
-export async function readWriteNonce(client, account) {
-  try {
-    // Read together: a block read after the nonce only lowers the search, never hides the nonce's transaction.
-    var reads = await Promise.all([client.getBlockNumber(), client.getTransactionCount({ address: account, blockTag: 'pending' })]);
-    var blockNumber = reads[0], nonce = reads[1];
-    return { nonce: BigInt(nonce), blockNumber: BigInt(blockNumber) };
-  } catch (_) { return null; }
-}
-
-// What the chain shows of a held write: `sent` with the hash to read the receipt of, or `pending`.
-// `usedBy`: another transaction took the nonce (it may still have run the call inside it, so it proves nothing).
-export async function findHeldWrite(client, record) {
-  if (record.hash) {
-    var tx = await client.getTransaction({ hash: record.hash }).catch(function () { return null; });
-    if (tx && String(tx.from).toLowerCase() === record.account && tx.blockNumber != null) return { status: 'sent', hash: record.hash };
-    return { status: 'pending' };
-  }
-  if (record.nonce == null || record.fromBlock == null) return { status: 'pending' };
-  var nonce = BigInt(record.nonce);
-  var count = async function (blockNumber) { return BigInt(await client.getTransactionCount({ address: record.account, blockNumber: blockNumber })); };
-  // ponytail: searches up to `latest`, not a finalized block; a reorg after the match is caught by the receipt read.
-  var high = BigInt(await client.getBlockNumber()), low = BigInt(record.fromBlock);
-  if (high <= low || (await count(high)) <= nonce || (await count(low)) > nonce) return { status: 'pending' };
-  while (high - low > 1n) {
-    var middle = (low + high) / 2n;
-    if ((await count(middle)) > nonce) high = middle; else low = middle;
-  }
-  var block = await client.getBlock({ blockNumber: high, includeTransactions: true });
-  var used = (block.transactions || []).find(function (t) { return String(t.from).toLowerCase() === record.account && BigInt(t.nonce) === nonce; });
-  if (!used) return { status: 'pending' };
-  if (String(used.to).toLowerCase() === record.to && String(used.input).toLowerCase() === record.data && BigInt(used.value || 0) === BigInt(record.value)) {
-    return { status: 'sent', hash: used.hash };
-  }
-  return { status: 'pending', usedBy: used.hash };
+// Whether the saved hash is this account's mined transaction (its receipt then settles the hold).
+export async function heldHashMined(client, record) {
+  if (!record.hash) return false;
+  var tx = await client.getTransaction({ hash: record.hash }).catch(function () { return null; });
+  return !!tx && String(tx.from).toLowerCase() === record.account && tx.blockNumber != null;
 }

@@ -334,4 +334,6 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - **Verification:** Failing-first vitest: ambiguous error then a second call does not open the wallet; 4001 releases; success clears; record survives a module reload (localStorage); check resolves by receipt. Then `npm run test:ci` (+ deps/audit), bundle budgets before/after.
 - **Resource budget:** Nonce read runs in parallel with gas estimation (no new happy-path waterfall). Two Codex passes. Replan if budgets fail.
 
-- [ ] Failing tests  - [ ] Shared hold helper + executeTransaction  - [ ] lpSendTx + form.js  - [ ] Gates + budgets  - [ ] Codex x2  - [ ] PR
+- [x] Failing tests (fail on origin/main source)  - [x] Shared hold + executeTransaction  - [x] lpSendTx + form.js  - [x] Gates + budgets
+- [x] Codex pass 1 (request changes): storage now fails closed before the wallet; slot re-read before the wallet opens; release only the shown attempt; 4001-only release predicate; nonce search dropped (an estimated nonce cannot bind a no-hash attempt, as in the SDK), so no-hash holds end only by the user's wallet check.
+- Direction change: local code mirroring the SDK, no new SDK imports.
