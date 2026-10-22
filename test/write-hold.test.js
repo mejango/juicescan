@@ -154,3 +154,13 @@ it('a release of the no-hash attempt shown never removes the hash its open walle
  hold.submitted(shown,'0x'+'d'.repeat(64));finishA();await a;await staleRelease;
  expect(hold.read().hash).toBe('0x'+'d'.repeat(64));
 });
+it('a release dialog shown before a hash arrived cannot clear that hash',async()=>{
+ h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
+ await run();await run();
+ const k=Object.keys(localStorage)[0];const shown=JSON.parse(localStorage.getItem(k));
+ localStorage.setItem(k,JSON.stringify({...shown,hash:'0x'+'e'.repeat(64)}));
+ document.querySelector('dialog[open] .create-btn.primary').click();await new Promise(r=>setTimeout(r));
+ expect(JSON.parse(localStorage.getItem(k)).hash).toBe('0x'+'e'.repeat(64));
+ h.client.getTransaction.mockResolvedValue({hash:'0x'+'e'.repeat(64),from:h.account,nonce:7,blockNumber:null});
+ expect((await run()).error).toMatch(/still pending/i);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});

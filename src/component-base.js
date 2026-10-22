@@ -1455,10 +1455,10 @@ function offerHeldRelease(hold, record, line) {
   release.addEventListener('click', function () {
     var current;
     try { current = hold.read(); } catch (err) { note.textContent = errMessage(err, 'Could not release it.'); return; }
-    // Only the attempt this dialog shows: a newer one started elsewhere stays held.
-    if (current && current.id !== record.id) { note.textContent = 'A newer attempt is held. Try the action again to check it.'; return; }
+    // Only the attempt this dialog shows, in the state shown: a newer attempt or a hash saved since stays held.
+    if (current && (current.id !== record.id || (current.hash || null) !== (record.hash || null))) { note.textContent = 'This action changed since this check. Try it again to see where it stands.'; return; }
     release.disabled = true;
-    Promise.resolve(current && hold.release(current)).then(modal.close, function (err) { release.disabled = false; note.textContent = errMessage(err, 'Could not release it.'); });
+    Promise.resolve(current && hold.release(record)).then(modal.close, function (err) { release.disabled = false; note.textContent = errMessage(err, 'Could not release it.'); });
   });
 }
 
