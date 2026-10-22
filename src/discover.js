@@ -6226,11 +6226,15 @@ export function rawAccountingBalanceSummary(rows, readable) {
 // Cross-chain balance breakdown across ALL accounting tokens + a USD total only when every non-zero token is
 // actually priced. Quotes come through JBPrices; raw per-token amounts remain the truthful fallback.
 function fetchBalanceBreakdown(project) {
-  if (project._balBreakdown) return Promise.resolve(project._balBreakdown);
+  // Reads are keyed by the ID scope they used, so balances read under a superseded scope are never reused.
+  var scopeKey = JSON.stringify(project.idByChain || {});
+  if (project._balBreakdown && project._balBreakdownKey === scopeKey) return Promise.resolve(project._balBreakdown);
   // Several surfaces (header, Funds card, grid card) mount in the same render pass; share one fan-out.
-  if (project._balBreakdownP) return project._balBreakdownP;
+  if (project._balBreakdownP && project._balBreakdownPKey === scopeKey) return project._balBreakdownP;
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
-  project._balBreakdownP = Promise.all(chains.map(function (c) { return readChainBalances(c.id, pidOn(project, c.id)); })).then(function (results) {
+  var p = Promise.resolve().then(function () {
+    return Promise.all(chains.map(function (c) { return readChainBalances(c.id, pidOn(project, c.id)); }));
+  }).then(function (results) {
     var hasContextFailure = results.some(function (result) { return !result.verified; });
     var quoteReads = [];
     results.forEach(function (cr) {
@@ -6270,11 +6274,12 @@ function fetchBalanceBreakdown(project) {
       bd.rawSummary = rawAccountingBalanceSummary(rows, !hasUnreadable);
       // Cache only a complete, fully priced read. A transient RPC/oracle failure must be retryable on the next
       // render; a genuinely unpriced custom token continues to use the raw-token summary.
-      if (!hasContextFailure && !hasUnreadable && !hasUnpricedBalance) project._balBreakdown = bd;
+      if (!hasContextFailure && !hasUnreadable && !hasUnpricedBalance) { project._balBreakdown = bd; project._balBreakdownKey = scopeKey; }
       return bd;
     });
-  }).finally(function () { project._balBreakdownP = null; });
-  return project._balBreakdownP;
+  }).finally(function () { if (project._balBreakdownP === p) project._balBreakdownP = null; });
+  project._balBreakdownP = p; project._balBreakdownPKey = scopeKey;
+  return p;
 }
 
 // A balance shown as a USD total with a hover popup breaking it down per chain. Renders a loading
@@ -7745,6 +7750,7 @@ function scheduleActiveProjectRefresh(project) {
     fetchProject(urlProjectId, urlChainId).then(function (fresh) {
       if (seq !== _projectRefreshSeq || !_activeDetail || !sameProjectDeployment(_activeDetail.project, project)) return;
       fresh.idByChain = idByChain;
+      fresh.chainsUnverified = !!active.project.chainsUnverified;
       fresh.chains = chains.length ? chains : [{ id: urlChainId, name: chainNameOf(urlChainId), projectId: Number(fresh.id) }];
       fresh._urlChainId = urlChainId;
       if (urlHandle) fresh._urlHandle = urlHandle;
@@ -7781,6 +7787,7 @@ function applyProjectDisplayRefresh(project, fresh) {
   if (fresh._transactionScopeConfirmed) {
     project.idByChain = Object.assign({}, fresh.idByChain || {});
     project.chains = (fresh.chains || []).slice();
+    project.chainsUnverified = !!fresh.chainsUnverified;
     project._transactionScopeConfirmed = true;
   }
   return project;
