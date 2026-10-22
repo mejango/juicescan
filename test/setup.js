@@ -68,3 +68,12 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', blockedNetworkConstructor('WebSocket'));
   vi.stubGlobal('EventSource', blockedNetworkConstructor('EventSource'));
 });
+
+// vi.waitFor defaults to a 1000 ms timeout. A render-and-poll test inside the full parallel suite on a
+// shared CI runner can need more than that, so the default is raised; a test that passes its own
+// timeout keeps it.
+const waitFor = vi.waitFor.bind(vi);
+vi.waitFor = (callback, options) => waitFor(
+  callback,
+  typeof options === 'number' ? options : { timeout: 5000, ...options },
+);
