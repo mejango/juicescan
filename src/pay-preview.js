@@ -13,8 +13,8 @@
 // real beneficiary/reserved counts live in the decoded metadata.
 
 import { decodeAbiParameters, formatUnits } from 'viem';
-import { prepareUserPay } from '@bananapus/nana-sdk-core/v6';
 import { decodePayFailure } from './pay-failure.js';
+import { prepareUserPay } from './pay-prepare.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS } from './slippage.js';
 import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
@@ -247,7 +247,7 @@ export async function computePayPreview(opts) {
   }
 }
 
-// The pay card's whole payment from the SDK: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
+// The pay card's whole payment from prepareUserPay: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
 // preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
 export function prepareCardPay(opts) {
   var tierIds = opts.tierIds || [];

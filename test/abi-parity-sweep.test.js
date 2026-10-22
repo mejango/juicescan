@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { toFunctionSelector } from 'viem';
 import { launchProjectAbi } from '../src/launch-component.js';
 import { DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS } from '../src/create-shared.js';
+import { getABI } from '../src/abi-registry.js';
 
 const ROOT = process.cwd();
 
@@ -129,11 +130,11 @@ const SWEEP_FILES = [
   'src/pay-component.js', 'src/cashout-component.js', 'src/payouts-component.js', 'src/burn-component.js',
   'src/mint-component.js', 'src/permissions-component.js', 'src/reserved-component.js',
   'src/deploy-erc20-component.js', 'src/project-payer.js', 'src/pay-preview.js', 'src/component-base.js',
-  'src/safe.js', 'src/relayr.js', 'src/discover.js', 'src/credit-claims.js', 'src/shop-media.js',
+  'src/safe.js', 'src/relayr.js', 'src/discover.js', 'src/credit-claims.js', 'src/shop-media.js', 'src/pay-prepare.js',
 ];
 
 // Fragments for contracts that have NO canonical artifact in data/abis (Safe wallet contracts,
-// Permit2, Uniswap v4 periphery/router). Keyed `file → declName.fnName`. EXACT list: an entry that
+// Permit2, Uniswap v3/v4 periphery/router). Keyed `file → declName.fnName`. EXACT list: an entry that
 // stops being needed (artifact added, fragment removed) fails the suite until removed here.
 const NO_CANONICAL_ARTIFACT = {
   'src/safe.js': [
@@ -147,8 +148,12 @@ const NO_CANONICAL_ARTIFACT = {
     'SAFE_SETUP_ABI.setup',
     'SAFE_TO_L2_SETUP_ABI.setupToL2',
   ],
-  'src/discover.js': [
+  'src/pay-prepare.js': [
     'v4QuoterAbi.quoteExactInputSingle',
+    'v3QuoterAbi.quoteExactInputSingle',
+    'v3PoolFeeAbi.fee',
+  ],
+  'src/discover.js': [
     'urExecuteAbi.execute',
     'extsloadAbi.extsload',
     'lpPermit2Abi.allowance',
@@ -173,7 +178,7 @@ const MIN_FRAGMENTS = {
   'src/burn-component.js': 2, 'src/mint-component.js': 1, 'src/permissions-component.js': 1,
   'src/reserved-component.js': 2, 'src/deploy-erc20-component.js': 1, 'src/project-payer.js': 1,
   'src/pay-preview.js': 1, 'src/component-base.js': 6, 'src/safe.js': 4, 'src/relayr.js': 1,
-  'src/discover.js': 135, 'src/credit-claims.js': 1, 'src/shop-media.js': 1,
+  'src/discover.js': 135, 'src/credit-claims.js': 1, 'src/shop-media.js': 1, 'src/pay-prepare.js': 6,
 };
 
 // The tx-critical discover fragments this sweep exists for — each must be found AND canonical-clean.
@@ -199,6 +204,7 @@ const SEEDS = {
   DEPLOY_721_COMPONENTS,
   PAY_DATA_HOOK_RULESET_COMPONENTS,
   RULESET_CFG_COMPONENT: launchProjectAbi[0].inputs.filter((i) => i.name === 'rulesetConfigurations')[0],
+  PREVIEW_PAY_FOR_OUTPUTS: getABI('JBMultiTerminal').find((item) => item.type === 'function' && item.name === 'previewPayFor').outputs,
 };
 
 function sweepFile(file) {

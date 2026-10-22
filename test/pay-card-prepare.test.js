@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ prepareUserPay: vi.fn() }));
-vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await importOriginal(), prepareUserPay: h.prepareUserPay }));
-import { createHookMetadata } from '@bananapus/nana-sdk-core';
-import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6';
+vi.mock('../src/pay-prepare.js', async importOriginal => ({ ...await importOriginal(), prepareUserPay: h.prepareUserPay }));
+import { createHookMetadata } from '../src/hook-metadata.js';
+import { buildUserPayMetadata } from '../src/pay-prepare.js';
 import { addToHookMetadata } from '../src/discover.js';
 import { prepareCardPay } from '../src/pay-preview.js';
 
