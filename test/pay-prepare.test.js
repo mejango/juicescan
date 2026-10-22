@@ -185,6 +185,22 @@ describe('prepareUserPay matches the SDK 557a9fc golden vectors', () => {
     }
   });
 
+  it('judges each attempt by its own reads: a read lost before a route that does not apply still falls back', async () => {
+    const c = byName('buyback swap amount above uint128');
+    const base = strictClient(c.reads, []);
+    let lost = false;
+    const once = { ...base, readContract: (p) => { if (p.functionName === 'poolKeyOf' && !lost) { lost = true; return Promise.reject(new BaseError('socket hang up')); } return base.readContract(p); } };
+    expect(JSON.parse(ser(await prepareUserPay(once, c.input)), revive)).toEqual(c.output);
+    expect(lost).toBe(true);
+  });
+
+  it('refuses a malformed quote even when the mint minimum is not zero', async () => {
+    const c = byName('buyback quote failure');
+    expect(byName('buyback pool cannot fill keeps the mint minimum').output.minReturnedTokens).toBeGreaterThan(0n);
+    const truncated = { ...strictClient(c.reads, []), call: async () => ({ data: '0x12' }) };
+    await expect(prepareUserPay(truncated, c.input)).rejects.toBeInstanceOf(PaySwapQuoteFailedError);
+  });
+
   it('refuses a swap whose quote is malformed or whose client throws synchronously, never a fallback minimum', async () => {
     const c = byName('quote failure with a tiny mint entitlement');
     const client = (patch) => { const base = strictClient(c.reads, []); return { ...base, ...patch(base) }; };

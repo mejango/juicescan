@@ -80,7 +80,7 @@ it('approves the terminal for exactly the amount of a directly accepted ERC-20',
 });
 
 const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function quoted(text) { await vi.waitFor(() => expect(document.querySelector('.paybox-yg-val').textContent).toContain(text)); }
+async function quoted(text) { await vi.waitFor(() => expect([...document.querySelectorAll('.paybox-yg-val')].map(v => v.textContent).join('\n')).toContain(text)); }
 
 it('opens no confirmation while the quote loads', async () => {
   runtime.prepare.mockReturnValueOnce(deferred().promise);
@@ -134,6 +134,14 @@ it('says inline, with Retry, when only the fallback minimum could be set, and st
   await review(); confirmButton().click();
   await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
   expect(runtime.execute.mock.lastCall[0].args.slice(4)).toEqual([6n * 10n ** 18n, '', '0x04']);
+});
+
+it('says so even when the fallback-minimum payment issues no tokens', async () => {
+  runtime.prepare.mockResolvedValue({ metadata: '0x06', minReturnedTokens: 0n, preview: { beneficiaryTokenCount: 0n, reservedTokenCount: 0n }, quoteFailed: true });
+  await card(614); type('1');
+  const line = () => [...document.querySelectorAll('.paybox-yg-row')].find(r => r.textContent.includes(PAY_QUOTE_FAILED_MESSAGE));
+  await vi.waitFor(() => expect(line()).toBeTruthy());
+  expect([...line().querySelectorAll('button')].some(b => b.textContent === 'Retry')).toBe(true);
 });
 
 it('drops the fallback-minimum line once Retry quotes the pool', async () => {
@@ -315,6 +323,17 @@ it.each([
   await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe(line));
   expect(reviewAgainButton()).toBeFalsy();
   expect(document.querySelector('.pay-retry-slippage')).toBeNull();
+});
+
+it('reads a wallet rejection as the payer declining, never as a shortfall, even with revert data', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Transaction rejected.', { userRejected: true, error: Object.assign(underMin(880n * 10n ** 18n, 900n * 10n ** 18n), { code: 4001 }) }));
+  await card(615); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  await settle(20);
+  expect(document.querySelector('.pay-retry-slippage')).toBeFalsy();
+  expect(document.body.textContent).not.toContain('fewer tokens than your minimum');
 });
 
 it('drops a loosened tolerance when the payment changed before Review again', async () => {

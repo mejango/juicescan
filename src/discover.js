@@ -9876,6 +9876,19 @@ export function renderPayCard(project, cart) {
       return;
     }
 
+    // The minimum is only the fallback, whatever the payment issues: one line with Retry; Pay still goes straight
+    // to its review.
+    if (p && p.quoteFailed && state.phase !== 'previewing') {
+      var warnRow = el('div', 'paybox-yg-row');
+      var warn = el('div', 'paybox-yg-val muted');
+      warn.textContent = p.reason;
+      warnRow.appendChild(warn);
+      var requote = el('button'); requote.type = 'button'; requote.textContent = 'Retry';
+      requote.addEventListener('click', schedulePreview);
+      warnRow.appendChild(requote);
+      feedback.appendChild(warnRow);
+    }
+
     // A verified payment can intentionally mint no project tokens (for example, a balance-funding project with
     // weight 0). Keep selected NFT receipts, but omit "0 tokens" and "Splits get 0 tokens" entirely.
     if (!payTokenOutputVisible(project.ruleset && project.ruleset.weight, state.phase, p)) {
@@ -9915,18 +9928,6 @@ export function renderPayCard(project, cart) {
     else val.textContent = '0.00 ' + sym;
     valRow.appendChild(val);
     feedback.appendChild(valRow);
-
-    // The minimum is only the fallback: one line with Retry; Pay still goes straight to its review.
-    if (p && p.quoteFailed && state.phase !== 'previewing') {
-      var warnRow = el('div', 'paybox-yg-row');
-      var warn = el('div', 'paybox-yg-val muted');
-      warn.textContent = p.reason;
-      warnRow.appendChild(warn);
-      var requote = el('button'); requote.type = 'button'; requote.textContent = 'Retry';
-      requote.addEventListener('click', schedulePreview);
-      warnRow.appendChild(requote);
-      feedback.appendChild(warnRow);
-    }
 
     var nb = nftBlock(); if (nb) feedback.appendChild(nb);
 
@@ -10393,8 +10394,9 @@ export function renderPayCard(project, cart) {
         status.dispatchEvent(new CustomEvent('jb:project-updated', { bubbles: true }));
       },
       onError: function (m, meta) {
-        // The revert's own reason when known; a shortfall offers a looser minimum and a fresh quote.
-        var failure = add ? null : decodePayFailure(meta && meta.error);
+        // The revert's own reason when known; a shortfall offers a looser minimum and a fresh quote. A wallet
+        // rejection is the payer's answer, never a shortfall, whatever data its error carries.
+        var failure = add || (meta && meta.userRejected) ? null : decodePayFailure(meta && meta.error);
         if (failure) m = failure.message;
         // A mined revert's cause is not knowable from its receipt: quote and simulate it again, and show that reason.
         var mined = !add && !!(meta && meta.error && meta.error.onchainRevert);
