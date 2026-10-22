@@ -11025,6 +11025,8 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
     reconcileResult: function (result, calls) { return reconcileSelectedSafeResult(result, calls, sender, opts.verifyReceipt, null, opts.verifyObsoleteSafeCall); },
     executeRound: async function (calls, index, plan, control) {
       var roundScope = scope + ':' + plan.id + ':round:' + index;
+      // Captured before any loader can drop an unreadable Relayr record: evidence seen once keeps the plan.
+      var roundRelayrEvidence = relayrPendingRecordExists(roundScope, account);
       // A keeper may resolve a queued payment while an earlier round is being reviewed. Refresh only
       // calls with no wallet/relay/Safe publication record; submitted work retains its exact recovery.
       if (opts.refreshUnsubmittedRound && !control.hasSafeProgress
@@ -11049,9 +11051,7 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
           if (opts.reverifySaved) {
             try { await opts.reverifySaved(calls, chainId, sender); } catch (error) {
               if (resumedPlan) offerRefusedActionDiscard(setStatus, function () {
-                return discardUnsubmittedActionPlan(scope, account, plan.id, async function () {
-                  return !relayrPendingRecordExists(roundScope, account) && await clearUnsubmittedDirectBatch(roundScope, account, calls);
-                });
+                return discardRefusedRound({ scope: scope, account: account, planId: plan.id, roundScope: roundScope, calls: calls, relayrEvidence: roundRelayrEvidence });
               });
               throw error;
             }
@@ -11557,6 +11557,13 @@ function relayrBundleScope(entries) {
 function removeRefusedActionDiscard(setStatus) {
   var statusEl = setStatus && setStatus.element;
   if (statusEl && statusEl._refusedDiscard) { statusEl._refusedDiscard.remove(); statusEl._refusedDiscard = null; }
+}
+// `relayrEvidence` is whether the round had any Relayr record when it started; a loader may drop an unreadable one
+// later, so evidence seen once keeps the plan.
+export function discardRefusedRound(o) {
+  return discardUnsubmittedActionPlan(o.scope, o.account, o.planId, async function () {
+    return !o.relayrEvidence && !relayrPendingRecordExists(o.roundScope, o.account) && await clearUnsubmittedDirectBatch(o.roundScope, o.account, o.calls);
+  });
 }
 export function offerRefusedActionDiscard(setStatus, discard) {
   var statusEl = setStatus && setStatus.element;

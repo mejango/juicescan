@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseAbi, encodeFunctionData } from 'viem';
 import { runSavedActionPlan, discardUnsubmittedActionPlan, hasSavedActionPlan } from '../src/action-plan.js';
-import { offerRefusedActionDiscard } from '../src/discover.js';
+import { discardRefusedRound, offerRefusedActionDiscard } from '../src/discover.js';
 import { makeStatusSetter } from '../src/component-base.js';
 import { relayrPendingRecordExists } from '../src/relayr.js';
 
@@ -102,5 +102,19 @@ describe('Relayr evidence for a discard', () => {
     localStorage.clear();
     localStorage.setItem(PREFIX_RELAYR + scope, '{}');
     expect(relayrPendingRecordExists(scope, ACCOUNT)).toBe(true);
+  });
+});
+
+describe('discarding a refused round', () => {
+  it('keeps the plan when the round had Relayr evidence at its start, even if that record was dropped since', async () => {
+    const plan = await savedRefusedPlan();
+    const round = { scope: SCOPE, account: ACCOUNT, planId: plan.id, roundScope: SCOPE + ':' + plan.id + ':round:0', calls: plan.rounds[0] };
+    await expect(discardRefusedRound({ ...round, relayrEvidence: true })).resolves.toBe(false);
+    localStorage.setItem(PREFIX_RELAYR + ACCOUNT + ':' + round.roundScope, '{not json');
+    await expect(discardRefusedRound({ ...round, relayrEvidence: false })).resolves.toBe(false);
+    expect(hasSavedActionPlan(SCOPE, ACCOUNT)).toBe(true);
+    localStorage.removeItem(PREFIX_RELAYR + ACCOUNT + ':' + round.roundScope);
+    await expect(discardRefusedRound({ ...round, relayrEvidence: false })).resolves.toBe(true);
+    expect(hasSavedActionPlan(SCOPE, ACCOUNT)).toBe(false);
   });
 });
