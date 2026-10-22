@@ -6,7 +6,7 @@ import { encodeFunctionData, toFunctionSelector } from 'viem';
 import { getABI } from './abi-registry.js';
 import { renderInput } from './inputs.js';
 import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
-import { holdForWrite, heldWriteRefuses, sendHeldWrite, HELD_WRITE_LINE, confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
+import { holdForWrite, heldWriteRefuses, sendHeldWrite, readWriteNonce, HELD_WRITE_LINE, confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS, chainNameFor } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
 import { renderResult } from './results.js';
@@ -384,8 +384,9 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
       }).then(async function(simulation) {
         if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
         setOutputMessage(outputArea, 'tx-pending', 'Awaiting wallet confirmation…');
+        var nonce = readWriteNonce(pub, reviewedAccount);
         var gas = await contractGasWithHeadroom(pub, simulation.request);
-        var sent = await sendHeldWrite(hold, pub, function () {
+        var sent = await sendHeldWrite(hold, nonce, function () {
           if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
         }, function () { return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas })); });
         heldReservation = sent.reservation;

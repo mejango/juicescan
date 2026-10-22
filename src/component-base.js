@@ -1407,10 +1407,11 @@ export function heldWriteRefuses(hold, label) {
   return true;
 }
 
-// Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
-// Only an explicit wallet rejection (EIP-1193 4001) releases the reservation; any other wallet error holds.
-export function sendHeldWrite(hold, client, check, send) {
-  var nonce = readWriteNonce(client, hold.account);
+// Reserve, then open the wallet. `nonce` is readWriteNonce's promise, started alongside gas estimation.
+// `check` runs right before the wallet opens: its throw sent nothing. Only an explicit wallet rejection
+// (EIP-1193 4001) releases the reservation; any other wallet error holds.
+export { readWriteNonce };
+export function sendHeldWrite(hold, nonce, check, send) {
   return hold.withLock(async function () {
     var reservation = hold.reserve(await nonce);
     try { check(); } catch (err) { hold.release(reservation); throw err; }
@@ -1652,6 +1653,7 @@ export function executeTransaction(opts) {
     if (approvalBlock != null) simulationRequest.blockNumber = approvalBlock;
     return pub.simulateContract(simulationRequest).then(async function(simulation) {
       cbs.onStatus('Awaiting wallet confirmation…', 'pending');
+      var nonce = hold ? readWriteNonce(pub, account) : null;
       var gas = await contractGasWithHeadroom(pub, simulation.request);
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
@@ -1661,7 +1663,7 @@ export function executeTransaction(opts) {
         return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
       }
       if (!hold) { assertWalletInvocation(false); return send(); }
-      return sendHeldWrite(hold, pub, function () { assertWalletInvocation(false); }, send).then(function (sent) {
+      return sendHeldWrite(hold, nonce, function () { assertWalletInvocation(false); }, send).then(function (sent) {
         heldReservation = sent.reservation;
         return sent.hash;
       });

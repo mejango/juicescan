@@ -73,8 +73,9 @@ export function writeHold(chainId, account, call) {
 // The account's next nonce (pending included) and the block it was read at, read before the wallet opens.
 export async function readWriteNonce(client, account) {
   try {
-    var blockNumber = await client.getBlockNumber();
-    var nonce = await client.getTransactionCount({ address: account, blockTag: 'pending' });
+    // Read together: a block read after the nonce only lowers the search, never hides the nonce's transaction.
+    var reads = await Promise.all([client.getBlockNumber(), client.getTransactionCount({ address: account, blockTag: 'pending' })]);
+    var blockNumber = reads[0], nonce = reads[1];
     return { nonce: BigInt(nonce), blockNumber: BigInt(blockNumber) };
   } catch (_) { return null; }
 }
