@@ -3776,10 +3776,11 @@ function itemFileSize(bytes) {
 
 function isProjectRecipient(v) { return /^[0-9]+$/.test(v) && Number(v) > 0; }
 
-// An item's sale split can name an existing project, entered by its ID on the first selected chain. Its ID on
-// every other chain is read from the sucker registry before any launch call is built. Unverified chains stay out.
-export async function resolveItemSplitProjects(state) {
-  var ref = Number((state.chainIds || [])[0]);
+// An item's sale split can name an existing project, entered by its ID on the first selected chain (`refChainId`
+// when the caller selects chains separately). Its ID on every other chain is read from the sucker registry before
+// any launch call is built. Unverified chains stay out.
+export async function resolveItemSplitProjects(state, refChainId) {
+  var ref = Number(refChainId != null ? refChainId : (state.chainIds || [])[0]);
   var ids = {};
   (state.nfts || []).forEach(function (nft) {
     if (!nft.splitOn) return;
@@ -3789,7 +3790,34 @@ export async function resolveItemSplitProjects(state) {
     return resolveSuckerGroup(createPublicClientForChain, ref, BigInt(v)).then(idMapFromGroup)
       .then(function (map) { ids[v] = map; }, function () { ids[v] = null; });
   }));
+  if (refChainId == null && Number((state.chainIds || [])[0]) !== ref) throw new Error('The selected chains changed while verifying split recipients. Try again.');
   state._itemSplitIds = { ref: ref, ids: ids };
+}
+
+function tierSplitProjectIds(value, out) {
+  if (!value || typeof value !== 'object') return out;
+  if (value.tiersConfig && Array.isArray(value.tiersConfig.tiers)) {
+    value.tiersConfig.tiers.forEach(function (tier) {
+      (tier.splits || []).forEach(function (split) { if (BigInt(split.projectId || 0) > 0n) out.push(BigInt(split.projectId)); });
+    });
+  }
+  Object.keys(value).forEach(function (key) { if (key !== 'tiersConfig') tierSplitProjectIds(value[key], out); });
+  return out;
+}
+
+// Launches saved before per-chain recipient IDs encoded the entered ID on every chain. Their remaining calls are
+// sent only where the sucker registry confirms that ID names the same project on that chain.
+async function verifyLegacyItemSplitIds(session, remaining) {
+  var ref = Number(session.plans[0].chainId);
+  for (var i = 0; i < remaining.length; i++) {
+    var cid = Number(remaining[i].chainId);
+    if (cid === ref) continue;
+    var pids = tierSplitProjectIds(remaining[i].args, []);
+    for (var j = 0; j < pids.length; j++) {
+      var map = await resolveSuckerGroup(createPublicClientForChain, ref, pids[j]).then(idMapFromGroup).catch(function () { return {}; });
+      if (map[cid] == null || BigInt(map[cid]) !== pids[j]) throw new Error('Could not verify project #' + pids[j] + ' on ' + chainName(cid) + '. The rest of this saved launch was not sent.');
+    }
+  }
 }
 
 function itemSplitProjectId(state, v, chainId) {
@@ -3971,6 +3999,7 @@ async function executeCreateDirectSession(state, session, resumed) {
   }
   var remaining = session.plans.filter(function (plan) { return plan.status !== 'confirmed'; });
   if (remaining.length) {
+    if (!session.recipientIds) await verifyLegacyItemSplitIds(session, remaining);
     var signer = getAccount();
     if (!signer || signer.toLowerCase() !== session.account.toLowerCase()) throw new Error('Connect ' + session.account + ' to resume the saved launch.');
     if (isSafeConnected()) throw new Error('Multichain direct launches require a wallet that can confirm each chain’s transaction.');
@@ -4352,7 +4381,7 @@ async function runDeploy(state, owner) {
   }
 
   if (!useRelayr) {
-    var directSession = { account: signer, plans: plans.map(function (plan) { return Object.assign({}, plan, { hash: null, status: 'ready' }); }) };
+    var directSession = { account: signer, recipientIds: 'onchain', plans: plans.map(function (plan) { return Object.assign({}, plan, { hash: null, status: 'ready' }); }) };
     return runCreateDirectSession(state, directSession, false);
   }
 
@@ -5452,7 +5481,7 @@ function ipfsHttp(uri) {
 export const __test = {
   resolveEns, attachEns,
   renderDeploy, runDeploy, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
-  suckerConfigFor, tokenMappingFor,
+  suckerConfigFor, tokenMappingFor, verifyLegacyItemSplitIds,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,

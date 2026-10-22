@@ -24715,7 +24715,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // Omnichain wrappers retain one shared deterministic salt so their hook addresses match across chains.
   var newShopSalt = newShop ? newShopDeploymentSalt(state, operatorAddr, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
   var projUri = project.metadataUri || project.uri || '';
-  if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); await createFlow.resolveItemSplitProjects(state); }
+  if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); await createFlow.resolveItemSplitProjects(state, selected[0].id); }
 
   // Route through JBOmnichainDeployer only when the LIVE ruleset already uses it as its data-hook wrapper.
   // Multi-chain revnets use REVOwner, so they must queue directly through each JBController; routing them through
