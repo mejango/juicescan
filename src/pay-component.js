@@ -10,7 +10,7 @@ import {
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
-import { decodePayFailure } from '@bananapus/nana-sdk-core/v6';
+import { decodePayFailure } from './pay-failure.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 
 export var payAbi = [{

@@ -22,3 +22,6 @@ export function quotedOutputFloor(quoted, bps) {
   var floor = quoted * bps / 10000n;
   return floor > 0n ? floor : 1n;
 }
+
+/** The default pay slippage tolerance in basis points (1%). */
+export const PAY_DEFAULT_SLIPPAGE_BPS = 100n;

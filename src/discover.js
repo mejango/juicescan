@@ -3,14 +3,15 @@
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
-import { MAX_DEFIFA_ACTION_NFTS, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS, decodePayFailure, defifaPhaseAllowsPay, payRetrySlippageBps } from '@bananapus/nana-sdk-core/v6';
-import { createHookMetadata } from '@bananapus/nana-sdk-core';
+import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from '@bananapus/nana-sdk-core/v6';
+import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './pay-failure.js';
+import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
-import { quotedOutputFloor } from './slippage.js';
+import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
@@ -588,10 +589,7 @@ export function encodedIpfsCandidates(b32) {
 // pay metadata (keyed to the router via getId("permit2", router)), calls PERMIT2.permit with it, then pulls
 // via PERMIT2.transferFrom. Returns `metadata` with the allowance added; signs along the way (one approve tx if Permit2 is short).
 function permit2MetadataId(target) {
-  var k = keccak256('0x7065726d697432'); // keccak256(utf8 "permit2")
-  var a = target.slice(2, 10).toLowerCase(), b = k.slice(2, 10), out = '';
-  for (var i = 0; i < 8; i += 2) out += (parseInt(a.substr(i, 2), 16) ^ parseInt(b.substr(i, 2), 16)).toString(16).padStart(2, '0');
-  return out;
+  return hookMetadataId(target, 'permit2').slice(2);
 }
 async function latestChainTimestamp(client) {
   var block = await client.getBlock({ blockTag: 'latest' });
@@ -691,10 +689,7 @@ export function buildTierCashOutMetadata(idTarget, tokenIds) {
 // abi.encode(uint256 minimumSwapAmountOut, bool skip=false). Passing a non-zero minimum makes the hook route
 // AMM whenever it beats the direct reclaim, without waiting for the oracle to seed (see beforeCashOutRecordedWith).
 function cashOutMetadataId(hookAddr) {
-  var k = keccak256('0x636173684f7574'); // keccak256(utf8 "cashOut")
-  var a = hookAddr.slice(2, 10).toLowerCase(), b = k.slice(2, 10), out = '';
-  for (var i = 0; i < 8; i += 2) out += (parseInt(a.substr(i, 2), 16) ^ parseInt(b.substr(i, 2), 16)).toString(16).padStart(2, '0');
-  return out;
+  return hookMetadataId(hookAddr, 'cashOut').slice(2);
 }
 function buildCashOutAmmMetadata(hookAddr, minReturned) {
   var data = encodeAbiParameters([{ type: 'uint256' }, { type: 'bool' }], [minReturned, false]);
