@@ -13,6 +13,7 @@
 
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, decodeEventLog } from 'viem';
 import { isSafeConnected } from './wallet.js';
+import { idMapFromGroup, resolveSuckerGroup } from './sucker-group.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
 import {
   el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
@@ -3773,8 +3774,34 @@ function itemFileSize(bytes) {
 }
 
 
-// Convert an item draft's split recipients into per-chain JB721 splits. Project recipients use the entered
-// project ID as-is on every chain (pre-deploy, the same project deploys at the same ID across chains).
+function isProjectRecipient(v) { return /^[0-9]+$/.test(v) && Number(v) > 0; }
+
+// An item's sale split can name an existing project, entered by its ID on the first selected chain. Its ID on
+// every other chain is read from the sucker registry before any launch call is built. Unverified chains stay out.
+export async function resolveItemSplitProjects(state) {
+  var ref = Number((state.chainIds || [])[0]);
+  var ids = {};
+  (state.nfts || []).forEach(function (nft) {
+    if (!nft.splitOn) return;
+    (nft.splitRecipients || []).forEach(function (r) { var v = String(r.recip || '').trim(); if (Number(r.pct) > 0 && isProjectRecipient(v)) ids[v] = null; });
+  });
+  await Promise.all(Object.keys(ids).map(function (v) {
+    return resolveSuckerGroup(createPublicClientForChain, ref, BigInt(v)).then(idMapFromGroup)
+      .then(function (map) { ids[v] = map; }, function () { ids[v] = null; });
+  }));
+  state._itemSplitIds = { ref: ref, ids: ids };
+}
+
+function itemSplitProjectId(state, v, chainId) {
+  var ref = Number(state && state._itemSplitIds ? state._itemSplitIds.ref : (state && state.chainIds || [])[0]);
+  if (!state || chainId == null || Number(chainId) === ref) return BigInt(v);
+  var map = state._itemSplitIds && state._itemSplitIds.ids[v];
+  if (!map || map[Number(chainId)] == null) throw new Error('Could not verify project #' + v + ' on ' + chainName(Number(chainId)) + '.');
+  return BigInt(map[Number(chainId)]);
+}
+
+// Convert an item draft's split recipients into per-chain JB721 splits. A project recipient carries its own ID on
+// each chain (see resolveItemSplitProjects).
 function itemSplits(d, state, chainId, itemIdx) {
   if (!d.splitOn) return { splitPercent: 0, splits: [] };
   var rsList = d.splitRecipients.map(function (r, i) { return { r: r, i: i }; }).filter(function (e) { return Number(e.r.pct) > 0 && (e.r.recip || '').trim(); });
@@ -3786,12 +3813,12 @@ function itemSplits(d, state, chainId, itemIdx) {
   var splits = rsList.map(function (e, k) {
     var r = e.r;
     var v = (r.recip || '').trim();
-    var isProj = /^[0-9]+$/.test(v) && Number(v) > 0;
+    var isProj = isProjectRecipient(v);
     // Per-chain wallet beneficiary override → default (ENS-resolved).
     var benef = state ? chainAddr(state, chainId, 'is:' + itemIdx + ':' + e.i, pickResolved(v, r)) : pickResolved(v, r);
     return {
       percent: shares[k],
-      projectId: isProj ? BigInt(v) : 0n,
+      projectId: isProj ? itemSplitProjectId(state, v, chainId) : 0n,
       beneficiary: isProj ? ((resolvedStr(r.benef) && isAddr(resolvedStr(r.benef))) ? resolvedStr(r.benef) : ZERO) : (addrOrZero(benef)),
       preferAddToBalance: false, lockedUntil: 0, hook: ZERO,
     };
@@ -4231,6 +4258,7 @@ async function runDeploy(state, owner) {
 
   // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
   // BEFORE the user signs or pays anything.
+  await resolveItemSplitProjects(state);
   var plans = [];
   for (var i = 0; i < state.chainIds.length; i++) {
     var cid = state.chainIds[i];
