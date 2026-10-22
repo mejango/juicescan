@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', viewAs: null, change: null,
   connect: vi.fn(), allowance: vi.fn(), approvalProof: vi.fn(), safe: false, resolveSafe: vi.fn(), receipt: vi.fn(), restore: vi.fn(), client: {}, execute: vi.fn(), preparePay: vi.fn(), prepareCashOut: vi.fn(), prepareTransfer: vi.fn(), holdings: vi.fn(), verify: vi.fn(), inventory: vi.fn() }));
-vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await importOriginal(), prepareDefifaPay: h.preparePay, prepareDefifaCashOut: h.prepareCashOut, prepareDefifaTransfer: h.prepareTransfer, getDefifaHoldings: h.holdings, verifyDefifaNftTransaction: h.verify, restoreDefifaNftReceiptContext: h.restore }));
+vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({ ...await importOriginal(), getDefifaHoldings: h.holdings }));
+vi.mock('../src/defifa.js', async importOriginal => ({ ...await importOriginal(), prepareDefifaPay: h.preparePay, prepareDefifaCashOut: h.prepareCashOut, prepareDefifaTransfer: h.prepareTransfer, verifyDefifaNftTransaction: h.verify, restoreDefifaNftReceiptContext: h.restore }));
 vi.mock('../src/component-base.js', () => ({ getAccount: () => h.account, getViewAs: () => h.viewAs, connect: h.connect, createPublicClientForChain: () => h.client, executeTransaction: h.execute, waitForTrackedTransactionReceipt: h.receipt, isSafeConnected: () => h.safe, readErc20Allowance: h.allowance, NATIVE_TOKEN: '0x000000000000000000000000000000000000EEEe', erc20ApproveAbi: [{ type: 'function', name: 'approve', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' }], formatAmount: (amount, decimals) => Number(amount) / 10 ** decimals,
   onEffectiveAccountChange: cb => { h.change = cb; return vi.fn(); }, ZERO_ADDRESS: '0x' + '0'.repeat(40), isAddr: value => /^0x[0-9a-fA-F]{40}$/.test(value) }));
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({ ...await importOriginal(), verifyReviewedWriteReceipt: h.approvalProof }));
@@ -10,7 +11,7 @@ vi.mock('../src/nft-inventory.js', () => ({ readProjectNftInventory: h.inventory
 vi.mock('../src/safe-app.js', () => ({ txHashForSafeTx: h.resolveSafe }));
 import { renderDefifaNftActions } from '../src/defifa-nft-actions.js';
 import { TransactionReceiptNotFoundError } from 'viem';
-import { DefifaNftTransactionRevertedError } from '@bananapus/nana-sdk-core/v6';
+import { DefifaNftTransactionRevertedError } from '../src/defifa.js';
 const TX = '0x' + 'a'.repeat(64), SAFE_TX = '0x' + 'b'.repeat(64);
 const hook = '0x2222222222222222222222222222222222222222';
 const native = { protocol: 'defifa', hook, implementation: hook, blockNumber: 50n, phase: 1, pricing: { decimals: 18, token: '0x000000000000000000000000000000000000EEEe' }, tiers: [{ id: 1, name: 'Blue Team', price: 3n }, { id: 7, name: 'Orange Team', price: 5n }] };
