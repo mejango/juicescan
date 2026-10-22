@@ -87,7 +87,10 @@ const clientActions = {
 async function replay(c) {
   const calls = [];
   let actual;
-  try { actual = JSON.parse(ser(await clientActions[c.fn](strictClient(c.reads ?? {}, calls), c.input)), bigints); } catch (error) { actual = outcome(error); }
+  try { actual = JSON.parse(ser(await clientActions[c.fn](strictClient(c.reads ?? {}, calls), c.input)), bigints); } catch (error) {
+    actual = outcome(error);
+    if (error.name === 'DefifaNftTransactionRevertedError') expect(error).toBeInstanceOf(v6.DefifaNftTransactionRevertedError);
+  }
   return { actual, calls };
 }
 
@@ -143,6 +146,20 @@ describe('installed SDK matches the 3.4.1 golden vectors', () => {
       let actual;
       try { actual = v6.effectiveTierPrice(row.price, row.discount); } catch (error) { actual = { $error: error.message }; }
       expect(actual, `${row.price} ${String(row.discount)}`).toEqual(row.output);
+    }
+  });
+
+  it('Defifa never turns an uncertain proof into a proven failure', async () => {
+    const c = load('defifa.json', bigints).cases.find((x) => x.name === 'verify direct pay success');
+    const wallet = Object.assign(new Error('User rejected the request.'), { code: 4001 });
+    const unavailable = Object.assign(new Error('node is syncing'), { cause: new Error('timeout') });
+    for (const [label, method, error] of [['wallet code', 'getTransaction', wallet], ['transaction read', 'getTransactionReceipt', unavailable], ['block read', 'getBlock', unavailable]]) {
+      const client = strictClient(c.reads, []);
+      client[method] = async () => { throw error; };
+      let thrown;
+      try { await v6.verifyDefifaNftTransaction(client, c.input.context, c.input.receipt); } catch (e) { thrown = e; }
+      expect(thrown, label).toBeTruthy();
+      expect(thrown, label).not.toBeInstanceOf(v6.DefifaNftTransactionRevertedError);
     }
   });
 
