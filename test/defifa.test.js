@@ -1,9 +1,16 @@
 // The lean Defifa actions must answer, and read, exactly as nana-sdk-core 3.4.1 did, case for case.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { erc721Abi, keccak256, toHex } from 'viem';
 import { getABI, getAddress, meta } from '../src/abi-registry.js';
+
+const registry = vi.hoisted(() => ({ addresses: {}, abis: {} }));
+vi.mock('../src/abi-registry.js', async (original) => {
+  const real = await original();
+  return { ...real, getAddress: (name, chain) => registry.addresses[name] ?? real.getAddress(name, chain), getABI: (name, chain) => registry.abis[name] ?? real.getABI(name, chain) };
+});
+afterEach(() => { registry.addresses = {}; registry.abis = {}; });
 import { DefifaNftTransactionRevertedError, MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsCashOut, defifaPhaseAllowsPay, effectiveTierPrice, prepareDefifaCashOut, prepareDefifaPay, prepareDefifaTransfer, restoreDefifaNftReceiptContext, verifyDefifaNftReceipt, verifyDefifaNftTransaction } from '../src/defifa.js';
 
 const revive = (k, v) => {
@@ -42,8 +49,8 @@ function keyOf(method, p) {
 function strictClient(reads, calls) {
   const get = async (method, p) => {
     const key = keyOf(method, p);
-    if (!(key in reads)) throw new Error('unrecorded read: ' + key);
     calls.push(key);
+    if (!(key in reads)) throw new Error('unrecorded read: ' + key);
     const value = reads[key];
     if (value && typeof value === 'object' && '$throw' in value) throw new Error(value.$throw);
     return value;
@@ -76,7 +83,10 @@ async function run(c, reads) {
 }
 
 describe('defifa matches SDK 3.4.1 golden vectors', () => {
-  it('replays every recorded scenario with identical results and identical reads', async () => {
+  it('replays every recorded scenario with identical results and identical reads, and never touches a wallet', async () => {
+    const request = vi.fn();
+    window.ethereum = { request };
+    globalThis.ethereum = window.ethereum;
     expect(golden.sdkVersion).toBe('3.4.1');
     expect(golden.cases.length).toBeGreaterThan(140);
     for (const c of golden.cases) {
@@ -86,6 +96,9 @@ describe('defifa matches SDK 3.4.1 golden vectors', () => {
       const keys = Object.keys(reads);
       expect(calls.map((key) => keys.indexOf(key)), c.name + ' reads, in order, once each as recorded').toEqual(c.trace ?? []);
     }
+    expect(request).not.toHaveBeenCalled();
+    delete window.ethereum;
+    delete globalThis.ethereum;
   });
 
   it('covers every action, its refusals and its recovery', () => {
@@ -113,12 +126,58 @@ describe('defifa matches SDK 3.4.1 golden vectors', () => {
     const reads = { ...c.reads };
     const client = strictClient(reads, []);
     const first = await actions.prepareDefifaPay(client, c.input);
-    const key = Object.keys(reads).find((k) => k.includes('|getTierDelegateOf|'));
+    const delegateKey = Object.keys(reads).find((k) => k.includes('|getTierDelegateOf|'));
     const next = '0x9999999999999999999999999999999999999999';
-    reads[key] = next;
+    reads[delegateKey] = next;
     const second = await actions.prepareDefifaPay(client, c.input);
     expect(second.effectiveDelegates.map((d) => d.delegate)).toContain(next);
     expect(second.effectiveAttestationDelegate).not.toBe(first.effectiveAttestationDelegate);
+    for (const key of Object.keys(reads).filter((k) => k.includes('|tierOf|'))) reads[key] = { ...reads[key], price: reads[key].price + 1n };
+    const third = await actions.prepareDefifaPay(client, c.input);
+    expect(third.amount).toBeGreaterThan(second.amount);
+    expect(third.transaction.args[2]).toBe(third.amount);
+    expect(third.transaction.value).toBe(third.amount);
+    expect(third.transaction.args[2]).not.toBe(first.transaction.args[2]);
+  });
+
+  it('snapshots the caller arguments before its first await', async () => {
+    for (const [name, fn] of [['pay 1 tier with memo and zero delegate', 'prepareDefifaPay'], ['cash out three NFTs in the mint phase', 'prepareDefifaCashOut']]) {
+      const c = golden.cases.find((x) => x.name === name);
+      const input = { ...c.input, ...(c.input.tierIdsToMint ? { tierIdsToMint: [...c.input.tierIdsToMint] } : { tokenIds: [...c.input.tokenIds] }) };
+      const client = strictClient(c.reads, []);
+      const read = client.readContract;
+      client.readContract = (p) => { input.memo = 'tampered'; input.beneficiary = '0x4444444444444444444444444444444444444444'; (input.tierIdsToMint ?? input.tokenIds).push(999n); return read(p); };
+      const result = JSON.parse(ser(await actions[fn](client, input)), revive);
+      expect(result, name).toEqual(c.output);
+    }
+  });
+
+  it('never turns an uncertain proof into a proven failure', async () => {
+    const c = golden.cases.find((x) => x.name === 'verify direct pay success');
+    const wallet = Object.assign(new Error('User rejected the request.'), { code: 4001 });
+    const unavailable = Object.assign(new Error('node is syncing'), { cause: new Error('timeout') });
+    for (const [label, method, error] of [['wallet code', 'getTransaction', wallet], ['transaction read', 'getTransactionReceipt', unavailable], ['block read', 'getBlock', unavailable]]) {
+      const client = strictClient(c.reads, []);
+      client[method] = async () => { throw error; };
+      let thrown;
+      try { await verifyDefifaNftTransaction(client, c.input.context, c.input.receipt); } catch (e) { thrown = e; }
+      expect(thrown, label).toBeTruthy();
+      expect(thrown, label).not.toBeInstanceOf(DefifaNftTransactionRevertedError);
+    }
+  });
+
+  it('takes the Defifa addresses and the ABIs from the registry', async () => {
+    const receipt = golden.cases.find((x) => x.name === 'pay receipt proves one mint');
+    expect(receipt.output).toBeNull();
+    registry.addresses = { DefifaHook: '0x1234567890123456789012345678901234567890' };
+    expect(() => verifyDefifaNftReceipt(receipt.input.context, receipt.input.receipt)).toThrow(/pinned chain implementation/);
+    registry.addresses = {};
+    for (const [name, fn] of [['pay 1 tier', 'prepareDefifaPay'], ['cash out three NFTs in the mint phase', 'prepareDefifaCashOut']]) {
+      const c = golden.cases.find((x) => x.name === name);
+      registry.abis = { JBMultiTerminal: [], JB721TiersHookStore: [], JBDirectory: [] };
+      await expect(actions[fn](strictClient(c.reads, []), c.input), name).rejects.toThrow(/unrecorded read/);
+      registry.abis = {};
+    }
   });
 
   it('reads the registry, not a pinned table, and agrees with the SDK deployments', () => {
