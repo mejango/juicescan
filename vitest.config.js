@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 // jsdom so create-flow.js (which uses `el()`/document inside its helpers) imports cleanly; JSON imports
 // (data/*.json) are handled by vite's transform.
@@ -7,6 +7,8 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./test/setup.js'],
     include: ['test/**/*.test.js'],
+    // The weekly SDK-parity canary installs the latest SDK; it runs only with SDK_PARITY set.
+    exclude: process.env.SDK_PARITY ? configDefaults.exclude : [...configDefaults.exclude, 'test/sdk-parity/**'],
     testTimeout: 20000,
     coverage: {
       provider: 'v8',
