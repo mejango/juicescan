@@ -61,6 +61,8 @@ if (dialogPrototype && typeof dialogPrototype.showModal !== 'function') {
 // Unit tests are deterministic and offline by default. Tests which exercise a
 // transport boundary must install an explicit fetch stub in their own setup.
 beforeEach(() => {
+  // Held wallet writes (src/write-hold.js) persist in localStorage; each test starts unheld.
+  try { localStorage.clear(); } catch (_) {}
   vi.stubGlobal('fetch', vi.fn((input) => Promise.reject(
     new Error(`Unexpected network request in unit test: ${requestedUrl(input)}`),
   )));

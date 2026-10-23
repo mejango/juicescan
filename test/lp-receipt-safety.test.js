@@ -13,6 +13,16 @@ describe('LP transaction receipt safety', () => {
     expect(helper.indexOf("receipt.status !== 'success'")).toBeLessThan(helper.lastIndexOf('return hash'));
   });
 
+  it('sends every non-multisig LP write under the shared hold, released only by a read receipt', () => {
+    const start = source.indexOf('async function lpSendTx');
+    const helper = source.slice(start, source.indexOf('\nvar lpPositionViewAbi', start));
+    expect(helper).toContain('await heldWriteGate(hold');
+    expect(helper).toContain('sendHeldWrite(hold, function');
+    expect(helper.match(/wallet\.writeContract\(/g)).toHaveLength(1);
+    expect(helper.indexOf('function send()')).toBeLessThan(helper.indexOf('sendHeldWrite('));
+    expect(helper).toContain('if (receipt && hold) await hold.release(sent.reservation)');
+  });
+
   it('confirms the direct-swap Permit2 approval through the shared dual-source receipt poll', () => {
     const start = source.indexOf("'Swap-router authorization submitted. Confirming onchain…'");
     expect(start).toBeGreaterThan(0);

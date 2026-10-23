@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import './web-locks.js';
 
 const state = vi.hoisted(() => ({
   account: null,
@@ -30,7 +31,8 @@ vi.mock('../src/wallet.js', () => ({
 }));
 
 const transactionReview = vi.hoisted(() => vi.fn());
-vi.mock('../src/component-base.js', () => ({
+vi.mock('../src/component-base.js', async original => ({
+  ...await original(),
   confirmTransactionModal: transactionReview,
   shouldKeepSubmittedTransactionPending: (hash, error) => !!hash && !error?.onchainRevert,
   truncAddr: value => `${String(value).slice(0, 6)}…${String(value).slice(-4)}`,
@@ -232,6 +234,24 @@ describe('generic ABI function form', () => {
     click(transact);
     await vi.waitFor(() => expect(form.querySelector('.fn-output').textContent).toMatch(/confirmation tracking is temporarily unavailable/i));
     expect(form.querySelector('.error-box')).toBeNull();
+  });
+
+  it('holds a write after an ambiguous wallet error so a second click never opens the wallet', async () => {
+    const fn = { type: 'function', name: 'pay', stateMutability: 'payable', inputs: [{ name: 'projectId', type: 'uint256', testValue: 7n }], outputs: [] };
+    const form = formFor(fn);
+    document.body.appendChild(form);
+    const transact = form.querySelector('.btn-connect');
+    state.account = ACCOUNT;
+    state.walletListeners.forEach(listener => listener());
+    state.wallet = { getChainId: vi.fn().mockResolvedValue(1), writeContract: vi.fn().mockRejectedValue(new Error('Wallet connection disappeared')) };
+    state.client = { simulateContract: vi.fn().mockResolvedValue({ request: { address: ADDRESS, functionName: 'pay' } }), estimateContractGas: vi.fn().mockResolvedValue(50_000n) };
+    transactionReview.mockResolvedValue(true);
+    click(transact);
+    await vi.waitFor(() => expect(form.querySelector('.error-box').textContent).toMatch(/stays pending/i));
+    click(transact);
+    await vi.waitFor(() => expect(form.querySelector('.error-box').textContent).toMatch(/your earlier pay/i));
+    expect(state.wallet.writeContract).toHaveBeenCalledOnce();
+    document.querySelectorAll('dialog').forEach(d => d.remove());
   });
 
   it('simulates without sending and exposes custom RPC selection', async () => {

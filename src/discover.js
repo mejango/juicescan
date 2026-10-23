@@ -7,7 +7,7 @@ import { MAX_DEFIFA_ACTION_NFTS, PAY_DEFAULT_SLIPPAGE_BPS, PAY_MAX_SLIPPAGE_BPS,
 import { createHookMetadata } from '@bananapus/nana-sdk-core';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { quotedOutputFloor } from './slippage.js';
@@ -29315,13 +29315,24 @@ async function lpSendTx(chainId, p) {
   if (walletChain !== chainId) { await switchChain(chainId); wallet = getWalletClient(); }
   acct = getAccount();
   if (!wallet || !acct || acct.toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+  // A multisig step resumes from its Safe queue; every other LP send is held until its receipt is read.
+  var hold = p.smartWallet ? null : holdForWrite(chainId, acct, p);
+  var gate = hold ? await heldWriteGate(hold, p.functionName) : null;
+  // The held write went through: its hash is this step's result, nothing is sent again.
+  if (gate && gate.hash) return gate.hash;
+  if (gate) throw new Error(gate.line);
   var client = clientFor(chainId);
   var simulation = await client.simulateContract({ account: acct, address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
   if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var gas = await contractGasWithHeadroom(client, simulation.request);
-  var hash = await wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId], gas: gas }));
+  function send() { return wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId], gas: gas })); }
+  var sent = hold ? await sendHeldWrite(hold, function () {
+    if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+  }, send) : { hash: await send() };
+  var hash = sent.hash;
   try {
     var receipt = await waitForTrackedTransactionReceipt(client, hash, wallet, chainId);
+    if (receipt && hold) await hold.release(sent.reservation).catch(function () {});
     if (!receipt || receipt.status !== 'success') {
       var reverted = new Error('Transaction reverted onchain. No state changes were applied.');
       reverted.onchainRevert = true;
@@ -30089,6 +30100,12 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
   var deadline = plan ? plan.deadline : BigInt(now + dlSecs);
   var permitDatas = [];
   var stepNo = 0;
+  // A held earlier mint (either entry point) settles or refuses before any approval or permit signature.
+  if (!prep.smartWallet) {
+    var mintGate = await heldWriteGate(holdForWrite(chainId, acct, lpMintCall(prep, deadline)), 'liquidity mint');
+    if (mintGate && mintGate.hash) return mintGate.hash;
+    if (mintGate) throw new Error(mintGate.line);
+  }
 
   if (prep.smartWallet && isSafeConnected()) {
     var batch = lpAddLiquidityCalls(prep, await lpLiveAllowanceNeeds(chainId, prep, acct, now), now, dlSecs, deadline);
@@ -30168,7 +30185,7 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
   if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
-    return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', args: [permitDatas.concat([mintData])], value: prep.value, smartWallet: prep.smartWallet });
+    return lpSendTx(chainId, { account: prep.acct, address: posm, abi: lpPositionManagerAbi, functionName: 'multicall', holdAs: 'modifyLiquidities', args: [permitDatas.concat([mintData])], value: prep.value, smartWallet: prep.smartWallet });
   }
   return lpSendTx(chainId, Object.assign({ account: prep.acct, smartWallet: prep.smartWallet }, lpMintCall(prep, deadline)));
 }

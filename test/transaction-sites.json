@@ -260,6 +260,14 @@
       "actions": [
         "Defifa NFT mint / transfer / cash out"
       ]
+    },
+    "src/write-hold.js": {
+      "counts": {
+        "providerRequest": 1
+      },
+      "actions": [
+        "Held direct writes"
+      ]
     }
   }
 }
