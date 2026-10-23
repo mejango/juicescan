@@ -1,5 +1,6 @@
-// SDK-parity canary. Juicescan owns lean copies of nana-sdk-core logic, frozen at 3.4.1 by test/fixtures/sdk-3.4.1.
-// This replays every fixture through the installed SDK. A failure means the SDK moved: a human decides whether
+// SDK-parity canary. Juicescan owns lean copies of nana-sdk-core logic, frozen by golden vectors: pay preparation at
+// SDK 557a9fc (test/fixtures/sdk-557a9fc), the rest at 3.4.1 (test/fixtures/sdk-3.4.1). This replays every fixture
+// through the installed SDK. A failure means the SDK moved: a human decides whether
 // juicescan follows. It runs weekly from .github/workflows/sdk-parity.yml with SDK_PARITY=1, never in the default run.
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -9,7 +10,7 @@ import * as sdk from '@bananapus/nana-sdk-core';
 import * as v6 from '@bananapus/nana-sdk-core/v6';
 import { describeJBHookMetadata } from '@bananapus/nana-sdk-core/review/decode';
 
-const load = (name, reviver) => JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/sdk-3.4.1', name), 'utf8'), reviver);
+const load = (name, reviver, dir = 'sdk-3.4.1') => JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures', dir, name), 'utf8'), reviver);
 const bigints = (k, v) => {
   if (v && typeof v === 'object' && '$bigint' in v) return BigInt(v.$bigint);
   if (k === 'abi' && v === '$abi:erc721') return erc721Abi;
@@ -36,11 +37,17 @@ function keyOf(method, p) {
     default: return `${method}|${ser(p ?? null)}`;
   }
 }
+// The V4 quoter's UnexpectedRevertBytes(NotEnoughLiquidity(poolId)), and the buyback hook's SpecifiedSlippageExceeded.
+const CANNOT_FILL = '0x6190b2b0' + '20'.padStart(64, '0') + '24'.padStart(64, '0') + '7a5ed734' + 'ab'.repeat(32) + '0'.repeat(56);
+const REJECTS_MINIMUM = '0xe2d708a9' + '1'.padStart(64, '0') + '2'.padStart(64, '0');
 const nonexistentAbi = [{ name: 'ERC721NonexistentToken', type: 'error', inputs: [{ type: 'uint256', name: 'tokenId' }] }];
 function makeError(kind, message, readAbi) {
   switch (kind) {
     case 'nonexistent': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: readAbi, functionName: 'ownerOf', data: encodeErrorResult({ abi: nonexistentAbi, errorName: 'ERC721NonexistentToken', args: [1n] }) }) });
     case 'revert': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: [], functionName: 'f', data: '0x' }) });
+    case 'cannotFill': return new BaseError(message, { cause: Object.assign(new Error('execution reverted'), { code: 3, data: CANNOT_FILL }) });
+    case 'rejectsMinimum': return new BaseError(message, { cause: new ContractFunctionRevertedError({ abi: [], functionName: 'previewPayFor', data: REJECTS_MINIMUM }) });
+    case 'decoderData': return new BaseError(message, { cause: Object.assign(new Error('decode failed'), { data: CANNOT_FILL }) });
     case 'zerodata': return new BaseError(message, { cause: new ContractFunctionZeroDataError({ functionName: 'STORE' }) });
     case 'transport': return new BaseError(message);
     default: return new Error(message);
@@ -94,8 +101,8 @@ async function replay(c) {
   return { actual, calls };
 }
 
-// A case with sdkOutput is a recorded, intentional divergence: the SDK answered sdkOutput at 3.4.1, juicescan answers
-// output, and the SDK matches either until it ships the same fix.
+// A case with sdkOutput is a recorded, intentional divergence: the SDK answered sdkOutput at the fixture's version,
+// juicescan answers output, and the SDK matches either until it ships the same fix. None is recorded today.
 async function replayAll(golden, label) {
   const request = vi.fn();
   window.ethereum = { request };
@@ -124,10 +131,11 @@ async function replayAll(golden, label) {
   return divergent;
 }
 
-describe('installed SDK matches the 3.4.1 golden vectors', () => {
-  it('pay preparation, apart from the recorded swap-quote divergence', async () => {
-    const golden = load('pay-prepare.json', bigints);
-    expect(await replayAll(golden, 'pay-prepare')).toBe(20);
+describe('installed SDK matches the golden vectors', () => {
+  it('pay preparation, as of SDK 557a9fc', async () => {
+    const golden = load('pay-prepare.json', bigints, 'sdk-557a9fc');
+    expect(golden.sdkCommit).toBe('557a9fc');
+    expect(await replayAll(golden, 'pay-prepare')).toBe(0);
   });
 
   it('NFT inventory and Defifa holdings reads', async () => {

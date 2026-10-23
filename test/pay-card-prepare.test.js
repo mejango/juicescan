@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ prepareUserPay: vi.fn() }));
 vi.mock('../src/pay-prepare.js', async importOriginal => ({ ...await importOriginal(), prepareUserPay: h.prepareUserPay }));
 import { createHookMetadata } from '../src/hook-metadata.js';
-import { buildUserPayMetadata, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
+import { buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, PaySwapQuoteFailedError } from '../src/pay-prepare.js';
 import { addToHookMetadata } from '../src/discover.js';
 import { prepareCardPay } from '../src/pay-preview.js';
 
@@ -47,6 +47,20 @@ describe('pay card payment preparation', () => {
     h.prepareUserPay.mockRejectedValueOnce(new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE));
     const prepared = await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n });
     expect(prepared).toEqual({ received: null, reserved: null, unavailable: true, reason: PAY_SWAP_QUOTE_FAILED_MESSAGE, explained: true, retry: true });
+  });
+
+  it('reads the SDK-shaped swap refusal as unavailable with a retry', async () => {
+    h.prepareUserPay.mockRejectedValueOnce(new PaySwapQuoteFailedError(new Error('socket hang up')));
+    const prepared = await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n });
+    expect(prepared).toEqual({ received: null, reserved: null, unavailable: true, reason: PAY_SWAP_QUOTE_FAILED_MESSAGE, explained: true, retry: true });
+  });
+
+  it('keeps a payable fallback minimum and says only the market price could not be loaded', async () => {
+    h.prepareUserPay.mockResolvedValueOnce({ metadata: '0x01', preview: { beneficiaryTokenCount: 9n, reservedTokenCount: 1n }, minReturnedTokens: 8n, quoteFailed: true });
+    const prepared = await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n });
+    expect(prepared).toEqual({ received: 9n, reserved: 1n, minReturnedTokens: 8n, metadata: '0x01', quoteFailed: true, reason: PAY_QUOTE_FAILED_MESSAGE });
+    h.prepareUserPay.mockResolvedValueOnce({ metadata: '0x01', preview: { beneficiaryTokenCount: 9n, reservedTokenCount: 1n }, minReturnedTokens: 8n });
+    expect(await prepareCardPay({ chainId: 8453, terminal, projectId: 6n, token, amount: 1n })).toEqual({ received: 9n, reserved: 1n, minReturnedTokens: 8n, metadata: '0x01' });
   });
 
   it('adds the router Permit2 allowance next to the buyback quote and 721 tiers', () => {

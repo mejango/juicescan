@@ -14,7 +14,7 @@
 
 import { decodeAbiParameters, formatUnits } from 'viem';
 import { decodePayFailure } from './pay-failure.js';
-import { PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay } from './pay-prepare.js';
+import { PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay } from './pay-prepare.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS } from './slippage.js';
 import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
@@ -248,7 +248,8 @@ export async function computePayPreview(opts) {
 }
 
 // The pay card's whole payment from prepareUserPay: the buyback quote (skipSplits) plus any 721 tiers as metadata, the
-// preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero.
+// preview, and the minimum the terminal enforces. A reverting preview reads as unavailable, never as zero. A
+// payment whose market price could not be read keeps its fallback minimum, with `quoteFailed` and the line to show.
 export function prepareCardPay(opts) {
   var tierIds = opts.tierIds || [];
   // `explained`: the reason is a plain sentence for the payer (a decoded revert), not a raw error.
@@ -266,7 +267,8 @@ export function prepareCardPay(opts) {
       : undefined,
     slippageBps: opts.slippageBps == null ? PAY_DEFAULT_SLIPPAGE_BPS : BigInt(opts.slippageBps),
   }).then(function (r) {
-    return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
+    var out = { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
+    return r.quoteFailed ? Object.assign(out, { quoteFailed: true, reason: PAY_QUOTE_FAILED_MESSAGE }) : out;
   }, function (error) {
     // A swap that could not be quoted has no safe minimum: not payable until a retried quote lands.
     if (error && error.message === PAY_SWAP_QUOTE_FAILED_MESSAGE) return Object.assign(unavailable(error.message, true), { retry: true });

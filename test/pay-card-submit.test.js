@@ -8,7 +8,7 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getWalletClient: () => ({ getChainId: async () => 8453, signTypedData: runtime.sign }),
   createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => '0x', getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
 import { getAddress } from '../src/abi-registry.js';
-import { buildUserPayMetadata, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
+import { buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
 import { hookMetadataId } from '../src/hook-metadata.js';
 import { decodeAbiParameters, encodeErrorResult } from 'viem';
 import { makeNftCart, renderPayCard } from '../src/discover.js';
@@ -83,7 +83,7 @@ it('approves the terminal for exactly the amount of a directly accepted ERC-20',
 });
 
 const settle = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function quoted(text) { await vi.waitFor(() => expect(document.querySelector('.paybox-yg-val').textContent).toContain(text)); }
+async function quoted(text) { await vi.waitFor(() => expect([...document.querySelectorAll('.paybox-yg-val')].map(v => v.textContent).join('\n')).toContain(text)); }
 
 it('opens no confirmation while the quote loads', async () => {
   runtime.prepare.mockReturnValueOnce(deferred().promise);
@@ -124,6 +124,38 @@ it('blocks a payment whose swap quote failed and offers one inline Retry', async
   await review(); confirmButton().click();
   await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
   expect(runtime.execute.mock.lastCall[0].args.slice(4)).toEqual([7n * 10n ** 18n, '', '0x03']);
+});
+
+it('says inline, with Retry, when only the fallback minimum could be set, and still pays in one confirmation', async () => {
+  runtime.prepare.mockResolvedValueOnce({ ...prepared('0x04', 6n * 10n ** 18n), quoteFailed: true }).mockResolvedValue(prepared('0x05', 7n * 10n ** 18n));
+  await card(612); type('1');
+  await quoted('6.00');
+  const line = () => [...document.querySelectorAll('.paybox-yg-row')].find(r => r.textContent.includes(PAY_QUOTE_FAILED_MESSAGE));
+  const retry = () => line() && [...line().querySelectorAll('button')].find(b => b.textContent === 'Retry');
+  expect(retry()).toBeTruthy();
+  expect(document.querySelector('[role="dialog"], dialog')).toBeFalsy();
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(runtime.execute.mock.lastCall[0].args.slice(4)).toEqual([6n * 10n ** 18n, '', '0x04']);
+});
+
+it('says so even when the fallback-minimum payment issues no tokens', async () => {
+  runtime.prepare.mockResolvedValue({ metadata: '0x06', minReturnedTokens: 0n, preview: { beneficiaryTokenCount: 0n, reservedTokenCount: 0n }, quoteFailed: true });
+  await card(614); type('1');
+  const line = () => [...document.querySelectorAll('.paybox-yg-row')].find(r => r.textContent.includes(PAY_QUOTE_FAILED_MESSAGE));
+  await vi.waitFor(() => expect(line()).toBeTruthy());
+  expect([...line().querySelectorAll('button')].some(b => b.textContent === 'Retry')).toBe(true);
+});
+
+it('drops the fallback-minimum line once Retry quotes the pool', async () => {
+  runtime.prepare.mockResolvedValueOnce({ ...prepared('0x04', 6n * 10n ** 18n), quoteFailed: true }).mockResolvedValue(prepared('0x05', 7n * 10n ** 18n));
+  await card(613); type('1');
+  await quoted('6.00');
+  const retry = () => [...document.querySelectorAll('.paybox-yg-row button')].find(b => b.textContent === 'Retry');
+  retry().click();
+  await quoted('7.00');
+  expect(document.body.textContent).not.toContain(PAY_QUOTE_FAILED_MESSAGE);
+  expect(retry()).toBeFalsy();
 });
 
 it('drops a late quote for an older amount', async () => {
@@ -294,6 +326,17 @@ it.each([
   await vi.waitFor(() => expect(document.querySelector('.tx-confirm-status').textContent).toBe(line));
   expect(reviewAgainButton()).toBeFalsy();
   expect(document.querySelector('.pay-retry-slippage')).toBeNull();
+});
+
+it('reads a wallet rejection as the payer declining, never as a shortfall, even with revert data', async () => {
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  runtime.execute.mockImplementationOnce(tx => tx.onError('Transaction rejected.', { userRejected: true, error: Object.assign(underMin(880n * 10n ** 18n, 900n * 10n ** 18n), { code: 4001 }) }));
+  await card(615); type('1'); await quoted('900');
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  await settle(20);
+  expect(document.querySelector('.pay-retry-slippage')).toBeFalsy();
+  expect(document.body.textContent).not.toContain('fewer tokens than your minimum');
 });
 
 it('drops a loosened tolerance when the payment changed before Review again', async () => {
