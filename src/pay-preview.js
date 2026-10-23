@@ -14,7 +14,7 @@
 
 import { decodeAbiParameters, formatUnits } from 'viem';
 import { decodePayFailure } from './pay-failure.js';
-import { prepareUserPay } from './pay-prepare.js';
+import { PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay } from './pay-prepare.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS } from './slippage.js';
 import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
@@ -268,6 +268,8 @@ export function prepareCardPay(opts) {
   }).then(function (r) {
     return { received: r.preview.beneficiaryTokenCount, reserved: r.preview.reservedTokenCount, minReturnedTokens: r.minReturnedTokens, metadata: r.metadata };
   }, function (error) {
+    // A swap that could not be quoted has no safe minimum: not payable until a retried quote lands.
+    if (error && error.message === PAY_SWAP_QUOTE_FAILED_MESSAGE) return Object.assign(unavailable(error.message, true), { retry: true });
     var failure = decodePayFailure(error);
     return failure ? unavailable(failure.message, true) : unavailable(errMessage(error, 'preview unavailable'));
   });

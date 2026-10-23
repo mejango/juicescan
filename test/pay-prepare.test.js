@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BaseError, ContractFunctionRevertedError, keccak256, toHex } from 'viem';
-import { build721PayMetadata, buildBuybackPayMetadata, buildPayTx, buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, prepareUserPay, resolvePaymentTerminal } from '../src/pay-prepare.js';
+import { build721PayMetadata, buildBuybackPayMetadata, buildPayTx, buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay, resolvePaymentTerminal } from '../src/pay-prepare.js';
 import { slippageFloor } from '../src/slippage.js';
 
 const revive = (_, v) => (v && typeof v === 'object' && '$bigint' in v ? BigInt(v.$bigint) : v);
@@ -121,8 +121,54 @@ describe('prepareUserPay matches SDK 3.4.1 golden vectors', () => {
     expect(c.output.minReturnedTokens).toBe(1_138_500_000_000_000_000_000n);
     expect(c.output.metadata.slice(2 + 64 * 3, 2 + 64 * 4)).toBe(1_138_500_000_000_000_000_000n.toString(16).padStart(64, '0'));
     expect(byName('buyback quote below mint keeps the mint path').output.minReturnedTokens).toBe(989_999_999_999_999_999_998n);
-    // As in 3.4.1, the fallback takes two rounding units off the mint entitlement, so an entitlement of 2 floors to 0.
-    expect(byName('quote failure with a tiny mint entitlement sends a zero minimum').output.minReturnedTokens).toBe(0n);
+  });
+
+  it('diverges from 3.4.1 only where a swap route lost a read: never a fallback minimum, which can be zero', () => {
+    const divergent = golden.cases.filter((c) => c.sdkOutput);
+    expect(divergent.length).toBe(20);
+    for (const c of divergent) {
+      expect(c.output, c.name).toEqual({ $error: PAY_SWAP_QUOTE_FAILED_MESSAGE, $name: 'Error' });
+      const unreadableSpec = /spec unreadable/.test(c.name);
+      expect(unreadableSpec || Object.values(c.reads).some((v) => v && (v.$throw || (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0))), c.name + ' lost a read').toBe(true);
+    }
+    // 3.4.1 sent a zero minimum here: an entitlement of 2 less its two rounding units.
+    expect(byName('quote failure with a tiny mint entitlement').sdkOutput.minReturnedTokens).toBe(0n);
+    // No swap route, or no quote possible on the chain: the fallback stands.
+    for (const name of ['noop buyback spec mints', 'buyback quote of zero', 'buyback swap amount above uint128', 'chain with no direct buyback hook', 'router conversion on a chain with no router', 'no pool matches the spec']) {
+      expect(byName(name).output.$error, name).toBeUndefined();
+    }
+  });
+
+  it('refuses a swap whose quote is malformed or whose client throws synchronously, never a fallback minimum', async () => {
+    const c = byName('quote failure with a tiny mint entitlement');
+    const client = (patch) => { const base = strictClient(c.reads, []); return { ...base, ...patch(base) }; };
+    const truncated = client(() => ({ call: async () => ({ data: '0x12' }) }));
+    await expect(prepareUserPay(truncated, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    const syncCall = client(() => ({ call: () => { throw new Error('socket closed'); } }));
+    await expect(prepareUserPay(syncCall, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    const syncRead = client((base) => ({ readContract: (p) => { if (p.functionName === 'poolKeyOf') throw new Error('socket closed'); return base.readContract(p); } }));
+    await expect(prepareUserPay(syncRead, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    for (const empty of [undefined, null]) {
+      const emptyCall = client(() => ({ call: async () => empty }));
+      await expect(prepareUserPay(emptyCall, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+      const emptyRead = client((base) => ({ readContract: async (p) => (p.functionName === 'poolKeyOf' ? empty : base.readContract(p)) }));
+      await expect(prepareUserPay(emptyRead, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    }
+    const r = byName('router converts and the buyback swaps');
+    const routerEmpty = { ...strictClient(r.reads, []) };
+    const routerRead = routerEmpty.readContract;
+    routerEmpty.readContract = async (p) => (p.functionName === 'projectIdOf' ? undefined : routerRead(p));
+    await expect(prepareUserPay(routerEmpty, r.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+    const malformed = client(() => ({ call: async () => { throw new SyntaxError('Cannot convert 0xzz to a BigInt'); } }));
+    await expect(prepareUserPay(malformed, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+  });
+
+  it('never sends a swap with a zero mint-path minimum, even when no read failed', async () => {
+    const c = byName('quote failure with a tiny mint entitlement');
+    const base = strictClient(c.reads, []);
+    const otherPool = { currency0: '0x0000000000000000000000000000000000000000', currency1: '0x9999999999999999999999999999999999999999', fee: 1, tickSpacing: 1, hooks: '0x0000000000000000000000000000000000000000' };
+    const noPool = { ...base, readContract: async (p) => (p.functionName === 'poolKeyOf' ? otherPool : p.functionName === 'accountingContextsOf' ? [] : base.readContract(p)) };
+    await expect(prepareUserPay(noPool, c.input)).rejects.toThrow(PAY_SWAP_QUOTE_FAILED_MESSAGE);
   });
 
   it('builds the same pay transaction the SDK does, with the terminal ABI from the registry', () => {

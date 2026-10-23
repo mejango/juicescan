@@ -9866,6 +9866,11 @@ export function renderPayCard(project, cart) {
       var why = el('div', 'paybox-yg-val muted');
       why.textContent = p.reason;
       whyRow.appendChild(why);
+      if (p.retry) {
+        var retryQuote = el('button'); retryQuote.type = 'button'; retryQuote.textContent = 'Retry';
+        retryQuote.addEventListener('click', schedulePreview);
+        whyRow.appendChild(retryQuote);
+      }
       feedback.appendChild(whyRow);
       var nbW = nftBlock(); if (nbW) feedback.appendChild(nbW);
       return;

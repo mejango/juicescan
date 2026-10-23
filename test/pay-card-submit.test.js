@@ -8,7 +8,7 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getWalletClient: () => ({ getChainId: async () => 8453, signTypedData: runtime.sign }),
   createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => '0x', getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
 import { getAddress } from '../src/abi-registry.js';
-import { buildUserPayMetadata } from '../src/pay-prepare.js';
+import { buildUserPayMetadata, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
 import { hookMetadataId } from '../src/hook-metadata.js';
 import { decodeAbiParameters, encodeErrorResult } from 'viem';
 import { makeNftCart, renderPayCard } from '../src/discover.js';
@@ -104,6 +104,26 @@ it('opens no confirmation after a refreshed quote fails', async () => {
   payButton().click(); await settle(50);
   expect(confirmButton()).toBeFalsy();
   expect(runtime.execute).not.toHaveBeenCalled();
+});
+
+it('blocks a payment whose swap quote failed and offers one inline Retry', async () => {
+  let quotable = false;
+  runtime.prepare.mockImplementation(async () => { if (!quotable) throw new Error(PAY_SWAP_QUOTE_FAILED_MESSAGE); return prepared('0x03', 7n * 10n ** 18n); });
+  await card(611); type('1');
+  const retry = () => [...document.querySelectorAll('.paybox-yg-row button')].find(b => b.textContent === 'Retry');
+  await vi.waitFor(() => expect(retry()).toBeTruthy(), { timeout: 3000 });
+  expect(document.querySelector('.paybox-yg-row').textContent).toContain(PAY_SWAP_QUOTE_FAILED_MESSAGE);
+  expect(document.querySelector('[role="dialog"], dialog')).toBeFalsy();
+  expect(confirmButton()).toBeFalsy();
+  const calls = runtime.prepare.mock.calls.length;
+  quotable = true;
+  retry().click();
+  await vi.waitFor(() => expect(runtime.prepare.mock.calls.length).toBeGreaterThan(calls));
+  await quoted('7.00');
+  expect(retry()).toBeFalsy();
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(runtime.execute.mock.lastCall[0].args.slice(4)).toEqual([7n * 10n ** 18n, '', '0x03']);
 });
 
 it('drops a late quote for an older amount', async () => {
