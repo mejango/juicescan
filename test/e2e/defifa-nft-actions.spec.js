@@ -4,12 +4,14 @@ let harness;
 async function source(){
  if(!harness)harness=esbuild.build({stdin:{contents:"import {renderDefifaNftActions} from './src/defifa-nft-actions.js';window.showNativeActions=()=>document.querySelector('main').replaceChildren(renderDefifaNftActions(window.native.inventory,8453,27,(value)=>String(value)+' base units'));",resolveDir:process.cwd(),loader:'js'},bundle:true,format:'esm',write:false,plugins:[{name:'controlled-native-ui',setup(build){
   build.onResolve({filter:/^@bananapus\/nana-sdk-core\/v6$/},()=>({path:'sdk',namespace:'native-ui'}));
+  build.onResolve({filter:/\/defifa\.js$/,namespace:'file'},()=>({path:'defifa',namespace:'native-ui'}));
   build.onResolve({filter:/^\//,namespace:'native-ui'},args=>({path:args.path,namespace:'file'}));
   build.onResolve({filter:/component-base\.js$/},()=>({path:'components',namespace:'native-ui'}));
   build.onResolve({filter:/safe-app\.js$/},()=>({path:'safe',namespace:'native-ui'}));
   build.onLoad({filter:/.*/,namespace:'native-ui'},args=>({loader:'js',contents:args.path==='sdk'?`export * from ${JSON.stringify(process.cwd()+'/node_modules/@bananapus/nana-sdk-core/dist/esm/v6/index.js')};
 export async function getProjectNftInventory(){return window.native.inventory}
 export async function getDefifaHoldings(){return window.native.holdings}
+`:args.path==='defifa'?`export {MAX_DEFIFA_ACTION_NFTS,defifaPhaseAllowsPay,defifaPhaseAllowsCashOut,effectiveTierPrice,DefifaNftTransactionRevertedError} from ${JSON.stringify(process.cwd()+'/src/defifa.js')};
 export async function prepareDefifaPay(client,args){window.native.preparations++;const counts=new Map();for(const id of args.tierIdsToMint)counts.set(id,(counts.get(id)||0n)+1n);const selectedTiers=[...counts].map(([tierId,count])=>({tierId,count,unitPrice:window.native.inventory.tiers.find(t=>BigInt(t.id)===tierId).price}));return {...window.native.prepared,selectedTiers,amount:selectedTiers.reduce((sum,t)=>sum+t.unitPrice*t.count,0n),effectiveAttestationDelegate:args.account}}
 export async function prepareDefifaCashOut(){window.native.preparations++;return {...window.native.prepared,reclaimAmount:0n,protocolRewards:{defifaAmount:2n,baseProtocolAmount:0n,defifaToken:window.native.inventory.hook,baseProtocolToken:window.native.inventory.hook,defifaDecimals:18,baseProtocolDecimals:18}}}
 export async function prepareDefifaTransfer(){window.native.preparations++;return window.native.prepared}
