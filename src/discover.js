@@ -17,10 +17,10 @@ import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive 
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
-import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan } from './action-plan.js';
+import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
 import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
 import { CREDIT_CLAIM_ABI, prepareCreditClaims, verifyCreditClaims, verifySavedCreditClaims } from './credit-claims.js';
 import { fetchPendingPaymentRows, readPendingPayment, preparePendingPayment, refreshPendingPayment, reverifyPendingPayment, pendingPaymentReceiptOutcome } from './pending-payments.js';
@@ -10996,6 +10996,7 @@ export function normalizeSelectedSafeResult(result, expectedCount) {
 
 export async function runSelectedProjectCallRounds(project, prepare, opts, setStatus) {
   opts = opts || {};
+  removeRefusedActionDiscard(setStatus);
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var account = getAccount();
   if (!account) account = await connect().then(getAccount);
@@ -11011,11 +11012,12 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
       Object.assign({}, opts, { pendingScope: scope }));
     return { relayr: true, resumed: true, session: old, completed: true };
   }
-  var preparedChecks = null;
+  var preparedChecks = null, resumedPlan = true;
   var outcome = await runSavedActionPlan({
     scope: scope, account: account, executionAccount: sender, safeMode: !!authoritySafe, gas: opts.gas,
     maxCalls: opts.maxCalls,
     prepare: async function () {
+      resumedPlan = false;
       var prepared = await prepare(sender);
       preparedChecks = opts._preparedReverify;
       return prepared;
@@ -11023,6 +11025,8 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
     reconcileResult: function (result, calls) { return reconcileSelectedSafeResult(result, calls, sender, opts.verifyReceipt, null, opts.verifyObsoleteSafeCall); },
     executeRound: async function (calls, index, plan, control) {
       var roundScope = scope + ':' + plan.id + ':round:' + index;
+      // Captured before any loader can drop an unreadable Relayr record: evidence seen once keeps the plan.
+      var roundRelayrEvidence = relayrPendingRecordExists(roundScope, account);
       // A keeper may resolve a queued payment while an earlier round is being reviewed. Refresh only
       // calls with no wallet/relay/Safe publication record; submitted work retains its exact recovery.
       if (opts.refreshUnsubmittedRound && !control.hasSafeProgress
@@ -11044,8 +11048,15 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
         summary: { rows: (opts.summaryForRound ? opts.summaryForRound(calls) : plan.summary && plan.summary.rows || []).concat([['Round', (index + 1) + ' of ' + plan.rounds.length], ['Calls in this round', String(calls.length)]]) },
         reverify: async function (chainId) {
           if (!getAccount() || !sameAddr(getAccount(), account)) throw new Error('Connected account changed. Resume with the original wallet.');
-          if (opts.reverifySaved) await opts.reverifySaved(calls, chainId, sender);
-          else if (preparedChecks) await preparedChecks(chainId);
+          if (opts.reverifySaved) {
+            try { await opts.reverifySaved(calls, chainId, sender); } catch (error) {
+              if (resumedPlan) offerRefusedActionDiscard(setStatus, function () {
+                return discardRefusedRound({ scope: scope, account: account, planId: plan.id, roundScope: roundScope, calls: calls, relayrEvidence: roundRelayrEvidence });
+              });
+              throw error;
+            }
+            removeRefusedActionDiscard(setStatus);
+          } else if (preparedChecks) await preparedChecks(chainId);
           else if (opts.reverify) await opts.reverify(chainId);
         },
         preserveCompletionCheck: true, retainPendingReceipt: true,
@@ -11539,6 +11550,36 @@ function relayrBundleScope(entries) {
     return [Number(entry.chain), String(entry.target || '').toLowerCase(), String(entry.data || ''), String(entry.value || '0')];
   });
   return 'bundle:' + keccak256(stringToHex(JSON.stringify(stable)));
+}
+
+// A saved action refused on resume gets one way out, shown only beside that refusal. Discarding succeeds only when
+// nothing in the action was submitted; otherwise the action stays for recovery.
+function removeRefusedActionDiscard(setStatus) {
+  var statusEl = setStatus && setStatus.element;
+  if (statusEl && statusEl._refusedDiscard) { statusEl._refusedDiscard.remove(); statusEl._refusedDiscard = null; }
+}
+// `relayrEvidence` is whether the round had any Relayr record when it started; a loader may drop an unreadable one
+// later, so evidence seen once keeps the plan.
+export function discardRefusedRound(o) {
+  return discardUnsubmittedActionPlan(o.scope, o.account, o.planId, async function () {
+    return !o.relayrEvidence && !relayrPendingRecordExists(o.roundScope, o.account) && await clearUnsubmittedDirectBatch(o.roundScope, o.account, o.calls);
+  });
+}
+export function offerRefusedActionDiscard(setStatus, discard) {
+  var statusEl = setStatus && setStatus.element;
+  if (!statusEl || !statusEl.parentNode) return;
+  removeRefusedActionDiscard(setStatus);
+  var btn = el('button', 'operator-cta refused-action-discard'); btn.type = 'button'; btn.textContent = 'Discard';
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    Promise.resolve().then(discard).then(function (discarded) {
+      removeRefusedActionDiscard(setStatus);
+      if (discarded) setStatus('Discarded the saved action. Nothing from it was sent.', 'success');
+      else setStatus('Part of this action may have been sent, so it was kept. Check its transactions before trying again.', 'error');
+    }, function (error) { btn.disabled = false; setStatus(errMessage(error, 'Could not discard the saved action.'), 'error'); });
+  });
+  statusEl.parentNode.insertBefore(btn, statusEl.nextSibling);
+  statusEl._refusedDiscard = btn;
 }
 
 function removeRelayrRecoveryPanel(setStatus) {

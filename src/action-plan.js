@@ -53,6 +53,25 @@ export function acknowledgeSavedActionPlan(scope, account) {
   if (plan && plan.nextRound === plan.rounds.length && !plan.safePending && plan.results.every(function (result) { return result.relayr || result.confirmed === true || Number(result.executedReady || 0) + Number(result.obsoleteReady || 0) === Number(result.expectedCount); })) localStorage.removeItem(key);
 }
 
+// A refused saved action may be dropped only while nothing in it was handed to a wallet, Safe or Relayr: no
+// checkpointed round and no Safe attempt or proposal. `journalsClear(plan)` must also prove the current round's own
+// direct and Relayr journals unsubmitted. Anything uncertain keeps the plan for recovery.
+export async function discardUnsubmittedActionPlan(scope, account, planId, journalsClear) {
+  var key = keyFor(scope, account);
+  if (active.has(key) || typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return false;
+  return navigator.locks.request(key, { ifAvailable: true }, async function (lock) {
+    if (!lock || active.has(key)) return false;
+    var plan;
+    try { plan = read(key); } catch (_) { return false; }
+    var progress = plan && plan.safeProgress;
+    if (!plan || plan.id !== planId || plan.nextRound !== 0 || (plan.results || []).length || plan.safePending
+      || (progress && (progress.attempt || (progress.proposals || []).length || (progress.executedChains || []).length))) return false;
+    if (!await journalsClear(plan)) return false;
+    localStorage.removeItem(key);
+    return localStorage.getItem(key) == null;
+  });
+}
+
 export async function runSavedActionPlan(options, locked) {
   var key = keyFor(options.scope, options.account);
   if (!options.scope || !options.account) throw new Error('This action is missing its account or recovery scope.');

@@ -3,7 +3,7 @@
   "sites": {
     "src/action-plan.js": {
       "counts": {
-        "providerRequest": 1
+        "providerRequest": 2
       },
       "actions": [
         "Selected project action recovery"
