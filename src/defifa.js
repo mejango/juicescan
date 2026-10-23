@@ -9,8 +9,8 @@ import { parseReviewedWriteRecoveryRecord, verifyReviewedWriteReceipt } from '@b
 import { RelayrDestinationRevertedError, verifyRelayrDestination } from '@bananapus/nana-sdk-core/review/relayr';
 import { getABI, getAddress } from './abi-registry.js';
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
-import { defifaDeployment, getProjectNftInventory, sameAddress, v6Address } from './nft-inventory-read.js';
-import { NATIVE_TOKEN } from './safe-batch.js';
+import { defifaDeployment, getProjectNftInventory, sameAddress } from './nft-inventory-read.js';
+import { buildPayTx, resolvePaymentTerminal } from './pay-prepare.js';
 
 const defifaActionAbi = [
   { name: 'defaultAttestationDelegate', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
@@ -70,17 +70,6 @@ function address(value, label, allowZero = false) {
   return value;
 }
 
-function buildPayTx({ chainId, terminal, projectId, token, amount, beneficiary, minReturnedTokens = 0n, memo = '', metadata = '0x' }) {
-  return {
-    chainId,
-    address: terminal,
-    abi: getABI('JBMultiTerminal', chainId),
-    functionName: 'pay',
-    args: [projectId, token, amount, beneficiary, minReturnedTokens, memo, metadata],
-    value: token.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? amount : 0n,
-  };
-}
-
 function buildCashOutTx({ chainId, terminal, holder, projectId, cashOutCount, tokenToReclaim, minTokensReclaimed = 0n, beneficiary, metadata = '0x' }) {
   return {
     chainId,
@@ -96,18 +85,6 @@ function build721CashOutMetadata({ metadataIdTarget, tokenIds }) {
   if (new Set(tokenIds.map(String)).size !== tokenIds.length) throw new Error('build721CashOutMetadata token ids must be unique');
   if (tokenIds.some((tokenId) => tokenId <= 0n)) throw new Error('build721CashOutMetadata token ids must be positive');
   return createHookMetadata([hookMetadataId(metadataIdTarget, 'cashOut')], [encodeAbiParameters([{ type: 'uint256[]' }], [tokenIds])]);
-}
-
-// The project's primary terminal for the token, else the router registry (which a Defifa action then rejects).
-async function resolvePaymentTerminal(client, { chainId, projectId, token }) {
-  const primaryTerminal = await client.readContract({
-    address: v6Address('JBDirectory', chainId),
-    abi: getABI('JBDirectory', chainId),
-    functionName: 'primaryTerminalOf',
-    args: [projectId, token],
-  });
-  if (primaryTerminal === zeroAddress) return { address: v6Address('JBRouterTerminalRegistry', chainId), isRouter: true };
-  return { address: primaryTerminal, isRouter: false };
 }
 
 /**

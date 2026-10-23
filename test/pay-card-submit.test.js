@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const runtime = vi.hoisted(() => ({ prepare: vi.fn(), execute: vi.fn(), contractRead: vi.fn(), sign: vi.fn(), inventory: vi.fn(), account: '0x1111111111111111111111111111111111111111' }));
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), prepareUserPay: runtime.prepare }));
+vi.mock('../src/pay-prepare.js', async original => ({ ...await original(), prepareUserPay: runtime.prepare }));
 vi.mock('../src/nft-inventory-read.js', async original => ({ ...await original(), getProjectNftInventory: (...args) => runtime.inventory(...args) }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account, getViewAs: () => null, isSafeConnected: () => false,
@@ -8,8 +8,8 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getWalletClient: () => ({ getChainId: async () => 8453, signTypedData: runtime.sign }),
   createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => '0x', getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
 import { getAddress } from '../src/abi-registry.js';
-import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6';
-import { hookMetadataId } from '@bananapus/nana-sdk-core';
+import { buildUserPayMetadata } from '../src/pay-prepare.js';
+import { hookMetadataId } from '../src/hook-metadata.js';
 import { decodeAbiParameters, encodeErrorResult } from 'viem';
 import { makeNftCart, renderPayCard } from '../src/discover.js';
 

@@ -36,7 +36,7 @@ var accountingContextsAbi = [{
 
 // Pure builder for the JBMultiTerminal.pay transaction — returns the executeTransaction config (no callbacks).
 // `o`: { chainId, projectId, token, amount (bigint), beneficiary, memo, route } where route carries the
-// resolved terminal/router address and the SDK's prepared payment (`preview.minReturnedTokens` and
+// resolved terminal/router address and the prepared payment (`preview.minReturnedTokens` and
 // `preview.metadata`, from prepareUserPay). A verified zero minimum is valid for a zero-issuance project; a
 // missing/unavailable preparation is rejected.
 export function buildPayArgs(o) {
@@ -108,7 +108,7 @@ export function resolveBestPayRoute(opts) {
       beneficiary: opts.beneficiary,
       terminal: route.address,
     };
-    // The SDK prepares the payment (metadata, preview, minimum); the routing labels load afterwards
+    // prepareUserPay prepares the payment (metadata, preview, minimum); the routing labels load afterwards
     // (payRouteLabels), so a slow display read never holds up the review.
     return prepareCardPay(request).then(function (prepared) {
       return Object.assign({}, route, { preview: prepared });

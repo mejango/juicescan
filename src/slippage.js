@@ -16,12 +16,25 @@ function toBigInt(value) {
  * so it clamps to 1. A zero/negative/unparseable quote returns 0n — the caller decides whether that is legal.
  */
 export function quotedOutputFloor(quoted, bps) {
-  quoted = toBigInt(quoted);
-  bps = bps == null ? 9900n : BigInt(bps);
+  return floorOf(toBigInt(quoted), bps == null ? 9900n : BigInt(bps));
+}
+
+// The floor itself, on bigints only: keep `keepBps` of a positive quote, never below 1.
+function floorOf(quoted, keepBps) {
   if (quoted <= 0n) return 0n;
-  var floor = quoted * bps / 10000n;
+  var floor = quoted * keepBps / 10000n;
   return floor > 0n ? floor : 1n;
 }
 
 /** The default pay slippage tolerance in basis points (1%). */
 export const PAY_DEFAULT_SLIPPAGE_BPS = 100n;
+
+/**
+ * The floor of a quote at a slippage tolerance in basis points (default 1%), rejecting a tolerance outside
+ * [0, 10000). Mirrors nana-sdk-core 3.4.1 v6/cashOut.ts#slippageFloor.
+ */
+export function slippageFloor(quoted, slippageBps = 100n) {
+  if (slippageBps < 0n || slippageBps >= 10000n) throw new Error('Slippage basis points must be in [0, 10000)');
+  if (quoted <= 0n) return 0n;
+  return floorOf(quoted, 10000n - slippageBps);
+}

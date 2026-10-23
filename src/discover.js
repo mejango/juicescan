@@ -15,6 +15,7 @@ import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
+import { V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
@@ -4395,29 +4396,9 @@ var UNIVERSAL_ROUTER_BY_CHAIN = {
   84532: '0x492e6456d9528771018deb9e87ef7750ef184104',
   421614: '0xefd1d4bd4cf1e86da286bb4cb1b8bced9c10ba47',
 };
-var V4_QUOTER_BY_CHAIN = {
-  1: '0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203',
-  10: '0x1f3131a13296fb91c90870043742c3cdbff1a8d7',
-  8453: '0x0d5e0f971ed27fbff6c2837bf31316121532048d',
-  42161: '0x3972c00f7ed4885e145823eb7c655375d275a1c5',
-  11155111: '0x61b3f2011a92d183c7dbadbda940a7555ccf9227',
-  84532: '0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba',
-  421614: '0x7de51022d70a725b508085468052e25e22b5c4c9',
-};
 // v4-periphery Actions + Universal Router Commands (canonical byte values).
 var V4_ACTION = { SWAP_EXACT_IN_SINGLE: 0x06, SETTLE_ALL: 0x0c, TAKE: 0x0e };
 var UR_CMD = { PERMIT2_PERMIT: 0x0a, V4_SWAP: 0x10 };
-var v4QuoterAbi = [{
-  type: 'function', name: 'quoteExactInputSingle', stateMutability: 'nonpayable',
-  inputs: [{ name: 'params', type: 'tuple', components: [
-    { name: 'poolKey', type: 'tuple', components: [
-      { name: 'currency0', type: 'address' }, { name: 'currency1', type: 'address' },
-      { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'hooks', type: 'address' },
-    ]},
-    { name: 'zeroForOne', type: 'bool' }, { name: 'exactAmount', type: 'uint128' }, { name: 'hookData', type: 'bytes' },
-  ]}],
-  outputs: [{ name: 'amountOut', type: 'uint256' }, { name: 'gasEstimate', type: 'uint256' }],
-}];
 var urExecuteAbi = [{
   type: 'function', name: 'execute', stateMutability: 'payable',
   inputs: [{ name: 'commands', type: 'bytes' }, { name: 'inputs', type: 'bytes[]' }, { name: 'deadline', type: 'uint256' }],
@@ -4430,21 +4411,10 @@ function pad1(n) { return (n < 16 ? '0' : '') + n.toString(16); }
 var AMM_ADDRESSES = (function () { var m = {}; Object.keys(POOL_MANAGER_BY_CHAIN).forEach(function (k) { m[POOL_MANAGER_BY_CHAIN[k].toLowerCase()] = true; }); return m; })();
 function isAmmAddress(addr) { return !!(addr && AMM_ADDRESSES[String(addr).toLowerCase()]); }
 
-var poolKeyOfAbi = [{
-  type: 'function', name: 'poolKeyOf', stateMutability: 'view',
-  inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }],
-  outputs: [{ name: 'key', type: 'tuple', components: [
-    { name: 'currency0', type: 'address' }, { name: 'currency1', type: 'address' },
-    { name: 'fee', type: 'uint24' }, { name: 'tickSpacing', type: 'int24' }, { name: 'hooks', type: 'address' },
-  ]}],
-}];
 var extsloadAbi = [{
   type: 'function', name: 'extsload', stateMutability: 'view',
   inputs: [{ name: 'slot', type: 'bytes32' }], outputs: [{ type: 'bytes32' }],
 }];
-var POOLKEY_TUPLE = [{ type: 'tuple', components: [
-  { type: 'address' }, { type: 'address' }, { type: 'uint24' }, { type: 'int24' }, { type: 'address' },
-]}];
 
 // Current AMM price (ETH per project token) from the buyback pool's slot0. Returns null if no pool /
 // price. Works even with zero liquidity (the pool is price-initialized at deploy at the issuance rate).
@@ -4807,7 +4777,7 @@ async function readAmmPrice(project, chainId) {
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase();
     var c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
     if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null; // pool not set
-    var poolId = keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]));
+    var poolId = uniswapV4PoolId(key);
     var stateSlot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [poolId, 6n])); // POOLS_SLOT = 6
     var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
     var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n); // sqrtPriceX96 = lower 160 bits of slot0
@@ -9122,7 +9092,7 @@ export function payTokenOutputVisible(rulesetWeight, phase, preview) {
 
 // Inline pay card (revnet.app-style) for the project detail page. The project is already known, so it
 // only needs a chain (when omnichain), a currency, and an amount. Live feedback (tokens received and
-// reserved/splits) comes from the SDK's prepareUserPay, which also sets the pay metadata and minimum.
+// reserved/splits) comes from prepareUserPay, which also sets the pay metadata and minimum.
 export function renderPayCard(project, cart) {
   var sym = project.tokenSymbol ? project.tokenSymbol : 'tokens';
   cart = cart || makeNftCart();
@@ -29379,7 +29349,7 @@ async function readPoolState(project, chainId, opts) {
     if (!key) return null;
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase(), c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
     if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return null;
-    var poolId = keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]));
+    var poolId = uniswapV4PoolId(key);
     var stateSlot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [poolId, 6n]));
     var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
     var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n);
@@ -29605,7 +29575,7 @@ async function lpReadPositionDetails(client, posm, tokenIds, expectedPoolId) {
         var key = result && (result.poolKey || result[0]);
         var info = BigInt(result && (result.info != null ? result.info : result[1]));
         if (!key || info !== detail.info) throw new Error('PositionManager returned inconsistent LP position data');
-        var actualPoolId = keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]));
+        var actualPoolId = uniswapV4PoolId(key);
         if (actualPoolId.toLowerCase() !== String(expectedPoolId).toLowerCase()) {
           throw new Error('PositionManager token does not belong to the expected pool');
         }
@@ -29632,7 +29602,7 @@ async function readLpPositions(project, chainId) {
     var sp = Number(sqrtP) / Math.pow(2, 96), rawP = sp * sp;
     var rawRatio = pairIsC0 ? (rawP > 0 ? 1 / rawP : 0) : rawP;
     var poolPrice = rawRatio * Math.pow(10, 18 - pairDec); // pair per token (human)
-    var poolId = keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]));
+    var poolId = uniswapV4PoolId(key);
     var client = clientFor(chainId);
     var empty = { owners: [], totalEth: 0n, totalRev: 0n, poolPrice: poolPrice, count: 0, positions: [], pair: pair, pairIsC0: pairIsC0 };
 
@@ -30077,7 +30047,7 @@ async function prepareAddLiquidity(opts) {
     unlockData: unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20, smartWallet: smartWallet,
     pa: opts.pa, pb: opts.pb, deadlineSecs: opts.deadlineSecs || null,
     // Carried so a successful mint can mark the index stale for this pool (noteLocalLpWrite).
-    poolId: keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]])),
+    poolId: uniswapV4PoolId(key),
   };
 }
 
@@ -30290,7 +30260,7 @@ async function lpScanPoolPositions(project, chainId, hookAddr, hookIsCurrent) {
     if (!key || !key.currency0) return [];
     var c0 = (key.currency0 || ZERO_ADDRESS).toLowerCase(), c1 = (key.currency1 || ZERO_ADDRESS).toLowerCase();
     if (c0 === ZERO_ADDRESS && c1 === ZERO_ADDRESS) return [];
-    var poolId = keccak256(encodeAbiParameters(POOLKEY_TUPLE, [[key.currency0, key.currency1, key.fee, key.tickSpacing, key.hooks]]));
+    var poolId = uniswapV4PoolId(key);
     var stateSlot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [poolId, 6n]));
     var slot0 = await client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [stateSlot] });
     var sqrtP = BigInt(slot0) & ((1n << 160n) - 1n);
