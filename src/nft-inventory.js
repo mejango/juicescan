@@ -1,4 +1,4 @@
-import { getProjectNftInventory } from '@bananapus/nana-sdk-core/v6';
+import { getProjectNftInventory } from './nft-inventory-read.js';
 
 var identities = new Map();
 var projectRequests = new WeakMap();

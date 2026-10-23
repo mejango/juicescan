@@ -1,15 +1,15 @@
 // src/defifa.js
 // Native Defifa NFT actions: pay, cash out and transfer preparation, receipt-bound effect checks, and the recovery
 // context. Lean mirror of nana-sdk-core 3.4.1 v6/defifa.ts and v6/tierPrice.ts (@ballkidz/defifa 1.0.2 native
-// interface); test/fixtures/sdk-3.4.1/defifa.json pins identical results and identical reads. The inventory read,
-// the reviewed-write proofs and the Relayr destination proof stay on the SDK until the tasks that replace them.
+// interface); test/fixtures/sdk-3.4.1/defifa.json pins identical results and identical reads. The reviewed-write proofs and the Relayr
+// destination proof stay on the SDK until the tasks that replace them.
 
 import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, erc721Abi, isAddress, parseEventLogs, zeroAddress } from 'viem';
-import { getProjectNftInventory } from '@bananapus/nana-sdk-core/v6';
 import { parseReviewedWriteRecoveryRecord, verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review';
 import { RelayrDestinationRevertedError, verifyRelayrDestination } from '@bananapus/nana-sdk-core/review/relayr';
 import { getABI, getAddress } from './abi-registry.js';
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
+import { defifaDeployment, getProjectNftInventory, sameAddress, v6Address } from './nft-inventory-read.js';
 import { NATIVE_TOKEN } from './safe-batch.js';
 
 const defifaActionAbi = [
@@ -68,23 +68,6 @@ function assertActionSize(count) {
 function address(value, label, allowZero = false) {
   if (!isAddress(value) || (!allowZero && value === zeroAddress)) throw new Error(`${label} must be a valid${allowZero ? '' : ' nonzero'} address.`);
   return value;
-}
-
-function sameAddress(left, right) {
-  return left.toLowerCase() === right.toLowerCase();
-}
-
-function v6Address(contract, chainId) {
-  const found = getAddress(contract, chainId);
-  if (!found) throw new Error(`No v6 ${contract} deployment on chain ${chainId}`);
-  return found;
-}
-
-// The native deployer and its hook implementation, from the deployment registry; null off the Defifa chains.
-function defifaDeployment(chainId) {
-  const deployer = getAddress('DefifaDeployer', chainId);
-  const implementation = getAddress('DefifaHook', chainId);
-  return deployer && implementation ? { deployer, implementation } : null;
 }
 
 function buildPayTx({ chainId, terminal, projectId, token, amount, beneficiary, minReturnedTokens = 0n, memo = '', metadata = '0x' }) {

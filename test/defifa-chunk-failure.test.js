@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 // The Defifa actions chunk failing to load is not an inventory read failure: Retry would repeat an import the
 // browser keeps failed, so the Pay card and Cash out offer a reload instead.
 const runtime = vi.hoisted(() => ({ read: vi.fn() }));
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: runtime.read }));
+vi.mock('../src/nft-inventory-read.js', async original => ({ ...await original(), getProjectNftInventory: runtime.read }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(), getAccount: () => null, getEffectiveAccount: () => null,
   createPublicClientForChain: () => ({ readContract: () => Promise.reject(new Error('Unavailable')), getBalance: async () => 0n }) }));
 vi.mock('../src/defifa-nft-actions.js', () => { throw new Error('chunk offline'); });

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectNftInventory: vi.fn() }));
-import { getProjectNftInventory } from '@bananapus/nana-sdk-core/v6';
+vi.mock('../src/nft-inventory-read.js', () => ({ getProjectNftInventory: vi.fn() }));
+import { getProjectNftInventory } from '../src/nft-inventory-read.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, requireGenericInventory, renderNativeInventory, isNativeInventory, nativeActionUnavailable } from '../src/nft-inventory.js';
 const args = { chainId: 8453, projectId: 27n };
 const native = { protocol: 'defifa', hook: '0x123', blockNumber: 123n, phase: 1, pricing: { currency: 61166, decimals: 18 }, tiers: [{ id: 1, name: 'Rekt', price: 1000000000000n, currentSupply: 3n }], capabilities: { genericPay: false, genericCashOut: false, manageTiers: false }, nextStartingId: null };

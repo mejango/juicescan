@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 const runtime = vi.hoisted(() => ({ read: vi.fn(), contract: vi.fn() }));
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: runtime.read }));
+vi.mock('../src/nft-inventory-read.js', async original => ({ ...await original(), getProjectNftInventory: runtime.read }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(), getAccount: () => null, getEffectiveAccount: () => null, createPublicClientForChain: () => ({ readContract: runtime.contract }) }));
 import { makeNftCart, renderShopSection } from '../src/discover.js';
 const native = () => ({ protocol: 'defifa', chainId: 8453, hook: '0x1111111111111111111111111111111111111111', store: '0x2222222222222222222222222222222222222222', blockNumber: 65n, phase: 1, pricing: { currency: 1, decimals: 18, token: '0x000000000000000000000000000000000000EEEe', symbol: 'ETH' }, nextStartingId: null, tiers: [1,2].map(id => ({ id, name: id === 1 ? 'Blue Team' : 'Orange Team', price: BigInt(id) * 1000000000000n, currentSupply: BigInt(id), remainingSupply: 100, initialSupply: 100, discountPercent: 0 })) });
