@@ -9212,7 +9212,9 @@ export function renderPayCard(project, cart) {
     phase: 'idle',
     preview: null,
     payerSlippage: null, // { bps, key }: a tolerance the payer loosened after a shortfall, for that payment only
-    shop: null,       // { hook, tiers, ... } once the strip loads
+    shop: null,       // the checkout chain's own shop { hook, tiers, ... }: the strip's shop on its chain, read again elsewhere
+    homeShop: null,   // the shop the strip loaded on project.chainId
+    shopStatus: 'ready', // the checkout chain's shop: 'ready' | 'loading' | 'failed' | 'absent'
     inventoryKnown: false,
     mode: 'pay',      // 'pay' (mint tokens) | 'addbalance' (top up balance, mint nothing)
     conversion: null, // { sym, units } router-swap landed amount for add-to-balance
@@ -9253,7 +9255,7 @@ export function renderPayCard(project, cart) {
   }
   function nftRouteForToken(t) { return t ? state.nftRoutes[nftTokenKey(t)] : null; }
   function nftCheckoutTokens() {
-    if (isNativeInventory(state.shop) || !selectedTierIds().length) return state.tokens || [];
+    if (isNativeInventory(state.shop) || !checkoutTierIds().length) return state.tokens || [];
     if (state.nftRoutesLoading) return [];
     return (state.tokens || []).filter(function (t) { var route = nftRouteForToken(t); return route && route.supported; });
   }
@@ -9280,7 +9282,7 @@ export function renderPayCard(project, cart) {
   }
   function nftCheckoutBreakdown() { return nftCreditBreakdown(nftTotalWei(), nftRestrictedWei(), state.nftCredits); }
   function nftFloorForToken(token) {
-    if (state.nftCreditsError || state.nftCreditsLoading) return null;
+    if (nftCheckoutBlock()) return null;
     var due = nftCheckoutBreakdown().due;
     if (due <= 0n) return 0n;
     if (!state.shop || !token) return null;
@@ -9322,6 +9324,8 @@ export function renderPayCard(project, cart) {
   }
   function nftTierById(id) { return state.shop ? state.shop.tiers.filter(function (t) { return t.id === id; })[0] : null; }
   function nftTotalWei() { return nftCartSubtotal(state.shop, cart); }
+  // Only a Pay mints the selected items; Add to balance ignores them, so its amount and currencies never wait on the shop.
+  function checkoutTierIds() { return state.mode === 'pay' ? selectedTierIds() : []; }
   function selectedTierIds() {
     var a = [], sel = cart.entries();
     Object.keys(sel).forEach(function (id) { for (var i = 0; i < sel[id]; i++) a.push(Number(id)); });
@@ -9393,7 +9397,7 @@ export function renderPayCard(project, cart) {
       state.nftCredits = 0n;
       state.nftCreditsLoading = false;
       state.nftCreditsError = false;
-      if (!isNativeInventory(shop) && selectedTierIds().length) syncNftAmountForSelection();
+      if (!isNativeInventory(shop) && checkoutTierIds().length) syncNftAmountForSelection();
       rebuildCurrency();
       renderFeedback();
       return Promise.resolve(0n);
@@ -9407,7 +9411,7 @@ export function renderPayCard(project, cart) {
       state.nftCredits = credits;
       state.nftCreditsError = failed;
       state.nftCreditsLoading = false;
-      if (selectedTierIds().length) {
+      if (checkoutTierIds().length) {
         syncNftAmountForSelection();
         schedulePreview();
       }
@@ -9419,8 +9423,52 @@ export function renderPayCard(project, cart) {
       .then(toBigInt)
       .then(function (credits) { return settle(credits, false); }, function () { return settle(0n, true); });
   }
-  // Selected items with unread credits: the amount due is unknown, so Pay stays off until a read succeeds.
-  function nftCreditsBlockPay() { return (state.nftCreditsError || state.nftCreditsLoading) && state.mode === 'pay' && selectedTierIds().length > 0; }
+  // Why the selected items cannot be checked out on this chain yet, or null. The amount due is unknown until the
+  // chain's own shop and the payer's credits on it are read, so Pay stays off: { text, retry }.
+  function nftCheckoutBlock() {
+    var ids = checkoutTierIds();
+    if (!ids.length || isNativeInventory(state.homeShop)) return null;
+    var chainName = payChainName(state.chainId, chainNameFor(state.chainId));
+    if (state.shopStatus === 'loading') return { text: 'Checking the shop on ' + chainName + '…' };
+    if (state.shopStatus === 'failed') return { text: 'Could not read the shop on ' + chainName + '.', retry: useChainShop };
+    if (state.shopStatus === 'absent' || !state.shop) return { text: 'These items are not sold on ' + chainName + '.' };
+    var missing = ids.filter(function (id) { return !nftTierById(id); })[0];
+    if (missing != null) return { text: 'Item #' + missing + ' is not sold on ' + chainName + '.' };
+    if (state.nftCreditsLoading) return { text: 'Your shop credit is still loading…' };
+    if (state.nftCreditsError) return { text: 'Could not read your NFT credits.', retry: refreshNftCredits };
+    return null;
+  }
+  // Point checkout at the selected chain's own shop. The strip's shop belongs to project.chainId; any other chain
+  // has its own hook, metadata target, prices and credit ledger, read onchain for that chain.
+  var shopGeneration = 0;
+  function useChainShop() {
+    var cid = state.chainId, home = state.homeShop, gen = ++shopGeneration;
+    var done = function () {
+      if (gen !== shopGeneration) return;
+      refreshNftCredits();
+      rebuildCurrency(); renderFeedback();
+      // Only an NFT checkout depends on the shop; an ordinary payment keeps its quote and open review.
+      if (checkoutTierIds().length) { refreshNftCheckoutRoutes(); schedulePreview(); }
+    };
+    if (Number(cid) === Number(project.chainId) || !home || isNativeInventory(home)) {
+      state.shop = home; state.shopStatus = 'ready'; done(); return Promise.resolve();
+    }
+    state.shop = null; state.shopStatus = 'loading';
+    var chainProject;
+    try { chainProject = Object.assign({}, project, { chainId: cid, id: Number(pidOn(project, cid)) }); }
+    catch (_) { state.shopStatus = 'failed'; done(); return Promise.resolve(); }
+    if (checkoutTierIds().length) syncNftAmountForSelection();
+    renderFeedback();
+    return fetchProjectTiers(chainProject).then(function (shop) {
+      if (gen !== shopGeneration) return;
+      state.shop = shop && !isNativeInventory(shop) ? shop : null;
+      state.shopStatus = state.shop ? 'ready' : 'absent';
+    }, function () {
+      if (gen !== shopGeneration) return;
+      bustTiersCache(chainProject);
+      state.shopStatus = 'failed';
+    }).then(done);
+  }
   function syncNftAmountForSelection() {
     var floor = nftFloorForToken(state.token);
     if (floor != null) {
@@ -9488,7 +9536,9 @@ export function renderPayCard(project, cart) {
   }
   card.appendChild(renderPayShopStrip(project, cart, {
     onIdentity: function (shop) {
-      state.shop = shop; state.inventoryKnown = true;
+      state.homeShop = shop; state.inventoryKnown = true;
+      if (Number(state.chainId) === Number(project.chainId) || isNativeInventory(shop)) state.shop = shop;
+      else useChainShop(); // the selected chain's shop does not wait on the home chain's tiers
       amountRow.hidden = false; topRow.hidden = false; memo.hidden = false; feedback.hidden = false;
       if (isNativeInventory(shop)) {
         showFundingOnly();
@@ -9499,8 +9549,9 @@ export function renderPayCard(project, cart) {
       loadAcceptedTokens(state.chainId); loadPaymentSurface(state.chainId);
     },
     onShop: function (shop) {
-      state.shop = shop;
+      state.homeShop = shop;
       if (isNativeInventory(shop)) {
+        state.shop = shop;
         if (!modeSel.querySelector('option[value="pay"]')) {
           var nativePay = document.createElement('option'); nativePay.value = 'pay'; nativePay.textContent = 'Pay'; modeSel.prepend(nativePay);
         }
@@ -9511,8 +9562,8 @@ export function renderPayCard(project, cart) {
         state.mode = 'pay'; modeSel.value = 'pay'; updateModeUi();
         return;
       }
-      refreshNftCredits();
-      if (selectedTierIds().length) refreshNftCheckoutRoutes();
+      // Another chain's checkout already reads its own shop (started from onIdentity or the chain picker).
+      if (Number(state.chainId) === Number(project.chainId)) useChainShop();
     },
     onError: function (error, retryRead) {
       status.textContent = errMessage(error, 'Could not verify NFT inventory.');
@@ -9543,6 +9594,8 @@ export function renderPayCard(project, cart) {
   modeSel.value = state.mode;
   modeSel.addEventListener('change', function () {
     state.mode = modeSel.value;
+    rebuildCurrency();
+    if (checkoutTierIds().length) { refreshNftCheckoutRoutes(); syncNftAmountForSelection(); }
     updateModeUi();
     schedulePreview();
   });
@@ -9572,11 +9625,11 @@ export function renderPayCard(project, cart) {
         chainSel,
         applyPayChainFontSize(chainSel, chainSel.options[chainSel.selectedIndex] && chainSel.options[chainSel.selectedIndex].textContent),
       );
+      useChainShop();
       rebuildCurrency();
       loadPaymentSurface(state.chainId);
       schedulePreview();
       loadAcceptedTokens(state.chainId); // refine for the newly-selected chain
-      refreshNftCredits();
     });
     payOn.appendChild(chainSel);
     sizeSelectToText(
@@ -9601,17 +9654,17 @@ export function renderPayCard(project, cart) {
   function rebuildCurrency() {
     currWrap.innerHTML = '';
     var shownTokens = nftCheckoutTokens();
-    if (selectedTierIds().length && state.nftRoutesLoading) {
+    if (checkoutTierIds().length && state.nftRoutesLoading) {
       var checking = el('span', 'paybox-curr-static'); checking.textContent = 'Checking…'; currWrap.appendChild(checking);
       if (payBtn) payBtn.disabled = true;
       return;
     }
-    if (selectedTierIds().length && !shownTokens.length) {
+    if (checkoutTierIds().length && !shownTokens.length) {
       var unavailable = el('span', 'paybox-curr-static'); unavailable.textContent = 'Unavailable'; currWrap.appendChild(unavailable);
       if (payBtn) payBtn.disabled = true;
       return;
     }
-    if (payBtn && (state.mode === 'addbalance' || startsAt <= Math.floor(Date.now() / 1000)) && !nftCreditsBlockPay()) payBtn.disabled = false;
+    if (payBtn && (state.mode === 'addbalance' || startsAt <= Math.floor(Date.now() / 1000)) && !nftCheckoutBlock()) payBtn.disabled = false;
     if (shownTokens.length > 1) {
       var sel = el('select', 'paybox-select');
       // Value by INDEX (not address) — a project can offer the same address both directly and via-router, and
@@ -9630,7 +9683,7 @@ export function renderPayCard(project, cart) {
         if (t) { state.token = t; state.tokenTouched = true; }
         sizeSelectToText(sel, 13);
         renderTerminalNotice();
-        if (selectedTierIds().length) syncNftAmountForSelection();
+        if (checkoutTierIds().length) syncNftAmountForSelection();
         schedulePreview();
       });
       currWrap.appendChild(sel);
@@ -9758,7 +9811,21 @@ export function renderPayCard(project, cart) {
   }
 
   function nftCheckoutSummary() {
-    if (!selectedTierIds().length || !state.shop) return null;
+    if (!selectedTierIds().length) return null;
+    var blocked = nftCheckoutBlock();
+    if (blocked) {
+      var line = el('div', 'paybox-nft-summary');
+      var unread = el('div', 'paybox-nft-summary-row short');
+      unread.appendChild(document.createTextNode(blocked.text + ' '));
+      if (blocked.retry) {
+        var retry = el('button'); retry.type = 'button'; retry.textContent = 'Retry';
+        retry.addEventListener('click', function () { retry.disabled = true; blocked.retry(); });
+        unread.appendChild(retry);
+      }
+      line.appendChild(unread);
+      return line;
+    }
+    if (!state.shop) return null;
     var pricing = nftPricing();
     var breakdown = nftCheckoutBreakdown();
     var box = el('div', 'paybox-nft-summary');
@@ -9769,16 +9836,6 @@ export function renderPayCard(project, cart) {
       box.appendChild(r);
     }
     row('Items', formatShopPrice(state.shop, breakdown.subtotal, state.chainId));
-    if (state.nftCreditsError) {
-      var unread = el('div', 'paybox-nft-summary-row short');
-      unread.appendChild(document.createTextNode('Could not read your NFT credits. '));
-      var retryCredits = el('button'); retryCredits.type = 'button'; retryCredits.textContent = 'Retry';
-      retryCredits.addEventListener('click', function () { retryCredits.disabled = true; refreshNftCredits(); });
-      unread.appendChild(retryCredits);
-      box.appendChild(unread);
-      return box;
-    }
-    if (state.nftCreditsLoading) { row('Amount due', 'Checking your shop credit…', 'muted'); return box; }
     if (breakdown.applied > 0n) {
       row('Shop credit applied', '−' + formatShopPrice(state.shop, breakdown.applied, state.chainId), 'credit');
     } else if (state.nftCredits > 0n) {
@@ -9815,7 +9872,7 @@ export function renderPayCard(project, cart) {
 
   function renderFeedback() {
     feedback.innerHTML = '';
-    if (payBtn && nftCreditsBlockPay()) payBtn.disabled = true;
+    if (payBtn && nftCheckoutBlock()) payBtn.disabled = true;
     var p = state.preview;
 
     // Add-to-balance mints nothing — describe the balance effect rather than a meaningless "You get 0 tokens".
@@ -10025,13 +10082,14 @@ export function renderPayCard(project, cart) {
     status.textContent = '';
     if (state.mode !== 'pay' && state.mode !== 'addbalance') { status.textContent = 'Choose Pay or Add to balance.'; return; }
     if (state.mode === 'pay' && !state.inventoryKnown) { status.textContent = 'NFT protocol identification is unavailable. Retry to verify NFT minting.'; return; }
+    var checkoutBlock = nftCheckoutBlock();
+    if (checkoutBlock) { status.textContent = checkoutBlock.text + (checkoutBlock.retry ? ' Retry.' : ''); return; }
     if (state.mode === 'pay') {
       if (isNativeInventory(state.shop)) { status.textContent = nativeActionUnavailable('genericPay'); return; }
       try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericPay'); } catch (error) { status.textContent = errMessage(error); return; }
     }
     // Idle until the project's first ruleset starts — paying earlier reverts in the terminal.
     if (state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { return; }
-    if (nftCreditsBlockPay()) { status.textContent = state.nftCreditsLoading ? 'Your shop credit is still loading…' : 'Could not read your NFT credits. Retry.'; return; }
     if (!state.contextsReady) { status.textContent = state.contextsError ? 'Could not verify the project’s accepted tokens.' : 'Accepted tokens are still loading…'; return; }
     if (state.amount === '' || !state.token) { status.textContent = selectedTierIds().length ? 'No supported payment currency is available for these items.' : 'Enter an amount'; return; }
     var amt;

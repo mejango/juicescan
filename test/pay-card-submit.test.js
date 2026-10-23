@@ -10,7 +10,7 @@ import { getAddress } from '../src/abi-registry.js';
 import { buildUserPayMetadata } from '@bananapus/nana-sdk-core/v6';
 import { hookMetadataId } from '@bananapus/nana-sdk-core';
 import { decodeAbiParameters, encodeErrorResult } from 'viem';
-import { renderPayCard } from '../src/discover.js';
+import { makeNftCart, renderPayCard } from '../src/discover.js';
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
 const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
@@ -501,11 +501,154 @@ it('credits read failure blocks checkout amount', async () => {
   expect(confirmButton()).toBeFalsy();
   const retry = deferred(); credits = retry.promise;
   [...document.querySelectorAll('.paybox-feedback button')].find(b => b.textContent === 'Retry').click();
-  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain('Checking your shop credit'));
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain('Your shop credit is still loading'));
   expect(amount.value).toBe(''); // still unknown while the retry reads
   expect(payButton().disabled).toBe(true);
   retry.resolve(0n);
   await vi.waitFor(() => expect(amount.value).toBe('0.01'));
   expect(document.querySelector('.paybox-feedback').textContent).not.toContain('Could not read your NFT credits');
   expect(payButton().disabled).toBe(false);
+});
+
+// A project's shop is a separate 721 hook on each chain. Checkout on a chain uses that chain's own hook.
+const HOOK_OP = '0x' + '82'.repeat(20), STORE_OP = '0x' + '83'.repeat(20), ID_TARGET_OP = '0x' + '84'.repeat(20);
+function twoChainShop({ opInventory }) {
+  vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+  const inventoryOf = chainId => ({ protocol: 'jb721', hook: chainId === 10 ? HOOK_OP : HOOK, store: chainId === 10 ? STORE_OP : STORE,
+    metadataIdTarget: chainId === 10 ? ID_TARGET_OP : ID_TARGET, blockNumber: 1n, nextStartingId: null,
+    pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
+    capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] });
+  runtime.inventory.mockImplementation(async (_client, args) => (Number(args.chainId) === 10 ? opInventory(inventoryOf(10)) : inventoryOf(8453)));
+  const base = runtime.contractRead.getMockImplementation();
+  const creditReads = [];
+  runtime.contractRead.mockImplementation(async call => {
+    switch (call.functionName) {
+      case 'controllerOf': return '0x' + '75'.repeat(20);
+      case 'currentRulesetOf': return [{ id: 1n }, { useDataHookForPay: true, dataHook: call.fixtureChainId === 10 ? HOOK_OP : HOOK, useDataHookForCashOut: false, metadata: 0 }];
+      case 'tokenUriResolverOf': return '0x' + '00'.repeat(20);
+      case 'maxTierIdOf': return 2n;
+      case 'tiersOf': return call.fixtureChainId === 10 ? TIERS.map(t => ({ ...t, price: t.price * 2n })) : TIERS;
+      case 'payCreditsOf': creditReads.push([call.fixtureChainId, call.address]); return 0n;
+      default: return base(call);
+    }
+  });
+  runtime.prepare.mockImplementation(async (_, args) => prepared(buildUserPayMetadata({ chainId: 8453, tiers: args.tiers, minimumSwapAmountOut: 0n }), 1n));
+  return creditReads;
+}
+async function twoChainCard(id) {
+  document.body.append(renderPayCard({ id, chainId: 8453, ruleset: { start: 0, weight: 10n ** 18n }, isRevnet: false,
+    idByChain: { 8453: id, 10: id + 1 }, chains: [{ id: 8453, name: 'Base' }, { id: 10, name: 'Optimism' }] }));
+  await vi.waitFor(() => expect(document.querySelector('.paybox-amount-row').hidden).toBe(false));
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2));
+  document.querySelector('.paybox-shop-item .paybox-shop-thumb').click();
+  const chain = document.querySelector('.paybox-payon select.paybox-select:not(.paybox-mode)');
+  chain.value = '10'; chain.dispatchEvent(new Event('change'));
+}
+
+it('checks out on another chain with that chain’s own shop hook', async () => {
+  const creditReads = twoChainShop({ opInventory: inventory => inventory });
+  await twoChainCard(650);
+  const onOptimism = ([, args]) => args.chainId === 10 && args.projectId === 651n && args.tiers;
+  await vi.waitFor(() => expect(runtime.prepare.mock.calls.some(onOptimism)).toBe(true), { timeout: 5000 });
+  const opCalls = runtime.prepare.mock.calls.filter(onOptimism);
+  expect(opCalls.every(([, args]) => args.tiers.metadataIdTarget === ID_TARGET_OP)).toBe(true);
+  expect(opCalls.at(-1)[1].amount).toBe(2n * 10n ** 16n); // Optimism's own tier price
+  expect(creditReads.filter(([chainId]) => chainId === 10).every(([, hook]) => hook === HOOK_OP)).toBe(true);
+  expect(creditReads.some(([chainId]) => chainId === 10)).toBe(true);
+});
+
+it('blocks checkout on a chain whose shop cannot be read, and Retry reads it again', async () => {
+  let fail = true;
+  twoChainShop({ opInventory: inventory => { if (fail) throw new Error('RPC unavailable'); return inventory; } });
+  await twoChainCard(652);
+  const onOptimism = ([, args]) => args.chainId === 10 && args.projectId === 653n && args.tiers;
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain('Could not read the shop on Optimism.'), { timeout: 5000 });
+  expect(payButton().disabled).toBe(true);
+  expect(runtime.prepare.mock.calls.some(onOptimism)).toBe(false);
+  payButton().disabled = false; payButton().click();
+  await vi.waitFor(() => expect(document.querySelector('.paybox-status').textContent).toBe('Could not read the shop on Optimism. Retry.'));
+  expect(confirmButton()).toBeFalsy();
+  fail = false;
+  [...document.querySelectorAll('.paybox-feedback button')].find(b => b.textContent === 'Retry').click();
+  await vi.waitFor(() => expect(runtime.prepare.mock.calls.some(call => onOptimism(call) && call[1].tiers.metadataIdTarget === ID_TARGET_OP)).toBe(true), { timeout: 5000 });
+  expect(payButton().disabled).toBe(false);
+});
+
+it('reads the selected chain’s shop even when the home chain’s items cannot be read', async () => {
+  twoChainShop({ opInventory: inventory => inventory });
+  const base = runtime.contractRead.getMockImplementation();
+  runtime.contractRead.mockImplementation(async call => {
+    if (call.functionName === 'tiersOf' && call.fixtureChainId === 8453) throw new Error('RPC unavailable');
+    return base(call);
+  });
+  const cart = makeNftCart(); cart.set(1, 1); // chosen in the Shop tab
+  document.body.append(renderPayCard({ id: 654, chainId: 8453, ruleset: { start: 0, weight: 10n ** 18n }, isRevnet: false,
+    idByChain: { 8453: 654, 10: 655 }, chains: [{ id: 10, name: 'Optimism' }, { id: 8453, name: 'Base' }] }, cart));
+  await vi.waitFor(() => expect(runtime.prepare.mock.calls.some(([, args]) => args.chainId === 10 && args.projectId === 655n
+    && args.tiers?.metadataIdTarget === ID_TARGET_OP)).toBe(true), { timeout: 5000 });
+});
+
+it('keeps an ordinary payment’s open review when the shop finishes loading', async () => {
+  const items = deferred();
+  runtime.inventory.mockImplementation(async (_client, args) => {
+    const inventory = { protocol: 'jb721', hook: HOOK, store: STORE, metadataIdTarget: ID_TARGET, blockNumber: 1n, nextStartingId: null,
+      pricing: { currency: 61166, decimals: 18 }, ruleset: { metadata: { useDataHookForCashOut: false } },
+      capabilities: { genericPay: true, genericCashOut: true, manageTiers: true }, tiers: [] };
+    return args.tierLimit === 1 ? inventory : items.promise.then(() => inventory);
+  });
+  vi.stubGlobal('fetch', async () => { throw new Error('offline'); });
+  const base = runtime.contractRead.getMockImplementation();
+  runtime.contractRead.mockImplementation(async call => {
+    switch (call.functionName) {
+      case 'controllerOf': return '0x' + '75'.repeat(20);
+      case 'currentRulesetOf': return [{ id: 1n }, { useDataHookForPay: true, dataHook: HOOK, useDataHookForCashOut: false, metadata: 0 }];
+      case 'tokenUriResolverOf': return '0x' + '00'.repeat(20);
+      case 'maxTierIdOf': return 2n;
+      case 'tiersOf': return TIERS;
+      case 'payCreditsOf': return 0n;
+      default: return base(call);
+    }
+  });
+  runtime.prepare.mockResolvedValue(prepared('0xaa', 900n * 10n ** 18n));
+  await card(656); type('1'); await quoted('9');
+  await review();
+  items.resolve();
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2), { timeout: 5000 });
+  await new Promise(resolve => setTimeout(resolve, 600)); // past the quote debounce
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(() => runtime.execute.mock.lastCall[0].assertWriteState()).not.toThrow();
+});
+
+it('keeps Add to balance usable when another chain’s shop cannot be read', async () => {
+  twoChainShop({ opInventory: () => { throw new Error('RPC unavailable'); } });
+  await twoChainCard(658);
+  const mode = document.querySelector('.paybox-mode');
+  mode.value = 'addbalance'; mode.dispatchEvent(new Event('change'));
+  type('1');
+  await vi.waitFor(() => expect(document.querySelector('.paybox-feedback').textContent).toContain('Adds to the project balance'), { timeout: 5000 });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  expect(document.querySelector('.paybox-amount-row input').value).toBe('1');
+  expect(payButton().disabled).toBe(false);
+  expect(document.querySelector('.paybox-curr-wrap').textContent).not.toBe('Unavailable');
+});
+
+it('keeps an open review on another chain when the home chain’s items finish loading', async () => {
+  const homeItems = deferred();
+  twoChainShop({ opInventory: inventory => inventory });
+  const inventoryOf = runtime.inventory.getMockImplementation();
+  runtime.inventory.mockImplementation(async (client, args) => (Number(args.chainId) === 8453 && args.tierLimit !== 1
+    ? homeItems.promise.then(() => inventoryOf(client, args)) : inventoryOf(client, args)));
+  const cart = makeNftCart(); cart.set(1, 1);
+  document.body.append(renderPayCard({ id: 660, chainId: 8453, ruleset: { start: 0, weight: 10n ** 18n }, isRevnet: false,
+    idByChain: { 8453: 660, 10: 661 }, chains: [{ id: 10, name: 'Optimism' }, { id: 8453, name: 'Base' }] }, cart));
+  await vi.waitFor(() => expect(runtime.prepare.mock.calls.some(([, args]) => args.projectId === 661n && args.tiers?.metadataIdTarget === ID_TARGET_OP)).toBe(true), { timeout: 5000 });
+  await vi.waitFor(() => expect(payButton().disabled).toBe(false));
+  await review();
+  homeItems.resolve();
+  await vi.waitFor(() => expect(document.querySelectorAll('.paybox-shop-item')).toHaveLength(2), { timeout: 5000 });
+  await new Promise(resolve => setTimeout(resolve, 600));
+  confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(() => runtime.execute.mock.lastCall[0].assertWriteState()).not.toThrow();
 });
