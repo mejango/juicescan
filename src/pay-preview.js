@@ -13,7 +13,9 @@
 // real beneficiary/reserved counts live in the decoded metadata.
 
 import { decodeAbiParameters, formatUnits } from 'viem';
-import { PAY_DEFAULT_SLIPPAGE_BPS, decodePayFailure, prepareUserPay } from '@bananapus/nana-sdk-core/v6';
+import { prepareUserPay } from '@bananapus/nana-sdk-core/v6';
+import { decodePayFailure } from './pay-failure.js';
+import { PAY_DEFAULT_SLIPPAGE_BPS } from './slippage.js';
 import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
 
 // Format an 18-decimal token count (bigint) for display, trimming to a few significant digits.

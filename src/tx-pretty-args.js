@@ -6,7 +6,7 @@
 // instead — a pretty rendering must never paper over bytes it can't fully
 // account for. Mirrors the revnet.money / juicebox.money review decoders.
 
-import { decodeAbiParameters, encodeAbiParameters, decodeFunctionData, encodeFunctionData } from 'viem';
+import { decodeFunctionData, encodeFunctionData } from 'viem';
 import { getABI } from './abi-registry.js';
 import { PERMISSION_IDS } from './permission-ids.js';
 
@@ -18,20 +18,8 @@ function bigintJson(value) {
   return JSON.stringify(value, function (_, item) { return typeof item === 'bigint' ? item.toString() : item; });
 }
 
-/** Strict decode + byte-exact re-encode round trip, else null. */
-function roundTripDecode(types, payload) {
-  try {
-    var decoded = decodeAbiParameters(types, payload);
-    if (encodeAbiParameters(types, decoded).toLowerCase() !== payload.toLowerCase()) return null;
-    return decoded;
-  } catch (e) {
-    return null;
-  }
-}
-
-// Hook envelopes and payload interpretation belong to the shared SDK review owner.
-export { describeJBHookMetadata } from '@bananapus/nana-sdk-core/review/decode';
-import { describeJBHookMetadata } from '@bananapus/nana-sdk-core/review/decode';
+export { describeJBHookMetadata } from './hook-metadata.js';
+import { describeJBHookMetadata } from './hook-metadata.js';
 
 // ── 2. Sucker bridge claim ───────────────────────────────────────────────────
 
