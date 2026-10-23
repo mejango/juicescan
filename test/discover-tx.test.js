@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, parseEther } from 'viem';
 import { NATIVE_TOKEN } from '../src/component-base.js';
-import { accountingTokenUsdValueAtPrice, groupPermissionHolders, permissionIdsOnChain, mergePermissionIds, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, projectIdsByChainFromSuckerGroup, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance, BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY } from '../src/discover.js';
+import { accountingTokenUsdValueAtPrice, groupPermissionHolders, permissionIdsOnChain, mergePermissionIds, borrowCurrencyForAccountContext, borrowLoanTokenForAccountContext, borrowMinAmountFromPreview, buildBorrowArgs, buildRepayArgs, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, buildClaimTokensArgs, clearLightEdgeMatte, gossipAccountingStaleness, indexedActivityAmount, issuancePriceScaleMax, issuancePriceScaleRatio, loanOpeningAmounts, loanUnlockFeeText, ownersChartTotalLabel, priceChartTimeBounds, quotedOutputFloor, rawAccountingBalanceSummary, remainingAccessAmount, sourceTokenMeta, tokenCurrencyIdForAccounting, updateFundsTabBalance } from '../src/discover.js';
 import { buildQueueRulesetsArgs, queueRulesetsAbi } from '../src/queue-ruleset-component.js';
 import { buildFundAccessLimitGroups, buildRulesetConfigs, buildSplitGroups, createDefaultFundAccessLimitGroup, createDefaultRuleset, parseRulesetWeight } from '../src/launch-component.js';
 
@@ -197,16 +197,6 @@ describe('source-of-truth data guards', () => {
     expect(issuanceMax).toBeCloseTo(0.0011);
     expect(issuancePriceScaleRatio(0.0004, issuanceMax)).toBeCloseTo(0.0004 / 0.0011);
     expect(issuancePriceScaleRatio(0.1088, issuanceMax)).toBe(1);
-  });
-
-  it('maps the nested sucker-group projectPage relation by chain', () => {
-    const data = { suckerGroup: { projects: { items: [
-      { chainId: 1, projectId: 7 }, { chainId: 10, projectId: 9 },
-    ] } } };
-    // A group which claims a different project on the route's own chain is not authoritative for this route.
-    expect(projectIdsByChainFromSuckerGroup(data, 10, 99)).toEqual({ 10: 99 });
-    expect(projectIdsByChainFromSuckerGroup(null, 10, 99)).toEqual({ 10: 99 });
-    expect(BENDYSTRAW_SUCKER_GROUP_PROJECTS_QUERY).toMatch(/projects\(where: \{ version: 6 \}, limit: 1000\).*items/s);
   });
 
   it('normalizes any accounting token with its verified USD quote and preserves raw mixed-token fallbacks', () => {

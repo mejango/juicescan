@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   groupProjectDeployments,
   pidOn,
-  projectIdsByChainFromSuckerGroup,
   resolveDiscoverIdentityRecord,
 } from '../src/discover.js';
 
@@ -68,29 +67,6 @@ describe('cross-chain project identity', () => {
       { 1: 8 },
       { 10: 12 },
     ]);
-  });
-
-  it('drops a remote chain when a sucker group reports conflicting project IDs', () => {
-    const byChain = projectIdsByChainFromSuckerGroup({
-      suckerGroup: { projects: { items: [
-        { chainId: 1, projectId: 7 },
-        { chainId: 10, projectId: 12 },
-        { chainId: 10, projectId: 99 },
-      ] } },
-    }, 1, 7);
-
-    expect(byChain).toEqual({ 1: 7 });
-  });
-
-  it('rejects every remote mapping when the group conflicts with the route pair', () => {
-    const byChain = projectIdsByChainFromSuckerGroup({
-      suckerGroup: { projects: { items: [
-        { chainId: 1, projectId: 99 },
-        { chainId: 10, projectId: 12 },
-      ] } },
-    }, 1, 7);
-
-    expect(byChain).toEqual({ 1: 7 });
   });
 
   it('does not combine one projectId with a multi-chain indexer filter', () => {

@@ -10,9 +10,9 @@ describe('Bendystraw project-row stale-then-confirm boundary', () => {
     expect(source).toContain('cacheStale(BENDYSTRAW_PROJECT_CACHE_NAMESPACE, key');
   });
 
-  it('requires live confirmation before a cached sucker group can reach cross-chain actions', () => {
-    expect(source).toContain('var indexed = fetchFreshBendystrawProjectRecord(projectId, chainId);');
-    expect(source).toContain('delete project.idByChain;');
+  it('reads cross-chain IDs onchain, and keeps a cached row home-only until it is confirmed', () => {
+    expect(source).toContain('resolveSuckerGroup(clientFor, Number(chainId), BigInt(projectId))');
+    expect(source).not.toContain('SUCKER_GROUP_PROJECTS_QUERY');
     expect(source).toContain('project._transactionScopeConfirmed = false;');
   });
 

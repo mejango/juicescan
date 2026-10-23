@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resolveSplitsEditByChain, projectIdsByChainFromSuckerGroup } from '../src/discover.js';
+import { resolveSuckerGroup, idMapFromGroup } from '../src/sucker-group.js';
+import { attachProjectChainIds, pidOn, resolveSplitsEditByChain } from '../src/discover.js';
+
+vi.mock('../src/sucker-group.js', async (importOriginal) => ({ ...(await importOriginal()), resolveSuckerGroup: vi.fn() }));
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const ALICE = '0x1111111111111111111111111111111111111111';
@@ -42,11 +45,11 @@ describe('split edits preserve recipient project identity across chains', () => 
   });
 
   it('refuses ambiguous sucker-group membership and incorrect source identity', async () => {
-    const byChain = projectIdsByChainFromSuckerGroup({ suckerGroup: { projects: { items: [
-      { chainId: BASE.id, projectId: 12, version: 6 },
-      { chainId: OP.id, projectId: 47, version: 6 },
-      { chainId: OP.id, projectId: 48, version: 6 },
-    ] } } }, BASE.id, 12);
+    const byChain = idMapFromGroup([
+      { chainId: BASE.id, projectId: 12n },
+      { chainId: OP.id, projectId: 47n },
+      { chainId: OP.id, projectId: 48n },
+    ]);
     await expect(resolveSplitsEditByChain([split()], [BASE, OP], BASE.id, async () => ({ byChain })))
       .rejects.toThrow(/recipient project #12 on Optimism/);
     await expect(resolveSplitsEditByChain([split()], [BASE, OP], BASE.id, async () => ({ byChain: { 8453: 99, 10: 47 } })))
@@ -77,5 +80,44 @@ describe('split edits preserve recipient project identity across chains', () => 
     expect(result[OP.id]).toEqual([split({ projectId: 0n })]);
     expect(await resolveSplitsEditByChain([], [BASE, OP], BASE.id, resolveProject)).toEqual({ 8453: [], 10: [] });
     expect(resolveProject).not.toHaveBeenCalled();
+  });
+});
+
+describe('project chain IDs come from the sucker registry, never the indexer', () => {
+  // The grid's Bendystraw grouping says Optimism holds project 9; the registry onchain says 7.
+  const seeded = () => ({
+    id: 5, chainId: 1,
+    chains: [{ id: 1, name: 'Ethereum', projectId: 5 }, { id: OP.id, name: 'Optimism', projectId: 9 }],
+  });
+
+  it('indexer peer differs from registry: registry wins', async () => {
+    resolveSuckerGroup.mockResolvedValueOnce([{ chainId: 1, projectId: 5n }, { chainId: OP.id, projectId: 7n }]);
+    const project = await attachProjectChainIds(seeded());
+    expect(resolveSuckerGroup).toHaveBeenLastCalledWith(expect.any(Function), 1, 5n);
+    expect(pidOn(project, OP.id)).toBe(7n);
+    expect(project.chains).toEqual([{ id: 1, name: 'Ethereum', projectId: 5 }, { id: OP.id, name: 'Optimism', projectId: 7 }]);
+    expect(project.chainsUnverified).toBe(false);
+  });
+
+  it('registry read fails: home only, no throw on display', async () => {
+    resolveSuckerGroup.mockRejectedValueOnce(new Error('rpc down'));
+    const project = await attachProjectChainIds(seeded());
+    expect(project.idByChain).toEqual({ 1: 5 });
+    expect(project.chainsUnverified).toBe(true);
+    expect(project.chains).toEqual([{ id: 1, name: 'Ethereum', projectId: 5 }]);
+    expect(() => pidOn(project, OP.id)).toThrow(/Could not verify this project.s ID on Optimism\./);
+  });
+
+  it('display seed renders before chain resolution', async () => {
+    let resolve;
+    resolveSuckerGroup.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const project = seeded();
+    const done = attachProjectChainIds(project);
+    expect(project.chains.map((c) => c.id)).toEqual([1, OP.id]);
+    expect(project.idByChain).toEqual({ 1: 5 });
+    expect(() => pidOn(project, OP.id)).toThrow(/Could not verify/);
+    resolve([{ chainId: 1, projectId: 5n }, { chainId: OP.id, projectId: 7n }]);
+    await done;
+    expect(project.idByChain).toEqual({ 1: 5, 10: 7 });
   });
 });
