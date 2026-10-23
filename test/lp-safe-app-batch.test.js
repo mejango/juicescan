@@ -12,7 +12,7 @@ vi.mock('../src/component-base.js', async importOriginal => ({
   waitForTrackedTransactionReceipt: vi.fn(async (_c, hash) => ({ status: 'success', transactionHash: hash })),
 }));
 vi.mock('../src/safe-app.js', async importOriginal => ({ ...await importOriginal(), proposeSafeTransactions: vi.fn(async () => '0x' + 'ab'.repeat(32)) }));
-vi.mock('../src/safe.js', async importOriginal => ({ ...await importOriginal(), listPendingSafeTxs: vi.fn(async () => runtime.pending) }));
+vi.mock('../src/safe.js', async importOriginal => ({ ...await importOriginal(), listPendingSafeTxs: vi.fn(async () => { if (runtime.pending instanceof Error) throw runtime.pending; return runtime.pending; }) }));
 
 import { proposeSafeTransactions } from '../src/safe-app.js';
 import { lpAddLiquidityCalls, runAddLiquidityTxs } from '../src/discover.js';
@@ -87,6 +87,14 @@ describe('runAddLiquidityTxs inside the Safe App', () => {
     runtime.pending = [{ nonce: 4, to: MULTI_SEND_CALL_ONLY, operation: 1, data: encodeMultiSend(mint) }];
     await expect(runAddLiquidityTxs(8453, prep(), vi.fn(), plan())).rejects.toThrow(/The token approval is already queued in your Safe \(nonce 4\)/);
     expect(proposeSafeTransactions).not.toHaveBeenCalled();
+    expect(runtime.client.request).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('Safe queue read failure stops the LP step (Safe App %s)', async (safeApp) => {
+    runtime.safeApp = safeApp; runtime.pending = new Error('Safe service unavailable');
+    await expect(runAddLiquidityTxs(8453, prep(), vi.fn(), plan())).rejects.toThrow("Could not check your Safe's queue. Try again before proposing.");
+    expect(proposeSafeTransactions).not.toHaveBeenCalled();
+    expect(runtime.wallet.writeContract).not.toHaveBeenCalled();
     expect(runtime.client.request).not.toHaveBeenCalled();
   });
 

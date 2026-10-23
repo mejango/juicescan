@@ -1,7 +1,18 @@
 // The operator buyback/router actions: the card must render its 4 action rows without throwing (the live render
 // couldn't be exercised in the test browser — its project feed is empty), and each descriptor's buildArgs must
 // encode the registry call with correctly-typed args (BigInt projectId + numeric pool params).
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+const rpc = vi.hoisted(() => ({ twap: null }));
+vi.mock('../src/component-base.js', async original => ({ ...await original(),
+  createPublicClientForChain: () => ({ readContract: async ({ functionName }) => {
+    if (functionName === 'controllerOf') return '0x' + '75'.repeat(20);
+    if (functionName === 'currentRulesetOf') return [{ id: 1n }, { dataHook: rpc.registry }];
+    if (functionName === 'hookOf') return '0x' + '72'.repeat(20);
+    if (functionName === 'twapWindowOf') { if (rpc.twap instanceof Error) throw rpc.twap; return rpc.twap; }
+    if (functionName === 'poolKeyOf') { if (rpc.twap === 0n) throw new Error('unused pool key read failed'); return { fee: 3000, tickSpacing: 60 }; }
+    throw new Error('RPC unavailable');
+  } }) }));
+import { getAddress } from '../src/abi-registry.js';
 import { renderBuybackHookCard, renderSwapRouterCard, POWER_SET_BUYBACK_HOOK, POWER_SET_ROUTER_TERMINAL, POWER_INIT_BUYBACK_POOL, POWER_SET_BUYBACK_POOL, POWER_SET_BUYBACK_TWAP, materializeChainValues } from '../src/discover.js';
 
 const NATIVE = '0x000000000000000000000000000000000000EEEe';
@@ -132,5 +143,33 @@ describe('operator buyback/router descriptors', () => {
       flag: true,
     });
     expect(materializeChainValues(values, 42161).controller).toBe('0x2222222222222222222222222222222222222222');
+  });
+});
+
+describe('buyback pool probes', () => {
+  rpc.registry = getAddress('JBBuybackHookRegistry', 8453);
+  const project = (id) => ({ id: String(id), chainId: 8453, idByChain: { 8453: id }, chains: [{ id: 8453, name: 'Base', projectId: id }] });
+  const twapRow = (card) => [...card.querySelectorAll('.powers-row')].find(r => r.querySelector('.powers-label').textContent === 'Set TWAP window');
+  const tokenField = POWER_SET_BUYBACK_TWAP.fields.find((f) => f.name === 'terminalToken');
+  const twapField = POWER_SET_BUYBACK_TWAP.fields.find((f) => f.name === 'twapWindow');
+
+  it('twap read failure is unknown, not absent', async () => {
+    rpc.twap = new Error('RPC unavailable');
+    await expect(POWER_SET_BUYBACK_TWAP.poolStateRead(project(901), 8453)).rejects.toThrow('RPC unavailable');
+    await expect(tokenField.crossChainRead(project(901), 8453)).rejects.toThrow('RPC unavailable');
+    await expect(twapField.defaultRead(project(901))).rejects.toThrow('RPC unavailable');
+    const card = renderBuybackHookCard(project(901));
+    await vi.waitFor(() => expect(twapRow(card).textContent).toContain('Current pool: unknown'));
+    expect(twapRow(card).textContent).not.toContain('not initialized');
+  });
+
+  it('a successful empty read is still no pool, without needing the pool key', async () => {
+    rpc.twap = 0n;
+    await expect(POWER_SET_BUYBACK_TWAP.poolStateRead(project(902), 8453)).resolves.toBe('not initialized');
+    await expect(tokenField.crossChainRead(project(902), 8453)).resolves.toBe(null);
+    await expect(twapField.defaultRead(project(902))).resolves.toBe('');
+    rpc.twap = 1800n;
+    await expect(POWER_SET_BUYBACK_TWAP.poolStateRead(project(903), 8453)).resolves.toBe('native pool (TWAP 1800s), USDC pool (TWAP 1800s)');
+    await expect(twapField.defaultRead(project(903))).resolves.toBe('1800');
   });
 });

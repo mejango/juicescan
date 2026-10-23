@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readDraftFunds } from '../src/project-draft.js';
+import { readDraftCollection, readDraftFunds } from '../src/project-draft.js';
 
 const NATIVE_TOKEN = '0x000000000000000000000000000000000000EEEe';
 const CUSTOM_TOKEN = '0x0000000000000000000000000000000000001234';
@@ -37,5 +37,19 @@ describe('project .jb fund snapshots', () => {
     expect(snapshot.funds[0]).toMatchObject({ context: source.contexts[0], allowances: [] });
     expect(snapshot.funds[0].payouts).toEqual([{ amount: 10n, currency: BigInt(NATIVE_TOKEN) }]);
     expect(snapshot.funds[1].splits).toEqual([{ percent: BigInt(CUSTOM_TOKEN) }]);
+  });
+});
+
+describe('project .jb shop collection', () => {
+  const shop = { hook: '0x' + '72'.repeat(20), store: '0x' + '73'.repeat(20) };
+  const client = failing => ({ readContract: async ({ functionName }) => {
+    if (functionName === failing) throw new Error('RPC unavailable');
+    return functionName === 'flagsOf' ? { preventOverspending: true } : functionName;
+  } });
+  it('reads name, symbol and flags as the chain reports them', async () => {
+    await expect(readDraftCollection(client(null), shop)).resolves.toEqual(['name', 'symbol', { preventOverspending: true }]);
+  });
+  it.each(['name', 'symbol', 'flagsOf'])('rejects when %s cannot be read instead of copying a blank or unrestricted collection', async failing => {
+    await expect(readDraftCollection(client(failing), shop)).rejects.toThrow('RPC unavailable');
   });
 });

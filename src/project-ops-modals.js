@@ -828,7 +828,7 @@ export function buildAddLiquidityModal(project) {
     lpIsSmartWallet(cid, acct).then(function (smart) {
       if (state.chainId !== cid || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) return;
       dlSel.options[0].textContent = smart ? 'Auto — 30 days (multisig connected)' : 'Auto — 20 minutes';
-    });
+    }).catch(function () {});
   }
 
   var status = el('div', 'modal-status'); wrap.appendChild(status);

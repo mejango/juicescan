@@ -144,6 +144,27 @@ describe('Add to batch', () => {
   });
 });
 
+describe('Add to batch with an unread pair token', () => {
+  it('does not queue the native default when the pool read failed', async () => {
+    const one = Object.assign(project(), { chains: [{ id: 8453, name: 'Base', projectId: 6 }] });
+    const card = renderBuybackHookCard(one);
+    document.body.appendChild(card);
+    Array.from(card.querySelectorAll('.powers-act')).find(b => b.textContent === 'Set buyback pool').click();
+    const dlg = dialog();
+    const pair = dlg.querySelector('input.operator-chain-address-input');
+    expect(pair.value).toBe(NATIVE_TOKEN);
+    await vi.waitFor(() => expect(pair.placeholder).toBe('Could not read the current value'));
+    expect(pair.value).toBe('');
+    const [fee, tick, twap] = Array.from(dlg.querySelectorAll('input.operator-edit-jwt:not(.operator-chain-address-input)'));
+    for (const [input, value] of [[fee, '10000'], [tick, '200'], [twap, '1800']]) { input.value = value; input.dispatchEvent(new Event('input')); }
+    const gate = dlg.querySelector('.danger-confirm input'); gate.checked = true; gate.dispatchEvent(new Event('change'));
+    dlg.querySelector('.operator-edit-batch').click();
+    await vi.waitFor(() => expect(dlg.querySelector('.operator-edit-status').className).toContain('error'));
+    expect(dlg.querySelector('.operator-edit-status').textContent).toBe('Enter a valid address for Pair (terminal) token on Base');
+    expect(loadTray(8453, 6)).toEqual([]);
+  });
+});
+
 describe('Same on every chain', () => {
   it('keeps an unverified selection and its dependent pool out of the destination tray when RPC reads fail', async () => {
     saveTray(8453, 6, [hook(), pool()]);

@@ -155,6 +155,31 @@ describe('Safe runtime fail-closed boundaries', () => {
     await expect(listPendingSafeTxs(421614, SAFE)).resolves.toEqual([]);
   });
 
+  it('reads every queue page and rejects an unread nonce or an unreadable page', async () => {
+    const page = (results, next) => ({ ok: true, json: async () => ({ results, next }) });
+    vi.mocked(fetch)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ nonce: 5 }) })
+      .mockResolvedValueOnce(page([{ nonce: 5 }], 'next-page'))
+      .mockResolvedValueOnce(page([{ nonce: 7 }], null));
+    safeState.publicClient = { readContract: vi.fn() };
+    await expect(listPendingSafeTxs(1, SAFE)).resolves.toEqual([{ nonce: 5 }, { nonce: 7 }]);
+    expect(vi.mocked(fetch).mock.calls[2][0]).toContain('&offset=50');
+
+    vi.mocked(fetch).mockReset()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ nonce: 5 }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ detail: 'busy' }) });
+    await expect(listPendingSafeTxs(1, SAFE)).rejects.toThrow('unreadable queue');
+
+    vi.mocked(fetch).mockReset().mockRejectedValue(new Error('offline'));
+    safeState.publicClient = { request: vi.fn().mockRejectedValue(new Error('RPC offline')) };
+    await expect(listPendingSafeTxs(1, OTHER)).rejects.toThrow("Could not read your Safe's nonce");
+
+    // A contract wallet that is not a Safe: the service does not know it and it has no nonce(), so no queue.
+    vi.mocked(fetch).mockReset().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+    safeState.publicClient = { request: vi.fn().mockRejectedValue(new Error('execution reverted')) };
+    await expect(listPendingSafeTxs(1, TARGET)).resolves.toEqual([]);
+  });
+
   it('reads on-chain owners/threshold and rejects when any approval read fails', async () => {
     const reads = rawSafeViews((functionName, args) => {
       if (functionName === 'nonce') return Promise.resolve(7n);

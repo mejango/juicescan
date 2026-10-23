@@ -429,6 +429,16 @@ function draftTierFingerprint(tier) {
     splitPercent: tier.splitPercent, flags: tier.flags });
 }
 
+// The collection's name, symbol and flags as one chain reports them. Every read must succeed: a flag read as
+// false would drop a restriction such as preventOverspending from the copied draft.
+export function readDraftCollection(client, shop) {
+  return Promise.all([
+    client.readContract({ address: shop.hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'name', args: [] }),
+    client.readContract({ address: shop.hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'symbol', args: [] }),
+    client.readContract({ address: shop.store, abi: PROJECT_DRAFT_721_FLAGS_ABI, functionName: 'flagsOf', args: [shop.hook] }),
+  ]);
+}
+
 async function applyDraftShop(state, project, sources, warnings) {
   var chainProjects = sources.map(function (source) { return Object.assign({}, project, { id: Number(source.projectId), chainId: source.chainId }); });
   var shops = await Promise.all(chainProjects.map(function (p) { return fetchProjectTiers(p); }));
@@ -514,20 +524,13 @@ async function applyDraftShop(state, project, sources, warnings) {
     state.collection.useForRedemptions = redemptionModes[0];
   }
 
-  var metas = await Promise.all(shops.map(function (shop, index) {
-    var client = clientFor(sources[index].chainId);
-    return Promise.all([
-      client.readContract({ address: shop.hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'name', args: [] }).catch(function () { return ''; }),
-      client.readContract({ address: shop.hook, abi: PROJECT_DRAFT_721_META_ABI, functionName: 'symbol', args: [] }).catch(function () { return ''; }),
-      client.readContract({ address: shop.store, abi: PROJECT_DRAFT_721_FLAGS_ABI, functionName: 'flagsOf', args: [shop.hook] }).catch(function () { return null; }),
-    ]);
-  }));
+  var metas = await Promise.all(shops.map(function (shop, index) { return readDraftCollection(clientFor(sources[index].chainId), shop); }));
   if (metas.slice(1).some(function (meta) { return draftFingerprint(meta) !== draftFingerprint(metas[0]); })) throw new Error('Shop collection metadata or flags differ by chain.');
   var meta = metas[0];
   state.shopEnabled = true; state.storePricingCurrency = Number(home.pricing.currency);
   state.collection.name = meta[0] || ''; state.collection.symbol = meta[1] || '';
   state.collection.nameTouched = !!meta[0]; state.collection.symbolTouched = !!meta[1];
-  var flags = meta[2] || {};
+  var flags = meta[2];
   ['noNewTiersWithReserves', 'noNewTiersWithVotes', 'noNewTiersWithOwnerMinting', 'preventOverspending', 'issueTokensForSplits'].forEach(function (key) { state.collection[key] = !!flags[key]; });
 
   state.nfts = await Promise.all(home.tiers.map(async function (tier) {

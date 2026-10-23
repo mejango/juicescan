@@ -259,27 +259,40 @@ export async function proposeSafeTx(opts) {
   };
 }
 
-// List the Safe's pending (not-yet-executed) queued transactions on `chainId`.
+// List the Safe's pending (not-yet-executed) queued transactions on `chainId`. Every read must succeed and every
+// page must be fetched: callers decide "nothing queued" from this list, so a partial answer rejects.
 export async function listPendingSafeTxs(chainId, safe) {
   var base = txBase(chainId);
   if (!base) return [];
   // Only nonces at/after the Safe's current nonce are executable — lower ones are dead (replaced/abandoned)
   // and the Safe app hides them. Filter server-side (also shrinks the response → fewer host errors).
-  var current = await getSafeNextNonce(chainId, safe).catch(function () { return null; });
-  var path = '/api/v1/safes/' + cs(safe) + '/multisig-transactions/?executed=false&trusted=true&ordering=nonce&limit=50' + (current != null ? ('&nonce__gte=' + current) : '');
-  // Gateway first (base), then the legacy host as a fallback.
+  var current = await getSafeNextNonce(chainId, safe);
+  if (current == null) {
+    // No nonce from the service or onchain: a contract wallet the service does not know (404) has no Safe queue.
+    var known = await safeFetch(base + '/api/v1/safes/' + cs(safe) + '/', { headers: headers(false) }).catch(function () { return null; });
+    if (known && known.status === 404) return [];
+    throw new Error('Could not read your Safe\'s nonce');
+  }
+  var path = '/api/v1/safes/' + cs(safe) + '/multisig-transactions/?executed=false&trusted=true&ordering=nonce&limit=' + SAFE_QUEUE_PAGE + '&nonce__gte=' + current;
+  var rows = [];
+  for (var page = 0; page < SAFE_QUEUE_MAX_PAGES; page++) {
+    var d = await safeQueuePage(chainId, base, path + '&offset=' + (page * SAFE_QUEUE_PAGE));
+    if (!d || !Array.isArray(d.results)) throw new Error('Safe service returned an unreadable queue');
+    rows = rows.concat(d.results.filter(function (t) { return Number(t.nonce) >= current; })); // belt-and-suspenders
+    if (!d.next) return rows;
+  }
+  throw new Error('Your Safe queue is too long to check here. Clear it in Safe{Wallet} first.');
+}
+var SAFE_QUEUE_PAGE = 50, SAFE_QUEUE_MAX_PAGES = 10;
+// One queue page: gateway first (base), then the legacy host as a fallback.
+async function safeQueuePage(chainId, base, path) {
   var bases = [base, legacyBase(chainId)].filter(function (v, i, a) { return v && a.indexOf(v) === i; });
   var lastErr = null;
   for (var b = 0; b < bases.length; b++) {
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
         var r = await safeFetch(bases[b] + path, { headers: headers(false) });
-        if (r.ok) {
-          var d = await r.json();
-          var rows = (d && d.results) || [];
-          if (current != null) rows = rows.filter(function (t) { return Number(t.nonce) >= current; }); // belt-and-suspenders
-          return rows;
-        }
+        if (r.ok) return await r.json();
         lastErr = new Error('Safe service ' + r.status);
       } catch (e) { lastErr = e; }
       if (attempt === 0) await new Promise(function (res) { setTimeout(res, 500); });
