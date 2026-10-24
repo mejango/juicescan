@@ -357,3 +357,18 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - [ ] Run repository gates and publish reviewable branch.
 
 Implementation review: Existing strict write-hold rejection classifier is reused. relayrPay restores only definite4001 rejections under its payment lock; all three funding callers restore the same hashless quote without erasing publication/request evidence. Uncertain transport errors and paid/conflicting records remain held. Focused payment/recovery/journal58 tests and creation recovery26 tests pass. Syntax325 files, transaction inventory118 boundaries, production bundle and original bundle budgets pass. Full coverage and repository/browser gates remain pending before publication.
+
+# Correct Terminate notice boundaries — 2026-10-24
+
+## Plan refinement
+- **Objective:** Preserve configured notice on timed predecessors of Terminate and omit it only from the final FOREVER stage.
+- **System fit:** Deployed core-v6@1.0.2 JBRulesets uses the predecessor approval hook to gate successor replacement. A Terminate clone remains a successor boundary. Client form applicability and encoding must share this rule.
+- **Reuse and simplicity:** Adjust existing deadlineApplies and assembleRuleset owners; retain preset/custom hook resolution without new abstractions.
+- **Evidence and unknowns:** Contract investigator verified deployed artifact matches nana-core-v6 bce6a4eea9f2442b328128e9861e3cee68704622. JBRulesets deriveStartFrom576, base hook763-779 and parent hook909 establish semantics, with three actual lifecycle regressions passing. FOREVER4294967295 is ordinary long duration, not magic protocol finality.
+- **Verification:** Encode single and multiple timed stages ending in Terminate, timed stages before an explicit FOREVER stage, all-FOREVER and queue paths; assert preset/custom hooks and visible approval control, then rerun affected gates.
+- **Resource budget:** Separate minimal commit after rejection recovery, bounded to notice applicability/encoding/copy and regressions. No contract changes or deployment.
+
+- [ ] Correct notice applicability and per-stage hook encoding.
+- [ ] Verify launch/queue payload and form regressions.
+
+Notice review: Updated the existing applicability owner to retain notice controls whenever a configured stage is not FOREVER. Per-stage encoding omits the hook only on FOREVER stages, retaining it on each timed predecessor. Added launch/queue single and multiple timed+Terminate payload checks, explicit final FOREVER/custom hook checks and form-visibility checks. Focused notice/scheduling34 tests pass. No contract source changed.

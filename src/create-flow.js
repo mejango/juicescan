@@ -1532,15 +1532,10 @@ export function renderStages(state, render, opts) {
   return wrap;
 }
 
-// The edit deadline governs how far ahead owner edits to a FUTURE ruleset must be queued. It's only
-// meaningful when such a boundary exists: not for a forever-duration last ruleset, and not for a single
-// timed ruleset set to Terminate (which just continues on the same terms).
+// A timed predecessor's hook governs changes to its successor, including a Terminate clone.
+// Keep notice controls available for earlier timed stages even when the final stage is FOREVER.
 function deadlineApplies(state) {
-  var last = state.stages[state.stages.length - 1];
-  if (!last) return false;
-  if (last.durationSeconds === FOREVER_SECONDS) return false;
-  if (state.stages.length === 1 && afterApplies(state) && state.afterMode === 'terminal') return false;
-  return true;
+  return state.stages.some(function (stage) { return stage.durationSeconds !== FOREVER_SECONDS; });
 }
 
 function renderStageCard(stage, idx, state, render) {
@@ -4868,7 +4863,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter
       : !!state.currentUseDataHookForCashOut;
   }
 
-  if (deadlineOn === false) {
+  if (deadlineOn === false || stage.durationSeconds === FOREVER_SECONDS) {
     rs.approvalHook = ZERO;
   } else if (stage.deadline === 'custom') {
     // Custom approval-hook contract — per-chain override → the global default; ENS resolved.
