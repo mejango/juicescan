@@ -342,3 +342,18 @@ Before/after qualification: original native Pay width111px and empty warning hei
 - [x] Codex pass 3 (request changes): every release now runs under the action's Web Lock (queued), so a stale callback cannot interleave with another window's swap; a held write that went through is reported as success (executeTransaction onSuccess with recovered:true, LP returns its hash, form shows success) instead of an error.
 - [x] Codex pass 4 (request changes): both LP mint entry points (multicall, modifyLiquidities) share one hold, checked before any permit signature; a release must match the attempt's id and hash, so a release queued behind an open wallet never removes the hash it returned. Behavioral LP regression added.
 - [x] Codex pass 5 (request changes): the release dialog compares id and hash with the attempt it shows and releases that snapshot, so a hash saved after the dialog opened stays held. Dialog-level regression added.
+# Relayr definite rejection recovery
+
+## Plan refinement
+- **Objective:** Return a definitely rejected wallet payment to its original unpaid quote, while retaining uncertain submissions and signed request evidence.
+- **System fit:** relayrPay owns wallet-error classification; existing funding callers own durable sessions. Restore only the exact hashless attempt under the existing payment lock.
+- **Reuse and simplicity:** Reuse existing session persistence and locking, adding no dependencies or SDK requirements.
+- **Evidence and unknowns:** Current main wraps all send errors as uncertain; monotonic persistence also prevents rollback. Trace all callers and preserve cross-window conflict protection.
+- **Verification:** Test direct and nested4001, ambiguous transport errors, names without evidence, quote retry and journal monotonicity; run source, transaction, build and applicable repository tests.
+- **Resource budget:** One isolated worktree and focused regressions followed by required gates; preserve dirty original checkout.
+
+- [ ] Implement narrow rejection classification and explicit rollback.
+- [ ] Verify failure/retry and uncertainty regressions.
+- [ ] Run repository gates and publish reviewable branch.
+
+Implementation review: Existing strict write-hold rejection classifier is reused. relayrPay restores only definite4001 rejections under its payment lock; all three funding callers restore the same hashless quote without erasing publication/request evidence. Uncertain transport errors and paid/conflicting records remain held. Focused payment/recovery/journal58 tests and creation recovery26 tests pass. Syntax325 files, transaction inventory118 boundaries, production bundle and original bundle budgets pass. Full coverage and repository/browser gates remain pending before publication.

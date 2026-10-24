@@ -5,11 +5,12 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   execute: vi.fn(), simulate: vi.fn(), review: vi.fn(), client: vi.fn(), safe: vi.fn(),
   resumeQuote: vi.fn(), paymentOptions: vi.fn(), postBundle: vi.fn(),
-  forward: vi.fn(),
+  forward: vi.fn(), pay: vi.fn(),
 }));
 vi.mock('../src/component-base.js', async (original) => ({
   ...await original(),
   getAccount: () => mocks.account,
+  getWalletClient: () => ({ getChainId: async () => 1 }),
   executeTransaction: mocks.execute,
   simulateTransaction: mocks.simulate,
   confirmTransactionModal: mocks.review,
@@ -19,10 +20,11 @@ vi.mock('../src/wallet.js', async (original) => ({ ...await original(), isSafeCo
 vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), hasPinata: () => false }));
 vi.mock('../src/relayr.js', async (original) => ({ ...await original(),
   relayrResumeQuotedBundle: mocks.resumeQuote, relayrPaymentOptions: mocks.paymentOptions, relayrPostBundle: mocks.postBundle,
-  buildForwardedTx: mocks.forward,
+  buildForwardedTx: mocks.forward, relayrPay: mocks.pay,
 }));
 
 import { __test } from '../src/create-flow.js';
+import { saveRelayrPendingSession, loadRelayrPendingSession } from '../src/relayr.js';
 
 const ALICE = '0x1111111111111111111111111111111111111111';
 const TARGET = '0x2222222222222222222222222222222222222222';
@@ -355,6 +357,33 @@ describe('creation funding selection', () => {
     expect(mocks.execute).not.toHaveBeenCalled();
     draft.quoteChoice.resolve(null);
     await expect(resumed).resolves.toBe(false);
+  });
+
+  it('restores creation funding to the same quote after wallet rejection', async () => {
+    const draft = state();
+    const quote = { bundle_uuid: 'rejected-create', payment_info: [{ chain: 1, amount: '1' }] };
+    draft._relayrPending = saveRelayrPendingSession('create-project', {
+      bundleUuid: quote.bundle_uuid, paymentState: 'quoted', account: ALICE, chains: [{ id: 1 }, { id: 10 }],
+    });
+    mocks.resumeQuote.mockReturnValue(quote);
+    const rejected = Object.assign(new Error('Rejected'), { code: 4001 });
+    mocks.pay.mockImplementationOnce(async (_payment, _account, _submitted, _uuid, _reverify, onSending, onUnsent) => {
+      onSending();
+      expect(loadRelayrPendingSession('create-project').paymentState).toBe('sending');
+      await onUnsent();
+      throw rejected;
+    });
+    const first = __test.runDeploy(draft, ALICE);
+    const outcome = expect(first).rejects.toBe(rejected);
+    draft.quoteChoice.resolve(quote.payment_info[0]);
+    await outcome;
+    expect(draft._relayrPending).toMatchObject({ bundleUuid: quote.bundle_uuid, paymentState: 'quoted', paymentHash: null });
+    expect(loadRelayrPendingSession('create-project').paymentState).toBe('quoted');
+    const resumed = __test.runDeploy(draft, ALICE);
+    expect(draft.quoteChoice.options[0].opt).toBe(quote.payment_info[0]);
+    draft.quoteChoice.resolve(null);
+    await expect(resumed).resolves.toBe(false);
+    expect(mocks.postBundle).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled();
   });
 
   it('blocks a restored known quote whose authenticated funding options were lost', async () => {

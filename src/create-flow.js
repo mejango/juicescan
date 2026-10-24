@@ -25,7 +25,7 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
@@ -4446,6 +4446,8 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
     paidSession.paymentState = 'sending';
     state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
     if (state._relayrPending.persisted === false) throw new Error('The payment request could not be saved. Restore browser storage before funding this quote.');
+  }, function () {
+    state._relayrPending = restoreUnsentRelayrPayment(CREATE_RELAYR_SCOPE, paidSession) || state._relayrPending;
   });
   paidSession.paymentHash = payHash;
   push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');

@@ -156,6 +156,29 @@ describe('Relayr recovery after payment submission', () => {
     expect(relayrPay).toHaveBeenCalledOnce();
   });
 
+  it('retries the same quote after a definite wallet rejection without new signatures or publication', async () => {
+    const quote = { bundle_uuid: BUNDLE, expected_transactions: BINDINGS };
+    relayrPostBundle.mockImplementation(async (_entries, opts) => persistQuote(quote, opts));
+    const rejected = Object.assign(new Error('Rejected'), { code: 4001 });
+    relayrPay.mockImplementationOnce(async (_payment, _account, _submitted, _uuid, _reverify, onSending, onUnsent) => {
+      onSending();
+      expect(loadRelayrPendingSession(SCOPE).paymentState).toBe('sending');
+      await onUnsent();
+      throw rejected;
+    });
+    const calls = [{ chainId: 1, to: '0x3333333333333333333333333333333333333333', data: '0x' }];
+    await expect(runProjectPayerRelayrDeploys(calls, vi.fn(), SCOPE)).rejects.toBe(rejected);
+    expect(loadRelayrPendingSession(SCOPE)).toMatchObject({ bundleUuid: BUNDLE, paymentState: 'quoted', paymentHash: null });
+    relayrResumeQuotedBundle.mockReturnValue(quote);
+    relayrPay.mockImplementationOnce(async (_payment, _account, onSubmitted, _uuid, _reverify, onSending) => {
+      onSending(); onSubmitted(HASH); return HASH;
+    });
+    relayrPoll.mockResolvedValue(RECORDS);
+    await expect(runProjectPayerRelayrDeploys(calls, vi.fn(), SCOPE)).resolves.toMatchObject({ resumed: true });
+    expect(relayrPostBundle).toHaveBeenCalledOnce();
+    expect(relayrPay).toHaveBeenCalledTimes(2);
+  });
+
   it('retains the original quote checks when a later form tries to supply different checks', async () => {
     const quote = { bundle_uuid: BUNDLE, expected_transactions: BINDINGS };
     const quoted = { ...session(), paymentState: 'quoted', paymentHash: null };

@@ -25,7 +25,7 @@ vi.mock('../src/wallet.js', () => ({
 }));
 
 import {
-  saveRelayrPendingSession, loadRelayrPendingSession, listRelayrPendingScopes, clearRelayrPendingSession,
+  saveRelayrPendingSession, loadRelayrPendingSession, listRelayrPendingScopes, clearRelayrPendingSession, restoreUnsentRelayrPayment,
 } from '../src/relayr.js';
 
 const A = '0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
@@ -156,6 +156,19 @@ describe('account-keyed Relayr pending scopes', () => {
     expect(saveRelayrPendingSession('storage-recovers', paid).persisted).toBe(true);
     localStorage.removeItem(PREFIX + A.toLowerCase() + ':storage-recovers');
     expect(loadRelayrPendingSession('storage-recovers')).toBeNull();
+  });
+
+  it('restores only the same hashless payment and preserves quote evidence', () => {
+    h.account = A;
+    const sending = { ...session('rejected-payment'), account: A, paymentState: 'sending',
+      publicationRequestHashes: [`0x${'ab'.repeat(32)}`] };
+    saveRelayrPendingSession('rejection', sending);
+    expect(restoreUnsentRelayrPayment('rejection', sending)).toMatchObject({
+      bundleUuid: sending.bundleUuid, paymentState: 'quoted', publicationRequestHashes: sending.publicationRequestHashes,
+    });
+    saveRelayrPendingSession('rejection', { ...sending, paymentHash: `0x${'cd'.repeat(32)}` });
+    expect(restoreUnsentRelayrPayment('rejection', sending).paymentHash).toBe(`0x${'cd'.repeat(32)}`);
+    expect(restoreUnsentRelayrPayment('rejection', { ...sending, bundleUuid: 'different' }).bundleUuid).toBe(sending.bundleUuid);
   });
 
   it('preserves a pre-hash payment journal and rejects another bundle in the same action scope', () => {
