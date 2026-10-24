@@ -19,7 +19,7 @@ import { V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from '
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
@@ -12051,6 +12051,9 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
         throw unavailable;
       }
       if (confirmOpts.onSession) confirmOpts.onSession(session);
+    }, function () {
+      session = restoreUnsentRelayrPayment(confirmOpts.pendingScope, session) || session;
+      if (confirmOpts.onSession) confirmOpts.onSession(session);
     });
   } catch (error) {
     var submitted = session.paymentHash || session.paymentState === 'sending';
@@ -12688,6 +12691,8 @@ function runRelayrBundle(entries, opts) {
                 paidSession = saveRelayrPendingSession(pendingScope, paidSession) || paidSession;
                 throw new Error('The payment request could not be saved. Enable browser storage before submitting; nothing was sent.');
               }
+            }, function () {
+              paidSession = restoreUnsentRelayrPayment(pendingScope, paidSession) || paidSession;
             });
             paidSession.paymentHash = payHash;
             pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';

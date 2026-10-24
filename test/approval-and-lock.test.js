@@ -2,7 +2,7 @@
 // and per-split locks (JBSplit.lockedUntil). These touch the on-chain ruleset/split encoding, so a wrong
 // approvalHook address or a mis-encoded lock timestamp is a real correctness bug.
 import { describe, it, expect } from 'vitest';
-import { __test } from '../src/create-flow.js';
+import { __test, buildQueueRulesetConfigs, renderStages } from '../src/create-flow.js';
 import { getAddress, ZERO_ADDRESS } from '../src/component-base.js';
 
 const { initState, assembleRuleset, splitState, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue } = __test;
@@ -55,6 +55,37 @@ describe('ruleset approval condition → rs.approvalHook', () => {
     s.stages.forEach((st) => { st.deadline = 'custom'; });
     s.approvalAddress = HOOK_A;
     expect(BigInt(assembleRuleset(s, s.stages[0], 0, 1, true, false, 0).approvalHook)).toBe(0n);
+  });
+});
+
+describe('Terminate notice boundaries', () => {
+  it.each([1, 2])('retains the configured hook on %s timed stage(s), including before the Terminate successor', count => {
+    const s = baseState();
+    s.afterMode = 'terminal';
+    s.stages = Array.from({ length: count }, () => ({ ...s.stages[0], deadline: '1day' }));
+    const expected = [...Array(count).fill(getAddress('JBDeadline1Day', 1)), ZERO_ADDRESS];
+    const launch = __test.buildLaunchArgs(s, 1, ALICE, '', 0);
+    expect(launch.args[2].rulesetConfigurations.map(stage => stage.approvalHook)).toEqual(expected);
+    expect(buildQueueRulesetConfigs(s, 1, 0).map(stage => stage.approvalHook)).toEqual(expected);
+    expect(renderStages(s, () => {}).textContent).toMatch(/approval|deadline|condition/i);
+  });
+
+  it('preserves earlier custom hooks before an explicit FOREVER stage', () => {
+    const s = baseState();
+    s.afterMode = 'cycle';
+    s.stages[0].deadline = 'custom'; s.approvalAddress = HOOK_A;
+    s.stages.push({ ...s.stages[0], durationSeconds: FOREVER_SECONDS });
+    expect(buildQueueRulesetConfigs(s, 1, 0).map(stage => stage.approvalHook)).toEqual([HOOK_A, ZERO_ADDRESS]);
+    expect(renderStages(s, () => {}).textContent).toContain('Custom address');
+  });
+
+  it('does not encode an unused hook for a lone FOREVER stage', () => {
+    const s = baseState();
+    s.afterMode = 'cycle';
+    s.stages[0].durationSeconds = FOREVER_SECONDS;
+    s.stages[0].deadline = 'custom'; s.approvalAddress = HOOK_A;
+    expect(buildQueueRulesetConfigs(s, 1, 0).map(stage => stage.approvalHook)).toEqual([ZERO_ADDRESS]);
+    expect(renderStages(s, () => {}).textContent).not.toContain('Custom address');
   });
 });
 

@@ -241,6 +241,30 @@ describe('Relayr payment receipt tracking', () => {
     expect(state.client.track).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])('releases a definite rejection before the payment lock closes (nested: %s)', async nested => {
+    const rejection = Object.assign(new Error('User rejected'), { code: 4001 });
+    const error = nested ? new Error('Provider error', { cause: rejection }) : rejection;
+    let locked = false;
+    vi.stubGlobal('navigator', { locks: { request: async (_key, callback) => {
+      locked = true;
+      try { return await callback(); } finally { locked = false; }
+    } } });
+    const unsent = vi.fn(() => { expect(locked).toBe(true); });
+    state.wallet.sendTransaction.mockRejectedValue(error);
+    await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, vi.fn(), unsent)).rejects.toBe(error);
+    expect(unsent).toHaveBeenCalledOnce();
+    expect(state.client.track).not.toHaveBeenCalled();
+  });
+
+  it.each([new Error('Provider disconnected'), Object.assign(new Error('User rejected'), { name: 'UserRejectedRequestError' })])(
+    'does not release a sending attempt without explicit rejection evidence: %s', async error => {
+      const unsent = vi.fn();
+      state.wallet.sendTransaction.mockRejectedValue(error);
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, vi.fn(), unsent))
+        .rejects.toMatchObject({ code: 'RELAYR_PAYMENT_UNCERTAIN' });
+      expect(unsent).not.toHaveBeenCalled();
+    });
+
   it('does not open the wallet when another pending bundle prevents journaling', async () => {
     const conflict = Object.assign(new Error('A bundle is already pending'), { code: 'RELAYR_PENDING_CONFLICT' });
     await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, () => { throw conflict; }))

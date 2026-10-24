@@ -16,6 +16,7 @@ import { encodeFunctionData, isAddress, keccak256, stringToHex } from 'viem';
 import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt, confirmTransactionModal } from './component-base.js';
 import { CHAINS, chainNameFor } from './chain.js';
 import { gasWithHeadroom } from './gas.js';
+import { isExplicitWalletRejection } from './write-hold.js';
 import { decodeSafeExecRelayrTx, hasExactSafeExecutionSuccess, readSafeUintBounded } from './safe.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
@@ -573,7 +574,7 @@ export function relayrRequestFingerprint(request) {
 // Send the single prepaid payment that funds execution on every chain. The HTTP quote is authenticated against
 // the exact bundle UUID and immutable payment runtime, then shown as a second exact transaction review before
 // the wallet opens. Returns the payment tx hash.
-export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending) {
+export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending, onUnsent) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
   var chainId = details.chainId;
@@ -640,6 +641,11 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
         gas: RELAYR_PAYMENT_GAS,
       });
     } catch (cause) {
+      if (isExplicitWalletRejection(cause)) {
+        // Release only this definitely unsent attempt, before another window can acquire the lock.
+        if (onUnsent) await onUnsent();
+        throw cause;
+      }
       // Wallet/RPC transport errors can occur after broadcast but before returning a transaction hash.
       // Keep the pre-send bundle journal so a subsequent attempt can only inspect this original bundle.
       var uncertain = new Error('The Relayr payment request reached your wallet, but its submission could not be confirmed. Do not pay again; check the saved bundle and wallet activity.');
@@ -805,7 +811,15 @@ export function bindRelayrSafeExecutions(expectedTransactions, proofs) {
   });
 }
 
-export function saveRelayrPendingSession(scope, session) {
+// Called only for a definitely unsent payment, inside relayrPay's payment lock. Keep the quote and
+// publication fingerprints, and never roll back a newer bundle or a payment with a returned hash.
+export function restoreUnsentRelayrPayment(scope, session) {
+  var current = loadRelayrPendingSession(scope, session);
+  if (!current || current.bundleUuid !== session.bundleUuid || current.paymentHash || current.paymentState !== 'sending') return current;
+  return saveRelayrPendingSession(scope, Object.assign({}, current, { paymentState: 'quoted' }), true);
+}
+
+export function saveRelayrPendingSession(scope, session, paymentNotSent) {
   if (!scope || !session || !session.bundleUuid) return null;
   // Pin the original object too: some submission callbacks retain it while the UI uses the returned snapshot.
   // Later polling must never move this receipt to a newly connected wallet's namespace.
@@ -853,11 +867,12 @@ export function saveRelayrPendingSession(scope, session) {
     }
     if (previousSession && relayrPaymentStage(previousSession) > relayrPaymentStage(snapshot)) {
       var durable = relayrStoredSession(stored.disk);
-      // The caller stopped before opening its wallet because the sending journal could not be written.
-      // Only an unchanged readable quoted record proves that this local failed write may return to quoted.
+      // A definite wallet rejection permits rollback under the payment lock. A failed pre-send write
+      // also permits rollback when the durable quote proves the wallet never opened.
       var unsentRollback = snapshot.paymentState === 'quoted' && previousSession.paymentState === 'sending'
-        && previousSession.persisted === false && !previousSession.paymentHash
-        && durable && durable.bundleUuid === snapshot.bundleUuid && durable.paymentState === 'quoted' && !durable.paymentHash;
+        && !previousSession.paymentHash && (paymentNotSent === true
+          || (previousSession.persisted === false && durable && durable.bundleUuid === snapshot.bundleUuid
+            && durable.paymentState === 'quoted' && !durable.paymentHash));
       if (!unsentRollback) {
         previousSession.account = snapshot.account;
         previousSession.persisted = stored.persisted;
