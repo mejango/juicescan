@@ -12,6 +12,8 @@
 // JWT lives in localStorage only.
 
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, decodeEventLog } from 'viem';
+import { deriveStartFrom } from './ruleset-schedule.js';
+export { deriveStartFrom } from './ruleset-schedule.js';
 import { isSafeConnected } from './wallet.js';
 import { idMapFromGroup, resolveSuckerGroup } from './sucker-group.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
@@ -1199,16 +1201,6 @@ function terminalStage(s1) {
   return s;
 }
 
-// JBRulesets.deriveStartFrom: the start a ruleset queued on `base` gets — the base's first cycle boundary at
-// or after mustStartAtOrAfter (0 → the contract substitutes block.timestamp → the very next boundary).
-export function deriveStartFrom(baseStart, baseDuration, mustStartAtOrAfter) {
-  if (!baseDuration) return mustStartAtOrAfter;
-  var nextImmediate = baseStart + baseDuration;
-  if (nextImmediate >= mustStartAtOrAfter) return nextImmediate;
-  var start = mustStartAtOrAfter - ((mustStartAtOrAfter - nextImmediate) % baseDuration);
-  while (mustStartAtOrAfter > start) start += baseDuration;
-  return start;
-}
 // A later custom-flow stage's mustStartAtOrAfter given the previous stage's (estimated) start + duration.
 // 0 keeps today's "next cycle boundary" encoding; N > 1 cycles or a date becomes an absolute timestamp.
 function stageMustStartAtOrAfter(stage, prevStart, prevDuration) {
