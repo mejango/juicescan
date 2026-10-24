@@ -449,3 +449,17 @@ Review: all five selected client rules are implemented, relevant existing onchai
 
 
 Parent verification update: The user explicitly authorized the previously blocked dependency audit and public schema-introspection destinations. On the same frozen application source, the approved Node22.23.4 checks both passed: npm audit reported0vulnerabilities and schema:check validated92production GraphQL documents against both Bendystraw schemas. Logs: /tmp/js-gate-audit-approved.log and /tmp/js-gate-schema-approved.log. No runtime, dependency, generated artifact or lockfile change after the2218-test/148-browser verification.
+
+# Astra Safe queue authorization correction, 2026-10-24
+
+## Plan refinement
+- **Objective:** Reject historical custom-vote and reserved-one shop calls before any new generic Safe signature, execution or Relayr funding, while preserving exact-byte queued history and already-submitted receipt reconciliation. No contracts, SDK adoption, dependencies, push, merge or deployment.
+- **System fit:** Existing Safe sign/send and Relayr funding boundaries own new authority; shared tier policy owns economics. Generic Safe queue entries bypass the current shop-specific preparation guard, as Astra reproduced against confirmSafeTx and the normal queue caller.
+- **Reuse and simplicity:** First move the unchanged assertNewTierPolicy predicate into a dependency-light shop-policy owner and the unchanged Safe execution ABI to the existing pure safe-batch module, keeping existing exports/callers compatible; verify this extraction before adding decoding. Reuse generated protocol ABIs, official MultiSend codec and forwarder ABI without a new decoding framework or copied economic predicates.
+- **Evidence and unknowns:** Baseline 8ee5a4f independently reproduces a new Safe co-signature on adjustTiers(useVotingUnits=true,votes42). Read-only queued state and already-broadcast hashes must not gain policy rejection. Hash-only approvals need their original reviewed transaction to prove what they authorize.
+- **Verification:** Durable actual Safe-module cases reject direct/wrapped/embedded custom tiers and reserved-one before wallet/service writes, permit price-based tiers and ordinary Safe operations, and retain submitted receipt/history reads. Re-run Astra reproduction expecting refusal, focused existing ownership/recovery checks, then frozen Node22 full coverage and required source/generated/inventory/build/budget/browser gates.
+- **Resource budget:** Bounded owning decoder plus authorization callers, separate behavior-preserving extraction and policy change, max2 workers and physical locked dependencies. Astra remains separate read-only review; no further cross-client census. User has authorized existing npm audit and both Bendystraw introspection endpoints; do not re-ask that permission.
+
+- [ ] Extract existing policy/ABI without behavior change and verify.
+- [ ] Guard decoded shop economics at every relevant new Safe/Relayr authorization boundary, preserving passive recovery.
+- [ ] Add source-bound regressions, obtain Astra review and finish frozen owning checks.

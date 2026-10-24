@@ -1,3 +1,5 @@
+import { SAFE_EXEC_ABI } from './safe-batch.js';
+export { SAFE_EXEC_ABI } from './safe-batch.js';
 // src/safe.js
 // Safe (multisig) support for owner/operator-gated actions. When a project owner is a Safe, we can't
 // route through Relayr (a Safe has no private key to sign an ERC-2771 forward request). Instead we
@@ -333,16 +335,7 @@ export async function confirmSafeTx(chainId, safe, tx, signer, reverify, onPubli
 // Execute a queued tx that has enough confirmations, straight from the dapp (no Safe app needed).
 // Assembles the owner signatures (sorted by owner address, as the Safe contract requires) and calls
 // execTransaction on the Safe. The connected wallet sends it and pays gas; must be on `chainId`.
-export var SAFE_EXEC_ABI = [{
-  type: 'function', name: 'execTransaction', stateMutability: 'payable',
-  inputs: [
-    { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' },
-    { name: 'operation', type: 'uint8' }, { name: 'safeTxGas', type: 'uint256' }, { name: 'baseGas', type: 'uint256' },
-    { name: 'gasPrice', type: 'uint256' }, { name: 'gasToken', type: 'address' }, { name: 'refundReceiver', type: 'address' },
-    { name: 'signatures', type: 'bytes' },
-  ],
-  outputs: [{ type: 'bool' }],
-}];
+
 
 // GnosisSafe.execTransaction args (shared by the direct-execute and Relayr-bundle paths). `signatures` is the
 // owner sigs concatenated in ascending owner-address order (see execSignatures); gas fields default to 0.

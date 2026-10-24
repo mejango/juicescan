@@ -13,6 +13,17 @@ export var multiSendAbi = [{ type: 'function', name: 'multiSend', stateMutabilit
 export var NATIVE_TOKEN = '0x000000000000000000000000000000000000EEEe';
 var ZERO = '0x0000000000000000000000000000000000000000';
 
+export var SAFE_EXEC_ABI = [{
+  type: 'function', name: 'execTransaction', stateMutability: 'payable',
+  inputs: [
+    { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'data', type: 'bytes' },
+    { name: 'operation', type: 'uint8' }, { name: 'safeTxGas', type: 'uint256' }, { name: 'baseGas', type: 'uint256' },
+    { name: 'gasPrice', type: 'uint256' }, { name: 'gasToken', type: 'address' }, { name: 'refundReceiver', type: 'address' },
+    { name: 'signatures', type: 'bytes' },
+  ],
+  outputs: [{ type: 'bool' }],
+}];
+
 // Minimal fragments for the registry/hook writes the batch composes. Kept local so the codec has no dependency on
 // the generated registry beyond per-chain addresses.
 var setHookForAbi = [{ type: 'function', name: 'setHookFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'hook', type: 'address' }], outputs: [] }];
