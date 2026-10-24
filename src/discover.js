@@ -11693,6 +11693,18 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, onClear) {
   return true;
 }
 
+function renderExpiredRelayrScheduleRecovery(setStatus, session, scope) {
+  if (!scope || !relayrScheduleCanBeRetired(session)) return false;
+  renderRelayrRecoveryPanel(setStatus, session, 'schedule-expired', null, async function () {
+    if (!window.confirm('Check that every original request is expired and unused, archive this unpaid receipt, and rebuild through a fresh review? Nothing will be submitted automatically.')) return;
+    try {
+      await retireExpiredUnpaidRelayrSession(scope, session);
+      removeRelayrRecoveryPanel(setStatus); setStatus('Expired unused requests archived. Reopen this action and review a fresh schedule.', '');
+    } catch (error) { setStatus(error.message || String(error), 'error'); }
+  });
+  return true;
+}
+
 export async function monitorRelayrSession(session, setStatus, opts) {
   opts = opts || {};
   var scope = opts.pendingScope;
@@ -11702,6 +11714,9 @@ export async function monitorRelayrSession(session, setStatus, opts) {
   }
   // A stale quoted modal can outlive payment from another tab. Refresh before writing or classifying it.
   refreshSavedSession();
+  // An expired unpaid quote has no execution to poll, including after its in-memory quote is lost.
+  // Reject outside the paid-recovery catch so its generic waiting card cannot replace Rebuild.
+  if (renderExpiredRelayrScheduleRecovery(setStatus, session, scope)) assertScheduleFresh(session.scheduleValidUntil);
   var expected = Math.max(1, Number(session.expectedCount) || (session.chains && session.chains.length) || 1);
   session.expectedCount = expected;
   function persist(records) {
@@ -12019,15 +12034,7 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
   confirmOpts = confirmOpts || {};
   // A stale funding modal must not reset another window's sending/submitted journal back to quoted.
   requireUnpaidRelayrSession(confirmOpts.pendingScope, bundle.bundle_uuid);
-  if (relayrScheduleCanBeRetired(session) && confirmOpts.pendingScope) {
-    renderRelayrRecoveryPanel(setStatus, session, 'schedule-expired', null, async function () {
-      if (!window.confirm('Check that every original request is expired and unused, archive this unpaid receipt, and rebuild through a fresh review? Nothing will be submitted automatically.')) return;
-      try {
-        await retireExpiredUnpaidRelayrSession(confirmOpts.pendingScope, session);
-        removeRelayrRecoveryPanel(setStatus); setStatus('Expired unused requests archived. Reopen this action and review a fresh schedule.', '');
-      } catch (error) { setStatus(error.message || String(error), 'error'); }
-    });
-  }
+  renderExpiredRelayrScheduleRecovery(setStatus, session, confirmOpts.pendingScope);
   assertScheduleFresh(session.scheduleValidUntil);
   session.publicationRequestHashes = (bundle.expected_transactions || []).map(function (binding) { return binding.requestHash; });
   var checksKey = String(session.account || '').toLowerCase() + ':' + String(confirmOpts.pendingScope || '') + ':' + session.bundleUuid;
