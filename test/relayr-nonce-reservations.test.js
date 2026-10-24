@@ -12,7 +12,7 @@ vi.mock('../src/component-base.js', () => ({
   VIEW_AS_TX_ERROR: 'View as is read-only.', waitForTrackedTransactionReceipt: vi.fn(), confirmTransactionModal: vi.fn(),
 }));
 import { buildForwardedTx, relayrPostBundle, relayrResumeQuotedBundle, verifyRelayrQuotedRequests,
-  clearRelayrPendingSession, loadRelayrPendingSession, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR,
+  clearRelayrPendingSession, loadRelayrPendingSession, saveRelayrPendingSession, retireExpiredUnpaidRelayrSession, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR,
   RELAYR_NATIVE_TOKEN } from '../src/relayr.js';
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
@@ -198,5 +198,58 @@ describe('forwarded nonce publication reservations', () => {
       .resolves.toHaveProperty('bundle_uuid');
     expect(reservations()).toEqual([]);
     expect(state.client.getBlock).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('expired unpaid schedule retirement', () => {
+  async function published() {
+    const tx = await buildForwardedTx(8453, ACCOUNT, TARGET, '0x12345678', 500000n, 0n, NOW + 60);
+    await relayrPostBundle([tx], { scope: 'staged-create', account: ACCOUNT, scheduleValidUntil: NOW + 60 });
+    vi.spyOn(Date, 'now').mockReturnValue((NOW + 61) * 1000);
+    return loadRelayrPendingSession('staged-create');
+  }
+  it('archives proven expired unused requests while retaining their nonce reservations', async () => {
+    const session = await published(); state.timestamp = BigInt(NOW + 61);
+    const before = reservations();
+    await retireExpiredUnpaidRelayrSession('staged-create', session);
+    expect(loadRelayrPendingSession('staged-create')).toBeNull();
+    const archiveKey = Object.keys(localStorage).find(key => key.startsWith('jb-relayr-retired-v1:'));
+    expect(JSON.parse(localStorage.getItem(archiveKey))).toMatchObject({ receipt: { bundleUuid: session.bundleUuid }, proof: [{ chain: 8453, timestamp: String(NOW + 61), nonce: '7' }] });
+    expect(reservations()).toEqual(before);
+    expect(fetchQuote).toHaveBeenCalledTimes(1); expect(state.wallet.signTypedData).toHaveBeenCalledTimes(1);
+    // A deliberate fresh review can publish only after the existing publication
+    // owner independently verifies the retained signature has expired onchain.
+    await relayrPostBundle([await entry()], journal('fresh-create'));
+    expect(fetchQuote).toHaveBeenCalledTimes(2);
+    expect(reservations()).toHaveLength(1); expect(reservations()[0].scope).toBe('fresh-create');
+  });
+  it.each(['live', 'consumed', 'unknown'])('does not clear %s authorization evidence based on the browser clock', async condition => {
+    const session = await published();
+    if (condition === 'consumed') { state.timestamp = BigInt(NOW + 61); state.nonce = 8n; }
+    if (condition === 'unknown') state.client.getBlock.mockRejectedValue(new Error('RPC unavailable'));
+    const before = reservations();
+    await expect(retireExpiredUnpaidRelayrSession('staged-create', session)).rejects.toThrow();
+    expect(loadRelayrPendingSession('staged-create').bundleUuid).toBe(session.bundleUuid);
+    expect(reservations()).toEqual(before);
+    expect(Object.keys(localStorage).filter(key => key.startsWith('jb-relayr-retired-v1:'))).toHaveLength(0);
+    expect(fetchQuote).toHaveBeenCalledTimes(1); expect(state.wallet.signTypedData).toHaveBeenCalledTimes(1);
+  });
+  it('does not retire a payment that started in another window', async () => {
+    const session = await published(); state.timestamp = BigInt(NOW + 61);
+    saveRelayrPendingSession('staged-create', { ...session, paymentState: 'sending' });
+    await expect(retireExpiredUnpaidRelayrSession('staged-create', session)).rejects.toMatchObject({ code: 'RELAYR_PENDING_CONFLICT' });
+    expect(loadRelayrPendingSession('staged-create').paymentState).toBe('sending');
+    expect(reservations()).toHaveLength(1);
+  });
+  it('retains the active receipt if its archive cannot be saved', async () => {
+    const session = await published(); state.timestamp = BigInt(NOW + 61);
+    const original = Storage.prototype.setItem;
+    const storage = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) { if (key.startsWith('jb-relayr-retired-v1:')) throw new Error('quota'); return original.call(this, key, value); });
+    try {
+      await expect(retireExpiredUnpaidRelayrSession('staged-create', session)).rejects.toThrow(/could not be archived/);
+      expect(loadRelayrPendingSession('staged-create').bundleUuid).toBe(session.bundleUuid);
+      expect(reservations()).toHaveLength(1);
+    } finally { storage.mockRestore(); }
   });
 });

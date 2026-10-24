@@ -992,6 +992,45 @@ export function listRelayrPendingScopes() {
   return scopes;
 }
 
+// This predicate only exposes recovery UI. Retirement itself requires canonical chain proof.
+export function relayrScheduleCanBeRetired(session) {
+  return !!session && session.paymentState === 'quoted' && !session.paymentHash
+    && Number.isSafeInteger(session.scheduleValidUntil) && session.scheduleValidUntil <= Math.floor(Date.now() / 1000);
+}
+
+export async function retireExpiredUnpaidRelayrSession(scope, session) {
+  if (typeof navigator === 'undefined' || !navigator.locks || typeof navigator.locks.request !== 'function') throw new Error('Use a browser with Web Locks to check this original launch before rebuilding.');
+  return navigator.locks.request('jb-relayr-payment:' + String(session.account).toLowerCase(), async function () {
+    var current = requireUnpaidRelayrSession(scope, session.bundleUuid);
+    if (String(current.account).toLowerCase() !== String(session.account).toLowerCase()) throw new Error('The launching wallet changed. Keep this original receipt and reconnect its wallet.');
+    if (!relayrScheduleCanBeRetired(current)) throw new Error('This saved request is live or its payment state is uncertain. Keep its original receipt.');
+    var hashes = new Set(current.publicationRequestHashes || []);
+    var proofs = readNonceReservations().filter(function (proof) { return proof.scope === scope && proof.signer === String(current.account).toLowerCase() && hashes.has(proof.requestHash); });
+    if (!current.expectedCount || proofs.length !== current.expectedCount || hashes.size !== current.expectedCount) throw new Error('The original signed request proofs are incomplete. Keep this receipt and inspect every destination before rebuilding.');
+    var evidence = [];
+    for (var proof of proofs) {
+      if (String(getAddress('ERC2771Forwarder', proof.chain)).toLowerCase() !== proof.forwarder) throw new Error('The original forwarder deployment could not be verified. Keep this receipt.');
+      var client = createPublicClientForChain(proof.chain);
+      var block = await client.getBlock({ blockTag: 'latest' });
+      if (!block || block.number == null || block.timestamp == null) throw new Error('Could not verify request expiry onchain. Keep this receipt and try again.');
+      var nonce = BigInt(await client.readContract({ address: proof.forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [proof.signer], blockNumber: block.number }));
+      if (BigInt(block.timestamp) <= BigInt(proof.deadline) || nonce !== BigInt(proof.nonce)) throw new Error('An original request is still live or its nonce was used. Keep this receipt and check every destination; nothing was rebuilt.');
+      evidence.push({ chain: proof.chain, requestHash: proof.requestHash, blockNumber: String(block.number), timestamp: String(block.timestamp), nonce: String(nonce) });
+    }
+    current = requireUnpaidRelayrSession(scope, session.bundleUuid);
+    if (String(current.account).toLowerCase() !== String(session.account).toLowerCase()) throw new Error('The launching wallet changed. Keep this original receipt.');
+    // Archive before removing the active marker. Nonce reservations remain intact and
+    // the normal publication gate independently verifies expiry before replacing them.
+    var key = 'jb-relayr-retired-v1:' + relayrAccountPart(current) + scope + ':' + current.bundleUuid;
+    var raw = JSON.stringify({ receipt: current, proof: evidence });
+    try { localStorage.setItem(key, raw); if (localStorage.getItem(key) !== raw) throw new Error(); }
+    catch (_) { throw new Error('The original receipt could not be archived. Restore browser storage before rebuilding.'); }
+    clearRelayrPendingSession(scope, current);
+    if (loadRelayrPendingSession(scope, current)) throw new Error('The original receipt could not be retired. Restore browser storage before rebuilding.');
+    return true;
+  });
+}
+
 export function clearRelayrPendingSession(scope, session) {
   // Async completion clears the original wallet's copy even if the connected account changed while polling.
   // Remove its legacy copy too, so a cleared receipt cannot be adopted again after migration.

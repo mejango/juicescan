@@ -27,7 +27,7 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
@@ -4074,10 +4074,13 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
   var panel = el('div', 'relayr-pending-panel create-relayr-receipt');
   var progress = relayrProgress(session.records, session.expectedCount);
   var paymentExpired = session.paymentState === 'expired';
+  var scheduleExpired = relayrScheduleCanBeRetired(session);
   renderRelayrReceiptInto(panel, session, {
     stateLabel: function (record) { var s = relayrChainStatus(record); return { text: s.label, kind: s.kind }; },
     chainNameOf: chainName,
-    noteText: paymentExpired
+    noteText: scheduleExpired
+      ? 'This launch schedule expired before payment. Check that every original request is expired and unused, then rebuild. Its receipt and nonce reservations stay saved for recovery.'
+      : paymentExpired
       ? 'The Relayr quote expired. Keep the payment hash and bundle ID, and review every destination before creating a new quote.'
       : session.paymentState === 'publication'
       ? 'Signed launch requests were submitted for a quote, but the response was not captured. Recover that bundle before signing or funding another launch.'
@@ -4092,7 +4095,15 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
         : 'The payment receipt is saved. Checking status never signs, pays, or creates another bundle.'),
   });
   var action = el('button', 'create-btn ghost'); action.type = 'button'; action.style.marginTop = '10px';
-  if (paymentExpired || progress.failed) {
+  if (scheduleExpired) {
+    action.textContent = 'Rebuild expired launch'; action.disabled = !!checking;
+    action.addEventListener('click', async function () {
+      if (!window.confirm('Check and retire this expired unpaid launch? Every original request must be expired and unused onchain. Its evidence stays saved; rebuilding will require a fresh review and will not send automatically.')) return;
+      action.disabled = true;
+      try { await retireExpiredUnpaidRelayrSession(CREATE_RELAYR_SCOPE, session); if (onClear) onClear(); }
+      catch (error) { action.disabled = false; var line = el('p', 'create-hint'); line.textContent = error.message || String(error); panel.appendChild(line); }
+    });
+  } else if (paymentExpired || progress.failed) {
     action.textContent = 'Clear saved receipt';
     action.addEventListener('click', function () {
       if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already deployed. Review every chain before launching any missing work.')) return;
@@ -5489,7 +5500,7 @@ function ipfsHttp(uri) {
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
   resolveEns, attachEns,
-  renderDeploy, runDeploy, captureDeployed, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
+  renderDeploy, runDeploy, captureDeployed, createRelayrReceiptNode, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
   suckerConfigFor, tokenMappingFor, verifyLegacyItemSplitIds,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,

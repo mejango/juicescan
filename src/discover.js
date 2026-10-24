@@ -20,7 +20,7 @@ import { V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from '
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
@@ -11665,7 +11665,9 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, onClear) {
     statusEl._relayrRecoveryPanel = panel;
   }
   var noteText;
-  if (session.paymentState === 'publication') {
+  if (mode === 'schedule-expired') {
+    noteText = 'This schedule expired before payment. Rebuild checks every original authorization is expired and unused onchain, and archives its receipt. No replacement is submitted automatically.';
+  } else if (session.paymentState === 'publication') {
     noteText = 'Signed requests may have reached Relayr, but its quote response was not received. No payment was requested. Keep this record and inspect the destination chains before signing this action again.';
   } else if (session.paymentState === 'quoted') {
     noteText = 'This previously reviewed bundle has not been paid. Its funding options are available only in the original window; keep its bundle ID and review the destination chains before signing again.';
@@ -11685,7 +11687,7 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, onClear) {
     action.addEventListener('click', onCheck); panel.appendChild(action);
   }
   if (onClear) {
-    var clear = document.createElement('button'); clear.type = 'button'; clear.className = 'relayr-pending-clear'; clear.textContent = 'Clear saved receipt';
+    var clear = document.createElement('button'); clear.type = 'button'; clear.className = 'relayr-pending-clear'; clear.textContent = mode === 'schedule-expired' ? 'Rebuild expired action' : 'Clear saved receipt';
     clear.addEventListener('click', onClear); panel.appendChild(clear);
   }
   return true;
@@ -12017,6 +12019,15 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
   confirmOpts = confirmOpts || {};
   // A stale funding modal must not reset another window's sending/submitted journal back to quoted.
   requireUnpaidRelayrSession(confirmOpts.pendingScope, bundle.bundle_uuid);
+  if (relayrScheduleCanBeRetired(session) && confirmOpts.pendingScope) {
+    renderRelayrRecoveryPanel(setStatus, session, 'schedule-expired', null, async function () {
+      if (!window.confirm('Check that every original request is expired and unused, archive this unpaid receipt, and rebuild through a fresh review? Nothing will be submitted automatically.')) return;
+      try {
+        await retireExpiredUnpaidRelayrSession(confirmOpts.pendingScope, session);
+        removeRelayrRecoveryPanel(setStatus); setStatus('Expired unused requests archived. Reopen this action and review a fresh schedule.', '');
+      } catch (error) { setStatus(error.message || String(error), 'error'); }
+    });
+  }
   assertScheduleFresh(session.scheduleValidUntil);
   session.publicationRequestHashes = (bundle.expected_transactions || []).map(function (binding) { return binding.requestHash; });
   var checksKey = String(session.account || '').toLowerCase() + ':' + String(confirmOpts.pendingScope || '') + ':' + session.bundleUuid;

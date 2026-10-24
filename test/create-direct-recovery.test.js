@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   execute: vi.fn(), simulate: vi.fn(), review: vi.fn(), client: vi.fn(), safe: vi.fn(),
   resumeQuote: vi.fn(), paymentOptions: vi.fn(), postBundle: vi.fn(),
-  forward: vi.fn(), pay: vi.fn(),
+  forward: vi.fn(), pay: vi.fn(), retireExpired: vi.fn(),
 }));
 vi.mock('../src/component-base.js', async (original) => ({
   ...await original(),
@@ -20,7 +20,7 @@ vi.mock('../src/wallet.js', async (original) => ({ ...await original(), isSafeCo
 vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), hasPinata: () => false }));
 vi.mock('../src/relayr.js', async (original) => ({ ...await original(),
   relayrResumeQuotedBundle: mocks.resumeQuote, relayrPaymentOptions: mocks.paymentOptions, relayrPostBundle: mocks.postBundle,
-  buildForwardedTx: mocks.forward, relayrPay: mocks.pay,
+  buildForwardedTx: mocks.forward, relayrPay: mocks.pay, retireExpiredUnpaidRelayrSession: mocks.retireExpired,
 }));
 
 import { __test } from '../src/create-flow.js';
@@ -477,5 +477,41 @@ describe('creation funding selection', () => {
     expect(pay.disabled).toBe(false);
     pay.click();
     expect(draft.quoteChoice.resolve).toHaveBeenCalledWith(opt);
+  });
+});
+
+
+describe('expired quoted launch recovery UI', () => {
+  it('offers an explicit proof-checked rebuild without signing or sending automatically', async () => {
+    const session = { account: ALICE, bundleUuid: 'expired-ui', paymentState: 'quoted', paymentHash: null, chains: [{ id: 1 }], scheduleValidUntil: Math.floor(Date.now() / 1000) - 1 };
+    const onClear = vi.fn();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mocks.retireExpired.mockResolvedValueOnce(true);
+    try {
+      const panel = __test.createRelayrReceiptNode(session, false, vi.fn(), onClear);
+      document.body.appendChild(panel);
+      const rebuild = [...panel.querySelectorAll('button')].find(button => button.textContent === 'Rebuild expired launch');
+      expect(rebuild).toBeTruthy(); rebuild.click();
+      await vi.waitFor(() => expect(onClear).toHaveBeenCalledTimes(1));
+      expect(mocks.retireExpired).toHaveBeenCalledWith('create-project', session);
+      expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled(); expect(mocks.pay).not.toHaveBeenCalled();
+    } finally { confirm.mockRestore(); }
+  });
+  it.each(['sending', 'paid', 'live'])('does not offer retirement of a %s request', kind => {
+    const session = { account: ALICE, bundleUuid: 'blocked-ui', paymentState: kind === 'sending' ? 'sending' : 'quoted', paymentHash: kind === 'paid' ? HASH1 : null, chains: [{ id: 1 }], scheduleValidUntil: Math.floor(Date.now() / 1000) + (kind === 'live' ? 100 : -1) };
+    const panel = __test.createRelayrReceiptNode(session, false, vi.fn(), vi.fn());
+    expect(panel.textContent).not.toContain('Rebuild expired launch');
+    expect(mocks.retireExpired).not.toHaveBeenCalled();
+  });
+  it('keeps the receipt visible when canonical expiry cannot be proved', async () => {
+    const session = { account: ALICE, bundleUuid: 'unknown-ui', paymentState: 'quoted', paymentHash: null, chains: [{ id: 1 }], scheduleValidUntil: Math.floor(Date.now() / 1000) - 1 };
+    const onClear = vi.fn(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mocks.retireExpired.mockRejectedValueOnce(new Error('An original request is still live or its nonce was used'));
+    try {
+      const panel = __test.createRelayrReceiptNode(session, false, vi.fn(), onClear);
+      [...panel.querySelectorAll('button')].find(button => button.textContent === 'Rebuild expired launch').click();
+      await vi.waitFor(() => expect(panel.textContent).toContain('still live'));
+      expect(onClear).not.toHaveBeenCalled(); expect(mocks.pay).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled();
+    } finally { confirm.mockRestore(); }
   });
 });
