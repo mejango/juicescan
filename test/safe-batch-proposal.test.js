@@ -1,3 +1,4 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 // The two new wallet primitives: an operation-1 SafeTx proposal (hash, typed message, POST body) and the ordered
 // MultiSend proposal through the Safe App — plus the simulation gate in front of both.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +7,7 @@ import { hashTypedData } from 'viem';
 const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', wallet: null, client: null }));
 vi.mock('../src/component-base.js', async importOriginal => ({
   ...await importOriginal(), getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account,
-  getWalletClient: () => runtime.wallet, switchChain: vi.fn(), createPublicClientForChain: () => runtime.client,
+  invokeWallet: (...args) => walletInvocationFor(runtime)(...args), isSafeConnected: () => !!runtime.safe, getWalletClient: () => runtime.wallet, switchChain: vi.fn(async chainId => { runtime.wallet.getChainId.mockResolvedValue(chainId); }), createPublicClientForChain: () => runtime.client,
 }));
 vi.mock('../src/safe-app.js', async importOriginal => ({ ...await importOriginal(), proposeSafeTransactions: vi.fn(async () => '0x' + 'ab'.repeat(32)) }));
 vi.mock('../src/safe.js', async importOriginal => ({
@@ -32,7 +33,7 @@ const simulateOk = n => [{ calls: Array.from({ length: n }, () => ({ status: '0x
 const unsupported = () => Object.assign(new Error('Method not found'), { code: -32601 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.clearAllMocks(); runtime.account = OWNER; runtime.safe = false;
   runtime.wallet = { getChainId: vi.fn(async () => 11155111), signTypedData: vi.fn(async () => SIGNATURE) };
   runtime.client = { getCode: vi.fn(async () => '0x6080'), request: vi.fn(async ({ method, params }) => (method === 'eth_simulateV1' ? simulateOk(params[0].blockStateCalls[0].calls.length) : '0x')) };
 });
@@ -88,11 +89,26 @@ describe('owner route', () => {
 
 describe('Safe App route', () => {
   it('proposes the ordered {to, value, data} list as one Safe App transaction batch after simulating from the Safe', async () => {
+    runtime.safe = true; runtime.account = SAFE;
     const result = await proposeBatchThroughSafeApp({ chainId: 11155111, chainName: 'Sepolia', authority: SAFE, calls: calls(), dependsOnPrior: flags(), setStatus: vi.fn() });
     expect(proposeSafeTransactions).toHaveBeenCalledOnce();
     expect(proposeSafeTransactions).toHaveBeenCalledWith(calls().map(c => ({ to: c.to, value: '0', data: c.data })));
     expect(result).toEqual({ safeTxHash: '0x' + 'ab'.repeat(32), executed: false });
     expect(runtime.client.request.mock.calls[0][0].params[0].blockStateCalls[0].calls[0].from).toBe(SAFE);
+  });
+
+  it.each(['account', 'chain', 'route'])('refuses a changed Safe %s while simulation is pending', async change => {
+    runtime.safe = true; runtime.account = SAFE;
+    let finish;
+    runtime.client.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const pending = proposeBatchThroughSafeApp({ chainId: 11155111, chainName: 'Sepolia', authority: SAFE, calls: calls(), dependsOnPrior: flags(), setStatus: vi.fn() }).catch(error => error);
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    if (change === 'account') runtime.account = OWNER;
+    if (change === 'chain') runtime.wallet.getChainId.mockResolvedValue(8453);
+    if (change === 'route') runtime.safe = false;
+    finish(simulateOk(calls().length));
+    expect((await pending).walletNotInvoked).toBe(true);
+    expect(proposeSafeTransactions).not.toHaveBeenCalled();
   });
 
   it('refuses when the Safe App is on another network', async () => {

@@ -23,6 +23,14 @@ describe('sequential direct transaction recovery', () => {
     expect(hasDirectBatch(scope, ACCOUNT, CALLS)).toBe(true);
   });
 
+  it('releases a journal when the final boundary proves the wallet was never invoked', async () => {
+    const scope = 'boundary-unsent';
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
+      sending(); throw Object.assign(new Error('account changed'), { walletNotInvoked: true });
+    } })).rejects.toThrow('account changed');
+    expect(await clearUnsubmittedDirectBatch(scope, ACCOUNT, CALLS)).toBe(true);
+  });
+
   it('resumes the exact submitted hash and skips confirmed legs after the later wallet step rejects', async () => {
     const options = { account: ACCOUNT, scope: 'direct-partial', verifySubmitted: vi.fn(async (_call, hash) => receipt(hash)),
       execute: vi.fn(async (_call, index, submitted) => {

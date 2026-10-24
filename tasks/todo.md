@@ -398,3 +398,84 @@ Expired-quote recovery refinement: a strict quoted/unpaid expired schedule expos
 Astra recovery follow-up: Discover reload has no in-memory funding quote and routes to monitorRelayrSession. Reuse the expired quoted recovery renderer in both funding and monitoring, rejecting expired preparation before generic paid/pending polling. Add restored-caller UI regression with no new sign, publish, chooser or payment. Canonical retirement authority and retained nonce evidence stay unchanged.
 
 Final verification on runtime c04b5b5: separate GPT Astra approved the final implementation and restored-quote delta, independently rerunning83recovery checks. Full coverage passes2,180tests across211files, Chromium passes148cases, and source327files, deployment parity100deployments, generated-source parity, dependency tree, transaction inventory119boundaries/28modules, live schema92documents, production build and unchanged gzip budgets all pass. Startup704,189/722,000bytes, distribution2,013,797/2,060,000bytes. Logs are /private/tmp/juicescan-stage-final2-*.log. Local production audit was previously rejected by automatic approval review because it uploads dependency metadata; unchanged dependencies and the hosted existing audit gate are the remaining release evidence. No contract changes, deployments, wallet submissions or pushes were performed.
+
+# Client convergence, 2026-10-24
+
+Workspace resources: `/Users/jango/Documents/jb/v6/evm/AGENTS.md`, `/Users/jango/Documents/jb/v6/evm/workflow/ponytail/SKILL.md`, `/Users/jango/Documents/jb/v6/evm/docs/PLAN_REFINEMENT.md`, root and local lessons. Parent convergence plan governs scope.
+
+## Plan refinement
+- **Objective:** Enforce five selected correctness rules throughout Juicescan; hold voting edits until clarified, preserve dirty checkout, no contracts, dependencies, merge or deployment.
+- **System fit:** Wallet owner resolves current connector at invocation preserving reviewed account, chain and Safe route; accounting identity, tier compiler and nullable read owners govern presentation and economics. Journals retain ambiguous submissions.
+- **Reuse and simplicity:** Add one shared current invocation boundary and reuse existing getters, accountingTokenContextKey, tier validators and balance completeness rather than scattered guards.
+- **Evidence and unknowns:** Cached origin/main c2ae52c matches parent-pinned refreshed main; this fetch failed DNS. Actual-source reproductions prove captured wallet and stale approval account defects; voting interpretation pending.
+- **Verification:** Actual-source await-race tests for same-account connector changes, account/chain/route changes, existing identity/tier/unknown data cases, source/inventory/build/unit/browser gates and network check limits.
+- **Resource budget:** Bounded invocation census plus shared owner, read-only delegated data census, reuse prior worktree locked dependencies; no audit expansion.
+
+- [x] Fix current wallet boundary and every applicable caller.
+- [x] Converge voting, token identity, reserved supply and unknown data.
+- [x] Verify and record review plus limits.
+
+## Plan refinement
+- **Objective:** Apply the user's clarified always-price-based governance policy: every newly compiled tier uses useVotingUnits=false, including restored legacy drafts and nonzero custom inputs.
+- **System fit:** nft721-build is the shared encoder; create/add-shop owners must stop offering custom voting controls while existing onchain tier displays remain truthful. Wallet/data ownership and release authority remain unchanged.
+- **Reuse and simplicity:** Remove the custom controls and neutralize legacy voting fields at the existing compiler; no new voting abstraction or migrated onchain state.
+- **Evidence and unknowns:** Parent relayed explicit user Yes always price-based; it supersedes earlier zero-only interpretation.
+- **Verification:** Assert zero/nonzero/custom-flag inputs compile price voting; assert creation/add-shop forms omit custom toggles, and run related tier/draft tests.
+- **Resource budget:** Small bounded policy update in current files and existing tests, followed by full owning checks; no new scope or dependencies.
+
+## Implementation review
+
+- [x] Rule 1: all new shared/create/add-shop tier compilers encode votingUnits=0 and useVotingUnits=false. Custom controls removed; legacy draft fields cannot reactivate custom voting. Voting-locked shops accept only free new price-based items, checked before pinning and again on authorization.
+- [x] Rule 2: wallet.invokeWallet resolves the current connector after gas/preparation and its own final chain RPC, checks account/network/View-as/Safe route and invokes synchronously. All existing contract-write/send/typed-signature sites share it. Same-account connector replacements use the replacement. Caller-specific schedule/quote freshness runs after that final RPC; proven-unsent journals release while actual send uncertainty remains held.
+- [x] Rule 3: accountingTokenContextKey owns custom chain/address identity; raw balances, funds descriptors/totals, same-symbol table cells and preview grouping preserve it. Authenticated native/USDC equivalence remains supported.
+- [x] Rule 4: shared tier compiler and saved unsigned tier policy reject positive reserves with supply 1; unlimited, supply 2 and unreserved supply 1 remain valid.
+- [x] Rule 5: failed balances stay nullable, Ops completeness checks every accounting token independently of gossip membership, partial per-chain/aggregate totals are unavailable, direct-sell routing withholds unknown spendable balance, and preview API rejects incomplete/malformed reads.
+
+Saved prepared direct launches and add-shop calls are validated before new authorization without modifying their bytes; submitted hashes reconcile first. Historical Relayr quotes have in-memory funding options only: after code reload a durable old quoted record cannot reconstruct a quote or fund it. Existing funded/published sessions retain exact passive reconciliation. No contract, Plugin, dependency-version, deployment or merge changes.
+
+Verification in progress: actual-source wallet13cases, data6suites42cases, focused tier/draft/recovery and transaction fixtures. Final Node22 full coverage uses a physical copy of the unchanged locked dependencies and two workers. Required source/deployment/generated/inventory/build/budget/browser checks follow.
+
+## Final verification, frozen source
+
+- [x] Full Node 22.23.4 coverage run: 213 suites, 2218 tests pass; every existing coverage floor passes. Overall statements 43.99%, branches 42.56%, functions 46.29%, lines 49.15%.
+- [x] Production browser suite: 148 checks pass across desktop, tablet, mobile and narrow widths on local port 4289, CI two workers.
+- [x] Locked dependency graph, source syntax (330 JavaScript files), pinned deployment parity, exact regeneration, transaction inventory (138 occurrences across 28 modules), production bundle and original bundle budgets pass.
+- [x] Artifact dependencies are a physical copy of the unchanged locked install. Startup 705754 bytes gzip / 722000 budget; total 2017134 / 2060000. No package, lockfile or generated source/data changes.
+- [x] Actual-source focused verification: nine affected suites, 159 tests pass; separate final narrow wallet/Safe review approved and its three suites / 31 tests pass. Frozen source SHA256: discover 2b481115cfc51dbd68e1308ac5ed265f2f6ec2292fd29ec26205350e7fe0ca67, safe-batch-ui f59c77e598d8e2813a5205fe9f866317ecf9d909dea7bc5c497a19e6d21d6c9f, wallet 2e57ae43ff33baea52caa4b1f28859d525eedf04fc1578a634283aad0f4ec7ec.
+
+Blocked external gates: production advisory audit and live GraphQL schema validation initially failed DNS in the sandbox. Automatic approval review rejected the combined network escalation because dependency metadata would be sent to external services and the schema endpoint lacked specific destination/egress authorization. No workaround or retry followed. These are not passed checks; the parent owns the final explicit approval question. npm audit targets registry.npmjs.org; schema introspection targets bendystraw.up.railway.app/graphql and bendystraw-testnet.up.railway.app/graphql, with repository GraphQL documents validated locally.
+
+Review: all five selected client rules are implemented, relevant existing onchain displays and historical submitted recovery remain truthful, and no contract changes, SDK adoption, new dependency versions, push, merge, deployment or wallet transaction occurred. Original dirty checkout remains untouched. The parent recovered the accidentally overwritten root plan exactly; this isolated checkout records a preventive path lesson.
+
+
+Parent verification update: The user explicitly authorized the previously blocked dependency audit and public schema-introspection destinations. On the same frozen application source, the approved Node22.23.4 checks both passed: npm audit reported0vulnerabilities and schema:check validated92production GraphQL documents against both Bendystraw schemas. Logs: /tmp/js-gate-audit-approved.log and /tmp/js-gate-schema-approved.log. No runtime, dependency, generated artifact or lockfile change after the2218-test/148-browser verification.
+
+# Astra Safe queue authorization correction, 2026-10-24
+
+## Plan refinement
+- **Objective:** Reject historical custom-vote and reserved-one shop calls before any new generic Safe signature, execution or Relayr funding, while preserving exact-byte queued history and already-submitted receipt reconciliation. No contracts, SDK adoption, dependencies, push, merge or deployment.
+- **System fit:** Existing Safe sign/send and Relayr funding boundaries own new authority; shared tier policy owns economics. Generic Safe queue entries bypass the current shop-specific preparation guard, as Astra reproduced against confirmSafeTx and the normal queue caller.
+- **Reuse and simplicity:** First move the unchanged assertNewTierPolicy predicate into a dependency-light shop-policy owner and the unchanged Safe execution ABI to the existing pure safe-batch module, keeping existing exports/callers compatible; verify this extraction before adding decoding. Reuse generated protocol ABIs, official MultiSend codec and forwarder ABI without a new decoding framework or copied economic predicates.
+- **Evidence and unknowns:** Baseline 8ee5a4f independently reproduces a new Safe co-signature on adjustTiers(useVotingUnits=true,votes42). Read-only queued state and already-broadcast hashes must not gain policy rejection. Hash-only approvals need their original reviewed transaction to prove what they authorize.
+- **Verification:** Durable actual Safe-module cases reject direct/wrapped/embedded custom tiers and reserved-one before wallet/service writes, permit price-based tiers and ordinary Safe operations, and retain submitted receipt/history reads. Re-run Astra reproduction expecting refusal, focused existing ownership/recovery checks, then frozen Node22 full coverage and required source/generated/inventory/build/budget/browser gates.
+- **Resource budget:** Bounded owning decoder plus authorization callers, separate behavior-preserving extraction and policy change, max2 workers and physical locked dependencies. Astra remains separate read-only review; no further cross-client census. User has authorized existing npm audit and both Bendystraw introspection endpoints; do not re-ask that permission.
+
+- [x] Extract existing policy/ABI without behavior change and verify.
+- [x] Guard decoded shop economics at every relevant new Safe/Relayr authorization boundary, preserving passive recovery.
+- [ ] Add source-bound regressions, obtain Astra review and finish frozen owning checks.
+
+Correction implementation frozen: unchanged-policy/ABI extraction passed 4 suites/57 tests and is isolated in commit 901b025. Shared decoded shop policy now checks canonical adjustment/embedded creation, official MultiSend, Safe execution and forwarder wrappers at existing new-sign/send/proposal/publication/funding boundaries. Hash approvals carry and bind their original reviewed transaction; no confirmation dialog was added. Pure history/decode/receipt recovery remains unchanged. Focused 11 suites/240 tests pass; final added wrapper-bound and historical receipt cases pass 2 suites/66 tests. Original Astra allow-signing reproduction now refuses with the selected policy error before signature/service publication. Astra has the frozen source for independent re-review. Full owning checks follow with source frozen.
+
+## Astra correction review and local verification
+
+- [x] Behavior-preserving extraction: 57 tests / 4 suites pass, separate commit 901b025; existing public exports retained.
+- [x] Shared new-authorization guard and exact hash-approval callers completed. Old custom voting and reserved supply 1 reject before new wallet/service writes through supported direct, MultiSend, Safe execution, forwarder and embedded launch/deploy calls. Price-based tiers and ordinary Safe calls remain usable. Existing confirmation flow remains unchanged.
+- [x] Actual-module focused checks: 240 tests / 11 suites pass. Final policy/recovery checks: 66 tests / 2 suites pass, independently rerun by Astra. Historical queued custom calls remain readable, exact previously submitted custom executions reconcile successfully, and original signed bytes remain unchanged.
+- [x] Astra independently APPROVED the frozen fix, finding no further blocker. Approved SHA256: shop-policy be6c1a75db09ad72a4402e6caa92cdd629be4d05a34d67942fdf58e89007546a, safe cd9b7139f2168862f31f9cee1b00d9247445e1e70763d89de66e42ae3ad7e01d. The wallet callback owner itself remains unchanged.
+- [x] Production browser: all 148 checks pass on port 4289, desktop/tablet/mobile/narrow, CI two workers.
+- [x] Source syntax (332 files), dependency graph, pinned deployments, exact regeneration, wallet inventory (138 occurrences), bundle and original budgets pass. Startup 706161 / 722000 gzip bytes, total 2017548 / 2060000. No dependency, lockfile, generated-data or budget-threshold changes.
+- [x] Fresh explicitly authorized network gates pass: npm audit reports zero vulnerabilities; 92 production GraphQL documents validate against both live Bendystraw schemas.
+
+Local full-run evidence is intentionally qualified: the frozen production source passed 2241 runtime tests / 213 suites; one static ABI-sweep assertion retained the old source-file exclusion for the unchanged extracted Safe execution ABI. That TEST-ONLY metadata was corrected to its new owning file, preserving the exact exclusion and expanding the sweep to all seven SafeBatch fragments. All 37 corrected ABI checks pass. Parent directed cancellation of the just-started redundant local coverage replay; complete exact-head coverage and required floors remain a required GitHub CI gate before merge, not a locally reported green full run for this correction. No production source changed after Astra approval or browser qualification.
+
+No push, merge, deployment, contracts or SDK/dependency-version changes were performed by this task. Parent owns final publication, exact-head CI and the user-authorized landing of the five client PRs.

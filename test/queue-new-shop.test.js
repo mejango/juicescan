@@ -4,7 +4,7 @@
 // deploy-fresh branch requires tiers.length > 0, so that's asserted too.
 import { describe, it, expect } from 'vitest';
 import { encodeFunctionData, decodeFunctionData, toFunctionSelector } from 'viem';
-import { build721Config, buildQueueRulesetConfigs, __test } from '../src/create-flow.js';
+import { renderNfts, build721Config, buildQueueRulesetConfigs, __test } from '../src/create-flow.js';
 import { buildNewShopQueueCall, buildOmnichainQueueArgs, newShopDeploymentSalt } from '../src/discover.js';
 import { getABI } from '../src/abi-registry.js';
 
@@ -27,6 +27,12 @@ function newShopState() {
 }
 
 describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)', () => {
+  it('ignores restored custom voting and removes its editor control', () => {
+    const s = newShopState();
+    s.nfts[0] = { ...s.nfts[0], votingOn: true, votingUnits: '99', flags: { useVotingUnits: true } };
+    expect(build721Config(s, 'ipfs://x', 1).tiersConfig.tiers[0]).toMatchObject({ votingUnits: 0, flags: { useVotingUnits: false } });
+    expect(renderNfts(s, () => {}).textContent).not.toContain('Custom voting units');
+  });
   it('one tier round-trips name/price/supply into tiersConfig.tiers', () => {
     const cfg = build721Config(newShopState(), 'ipfs://x', 1);
     expect(cfg.name).toBe('NewCol');

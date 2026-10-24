@@ -1,3 +1,4 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import './web-locks.js';
 
@@ -23,7 +24,7 @@ vi.mock('../src/inputs.js', () => ({
 
 vi.mock('../src/wallet.js', () => ({
   getAccount: vi.fn(() => state.account),
-  getWalletClient: vi.fn(() => state.wallet),
+  invokeWallet: (...args) => walletInvocationFor(state)(...args), isSafeConnected: () => false, getWalletClient: vi.fn(() => state.wallet),
   createPublicClientForChain: vi.fn(() => state.client),
   connect: vi.fn(() => Promise.resolve()),
   onWalletChange: vi.fn(listener => state.walletListeners.push(listener)),

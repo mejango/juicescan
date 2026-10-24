@@ -1,3 +1,4 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { keccak256 } from 'viem';
 
@@ -9,11 +10,11 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/component-base.js', () => ({
-  getWalletClient: () => state.wallet,
+  invokeWallet: (...args) => walletInvocationFor(state)(...args), isSafeConnected: () => false, getWalletClient: () => state.wallet,
   getAccount: () => state.account,
   createPublicClientForChain: () => state.client,
   getAddress: () => '0x2222222222222222222222222222222222222222',
-  switchChain: vi.fn(),
+  switchChain: vi.fn(async chainId => { state.wallet.getChainId.mockResolvedValue(chainId); }),
   getViewAs: () => null,
   VIEW_AS_TX_ERROR: 'View as is read-only.',
   waitForTrackedTransactionReceipt: (client, hash, wallet, chainId) => client.track(hash, wallet, chainId),
@@ -239,6 +240,18 @@ describe('Relayr payment receipt tracking', () => {
     expect(sending.mock.invocationCallOrder[0]).toBeLessThan(state.wallet.sendTransaction.mock.invocationCallOrder[0]);
     expect(submitted).not.toHaveBeenCalled();
     expect(state.client.track).not.toHaveBeenCalled();
+  });
+
+  it('rechecks caller freshness after the final chain await and releases only the unsent payment', async () => {
+    let finish, started;
+    const reading = new Promise(resolve => { started = resolve; });
+    state.wallet.getChainId.mockResolvedValueOnce(1).mockImplementationOnce(() => { started(); return new Promise(resolve => { finish = resolve; }); });
+    const sending = vi.fn(), unsent = vi.fn(), fresh = vi.fn(() => { throw new Error('schedule expired'); });
+    const pending = relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, sending, unsent, fresh).catch(error => error);
+    await reading; expect(sending).toHaveBeenCalledOnce(); expect(fresh).not.toHaveBeenCalled();
+    finish(1); const error = await pending;
+    expect(error).toMatchObject({ message: 'schedule expired', walletNotInvoked: true });
+    expect(unsent).toHaveBeenCalledOnce(); expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('releases a definite rejection before the payment lock closes (nested: %s)', async nested => {

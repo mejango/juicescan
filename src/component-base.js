@@ -1,8 +1,9 @@
+import { assertShopCallPolicy } from './shop-policy.js';
 import { mountFeeBuybackReview } from './fee-buyback-review.js';
 // src/component-base.js
 // Shared building blocks for all component widgets
 
-import { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions, waitForSafeInitialization } from './wallet.js';
+import { getAccount, getWalletClient, invokeWallet, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected, proposeSafeTransactions, waitForSafeInitialization } from './wallet.js';
 import { getViewAs, onViewAsChange, VIEW_AS_TX_ERROR } from './view-as.js';
 import { CHAINS, chainNameFor, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
@@ -52,7 +53,7 @@ export function abiSignature(abi, functionName) {
   return f.name + '(' + ins + ')' + mut + outs;
 }
 
-export { getAccount, getWalletClient, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected };
+export { getAccount, getWalletClient, invokeWallet, createPublicClientForChain, connect, disconnect, onWalletChange, switchChain, eagerConnect, getProviders, refreshProviders, isSafeConnected };
 export { initSafeApp, getSafeInfo } from './wallet.js';
 export { getViewAs, setViewAs, clearViewAs, onViewAsChange, VIEW_AS_TX_ERROR } from './view-as.js';
 
@@ -1441,7 +1442,7 @@ export function sendHeldWrite(hold, check, send) {
     } catch (err) { hold.releaseLocked(reservation); throw err; }
     var hash;
     try { hash = await send(); } catch (err) {
-      if (isExplicitWalletRejection(err)) { hold.releaseLocked(reservation); throw err; }
+      if (err.walletNotInvoked || isExplicitWalletRejection(err)) { hold.releaseLocked(reservation); throw err; }
       throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it, so this action stays pending until it settles.', { cause: err }), { heldWrite: true });
     }
     return { hash: hash, reservation: hold.submitted(reservation, hash) || reservation };
@@ -1470,6 +1471,7 @@ export function executeTransaction(opts) {
   // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, reverify, onStatus, onSuccess, onError, skipConfirm, label }
   if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
   var wallet = getWalletClient();
+  var reviewedSafe = opts.expectedSafe == null ? isSafeConnected() : opts.expectedSafe;
   if (!wallet) { opts.onError('Connect wallet to transact'); return; }
   var account = getAccount();
   if (!account) { opts.onError('Connect wallet to transact'); return; }
@@ -1555,13 +1557,14 @@ export function executeTransaction(opts) {
   });
 
   function sendNow() {
-  if (opts.expectedSafe != null && isSafeConnected() !== opts.expectedSafe) {
+  if (isSafeConnected() !== reviewedSafe) {
     cbs.onError('Wallet route changed. Review the transaction again.'); return;
   }
   var submittedHash = null;
   var reverifiedBlock = null;
   var beforeWriteComplete = false, walletInvoked = false;
   function assertWalletInvocation(expectedSafe) {
+    assertShopCallPolicy(encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }), opts.address);
     if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     if (isSafeConnected() !== expectedSafe) throw new Error('Wallet route changed. Review the transaction again.');
@@ -1610,10 +1613,10 @@ export function executeTransaction(opts) {
       cbs.onStatus('Proposing to your Safe…', 'pending');
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
-      if (await wallet.getChainId() !== opts.chainId) throw new Error('Wallet network changed. Review the transaction again.');
-      assertWalletInvocation(true);
-      walletInvoked = true;
-      return proposeSafeTransactions(txs).then(function (safeTxHash) {
+      return invokeWallet(opts.chainId, account, true, function () {
+        walletInvoked = true;
+        return proposeSafeTransactions(txs);
+      }, function () { assertWalletInvocation(true); }).then(function (safeTxHash) {
         cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
       });
     }).catch(async function (err) {
@@ -1636,7 +1639,7 @@ export function executeTransaction(opts) {
     return reverifyReviewedState();
   }).then(function() {
     if (opts.tokenAddr && opts.spenderAddr && opts.approvalAmount) {
-      return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus, opts.assertWriteState ? function () { assertWalletInvocation(false); } : null);
+      return checkAndApprove(opts.tokenAddr, opts.spenderAddr, opts.approvalAmount, opts.chainId, cbs.onStatus, function () { assertWalletInvocation(false); }, account);
     }
   }).then(function(receipt) {
     approvalReceipt = receipt || null;
@@ -1668,10 +1671,12 @@ export function executeTransaction(opts) {
       var gas = await contractGasWithHeadroom(pub, simulation.request);
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
-      if (opts.onSending && await wallet.getChainId() !== opts.chainId) throw new Error('Wallet network changed. Review the transaction again.');
       function send() {
-        walletInvoked = true;
-        return wallet.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
+        return invokeWallet(opts.chainId, account, false, function (current) {
+          wallet = current;
+          walletInvoked = true;
+          return current.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
+        }, function () { assertWalletInvocation(false); });
       }
       if (!hold) { assertWalletInvocation(false); return send(); }
       return sendHeldWrite(hold, function () { assertWalletInvocation(false); }, send).then(function (sent) {
@@ -1846,9 +1851,8 @@ export async function waitForErc20Approval(client, hash, tokenAddr, owner, spend
   return receipt;
 }
 
-function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus, assertWriteState) {
+function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus, assertWriteState, owner) {
   var pub = createPublicClientForChain(chainId);
-  var owner = getAccount();
   if (!pub || !owner) return Promise.resolve();
   // Native ETH (and the zero address) have no ERC-20 contract — no allowance/approval step. Reading
   // `allowance` on the native pseudo-address reverts with "returned no data (0x)".
@@ -1858,7 +1862,6 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus, assertWr
     if (BigInt(allowance) >= BigInt(amount)) return;
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     onStatus('Approving token spend…', 'pending');
-    var wallet = getWalletClient();
     return pub.simulateContract({
       account: owner,
       address: tokenAddr,
@@ -1868,11 +1871,9 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus, assertWr
     }).then(async function(simulation) {
       if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
       var gas = await contractGasWithHeadroom(pub, simulation.request);
-      if (assertWriteState) {
-        if (await wallet.getChainId() !== chainId) throw new Error('Wallet network changed. Review the transaction again.');
-        assertWriteState();
-      }
-      return wallet.writeContract(Object.assign({}, simulation.request, { account: owner, chain: CHAINS[chainId], gas: gas }));
+      return invokeWallet(chainId, owner, false, function (current) {
+        return current.writeContract(Object.assign({}, simulation.request, { account: owner, chain: CHAINS[chainId], gas: gas }));
+      }, assertWriteState);
     }).then(function(hash) {
       return waitForErc20Approval(pub, hash, tokenAddr, owner, spender, amount);
     });

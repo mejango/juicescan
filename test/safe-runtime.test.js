@@ -1,3 +1,4 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData, encodeFunctionResult, encodeFunctionData, parseAbi } from 'viem';
 
@@ -9,7 +10,7 @@ const safeState = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/component-base.js', () => ({
-  getWalletClient: () => safeState.wallet,
+  invokeWallet: (...args) => walletInvocationFor(safeState)(...args), isSafeConnected: () => false, getWalletClient: () => safeState.wallet,
   getAccount: () => safeState.account,
   getViewAs: () => null,
   VIEW_AS_TX_ERROR: "You're viewing the site as another account — exit View as to transact.",

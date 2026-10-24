@@ -129,6 +129,25 @@ describe('direct multichain creation recovery', () => {
     expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled();
   });
 
+  it.each(['custom voting', 'reserved supply one'])('keeps saved bytes and refuses a new authorization for %s', async kind => {
+    const draft = state(), session = { account: ALICE, recipientIds: 'onchain', plans: plans() };
+    const tierAbi = [{ type: 'function', name: 'launchProjectFor', stateMutability: 'payable', inputs: [{ name: 'tier', type: 'tuple', components: [
+      { name: 'price', type: 'uint104' }, { name: 'initialSupply', type: 'uint32' }, { name: 'reserveFrequency', type: 'uint16' },
+      { name: 'flags', type: 'tuple', components: [{ name: 'useVotingUnits', type: 'bool' }] },
+    ] }], outputs: [] }];
+    session.plans[0].status = 'confirmed'; session.plans[0].hash = HASH1;
+    session.plans[1].abi = tierAbi;
+    session.plans[1].args = [{ price: 1n, initialSupply: kind === 'custom voting' ? 2 : 1, reserveFrequency: kind === 'custom voting' ? 0 : 1, flags: { useVotingUnits: kind === 'custom voting' } }];
+    mocks.client.mockImplementation(clientFor(session));
+    __test.saveCreateDirectSession(draft, session);
+    const original = encodeFunctionData({ abi: tierAbi, functionName: 'launchProjectFor', args: session.plans[1].args });
+    await expect(__test.runCreateDirectSession(draft, session, true)).rejects.toThrow(kind === 'custom voting' ? /price-based governance/ : /supply of at least 2/);
+    expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled();
+    const saved = __test.loadCreateDirectSession();
+    expect(saved.plans[0]).toMatchObject({ hash: HASH1, status: 'confirmed' });
+    expect(encodeFunctionData({ abi: tierAbi, functionName: 'launchProjectFor', args: saved.plans[1].args })).toBe(original);
+  });
+
   it('resumes only the rejected remaining leg using the original shared start and exact calldata', async () => {
     const draft = state();
     const session = { account: ALICE, plans: plans() };

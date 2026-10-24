@@ -1,11 +1,12 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { keccak256, stringToHex } from 'viem';
 
 const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', transactions: {}, wallet: null, rpc: vi.fn(), estimate: 100000n }));
 vi.mock('../src/component-base.js', async importOriginal => ({
   ...await importOriginal(), getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account,
-  getWalletClient: () => runtime.wallet,
-  confirmTransactionModal: vi.fn().mockResolvedValue(true), switchChain: vi.fn(),
+  invokeWallet: (...args) => walletInvocationFor(runtime)(...args), isSafeConnected: () => false, getWalletClient: () => runtime.wallet,
+  confirmTransactionModal: vi.fn().mockResolvedValue(true), switchChain: vi.fn(async chainId => { runtime.wallet.getChainId.mockResolvedValue(chainId); }),
   waitForTrackedTransactionReceipt: vi.fn(async (_client, hash) => ({ status: 'success', transactionHash: hash, blockNumber: 100n })),
   createPublicClientForChain: cid => ({ request: (...args) => runtime.rpc(...args), estimateGas: vi.fn(async () => runtime.estimate),
     getTransaction: vi.fn(async ({ hash }) => runtime.transactions[hash]),

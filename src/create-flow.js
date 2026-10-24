@@ -30,7 +30,7 @@ import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
-import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { assertNewTierPolicy, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
 import { gasWithHeadroom } from './gas.js';
@@ -2696,7 +2696,7 @@ function collectionExtrasSection(state, render) {
 
   f.appendChild(toggleRow('Require exact payment', dz('Payers must pay an item’s exact price — anything extra is turned away.', 'Payers can overpay; the extra is kept as spendable credit.'), c.preventOverspending, function (v) { c.preventOverspending = v; }));
   f.appendChild(toggleRow('Lock reserved items after launch', dz('New items added after launch can’t set aside reserved inventory.', 'New items added after launch can set aside reserved inventory.'), c.noNewTiersWithReserves, function (v) { c.noNewTiersWithReserves = v; }));
-  f.appendChild(toggleRow('Lock voting items after launch', dz('New items added after launch can’t carry custom voting power.', 'New items added after launch can carry custom voting power.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
+  f.appendChild(toggleRow('Lock voting items after launch', dz('Only free items can be added after launch. Governance weight follows the item price.', 'Paid and free items can be added after launch. Governance weight follows the item price.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
   f.appendChild(toggleRow('Lock project owner minting after launch', dz('New items added after launch can’t let the project owner mint for free.', 'New items added after launch can let the project owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
   f.appendChild(toggleRow(SPLIT_SALES_TOKEN_CREDIT_TITLE, dz(SPLIT_SALES_TOKEN_CREDIT_ON, SPLIT_SALES_TOKEN_CREDIT_OFF), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
   // useDataHookForCashOut — item holders redeem items against project surplus. Revnets force this on at the
@@ -2951,8 +2951,7 @@ function itemEditor(state, nft, idx, render) {
     a.appendChild(toggleRow('Permanent', dz('This item can never be removed from the store.', 'This item can be removed later.'), nft.flags.cantBeRemoved, function (v) { nft.flags.cantBeRemoved = v; }));
     a.appendChild(toggleRow('Allow credit purchases', dz('Payments that don’t buy an item become credit usable on items that allow it.', 'Payments that don’t buy this item don’t earn credit toward it.'), nft.flags.allowCredits, function (v) { nft.flags.allowCredits = v; }));
     a.appendChild(toggleRow(minter.charAt(0).toUpperCase() + minter.slice(1) + ' can edit discounts', dz('The ' + minter + ' can change this item’s discount later.', 'This item’s discount is locked.'), nft.flags.ownerCanEditDiscount, function (v) { nft.flags.ownerCanEditDiscount = v; }));
-    a.appendChild(toggleRow('Custom voting units', dz('Give this item a specific governance weight.', 'Governance weight follows the item price.'), nft.votingOn, function (v) { nft.votingOn = v; if (!v) nft.votingUnits = ''; render(); }));
-    if (nft.votingOn) a.appendChild(fieldBlock('Voting units', false, textInput(nft.votingUnits, '0', function (v) { nft.votingUnits = v.trim(); })));
+
     return a;
   }));
   return c;
@@ -3983,6 +3982,7 @@ async function executeCreateDirectSession(state, session, resumed) {
     // Catch any configuration/fee failures across all remaining chains before submitting the next leg.
     for (var j = 0; j < remaining.length; j++) {
       var pending = remaining[j];
+      assertNewTierPolicy(pending.args);
       push('Simulating the saved launch on ' + chainName(pending.chainId) + '…');
       await simulateTransaction({ chainId: pending.chainId, address: pending.address, abi: pending.abi,
         functionName: pending.functionName || 'launchProjectFor', args: pending.args, value: pending.value, account: session.account });
@@ -4450,7 +4450,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
     if (state._relayrPending.persisted === false) throw new Error('The payment request could not be saved. Restore browser storage before funding this quote.');
   }, function () {
     state._relayrPending = restoreUnsentRelayrPayment(CREATE_RELAYR_SCOPE, paidSession) || state._relayrPending;
-  });
+  }, function () { assertScheduleFresh(paidSession.scheduleValidUntil); });
   paidSession.paymentHash = payHash;
   push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
   // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
@@ -5086,14 +5086,13 @@ export function build721Config(state, projectUri, chainId) {
     var freq = nft.reserveOn ? (Number(nft.reserveFrequency) || 0) : 0;
     var rb = freq > 0 ? chainAddr(state, chainId, 'rb:' + e.idx, resolvedStr(nft.reserveBeneficiary)) : '';
     var reserveBenef = addrOrZero(rb);
-    var votes = nft.votingOn ? (Number(nft.votingUnits) || 0) : 0;
     var discountPercent = nft.discountOn ? tierDiscountPercentFromPct(nft.discountPct) : 0;
     var sp = itemSplits(nft, state, chainId, e.idx);
     var tier = build721TierConfig({
       price: priceUnits(nft.price, priceDecimals),
       initialSupply: chainSupply,
       unlimited: !limited,
-      votingUnits: votes,
+      votingUnits: 0,
       reserveFrequency: freq,
       reserveBeneficiary: reserveBenef,
       encodedIpfsUri: nft.encodedIpfsUri || (nft.metaUri ? encodeIpfsUriToBytes32(nft.metaUri) : '0x' + '0'.repeat(64)),
@@ -5103,7 +5102,7 @@ export function build721Config(state, projectUri, chainId) {
         allowOwnerMint: !!flags.allowOwnerMint,
         useReserveBeneficiaryAsDefault: freq > 0 && reserveBenef !== ZERO,
         transfersPausable: !!flags.transfersPausable,
-        useVotingUnits: votes > 0,
+        useVotingUnits: false,
         cantBeRemoved: !!flags.cantBeRemoved,
         cantIncreaseDiscountPercent: !(flags.ownerCanEditDiscount !== false),
         cantBuyWithCredits: !(flags.allowCredits !== false),

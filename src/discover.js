@@ -8,8 +8,8 @@ import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from './defifa.js';
 import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './pay-failure.js';
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
-import { createPublicClient, http, keccak256, stringToHex, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
+import { holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
@@ -40,7 +40,7 @@ import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
 import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
-import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
+import { TIER_UNLIMITED_SUPPLY, assertNewTierPolicy, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { SHOP_MEDIA_METADATA_ABI, shopMediaMetadataArgs, shopMetadataName, prepareShopMediaMetadata } from './shop-media.js';
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
@@ -302,9 +302,10 @@ export function cashOutPoolBufferBps(rawQuote, executableQuote) {
 }
 
 export function cashOutDirectRouteWins(directQuote, terminalExpected, slippageBps, spendableCount, cashOutCount) {
+  if (spendableCount == null) return false;
   directQuote = directQuote == null ? 0n : toBigInt(directQuote);
   terminalExpected = terminalExpected == null ? 0n : toBigInt(terminalExpected);
-  spendableCount = spendableCount == null ? 0n : toBigInt(spendableCount);
+  spendableCount = toBigInt(spendableCount);
   cashOutCount = cashOutCount == null ? 0n : toBigInt(cashOutCount);
   return directQuote > 0n && cashOutCount > 0n && spendableCount >= cashOutCount
     && cashOutExecutableMinimum(directQuote, slippageBps == null ? 100 : Number(slippageBps)) > terminalExpected;
@@ -605,6 +606,7 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
   if (amount <= 0n || amount > (1n << 160n) - 1n) throw new Error('Payment amount is outside Permit2’s uint160 range.');
   var client = clientFor(chainId);
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   // The Permit2 signTypedData domain pins chainId, and the ERC20 approve writes on the active chain — switch the
   // wallet to the pay chain first or the signature targets the wrong chain / the approve lands elsewhere.
   var wc0 = await wallet.getChainId().catch(function () { return null; });
@@ -631,7 +633,7 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     var approval = await client.simulateContract({ account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, maxU] });
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
-    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId], gas: approvalGas }));
+    var ah = await invokeWallet(chainId, owner, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId], gas: approvalGas })); });
     if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, owner, PERMIT2_ADDRESS, amount);
     if (onStatus) onStatus('Token access approved. Next: authorize the payment.', 'pending');
@@ -644,13 +646,13 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
   // 3. Sign the exact, expiring Permit2 single-allowance (gasless) authorizing the router to pull `amount`.
   if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
   if (onStatus) onStatus('Sign the payment authorization…', 'pending');
-  var signature = await wallet.signTypedData({
+  var signature = await invokeWallet(chainId, owner, reviewedSafe, function (current) { return current.signTypedData({
     account: owner,
     domain: { name: 'Permit2', chainId: chainId, verifyingContract: PERMIT2_ADDRESS },
     types: LP_PERMIT2_TYPES,
     primaryType: 'PermitSingle',
     message: { details: { token: token, amount: amount, expiration: expiration, nonce: nonce }, spender: spender, sigDeadline: sigDeadline },
-  });
+  }); });
   if (onStatus) onStatus('Payment authorization signed. Next: execute the payment.', 'pending');
   if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
   // 4. Encode JBSingleAllowance as ONE dynamic tuple (the router does abi.decode(data,(JBSingleAllowance)),
@@ -2464,15 +2466,7 @@ function openAddTierModal(project, shop) {
   // Discount: a capability flag only — no initial discount is set here. cantIncreaseDiscountPercent is the inverse.
   var ownerDiscountCb = flagCheck(itemMinter + ' can edit discounts', 'The ' + itemMinter.toLowerCase() + ' can change this item’s discount.', true);
 
-  // Voting units — opt-in, last in the list. Default off; the price drives governance weight unless overridden.
-  var votingCbRow = el('label', 'operator-flag-row');
-  var votingCb = document.createElement('input'); votingCb.type = 'checkbox'; votingCbRow.appendChild(votingCb);
-  var vcs = el('span'); vcs.textContent = 'Custom voting units'; votingCbRow.appendChild(vcs);
-  adv.appendChild(votingCbRow);
-  var vsub = el('div', 'operator-flag-sub'); vsub.textContent = 'Useful if you have custom governance needs.'; adv.appendChild(vsub);
-  var votingWrap = el('div', 'operator-voting-wrap'); votingWrap.style.display = 'none'; adv.appendChild(votingWrap);
-  var votingInput = el('input', 'operator-edit-jwt'); votingInput.type = 'number'; votingInput.step = '1'; votingInput.min = '0'; votingInput.placeholder = '0'; votingWrap.appendChild(votingInput);
-  votingCb.addEventListener('change', function () { votingWrap.style.display = votingCb.checked ? '' : 'none'; if (!votingCb.checked) votingInput.value = ''; });
+  var votingNote = el('div', 'operator-flag-sub'); votingNote.textContent = 'Governance weight follows the item price.'; adv.appendChild(votingNote);
 
   // "+ Add another item" on its own line, divided from the current item's fields above; sits above the chain
   // selector (the chains apply to every staged item).
@@ -2510,7 +2504,7 @@ function openAddTierModal(project, shop) {
       name: nameInput.value, description: descriptionInput.value, price: priceInput.value, supply: unlimitedCb.checked ? '' : supplyInput.value, priceDecimals: priceDecimals,
       imageFile: selectedMedia,
       category: categorySelect.value, reserveFreq: reserveCb.checked ? reserveFreqInput.value : '', reserveBenef: reserveCb.checked ? reserveBenefPerChain.snapshot() : '',
-      votingUnits: votingInput.value,
+      votingUnits: 0,
       splitOn: splitCb.checked, splits: snapshotSplits(), splitRefChain: splitRefChain,
       discountPct: discCb.checked ? discInput.value : '',
       flags: {
@@ -2530,7 +2524,6 @@ function openAddTierModal(project, shop) {
     categorySelect.value = '0'; lastCatValue = '0';
     reserveCb.checked = false; reserveWrap.style.display = 'none'; reserveFreqInput.value = ''; reserveBenefInput.value = '';
     reserveBenefInput.dispatchEvent(new Event('input')); reserveBenefPerChain.reset();
-    votingCb.checked = false; votingWrap.style.display = 'none'; votingInput.value = '';
     allowOwnerMintCb.checked = false; transfersPausableCb.checked = false;
     cantBeRemovedCb.checked = false; allowCreditsCb.checked = true; ownerDiscountCb.checked = true;
     syncSplitEnabled();
@@ -2778,6 +2771,7 @@ async function prepareAddTiers(project, selectedChains, operatorAddr, forms, set
     var price;
     try { price = parseAmount(form.price, form.priceDecimals); } catch (_) { throw new Error(label + 'enter a valid price'); }
     if (price < 0n || price > (1n << 104n) - 1n) { throw new Error(label + 'price must fit uint104'); }
+    if (price > 0n && targets.some(function (target) { return target.noNewTiersWithVotes; })) throw new Error(label + 'this shop locks new voting items. Only free items can be added because governance weight follows the item price.');
     var supplyStr = (form.supply || '').trim();
     if (supplyStr !== '' && !/^\d+$/.test(supplyStr)) { throw new Error(label + 'supply must be a whole number'); }
     var supplyRaw = supplyStr === '' ? BigInt(TIER_UNLIMITED_SUPPLY) : BigInt(supplyStr);
@@ -2789,9 +2783,6 @@ async function prepareAddTiers(project, selectedChains, operatorAddr, forms, set
     if (!/^\d+$/.test(reserveRaw) || BigInt(reserveRaw) > 0xffffn) { throw new Error(label + 'reserve frequency must fit uint16'); }
     var reserveFreq = Number(reserveRaw);
     var reserveBenef = form.reserveBenef || '';
-    var votingRaw = String(form.votingUnits || '0').trim() || '0';
-    if (!/^\d+$/.test(votingRaw) || BigInt(votingRaw) > 0xffffffffn) { throw new Error(label + 'voting units must fit uint32'); }
-    var votingUnits = Number(votingRaw);
     var discountPercent = 0;
     var discountStr = (form.discountPct || '').trim();
     if (discountStr !== '') {
@@ -2853,12 +2844,12 @@ async function prepareAddTiers(project, selectedChains, operatorAddr, forms, set
     var metaUri = await pinJson(tierMeta, name + '-tier');
     built.push({
       tierInput: {
-        price: price, initialSupply: supply, unlimited: supplyStr === '', votingUnits: votingUnits, reserveFrequency: reserveFreq,
+        price: price, initialSupply: supply, unlimited: supplyStr === '', votingUnits: 0, reserveFrequency: reserveFreq,
         reserveBeneficiary: reserveBenef,
         encodedIpfsUri: encodeIpfsUriToBytes32(metaUri), category: category, discountPercent: discountPercent,
         flags: {
           allowOwnerMint: !!form.flags.allowOwnerMint, useReserveBeneficiaryAsDefault: false,
-          transfersPausable: !!form.flags.transfersPausable, useVotingUnits: votingUnits > 0,
+          transfersPausable: !!form.flags.transfersPausable, useVotingUnits: false,
           cantBeRemoved: !!form.flags.cantBeRemoved, cantIncreaseDiscountPercent: !!form.flags.cantIncreaseDiscountPercent,
           cantBuyWithCredits: !!form.flags.cantBuyWithCredits,
         },
@@ -2906,21 +2897,24 @@ async function readAddShopTargets(project, chains, hookMap) {
       client.readContract({ address: hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] }),
     ]);
     var pricing = values[1];
+    var flags = await client.readContract({ address: values[0], abi: TIER721_CONFIG_FLAGS_ABI, functionName: 'flagsOf', args: [hook] });
     // `recipientIds` marks plans whose split recipient IDs came from the sucker registry, not the indexer.
-    return { chainId: chain.id, projectId: pidOn(project, chain.id), hook: hook, store: values[0], recipientIds: 'onchain',
+    return { chainId: chain.id, projectId: pidOn(project, chain.id), hook: hook, store: values[0], recipientIds: 'onchain', noNewTiersWithVotes: !!(flags.noNewTiersWithVotes == null ? flags[1] : flags.noNewTiersWithVotes),
       pricing: { currency: Number(pricing.currency == null ? pricing[0] : pricing.currency), decimals: Number(pricing.decimals == null ? pricing[1] : pricing.decimals) } };
   }));
 }
-async function reverifyShopAddCalls(project, calls, chainId, sender) {
+export async function reverifyShopAddCalls(project, calls, chainId, sender) {
   var selected = calls.filter(function (call) { return chainId == null || Number(call.chainId) === Number(chainId); });
   var chains = selected.map(function (call) { return { id: call.chainId, name: chainNameOf(call.chainId) }; });
   var hooks = (await resolveHookMap(project, chains)).hooks;
   var fresh = await readAddShopTargets(project, chains, hooks);
   await Promise.all(selected.map(async function (call, index) {
+    assertNewTierPolicy(decodeFunctionData({ abi: call.abi, data: call.data }).args);
     var old = call.shopAddValidation, live = fresh[index];
     if (old && old.recipientIds !== live.recipientIds) throw new Error('This saved action predates onchain recipient checks. Start it again.');
     if (!old || BigInt(old.projectId) !== pidOn(project, call.chainId) || !sameAddr(old.hook, live.hook) || !sameAddr(old.store, live.store)
         || old.pricing.currency !== live.pricing.currency || old.pricing.decimals !== live.pricing.decimals) throw new Error('A selected shop changed. Resume only after verifying the original target and pricing.');
+    if (live.noNewTiersWithVotes && decodeFunctionData({ abi: call.abi, data: call.data }).args[0].some(function (tier) { return BigInt(tier.price) > 0n; })) throw new Error('This shop now locks new voting items. Only free items can be added.');
     if (!await accountCanShopPermissionOn(project, call.chainId, call.to, sender, 24n)) throw new Error('The execution account no longer has ADJUST_721_TIERS permission.');
   }));
 }
@@ -5037,6 +5031,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
   var ur = UNIVERSAL_ROUTER_BY_CHAIN[chainId];
   var client = clientFor(chainId);
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   // Switch to the swap chain before signing — the Permit2 domain + the approve write both bind to the active chain.
   var wc0 = await wallet.getChainId().catch(function () { return null; });
   if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
@@ -5048,7 +5043,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     var approval = await client.simulateContract({ account: recipient, address: token, abi: lpErc20Abi, functionName: 'approve', args: [PERMIT2_ADDRESS, (1n << 256n) - 1n] });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
-    var ah = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas }));
+    var ah = await invokeWallet(chainId, recipient, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas })); });
     if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, recipient, PERMIT2_ADDRESS, amountIn);
     if (onStatus) onStatus('Token access approved. Next: authorize the swap.', 'pending');
@@ -5074,12 +5069,12 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     if (onStatus) await onStatus('Sign the swap authorization…', 'pending', { reviewPayload: directSwapPermit2SignaturePayload(plan), step: plan.needsTokenApproval ? 1 : 0 });
     try {
-      signature = await wallet.signTypedData({
+      signature = await invokeWallet(chainId, recipient, reviewedSafe, function (current) { return current.signTypedData({
         account: recipient,
         domain: { name: 'Permit2', chainId: chainId, verifyingContract: PERMIT2_ADDRESS },
         types: LP_PERMIT2_TYPES, primaryType: 'PermitSingle',
         message: { details: { token: token, amount: amountIn, expiration: expiration, nonce: nonce }, spender: ur, sigDeadline: sigDeadline },
-      });
+      }); });
       if (onStatus) onStatus('Swap authorization signed. Next: execute the swap.', 'pending');
     } catch (error) {
       if (!permit2SignatureNeedsOnchainFallback(error)) throw error;
@@ -5097,7 +5092,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     });
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
-    var approvalHash = await wallet.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas }));
+    var approvalHash = await invokeWallet(chainId, recipient, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas })); });
     if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: approvalHash, chainId: chainId });
     // The same dual-source receipt poll as every other write here: viem's watcher can sit pending forever on
     // some wallet/public-RPC pairs even after the approval mined, which stranded this step at "Confirming".
@@ -6168,16 +6163,16 @@ function accountingTokenContextKey(token, chainId) {
   if (address === NATIVE_TOKEN.toLowerCase()) return 'native';
   var usdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase();
   if (usdc && address === usdc) return 'usdc';
-  return address || 'unknown';
+  return String(chainId) + ':' + (address || 'unknown');
 }
 
 // If one held token has no trustworthy USD feed, the headline cannot be summed honestly. Preserve usefulness by
 // grouping the verified raw balances per token across chains ("0.01 ETH + 12 KMAC") instead of guessing a rate.
 export function rawAccountingBalanceSummary(rows, readable) {
-  if (readable === false) return '—';
+  if (readable === false || (rows || []).some(function (row) { return row && row.balance == null; })) return '—';
   var groups = {}, order = [];
   (rows || []).filter(function (row) { return row && row.balance != null && BigInt(row.balance) > 0n; }).forEach(function (row) {
-    var key = row.contextKey || (String(row.token || '').toLowerCase() + '@' + Number(row.decimals == null ? 18 : row.decimals));
+    var key = row.contextKey || (accountingTokenContextKey(row.token, row.chainId) + '@' + Number(row.decimals == null ? 18 : row.decimals));
     if (!groups[key]) {
       groups[key] = { amount: 0n, decimals: Number(row.decimals == null ? 18 : row.decimals), symbol: row.symbol || '' };
       order.push(key);
@@ -11919,6 +11914,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         if (!directOk || (typeof directOk === 'object' && !directOk.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
         setStatus('Checking wallet network…', 'pending');
         var directWallet = getWalletClient();
+        var directReviewedSafe = false;
         if (!directWallet) throw new Error('Connect a wallet to continue.');
         var directWalletChainId = await directWallet.getChainId();
         if (directWalletChainId !== direct.cid) {
@@ -11956,15 +11952,15 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         }, directGas);
         assertScheduleFresh(direct.scheduleValidUntil);
         setStatus('Awaiting wallet confirmation…', 'pending');
-        onSending();
-        var directHash = await directWallet.sendTransaction({
+        await onSending();
+        var directHash = await invokeWallet(direct.cid, account, directReviewedSafe, function (current) { return current.sendTransaction({
           account: account,
           chain: CHAINS[direct.cid],
           to: direct.to,
           data: direct.data,
           value: 0n,
           gas: directSendGas,
-        });
+        }); }, function () { assertScheduleFresh(direct.scheduleValidUntil); });
         onSubmitted(directHash);
         setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
         // Use the same dual-source receipt poll as the shared transaction boundary. Some wallet/public-RPC
@@ -12083,7 +12079,7 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
     }, function () {
       session = restoreUnsentRelayrPayment(confirmOpts.pendingScope, session) || session;
       if (confirmOpts.onSession) confirmOpts.onSession(session);
-    });
+    }, function () { assertScheduleFresh(session.scheduleValidUntil); });
   } catch (error) {
     var submitted = session.paymentHash || session.paymentState === 'sending';
     if (submitted && error && typeof error === 'object') error.relayrSession = session;
@@ -12722,7 +12718,7 @@ function runRelayrBundle(entries, opts) {
               }
             }, function () {
               paidSession = restoreUnsentRelayrPayment(pendingScope, paidSession) || paidSession;
-            });
+            }, opts.assertWriteState);
             paidSession.paymentHash = payHash;
             pay.style.display = 'none'; choiceWrap.style.display = 'none'; cancel.disabled = false; cancel.textContent = 'Close';
             await waitForBundle(paidSession);
@@ -13437,7 +13433,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                   if (Number(r.nInput && r.nInput.value) !== Number(chosen) || r.hash !== reviewedHash) {
                     throw new Error('The selected nonce or Safe transaction changed while approving on ' + r.chain + '. Review the action again.');
                   }
-                }, markSafeRequest);
+                }, markSafeRequest, { to: r.to, data: r.data, value: 0, nonce: chosen });
                 await verifySafeRowAction(r, acct, liveSafeInfo);
                 await refreshOnChainStatus(r);
                 chosen = r.chosenNonce; current = Number(r.ctx.nonce);
@@ -19303,13 +19299,13 @@ function buildUseAllowanceModal(project, acctKind) {
 }
 
 // A funds "kind" descriptor — one per accounting context the project's terminal accepts. Resolves the
-// right token ADDRESS per chain (native = same everywhere; USDC differs per chain; custom = fixed).
+// right token ADDRESS per chain (native = same everywhere; USDC differs per chain; custom = chain-local).
 function nativeFundsKind(dec) { return { key: 'native', symbol: 'ETH', name: 'Ether', address: NATIVE_TOKEN, decimals: dec == null ? 18 : dec, addrForChain: function () { return NATIVE_TOKEN; }, matchCur: function (c) { c = Number(c); return c === 1 || c === 61166; } }; }
 function usdcFundsKind(dec) { return { key: 'usdc', symbol: 'USDC', name: 'USD Coin', address: '', decimals: dec == null ? 6 : dec, addrForChain: function (cid) { return USDC_BY_CHAIN[cid] || null; }, matchCur: function (c, cid) { var u = USDC_BY_CHAIN[cid]; return !!u && Number(c) === Number(BigInt(u) & 0xffffffffn); } }; }
-function customFundsKind(meta) {
+function customFundsKind(meta, chainId) {
   var addr = meta.address, curr = Number(BigInt(addr) & 0xffffffffn);
-  return { key: addr.toLowerCase(), symbol: meta.symbol || acctTokenLabel(addr), name: meta.name || '', address: addr,
-    decimals: meta.decimals == null ? 18 : Number(meta.decimals), addrForChain: function () { return addr; }, matchCur: function (c) { return Number(c) === curr; } };
+  return { key: accountingTokenContextKey(addr, chainId), symbol: meta.symbol || acctTokenLabel(addr), name: meta.name || '', address: addr,
+    decimals: meta.decimals == null ? 18 : Number(meta.decimals), addrForChain: function (cid) { return Number(cid) === Number(chainId) ? addr : null; }, matchCur: function (c, cid) { return Number(cid) === Number(chainId) && Number(c) === curr; } };
 }
 
 function fundsKindAuditLabel(kind, chainId) {
@@ -19339,7 +19335,7 @@ function acctKindsForFunds(project) {
       var lc = verified.address.toLowerCase(); var dec = verified.decimals;
       if (lc === NATIVE_TOKEN.toLowerCase()) return nativeFundsKind(dec);
       if (usdcHome && lc === usdcHome) return usdcFundsKind(dec);
-      return customFundsKind(verified);
+      return customFundsKind(verified, home);
     });
   });
 }
@@ -19347,7 +19343,7 @@ function acctKindsForFunds(project) {
 // Total balance for an accounting kind across all the project's chains (for the at-a-glance tab label).
 function totalBalanceForKind(project, kind) {
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId }];
-  return Promise.all(chains.map(function (c) {
+  return Promise.all(chains.filter(function (c) { return !!kind.addrForChain(c.id); }).map(function (c) {
     var term = getAddress('JBMultiTerminal', c.id); var tok = kind.addrForChain(c.id);
     if (!term || !tok) return Promise.resolve(null);
     return read(c.id, 'JBTerminalStore', storeBalanceAbi, 'balanceOf', [term, pidOn(project, c.id), tok])
@@ -19517,7 +19513,7 @@ function buildFundsTokenBlock(project, kind, showHead, onBalance) {
   surCol.appendChild(useBtn);
 
   // Per-chain live state. A single failed chain suppresses the aggregate total instead of making it look smaller.
-  var snapshotsP = Promise.all(chains.map(function (c) {
+  var snapshotsP = Promise.all(chains.filter(function (c) { return !!kind.addrForChain(c.id); }).map(function (c) {
     return readFundsAccessSnapshot(project, kind, c.id)
       .then(function (snapshot) { return { c: c, snapshot: snapshot }; })
       .catch(function () { return { c: c, snapshot: null }; });
@@ -20851,7 +20847,7 @@ function swapFlowAmount(project, raw) {
 }
 
 // A raw cross-chain amount (a swap, a group balance) may only be read in one token when EVERY chain has
-// exactly one accounting context and all of them are the same token (native, USDC, or one address) with the
+// exactly one accounting context and all of them are the same token (native, USDC, or one chain/address) with the
 // same decimals; a project accounting in 6-dec USDC on one chain and an 18-dec token on another would
 // otherwise mislabel remote amounts by 1e12. `contextLists` is one context list per chain, each context
 // carrying its chainId; any missing/failed/multi-context chain disqualifies the label.
@@ -25703,6 +25699,7 @@ function renderAcrossChainsBody(project) {
     // Balance shows every accounting token the chain holds with its share of that token's cross-chain total
     // ("20 USDC (100%)" then "0.005 ETH (50%)").
     var balCell = function (tokens, acct, chainId) {
+      if ((tokens || []).some(function (t) { return t.balance == null; })) return '—';
       var nz = (tokens || []).filter(function (t) { return t.balance != null && BigInt(t.balance) > 0n; });
       if (!nz.length) {
         var readable = (tokens || []).filter(function (t) { return t.balance != null; });
@@ -26808,8 +26805,8 @@ function renderBalanceTables(balTable, project, sym, opts) {
     var cells = {}; // chainId → [cell per kind]
     chs.forEach(function (c) { var cs = kinds.map(function () { return numCell(null); }); cells[c.id] = cs; addRow(tt, [chainCell(c.id, c.name)].concat(cs)); });
     return fetchBalanceBreakdown(project).then(function (bd) {
-      var byChainSym = {}; (bd.rows || []).forEach(function (r) { byChainSym[r.chainId + '|' + r.symbol] = r.balance == null ? '—' : formatAmount(r.balance, r.decimals); });
-      chs.forEach(function (c) { kinds.forEach(function (k, i) { var v = cells[c.id][i]; if (v) { var key = c.id + '|' + k.symbol; v.textContent = byChainSym[key] != null ? byChainSym[key] : (bd.chainVerified && bd.chainVerified[c.id] ? '0' : '—'); } }); });
+      var byContext = {}; (bd.rows || []).forEach(function (r) { byContext[r.chainId + '|' + r.contextKey] = r.balance == null ? '—' : formatAmount(r.balance, r.decimals); });
+      chs.forEach(function (c) { kinds.forEach(function (k, i) { var v = cells[c.id][i]; if (v) { var token = k.addrForChain(c.id); var key = c.id + '|' + accountingTokenContextKey(token, c.id) + '@' + k.decimals; v.textContent = byContext[key] != null ? byContext[key] : (token && bd.chainVerified && bd.chainVerified[c.id] ? '0' : '—'); } }); });
     });
   }).catch(function () { tt.textContent = 'Could not read balances.'; });
 }
@@ -27380,13 +27377,13 @@ function buildCashOutModal(project, requestClose) {
       }
       var qDirect = (pool && count > 0n) ? quoteDirectSwap(state.chainId, pool, count) : Promise.resolve(null);
       // Claimed ERC-20 balance = the pool's project-token currency held by the user (credits are excluded).
-      // An unreadable balance reads as 0n on purpose: it only withholds the direct sell, leaving the terminal route.
-      var erc20P = (pool && acct) ? clientFor(state.chainId).readContract({ address: pool.projectToken, abi: erc20BalanceOfAbi, functionName: 'balanceOf', args: [acct] }).then(toBigInt).catch(function () { return 0n; }) : Promise.resolve(0n);
+      // An unreadable balance stays unknown and withholds the direct sell, leaving the verified terminal route.
+      var erc20P = (pool && acct) ? readWalletTokenBalance(state.chainId, pool.projectToken, acct) : Promise.resolve(null);
       Promise.all([qDirect, erc20P]).then(function (q) {
         if (seq !== previewSeq) return;
         var liveAccount = getEffectiveAccount();
         if (!acct || !liveAccount || liveAccount.toLowerCase() !== acct.toLowerCase()) { onChainChange(); return; }
-        var directOut = q[0], erc20Bal = q[1] || 0n;
+        var directOut = q[0], erc20Bal = q[1];
         // Route 3 — direct pool sell (preferred when the user holds enough claimed ERC-20 to cover the cash out).
         var protectedDirect = directOut == null ? 0n : cashOutExecutableMinimum(directOut, state.slippageBps || 100);
         if (pool && cashOutDirectRouteWins(directOut, terminalRoute.expected, state.slippageBps || 100, erc20Bal, count)) {
@@ -29438,6 +29435,7 @@ async function readPoolState(project, chainId, opts) {
 async function lpSendTx(chainId, p) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   if (!wallet) throw new Error('Connect a wallet');
   var acct = getAccount();
   var expected = p.account || acct;
@@ -29456,7 +29454,7 @@ async function lpSendTx(chainId, p) {
   var simulation = await client.simulateContract({ account: acct, address: p.address, abi: p.abi, functionName: p.functionName, args: p.args, value: p.value || 0n });
   if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   var gas = await contractGasWithHeadroom(client, simulation.request);
-  function send() { return wallet.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId], gas: gas })); }
+  function send() { return invokeWallet(chainId, expected, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, simulation.request, { account: acct, chain: CHAINS[chainId], gas: gas })); }); }
   var sent = hold ? await sendHeldWrite(hold, function () {
     if (!getAccount() || getAccount().toLowerCase() !== expected.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
   }, send) : { hash: await send() };
@@ -30202,7 +30200,9 @@ async function proposeAddLiquidityBatch(chainId, prep, calls, onStatus) {
   await simulateBatchCalls(clientFor(chainId), prep.acct, calls, calls.map(function (c) { return !!c.dependsOnPrior; }));
   if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   onStatus('Proposing the batch of ' + calls.length + ' calls to your Safe — confirm in Safe{Wallet}…', 'pending', { step: 0 });
-  var safeTxHash = await proposeSafeTransactions(calls.map(function (c) { return { to: c.to, value: c.value ? '0x' + BigInt(c.value).toString(16) : '0', data: c.data }; }));
+  var safeTxHash = await invokeWallet(chainId, prep.acct, true, function () {
+    return proposeSafeTransactions(calls.map(function (c) { return { to: c.to, value: c.value ? '0x' + BigInt(c.value).toString(16) : '0', data: c.data }; }));
+  });
   if (!safeTxHash) throw new Error('Safe returned no proposal hash.');
   document.dispatchEvent(new CustomEvent('jb:safe-queued'));
   return { safeTxHash: safeTxHash, calls: calls.length };
@@ -30220,6 +30220,7 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
   if (!prep.acct || acct.toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   var posm = prep.posm;
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   if (!wallet) throw new Error('Connect a wallet');
   var wc = await wallet.getChainId();
   if (wc !== chainId) { onStatus('Switching network…', 'pending'); await switchChain(chainId); }
@@ -30301,13 +30302,13 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
         sigDeadline: BigInt(now + 1800),
       };
       if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
-      var signature = await wallet.signTypedData({
+      var signature = await invokeWallet(chainId, prep.acct, reviewedSafe, function (current) { return current.signTypedData({
         account: acct,
         domain: { name: 'Permit2', chainId: chainId, verifyingContract: PERMIT2_ADDRESS },
         types: LP_PERMIT2_TYPES,
         primaryType: 'PermitSingle',
         message: permitMessage,
-      });
+      }); });
       permitDatas.push(encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'permit', args: [acct, permitMessage, signature] }));
     }
   }
@@ -31103,7 +31104,7 @@ function fetchOps(project) {
           else gossipTokens = baseGossipTokens;
         }
         var base = { id: cid, name: chain.name, supply: supply, balance: balance, tokens: tokens, unitValue: null, acct: acct,
-          tokensVerified: !!chainBalances.verified && tokenReadsVerified,
+          tokensVerified: !!chainBalances.verified && tokens.every(function (token) { return token.balance != null; }),
           gossipSupply: gossipSupply, gossipTokens: gossipTokens, gossipVerified: gossipVerified };
         // Unit value = reclaim for 1 token at current supply + surplus, net of the 2.5% protocol fee (so it
         // matches what a cash out would actually pay); only meaningful once there's at least a token of

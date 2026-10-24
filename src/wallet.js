@@ -7,6 +7,7 @@ import { CHAINS, getCurrentChainId, getCustomRpc, readRpcUrlsFor } from './chain
 import { boundedLogClient } from './rpc-logs.js';
 import { isMobileDevice } from './wallet-links.js';
 import { detectSafeApp, makeSafeProvider, proposeSafeTransactions } from './safe-app.js';
+import { getViewAs, VIEW_AS_TX_ERROR } from './view-as.js';
 export { proposeSafeTransactions } from './safe-app.js';
 
 let walletClient = null;
@@ -139,6 +140,32 @@ export function getAccount() {
 
 export function getWalletClient() {
   return walletClient;
+}
+
+// Resolve after preparation, then invoke without yielding again. A connector may change while its
+// chain read waits: validate the replacement instead of sending through the captured connector.
+export async function invokeWallet(chainId, reviewedAccount, expectedSafe, send, assertState) {
+  var wallet;
+  try {
+    for (var attempt = 0; attempt < 3; attempt++) {
+      wallet = getWalletClient();
+      if (!wallet) throw new Error('Connect a wallet to continue.');
+      var chainIdNow = await wallet.getChainId();
+      if (wallet !== getWalletClient()) { wallet = null; continue; }
+      if (Number(chainIdNow) !== Number(chainId)) throw new Error('Wallet network changed. Review the transaction again.');
+      if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
+      if (!getAccount() || !reviewedAccount || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+      if (isSafeConnected() !== expectedSafe) throw new Error('Wallet route changed. Review the transaction again.');
+      if (assertState) assertState();
+      break;
+    }
+    if (!wallet) throw new Error('Wallet connection is changing. Review the transaction again.');
+  } catch (error) {
+    // Journal owners can release this attempt: no external wallet method was invoked.
+    error.walletNotInvoked = true;
+    throw error;
+  }
+  return send(wallet);
 }
 
 export function onWalletChange(fn) {

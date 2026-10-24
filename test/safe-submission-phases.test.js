@@ -1,9 +1,10 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111',
   wallet: null, client: null, receipt: null, stages: [] }));
 vi.mock('../src/component-base.js', () => ({
-  getWalletClient: () => state.wallet, getAccount: () => state.account,
+  invokeWallet: (...args) => walletInvocationFor(state)(...args), isSafeConnected: () => false, getWalletClient: () => state.wallet, getAccount: () => state.account,
   createPublicClientForChain: () => state.client, switchChain: vi.fn(),
   getViewAs: () => null, VIEW_AS_TX_ERROR: 'View as is read-only.',
   waitForTrackedTransactionReceipt: () => state.receipt(), ZERO_ADDRESS: '0x0000000000000000000000000000000000000000',
@@ -89,14 +90,14 @@ describe('Safe service publication phase', () => {
 
 describe('Safe wallet submission phase', () => {
   it.each(['approval', 'execution'])('journals %s after simulation, gas estimate and final verification', async kind => {
-    if (kind === 'approval') await approveSafeHashOnChain(1, SAFE, HASH, reverify, onSending);
+    if (kind === 'approval') await approveSafeHashOnChain(1, SAFE, safeTxHashForQueuedTx(1, SAFE, tx()), reverify, onSending, tx());
     else await executeSafeTx(1, SAFE, tx(), reverify, null, onSending);
     expect(state.stages).toEqual(['reverify', 'simulation', 'estimate', 'reverify', 'sending', 'wallet']);
   });
 
   it.each([4001, 'ACTION_REJECTED'])('marks a definite write rejection %s with no hash as unsent', async code => {
     state.wallet.writeContract.mockRejectedValue(Object.assign(new Error('Wrapped'), { cause: Object.assign(new Error('Declined'), { code }) }));
-    await expect(approveSafeHashOnChain(1, SAFE, HASH, null, onSending)).rejects.toMatchObject({ safeRequestNotSubmitted: true });
+    await expect(approveSafeHashOnChain(1, SAFE, safeTxHashForQueuedTx(1, SAFE, tx()), null, onSending, tx())).rejects.toMatchObject({ safeRequestNotSubmitted: true });
     expect(state.stages).toContain('sending'); expect(state.receipt).not.toHaveBeenCalled();
   });
 
@@ -106,7 +107,7 @@ describe('Safe wallet submission phase', () => {
     new Error('User rejected the request'),
   ])('does not infer no submission from ambiguous transport or wording %#', async error => {
     state.wallet.writeContract.mockRejectedValue(error);
-    await expect(approveSafeHashOnChain(1, SAFE, HASH, null, onSending)).rejects.toBe(error);
+    await expect(approveSafeHashOnChain(1, SAFE, safeTxHashForQueuedTx(1, SAFE, tx()), null, onSending, tx())).rejects.toBe(error);
     expect(error.safeRequestNotSubmitted).not.toBe(true);
   });
 
@@ -119,7 +120,7 @@ describe('Safe wallet submission phase', () => {
   });
 
   it('never opens a wallet request if the phase checkpoint fails', async () => {
-    await expect(approveSafeHashOnChain(1, SAFE, HASH, null, () => { throw new Error('Storage failed'); })).rejects.toThrow('Storage failed');
+    await expect(approveSafeHashOnChain(1, SAFE, safeTxHashForQueuedTx(1, SAFE, tx()), null, () => { throw new Error('Storage failed'); }, tx())).rejects.toThrow('Storage failed');
     expect(state.wallet.writeContract).not.toHaveBeenCalled();
   });
 });

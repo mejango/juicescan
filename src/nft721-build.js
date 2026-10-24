@@ -1,3 +1,5 @@
+import { assertNewTierPolicy } from './shop-policy.js';
+export { assertNewTierPolicy } from './shop-policy.js';
 import { addrOrZero, isAddr, ZERO_ADDRESS as ZERO } from './component-base.js';
 
 export var TIER_UNLIMITED_SUPPLY = 999999999;
@@ -73,6 +75,7 @@ export function sortTierEntriesByCategory(entries, pickTier) {
   });
 }
 
+
 export function build721TierConfig(o) {
   o = o || {};
   var price; try { price = BigInt(o.price || 0); } catch (_) { throw new Error('Item price must be an integer in base units.'); }
@@ -80,17 +83,18 @@ export function build721TierConfig(o) {
   var reserveFrequency = uintNumber(o.reserveFrequency || 0, 16, 'Reserve frequency');
   if (reserveFrequency > 0 && !isAddr(o.reserveBeneficiary)) throw new Error('A reserved item needs a valid reserve beneficiary.');
   var reserveBeneficiary = reserveFrequency > 0 ? addrOrZero(o.reserveBeneficiary) : ZERO;
-  var votingUnits = uintNumber(o.votingUnits || 0, 32, 'Voting units');
   var category = uintNumber(o.category || 0, 24, 'Category');
   var discountPercent = uintNumber(o.discountPercent || 0, 8, 'Discount percent');
   if (discountPercent > 200) throw new Error('Discount percent exceeds the protocol maximum of 200.');
   var splitPercent = uintNumber(o.splitPercent || 0, 32, 'Split percent');
   if (splitPercent > 1000000000) throw new Error('Split percent exceeds 100%.');
+  var initialSupply = clampTierInitialSupply(o.initialSupply, !!o.unlimited);
+  assertNewTierPolicy({ price: price, initialSupply: initialSupply, reserveFrequency: reserveFrequency, flags: { useVotingUnits: false } });
   var flags = o.flags || {};
   return {
     price: price,
-    initialSupply: clampTierInitialSupply(o.initialSupply, !!o.unlimited),
-    votingUnits: votingUnits,
+    initialSupply: initialSupply,
+    votingUnits: 0,
     reserveFrequency: reserveFrequency,
     reserveBeneficiary: reserveBeneficiary,
     encodedIpfsUri: o.encodedIpfsUri || ('0x' + '0'.repeat(64)),
@@ -102,7 +106,7 @@ export function build721TierConfig(o) {
         ? !!flags.useReserveBeneficiaryAsDefault
         : reserveFrequency > 0 && reserveBeneficiary !== ZERO,
       transfersPausable: !!flags.transfersPausable,
-      useVotingUnits: flags.useVotingUnits != null ? !!flags.useVotingUnits : votingUnits > 0,
+      useVotingUnits: false,
       cantBeRemoved: !!flags.cantBeRemoved,
       cantIncreaseDiscountPercent: !!flags.cantIncreaseDiscountPercent,
       cantBuyWithCredits: !!flags.cantBuyWithCredits,

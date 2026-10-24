@@ -31,7 +31,8 @@
         "proposeSafeTransactions": 1,
         "providerRequest": 1,
         "rpcSendMethod": 1,
-        "writeContract": 2
+        "writeContract": 2,
+        "invokeWallet": 3
       },
       "actions": [
         "Reviewed direct write boundary",
@@ -80,7 +81,8 @@
         "relayrPostBundle": 3,
         "sendTransaction": 1,
         "signTypedData": 3,
-        "writeContract": 4
+        "writeContract": 4,
+        "invokeWallet": 9
       },
       "actions": [
         "Project management actions",
@@ -105,7 +107,8 @@
     },
     "src/form.js": {
       "counts": {
-        "writeContract": 1
+        "writeContract": 1,
+        "invokeWallet": 1
       },
       "actions": [
         "Generic ABI contract write"
@@ -181,7 +184,8 @@
         "relayrPay": 2,
         "relayrPostBundle": 4,
         "sendTransaction": 1,
-        "signTypedData": 1
+        "signTypedData": 1,
+        "invokeWallet": 2
       },
       "actions": [
         "Relayr forwarded bundle / payment",
@@ -218,7 +222,8 @@
         "approveSafeHashOnChain": 1,
         "executeSafeTx": 1,
         "proposeSafeTransactions": 1,
-        "proposeSafeTx": 1
+        "proposeSafeTx": 1,
+        "invokeWallet": 1
       },
       "actions": [
         "Safe operator batch"
@@ -240,7 +245,8 @@
         "proposeSafeTx": 1,
         "providerRequest": 2,
         "signTypedData": 1,
-        "writeContract": 1
+        "writeContract": 1,
+        "invokeWallet": 2
       },
       "actions": [
         "Safe proposal / confirmation / execution"
@@ -248,7 +254,8 @@
     },
     "src/wallet.js": {
       "counts": {
-        "providerRequest": 6
+        "providerRequest": 6,
+        "invokeWallet": 1
       },
       "actions": [
         "Wallet connection / network request"

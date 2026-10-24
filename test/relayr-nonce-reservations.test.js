@@ -1,3 +1,4 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -6,9 +7,9 @@ const state = vi.hoisted(() => ({
   nonce: 7n, timestamp: 2000000000n, client: null, wallet: null, inLock: false,
 }));
 vi.mock('../src/component-base.js', () => ({
-  getAccount: () => state.account, getWalletClient: () => state.wallet,
+  getAccount: () => state.account, invokeWallet: (...args) => walletInvocationFor(state)(...args), isSafeConnected: () => false, getWalletClient: () => state.wallet,
   createPublicClientForChain: chainId => ({ ...state.client, readContract: request => state.client.readContract(request, chainId) }),
-  getAddress: () => state.forwarder, switchChain: vi.fn(), getViewAs: () => null,
+  getAddress: () => state.forwarder, switchChain: vi.fn(async chainId => { state.wallet.getChainId.mockResolvedValue(chainId); }), getViewAs: () => null,
   VIEW_AS_TX_ERROR: 'View as is read-only.', waitForTrackedTransactionReceipt: vi.fn(), confirmTransactionModal: vi.fn(),
 }));
 import { buildForwardedTx, relayrPostBundle, relayrResumeQuotedBundle, verifyRelayrQuotedRequests,
