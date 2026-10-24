@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   execute: vi.fn(), simulate: vi.fn(), review: vi.fn(), client: vi.fn(), safe: vi.fn(),
   resumeQuote: vi.fn(), paymentOptions: vi.fn(), postBundle: vi.fn(),
-  forward: vi.fn(), pay: vi.fn(),
+  forward: vi.fn(), pay: vi.fn(), retireExpired: vi.fn(),
 }));
 vi.mock('../src/component-base.js', async (original) => ({
   ...await original(),
@@ -20,7 +20,7 @@ vi.mock('../src/wallet.js', async (original) => ({ ...await original(), isSafeCo
 vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), hasPinata: () => false }));
 vi.mock('../src/relayr.js', async (original) => ({ ...await original(),
   relayrResumeQuotedBundle: mocks.resumeQuote, relayrPaymentOptions: mocks.paymentOptions, relayrPostBundle: mocks.postBundle,
-  buildForwardedTx: mocks.forward, relayrPay: mocks.pay,
+  buildForwardedTx: mocks.forward, relayrPay: mocks.pay, retireExpiredUnpaidRelayrSession: mocks.retireExpired,
 }));
 
 import { __test } from '../src/create-flow.js';
@@ -195,7 +195,7 @@ describe('direct multichain creation recovery', () => {
 
   it('does not infer user cancellation from ambiguous rejection wording', async () => {
     const session = { account: ALICE, plans: plans() };
-    mocks.execute.mockImplementationOnce((opts) => opts.onError('RPC rejected the broadcast response'));
+    mocks.execute.mockImplementationOnce(async (opts) => { await opts.onSending(); opts.onError('RPC rejected the broadcast response'); });
     await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow(/rejected/);
     expect(session.plans[0].status).toBe('awaiting-wallet');
     await expect(__test.runCreateDirectSession(state(), session, true)).rejects.toThrow(/interrupted/);
@@ -230,6 +230,42 @@ describe('direct multichain creation recovery', () => {
     mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH2));
     await __test.runCreateDirectSession(draft, session, true);
     expect(mocks.execute.mock.calls.map(([opts]) => opts.chainId)).toEqual([84532]);
+  });
+
+  it('returns an expired final-boundary request to a discardable no-send state', async () => {
+    const draft = state(); const session = { account: ALICE, plans: plans().slice(0, 1) };
+    session.plans[0].scheduleValidUntil = Math.floor(Date.now() / 1000) + 60;
+    mocks.execute.mockImplementationOnce(async (opts) => {
+      await opts.onSending();
+      session.plans[0].scheduleValidUntil = Math.floor(Date.now() / 1000) - 1;
+      try { opts.assertWriteState(); }
+      catch (error) { await opts.onBeforeWriteAborted(); opts.onError(error.message); }
+    });
+    await expect(__test.runCreateDirectSession(draft, session, false)).rejects.toThrow(/schedule expired/);
+    expect(session.plans[0]).toMatchObject({ status: 'ready', hash: null });
+    expect(__test.renderDeploy(draft, () => {}).textContent).toContain('Discard unsubmitted launch');
+  });
+
+  it('keeps expired staged direct calls saved but refuses another wallet invocation', async () => {
+    const draft = state();
+    const session = { account: ALICE, plans: plans().map(plan => ({ ...plan, scheduleValidUntil: Math.floor(Date.now() / 1000) - 1 })) };
+    mocks.client.mockImplementation(clientFor(session));
+    await expect(__test.runCreateDirectSession(draft, session, true)).rejects.toThrow(/schedule expired/);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(__test.loadCreateDirectSession().plans[0].args).toEqual([1999999999n]);
+  });
+
+  it('keeps a single staged launch receipt across retries instead of preparing a second project', async () => {
+    const draft = state(); draft.chainIds = [11155111];
+    const session = { account: ALICE, plans: [{ ...plans()[0], hash: HASH1, status: 'submitted', rulesetCount: 2 }] };
+    __test.saveCreateDirectSession(draft, session);
+    const saved = localStorage.getItem(KEY);
+    __test.clearCreateDirectSession(draft); localStorage.setItem(KEY, saved);
+    mocks.client.mockImplementation(clientFor(session));
+    await expect(__test.runDeploy(draft, ALICE)).rejects.toThrow(/complete ruleset sequence/);
+    await expect(__test.runDeploy(draft, ALICE)).rejects.toThrow(/complete ruleset sequence/);
+    expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled();
+    expect(__test.loadCreateDirectSession().plans[0].hash).toBe(HASH1);
   });
 
   it('requires a durable journal before making a wallet request', async () => {
@@ -287,6 +323,34 @@ describe('direct multichain creation recovery', () => {
 });
 
 describe('new creation network routing', () => {
+  it('binds every staged launch signature to its frozen execution window', async () => {
+    const draft = state(); draft.chainIds = [1, 10]; draft.projectType = 'custom'; draft.afterMode = 'terminal';
+    draft.details.name = 'Staged launch'; draft.details.owner = ALICE;
+    Object.assign(draft.stages[0], { durationSeconds: 86400, deadline: '1day' });
+    mocks.client.mockImplementation(() => ({ readContract: vi.fn(async () => 7n), estimateContractGas: vi.fn(async () => 2500000n) }));
+    mocks.postBundle.mockRejectedValue(new Error('captured staged quote'));
+    await expect(__test.runDeploy(draft, ALICE)).rejects.toThrow(/captured staged quote/);
+    const review = mocks.review.mock.calls[0][0];
+    const firstStart = Number(review.transactions[0].args[3][0].mustStartAtOrAfter);
+    expect(mocks.forward.mock.calls.map(args => args[6])).toEqual([firstStart - 1, firstStart - 1]);
+    expect(review.summary.rows.find(row => row[0] === 'Execute before')[1]).toContain('Pending wallet or Safe');
+    expect(mocks.pay).not.toHaveBeenCalled();
+  });
+
+  it('refuses funding an expired restored schedule without generating replacement requests', async () => {
+    const draft = state();
+    const quote = { bundle_uuid: '11111111-1111-4111-8111-111111111111', payment_info: [] };
+    draft._relayrPending = saveRelayrPendingSession('create-project', {
+      bundleUuid: quote.bundle_uuid, paymentState: 'quoted', account: ALICE, chains: [{ id: 1 }, { id: 10 }],
+      scheduleValidUntil: Math.floor(Date.now() / 1000) - 1,
+      rulesetCountByChain: { 1: 2, 10: 2 },
+    });
+    mocks.resumeQuote.mockReturnValue(quote);
+    await expect(__test.runDeploy(draft, ALICE)).rejects.toThrow(/schedule expired/);
+    expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled(); expect(mocks.pay).not.toHaveBeenCalled();
+    expect(loadRelayrPendingSession('create-project').rulesetCountByChain).toEqual({ 1: 2, 10: 2 });
+  });
+
   it.each([
     ['mainnet', [1, 10, 8453, 42161]],
     ['testnet', [11155111, 11155420, 84532, 421614]],
@@ -311,7 +375,7 @@ describe('new creation network routing', () => {
     expect(options.steps[4]).toBe('Pay the relay fee once');
     expect(new Set(review.transactions.map(call => String(call.args[3][0].mustStartAtOrAfter))).size).toBe(1);
     review.transactions.forEach((call, index) => {
-      expect(mocks.forward.mock.calls[index]).toEqual([call.chainId, ALICE, call.address, call.calldata, 5000000n, 7n]);
+      expect(mocks.forward.mock.calls[index]).toEqual([call.chainId, ALICE, call.address, call.calldata, 5000000n, 7n, null]);
     });
     expect(draft.quoteChoice.options[0]).toMatchObject({ eth: '0.000000000000000001', opt: quote.payment_info[0] });
     expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.simulate).not.toHaveBeenCalled();
@@ -323,7 +387,11 @@ describe('new creation network routing', () => {
     const draft = state();
     draft.projectType = 'custom'; draft.chainIds = [84532]; draft.details.name = 'One testnet'; draft.details.owner = ALICE;
     mocks.client.mockImplementation(() => ({ readContract: vi.fn(async () => 7n),
-      getTransactionReceipt: vi.fn(async () => ({ transactionHash: HASH1, status: 'success', logs: [] })) }));
+      getTransactionReceipt: vi.fn(async () => ({ transactionHash: HASH1, status: 'success', logs: [] })),
+      getTransaction: vi.fn(async () => {
+        const opts = mocks.execute.mock.calls[0][0];
+        return { from: ALICE, to: opts.address, chainId: 84532, input: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }), value: opts.value };
+      }) }));
     mocks.execute.mockImplementationOnce(opts => confirmSend(opts, HASH1));
     await __test.runDeploy(draft, ALICE);
     expect(mocks.execute).toHaveBeenCalledTimes(1);
@@ -409,5 +477,41 @@ describe('creation funding selection', () => {
     expect(pay.disabled).toBe(false);
     pay.click();
     expect(draft.quoteChoice.resolve).toHaveBeenCalledWith(opt);
+  });
+});
+
+
+describe('expired quoted launch recovery UI', () => {
+  it('offers an explicit proof-checked rebuild without signing or sending automatically', async () => {
+    const session = { account: ALICE, bundleUuid: 'expired-ui', paymentState: 'quoted', paymentHash: null, chains: [{ id: 1 }], scheduleValidUntil: Math.floor(Date.now() / 1000) - 1 };
+    const onClear = vi.fn();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mocks.retireExpired.mockResolvedValueOnce(true);
+    try {
+      const panel = __test.createRelayrReceiptNode(session, false, vi.fn(), onClear);
+      document.body.appendChild(panel);
+      const rebuild = [...panel.querySelectorAll('button')].find(button => button.textContent === 'Rebuild expired launch');
+      expect(rebuild).toBeTruthy(); rebuild.click();
+      await vi.waitFor(() => expect(onClear).toHaveBeenCalledTimes(1));
+      expect(mocks.retireExpired).toHaveBeenCalledWith('create-project', session);
+      expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled(); expect(mocks.pay).not.toHaveBeenCalled();
+    } finally { confirm.mockRestore(); }
+  });
+  it.each(['sending', 'paid', 'live'])('does not offer retirement of a %s request', kind => {
+    const session = { account: ALICE, bundleUuid: 'blocked-ui', paymentState: kind === 'sending' ? 'sending' : 'quoted', paymentHash: kind === 'paid' ? HASH1 : null, chains: [{ id: 1 }], scheduleValidUntil: Math.floor(Date.now() / 1000) + (kind === 'live' ? 100 : -1) };
+    const panel = __test.createRelayrReceiptNode(session, false, vi.fn(), vi.fn());
+    expect(panel.textContent).not.toContain('Rebuild expired launch');
+    expect(mocks.retireExpired).not.toHaveBeenCalled();
+  });
+  it('keeps the receipt visible when canonical expiry cannot be proved', async () => {
+    const session = { account: ALICE, bundleUuid: 'unknown-ui', paymentState: 'quoted', paymentHash: null, chains: [{ id: 1 }], scheduleValidUntil: Math.floor(Date.now() / 1000) - 1 };
+    const onClear = vi.fn(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mocks.retireExpired.mockRejectedValueOnce(new Error('An original request is still live or its nonce was used'));
+    try {
+      const panel = __test.createRelayrReceiptNode(session, false, vi.fn(), onClear);
+      [...panel.querySelectorAll('button')].find(button => button.textContent === 'Rebuild expired launch').click();
+      await vi.waitFor(() => expect(panel.textContent).toContain('still live'));
+      expect(onClear).not.toHaveBeenCalled(); expect(mocks.pay).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled();
+    } finally { confirm.mockRestore(); }
   });
 });

@@ -70,12 +70,12 @@ describe('Terminate notice boundaries', () => {
     expect(renderStages(s, () => {}).textContent).toMatch(/approval|deadline|condition/i);
   });
 
-  it('preserves earlier custom hooks before an explicit FOREVER stage', () => {
+  it('requires a provable approval condition for a batch before an explicit FOREVER stage', () => {
     const s = baseState();
     s.afterMode = 'cycle';
     s.stages[0].deadline = 'custom'; s.approvalAddress = HOOK_A;
     s.stages.push({ ...s.stages[0], durationSeconds: FOREVER_SECONDS });
-    expect(buildQueueRulesetConfigs(s, 1, 0).map(stage => stage.approvalHook)).toEqual([HOOK_A, ZERO_ADDRESS]);
+    expect(() => buildQueueRulesetConfigs(s, 1, 0)).toThrow(/known approval condition/);
     expect(renderStages(s, () => {}).textContent).toContain('Custom address');
   });
 

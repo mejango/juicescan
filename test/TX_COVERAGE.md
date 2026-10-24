@@ -54,6 +54,7 @@ one cannot silently enter the app.
 | Distribution receipt semantics | `distribution-plan.js` / direct, forwarded, and Safe receipt boundaries | Caught payout/reserved failures and hook underpull keep successful outer receipts pending. Exact emitter, project, original sender, token, and completion event are required. Safe reload reconstructs exact inner calldata; the original controller immutable TOKENS read is raw, CCIP-off, gas and output bounded. |
 | Generic ABI contract write | `form.js` reviewed write | Displays target/function/arguments/calldata/value, rechecks account and chain, simulates, then requires a successful receipt. |
 | Relayr forwarded bundle / payment | `relayrPostBundle` / `relayrPay` | Same-family eligibility across the four mainnets and four Sepolia testnets, recipient forwarder trust, exact EIP-712 domain and sender suffix, explicit funding choice, account-pinned publication/payment journals, and partial/unknown recovery are unit-tested. Funding options and the final payment boundary use the original published destination family; testnet bundles cannot request real mainnet ETH. Signed request fingerprints are saved before POST; ambiguous publication blocks fresh signatures. Known quotes can reopen in the same window, while reload retains a guard without persisting signatures. Each wallet send requires a durable marker; exact destination verification is required before paid receipts clear. The prepaid native-payment target, selector, runtime hash, token, bundle UUID, and deadline are pinned and decoded client-side; exact target/value/calldata receive mandatory review before bounded simulation and send. Forwarded publication requires a shared Web Lock and persistent signer/forwarder/chain nonce reservation across action scopes, including creation. Chain-proven nonce consumption or signature expiry is required before retirement; funding rechecks the reservation. Raw payer/Safe entries are exempt from forwarder nonce reservations. |
+| Expired unpaid schedule retirement | Local account payment Web Lock, no wallet send | Requires original publication proofs, canonical chain expiry and unchanged nonce; archives evidence before active-marker removal and retains nonce reservations. Live, consumed, unknown and sending requests stay blocked. |
 | Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; canonical Safe proxy/singleton identity, bounded CCIP-off reads, exact `execTransaction` tuples, current owners/threshold/nonce/confirmations, raw bounded simulation, post-review freshness, receipt status, and exact pending-call reuse without duplicate proposals are tested. |
 | Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, post-receipt allowance checks, valid-allowance reuse, and typed-signature fallback to an approval-block-anchored on-chain authorization are tested. |
 | Project management actions | `discover.js` reviewed action handlers | Individual ABI builders are tracked above; all submission paths must remain behind the shared review, Safe, or Relayr boundaries. |
@@ -137,3 +138,21 @@ deployed V6 contracts (selectors, arg order, types, payability) — zero HIGH/ME
 (deploy-erc20 permission label, permission display grouping, borrow slippage floor) are fixed.
 
 | Bounded RPC history reads | `rpc-logs.js` | Read-client forwarding only: splits `eth_getLogs` into exact 500-block ranges; does not create, approve or submit a transaction. Other methods retain the existing public-client behavior. `test/rpc-logs.test.js` verifies filters, range coverage, failure propagation and passthrough. |
+
+
+## Ordered schedule recovery
+
+`ordered-ruleset-schedule.test.js` covers pinned first starts, explicit follower floors, notice/cycle alignment,
+queue replacement boundaries, monotonic IDs, fractional-day Revnet intervals and actual emitted ancestry.
+`transaction-receipt-verifier.test.js` and `create-direct-recovery.test.js` keep failed semantic receipts held
+through reload and restore proven pre-wallet aborts to a discardable state.
+
+### Expired unpaid schedule retirement
+
+The additional `providerRequest` occurrence in `src/relayr.js` is the existing account payment Web Lock used
+for retirement coordination, not a wallet RPC. `retireExpiredUnpaidRelayrSession` requires every original
+publication proof, a canonical forwarder, a pinned chain timestamp strictly after each signature deadline and
+an unchanged nonce. It archives the original receipt and chain evidence before removing the active marker;
+nonce reservations remain, and no request is signed, published or funded automatically. Tests in
+`relayr-nonce-reservations.test.js` reject live, consumed, unknown and sending requests and preserve the
+active journal when archive storage fails. Creation UI tests verify the explicit confirmed Rebuild action.

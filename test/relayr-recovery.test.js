@@ -12,6 +12,7 @@ vi.mock('../src/relayr.js', async importOriginal => ({
   relayrResumeQuotedBundle: vi.fn(),
   relayrPay: vi.fn(),
   relayrPoll: vi.fn(),
+  retireExpiredUnpaidRelayrSession: vi.fn(),
   verifyRelayrDestinationRecords: vi.fn().mockResolvedValue(true),
 }));
 vi.mock('../src/relayr-ui.js', async importOriginal => ({
@@ -22,7 +23,7 @@ vi.mock('../src/relayr-ui.js', async importOriginal => ({
 import { fundRelayrQuotedSession, monitorRelayrSession, runProjectPayerRelayrDeploys } from '../src/discover.js';
 import {
   clearRelayrPendingSession, loadRelayrPendingSession, relayrPay, relayrPoll, relayrPostBundle, relayrResumeQuotedBundle,
-  saveRelayrPendingSession, verifyRelayrDestinationRecords,
+  saveRelayrPendingSession, verifyRelayrDestinationRecords, retireExpiredUnpaidRelayrSession,
 } from '../src/relayr.js';
 import { chooseRelayrPayment } from '../src/relayr-ui.js';
 
@@ -205,6 +206,29 @@ describe('Relayr recovery after payment submission', () => {
     expect(relayrPay).not.toHaveBeenCalled();
     expect(relayrPoll).not.toHaveBeenCalled();
     expect(loadRelayrPendingSession(SCOPE).paymentState).toBe('quoted');
+  });
+
+  it('offers proof-checked Rebuild after an expired quote reload loses its funding options', async () => {
+    const quoted = { ...session(), paymentState: 'quoted', paymentHash: null,
+      scheduleValidUntil: Math.floor(Date.now() / 1000) - 1 };
+    saveRelayrPendingSession(SCOPE, quoted);
+    const status = vi.fn(); status.element = document.createElement('div');
+    const container = document.createElement('div'); container.appendChild(status.element); document.body.appendChild(container);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    retireExpiredUnpaidRelayrSession.mockRejectedValueOnce(new Error('Original request is still live'));
+    try {
+      await expect(runProjectPayerRelayrDeploys([], status, SCOPE)).rejects.toThrow(/expired/i);
+      const rebuild = [...container.querySelectorAll('button')].find(button => button.textContent === 'Rebuild expired action');
+      expect(rebuild).toBeTruthy();
+      expect(retireExpiredUnpaidRelayrSession).not.toHaveBeenCalled();
+      rebuild.click();
+      await vi.waitFor(() => expect(status).toHaveBeenCalledWith('Original request is still live', 'error'));
+      expect(retireExpiredUnpaidRelayrSession).toHaveBeenCalledWith(SCOPE, expect.objectContaining({ bundleUuid: BUNDLE }));
+      expect(loadRelayrPendingSession(SCOPE)).toMatchObject({ bundleUuid: BUNDLE, paymentState: 'quoted' });
+      expect(container.textContent).toContain('Rebuild expired action');
+      expect(relayrPostBundle).not.toHaveBeenCalled(); expect(relayrPay).not.toHaveBeenCalled();
+      expect(relayrPoll).not.toHaveBeenCalled(); expect(chooseRelayrPayment).not.toHaveBeenCalled();
+    } finally { confirm.mockRestore(); container.remove(); }
   });
 
   it('restores quoted state and stops before wallet submission if the sending journal cannot persist', async () => {

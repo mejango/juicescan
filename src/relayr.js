@@ -235,7 +235,7 @@ export async function relayrSupportsForwarding(chainId, target) {
 // The EIP-712 domain (name/version) is read from the forwarder at runtime (EIP-5267) so we never guess it.
 // `value` is the ETH forwarded to the target (e.g. a project-creation fee); the relayer sends it with
 // `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
-export async function buildForwardedTx(chainId, from, to, data, gasHint, value) {
+export async function buildForwardedTx(chainId, from, to, data, gasHint, value, executionDeadline) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   if (!relayrSupportsChain(chainId)) throw new Error('Relayr does not support this destination chain. Use a direct wallet transaction.');
   var forwarder = getAddress('ERC2771Forwarder', chainId);
@@ -273,6 +273,10 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   var nonce = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [from] });
 
   var deadline = Math.floor(Date.now() / 1000) + 47 * 3600; // uint48 seconds (< 48h Relayr max)
+  if (executionDeadline != null) {
+    if (!Number.isSafeInteger(Number(executionDeadline)) || Number(executionDeadline) <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
+    deadline = Math.min(deadline, Number(executionDeadline));
+  }
   // Measure the destination call rather than signing a flat guess. The forwarder caps the
   // inner call at `gas` and reverts `execute` if it runs out, so an undersized constant
   // burns a bundle the user has already paid for; an oversized one inflates every quote.
@@ -287,6 +291,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
     if (!gas) gas = 500000n; // estimation unavailable — Relayr still simulates server-side and refuses a bad quote
   }
 
+  if (deadline <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
   var signature = await wallet.signTypedData({
     account: from,
     domain: { name: domainName, version: domainVersion, chainId: BigInt(chainId), verifyingContract: forwarder },
@@ -434,6 +439,7 @@ export async function relayrPostBundle(transactions, journal, locked) {
     publication = saveRelayrPendingSession(journal.scope, {
       bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
       paymentState: 'publication', expectedCount: ordered.length,
+      scheduleValidUntil: journal.scheduleValidUntil, rulesetCountByChain: journal.rulesetCountByChain, rulesetParentByChain: journal.rulesetParentByChain,
       chains: journal.chains || ordered.map(function (request) { return { id: Number(request.chain), name: chainNameFor(request.chain) }; }),
       publicationRequestHashes: ordered.map(relayrRequestFingerprint), records: [],
     });
@@ -853,6 +859,18 @@ export function saveRelayrPendingSession(scope, session, paymentNotSent) {
     }).map(function (hash) { return hash.toLowerCase(); }),
     persisted: true,
   };
+  if (session.scheduleValidUntil != null && Number.isSafeInteger(Number(session.scheduleValidUntil))) snapshot.scheduleValidUntil = Number(session.scheduleValidUntil);
+  if (session.rulesetCountByChain && typeof session.rulesetCountByChain === 'object') {
+    snapshot.rulesetCountByChain = Object.fromEntries(Object.entries(session.rulesetCountByChain).filter(function (entry) {
+      return /^\d+$/.test(entry[0]) && Number.isSafeInteger(Number(entry[1])) && Number(entry[1]) > 0 && Number(entry[1]) <= 1000;
+    }).map(function (entry) { return [entry[0], Number(entry[1])]; }));
+  }
+
+  if (session.rulesetParentByChain && typeof session.rulesetParentByChain === 'object') {
+    snapshot.rulesetParentByChain = Object.fromEntries(Object.entries(session.rulesetParentByChain).filter(function (entry) {
+      return /^\d+$/.test(entry[0]) && /^\d+$/.test(String(entry[1])) && BigInt(entry[1]) < (1n << 48n);
+    }).map(function (entry) { return [entry[0], String(entry[1])]; }));
+  }
   var key = relayrPendingStorageKey(scope, session);
   var serialized = JSON.stringify(snapshot);
   var stored = relayrStoredValue(key);
@@ -972,6 +990,45 @@ export function listRelayrPendingScopes() {
     if (scope && !seen[scope]) { seen[scope] = true; scopes.push(scope); }
   });
   return scopes;
+}
+
+// This predicate only exposes recovery UI. Retirement itself requires canonical chain proof.
+export function relayrScheduleCanBeRetired(session) {
+  return !!session && session.paymentState === 'quoted' && !session.paymentHash
+    && Number.isSafeInteger(session.scheduleValidUntil) && session.scheduleValidUntil <= Math.floor(Date.now() / 1000);
+}
+
+export async function retireExpiredUnpaidRelayrSession(scope, session) {
+  if (typeof navigator === 'undefined' || !navigator.locks || typeof navigator.locks.request !== 'function') throw new Error('Use a browser with Web Locks to check this original launch before rebuilding.');
+  return navigator.locks.request('jb-relayr-payment:' + String(session.account).toLowerCase(), async function () {
+    var current = requireUnpaidRelayrSession(scope, session.bundleUuid);
+    if (String(current.account).toLowerCase() !== String(session.account).toLowerCase()) throw new Error('The launching wallet changed. Keep this original receipt and reconnect its wallet.');
+    if (!relayrScheduleCanBeRetired(current)) throw new Error('This saved request is live or its payment state is uncertain. Keep its original receipt.');
+    var hashes = new Set(current.publicationRequestHashes || []);
+    var proofs = readNonceReservations().filter(function (proof) { return proof.scope === scope && proof.signer === String(current.account).toLowerCase() && hashes.has(proof.requestHash); });
+    if (!current.expectedCount || proofs.length !== current.expectedCount || hashes.size !== current.expectedCount) throw new Error('The original signed request proofs are incomplete. Keep this receipt and inspect every destination before rebuilding.');
+    var evidence = [];
+    for (var proof of proofs) {
+      if (String(getAddress('ERC2771Forwarder', proof.chain)).toLowerCase() !== proof.forwarder) throw new Error('The original forwarder deployment could not be verified. Keep this receipt.');
+      var client = createPublicClientForChain(proof.chain);
+      var block = await client.getBlock({ blockTag: 'latest' });
+      if (!block || block.number == null || block.timestamp == null) throw new Error('Could not verify request expiry onchain. Keep this receipt and try again.');
+      var nonce = BigInt(await client.readContract({ address: proof.forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [proof.signer], blockNumber: block.number }));
+      if (BigInt(block.timestamp) <= BigInt(proof.deadline) || nonce !== BigInt(proof.nonce)) throw new Error('An original request is still live or its nonce was used. Keep this receipt and check every destination; nothing was rebuilt.');
+      evidence.push({ chain: proof.chain, requestHash: proof.requestHash, blockNumber: String(block.number), timestamp: String(block.timestamp), nonce: String(nonce) });
+    }
+    current = requireUnpaidRelayrSession(scope, session.bundleUuid);
+    if (String(current.account).toLowerCase() !== String(session.account).toLowerCase()) throw new Error('The launching wallet changed. Keep this original receipt.');
+    // Archive before removing the active marker. Nonce reservations remain intact and
+    // the normal publication gate independently verifies expiry before replacing them.
+    var key = 'jb-relayr-retired-v1:' + relayrAccountPart(current) + scope + ':' + current.bundleUuid;
+    var raw = JSON.stringify({ receipt: current, proof: evidence });
+    try { localStorage.setItem(key, raw); if (localStorage.getItem(key) !== raw) throw new Error(); }
+    catch (_) { throw new Error('The original receipt could not be archived. Restore browser storage before rebuilding.'); }
+    clearRelayrPendingSession(scope, current);
+    if (loadRelayrPendingSession(scope, current)) throw new Error('The original receipt could not be retired. Restore browser storage before rebuilding.');
+    return true;
+  });
 }
 
 export function clearRelayrPendingSession(scope, session) {

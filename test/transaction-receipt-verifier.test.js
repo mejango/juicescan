@@ -162,3 +162,40 @@ it('names a failure with describeFailure in the open dialog and to the caller',a
  await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith('Paused.',expect.objectContaining({error:expect.any(Error)})));
  expect(h.wallet.writeContract).not.toHaveBeenCalled();
 });
+
+it('retains a semantic proof failure through held receipt recovery without a second send', async () => {
+ localStorage.clear();
+ h.client.getTransaction=vi.fn(async()=>({hash,from:h.account,nonce:7,blockNumber:10n}));
+ h.client.getTransactionCount=vi.fn(async()=>8);
+ const verifyReceipt=vi.fn(async()=>{const error=new Error('intermediate ruleset skipped');error.code='RULESET_ORDER_UNVERIFIED';throw error;});
+ const onError=vi.fn(),onSuccess=vi.fn();
+ executeTransaction({...args,verifyReceipt,onError,onSuccess});
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith(expect.stringContaining('intermediate ruleset skipped'),expect.objectContaining({submittedHash:hash})));
+ expect(onSuccess).not.toHaveBeenCalled();
+ const retriedError=vi.fn();
+ vi.resetModules();
+ const {executeTransaction:recoveredExecute}=await import('../src/component-base.js');
+ recoveredExecute({...args,verifyReceipt,onError:retriedError,onSuccess});
+ await vi.waitFor(()=>expect(retriedError).toHaveBeenCalledWith(expect.stringContaining('effects are not verified'),expect.objectContaining({submittedHash:hash})));
+ expect(onSuccess).not.toHaveBeenCalled();
+ expect(verifyReceipt).toHaveBeenCalledTimes(2);
+ expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});
+
+it('reports a proven no-send abort when schedule expiry crosses the final network await', async () => {
+ localStorage.clear();
+ let currentTime=Date.now(),finish;
+ const clock=vi.spyOn(Date,'now').mockImplementation(()=>currentTime);
+ const validUntil=Math.floor(currentTime/1000)+300;
+ h.wallet.getChainId.mockResolvedValueOnce(8453).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));
+ const {assertScheduleFresh}=await import('../src/ruleset-schedule.js');
+ const onBeforeWriteAborted=vi.fn(),onError=vi.fn();
+ try {
+  executeTransaction({...args,onSending:async()=>{},assertWriteState:()=>assertScheduleFresh(validUntil),onBeforeWriteAborted,onError});
+  await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));
+  currentTime+=400000;finish(8453);
+  await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));
+  expect(h.wallet.writeContract).not.toHaveBeenCalled();
+  expect(onError).toHaveBeenCalledWith(expect.stringContaining('schedule expired'),expect.objectContaining({submittedHash:null}));
+ } finally {clock.mockRestore();}
+});

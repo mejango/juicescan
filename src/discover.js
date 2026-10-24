@@ -1,3 +1,4 @@
+import { assertScheduleFresh, assertOrderedRulesetReceipt } from './ruleset-schedule.js';
 // src/discover.js
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
@@ -19,7 +20,7 @@ import { V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from '
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
-import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
@@ -37,7 +38,7 @@ import { isEnsName } from './ens.js';
 import { CHUNK_FAILED_TEXT, chunkFailure, chunkReloadButton } from './chunk-failure.js';
 import { launchProjectAbi } from './launch-component.js';
 import { availablePayoutAmount, isExactPayoutCurrency } from './payouts-component.js';
-import { DEADLINE_OPTIONS } from './deadline-options.js';
+import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
 import { scaledUsdToNumber as usdFromScaled } from './bendystraw-format.js';
 import { TIER_UNLIMITED_SUPPLY, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { SHOP_MEDIA_METADATA_ABI, shopMediaMetadataArgs, shopMetadataName, prepareShopMediaMetadata } from './shop-media.js';
@@ -11664,7 +11665,9 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, onClear) {
     statusEl._relayrRecoveryPanel = panel;
   }
   var noteText;
-  if (session.paymentState === 'publication') {
+  if (mode === 'schedule-expired') {
+    noteText = 'This schedule expired before payment. Rebuild checks every original authorization is expired and unused onchain, and archives its receipt. No replacement is submitted automatically.';
+  } else if (session.paymentState === 'publication') {
     noteText = 'Signed requests may have reached Relayr, but its quote response was not received. No payment was requested. Keep this record and inspect the destination chains before signing this action again.';
   } else if (session.paymentState === 'quoted') {
     noteText = 'This previously reviewed bundle has not been paid. Its funding options are available only in the original window; keep its bundle ID and review the destination chains before signing again.';
@@ -11684,9 +11687,21 @@ function renderRelayrRecoveryPanel(setStatus, session, mode, onCheck, onClear) {
     action.addEventListener('click', onCheck); panel.appendChild(action);
   }
   if (onClear) {
-    var clear = document.createElement('button'); clear.type = 'button'; clear.className = 'relayr-pending-clear'; clear.textContent = 'Clear saved receipt';
+    var clear = document.createElement('button'); clear.type = 'button'; clear.className = 'relayr-pending-clear'; clear.textContent = mode === 'schedule-expired' ? 'Rebuild expired action' : 'Clear saved receipt';
     clear.addEventListener('click', onClear); panel.appendChild(clear);
   }
+  return true;
+}
+
+function renderExpiredRelayrScheduleRecovery(setStatus, session, scope) {
+  if (!scope || !relayrScheduleCanBeRetired(session)) return false;
+  renderRelayrRecoveryPanel(setStatus, session, 'schedule-expired', null, async function () {
+    if (!window.confirm('Check that every original request is expired and unused, archive this unpaid receipt, and rebuild through a fresh review? Nothing will be submitted automatically.')) return;
+    try {
+      await retireExpiredUnpaidRelayrSession(scope, session);
+      removeRelayrRecoveryPanel(setStatus); setStatus('Expired unused requests archived. Reopen this action and review a fresh schedule.', '');
+    } catch (error) { setStatus(error.message || String(error), 'error'); }
+  });
   return true;
 }
 
@@ -11699,6 +11714,9 @@ export async function monitorRelayrSession(session, setStatus, opts) {
   }
   // A stale quoted modal can outlive payment from another tab. Refresh before writing or classifying it.
   refreshSavedSession();
+  // An expired unpaid quote has no execution to poll, including after its in-memory quote is lost.
+  // Reject outside the paid-recovery catch so its generic waiting card cannot replace Rebuild.
+  if (renderExpiredRelayrScheduleRecovery(setStatus, session, scope)) assertScheduleFresh(session.scheduleValidUntil);
   var expected = Math.max(1, Number(session.expectedCount) || (session.chains && session.chains.length) || 1);
   session.expectedCount = expected;
   function persist(records) {
@@ -11856,6 +11874,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         functionName: call.functionName || call.function || null,
         args: Array.isArray(call.args) ? call.args : null,
         step: call.step || null,
+        scheduleValidUntil: call.scheduleValidUntil, rulesetCount: call.rulesetCount, rulesetParentId: call.rulesetParentId,
       });
     }
   }
@@ -11935,6 +11954,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         var directSendGas = await gasWithinCap(directClient, {
           account: account, to: direct.to, data: direct.data, value: 0n,
         }, directGas);
+        assertScheduleFresh(direct.scheduleValidUntil);
         setStatus('Awaiting wallet confirmation…', 'pending');
         onSending();
         var directHash = await directWallet.sendTransaction({
@@ -11982,11 +12002,16 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
   setStatus('Sign the change for ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
   var txs = [];
   for (var j = 0; j < calls.length; j++) {
-    txs.push(await buildForwardedTx(calls[j].cid, account, calls[j].to, calls[j].data, gas || 400000n));
+    assertScheduleFresh(calls[j].scheduleValidUntil);
+    txs.push(await buildForwardedTx(calls[j].cid, account, calls[j].to, calls[j].data, gas || 400000n, 0n, calls[j].scheduleValidUntil));
   }
   setStatus('Requesting Relayr quote…', 'pending');
   if (confirmOpts.reverify) await confirmOpts.reverify();
-  var bundle = await relayrPostBundle(txs, { scope: confirmOpts.pendingScope, account: account,
+  var scheduleLimits = calls.map(function (call) { return call.scheduleValidUntil; }).filter(function (limit) { return limit != null; });
+  var scheduleLimit = scheduleLimits.length ? Math.min.apply(Math, scheduleLimits) : null;
+  var rulesetParents = Object.fromEntries(calls.filter(function (call) { return call.rulesetParentId != null; }).map(function (call) { return [call.cid, String(call.rulesetParentId)]; }));
+  var rulesetCounts = Object.fromEntries(calls.filter(function (call) { return call.rulesetCount; }).map(function (call) { return [call.cid, call.rulesetCount]; }));
+  var bundle = await relayrPostBundle(txs, { scope: confirmOpts.pendingScope, account: account, scheduleValidUntil: scheduleLimit, rulesetCountByChain: rulesetCounts, rulesetParentByChain: rulesetParents,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }) });
   var session = {
     bundleUuid: bundle.bundle_uuid,
@@ -11994,6 +12019,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
     paymentHash: null,
     paymentState: 'quoted',
     expectedCount: calls.length,
+    scheduleValidUntil: scheduleLimit, rulesetCountByChain: rulesetCounts, rulesetParentByChain: rulesetParents,
     expectedTransactions: bundle.expected_transactions,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }),
     records: [],
@@ -12008,6 +12034,8 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
   confirmOpts = confirmOpts || {};
   // A stale funding modal must not reset another window's sending/submitted journal back to quoted.
   requireUnpaidRelayrSession(confirmOpts.pendingScope, bundle.bundle_uuid);
+  renderExpiredRelayrScheduleRecovery(setStatus, session, confirmOpts.pendingScope);
+  assertScheduleFresh(session.scheduleValidUntil);
   session.publicationRequestHashes = (bundle.expected_transactions || []).map(function (binding) { return binding.requestHash; });
   var checksKey = String(session.account || '').toLowerCase() + ':' + String(confirmOpts.pendingScope || '') + ':' + session.bundleUuid;
   if (confirmOpts.resumeQuoted) {
@@ -12041,6 +12069,7 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
       if (confirmOpts.onSession) { try { confirmOpts.onSession(session); } catch (_) {} }
     }, bundle.bundle_uuid, confirmOpts.reverify, function () {
       requireUnpaidRelayrSession(confirmOpts.pendingScope, bundle.bundle_uuid);
+      assertScheduleFresh(session.scheduleValidUntil);
       session.paymentState = 'sending';
       if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
       if (session.persisted === false) {
@@ -24090,7 +24119,10 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     DEADLINE_OPTIONS.forEach(function (d) {
       if (d.contract && (getAddress(d.contract, chainId) || '').toLowerCase() === String(parent.approvalHook || '').toLowerCase()) deadline = d.key;
     });
-    return { start: Number(parent.start), duration: Number(parent.duration), deadline: deadline };
+    var latest = situation.latest[0];
+    return { id: Number(parent.id), start: Number(parent.start), duration: Number(parent.duration), deadline: deadline,
+      approvalHook: parent.approvalHook, automaticStart: option.action !== 'replace' && !option.requiresStartDate, latestId: Number(latest.id),
+      validUntil: option.action === 'replace' ? Number(latest.start) - (DEADLINE_SECONDS[deadline] || 0) - 1 : null };
   }
 
   function updateQueueApprovalNote(situation, option) {
@@ -24817,6 +24849,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
       function () { throw new Error('Couldn’t verify price feed coverage on ' + chainNameOf(cid) + ' right now — nothing was sent. Try again.'); }
     );
   }));
+  state._schedulePreparedAt = Math.floor(Date.now() / 1000);
   var multi = selected.length > 1;
   var usesOmnichainWrapper = !!state.isOmnichain;
   // Share one first-ruleset start across chains (now + 20 min) so cycles align; single chain starts at 0
@@ -24852,16 +24885,29 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
         useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions),
         controller: liveController, projectDeployer: getAddress('JB721TiersHookProjectDeployer', cid),
         omnichainDeployer: getAddress('JBOmnichainDeployer', cid), salt: newShopSalt, isOmnichain: usesOmnichainWrapper, memo: memo });
-      return { to: nc.to, data: encodeFunctionData({ abi: nc.abi, functionName: nc.functionName, args: nc.args }) };
+      return { scheduleValidUntil: state.queueSchedules[cid].validUntil, rulesetCount: cfgs.length, rulesetParentId: state.queueParentByChain[cid].id, to: nc.to, data: encodeFunctionData({ abi: nc.abi, functionName: nc.functionName, args: nc.args }) };
     }
     if (usesOmnichainWrapper) {
       var omni = buildOmnichainQueueArgs({ chainId: cid, omnichainDeployer: getAddress('JBOmnichainDeployer', cid),
         projectId: localPid, rulesetConfigs: cfgs, memo: memo });
-      return { to: omni.address, data: encodeFunctionData({ abi: omni.abi, functionName: omni.functionName, args: omni.args }) };
+      return { scheduleValidUntil: state.queueSchedules[cid].validUntil, rulesetCount: cfgs.length, rulesetParentId: state.queueParentByChain[cid].id, to: omni.address, data: encodeFunctionData({ abi: omni.abi, functionName: omni.functionName, args: omni.args }) };
     }
-    return { to: liveController, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid, cfgs, memo] }) };
+    return { scheduleValidUntil: state.queueSchedules[cid].validUntil, rulesetCount: cfgs.length, rulesetParentId: state.queueParentByChain[cid].id, to: liveController, data: encodeFunctionData({ abi: queueRulesetsAbi, functionName: 'queueRulesetsOf', args: [localPid, cfgs, memo] }) };
   };
 
+  selected.forEach(function (chain) { buildCall(chain.id); });
+  var queueParents = Object.fromEntries(selected.map(function (chain) { return [chain.id, state.queueParentByChain[chain.id].id]; }));
+  var queueCounts = Object.fromEntries(selected.map(function (chain) { return [chain.id, state.queueSchedules[chain.id].starts.length]; }));
+  var limits = selected.map(function (chain) { return state.queueSchedules[chain.id].validUntil; }).filter(function (limit) { return limit != null; });
+  var validUntil = limits.length ? Math.min.apply(Math, limits) : null;
+  var scheduleRows = validUntil == null ? [] : [['Execute before', new Date(validUntil * 1000).toLocaleString() + ' to preserve this schedule. Rebuild if it expires; pending Safe/wallet transactions cannot be expired by this page.']];
+  function checkSchedule() { assertScheduleFresh(validUntil); }
+  async function reverifySchedule() {
+    checkSchedule(); await state.verifyQueuePosition(selected); checkSchedule();
+  }
+  function verifyScheduleReceipt(call, receipt) {
+    assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', call.cid), pidOn(project, call.cid), call.rulesetCount, call.rulesetParentId);
+  }
   // Safe-owned project → Relayr can't sign for the Safe; propose the call to each selected chain's Safe queue.
   // The Safe is the owner (msg.sender), so the same target/calldata as the EOA path works — no forwarder needed.
   var safeInfo = await fetchSafeInfo(operatorAddr, project.chainId).catch(function () { return null; });
@@ -24876,7 +24922,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     var shim = Object.assign({}, project, { chains: selected });
     var tabName = project.isRevnet ? 'Operator' : 'Owner';
     var res = await proposeSafeAcrossChains(shim, operatorAddr, signer, buildCall, { title: 'Queue ruleset on Safe', queueTab: tabName,
-      summary: { action: 'Queue ruleset', rows: [['Queues', (state.stages || []).length + ' ruleset' + ((state.stages || []).length === 1 ? '' : 's')]] } });
+      reverify: reverifySchedule, verifyReceipt: function (call, receipt) { verifyScheduleReceipt({ cid: call.cid, rulesetCount: queueCounts[call.cid], rulesetParentId: queueParents[call.cid] }, receipt); }, summary: { action: 'Queue ruleset', rows: [['Queues', (state.stages || []).length + ' ruleset' + ((state.stages || []).length === 1 ? '' : 's')]].concat(scheduleRows) } });
     if (!res || res.cancelled) { setStatus('Cancelled', ''); return; }
     document.dispatchEvent(new CustomEvent('jb:safe-queued'));
     var readyCount = (res.readyExecs && res.readyExecs.length) || 0;
@@ -24921,12 +24967,13 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     await new Promise(function (resolve, reject) {
       executeTransaction({
         chainId: cid0, address: exec.address, abi: exec.abi, functionName: exec.functionName, contractName: exec.contractName,
-        args: exec.args, label: exec.label,
+        args: exec.args, label: exec.label, reverify: reverifySchedule, assertWriteState: checkSchedule,
+        verifyReceipt: function (receipt) { verifyScheduleReceipt({ cid: cid0, rulesetCount: configs.length, rulesetParentId: queueParents[cid0] }, receipt); },
         confirmSummary: { action: exec.label, rows: [
           ['Queues', (state.stages || []).length + ' ruleset' + ((state.stages || []).length === 1 ? '' : 's') + (newShop ? ' with a new shop' : '')],
           ['Project', '#' + String(localPid0)],
           ['On chain', chainNameOf(cid0)],
-        ] },
+        ].concat(scheduleRows) },
         onStatus: function (m, k) { setStatus(m, k); }, onError: function (m) { reject(new Error(m)); },
         onSuccess: function () { setStatus((newShop ? 'New shop deployed + ruleset queued on ' : 'Ruleset queued on ') + chainNameOf(cid0) + '.', 'success'); notifyProjectUpdated(project); resolve(); },
       });
@@ -24935,8 +24982,13 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   }
 
   // Multiple selected chains → one Relayr bundle, with each entry targeting its verified wrapper/controller.
-  var relaySession = await runRelayrAcrossChains(selected, account, buildCall, 1500000n, setStatus, { label: 'Queue ruleset', title: 'Confirm queue ruleset', pendingScope: relayrActionScope(project, 'queue-ruleset'),
-    summary: { rows: [['Queues', (state.stages || []).length + ' ruleset' + ((state.stages || []).length === 1 ? '' : 's')]] } });
+  var relaySession = await runRelayrAcrossChains(selected, account, buildCall, 1500000n, setStatus, { label: 'Queue ruleset', title: 'Confirm queue ruleset', reverify: reverifySchedule, verifyReceipt: verifyScheduleReceipt, preserveCompletionCheck: true, verifyCompletion: async function (session, records) {
+      await Promise.all(records.map(async function (record, index) {
+        var cid = Number(session.chains[index].id);
+        verifyScheduleReceipt({ cid: cid, rulesetCount: session.rulesetCountByChain && session.rulesetCountByChain[cid], rulesetParentId: session.rulesetParentByChain && session.rulesetParentByChain[cid] }, await clientFor(cid).getTransactionReceipt({ hash: relayrDestinationHash(record) }));
+      }));
+    }, pendingScope: relayrActionScope(project, 'queue-ruleset'),
+    summary: { rows: [['Queues', (state.stages || []).length + ' ruleset' + ((state.stages || []).length === 1 ? '' : 's')]].concat(scheduleRows) } });
   if (relaySession && relaySession.resumed) {
     setStatus(relayrRecoveredMessage(relaySession), 'success');
     notifyProjectUpdated(project);

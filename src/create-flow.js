@@ -12,6 +12,8 @@
 // JWT lives in localStorage only.
 
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, decodeEventLog } from 'viem';
+import { deriveStartFrom, orderedRulesetSchedule, assertScheduleFresh, scheduleIsFresh, assertOrderedRulesetReceipt } from './ruleset-schedule.js';
+export { deriveStartFrom } from './ruleset-schedule.js';
 import { isSafeConnected } from './wallet.js';
 import { idMapFromGroup, resolveSuckerGroup } from './sucker-group.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
@@ -25,9 +27,9 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
-import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment } from './relayr.js';
+import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
-import { DEADLINE_OPTIONS } from './deadline-options.js';
+import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
 import { build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
@@ -1199,82 +1201,47 @@ function terminalStage(s1) {
   return s;
 }
 
-// JBRulesets.deriveStartFrom: the start a ruleset queued on `base` gets — the base's first cycle boundary at
-// or after mustStartAtOrAfter (0 → the contract substitutes block.timestamp → the very next boundary).
-export function deriveStartFrom(baseStart, baseDuration, mustStartAtOrAfter) {
-  if (!baseDuration) return mustStartAtOrAfter;
-  var nextImmediate = baseStart + baseDuration;
-  if (nextImmediate >= mustStartAtOrAfter) return nextImmediate;
-  var start = mustStartAtOrAfter - ((mustStartAtOrAfter - nextImmediate) % baseDuration);
-  while (mustStartAtOrAfter > start) start += baseDuration;
-  return start;
-}
-// A later custom-flow stage's mustStartAtOrAfter given the previous stage's (estimated) start + duration.
-// 0 keeps today's "next cycle boundary" encoding; N > 1 cycles or a date becomes an absolute timestamp.
-function stageMustStartAtOrAfter(stage, prevStart, prevDuration) {
-  if (stage.startMode === 'date') return Number(stage.startDate) || 0;
-  var n = Number(stage.startCycles) || 1;
-  return n > 1 ? prevStart + n * prevDuration : 0;
-}
 export function stageStartOk(stage) {
   if (stage.startMode === 'date') return Number(stage.startDate) > 0;
   var n = Number(stage.startCycles);
   return Number.isInteger(n) && n >= 1;
 }
-// Every deployed stage's encoded mustStartAtOrAfter and the start it lands on, chained from stage 1's known
-// start: its scheduled time, the multichain pin, or `now` for a single chain (stage 1 starts at the deploy
-// block; "N cycles" is exact as long as the tx lands within one duration of clicking Launch). In the queue
-// editor stage 1 is queued on the live parent ruleset (state.queueParentByChain, read on-chain), so its
-// start is the parent's first cycle boundary at or after its mustStartAtOrAfter — exactly what the contract
-// derives — and later stages chain off that.
+// Launch and queue share one explicit schedule, including the synthetic closing ruleset.
+function stageNoticeSeconds(state, stage, chainId) {
+  if (stage.durationSeconds === FOREVER_SECONDS) return 0;
+  if (stage.deadline !== 'custom') return DEADLINE_SECONDS[stage.deadline] || 0;
+  var address = chainAddr(state, chainId, 'approval', pickResolved(state.approvalAddress, { resolvedAddress: state.approvalAddressResolved, resolvedFor: state.approvalAddressResolvedFor }));
+  var preset = DEADLINE_OPTIONS.find(function (d) { return d.contract && String(getAddress(d.contract, chainId)).toLowerCase() === String(address).toLowerCase(); });
+  return preset ? DEADLINE_SECONDS[preset.key] : null;
+}
 function stageStarts(state, effectiveStages, firstStart, now, chainId) {
   var parent = state.queueEditor && state.queueParentByChain
     && (state.queueParentByChain[chainId] || state.queueParentByChain[state.queueHomeChainId]);
-  var musts = [firstStart];
-  var starts = [parent ? deriveStartFrom(parent.start, parent.duration, firstStart || now) : (firstStart || now)];
-  for (var i = 1; i < effectiveStages.length; i++) {
-    var prevStart = starts[i - 1], prevDuration = effectiveStages[i - 1].durationSeconds || 0;
-    var must = i >= state.stages.length ? 0 : stageMustStartAtOrAfter(effectiveStages[i], prevStart, prevDuration);
-    musts.push(must);
-    starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+  if (effectiveStages.length === 1) {
+    return { musts: [firstStart], starts: [parent ? deriveStartFrom(parent.start, parent.duration, firstStart || now) : firstStart || now], validUntil: null };
   }
-  return { musts: musts, starts: starts };
+  var preparedAt = Number(state._schedulePreparedAt) || now;
+  var schedule = orderedRulesetSchedule(effectiveStages.map(function (stage, i) {
+    return { duration: stage.durationSeconds || 0, noticeSeconds: stageNoticeSeconds(state, stage, chainId),
+      date: i < state.stages.length && stage.startMode === 'date' ? Number(stage.startDate) : 0,
+      cycles: i < state.stages.length ? Number(stage.startCycles) || 1 : 1 };
+  }), firstStart, preparedAt, parent && Object.assign({}, parent, {
+    noticeSeconds: parent.deadline ? DEADLINE_SECONDS[parent.deadline] : (parent.approvalHook && !/^0x0+$/.test(parent.approvalHook) ? null : 0),
+  }));
+  return schedule;
 }
-var DEADLINE_SECONDS = { '3hours': 3 * 3600, '1day': 86400, '3days': 3 * 86400, '7days': 7 * 86400 };
-// A stage queued in the launch tx has id ≈ block.timestamp; JBDeadline returns Failed when start − id is
-// shorter than its deadline, so the stage silently never takes effect and the earlier ruleset keeps
-// cycling. Covers the standby/terminal stage "Afterwards" appends too. Returns the warning text or null.
-// In the queue editor the parent ruleset's hook (read on-chain) governs stage 1 and the editor's deadline
-// governs the stages queued after it.
+// Known notices delay cycle-aligned starts; unsupported custom batches fail before review.
 export function noticeClashIssue(state) {
   if (state.projectType === 'revnet' || !(state.stages || []).length) return null;
-  var now = Math.floor(Date.now() / 1000);
-  var first = state.stages[0];
-  var parent = state.queueEditor && state.queueParentByChain && state.queueParentByChain[state.queueHomeChainId];
-  var firstStart = state.queueEditor
-    ? Number(state.queueMustStartAtByChain && state.queueMustStartAtByChain[state.queueHomeChainId] || 0)
-    : (first.schedule ? Number(first.schedule) : (state.chainIds.length > 1 ? now + 600 : 0));
-  var starts = stageStarts(state, resolveStages(state), firstStart, now, state.queueHomeChainId).starts;
-  var verb = state.queueEditor ? 'queueing' : 'launch';
-  var fix = ' Shorten the deadline or make the earlier rules run longer.';
-  if (parent && parent.deadline && DEADLINE_SECONDS[parent.deadline] && starts[0] - now < DEADLINE_SECONDS[parent.deadline]) {
-    var pdl = DEADLINE_OPTIONS.find(function (d) { return d.key === parent.deadline; });
-    return 'Ruleset #1 would start ' + secondsLabel(Math.max(0, Math.floor((starts[0] - now) / 3600) * 3600)) + ' after queueing, sooner than the parent ruleset’s '
-      + pdl.detailLabel + ' deadline, so its approval condition would reject it and it would never take effect. Choose a later start.';
-  }
-  if (!deadlineApplies(state)) return null;
-  var dl = DEADLINE_OPTIONS.find(function (d) { return d.key === first.deadline; });
-  var secs = dl ? DEADLINE_SECONDS[dl.key] : 0;
-  if (!secs) return null;
-  for (var i = 1; i < starts.length; i++) {
-    if (starts[i] - now < secs) {
-      var who = i < state.stages.length ? 'Ruleset #' + (i + 1) : 'The closing ruleset (Afterwards)';
-      var lead = Math.floor((starts[i] - now) / 3600) * 3600;
-      return who + ' would start ' + secondsLabel(lead) + ' after ' + verb + ', sooner than the ' + dl.detailLabel
-        + ' deadline, so the approval condition would reject it and it would never take effect.' + fix;
-    }
-  }
-  return null;
+  try {
+    var now = Math.floor(Date.now() / 1000);
+    var chainId = state.queueHomeChainId || state.chainIds[0];
+    var firstStart = state.queueEditor
+      ? Number(state.queueOption && state.queueOption.requiresStartDate ? state.queueCustomStart : state.queueMustStartAtByChain && state.queueMustStartAtByChain[chainId] || 0)
+      : Number(state.stages[0].schedule) || now + 600;
+    var schedule = stageStarts(state, resolveStages(state), firstStart, now, chainId);
+    return scheduleIsFresh(schedule.validUntil, now) ? null : 'This schedule has no usable execution window. Choose a later ruleset start, lengthen an earlier cycle, or shorten its notice.';
+  } catch (error) { return error.message; }
 }
 
 // Returns the index of the first non-final stage with no duration (which would break sequencing), or -1.
@@ -1736,13 +1703,13 @@ function revStageEditor(stage, idx, state, render) {
 // The previous stage's autocut interval in days (0 if it has none) — the cycle boundary the next stage snaps to.
 function revPrevCutFreqDays(state, idx) {
   var prev = state.stages[idx - 1];
-  return (prev && prev.issuanceCutOn && Number(prev.cutFreqDays) > 0) ? Math.max(1, Math.round(Number(prev.cutFreqDays))) : 0;
+  return (prev && prev.issuanceCutOn && Number(prev.cutFreqDays) > 0) ? Math.round(Number(prev.cutFreqDays) * 86400) / 86400 : 0;
 }
 // Stage idx's "days after the previous stage", snapped to a positive multiple of the previous stage's cut interval.
 function revStageDaysAfter(state, idx) {
   var freq = revPrevCutFreqDays(state, idx);
-  var d = Math.max(1, Math.round(Number(state.stages[idx].startDaysAfter) || 30));
-  if (freq > 0) d = Math.max(freq, Math.round(d / freq) * freq);
+  var d = Math.round(Math.max(1, Number(state.stages[idx].startDaysAfter) || 30) * 86400) / 86400;
+  if (freq > 0) d = Math.max(Math.round(freq * 86400), Math.ceil(Math.round(d * 86400) / Math.round(freq * 86400)) * Math.round(freq * 86400)) / 86400;
   return d;
 }
 
@@ -3716,7 +3683,7 @@ function reviewSummary(state) {
   c.appendChild(row('Name', state.details.name || '—'));
   c.appendChild(row('Accounting token', surplusTokenLabel(state) + (state.swapRouter ? ' (+ any via router)' : '')));
   c.appendChild(row('Launch', state.stages[0] && state.stages[0].schedule
-    ? new Date(Number(state.stages[0].schedule) * 1000).toLocaleString() : 'Immediately'));
+    ? new Date(Number(state.stages[0].schedule) * 1000).toLocaleString() : (resolveStages(state).length > 1 || state.chainIds.length > 1 ? 'About 10 minutes after preparation' : 'Immediately')));
   c.appendChild(row('Rulesets', String(state.stages.length)));
   state.stages.forEach(function (s, i) { c.appendChild(rowBullets('Ruleset #' + (i + 1), stageSummaryParts(s, i, state))); });
   if (afterApplies(state)) {
@@ -3953,7 +3920,10 @@ async function verifyCreateDirectLeg(session, plan) {
     || (tx.chainId != null && Number(tx.chainId) !== Number(plan.chainId))) {
     throw new Error('The submitted transaction on ' + chainName(plan.chainId) + ' does not match the saved launch. No launch was resubmitted.');
   }
-  if (receipt.status === 'success') plan.status = 'confirmed';
+  if (receipt.status === 'success') {
+    assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', plan.chainId), null, plan.rulesetCount);
+    plan.status = 'confirmed';
+  }
   else if (receipt.status === 'reverted') {
     plan.failedHashes = (plan.failedHashes || []).concat([plan.hash]);
     plan.hash = null;
@@ -4020,13 +3990,21 @@ async function executeCreateDirectSession(state, session, resumed) {
     for (var k = 0; k < remaining.length; k++) {
       var plan = remaining[k];
       if (!getAccount() || getAccount().toLowerCase() !== session.account.toLowerCase()) throw new Error('Connected account changed. Reconnect the launching wallet to continue.');
-      plan.status = 'awaiting-wallet';
-      saveCreateDirectSession(state, session);
+      assertScheduleFresh(plan.scheduleValidUntil);
       push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
       try {
         var hash = await execTx({ chainId: plan.chainId, address: plan.address, abi: plan.abi,
           functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value, skipConfirm: true,
           trackSavedLaunch: true,
+          onSending: function () {
+            plan.status = 'awaiting-wallet';
+            try { saveCreateDirectSession(state, session); }
+            catch (error) { plan.status = 'ready'; throw error; }
+          },
+          onBeforeWriteAborted: function () {
+            if (!plan.hash && plan.status === 'awaiting-wallet') { plan.status = 'ready'; saveCreateDirectSession(state, session); }
+          },
+          assertWriteState: function () { assertScheduleFresh(plan.scheduleValidUntil); }, verifyReceipt: function (receipt) { assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', plan.chainId), null, plan.rulesetCount); },
           onStatus: function (message, kind, meta) {
             if (meta && meta.hash) { plan.hash = meta.hash; plan.status = 'submitted'; saveCreateDirectSession(state, session); }
             push(message, kind);
@@ -4044,7 +4022,7 @@ async function executeCreateDirectSession(state, session, resumed) {
       }
     }
   }
-  await captureDeployed(state, session.plans[0].chainId, session.plans[0].hash);
+  await captureDeployed(state, session.plans[0].chainId, session.plans[0].hash, session.plans[0].rulesetCount);
   state._deployedChains = session.plans.map(function (plan) { return plan.chainId; });
   clearCreateDirectSession(state);
 }
@@ -4071,6 +4049,13 @@ async function monitorCreateRelayr(state, session, resumed) {
       if (state._render) state._render();
     }, 2500, resumed ? 60 * 1000 : undefined, expected, session.expectedTransactions);
     await verifyRelayrDestinationRecords(session.expectedTransactions, records);
+    await Promise.all(records.map(async function (record, index) {
+      var chainId = Number(session.chains[index].id);
+      var count = session.rulesetCountByChain && session.rulesetCountByChain[chainId];
+      if (!(count > 1)) return;
+      var receipt = await createPublicClientForChain(chainId).getTransactionReceipt({ hash: relayrDestinationHash(record) });
+      assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', chainId), null, count);
+    }));
     state.deployProgress = null;
     return records;
   } catch (error) {
@@ -4089,10 +4074,13 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
   var panel = el('div', 'relayr-pending-panel create-relayr-receipt');
   var progress = relayrProgress(session.records, session.expectedCount);
   var paymentExpired = session.paymentState === 'expired';
+  var scheduleExpired = relayrScheduleCanBeRetired(session);
   renderRelayrReceiptInto(panel, session, {
     stateLabel: function (record) { var s = relayrChainStatus(record); return { text: s.label, kind: s.kind }; },
     chainNameOf: chainName,
-    noteText: paymentExpired
+    noteText: scheduleExpired
+      ? 'This launch schedule expired before payment. Check that every original request is expired and unused, then rebuild. Its receipt and nonce reservations stay saved for recovery.'
+      : paymentExpired
       ? 'The Relayr quote expired. Keep the payment hash and bundle ID, and review every destination before creating a new quote.'
       : session.paymentState === 'publication'
       ? 'Signed launch requests were submitted for a quote, but the response was not captured. Recover that bundle before signing or funding another launch.'
@@ -4107,7 +4095,15 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
         : 'The payment receipt is saved. Checking status never signs, pays, or creates another bundle.'),
   });
   var action = el('button', 'create-btn ghost'); action.type = 'button'; action.style.marginTop = '10px';
-  if (paymentExpired || progress.failed) {
+  if (scheduleExpired) {
+    action.textContent = 'Rebuild expired launch'; action.disabled = !!checking;
+    action.addEventListener('click', async function () {
+      if (!window.confirm('Check and retire this expired unpaid launch? Every original request must be expired and unused onchain. Its evidence stays saved; rebuilding will require a fresh review and will not send automatically.')) return;
+      action.disabled = true;
+      try { await retireExpiredUnpaidRelayrSession(CREATE_RELAYR_SCOPE, session); if (onClear) onClear(); }
+      catch (error) { action.disabled = false; var line = el('p', 'create-hint'); line.textContent = error.message || String(error); panel.appendChild(line); }
+    });
+  } else if (paymentExpired || progress.failed) {
     action.textContent = 'Clear saved receipt';
     action.addEventListener('click', function () {
       if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already deployed. Review every chain before launching any missing work.')) return;
@@ -4218,7 +4214,7 @@ async function runDeploy(state, owner) {
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
-    await captureDeployed(state, restoredChain, relayrDestinationHash(restoredTxs[0]));
+    await captureDeployed(state, restoredChain, relayrDestinationHash(restoredTxs[0]), restoredRelayr.rulesetCountByChain && restoredRelayr.rulesetCountByChain[restoredChain]);
     state._deployedChains = restoredRelayr.chains.map(function (chain) { return Number(chain.id); });
     clearRelayrPendingSession(CREATE_RELAYR_SCOPE, restoredRelayr);
     state._relayrPending = null;
@@ -4272,13 +4268,10 @@ async function runDeploy(state, owner) {
   // bake it into stage starts (matching the cross-chain config hash → deterministic sucker/project
   // addresses); custom multichain uses it for the first ruleset's mustStartAtOrAfter so every chain's
   // project begins at the SAME moment rather than at each chain's own block-confirmation time.
-  // FROZEN deliberately: every chain must encode the SAME start or the cross-chain
-  // configuration hash (and the deterministic addresses derived from it) diverge. The
-  // consequence is that a launch EXECUTED much later — a Safe collecting signatures over
-  // days — begins with stage 1 already in the past and some issuance-cut cycles elapsed
-  // versus what was reviewed. That is inherent to the hash requirement, not a bug to fix
-  // here; the review screen warns Safe users (see confirmDeployStartNote).
-  var deployStart = Math.floor(Date.now() / 1000) + 600;
+  // Keep the reviewed pin across every chain and saved retry. Known notice hooks
+  // give the plan a concrete execution window; expired unsent plans need fresh review.
+  state._schedulePreparedAt = Math.floor(Date.now() / 1000);
+  var deployStart = state._schedulePreparedAt + 600;
 
   // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
   // BEFORE the user signs or pays anything.
@@ -4330,7 +4323,9 @@ async function runDeploy(state, owner) {
       isRev ? ['Token', state.details.ticker || 'TOKEN'] : null,
       ['Accepts', (state.accepts || []).map(function (t) { return t === 'eth' ? 'ETH' : t === 'usdc' ? 'USDC' : 'custom token'; }).join(', ') || 'ETH'],
       [isRev ? 'Stages' : 'Rulesets', String((state.stages || []).length || 1)],
+      plans[0].rulesetStarts && plans[0].rulesetStarts[0] ? ['First ruleset starts', new Date(plans[0].rulesetStarts[0] * 1000).toLocaleString()] : null,
       ['Creation fee', formatEther(plans[0].value) + ' ETH per chain'],
+      launchScheduleLimit(plans) != null ? ['Execute before', new Date(launchScheduleLimit(plans) * 1000).toLocaleString() + ' to preserve this schedule; rebuild if it expires. Pending wallet or Safe transactions cannot be expired by this page.'] : null,
     ].filter(Boolean),
   };
   var reviewOk = await confirmTransactionModal(reviewPayload, {
@@ -4349,11 +4344,17 @@ async function runDeploy(state, owner) {
   var confirmCtx = typeof reviewOk === 'object' ? reviewOk : null;
   function pushLive(text, kind) { push(text, kind); if (confirmCtx) confirmCtx.showStatus(text, kind === 'err' ? 'error' : 'pending'); }
 
+  // A saved exact call survives semantic receipt failures without creating a new pinned launch on retry.
+  if (plans.length === 1 && !isSafeConnected()) {
+    return runCreateDirectSession(state, { account: signer, recipientIds: 'onchain', plans: plans.map(function (plan) { return Object.assign({}, plan, { hash: null, status: 'ready' }); }) }, false);
+  }
+
   // Single chain → simulate locally (eth_call), then one direct wallet transaction (creation fee as
   // msg.value). Already reviewed above, so skip executeTransaction's own confirm (the wallet still shows
   // its native signing prompt).
   if (plans.length === 1) {
     var p0 = plans[0];
+    assertScheduleFresh(p0.scheduleValidUntil);
     try {
       pushLive('Simulating the ' + (state.projectType === 'revnet' ? 'revnet deploy' : 'launch') + ' on ' + chainName(p0.chainId) + '…');
       try {
@@ -4363,10 +4364,11 @@ async function runDeploy(state, owner) {
         throw new Error('Could not simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
       }
       if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the launch transaction again.');
+      assertScheduleFresh(p0.scheduleValidUntil);
       pushLive('Confirm in your wallet for ' + chainName(p0.chainId) + ' (incl. ' + formatEther(p0.value) + ' ETH creation fee)…');
-      var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, skipConfirm: true, onStatus: function (m, kind, meta) { push(m); if (confirmCtx) confirmCtx.showStatus(m, 'pending', meta); } });
+      var hash0 = await execTx({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, skipConfirm: true, assertWriteState: function () { assertScheduleFresh(p0.scheduleValidUntil); }, verifyReceipt: function (receipt) { assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', p0.chainId), null, p0.rulesetCount); }, onStatus: function (m, kind, meta) { push(m); if (confirmCtx) confirmCtx.showStatus(m, 'pending', meta); } });
       pushLive('Reading the new project…');
-      await captureDeployed(state, p0.chainId, hash0);
+      await captureDeployed(state, p0.chainId, hash0, p0.rulesetCount);
     } catch (e) {
       if (confirmCtx) confirmCtx.showStatus(friendlyDeployError(e), 'error');
       throw e;
@@ -4390,12 +4392,13 @@ async function runDeploy(state, owner) {
     push('Estimating + signing for ' + chainName(pk.chainId) + '…');
     var gas = await estimateLaunchGas(pk, signer);
     var data = encodeFunctionData({ abi: pk.abi, functionName: pk.functionName || 'launchProjectFor', args: pk.args });
-    txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, data, gas, pk.value));
+    assertScheduleFresh(pk.scheduleValidUntil);
+    txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, data, gas, pk.value, pk.scheduleValidUntil));
   }
   push('Sending to Relayr to simulate + quote…');
   var quote;
   try {
-    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, chains: plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }) });
+    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, scheduleValidUntil: launchScheduleLimit(plans), rulesetCountByChain: Object.fromEntries(plans.map(function (p) { return [p.chainId, p.rulesetCount || state.stages.length]; })), chains: plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }) });
   } catch (error) {
     state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
     throw error;
@@ -4407,6 +4410,7 @@ async function runDeploy(state, owner) {
 async function fundCreateRelayrQuote(state, signer, quote, chains) {
   var push = state._push;
   if (!signer || !getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connect the original launching wallet to fund this saved quote.');
+  assertScheduleFresh(state._relayrPending && state._relayrPending.scheduleValidUntil);
   var options = relayrPaymentOptions(quote);
   if (!options.length) throw new Error('Relayr returned no payment options.');
   // Step 2: let the user pick a pay option from the quote (cheapest first), then pay it.
@@ -4422,7 +4426,9 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   var cur = await wallet.getChainId();
   if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
   push('Pay once on ' + chainName(pay.chain) + ' (' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
+  var savedSchedule = state._relayrPending || {};
   var paidSession = {
+    scheduleValidUntil: savedSchedule.scheduleValidUntil, rulesetCountByChain: savedSchedule.rulesetCountByChain,
     account: signer,
     bundleUuid: quote.bundle_uuid,
     paymentHash: null,
@@ -4438,6 +4444,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
     state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
   }, quote.bundle_uuid, undefined, function () {
     requireUnpaidRelayrSession(CREATE_RELAYR_SCOPE, quote.bundle_uuid);
+    assertScheduleFresh(paidSession.scheduleValidUntil);
     paidSession.paymentState = 'sending';
     state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
     if (state._relayrPending.persisted === false) throw new Error('The payment request could not be saved. Restore browser storage before funding this quote.');
@@ -4451,7 +4458,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   state.deployChains = chains.map(function (chain) { return Number(chain.id); });
   var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
-  await captureDeployed(state, Number(chains[0].id), relayrDestinationHash(finalRelayrTxs[0]));
+  await captureDeployed(state, Number(chains[0].id), relayrDestinationHash(finalRelayrTxs[0]), paidSession.rulesetCountByChain && paidSession.rulesetCountByChain[chains[0].id]);
   state._deployedChains = state.deployChains.slice();
   clearRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession);
   state._relayrPending = null;
@@ -4460,6 +4467,10 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
 // Gas for the inner launch call (the forwarder forwards this much). Estimate the direct call + buffer;
 // fall back generously if estimation throws. Includes the creation fee as value so the estimate runs
 // (a 0-value estimate would hit the InvalidCreationFee revert).
+function launchScheduleLimit(plans) {
+  var limits = plans.map(function (plan) { return plan.scheduleValidUntil; }).filter(function (limit) { return limit != null; });
+  return limits.length ? Math.min.apply(Math, limits) : null;
+}
 function estimateLaunchGas(plan, account) {
   var pub = createPublicClientForChain(plan.chainId);
   return pub.estimateContractGas({ account: account, address: plan.address, abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value || 0n })
@@ -4495,7 +4506,7 @@ function execTx(opts) {
 
 // After a successful deploy, decode this transaction's JBProjects.Create event for the exact project id.
 // Reading the global count here is race-prone: another project could be created before the receipt is processed.
-function captureDeployed(state, chainId, txHash) {
+function captureDeployed(state, chainId, txHash, expectedCount) {
   if (!txHash) { state.deployed = { chainId: chainId, txHash: null }; return Promise.resolve(); }
   var projects = getAddress('JBProjects', chainId);
   var createEvent = [{ type: 'event', name: 'Create', inputs: [
@@ -4511,9 +4522,13 @@ function captureDeployed(state, chainId, txHash) {
       } catch (_) {}
       return false;
     });
+    assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', chainId), pid, expectedCount);
     if (pid == null) throw new Error('Create event not found');
     state.deployed = { chainId: chainId, projectId: pid, txHash: txHash, route: projectRouteFor(chainId, pid) };
-  }).catch(function () { state.deployed = { chainId: chainId, txHash: txHash }; });
+  }).catch(function (error) {
+    if (error.code === 'RULESET_ORDER_UNVERIFIED') { state.deployed = null; throw error; }
+    state.deployed = { chainId: chainId, txHash: txHash };
+  });
 }
 
 // Chain-id → discover route slug (must match discover.js CHAIN_SLUGS exactly) for the "Go to project" link.
@@ -4531,8 +4546,8 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var chainOwner = chainAddr(state, chainId, 'owner', owner);
   if (isAddr(chainOwner)) owner = chainOwner;
   // Multichain "start immediately" → pin every chain's first ruleset to the one shared deploy-time start
-  // (~10 min ahead) so they all begin at the same moment. Single chain starts at its own deploy block (0).
-  var immediateStart = multi ? deployStart : 0;
+  // (~10 min ahead). Staged single-chain launches use the same pin so every follower has a stable parent.
+  var immediateStart = multi || resolveStages(state).length > 1 ? (deployStart || Math.floor(Date.now() / 1000) + 600) : 0;
   // Always deploy a 721 shop hook (empty if no items) so any project can sell NFTs later without re-deploying —
   // matches revnets, which always ship a default empty 721 hook. build721Config still filters items per chain;
   // _deploy721Hook is unconditional at launch (the tiers.length gate is queue-only, so 0 tiers won't revert).
@@ -4541,7 +4556,8 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
   var firstStart = effectiveStages[0].schedule ? Number(effectiveStages[0].schedule) : (immediateStart || 0);
-  var musts = stageStarts(state, effectiveStages, firstStart, Math.floor(Date.now() / 1000), chainId).musts;
+  var schedule = stageStarts(state, effectiveStages, firstStart, Math.floor(Date.now() / 1000), chainId);
+  var musts = schedule.musts;
   var stageRulesets = function (payHook) {
     return buildRulesetConfigs(
       effectiveStages.map(function (s, i) {
@@ -4554,12 +4570,14 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
 
   if (!multi && !hasNfts) {
     return {
+      scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts,
       contract: 'JBController', address: getAddress('JBController', chainId), abi: launchProjectAbi,
       args: [owner, projectUri, stageRulesets(false), terminalConfigs, ''],
     };
   }
   if (!multi && hasNfts) {
     return {
+      scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts,
       contract: 'JB721TiersHookProjectDeployer', address: getAddress('JB721TiersHookProjectDeployer', chainId), abi: deployer721Abi,
       args: [owner, build721Config(state, projectUri, chainId),
         { projectUri: projectUri, rulesetConfigurations: stageRulesets(true), terminalConfigurations: terminalConfigs, memo: '' },
@@ -4573,10 +4591,10 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var missing = sucker.missing.length > 0;
   if (hasNfts) {
     var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions), salt: salt };
-    return { contract: 'JBOmnichainDeployer', address: addr, abi: omnichain721Abi, missingSuckers: missing,
+    return { scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts, contract: 'JBOmnichainDeployer', address: addr, abi: omnichain721Abi, missingSuckers: missing,
       args: [owner, projectUri, deploy721, rulesetsFull, terminalConfigs, '', sucker] };
   }
-  return { contract: 'JBOmnichainDeployer', address: addr, abi: omnichainAbi, missingSuckers: missing,
+  return { scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts, contract: 'JBOmnichainDeployer', address: addr, abi: omnichainAbi, missingSuckers: missing,
     args: [owner, projectUri, rulesetsFull, terminalConfigs, '', sucker] };
 }
 
@@ -4602,7 +4620,7 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
       // duration = issuanceCutFrequency). A queued next stage only takes effect on a cycle boundary, so
       // its start must be a positive multiple of the cut interval — snap it so the encoded start matches
       // what the controller will actually do.
-      start = prevStart + revStageDaysAfter(state, i) * 86400;
+      start = prevStart + Math.round(revStageDaysAfter(state, i) * 86400);
     }
     prevStart = start;
     stages.push(buildRevStage(state, stage, i, chainId, start));
@@ -4626,11 +4644,13 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var hasItems = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
   if (hasItems) {
     return {
+      rulesetCount: stages.length,
       contract: 'REVDeployer', address: addr, abi: revDeploy721Abi, functionName: 'deployFor', missingSuckers: missing,
       args: [0n, configuration, accept, suckerArg, buildRevnet721Config(state, projectUri, chainId, salt), []],
     };
   }
   return {
+      rulesetCount: stages.length,
     contract: 'REVDeployer', address: addr, abi: revDeployAbi, functionName: 'deployFor', missingSuckers: missing,
     args: [0n, configuration, accept, suckerArg],
   };
@@ -4759,18 +4779,21 @@ function buildRevStage(state, stage, idx, chainId, start) {
 
 // Assemble a single ruleset state object (createDefaultRuleset shape) from the wizard steps.
 // Build one JBRulesetConfig from a stage. `mustStartAtOrAfter` comes from stageStarts: stage 1's scheduled
-// time / multichain pin / 0, later stages 0 (next cycle boundary) or an absolute N-cycles/date start.
+// time or shared pin; every follower carries its explicit cycle-aligned start.
 // Encode a queue's rulesets for one chain — the same stage→JBRulesetConfig[] mapping the launcher uses
 // (resolveStages applies the "Afterwards" choice; assembleRuleset encodes each), minus the NFT/terminal
-// scaffolding. `immediateStart` aligns the first ruleset across chains for an omnichain queue (0 = next
-// cycle on a single chain). Returns the JBRulesetConfig[] for JBController/JBOmnichainDeployer.queueRulesetsOf.
+// scaffolding. `immediateStart` aligns the first ruleset across chains. Multi-stage queues pin
+// every boundary using their live parent; single-stage queues retain their ordinary next-cycle behavior.
 export function buildQueueRulesetConfigs(state, chainId, immediateStart, opts) {
   var durationBad = durationIssue(state);
   if (durationBad) throw new Error(durationBad);
   var effectiveStages = resolveStages(state);
   var deadlineOn = deadlineApplies(state);
   var firstStart = effectiveStages[0].schedule ? Number(effectiveStages[0].schedule) : (immediateStart || 0);
-  var musts = stageStarts(state, effectiveStages, firstStart, Math.floor(Date.now() / 1000), chainId).musts;
+  var schedule = stageStarts(state, effectiveStages, firstStart, Math.floor(Date.now() / 1000), chainId);
+  var musts = schedule.musts;
+  state.queueSchedules = state.queueSchedules || {};
+  state.queueSchedules[chainId] = schedule;
   return buildRulesetConfigs(effectiveStages.map(function (s, i) {
     var userIdx = Math.min(i, state.stages.length - 1);
     return assembleRuleset(state, s, userIdx, chainId, musts[i], deadlineOn);
@@ -5477,7 +5500,7 @@ function ipfsHttp(uri) {
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
   resolveEns, attachEns,
-  renderDeploy, runDeploy, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
+  renderDeploy, runDeploy, captureDeployed, createRelayrReceiptNode, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
   suckerConfigFor, tokenMappingFor, verifyLegacyItemSplitIds,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
@@ -5486,7 +5509,7 @@ export const __test = {
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
   recomputeCustomDuration, durationIssue,
   verifyLaunchFeedCoverage, launchBaseCurrencies, revnetBaseCurrencyId,
-  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft, noticeClashIssue, stageMustStartAtOrAfter, stageStarts,
+  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft, noticeClashIssue, stageStarts,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
   revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,

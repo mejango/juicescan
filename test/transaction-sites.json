@@ -177,14 +177,15 @@
     },
     "src/relayr.js": {
       "counts": {
-        "providerRequest": 6,
+        "providerRequest": 7,
         "relayrPay": 2,
         "relayrPostBundle": 4,
         "sendTransaction": 1,
         "signTypedData": 1
       },
       "actions": [
-        "Relayr forwarded bundle / payment"
+        "Relayr forwarded bundle / payment",
+        "Expired unpaid schedule retirement"
       ]
     },
     "src/reserved-component.js": {

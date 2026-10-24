@@ -48,6 +48,20 @@ describe('Relayr preserves the original wallet identity', () => {
     expect(decoded.args[0]).toMatchObject({ from: state.account, to: TARGET, data: DATA, value: 123n, gas: 700000n });
   });
 
+  it('caps the signed forwarder request at the reviewed schedule deadline', async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 300;
+    const tx = await buildForwardedTx(8453, state.account, TARGET, DATA, 400000n, 0n, deadline);
+    expect(state.wallet.signTypedData.mock.calls[0][0].message.deadline).toBe(deadline);
+    const abi = state.client.readContract.mock.calls.find(([request]) => request.functionName === 'nonces')[0].abi;
+    expect(Number(decodeFunctionData({ abi, data: tx.data }).args[0].deadline)).toBe(deadline);
+  });
+
+  it('refuses an expired reviewed schedule before opening the signing prompt', async () => {
+    const deadline = Math.floor(Date.now() / 1000) - 1;
+    await expect(buildForwardedTx(8453, state.account, TARGET, DATA, 400000n, 0n, deadline)).rejects.toThrow(/schedule expired/);
+    expect(state.wallet.signTypedData).not.toHaveBeenCalled();
+  });
+
   it.each([false, undefined, 'true'])('does not sign for a recipient returning %s instead of trusted=true', async value => {
     trusted = value;
     await expect(buildForwardedTx(8453, state.account, TARGET, DATA)).rejects.toThrow(/does not support the trusted forwarder/);
