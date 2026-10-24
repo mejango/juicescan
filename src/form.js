@@ -5,7 +5,7 @@
 import { encodeFunctionData, toFunctionSelector } from 'viem';
 import { getABI } from './abi-registry.js';
 import { renderInput } from './inputs.js';
-import { getAccount, getWalletClient, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
+import { getAccount, getWalletClient, invokeWallet, isSafeConnected, createPublicClientForChain, connect, onWalletChange, switchChain } from './wallet.js';
 import { holdForWrite, heldWriteGate, sendHeldWrite, confirmTransactionModal, friendlyTransactionError, shouldKeepSubmittedTransactionPending, truncAddr, waitForTrackedTransactionReceipt } from './component-base.js';
 import { getCurrentChainId, setCurrentChainId, getManifestChains, getCustomRpc, setCustomRpc, CHAINS, chainNameFor } from './chain.js';
 import { parseAmount, decodeError } from './encoding.js';
@@ -326,6 +326,7 @@ function executeRead(fn, inputs, contractAddress, abi, outputArea, chainId) {
 function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi, outputArea, chainId) {
   outputArea.innerHTML = '';
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   var pub = createPublicClientForChain(chainId);
   if (!wallet) { outputArea.appendChild(renderError('Connect wallet to transact')); return; }
   if (!contractAddress) { outputArea.appendChild(renderError('No contract address for this chain')); return; }
@@ -389,7 +390,7 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
         var gas = await contractGasWithHeadroom(pub, simulation.request);
         var sent = await sendHeldWrite(hold, function () {
           if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-        }, function () { return wallet.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas })); });
+        }, function () { return invokeWallet(chainId, reviewedAccount, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas })); }); });
         heldReservation = sent.reservation;
         return sent.hash;
       }).then(function(hash) {

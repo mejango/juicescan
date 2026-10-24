@@ -156,3 +156,5 @@ an unchanged nonce. It archives the original receipt and chain evidence before r
 nonce reservations remain, and no request is signed, published or funded automatically. Tests in
 `relayr-nonce-reservations.test.js` reject live, consumed, unknown and sending requests and preserve the
 active journal when archive storage fails. Creation UI tests verify the explicit confirmed Rebuild action.
+
+Current wallet invocation is owned by `wallet.invokeWallet`, shared by every direct write and typed-data signature owner. `wallet-invocation-race.test.js` executes actual transaction, Permit2 approval and forwarder sources across held gas/chain reads, connector replacement, changed account/network/Safe route, expiry and unknown send outcomes. Pre-invocation refusals release only proven-unsent journals. Existing transaction fixtures execute the production helper against their explicit wallet getters.

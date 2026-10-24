@@ -398,3 +398,51 @@ Expired-quote recovery refinement: a strict quoted/unpaid expired schedule expos
 Astra recovery follow-up: Discover reload has no in-memory funding quote and routes to monitorRelayrSession. Reuse the expired quoted recovery renderer in both funding and monitoring, rejecting expired preparation before generic paid/pending polling. Add restored-caller UI regression with no new sign, publish, chooser or payment. Canonical retirement authority and retained nonce evidence stay unchanged.
 
 Final verification on runtime c04b5b5: separate GPT Astra approved the final implementation and restored-quote delta, independently rerunning83recovery checks. Full coverage passes2,180tests across211files, Chromium passes148cases, and source327files, deployment parity100deployments, generated-source parity, dependency tree, transaction inventory119boundaries/28modules, live schema92documents, production build and unchanged gzip budgets all pass. Startup704,189/722,000bytes, distribution2,013,797/2,060,000bytes. Logs are /private/tmp/juicescan-stage-final2-*.log. Local production audit was previously rejected by automatic approval review because it uploads dependency metadata; unchanged dependencies and the hosted existing audit gate are the remaining release evidence. No contract changes, deployments, wallet submissions or pushes were performed.
+
+# Client convergence, 2026-10-24
+
+Workspace resources: `/Users/jango/Documents/jb/v6/evm/AGENTS.md`, `/Users/jango/Documents/jb/v6/evm/workflow/ponytail/SKILL.md`, `/Users/jango/Documents/jb/v6/evm/docs/PLAN_REFINEMENT.md`, root and local lessons. Parent convergence plan governs scope.
+
+## Plan refinement
+- **Objective:** Enforce five selected correctness rules throughout Juicescan; hold voting edits until clarified, preserve dirty checkout, no contracts, dependencies, merge or deployment.
+- **System fit:** Wallet owner resolves current connector at invocation preserving reviewed account, chain and Safe route; accounting identity, tier compiler and nullable read owners govern presentation and economics. Journals retain ambiguous submissions.
+- **Reuse and simplicity:** Add one shared current invocation boundary and reuse existing getters, accountingTokenContextKey, tier validators and balance completeness rather than scattered guards.
+- **Evidence and unknowns:** Cached origin/main c2ae52c matches parent-pinned refreshed main; this fetch failed DNS. Actual-source reproductions prove captured wallet and stale approval account defects; voting interpretation pending.
+- **Verification:** Actual-source await-race tests for same-account connector changes, account/chain/route changes, existing identity/tier/unknown data cases, source/inventory/build/unit/browser gates and network check limits.
+- **Resource budget:** Bounded invocation census plus shared owner, read-only delegated data census, reuse prior worktree locked dependencies; no audit expansion.
+
+- [x] Fix current wallet boundary and every applicable caller.
+- [x] Converge voting, token identity, reserved supply and unknown data.
+- [x] Verify and record review plus limits.
+
+## Plan refinement
+- **Objective:** Apply the user's clarified always-price-based governance policy: every newly compiled tier uses useVotingUnits=false, including restored legacy drafts and nonzero custom inputs.
+- **System fit:** nft721-build is the shared encoder; create/add-shop owners must stop offering custom voting controls while existing onchain tier displays remain truthful. Wallet/data ownership and release authority remain unchanged.
+- **Reuse and simplicity:** Remove the custom controls and neutralize legacy voting fields at the existing compiler; no new voting abstraction or migrated onchain state.
+- **Evidence and unknowns:** Parent relayed explicit user Yes always price-based; it supersedes earlier zero-only interpretation.
+- **Verification:** Assert zero/nonzero/custom-flag inputs compile price voting; assert creation/add-shop forms omit custom toggles, and run related tier/draft tests.
+- **Resource budget:** Small bounded policy update in current files and existing tests, followed by full owning checks; no new scope or dependencies.
+
+## Implementation review
+
+- [x] Rule 1: all new shared/create/add-shop tier compilers encode votingUnits=0 and useVotingUnits=false. Custom controls removed; legacy draft fields cannot reactivate custom voting. Voting-locked shops accept only free new price-based items, checked before pinning and again on authorization.
+- [x] Rule 2: wallet.invokeWallet resolves the current connector after gas/preparation and its own final chain RPC, checks account/network/View-as/Safe route and invokes synchronously. All existing contract-write/send/typed-signature sites share it. Same-account connector replacements use the replacement. Caller-specific schedule/quote freshness runs after that final RPC; proven-unsent journals release while actual send uncertainty remains held.
+- [x] Rule 3: accountingTokenContextKey owns custom chain/address identity; raw balances, funds descriptors/totals, same-symbol table cells and preview grouping preserve it. Authenticated native/USDC equivalence remains supported.
+- [x] Rule 4: shared tier compiler and saved unsigned tier policy reject positive reserves with supply 1; unlimited, supply 2 and unreserved supply 1 remain valid.
+- [x] Rule 5: failed balances stay nullable, Ops completeness checks every accounting token independently of gossip membership, partial per-chain/aggregate totals are unavailable, direct-sell routing withholds unknown spendable balance, and preview API rejects incomplete/malformed reads.
+
+Saved prepared direct launches and add-shop calls are validated before new authorization without modifying their bytes; submitted hashes reconcile first. Historical Relayr quotes have in-memory funding options only: after code reload a durable old quoted record cannot reconstruct a quote or fund it. Existing funded/published sessions retain exact passive reconciliation. No contract, Plugin, dependency-version, deployment or merge changes.
+
+Verification in progress: actual-source wallet13cases, data6suites42cases, focused tier/draft/recovery and transaction fixtures. Final Node22 full coverage uses a physical copy of the unchanged locked dependencies and two workers. Required source/deployment/generated/inventory/build/budget/browser checks follow.
+
+## Final verification, frozen source
+
+- [x] Full Node 22.23.4 coverage run: 213 suites, 2218 tests pass; every existing coverage floor passes. Overall statements 43.99%, branches 42.56%, functions 46.29%, lines 49.15%.
+- [x] Production browser suite: 148 checks pass across desktop, tablet, mobile and narrow widths on local port 4289, CI two workers.
+- [x] Locked dependency graph, source syntax (330 JavaScript files), pinned deployment parity, exact regeneration, transaction inventory (138 occurrences across 28 modules), production bundle and original bundle budgets pass.
+- [x] Artifact dependencies are a physical copy of the unchanged locked install. Startup 705754 bytes gzip / 722000 budget; total 2017134 / 2060000. No package, lockfile or generated source/data changes.
+- [x] Actual-source focused verification: nine affected suites, 159 tests pass; separate final narrow wallet/Safe review approved and its three suites / 31 tests pass. Frozen source SHA256: discover 2b481115cfc51dbd68e1308ac5ed265f2f6ec2292fd29ec26205350e7fe0ca67, safe-batch-ui f59c77e598d8e2813a5205fe9f866317ecf9d909dea7bc5c497a19e6d21d6c9f, wallet 2e57ae43ff33baea52caa4b1f28859d525eedf04fc1578a634283aad0f4ec7ec.
+
+Blocked external gates: production advisory audit and live GraphQL schema validation initially failed DNS in the sandbox. Automatic approval review rejected the combined network escalation because dependency metadata would be sent to external services and the schema endpoint lacked specific destination/egress authorization. No workaround or retry followed. These are not passed checks; the parent owns the final explicit approval question. npm audit targets registry.npmjs.org; schema introspection targets bendystraw.up.railway.app/graphql and bendystraw-testnet.up.railway.app/graphql, with repository GraphQL documents validated locally.
+
+Review: all five selected client rules are implemented, relevant existing onchain displays and historical submitted recovery remain truthful, and no contract changes, SDK adoption, new dependency versions, push, merge, deployment or wallet transaction occurred. Original dirty checkout remains untouched. The parent recovered the accidentally overwritten root plan exactly; this isolated checkout records a preventive path lesson.

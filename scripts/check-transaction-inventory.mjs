@@ -17,6 +17,7 @@ if (manifest.version !== 1) {
 // therefore an explicit review event even when the new code happens to reuse a
 // familiar function name.
 const patterns = {
+  invokeWallet: /\binvokeWallet\s*\(/g,
   executeTransaction: /\bexecuteTransaction\s*\(/g,
   relayrPostBundle: /\brelayrPostBundle\s*\(/g,
   relayrPay: /\brelayrPay\s*\(/g,

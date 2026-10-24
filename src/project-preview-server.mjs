@@ -146,6 +146,7 @@ function formatUsdScaled(raw) {
 export function formatPreviewBalance(deployments) {
   const buckets = new Map();
   let unnamedUsd = 0n;
+  if ((deployments || []).some((deployment) => !Array.isArray(deployment?.projectTokenBalances?.items))) return 'Unavailable';
   const rows = (deployments || []).flatMap((deployment) =>
     (deployment?.projectTokenBalances?.items || []).map((row) => ({ ...row, chainId: deployment.chainId })));
   for (const row of rows) {
@@ -155,18 +156,20 @@ export function formatPreviewBalance(deployments) {
       const symbol = (typeof row?.tokenSymbol === 'string' ? row.tokenSymbol.trim() : '') || known?.symbol || '';
       const decimals = Number(row?.decimals ?? known?.decimals);
       if (!symbol || !Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) {
-        unnamedUsd += BigInt(row?.balanceUsd || 0);
+        if (row?.balanceUsd == null) return 'Unavailable';
+        unnamedUsd += BigInt(row.balanceUsd);
         continue;
       }
+      if (row.balance == null) return 'Unavailable';
       const key = known ? `${known.symbol}:${decimals}` : `${row.chainId}:${address}:${decimals}`;
       const current = buckets.get(key);
       buckets.set(key, {
         symbol,
         decimals,
-        amount: (current?.amount || 0n) + BigInt(row.balance || 0),
+        amount: (current?.amount || 0n) + BigInt(row.balance),
       });
     } catch {
-      // Unknown stays unknown.
+      return 'Unavailable';
     }
   }
   const held = [...buckets.values()].filter((bucket) => bucket.amount > 0n);

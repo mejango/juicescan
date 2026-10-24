@@ -53,6 +53,20 @@ describe('project link previews', () => {
     ] } }])).toBe('$5.00');
   });
 
+  it('separates identical custom addresses on different chains', () => {
+    const token = '0x1111111111111111111111111111111111111111';
+    expect(formatPreviewBalance([1, 10].map((chainId, index) => ({ chainId, projectTokenBalances: { items: [{ token, tokenSymbol: 'XYZ', decimals: 0, balance: String(index + 1) }] } })))).toBe('1 XYZ + 2 XYZ');
+  });
+
+  it('keeps absent, failed and incomplete balance reads unavailable', () => {
+    const token = '0x000000000000000000000000000000000000eeee';
+    const known = { chainId: 1, projectTokenBalances: { items: [{ token, tokenSymbol: 'ETH', decimals: 18, balance: '1000000000000000000' }] } };
+    expect(formatPreviewBalance([known, { chainId: 10 }])).toBe('Unavailable');
+    expect(formatPreviewBalance([{ ...known, projectTokenBalances: { items: [{ token, tokenSymbol: 'ETH', decimals: 18, balance: null }] } }])).toBe('Unavailable');
+    expect(formatPreviewBalance([{ ...known, projectTokenBalances: { items: [{ token, tokenSymbol: 'ETH', decimals: 18, balance: 'failed' }] } }])).toBe('Unavailable');
+    expect(formatPreviewBalance([{ ...known, projectTokenBalances: { items: [{ token: '0x1111111111111111111111111111111111111111', balance: '1', decimals: null, balanceUsd: null }] } }])).toBe('Unavailable');
+  });
+
   it('uses a plain-text description when a project has no tagline', () => {
     expect(projectPreviewSlogan(null, '<p>Join our <b>creative</b> mission.</p>')).toBe(
       'Join our creative mission.',

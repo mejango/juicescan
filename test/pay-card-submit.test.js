@@ -1,11 +1,12 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { beforeEach, expect, it, vi } from 'vitest';
 const runtime = vi.hoisted(() => ({ prepare: vi.fn(), execute: vi.fn(), contractRead: vi.fn(), sign: vi.fn(), inventory: vi.fn(), account: '0x1111111111111111111111111111111111111111' }));
 vi.mock('../src/pay-prepare.js', async original => ({ ...await original(), prepareUserPay: runtime.prepare }));
 vi.mock('../src/nft-inventory-read.js', async original => ({ ...await original(), getProjectNftInventory: (...args) => runtime.inventory(...args) }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account, getViewAs: () => null, isSafeConnected: () => false,
-  executeTransaction: runtime.execute,
-  getWalletClient: () => ({ getChainId: async () => 8453, signTypedData: runtime.sign }),
+  executeTransaction: runtime.execute, invokeWallet: (...args) => walletInvocationFor(runtime)(...args),
+  getWalletClient: () => runtime.wallet,
   createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => '0x', getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
 import { getAddress } from '../src/abi-registry.js';
 import { buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
@@ -27,6 +28,7 @@ const prepared = (metadata, minReturnedTokens) => ({ metadata, minReturnedTokens
 
 beforeEach(() => {
   document.body.innerHTML = ''; vi.unstubAllGlobals();
+  runtime.wallet = { getChainId: async () => 8453, signTypedData: runtime.sign };
   contexts = [{ token: NATIVE, decimals: 18, currency: 61166 }]; terminals = [terminal];
   runtime.prepare.mockReset(); runtime.execute.mockReset(); runtime.sign.mockReset(); runtime.inventory.mockReset().mockResolvedValue(null);
   runtime.contractRead.mockReset().mockImplementation(async call => {

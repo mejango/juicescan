@@ -1,3 +1,4 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData } from 'viem';
 
@@ -5,7 +6,7 @@ const state = vi.hoisted(() => ({ wallet: null, client: null,
   account: '0x1111111111111111111111111111111111111111',
   forwarder: '0x2222222222222222222222222222222222222222' }));
 vi.mock('../src/component-base.js', () => ({
-  getWalletClient: () => state.wallet, getAccount: () => state.account,
+  invokeWallet: (...args) => walletInvocationFor(state)(...args), isSafeConnected: () => false, getWalletClient: () => state.wallet, getAccount: () => state.account,
   createPublicClientForChain: () => state.client, getAddress: () => state.forwarder,
   switchChain: vi.fn(), getViewAs: () => null, VIEW_AS_TX_ERROR: 'View as is read-only.',
   waitForTrackedTransactionReceipt: vi.fn(), confirmTransactionModal: vi.fn(),

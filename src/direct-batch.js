@@ -103,7 +103,7 @@ export async function runDirectBatch(calls, options, locked) {
         });
       } catch (error) {
         // A definite wallet rejection did not broadcast. Transport errors remain blocked with the saved marker.
-        if (session.hashes[index] === 'sending' && error && (error.code === 4001 || error.code === 'ACTION_REJECTED')) {
+        if (session.hashes[index] === 'sending' && error && (error.walletNotInvoked || error.code === 4001 || error.code === 'ACTION_REJECTED')) {
           session.hashes[index] = null; persist();
         }
         throw error;

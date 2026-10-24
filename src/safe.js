@@ -11,7 +11,7 @@
 // the "Open in Safe app" deep link.
 
 import { hashTypedData, getAddress as checksumAddress, encodeFunctionData, decodeFunctionData, decodeFunctionResult, keccak256, stringToHex } from 'viem';
-import { getWalletClient, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt } from './component-base.js';
+import { getWalletClient, invokeWallet, isSafeConnected, getAccount, switchChain, createPublicClientForChain, ZERO_ADDRESS as ZERO, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt } from './component-base.js';
 import { CHAINS, chainList, chainNameFor, isTestnetChain } from './chain.js';
 import { contractGasWithinCap } from './gas.js';
 import { verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
@@ -144,7 +144,7 @@ function safeRequestRejected(error) {
   return rejected;
 }
 function safeUnsubmittedRejection(error) {
-  if (!safeRequestRejected(error)) return error;
+  if (!error.walletNotInvoked && !safeRequestRejected(error)) return error;
   try { error.safeRequestNotSubmitted = true; if (error.safeRequestNotSubmitted === true) return error; } catch (_) {}
   var wrapped = new Error(error && error.message || 'The wallet request was rejected.');
   wrapped.cause = error; wrapped.code = error && error.code; wrapped.safeRequestNotSubmitted = true;
@@ -155,6 +155,7 @@ function safeUnsubmittedRejection(error) {
 async function signSafeTx(chainId, safe, fields, signer) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   if (!wallet) throw new Error('Connect a wallet first');
   try {
     var active = await wallet.getChainId();
@@ -166,10 +167,10 @@ async function signSafeTx(chainId, safe, fields, signer) {
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   var signature;
   try {
-    signature = await wallet.signTypedData({
+    signature = await invokeWallet(chainId, signer, reviewedSafe, function (current) { return current.signTypedData({
       account: signer, domain: { chainId: Number(chainId), verifyingContract: safe },
       types: SAFE_TX_TYPES, primaryType: 'SafeTx', message: safeTxMessage(fields),
-    });
+    }); });
   } catch (error) { throw safeUnsubmittedRejection(error); }
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   return signature;
@@ -410,9 +411,9 @@ async function feeOverrides(chainId) {
 
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an onchain revert surfaces as
 // an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
-async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending, executionGasCap) {
+async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending, executionGasCap, reviewedSafe, reviewedAccount) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
-  var account = getAccount();
+  var account = reviewedAccount;
   if (!account) throw new Error('Connect a wallet first');
   var active = await wallet.getChainId().catch(function () { return null; });
   if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
@@ -457,7 +458,7 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   var hash;
   try {
     if (onSending) await onSending();
-    hash = await wallet.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees));
+    hash = await invokeWallet(chainId, account, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees)); });
   } catch (error) { throw safeUnsubmittedRejection(error); }
   try {
     var rcpt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
@@ -477,7 +478,9 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
 }
 
 export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, onSending) {
+  var reviewedAccount = getAccount();
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   if (!wallet) throw new Error('Connect a wallet first');
   try {
     var active = await wallet.getChainId();
@@ -501,7 +504,7 @@ export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, 
       return readDistributionTokens(createPublicClientForChain(chainId), controller);
     });
     if (verifyReceipt) await verifyReceipt(receipt);
-  }, onSending, executionGasCap);
+  }, onSending, executionGasCap, reviewedSafe, reviewedAccount);
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.
@@ -1248,6 +1251,8 @@ export async function fetchSafeCreation(safe) {
 // Deploy the same-address Safe on `chainId` from a fetched creation record, then verify it actually landed at the
 // expected address (a differing factory/singleton on the target chain would produce a different address).
 export async function deploySafeSameAddress(chainId, creation, expectedSafe, authoritySourceChainId) {
+  var reviewedAccount = getAccount();
+  var reviewedSafe = isSafeConnected();
   var sourceChainId = authoritySourceChainId != null ? Number(authoritySourceChainId) : Number(creation && creation.sourceChainId);
   if (!Number.isSafeInteger(sourceChainId) || sourceChainId <= 0) throw new Error('The Safe creation record is missing its source chain. Read it again before deploying.');
   if (!creation || typeof creation.saltNonce !== 'bigint' || creation.saltNonce < 0n) throw new Error('The Safe creation record has an invalid salt nonce.');
@@ -1268,7 +1273,7 @@ export async function deploySafeSameAddress(chainId, creation, expectedSafe, aut
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to deploy.'); }
-  var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce', expectedSafe);
+  var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce', expectedSafe, null, null, null, null, reviewedSafe, reviewedAccount);
   // Verify the Safe landed at the expected address — but RETRY, because a flaky RPC (Base/OP Sepolia especially) can
   // return empty code for a just-deployed contract and produce a false "did not land". Only fail after several misses.
   var pub = targetPublicClient, code = null;
@@ -1345,13 +1350,15 @@ export async function safeApprovalsOf(chainId, safe, hash, owners) {
 // Approve a SafeTx hash onchain from the connected signer (records approvedHashes[signer][hash] = 1). The wallet
 // must be on `chainId` and be a Safe owner. Returns the approveHash tx hash.
 export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSending) {
+  var reviewedAccount = getAccount();
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   if (!wallet) throw new Error('Connect a wallet first');
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (safeRequestRejected(e)) throw safeUnsubmittedRejection(e); throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to approve.'); }
-  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash', null, reverify, null, onSending);
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash', null, reverify, null, onSending, null, reviewedSafe, reviewedAccount);
 }
 
 export { SAFE_PREFIX };

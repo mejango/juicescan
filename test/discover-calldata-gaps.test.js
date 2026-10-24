@@ -169,7 +169,8 @@ describe('shop item adjustment — JB721TiersHook.adjustTiers', () => {
     expect(decoded.args[1]).toEqual([]);
     expect(added.price).toBe(123456789n);
     expect(added.initialSupply).toBe(250);
-    expect(added.votingUnits).toBe(3);
+    expect(added.votingUnits).toBe(0);
+    expect(added.flags.useVotingUnits).toBe(false);
     expect(added.reserveFrequency).toBe(5);
     expect(added.reserveBeneficiary).toBe(ALICE);
     expect(added.encodedIpfsUri).toBe('0x' + 'ab'.repeat(32));

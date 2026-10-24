@@ -1,8 +1,9 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 // A direct write the wallet may have sent stays held: only an explicit wallet rejection (4001) frees the action.
 import {beforeEach,expect,it,vi} from 'vitest';
 import {webLocks} from './web-locks.js';
 const h=vi.hoisted(()=>({wallet:null,client:null,account:'0x1111111111111111111111111111111111111111'}));
-vi.mock('../src/wallet.js',async original=>({...await original(),getAccount:()=>h.account,getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>false,waitForSafeInitialization:async()=>{}}));
+vi.mock('../src/wallet.js',async original=>({...await original(),getAccount:()=>h.account,invokeWallet: (...args) => walletInvocationFor(h)(...args), getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>false,waitForSafeInitialization:async()=>{}}));
 import {executeTransaction} from '../src/component-base.js';
 const hash='0x'+'a'.repeat(64),receipt={status:'success',blockNumber:10n,transactionHash:hash};
 const abi=[{type:'function',name:'pay',inputs:[{name:'amount',type:'uint256'}],outputs:[],stateMutability:'payable'}];

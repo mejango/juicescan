@@ -1,3 +1,4 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 // Adding liquidity from inside the Safe App proposes the whole sequence ONCE (approve → Permit2.approve → mint) as
 // an ordered Safe App batch after simulating it from the Safe; every other connection keeps the per-step sends.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +8,7 @@ import './web-locks.js';
 const runtime = vi.hoisted(() => ({ safeApp: true, erc20Allowance: 0n, permit2: [0n, 0n, 0n], pending: [], wallet: null, client: null }));
 const SAFE = '0x2222222222222222222222222222222222222222';
 vi.mock('../src/component-base.js', async importOriginal => ({
-  ...await importOriginal(), getAccount: () => SAFE, getEffectiveAccount: () => SAFE, getWalletClient: () => runtime.wallet,
+  ...await importOriginal(), getAccount: () => SAFE, getEffectiveAccount: () => SAFE, getWalletClient: () => runtime.wallet, invokeWallet: (...args) => walletInvocationFor({ get wallet() { return runtime.wallet; }, account: SAFE, get safe() { return runtime.safeApp; } })(...args),
   isSafeConnected: () => runtime.safeApp, createPublicClientForChain: () => runtime.client, switchChain: vi.fn(),
   waitForTrackedTransactionReceipt: vi.fn(async (_c, hash) => ({ status: 'success', transactionHash: hash })),
 }));

@@ -18,7 +18,8 @@ describe('LP transaction receipt safety', () => {
     const helper = source.slice(start, source.indexOf('\nvar lpPositionViewAbi', start));
     expect(helper).toContain('await heldWriteGate(hold');
     expect(helper).toContain('sendHeldWrite(hold, function');
-    expect(helper.match(/wallet\.writeContract\(/g)).toHaveLength(1);
+    expect(helper).toContain('invokeWallet(chainId, expected, reviewedSafe');
+    expect(helper.match(/current\.writeContract\(/g)).toHaveLength(1);
     expect(helper.indexOf('function send()')).toBeLessThan(helper.indexOf('sendHeldWrite('));
     expect(helper).toContain('if (receipt && hold) await hold.release(sent.reservation)');
   });

@@ -13,7 +13,7 @@
 // No API key. Host confirmed from juice-sdk-v4: https://api.relayr.ba5ed.com
 
 import { encodeFunctionData, isAddress, keccak256, stringToHex } from 'viem';
-import { getWalletClient, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt, confirmTransactionModal } from './component-base.js';
+import { getWalletClient, invokeWallet, isSafeConnected, getAccount, createPublicClientForChain, getAddress, switchChain, getViewAs, VIEW_AS_TX_ERROR, waitForTrackedTransactionReceipt, confirmTransactionModal } from './component-base.js';
 import { CHAINS, chainNameFor } from './chain.js';
 import { gasWithHeadroom } from './gas.js';
 import { isExplicitWalletRejection } from './write-hold.js';
@@ -242,6 +242,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value, 
   if (!forwarder) throw new Error('No ERC2771Forwarder on ' + chainNameFor(chainId));
   var pub = createPublicClientForChain(chainId);
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   if (!wallet) throw new Error('Connect a wallet first');
   var val = value || 0n;
 
@@ -292,7 +293,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value, 
   }
 
   if (deadline <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
-  var signature = await wallet.signTypedData({
+  var signature = await invokeWallet(chainId, from, reviewedSafe, function (current) { return current.signTypedData({
     account: from,
     domain: { name: domainName, version: domainVersion, chainId: BigInt(chainId), verifyingContract: forwarder },
     types: { ForwardRequest: [
@@ -301,6 +302,8 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value, 
       { name: 'deadline', type: 'uint48' }, { name: 'data', type: 'bytes' } ] },
     primaryType: 'ForwardRequest',
     message: { from: from, to: to, value: val, gas: gas, nonce: nonce, deadline: deadline, data: data },
+  }); }, function () {
+    if (deadline <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
   });
   if (!getAccount() || getAccount().toLowerCase() !== from.toLowerCase()) throw new Error('Connected account changed. Review the cross-chain request again.');
 
@@ -580,11 +583,12 @@ export function relayrRequestFingerprint(request) {
 // Send the single prepaid payment that funds execution on every chain. The HTTP quote is authenticated against
 // the exact bundle UUID and immutable payment runtime, then shown as a second exact transaction review before
 // the wallet opens. Returns the payment tx hash.
-export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending, onUnsent) {
+export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending, onUnsent, assertWriteState) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
   var chainId = details.chainId;
   var wallet = getWalletClient();
+  var reviewedSafe = isSafeConnected();
   if (!wallet) throw new Error('Connect a wallet first');
   var account = getAccount();
   if (!account) throw new Error('Connect a wallet first');
@@ -638,16 +642,19 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
     if (onSending) await onSending();
     try {
-      return await wallet.sendTransaction({
+      return await invokeWallet(chainId, account, reviewedSafe, function (current) { return current.sendTransaction({
         account: account,
         chain: CHAINS[chainId],
         to: details.target,
         value: details.amount,
         data: details.calldata,
         gas: RELAYR_PAYMENT_GAS,
+      }); }, function () {
+        details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
+        if (assertWriteState) assertWriteState();
       });
     } catch (cause) {
-      if (isExplicitWalletRejection(cause)) {
+      if (cause.walletNotInvoked || isExplicitWalletRejection(cause)) {
         // Release only this definitely unsent attempt, before another window can acquire the lock.
         if (onUnsent) await onUnsent();
         throw cause;

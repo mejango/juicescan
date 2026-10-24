@@ -73,6 +73,17 @@ export function sortTierEntriesByCategory(entries, pickTier) {
   });
 }
 
+// Saved unsigned launch/add calls retain their original bytes. Refuse outdated economics before
+// another authorization; callers reconcile already-submitted hashes before applying this policy.
+export function assertNewTierPolicy(value) {
+  if (!value || typeof value !== 'object') return;
+  if (value.initialSupply != null && value.price != null && value.flags) {
+    if (value.flags.useVotingUnits) throw new Error('This saved item uses custom voting units. Rebuild and review it with price-based governance.');
+    if (BigInt(value.initialSupply) === 1n && BigInt(value.reserveFrequency || 0) > 0n) throw new Error('A reserved item needs a supply of at least 2 (or unlimited).');
+  }
+  Object.values(value).forEach(assertNewTierPolicy);
+}
+
 export function build721TierConfig(o) {
   o = o || {};
   var price; try { price = BigInt(o.price || 0); } catch (_) { throw new Error('Item price must be an integer in base units.'); }
@@ -80,17 +91,18 @@ export function build721TierConfig(o) {
   var reserveFrequency = uintNumber(o.reserveFrequency || 0, 16, 'Reserve frequency');
   if (reserveFrequency > 0 && !isAddr(o.reserveBeneficiary)) throw new Error('A reserved item needs a valid reserve beneficiary.');
   var reserveBeneficiary = reserveFrequency > 0 ? addrOrZero(o.reserveBeneficiary) : ZERO;
-  var votingUnits = uintNumber(o.votingUnits || 0, 32, 'Voting units');
   var category = uintNumber(o.category || 0, 24, 'Category');
   var discountPercent = uintNumber(o.discountPercent || 0, 8, 'Discount percent');
   if (discountPercent > 200) throw new Error('Discount percent exceeds the protocol maximum of 200.');
   var splitPercent = uintNumber(o.splitPercent || 0, 32, 'Split percent');
   if (splitPercent > 1000000000) throw new Error('Split percent exceeds 100%.');
+  var initialSupply = clampTierInitialSupply(o.initialSupply, !!o.unlimited);
+  assertNewTierPolicy({ price: price, initialSupply: initialSupply, reserveFrequency: reserveFrequency, flags: { useVotingUnits: false } });
   var flags = o.flags || {};
   return {
     price: price,
-    initialSupply: clampTierInitialSupply(o.initialSupply, !!o.unlimited),
-    votingUnits: votingUnits,
+    initialSupply: initialSupply,
+    votingUnits: 0,
     reserveFrequency: reserveFrequency,
     reserveBeneficiary: reserveBeneficiary,
     encodedIpfsUri: o.encodedIpfsUri || ('0x' + '0'.repeat(64)),
@@ -102,7 +114,7 @@ export function build721TierConfig(o) {
         ? !!flags.useReserveBeneficiaryAsDefault
         : reserveFrequency > 0 && reserveBeneficiary !== ZERO,
       transfersPausable: !!flags.transfersPausable,
-      useVotingUnits: flags.useVotingUnits != null ? !!flags.useVotingUnits : votingUnits > 0,
+      useVotingUnits: false,
       cantBeRemoved: !!flags.cantBeRemoved,
       cantIncreaseDiscountPercent: !!flags.cantIncreaseDiscountPercent,
       cantBuyWithCredits: !!flags.cantBuyWithCredits,

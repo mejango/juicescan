@@ -1,7 +1,8 @@
+import { walletInvocationFor } from './wallet-invocation-fixture.js';
 import {beforeEach,expect,it,vi} from 'vitest';
 import './web-locks.js';
 const h=vi.hoisted(()=>({wallet:null,client:null,safe:false,account:'0x1111111111111111111111111111111111111111',propose:vi.fn()}));
-vi.mock('../src/wallet.js',async original=>({...await original(),getAccount:()=>h.account,getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>h.safe,proposeSafeTransactions:(txs)=>h.propose(txs),waitForSafeInitialization:async()=>{}}));
+vi.mock('../src/wallet.js',async original=>({...await original(),invokeWallet:(...args)=>walletInvocationFor(h)(...args),getAccount:()=>h.account,getWalletClient:()=>h.wallet,createPublicClientForChain:()=>h.client,isSafeConnected:()=>h.safe,proposeSafeTransactions:(txs)=>h.propose(txs),waitForSafeInitialization:async()=>{}}));
 import {setViewAs,clearViewAs} from '../src/view-as.js';
 import {executeTransaction} from '../src/component-base.js';
 const hash='0x'+'a'.repeat(64),receipt={status:'success',blockNumber:10n,transactionHash:hash};

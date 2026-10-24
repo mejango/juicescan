@@ -3,7 +3,7 @@
 // per-chain batch dialog (the app's standard confirm shape carrying an editable step list), and the submit routes —
 // one proposal through the connected Safe App, one operation-1 SafeTx signed by a Safe owner, or ordered
 // direct sends / one Relayr bundle for an EOA authority. Never N separate Safe proposals.
-import { el, openDialog, confirmTransactionModal, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
+import { el, openDialog, confirmTransactionModal, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, invokeWallet, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
 import { chainNameFor, usdcByChain } from './chain.js';
 import { getAddress } from './abi-registry.js';
 import { STEP_KINDS, buildStep, loadTray, saveTray, clearTray, upsertStep, moveStep, removeStep, composeBatch, checkBatchOrder, dependsOnPrior, mirrorBatch, encodeMultiSend, multiSendBatchCalls, simulateBatchCalls, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN, TRAY_UPDATED_EVENT } from './safe-batch.js';
@@ -284,7 +284,9 @@ export async function proposeBatchThroughSafeApp(opts) {
   opts.setStatus('Simulating the batch from the Safe…', 'pending');
   await simulateBatchCalls(client, opts.authority, opts.calls, opts.dependsOnPrior);
   opts.setStatus('Proposing the batch to the Safe — confirm in Safe{Wallet}…', 'pending');
-  var safeTxHash = await proposeSafeTransactions(opts.calls.map(function (c) { return { to: c.to, value: '0', data: c.data }; }));
+  var safeTxHash = await invokeWallet(opts.chainId, opts.authority, true, function () {
+    return proposeSafeTransactions(opts.calls.map(function (c) { return { to: c.to, value: '0', data: c.data }; }));
+  });
   if (!safeTxHash) throw new Error('Safe returned no proposal hash.');
   return { safeTxHash: safeTxHash, executed: false };
 }

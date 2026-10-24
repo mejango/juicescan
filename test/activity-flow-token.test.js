@@ -86,7 +86,8 @@ describe('flowTokenFromContexts', () => {
   it('rejects two different tokens that share a symbol and decimals', () => {
     const lookalike = { ...CUSTOM_18, address: '0x2222222222222222222222222222222222222222', chainId: 10 };
     expect(flowTokenFromContexts([[CUSTOM_18], [lookalike]])).toBeNull();
-    expect(flowTokenFromContexts([[CUSTOM_18], [{ ...CUSTOM_18, chainId: 10 }]])).toEqual({ symbol: 'JBX', decimals: 18 });
+    expect(flowTokenFromContexts([[CUSTOM_18], [{ ...CUSTOM_18, chainId: 10 }]])).toBeNull();
+    expect(flowTokenFromContexts([[CUSTOM_18], [{ ...CUSTOM_18 }]])).toEqual({ symbol: 'JBX', decimals: 18 });
   });
 
   it('rejects when any chain has multiple contexts, a failed read, or no contexts', () => {
