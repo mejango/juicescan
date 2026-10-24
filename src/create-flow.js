@@ -3987,13 +3987,20 @@ async function executeCreateDirectSession(state, session, resumed) {
       var plan = remaining[k];
       if (!getAccount() || getAccount().toLowerCase() !== session.account.toLowerCase()) throw new Error('Connected account changed. Reconnect the launching wallet to continue.');
       assertScheduleFresh(plan.scheduleValidUntil);
-      plan.status = 'awaiting-wallet';
-      saveCreateDirectSession(state, session);
       push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
       try {
         var hash = await execTx({ chainId: plan.chainId, address: plan.address, abi: plan.abi,
           functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value, skipConfirm: true,
-          trackSavedLaunch: true, assertWriteState: function () { assertScheduleFresh(plan.scheduleValidUntil); }, verifyReceipt: function (receipt) { assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', plan.chainId), null, plan.rulesetCount); },
+          trackSavedLaunch: true,
+          onSending: function () {
+            plan.status = 'awaiting-wallet';
+            try { saveCreateDirectSession(state, session); }
+            catch (error) { plan.status = 'ready'; throw error; }
+          },
+          onBeforeWriteAborted: function () {
+            if (!plan.hash && plan.status === 'awaiting-wallet') { plan.status = 'ready'; saveCreateDirectSession(state, session); }
+          },
+          assertWriteState: function () { assertScheduleFresh(plan.scheduleValidUntil); }, verifyReceipt: function (receipt) { assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', plan.chainId), null, plan.rulesetCount); },
           onStatus: function (message, kind, meta) {
             if (meta && meta.hash) { plan.hash = meta.hash; plan.status = 'submitted'; saveCreateDirectSession(state, session); }
             push(message, kind);

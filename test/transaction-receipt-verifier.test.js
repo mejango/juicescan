@@ -181,3 +181,21 @@ it('retains a semantic proof failure through held receipt recovery without a sec
  expect(verifyReceipt).toHaveBeenCalledTimes(2);
  expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
+
+it('reports a proven no-send abort when schedule expiry crosses the final network await', async () => {
+ localStorage.clear();
+ let currentTime=Date.now(),finish;
+ const clock=vi.spyOn(Date,'now').mockImplementation(()=>currentTime);
+ const validUntil=Math.floor(currentTime/1000)+300;
+ h.wallet.getChainId.mockResolvedValueOnce(8453).mockImplementationOnce(()=>new Promise(resolve=>finish=resolve));
+ const {assertScheduleFresh}=await import('../src/ruleset-schedule.js');
+ const onBeforeWriteAborted=vi.fn(),onError=vi.fn();
+ try {
+  executeTransaction({...args,onSending:async()=>{},assertWriteState:()=>assertScheduleFresh(validUntil),onBeforeWriteAborted,onError});
+  await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));
+  currentTime+=400000;finish(8453);
+  await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));
+  expect(h.wallet.writeContract).not.toHaveBeenCalled();
+  expect(onError).toHaveBeenCalledWith(expect.stringContaining('schedule expired'),expect.objectContaining({submittedHash:null}));
+ } finally {clock.mockRestore();}
+});

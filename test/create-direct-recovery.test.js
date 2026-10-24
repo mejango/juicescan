@@ -195,7 +195,7 @@ describe('direct multichain creation recovery', () => {
 
   it('does not infer user cancellation from ambiguous rejection wording', async () => {
     const session = { account: ALICE, plans: plans() };
-    mocks.execute.mockImplementationOnce((opts) => opts.onError('RPC rejected the broadcast response'));
+    mocks.execute.mockImplementationOnce(async (opts) => { await opts.onSending(); opts.onError('RPC rejected the broadcast response'); });
     await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow(/rejected/);
     expect(session.plans[0].status).toBe('awaiting-wallet');
     await expect(__test.runCreateDirectSession(state(), session, true)).rejects.toThrow(/interrupted/);
@@ -230,6 +230,20 @@ describe('direct multichain creation recovery', () => {
     mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH2));
     await __test.runCreateDirectSession(draft, session, true);
     expect(mocks.execute.mock.calls.map(([opts]) => opts.chainId)).toEqual([84532]);
+  });
+
+  it('returns an expired final-boundary request to a discardable no-send state', async () => {
+    const draft = state(); const session = { account: ALICE, plans: plans().slice(0, 1) };
+    session.plans[0].scheduleValidUntil = Math.floor(Date.now() / 1000) + 60;
+    mocks.execute.mockImplementationOnce(async (opts) => {
+      await opts.onSending();
+      session.plans[0].scheduleValidUntil = Math.floor(Date.now() / 1000) - 1;
+      try { opts.assertWriteState(); }
+      catch (error) { await opts.onBeforeWriteAborted(); opts.onError(error.message); }
+    });
+    await expect(__test.runCreateDirectSession(draft, session, false)).rejects.toThrow(/schedule expired/);
+    expect(session.plans[0]).toMatchObject({ status: 'ready', hash: null });
+    expect(__test.renderDeploy(draft, () => {}).textContent).toContain('Discard unsubmitted launch');
   });
 
   it('keeps expired staged direct calls saved but refuses another wallet invocation', async () => {
