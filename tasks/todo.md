@@ -372,3 +372,21 @@ Implementation review: Existing strict write-hold rejection classifier is reused
 - [ ] Verify launch/queue payload and form regressions.
 
 Notice review: Updated the existing applicability owner to retain notice controls whenever a configured stage is not FOREVER. Per-stage encoding omits the hook only on FOREVER stages, retaining it on each timed predecessor. Added launch/queue single and multiple timed+Terminate payload checks, explicit final FOREVER/custom hook checks and form-visibility checks. Focused notice/scheduling34 tests pass. No contract source changed.
+
+# Preserve client-generated stage ordering — 2026-10-24
+
+## Plan refinement
+- **Objective:** Encode sequential stage boundaries in Custom launch/queue and Revnet launch, preserving Wait/Terminate and pinning immediate staged launches once; no contract changes or dependencies.
+- **System fit:** A pure schedule owner derives actual cycle-aligned starts from pinned first start, parent, monotonic queue IDs and known notices. Encoders reuse its explicit starts; existing signed Relayr requests bound execution and direct/Safe reviews show execution limits, with receipt ancestry checked before success.
+- **Reuse and simplicity:** Move existing deriveStartFrom unchanged into an import-free scheduling owner before adding ordered scheduling. Reuse existing 600-second first-start pin and direct/Relayr journals, request deadline and receipt logs. Keep existing one-stage launch behavior.
+- **Evidence and unknowns:** Deployed core can replace a pending predecessor when later mustStartAtOrAfter is zero or below the predecessor's actual end. A known-notice schedule is stable within its prepared inclusion window; external Safe and direct mining cannot be expired onchain. Custom hooks can report ineligible states independent of timing, requiring explicit rejection of unprovable batches.
+- **Verification:** Regression tests assert encoded floors and unchanged-contract ancestry through a contract-semantic fixture for default/no-hook, one-second delay, long notice, Wait/Terminate, queue parent/latest-ID and exact-second Revnet cycles. Signed deadline and expired preparation tests cover real callers; run source/inventory/build/budgets and affected suites before final Astra review.
+- **Resource budget:** One pure math owner, existing create/discover compilers and local Relayr deadline extension only; physical locked dependency copy; freeze source before broad tests and avoid contract edits or deployments.
+
+- [ ] Extract existing derivation without changing behavior.
+- [ ] Implement explicit ordered schedules and lifecycle expiry guards.
+- [ ] Verify focused and full owning checks, then hand off for separate Astra review.
+
+Review progress: Existing derivation was extracted unchanged in712a972 after50focused checks. The client compilers now materialize every successor boundary, include known notices and latest IDs, retain the first pin and carry valid-until metadata through Relayr recovery. No-hook schedules remain ordered after delayed inclusion; external direct/Safe execution deadlines are advisory, while Relayr signatures enforce theirs. Unknown custom approval batches fail closed. Revnet frequencies and requested intervals use whole seconds, including fractional-day/no-cut cases.
+
+Independent Astra review reproduced a short replacement-window error and a confirmed-receipt recovery bypass. The schedule horizon now respects the replacement approval window before monotonic IDs, and receipt checks verify the first chosen parent as well as every follower. Held-write recovery runs the original receipt verifier before release/success; single EOA creations retain their exact calls in the existing durable session. Tests cover module reload and retry without a second send.186focused checks across11suites pass; an earlier intermediate-source full run passed2157tests, but final broad checks will be rerun after review because the recovery changes invalidate that earlier source proof. Source, transaction inventory, build and unchanged bundle limits passed before the final review fixes.

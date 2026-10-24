@@ -162,3 +162,22 @@ it('names a failure with describeFailure in the open dialog and to the caller',a
  await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith('Paused.',expect.objectContaining({error:expect.any(Error)})));
  expect(h.wallet.writeContract).not.toHaveBeenCalled();
 });
+
+it('retains a semantic proof failure through held receipt recovery without a second send', async () => {
+ localStorage.clear();
+ h.client.getTransaction=vi.fn(async()=>({hash,from:h.account,nonce:7,blockNumber:10n}));
+ h.client.getTransactionCount=vi.fn(async()=>8);
+ const verifyReceipt=vi.fn(async()=>{const error=new Error('intermediate ruleset skipped');error.code='RULESET_ORDER_UNVERIFIED';throw error;});
+ const onError=vi.fn(),onSuccess=vi.fn();
+ executeTransaction({...args,verifyReceipt,onError,onSuccess});
+ await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith(expect.stringContaining('intermediate ruleset skipped'),expect.objectContaining({submittedHash:hash})));
+ expect(onSuccess).not.toHaveBeenCalled();
+ const retriedError=vi.fn();
+ vi.resetModules();
+ const {executeTransaction:recoveredExecute}=await import('../src/component-base.js');
+ recoveredExecute({...args,verifyReceipt,onError:retriedError,onSuccess});
+ await vi.waitFor(()=>expect(retriedError).toHaveBeenCalledWith(expect.stringContaining('effects are not verified'),expect.objectContaining({submittedHash:hash})));
+ expect(onSuccess).not.toHaveBeenCalled();
+ expect(verifyReceipt).toHaveBeenCalledTimes(2);
+ expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});

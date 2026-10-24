@@ -1402,7 +1402,7 @@ export function holdForWrite(chainId, account, request) {
 // saved hash failed onchain), else { line }, with { hash, blockNumber } when the held write went through. Only a hold the chain cannot settle gets one action:
 // a release, after the user checks their wallet, of exactly the attempt shown. The normal path never waits:
 // with nothing held this resolves at once without a read.
-export async function heldWriteGate(hold, label) {
+export async function heldWriteGate(hold, label, verifyReceipt) {
   var record;
   try { record = hold.read(); } catch (err) { return { line: errMessage(err, 'Browser storage is unavailable.') }; }
   if (!record) return null;
@@ -1412,6 +1412,10 @@ export async function heldWriteGate(hold, label) {
   if (found === 'mined') {
     var receipt = await pollTransactionReceipt(client, null, record.hash, hold.chainId, 3, 2000).catch(function () { return null; });
     if (receipt && (receipt.status === 'success' || receipt.status === 'reverted')) {
+      if (receipt.status === 'success' && verifyReceipt) {
+        try { await verifyReceipt(receipt); }
+        catch (error) { return { line: what + ' is confirmed, but its effects are not verified. ' + errMessage(error, 'Inspect its receipt before continuing.'), verificationError: error, submittedHash: record.hash }; }
+      }
       try { await hold.release(record); } catch (_) {}
       if (receipt.status === 'reverted' && !hold.read()) return null;
       if (receipt.status === 'success') return { line: what + ' went through in block ' + receipt.blockNumber + ' (' + truncAddr(record.hash) + '). It was not sent again.', hash: record.hash, blockNumber: receipt.blockNumber };
@@ -1486,9 +1490,9 @@ export function executeTransaction(opts) {
   // A held earlier attempt is settled from the chain first; the review opens only once nothing holds it.
   var held = false, heldNow;
   try { heldNow = !!hold && !!hold.read(); } catch (_) { heldNow = true; }
-  var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName).then(function (gate) {
+  var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName, opts.verifyReceipt).then(function (gate) {
     if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'confirmed', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
-    if (gate) { held = true; callerOnError(gate.line); return null; }
+    if (gate) { held = true; callerOnError(gate.line, gate.verificationError ? { submittedHash: gate.submittedHash, error: gate.verificationError, userRejected: false } : undefined); return null; }
     return reviewStep();
   }) : reviewStep();
   function reviewStep() {
@@ -1699,6 +1703,9 @@ export function executeTransaction(opts) {
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(async function(err) {
     try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
+    if (submittedHash && err && err.code === 'RULESET_ORDER_UNVERIFIED') {
+      cbs.onError(err.message, { userRejected: false, submittedHash: submittedHash, error: err }); return;
+    }
     if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {
       cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'submitted', hash: submittedHash, chainId: opts.chainId, trackingError: true });
       return;

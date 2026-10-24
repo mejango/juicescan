@@ -235,7 +235,7 @@ export async function relayrSupportsForwarding(chainId, target) {
 // The EIP-712 domain (name/version) is read from the forwarder at runtime (EIP-5267) so we never guess it.
 // `value` is the ETH forwarded to the target (e.g. a project-creation fee); the relayer sends it with
 // `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
-export async function buildForwardedTx(chainId, from, to, data, gasHint, value) {
+export async function buildForwardedTx(chainId, from, to, data, gasHint, value, executionDeadline) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   if (!relayrSupportsChain(chainId)) throw new Error('Relayr does not support this destination chain. Use a direct wallet transaction.');
   var forwarder = getAddress('ERC2771Forwarder', chainId);
@@ -273,6 +273,10 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
   var nonce = await pub.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [from] });
 
   var deadline = Math.floor(Date.now() / 1000) + 47 * 3600; // uint48 seconds (< 48h Relayr max)
+  if (executionDeadline != null) {
+    if (!Number.isSafeInteger(Number(executionDeadline)) || Number(executionDeadline) <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
+    deadline = Math.min(deadline, Number(executionDeadline));
+  }
   // Measure the destination call rather than signing a flat guess. The forwarder caps the
   // inner call at `gas` and reverts `execute` if it runs out, so an undersized constant
   // burns a bundle the user has already paid for; an oversized one inflates every quote.
@@ -287,6 +291,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value) 
     if (!gas) gas = 500000n; // estimation unavailable — Relayr still simulates server-side and refuses a bad quote
   }
 
+  if (deadline <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
   var signature = await wallet.signTypedData({
     account: from,
     domain: { name: domainName, version: domainVersion, chainId: BigInt(chainId), verifyingContract: forwarder },
@@ -434,6 +439,7 @@ export async function relayrPostBundle(transactions, journal, locked) {
     publication = saveRelayrPendingSession(journal.scope, {
       bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
       paymentState: 'publication', expectedCount: ordered.length,
+      scheduleValidUntil: journal.scheduleValidUntil, rulesetCountByChain: journal.rulesetCountByChain, rulesetParentByChain: journal.rulesetParentByChain,
       chains: journal.chains || ordered.map(function (request) { return { id: Number(request.chain), name: chainNameFor(request.chain) }; }),
       publicationRequestHashes: ordered.map(relayrRequestFingerprint), records: [],
     });
@@ -853,6 +859,18 @@ export function saveRelayrPendingSession(scope, session, paymentNotSent) {
     }).map(function (hash) { return hash.toLowerCase(); }),
     persisted: true,
   };
+  if (session.scheduleValidUntil != null && Number.isSafeInteger(Number(session.scheduleValidUntil))) snapshot.scheduleValidUntil = Number(session.scheduleValidUntil);
+  if (session.rulesetCountByChain && typeof session.rulesetCountByChain === 'object') {
+    snapshot.rulesetCountByChain = Object.fromEntries(Object.entries(session.rulesetCountByChain).filter(function (entry) {
+      return /^\d+$/.test(entry[0]) && Number.isSafeInteger(Number(entry[1])) && Number(entry[1]) > 0 && Number(entry[1]) <= 1000;
+    }).map(function (entry) { return [entry[0], Number(entry[1])]; }));
+  }
+
+  if (session.rulesetParentByChain && typeof session.rulesetParentByChain === 'object') {
+    snapshot.rulesetParentByChain = Object.fromEntries(Object.entries(session.rulesetParentByChain).filter(function (entry) {
+      return /^\d+$/.test(entry[0]) && /^\d+$/.test(String(entry[1])) && BigInt(entry[1]) < (1n << 48n);
+    }).map(function (entry) { return [entry[0], String(entry[1])]; }));
+  }
   var key = relayrPendingStorageKey(scope, session);
   var serialized = JSON.stringify(snapshot);
   var stored = relayrStoredValue(key);
