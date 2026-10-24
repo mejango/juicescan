@@ -3,6 +3,10 @@ import { encodeEventTopics, encodeAbiParameters, encodeFunctionData } from 'viem
 import { orderedRulesetSchedule, deriveStartFrom, assertScheduleFresh, assertOrderedRulesetReceipt } from '../src/ruleset-schedule.js';
 import { __test, createStage, buildQueueRulesetConfigs } from '../src/create-flow.js';
 import { getAddress } from '../src/component-base.js';
+const receiptReader = vi.hoisted(() => ({ getTransactionReceipt: vi.fn() }));
+vi.mock('../src/component-base.js', async original => ({
+  ...await original(), createPublicClientForChain: () => ({ getTransactionReceipt: receiptReader.getTransactionReceipt }),
+}));
 const day = 86400;
 const now = 2000000000;
 const OWNER = '0x1111111111111111111111111111111111111111';
@@ -149,4 +153,13 @@ it('shows an actionable admission error when tiny cycles leave no usable notice 
   const clock=vi.spyOn(Date,'now').mockReturnValue(now*1000);
   try { expect(__test.noticeClashIssue(s)).toMatch(/no usable execution window/); }
   finally {clock.mockRestore();}
+});
+
+
+it('does not render a successful launch after resumed receipt ancestry fails', async () => {
+  const s = state();
+  const address = getAddress('JBRulesets', 1);
+  receiptReader.getTransactionReceipt.mockResolvedValue({ logs: [initialized(1, 0), initialized(2, 1), initialized(3, 1)].map(log => ({ ...log, address })) });
+  await expect(__test.captureDeployed(s, 1, '0x' + 'ab'.repeat(32), 3)).rejects.toThrow(/intermediate ruleset was skipped/);
+  expect(s.deployed).toBeNull();
 });

@@ -4515,8 +4515,8 @@ function captureDeployed(state, chainId, txHash, expectedCount) {
     if (pid == null) throw new Error('Create event not found');
     state.deployed = { chainId: chainId, projectId: pid, txHash: txHash, route: projectRouteFor(chainId, pid) };
   }).catch(function (error) {
+    if (error.code === 'RULESET_ORDER_UNVERIFIED') { state.deployed = null; throw error; }
     state.deployed = { chainId: chainId, txHash: txHash };
-    if (error.code === 'RULESET_ORDER_UNVERIFIED') throw error;
   });
 }
 
@@ -5489,7 +5489,7 @@ function ipfsHttp(uri) {
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
   resolveEns, attachEns,
-  renderDeploy, runDeploy, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
+  renderDeploy, runDeploy, captureDeployed, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
   suckerConfigFor, tokenMappingFor, verifyLegacyItemSplitIds,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
