@@ -16,9 +16,7 @@ export function orderedRulesetSchedule(stages, firstStart, now, parent) {
   var count = stages.length;
   if (!count) return { musts: [], starts: [], validUntil: null };
   var first = Number(firstStart) || (parent ? now : now + 600);
-  var horizon = now + 600 - count - 1;
-  if (parent && parent.validUntil != null) horizon = Math.min(horizon, Number(parent.validUntil));
-  var queueId = Math.max(horizon, Number(parent && parent.latestId || 0) + 1);
+  var queueId = Math.max(now, Number(parent && parent.latestId || 0) + 1);
   if (parent && parent.validUntil != null && queueId > Number(parent.validUntil)) throw new Error('The replacement window expired. Reopen the queue and review its current position.');
   var validUntil = parent && parent.validUntil != null ? Number(parent.validUntil) : null;
   var musts = [], starts = [];
@@ -33,7 +31,15 @@ export function orderedRulesetSchedule(stages, firstStart, now, parent) {
     }
     return start;
   }
-  if (parent) first = derived(parent, first, 0);
+  if (parent) {
+    // An automatic append can choose a usable inclusion window; explicit dates
+    // and replacement positions retain the exact boundary the user selected.
+    if (parent.automaticStart && parent.noticeSeconds > 0) {
+      var candidate = deriveStartFrom(parent.start, parent.duration, Math.max(first, parent.start + parent.duration, queueId + parent.noticeSeconds));
+      if (!scheduleIsFresh(candidate - parent.noticeSeconds, now)) first = Math.max(first, now + 600 + parent.noticeSeconds);
+    }
+    first = derived(parent, first, 0);
+  }
   musts.push(first); starts.push(first);
   for (var i = 1; i < count; i++) {
     var previous = stages[i - 1];
@@ -44,8 +50,12 @@ export function orderedRulesetSchedule(stages, firstStart, now, parent) {
   return { musts: musts, starts: starts, validUntil: validUntil };
 }
 
+export function scheduleIsFresh(validUntil, now) {
+  return validUntil == null || Number(validUntil) > (now == null ? Math.floor(Date.now() / 1000) : now) + 15;
+}
+
 export function assertScheduleFresh(validUntil, now) {
-  if (validUntil != null && Number(validUntil) <= (now == null ? Math.floor(Date.now() / 1000) : now) + 15) {
+  if (!scheduleIsFresh(validUntil, now)) {
     throw new Error('This ruleset schedule expired. Rebuild and review it before sending; no new transaction was submitted.');
   }
 }

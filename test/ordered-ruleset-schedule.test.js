@@ -129,3 +129,24 @@ it('encodes fractional Revnet day intervals with no cut as whole seconds', () =>
   expect(call.args[1].stageConfigurations[1].startsAtOrAfter).toBe(now + 600 + Math.round(1.234567 * day));
   expect(() => encodeFunctionData({ abi: call.abi, functionName: call.functionName, args: call.args })).not.toThrow();
 });
+
+it('does not postpone an explicit boundary to accommodate a hypothetical later preparation horizon', () => {
+  const parent = { start: now - day, duration: day, noticeSeconds: day, latestId: now - 1 };
+  const first = now + day;
+  const plan = orderedRulesetSchedule([{ duration: day, noticeSeconds: 0 }, { duration: 0, noticeSeconds: 0 }], first, now, parent);
+  expect(plan.musts[0]).toBe(first);
+  expect(plan.validUntil).toBe(now);
+});
+it('gives automatic append a usable window when a flexible parent notice would otherwise expire immediately', () => {
+  const parent = { start: now - day, duration: 0, noticeSeconds: day, latestId: now - 1, automaticStart: true };
+  const plan = orderedRulesetSchedule([{ duration: day, noticeSeconds: 0 }, { duration: 0, noticeSeconds: 0 }], 0, now, parent);
+  expect(plan.musts[0]).toBe(now + day + 600);
+  expect(plan.validUntil).toBe(now + 600);
+});
+
+it('shows an actionable admission error when tiny cycles leave no usable notice window', () => {
+  const s = state(); s.stages[0].durationSeconds = 1; s.stages[0].deadline = '7days';
+  const clock=vi.spyOn(Date,'now').mockReturnValue(now*1000);
+  try { expect(__test.noticeClashIssue(s)).toMatch(/no usable execution window/); }
+  finally {clock.mockRestore();}
+});

@@ -24103,7 +24103,7 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     });
     var latest = situation.latest[0];
     return { id: Number(parent.id), start: Number(parent.start), duration: Number(parent.duration), deadline: deadline,
-      approvalHook: parent.approvalHook, latestId: Number(latest.id),
+      approvalHook: parent.approvalHook, automaticStart: option.action !== 'replace' && !option.requiresStartDate, latestId: Number(latest.id),
       validUntil: option.action === 'replace' ? Number(latest.start) - (DEADLINE_SECONDS[deadline] || 0) - 1 : null };
   }
 

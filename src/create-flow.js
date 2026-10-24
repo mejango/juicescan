@@ -12,7 +12,7 @@
 // JWT lives in localStorage only.
 
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, decodeEventLog } from 'viem';
-import { deriveStartFrom, orderedRulesetSchedule, assertScheduleFresh, assertOrderedRulesetReceipt } from './ruleset-schedule.js';
+import { deriveStartFrom, orderedRulesetSchedule, assertScheduleFresh, scheduleIsFresh, assertOrderedRulesetReceipt } from './ruleset-schedule.js';
 export { deriveStartFrom } from './ruleset-schedule.js';
 import { isSafeConnected } from './wallet.js';
 import { idMapFromGroup, resolveSuckerGroup } from './sucker-group.js';
@@ -1235,8 +1235,12 @@ export function noticeClashIssue(state) {
   if (state.projectType === 'revnet' || !(state.stages || []).length) return null;
   try {
     var now = Math.floor(Date.now() / 1000);
-    stageStarts(state, resolveStages(state), Number(state.stages[0].schedule) || now + 600, now, state.queueHomeChainId || state.chainIds[0]);
-    return null;
+    var chainId = state.queueHomeChainId || state.chainIds[0];
+    var firstStart = state.queueEditor
+      ? Number(state.queueOption && state.queueOption.requiresStartDate ? state.queueCustomStart : state.queueMustStartAtByChain && state.queueMustStartAtByChain[chainId] || 0)
+      : Number(state.stages[0].schedule) || now + 600;
+    var schedule = stageStarts(state, resolveStages(state), firstStart, now, chainId);
+    return scheduleIsFresh(schedule.validUntil, now) ? null : 'This schedule has no usable execution window. Choose a later ruleset start, lengthen an earlier cycle, or shorten its notice.';
   } catch (error) { return error.message; }
 }
 
