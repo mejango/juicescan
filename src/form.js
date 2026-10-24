@@ -1,3 +1,4 @@
+import { assertShopCallPolicy } from './shop-policy.js';
 // src/form.js
 // Renders an ABI function definition into an interactive DOM form
 // Each form has its own chain selector. Chain selection is remembered globally.
@@ -390,7 +391,7 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
         var gas = await contractGasWithHeadroom(pub, simulation.request);
         var sent = await sendHeldWrite(hold, function () {
           if (!getAccount() || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-        }, function () { return invokeWallet(chainId, reviewedAccount, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas })); }); });
+        }, function () { return invokeWallet(chainId, reviewedAccount, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, simulation.request, { account: currentAccount, chain: CHAINS[chainId], gas: gas })); }, function () { assertShopCallPolicy(encodeFunctionData({ abi: [fn], functionName: fn.name, args: args }), contractAddress); }); });
         heldReservation = sent.reservation;
         return sent.hash;
       }).then(function(hash) {

@@ -13433,7 +13433,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                   if (Number(r.nInput && r.nInput.value) !== Number(chosen) || r.hash !== reviewedHash) {
                     throw new Error('The selected nonce or Safe transaction changed while approving on ' + r.chain + '. Review the action again.');
                   }
-                }, markSafeRequest);
+                }, markSafeRequest, { to: r.to, data: r.data, value: 0, nonce: chosen });
                 await verifySafeRowAction(r, acct, liveSafeInfo);
                 await refreshOnChainStatus(r);
                 chosen = r.chosenNonce; current = Number(r.ctx.nonce);

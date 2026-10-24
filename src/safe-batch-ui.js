@@ -316,7 +316,7 @@ export async function proposeBatchAsOwner(opts) {
   var approved = await safeApprovalsOf(chainId, safe, hash, ctx.owners);
   if (!approved.some(function (owner) { return sameAddr(owner, opts.signer); })) {
     opts.setStatus('Approving the batch on the blockchain at transaction number ' + ctx.nonce + ' — confirm in your wallet…', 'pending');
-    await approveSafeHashOnChain(chainId, safe, hash);
+    await approveSafeHashOnChain(chainId, safe, hash, null, null, { to: MULTI_SEND_CALL_ONLY, data: data, value: 0, nonce: ctx.nonce, operation: 1 });
     approved = await safeApprovalsOf(chainId, safe, hash, ctx.owners);
   }
   if (approved.length >= ctx.threshold) {

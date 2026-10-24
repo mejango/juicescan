@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { encodeFunctionData } from 'viem';
+import { getABI } from '../src/abi-registry.js';
 import { findSavedSafeExecution, SAFE_EXECUTION_SUCCESS_TOPIC, SAFE_EXECUTION_FAILURE_TOPIC,
   safeExecRelayrTx, safeTxHashForQueuedTx } from '../src/safe.js';
 
@@ -44,6 +46,19 @@ describe('canonical saved Safe execution recovery', () => {
       fromBlock: 100n, toBlock: 1000n, strict: false });
     expect(client.getTransaction).toHaveBeenCalledExactlyOnceWith({ hash: HASH });
     expect(client.getBlock).toHaveBeenCalledExactlyOnceWith({ blockNumber: 200n });
+  });
+
+  it('reconciles an already-submitted historical custom-vote shop execution without new authority', async () => {
+    const item = { price: 1n, initialSupply: 10, votingUnits: 42, reserveFrequency: 0, reserveBeneficiary: ZERO,
+      encodedIpfsUri: '0x' + '00'.repeat(32), category: 0, discountPercent: 0, splitPercent: 0, splits: [],
+      flags: { allowOwnerMint: false, useReserveBeneficiaryAsDefault: false, transfersPausable: false, useVotingUnits: true,
+        cantBeRemoved: false, cantIncreaseDiscountPercent: false, cantBuyWithCredits: false } };
+    tx.data = encodeFunctionData({ abi: getABI('JB721TiersHook'), functionName: 'adjustTiers', args: [[item], []] });
+    saved.tx = { ...tx }; saved.safeTxHash = safeTxHashForQueuedTx(8453, SAFE, tx);
+    log.topics = [SAFE_EXECUTION_SUCCESS_TOPIC, saved.safeTxHash]; transaction.input = encoded();
+    const original = saved.tx.data;
+    await expect(findSavedSafeExecution(saved, client)).resolves.toBe(receipt);
+    expect(saved.tx.data).toBe(original);
   });
 
   it('permits an unrelated executor and incidental outer ETH while proving the same inner call', async () => {

@@ -460,6 +460,22 @@ Parent verification update: The user explicitly authorized the previously blocke
 - **Verification:** Durable actual Safe-module cases reject direct/wrapped/embedded custom tiers and reserved-one before wallet/service writes, permit price-based tiers and ordinary Safe operations, and retain submitted receipt/history reads. Re-run Astra reproduction expecting refusal, focused existing ownership/recovery checks, then frozen Node22 full coverage and required source/generated/inventory/build/budget/browser gates.
 - **Resource budget:** Bounded owning decoder plus authorization callers, separate behavior-preserving extraction and policy change, max2 workers and physical locked dependencies. Astra remains separate read-only review; no further cross-client census. User has authorized existing npm audit and both Bendystraw introspection endpoints; do not re-ask that permission.
 
-- [ ] Extract existing policy/ABI without behavior change and verify.
-- [ ] Guard decoded shop economics at every relevant new Safe/Relayr authorization boundary, preserving passive recovery.
+- [x] Extract existing policy/ABI without behavior change and verify.
+- [x] Guard decoded shop economics at every relevant new Safe/Relayr authorization boundary, preserving passive recovery.
 - [ ] Add source-bound regressions, obtain Astra review and finish frozen owning checks.
+
+Correction implementation frozen: unchanged-policy/ABI extraction passed 4 suites/57 tests and is isolated in commit 901b025. Shared decoded shop policy now checks canonical adjustment/embedded creation, official MultiSend, Safe execution and forwarder wrappers at existing new-sign/send/proposal/publication/funding boundaries. Hash approvals carry and bind their original reviewed transaction; no confirmation dialog was added. Pure history/decode/receipt recovery remains unchanged. Focused 11 suites/240 tests pass; final added wrapper-bound and historical receipt cases pass 2 suites/66 tests. Original Astra allow-signing reproduction now refuses with the selected policy error before signature/service publication. Astra has the frozen source for independent re-review. Full owning checks follow with source frozen.
+
+## Astra correction review and local verification
+
+- [x] Behavior-preserving extraction: 57 tests / 4 suites pass, separate commit 901b025; existing public exports retained.
+- [x] Shared new-authorization guard and exact hash-approval callers completed. Old custom voting and reserved supply 1 reject before new wallet/service writes through supported direct, MultiSend, Safe execution, forwarder and embedded launch/deploy calls. Price-based tiers and ordinary Safe calls remain usable. Existing confirmation flow remains unchanged.
+- [x] Actual-module focused checks: 240 tests / 11 suites pass. Final policy/recovery checks: 66 tests / 2 suites pass, independently rerun by Astra. Historical queued custom calls remain readable, exact previously submitted custom executions reconcile successfully, and original signed bytes remain unchanged.
+- [x] Astra independently APPROVED the frozen fix, finding no further blocker. Approved SHA256: shop-policy be6c1a75db09ad72a4402e6caa92cdd629be4d05a34d67942fdf58e89007546a, safe cd9b7139f2168862f31f9cee1b00d9247445e1e70763d89de66e42ae3ad7e01d. The wallet callback owner itself remains unchanged.
+- [x] Production browser: all 148 checks pass on port 4289, desktop/tablet/mobile/narrow, CI two workers.
+- [x] Source syntax (332 files), dependency graph, pinned deployments, exact regeneration, wallet inventory (138 occurrences), bundle and original budgets pass. Startup 706161 / 722000 gzip bytes, total 2017548 / 2060000. No dependency, lockfile, generated-data or budget-threshold changes.
+- [x] Fresh explicitly authorized network gates pass: npm audit reports zero vulnerabilities; 92 production GraphQL documents validate against both live Bendystraw schemas.
+
+Local full-run evidence is intentionally qualified: the frozen production source passed 2241 runtime tests / 213 suites; one static ABI-sweep assertion retained the old source-file exclusion for the unchanged extracted Safe execution ABI. That TEST-ONLY metadata was corrected to its new owning file, preserving the exact exclusion and expanding the sweep to all seven SafeBatch fragments. All 37 corrected ABI checks pass. Parent directed cancellation of the just-started redundant local coverage replay; complete exact-head coverage and required floors remain a required GitHub CI gate before merge, not a locally reported green full run for this correction. No production source changed after Astra approval or browser qualification.
+
+No push, merge, deployment, contracts or SDK/dependency-version changes were performed by this task. Parent owns final publication, exact-head CI and the user-authorized landing of the five client PRs.

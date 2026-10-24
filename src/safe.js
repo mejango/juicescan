@@ -1,3 +1,4 @@
+import { assertShopCallPolicy } from './shop-policy.js';
 import { SAFE_EXEC_ABI } from './safe-batch.js';
 export { SAFE_EXEC_ABI } from './safe-batch.js';
 // src/safe.js
@@ -155,6 +156,7 @@ function safeUnsubmittedRejection(error) {
 // Sign the SafeTx with the connected wallet. MetaMask/Ledger require the active chain to equal the EIP-712
 // domain chainId, so switch first.
 async function signSafeTx(chainId, safe, fields, signer) {
+  assertShopCallPolicy(fields.data, fields.to, fields.operation);
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
@@ -172,7 +174,7 @@ async function signSafeTx(chainId, safe, fields, signer) {
     signature = await invokeWallet(chainId, signer, reviewedSafe, function (current) { return current.signTypedData({
       account: signer, domain: { chainId: Number(chainId), verifyingContract: safe },
       types: SAFE_TX_TYPES, primaryType: 'SafeTx', message: safeTxMessage(fields),
-    }); });
+    }); }, function () { assertShopCallPolicy(fields.data, fields.to, fields.operation); });
   } catch (error) { throw safeUnsubmittedRejection(error); }
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   return signature;
@@ -451,7 +453,9 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   var hash;
   try {
     if (onSending) await onSending();
-    hash = await invokeWallet(chainId, account, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees)); });
+    hash = await invokeWallet(chainId, account, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees)); }, function () {
+      assertShopCallPolicy(encodeFunctionData({ abi: params.abi, functionName: params.functionName, args: params.args || [] }), params.address);
+    });
   } catch (error) { throw safeUnsubmittedRejection(error); }
   try {
     var rcpt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
@@ -471,6 +475,7 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
 }
 
 export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, onSending) {
+  assertShopCallPolicy(tx.data, tx.to, tx.operation);
   var reviewedAccount = getAccount();
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
@@ -1342,7 +1347,9 @@ export async function safeApprovalsOf(chainId, safe, hash, owners) {
 
 // Approve a SafeTx hash onchain from the connected signer (records approvedHashes[signer][hash] = 1). The wallet
 // must be on `chainId` and be a Safe owner. Returns the approveHash tx hash.
-export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSending) {
+export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSending, reviewedTx) {
+  if (!reviewedTx || safeTxHashForQueuedTx(chainId, safe, reviewedTx).toLowerCase() !== String(hash).toLowerCase()) throw new Error('Read and review the original Safe transaction before approving its hash.');
+  assertShopCallPolicy(reviewedTx.data, reviewedTx.to, reviewedTx.operation);
   var reviewedAccount = getAccount();
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
@@ -1351,7 +1358,11 @@ export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSe
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (safeRequestRejected(e)) throw safeUnsubmittedRejection(e); throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to approve.'); }
-  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash', null, reverify, null, onSending, null, reviewedSafe, reviewedAccount);
+  return sendAndConfirm(wallet, chainId, { address: cs(safe), abi: SAFE_ONCHAIN_ABI, functionName: 'approveHash', args: [hash] }, 'approveHash', null, async function () {
+    if (reverify) await reverify();
+    if (safeTxHashForQueuedTx(chainId, safe, reviewedTx).toLowerCase() !== String(hash).toLowerCase()) throw new Error('The reviewed Safe transaction changed. Review its hash again.');
+    assertShopCallPolicy(reviewedTx.data, reviewedTx.to, reviewedTx.operation);
+  }, null, onSending, null, reviewedSafe, reviewedAccount);
 }
 
 export { SAFE_PREFIX };

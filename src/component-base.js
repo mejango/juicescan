@@ -1,3 +1,4 @@
+import { assertShopCallPolicy } from './shop-policy.js';
 import { mountFeeBuybackReview } from './fee-buyback-review.js';
 // src/component-base.js
 // Shared building blocks for all component widgets
@@ -1563,6 +1564,7 @@ export function executeTransaction(opts) {
   var reverifiedBlock = null;
   var beforeWriteComplete = false, walletInvoked = false;
   function assertWalletInvocation(expectedSafe) {
+    assertShopCallPolicy(encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }), opts.address);
     if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
     if (isSafeConnected() !== expectedSafe) throw new Error('Wallet route changed. Review the transaction again.');

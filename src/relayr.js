@@ -1,3 +1,4 @@
+import { assertShopCallPolicy } from './shop-policy.js';
 // src/relayr.js
 // Cross-chain transaction submission via relayr (the permissionless Bananapus relay), modelled on the
 // revnet-app / juice-sdk-v4 flow. Each per-chain call is wrapped as an ERC-2771 meta-transaction:
@@ -236,6 +237,7 @@ export async function relayrSupportsForwarding(chainId, target) {
 // `value` is the ETH forwarded to the target (e.g. a project-creation fee); the relayer sends it with
 // `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
 export async function buildForwardedTx(chainId, from, to, data, gasHint, value, executionDeadline) {
+  assertShopCallPolicy(data, to);
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   if (!relayrSupportsChain(chainId)) throw new Error('Relayr does not support this destination chain. Use a direct wallet transaction.');
   var forwarder = getAddress('ERC2771Forwarder', chainId);
@@ -304,6 +306,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value, 
     message: { from: from, to: to, value: val, gas: gas, nonce: nonce, deadline: deadline, data: data },
   }); }, function () {
     if (deadline <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
+    assertShopCallPolicy(data, to);
   });
   if (!getAccount() || getAccount().toLowerCase() !== from.toLowerCase()) throw new Error('Connected account changed. Review the cross-chain request again.');
 
@@ -402,6 +405,7 @@ async function reserveForwardedPublication(proofs) {
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.
 export async function relayrPostBundle(transactions, journal, locked) {
+  (transactions || []).forEach(function (request) { assertShopCallPolicy(request.data, request.target); });
   if (!Array.isArray(transactions) || !relayrNetworkFamily(transactions.map(function (tx) { return tx && tx.chain; }))) {
     throw new Error('Relayr destinations must use one supported network family: Ethereum, Optimism, Base, and Arbitrum mainnets or their Sepolia testnets.');
   }
@@ -517,7 +521,13 @@ export async function relayrPostBundle(transactions, journal, locked) {
 // Simulate the exact requests that this client published, including each signed forwarder nonce, deadline,
 // value, and gas limit. Only the caller's native balance is overridden, because Relayr supplies call value.
 // No target code, target storage, or authorization state is replaced.
+function assertRelayrShopPolicy(bundleUuid) {
+  var bound = RELAYR_QUOTED_REQUESTS.get(bundleUuid);
+  if (bound) bound.transactions.forEach(function (request) { assertShopCallPolicy(request.data, request.target); });
+}
+
 export async function verifyRelayrQuotedRequests(bundleUuid, account) {
+  assertRelayrShopPolicy(bundleUuid);
   var bound = RELAYR_QUOTED_REQUESTS.get(bundleUuid);
   if (!bound) return; // Standalone payment-boundary callers have no locally published destination bundle.
   if (bound.forwarded && bound.forwarded.length) {
@@ -651,6 +661,7 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
         gas: RELAYR_PAYMENT_GAS,
       }); }, function () {
         details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
+        assertRelayrShopPolicy(expectedBundleUuid);
         if (assertWriteState) assertWriteState();
       });
     } catch (cause) {

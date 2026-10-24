@@ -130,15 +130,15 @@ const SWEEP_FILES = [
   'src/pay-component.js', 'src/cashout-component.js', 'src/payouts-component.js', 'src/burn-component.js',
   'src/mint-component.js', 'src/permissions-component.js', 'src/reserved-component.js',
   'src/deploy-erc20-component.js', 'src/project-payer.js', 'src/pay-preview.js', 'src/component-base.js',
-  'src/safe.js', 'src/relayr.js', 'src/discover.js', 'src/credit-claims.js', 'src/shop-media.js', 'src/pay-prepare.js',
+  'src/safe.js', 'src/safe-batch.js', 'src/relayr.js', 'src/discover.js', 'src/credit-claims.js', 'src/shop-media.js', 'src/pay-prepare.js',
 ];
 
 // Fragments for contracts that have NO canonical artifact in data/abis (Safe wallet contracts,
 // Permit2, Uniswap v3/v4 periphery/router). Keyed `file → declName.fnName`. EXACT list: an entry that
 // stops being needed (artifact added, fragment removed) fails the suite until removed here.
 const NO_CANONICAL_ARTIFACT = {
+  'src/safe-batch.js': ['SAFE_EXEC_ABI.execTransaction', 'multiSendAbi.multiSend'],
   'src/safe.js': [
-    'SAFE_EXEC_ABI.execTransaction',
     'SAFE_ONCHAIN_ABI.approveHash',
     'SAFE_ONCHAIN_ABI.approvedHashes',
     'SAFE_ONCHAIN_ABI.getThreshold',
@@ -177,7 +177,7 @@ const MIN_FRAGMENTS = {
   'src/pay-component.js': 2, 'src/cashout-component.js': 4, 'src/payouts-component.js': 7,
   'src/burn-component.js': 2, 'src/mint-component.js': 1, 'src/permissions-component.js': 1,
   'src/reserved-component.js': 2, 'src/deploy-erc20-component.js': 1, 'src/project-payer.js': 1,
-  'src/pay-preview.js': 1, 'src/component-base.js': 6, 'src/safe.js': 4, 'src/relayr.js': 1,
+  'src/pay-preview.js': 1, 'src/component-base.js': 6, 'src/safe.js': 4, 'src/safe-batch.js': 7, 'src/relayr.js': 1,
   'src/discover.js': 135, 'src/credit-claims.js': 1, 'src/shop-media.js': 1, 'src/pay-prepare.js': 6,
 };
 

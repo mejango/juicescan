@@ -1,3 +1,4 @@
+import { assertShopCallPolicy } from './shop-policy.js';
 // src/safe-app.js
 // Minimal Safe{Wallet} Apps integration — NO dependency. When this site is opened as a Safe App (inside the
 // app.safe.global iframe: Apps → add custom app → this URL), it speaks the Safe Apps postMessage protocol so
@@ -105,6 +106,7 @@ export function waitForSafeExecution(safeTxHash, pollingIntervalMs) {
 // Propose a BATCH of transactions as a single Safe queue entry (executed atomically once signed). Used to
 // bundle an ERC-20 approval + the main call into one proposal. Returns the safeTxHash.
 export function proposeSafeTransactions(txs) {
+  txs.forEach(function (tx) { assertShopCallPolicy(tx.data, tx.to); });
   return safeRpc('sendTransactions', { txs: txs }).then(function (r) { return r && r.safeTxHash; });
 }
 
@@ -138,6 +140,7 @@ export function makeSafeProvider(safeInfo) {
         }
         case 'eth_sendTransaction': {
           var tx = params[0] || {};
+          assertShopCallPolicy(tx.data, tx.to);
           var value;
           try { value = tx.value == null ? '0' : (typeof tx.value === 'string' ? tx.value : ('0x' + BigInt(tx.value).toString(16))); }
           catch (_) { value = '0'; }

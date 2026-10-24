@@ -1,3 +1,5 @@
+import { encodeFunctionData } from 'viem';
+import { assertShopCallPolicy } from '../src/shop-policy.js';
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
@@ -21,7 +23,7 @@ function harness() {
   const hold = { read: () => null, withLock: fn => fn(), reserve: () => 1, owns: () => true, submitted: () => 1, release: async () => {}, releaseLocked: r => releases.push(r) };
   const pub = { readContract: async () => 0n, simulateContract: async req => ({ request: req }) };
   const context = vm.createContext({ console, Promise, Object, BigInt, Number, Error,
-    getViewAs: () => state.view, VIEW_AS_TX_ERROR: 'View as', getWalletClient: () => state.wallet, getAccount: () => state.account,
+    encodeFunctionData, assertShopCallPolicy, getViewAs: () => state.view, VIEW_AS_TX_ERROR: 'View as', getWalletClient: () => state.wallet, getAccount: () => state.account,
     isSafeConnected: () => state.safe, holdForWrite: () => hold, waitForSafeInitialization: async () => {},
     createPublicClientForChain: () => pub, clientFor: () => pub,
     contractGasWithHeadroom: () => { started.resolve(); return gas.promise; }, CHAINS: { 1: { id: 1 } },
@@ -33,7 +35,7 @@ function harness() {
   });
   vm.runInContext(invoke + '\n' + sendHeld + '\n' + execute + '\n' + permit, context);
   function start() {
-    context.executeTransaction({ chainId: 1, address: OTHER, abi: [], functionName: 'pay', args: [], value: 10n, skipConfirm: true,
+    context.executeTransaction({ chainId: 1, address: OTHER, abi: [{ type: 'function', name: 'pay', inputs: [], outputs: [], stateMutability: 'payable' }], functionName: 'pay', args: [], value: 10n, skipConfirm: true,
       onStatus: () => {}, onSuccess: () => result.resolve(null), onError: (m, meta) => result.resolve(meta?.error || new Error(m)) });
   }
   return { context, state, wallet, gas, started, result, writes, releases, start };
@@ -83,7 +85,7 @@ describe('final authorization freshness after current wallet chain read', () => 
     let now = 100000, reads = 0;
     h.state.wallet.getChainId = () => ++reads === 1 ? Promise.resolve(1) : (reading.resolve(), chain.promise);
     Object.assign(h.context, { Date: { now: () => now }, Math, Array, String,
-      relayrSupportsChain: () => true, getAddress: () => OTHER,
+      assertShopCallPolicy, relayrSupportsChain: () => true, getAddress: () => OTHER,
       createPublicClientForChain: () => ({ readContract: async r => r.functionName === 'isTrustedForwarder' ? true : r.functionName === 'eip712Domain' ? ['0x0f', 'Forwarder', '1', 1n, OTHER, '0x', []] : 0n, estimateGas: async () => 100000n }),
       TRUSTED_FORWARDER_ABI: [], FORWARDER_ABI: [], gasWithHeadroom: x => x, encodeFunctionData: () => '0xab',
       RELAYR_SIGNED_FORWARD_REQUESTS: new Map(), relayrRequestFingerprint: () => 'proof',
