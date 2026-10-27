@@ -7,6 +7,7 @@ import { encodeFunctionData, decodeFunctionData, toFunctionSelector } from 'viem
 import { renderNfts, build721Config, buildQueueRulesetConfigs, __test } from '../src/create-flow.js';
 import { buildNewShopQueueCall, buildOmnichainQueueArgs, newShopDeploymentSalt } from '../src/discover.js';
 import { getABI } from '../src/abi-registry.js';
+import { SPLIT_SALES_TOKEN_CREDIT_TITLE } from '../src/create-shared.js';
 
 const { initState, storeUnit } = __test;
 const ALICE = '0x1111111111111111111111111111111111111111';
@@ -27,6 +28,47 @@ function newShopState() {
 }
 
 describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)', () => {
+  it('hides ineffective split-sale credit controls for revnets without changing saved state or launch bytes', () => {
+    const s = newShopState();
+    s.projectType = 'revnet';
+    s.collection.extrasOpen = true;
+    s.collection.issueTokensForSplits = true;
+    const encode = () => encodeFunctionData(__test.buildRevnetArgs(s, 1, ALICE, 'ipfs://x', SALT, 1700000000));
+    const before = encode();
+
+    const rendered = renderNfts(s, () => {});
+    expect(rendered.textContent).toContain('Require exact payment');
+    expect(rendered.textContent).not.toContain(SPLIT_SALES_TOKEN_CREDIT_TITLE);
+    expect(s.collection.issueTokensForSplits).toBe(true);
+    expect(encode()).toBe(before);
+    s.collection.issueTokensForSplits = false;
+    expect(encode()).toBe(before);
+  });
+
+  it('keeps ordinary project split-sale credit controls working through the rendered checkbox', () => {
+    const s = newShopState();
+    s.collection.extrasOpen = true;
+    s.collection.issueTokensForSplits = false;
+    const encode = () => {
+      const call = __test.buildLaunchArgs(s, 1, ALICE, 'ipfs://x', SALT, 1700000000);
+      return encodeFunctionData({ ...call, functionName: call.functionName || 'launchProjectFor' });
+    };
+    const before = encode();
+    const rendered = renderNfts(s, () => {});
+    const label = Array.from(rendered.querySelectorAll('label'))
+      .find(node => node.textContent === SPLIT_SALES_TOKEN_CREDIT_TITLE);
+    expect(label).toBeDefined();
+    const checkbox = label.querySelector('input[type="checkbox"]');
+    expect(checkbox.checked).toBe(false);
+    expect(build721Config(s, 'ipfs://x', 1).flags.issueTokensForSplits).toBe(false);
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(s.collection.issueTokensForSplits).toBe(true);
+    expect(build721Config(s, 'ipfs://x', 1).flags.issueTokensForSplits).toBe(true);
+    expect(encode()).not.toBe(before);
+  });
+
   it('ignores restored custom voting and removes its editor control', () => {
     const s = newShopState();
     s.nfts[0] = { ...s.nfts[0], votingOn: true, votingUnits: '99', flags: { useVotingUnits: true } };
