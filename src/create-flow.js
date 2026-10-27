@@ -2698,11 +2698,12 @@ function collectionExtrasSection(state, render) {
   f.appendChild(toggleRow('Lock reserved items after launch', dz('New items added after launch can’t set aside reserved inventory.', 'New items added after launch can set aside reserved inventory.'), c.noNewTiersWithReserves, function (v) { c.noNewTiersWithReserves = v; }));
   f.appendChild(toggleRow('Lock voting items after launch', dz('Only free items can be added after launch. Governance weight follows the item price.', 'Paid and free items can be added after launch. Governance weight follows the item price.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
   f.appendChild(toggleRow('Lock project owner minting after launch', dz('New items added after launch can’t let the project owner mint for free.', 'New items added after launch can let the project owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
-  f.appendChild(toggleRow(SPLIT_SALES_TOKEN_CREDIT_TITLE, dz(SPLIT_SALES_TOKEN_CREDIT_ON, SPLIT_SALES_TOKEN_CREDIT_OFF), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
   // useDataHookForCashOut — item holders redeem items against project surplus. Revnets force this on at the
   // deployer (so it's custom-only). Mutually exclusive with TOKEN cash out (set in rulesets): the 721 hook
   // reverts on any token cash out, so if token cash outs are on we idle this instead of letting both be set.
   if (state.projectType !== 'revnet') {
+    // The revnet deployer fixes split-sale token credit instead of using this choice.
+    f.appendChild(toggleRow(SPLIT_SALES_TOKEN_CREDIT_TITLE, dz(SPLIT_SALES_TOKEN_CREDIT_ON, SPLIT_SALES_TOKEN_CREDIT_OFF), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
     if (anyTokenCashOut(state) && !c.useForRedemptions) {
       f.appendChild(idleToggle('Give items cash out access to surplus funds', 'Token cash outs are enabled in your rulesets — tokens and items can’t both be cashed out. Turn off token cash outs to let items redeem.'));
     } else {

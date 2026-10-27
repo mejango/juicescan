@@ -479,3 +479,19 @@ Correction implementation frozen: unchanged-policy/ABI extraction passed 4 suite
 Local full-run evidence is intentionally qualified: the frozen production source passed 2241 runtime tests / 213 suites; one static ABI-sweep assertion retained the old source-file exclusion for the unchanged extracted Safe execution ABI. That TEST-ONLY metadata was corrected to its new owning file, preserving the exact exclusion and expanding the sweep to all seven SafeBatch fragments. All 37 corrected ABI checks pass. Parent directed cancellation of the just-started redundant local coverage replay; complete exact-head coverage and required floors remain a required GitHub CI gate before merge, not a locally reported green full run for this correction. No production source changed after Astra approval or browser qualification.
 
 No push, merge, deployment, contracts or SDK/dependency-version changes were performed by this task. Parent owns final publication, exact-head CI and the user-authorized landing of the five client PRs.
+
+# Scoped client follow-up — 2026-10-27
+
+## Plan refinement
+- **Objective:** Hide ignored split-credit control in Revnet creation, preserve ordinary-project behavior and dependencies. User authorizes client push and merge after confidence gates; parent owns release.
+- **System fit:** Contract source-token context, minimum-output bounds and REVDeployer split policy own behavior. Preserve raw economics, saved recovery, final wallet guards and smooth UX; contracts/SDK/dependencies unchanged.
+- **Reuse and simplicity:** Use existing domain owners and UI flavor guards, one home per rule. Separate any behavior-preserving extraction before changes. Parent alone owns task notes.
+- **Evidence and unknowns:** Current main pinned, prior actual-source repro confirms symptom; authoritative contract semantics checked. Original dirty trees preserved in isolated checkout. No live transaction or deployment claim.
+- **Verification:** Owner adds focused actual-consumer regression, static checks then staggered production artifact checks. Independent Astra approval and mandatory exact-head full CI precede matched-head merge with readback.
+- **Resource budget:** One owner per client, max2 test workers each, Node26/npm12 physical locked dependencies. No broad census, dependency changes or redundant full local suites; parent coordinates expensive builds and publication.
+
+- [x] Implement scoped fixes and focused regressions.
+- [x] Complete independent review and local preflight.
+- [ ] Publish, pass exact-head full CI and merge with readback.
+
+Review: Revnet-only ignored control hidden with existing flavor guard; ordinary DOM checkbox changes actual encoded launch bytes, restored Revnet flag/bytes unchanged.52 focused tests across3 suites,332JS syntax checks, transaction inventory, dependency audit and production bundle/budgets pass on pinnedNode26. Independent Astra approves runtime SHA256905bcca3254e32a8563e0320fb1430b694e17f11466db8def30de37b01a716db and separately passes12DOM/encoding tests onNode22. No dependencies/contracts/SDK changes. Exact-head full CI required before authorized matched-head merge.
