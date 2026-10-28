@@ -82,7 +82,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async url => {
     const key = Object.keys(runtime.metadata).find(candidate => String(url).includes(candidate));
     if (!key) throw new Error('Unexpected metadata URL ' + url);
-    return { ok: true, json: async () => runtime.metadata[key] };
+    return new Response(JSON.stringify(runtime.metadata[key]));
   }));
 });
 

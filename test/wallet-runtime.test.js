@@ -201,3 +201,64 @@ describe('wallet provider runtime states', () => {
     expect(wallet.getProviders()[0].info.name).toMatch(/Safe \(0x2222…2222\)/);
   });
 });
+
+describe('optional permission revocation', () => {
+  it.each(['pending', 'rejected', 'throws'])('disconnects locally and bounds a %s wallet revocation without duplicate prompts', async outcome => {
+    localStorage.clear();
+    runtime.currentChain = 1;
+    runtime.mobile = true;
+    runtime.safeInfo = null;
+    runtime.safeProvider = null;
+    vi.resetModules();
+    const handlers = new Map();
+    let completeRevocation;
+    const provider = {
+      request: vi.fn(({ method }) => {
+        if (method === 'eth_requestAccounts') return Promise.resolve([ACCOUNT]);
+        if (method === 'wallet_revokePermissions') {
+          if (outcome === 'rejected') return Promise.reject(new Error('unsupported'));
+          if (outcome === 'throws') throw new Error('unsupported');
+          return new Promise(resolve => { completeRevocation = resolve; });
+        }
+        throw new Error(`unexpected method ${method}`);
+      }),
+      on: vi.fn((event, handler) => handlers.set(event, handler)),
+      removeListener: vi.fn((event, handler) => { if (handlers.get(event) === handler) handlers.delete(event); }),
+    };
+    Object.defineProperty(window, 'ethereum', { configurable: true, value: provider });
+    const wallet = await import('../src/wallet.js');
+    await wallet.connect();
+    expect(wallet.getAccount()).toBe(ACCOUNT);
+    const listener = vi.fn();
+    const stop = wallet.onWalletChange(listener);
+    vi.useFakeTimers();
+    try {
+      let finished = false;
+      const disconnecting = wallet.disconnect().then(() => { finished = true; });
+      expect(wallet.getAccount()).toBeNull();
+      expect(wallet.getWalletClient()).toBeNull();
+      expect(localStorage.getItem('jb-wallet-connected')).toBeNull();
+      expect(localStorage.getItem('jb-wallet-rdns')).toBeNull();
+      expect(listener).toHaveBeenCalledWith({ account: null, connected: false });
+      expect(handlers.has('accountsChanged')).toBe(false);
+      await wallet.disconnect();
+      await vi.advanceTimersByTimeAsync(99);
+      if (outcome === 'pending') expect(finished).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await disconnecting;
+      expect(finished).toBe(true);
+      expect(provider.request.mock.calls.filter(([request]) => request.method === 'wallet_revokePermissions')).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+      if (completeRevocation) { completeRevocation(); await Promise.resolve(); }
+      expect(wallet.getAccount()).toBeNull();
+      await wallet.connect();
+      expect(wallet.getAccount()).toBe(ACCOUNT);
+      expect(handlers.has('accountsChanged')).toBe(true);
+    } finally {
+      stop();
+      vi.useRealTimers();
+      delete window.ethereum;
+      runtime.mobile = false;
+    }
+  });
+});
