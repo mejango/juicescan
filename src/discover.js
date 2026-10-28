@@ -1,3 +1,4 @@
+import { boundedMetadataJson } from './bounded-response.js';
 import { assertScheduleFresh, assertOrderedRulesetReceipt } from './ruleset-schedule.js';
 // src/discover.js
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
@@ -5772,7 +5773,7 @@ function fetchJsonFromUrl(url, timeoutMs, controllers) {
     }, timeoutMs);
     fetch(url, opts).then(function (res) {
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      return res.json();
+      return boundedMetadataJson(res, controller && controller.signal);
     }).then(function (json) {
       if (settled) return;
       settled = true; clearTimeout(timer); resolve(json);

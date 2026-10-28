@@ -321,16 +321,22 @@ export async function connect(chosen) {
 }
 
 export async function disconnect() {
-  // Revoke the dapp's account permission so the NEXT connect re-prompts the wallet's account picker
-  // instead of silently re-granting the same account. Newer wallets support wallet_revokePermissions;
-  // older ones don't — ignore failures.
-  try {
-    if (activeProvider) await activeProvider.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] });
-  } catch (_) {}
+  // Disconnect locally first. Optional permission revocation must not hold the UI or another disconnect open.
+  var provider = account && activeProvider;
   walletClient = null;
   account = null;
+  bindEvents(null);
   try { localStorage.removeItem(WALLET_FLAG); localStorage.removeItem(WALLET_RDNS); } catch (_) {}
   notify();
+  if (!provider) return;
+  var timer;
+  try {
+    await Promise.race([
+      Promise.resolve().then(function () { return provider.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] }); }),
+      new Promise(function (resolve) { timer = setTimeout(resolve, 100); }),
+    ]);
+  } catch (_) { /* Permission revocation is optional for injected wallets. */ }
+  finally { clearTimeout(timer); }
 }
 
 // Silently restore a prior connection on page load — `eth_accounts` returns already-authorized

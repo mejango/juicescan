@@ -1,3 +1,4 @@
+import { MAX_METADATA_BYTES } from '../src/bounded-response.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   BENDYSTRAW_PROJECT_QUERY,
@@ -18,6 +19,7 @@ describe('IPFS metadata fetches', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -53,10 +55,7 @@ describe('IPFS metadata fetches', () => {
   });
 
   it('normalizes gateway URLs to the same immutable cache key', async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ name: 'Cached Project' }),
-    }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ name: 'Cached Project' })));
     vi.stubGlobal('fetch', fetchMock);
 
     const first = await fetchMetadata('ipfs://bafycache/project.json');
@@ -68,6 +67,40 @@ describe('IPFS metadata fetches', () => {
     const second = await fetchMetadata('https://bafycache.eth.sucks/project.json');
     expect(second).toEqual(first);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('tries the next existing gateway after an oversized project document', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const oversized = new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(MAX_METADATA_BYTES + 1)); },
+      cancel,
+    });
+    const mock = vi.fn()
+      .mockResolvedValueOnce(new Response(oversized))
+      .mockImplementation(async () => new Response(JSON.stringify({ name: 'Fallback metadata' })));
+    vi.stubGlobal('fetch', mock);
+    const result = fetchMetadata('ipfs://bafyoversize-fallback/project.json');
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(result).resolves.toEqual({ name: 'Fallback metadata' });
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(oversized.locked).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('times out a stalled body, cancels it and leaves no fetch timers behind', async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn(() => new Promise(() => {}));
+    const body = new ReadableStream({ cancel });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)));
+    const result = fetchMetadata('https://metadata.example/stalled-project.json');
+    await vi.advanceTimersByTimeAsync(5500);
+    await expect(result).resolves.toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(body.locked).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('reconstructs both canonical DAG-PB and legacy raw candidates from an on-chain tier digest', () => {

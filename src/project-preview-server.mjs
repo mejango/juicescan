@@ -1,3 +1,4 @@
+import { boundedResponseBytes } from './bounded-response.js';
 import sharp from 'sharp';
 import { BENDYSTRAW_MAINNET_HOST as MAINNET_HOST, BENDYSTRAW_TESTNET_HOST as TESTNET_HOST } from './bendystraw-endpoints.js';
 import tokens from '../data/tokens.json' with { type: 'json' };
@@ -74,13 +75,6 @@ function ipfsPath(value) {
   return path;
 }
 
-async function boundedResponseBytes(response, maximum) {
-  const declared = Number(response.headers.get('content-length') || 0);
-  if (declared > maximum) throw new Error('response too large');
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maximum) throw new Error('response too large');
-  return bytes;
-}
 
 async function fetchIpfsJson(uri) {
   const path = ipfsPath(uri);
