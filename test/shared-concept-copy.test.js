@@ -26,7 +26,7 @@ const SHARED_CONCEPT_KEYS = [
 ];
 
 /** Must match juicebox-money and revnet-money. Update all three together, never one. */
-const SHARED_CONCEPT_HASH = 'eb1e73ad0ef88b37';
+const SHARED_CONCEPT_HASH = 'b9e0e2dc274ee1e7';
 
 function hashSharedConcepts(concepts, keys) {
   const body = [...keys]
