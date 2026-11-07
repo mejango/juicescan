@@ -221,7 +221,7 @@ export const LEARN_SECTIONS = [
           ],
           [
             "Reserved tokens",
-            "The share of new tokens set aside for chosen recipients."
+            "The share of new tokens that goes to chosen recipients."
           ],
           [
             "Cash out tax",
@@ -635,7 +635,7 @@ export const LEARN_SECTIONS = [
           ["Permission", "A task the owner lets another account do, without handing over ownership."],
           ["Pool", "A shared market holding tokens and money for trades."],
           ["Price feed", "A source of exchange rates, used to price terms in USD while accepting ETH."],
-          ["Reserved tokens", "The share of new tokens set aside for chosen recipients. Revnets call them splits."],
+          ["Reserved tokens", "The share of new tokens that goes to chosen recipients. Revnets call them splits."],
           ["Revnet / stage", "A project with its token schedule fixed at launch, and one period in that schedule."],
           ["Ruleset", "A project’s terms and when they apply."],
           ["Safe", "A shared wallet that needs several approvals. A proposal changes nothing until it’s executed."],

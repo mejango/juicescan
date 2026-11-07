@@ -19842,13 +19842,13 @@ export function formatPrice(n) {
 // no "surplus", no "splits" — those are our words, not theirs.
 export var PROTOCOL_CONCEPTS = {
   // tokenCount = amount * weight / weightRatio (JBTerminalStore.sol:1165-1175).
-  issuance: "How many new tokens a payment creates per unit paid, before any are set aside for other recipients. The rules set this rate; trading does not.",
+  issuance: "How many new tokens a payment creates per unit paid, before any go to other recipients. The rules set this rate; trading does not.",
   // JBRulesetMetadataResolver.reservedPercent.
-  reservedShare: "The share of new tokens set aside for chosen recipients. The payer gets the rest.",
+  reservedShare: "The share of new tokens that goes to chosen recipients. The payer gets the rest.",
   // Available to mint for named beneficiaries once a stage starts.
-  autoIssuance: "Tokens set aside for named recipients without a payment. They can be created once their stage starts.",
+  autoIssuance: "Tokens scheduled for named recipients without a payment. They can be created once their stage starts.",
   // JBCashOuts.cashOutFrom — 0 returns the exact proportional share; higher returns less.
-  cashOutTax: "A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.",
+  cashOutTax: "A setting that leaves more money for remaining token owners when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.",
   // JBFundAccessLimitGroup.surplusAllowances. JBTerminalStore.sol:140-144: usage is keyed by
   // `ruleset.id`, NOT cycle number, so cycles rolling over do NOT refill it.
   surplusAllowance: "An extra withdrawal budget for funds not set aside for payouts. The owner or an account they authorize can spend it. It does not reset when the same rules repeat.",
@@ -20936,7 +20936,7 @@ function renderAutoIssuance(project, stages) {
   var card = el('div');
 
   var desc = el('div', 'detail-card-body');
-  desc.textContent = 'Tokens set aside for named recipients on each listed network. Anyone can create and send them once their stage starts.';
+  desc.textContent = 'Tokens scheduled for named recipients on each listed network. Anyone can create and send them once their stage starts.';
   card.appendChild(desc);
 
   var sym = project.tokenSymbol ? ' ' + project.tokenSymbol : '';
