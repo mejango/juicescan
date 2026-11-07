@@ -19848,7 +19848,7 @@ export var PROTOCOL_CONCEPTS = {
   // Available to mint for named beneficiaries once a stage starts.
   autoIssuance: "Tokens scheduled for named recipients without a payment. They can be created once their stage starts.",
   // JBCashOuts.cashOutFrom — 0 returns the exact proportional share; higher returns less.
-  cashOutTax: "A setting that leaves more money for remaining token owners when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.",
+  cashOutTax: "A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.",
   // JBFundAccessLimitGroup.surplusAllowances. JBTerminalStore.sol:140-144: usage is keyed by
   // `ruleset.id`, NOT cycle number, so cycles rolling over do NOT refill it.
   surplusAllowance: "An extra withdrawal budget for funds not set aside for payouts. The owner or an account they authorize can spend it. It does not reset when the same rules repeat.",
