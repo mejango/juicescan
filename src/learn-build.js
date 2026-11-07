@@ -276,7 +276,7 @@ export function renderBuildTab() {
 
   wrap.appendChild(guideSection('build-cashout', '6. CASH OUT', [
     "A cash out removes a holder’s tokens and returns project money under the current rules. Money above the unused payout limit is called surplus; it is the starting amount for this calculation.",
-    "The cash out tax rate controls how much of a holder’s share stays for others. At 0%, the starting calculation is proportional. At 100%, ordinary cash outs return nothing. Preview the full operation to account for the project’s configured behavior."
+    "The cash out tax rate controls how much of a holder’s share stays for others. At 0, the starting calculation is proportional. At 1, ordinary cash outs return nothing. Preview the full operation to account for the project’s configured behavior."
   ], [
     codeBlock(
       'JBMultiTerminal.cashOutTokensOf',
