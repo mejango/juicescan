@@ -10,7 +10,7 @@ import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './p
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { confirmStatusSettles, offerRelease, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { confirmStatusSettles, offerRelease, onDocumentWhileConnected, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
@@ -1957,8 +1957,7 @@ function renderCustomerYou(project, mediaP) {
   load();
   onEffectiveAccountChange(function () { if (box.isConnected) load(); });
   // A redemption burns items — reload so the owned count reflects it without a manual refresh.
-  var onBridge = function () { if (box.isConnected) load(); };
-  document.addEventListener('jb:bridge-updated', onBridge);
+  onDocumentWhileConnected(box, 'jb:bridge-updated', function () { load(); });
   return box;
 }
 
@@ -26256,7 +26255,7 @@ function renderYouCard(project, opts) {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reconcileAfterMount);
   else Promise.resolve().then(reconcileAfterMount);
   onEffectiveAccountChange(function () { if (body.isConnected) load(); });
-  document.addEventListener('jb:bridge-updated', function () { if (body.isConnected) load(); });
+  onDocumentWhileConnected(body, 'jb:bridge-updated', function () { load(); });
   return wrap;
 }
 
@@ -26314,9 +26313,12 @@ function renderBridgeTransactions(project) {
     if (rows.length === 0) emptyRetries++;
     pollTimer = setTimeout(function () { if (body.isConnected) load(); }, rows.length === 0 ? 8000 : 45000);
   }
+  // Only the latest read lands: an older one finishing last never moves a status backwards.
+  var loadSeq = 0;
   function load() {
+    var seq = ++loadSeq;
     fetchBridgeTransactions(project).then(function (data) {
-      if (!body.isConnected) return;
+      if (seq !== loadSeq || !body.isConnected) return;
       data = data || [];
       // Movements never legitimately disappear (a delivered/claimed leaf persists). A transient RPC/getLogs
       // failure returns fewer rows — merge by key (fresh status wins) so the view is monotonic and never
@@ -26332,7 +26334,7 @@ function renderBridgeTransactions(project) {
       draw();
       schedulePoll();
     }).catch(function () {
-      if (!body.isConnected) return;
+      if (seq !== loadSeq || !body.isConnected) return;
       // Don't wipe a populated table on a failed re-read — only show the error when we have nothing.
       if (!rows.length) { body.className = 'detail-card-body bridge-empty'; body.textContent = 'Could not load bridge transactions.'; }
       schedulePoll();
@@ -26341,7 +26343,7 @@ function renderBridgeTransactions(project) {
 
   filter.addEventListener('change', draw);
   // A move/claim/execute elsewhere dispatches this; re-read chain state so statuses stay fresh.
-  document.addEventListener('jb:bridge-updated', load);
+  onDocumentWhileConnected(body, 'jb:bridge-updated', function () { load(); });
   load();
 
   return card;
@@ -29075,7 +29077,7 @@ function renderGossipSection(project) {
   }
   box.appendChild(skelOpsTable(['Chain', 'Knows'], 3));
   fill();
-  document.addEventListener('jb:bridge-updated', function () { if (section.isConnected) fill(); });
+  onDocumentWhileConnected(section, 'jb:bridge-updated', function () { fill(); });
   return section;
 }
 
@@ -31192,7 +31194,7 @@ export {
   lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
   payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
   readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, renderBalanceTables,
-  renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
+  renderBridgeTransactions, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
   revnetOperatorOf, sameAddr, splitsOfAbi, suckerTokenMappingAbi, surplusAllowancesAbi, terminalOfAbi,
   terminalsOfAbi, toBigInt, tokenOfAbi, totalSupplyAbi,
 };

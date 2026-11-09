@@ -139,6 +139,17 @@ export function el(tag, className) {
   return e;
 }
 
+// A document event handler for a node's lifetime: `fn` runs while `node` is on the page, and the handler is
+// removed at the first event after the node, once seen mounted, has left it.
+export function onDocumentWhileConnected(node, type, fn) {
+  var mounted = false;
+  function handler(event) {
+    if (node.isConnected) { mounted = true; fn(event); return; }
+    if (mounted) document.removeEventListener(type, handler);
+  }
+  document.addEventListener(type, handler);
+}
+
 export function truncAddr(addr) {
   if (!addr || addr.length < 10) return addr;
   return addr.slice(0, 6) + '...' + addr.slice(-4);
