@@ -10247,6 +10247,7 @@ export function renderPayCard(project, cart) {
       };
     // One hold per payment (or add to balance) to this project, whichever terminal or router the route picks.
     txParams.holdScope = 'project-' + String(reviewedProjectId);
+    txParams.holdLegacyTargets = [getAddress('JBMultiTerminal', reviewedChainId), routerTerminalFor(reviewedChainId)];
     // Approval, authorization and simulation waits must not outlive the reviewed inputs.
     txParams.assertWriteState = function () {
       if (!payInputsUnchanged()) throw new Error('The payment details, network, quote, or wallet changed. Review and try again.');

@@ -171,3 +171,11 @@ it('reports every send stage in the SDK phase names',async()=>{
  expect(phases).toEqual(['simulating','simulating','signing','receipt']);
  expect(done.phase).toBe('done');
 });
+it.each([['with a saved hash',hash,/still pending/i],['without a hash',null,/may have been sent/i]])('a scoped send also refuses while a legacy per-target hold is outstanding (%s)',async(_label,saved,line)=>{
+ const legacy='juicescan-write-hold-v1:'+h.account.toLowerCase()+':8453:0x3333333333333333333333333333333333333333:pay';
+ localStorage.setItem(legacy,JSON.stringify({id:'old',account:h.account.toLowerCase(),hash:saved}));
+ h.client.getTransaction=vi.fn(async()=>({hash,from:h.account,blockNumber:null}));
+ const result=await run({holdScope:'project-7',holdLegacyTargets:[args.address,'0x3333333333333333333333333333333333333333']});
+ expect(result.error).toMatch(line);expect(h.wallet.writeContract).not.toHaveBeenCalled();
+ expect(JSON.parse(localStorage.getItem(legacy)).id).toBe('old');
+});

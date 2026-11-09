@@ -611,6 +611,7 @@ export function renderPayComponent() {
       }), {
         // One hold per payment to this project, whichever terminal or router the route picks.
         holdScope: 'project-' + String(reviewed.projectId),
+        holdLegacyTargets: payRouteCandidates(reviewed.chainId).map(function (candidate) { return candidate.address; }),
         assertWriteState: function () { if (!unchanged()) throw new Error(CHANGED); },
         // The confirm dialog shows why a pay reverted, when the revert says.
         describeFailure: function (error) { var failure = decodePayFailure(error); return failure && failure.message; },

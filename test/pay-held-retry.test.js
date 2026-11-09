@@ -116,4 +116,21 @@ describe('Pay tool retry after a lost receipt watch', () => {
     expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
     expect(second.textContent).toMatch(/still pending/i);
   });
+
+  it.each([
+    ['with a saved hash', HASH, /still pending/i],
+    ['without a hash', null, /may have been sent/i],
+  ])('refuses while a hold the previous build saved under a payment route is outstanding (%s)', async (_label, hash, line) => {
+    for (const target of [h.TERMINAL, h.ROUTER]) {
+      localStorage.clear(); document.body.innerHTML = '';
+      const key = 'juicescan-write-hold-v1:' + h.account.toLowerCase() + ':1:' + target.toLowerCase() + ':pay';
+      localStorage.setItem(key, JSON.stringify({ id: 'old-build', account: h.account.toLowerCase(), hash }));
+      const component = renderPayComponent();
+      document.body.appendChild(component);
+      component.querySelector('.pay-btn').click();
+      await vi.waitFor(() => expect(component.textContent).toMatch(line));
+      expect(h.wallet.writeContract).not.toHaveBeenCalled();
+      expect(JSON.parse(localStorage.getItem(key)).id).toBe('old-build');
+    }
+  });
 });

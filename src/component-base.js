@@ -1502,6 +1502,10 @@ export function executeTransaction(opts) {
   if (!account) { opts.onError('Connect wallet to transact'); return; }
   // A caller with its own write journal (onWriteRejected) keeps it; every other direct write is held here.
   var hold = opts.onWriteRejected ? null : holdForWrite(opts.chainId, account, opts);
+  // A scoped hold also reads the per-target holds an earlier build saved for the same action (read-only).
+  var legacyHolds = hold && opts.holdScope ? (opts.holdLegacyTargets || []).filter(Boolean).map(function (to) {
+    return holdForWrite(opts.chainId, account, Object.assign({}, opts, { address: to, holdScope: null }));
+  }) : [];
   var heldReservation = null;
 
   // Status/result callbacks. When the confirm modal is shown (not skipConfirm), these get wrapped so tx
@@ -1515,9 +1519,14 @@ export function executeTransaction(opts) {
 
   // Build the review payload and require explicit confirmation, unless the caller already showed its own.
   // A held earlier attempt is settled from the chain first; the review opens only once nothing holds it.
-  var held = false, heldNow;
-  try { heldNow = !!hold && !!hold.read(); } catch (_) { heldNow = true; }
-  var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName, opts.verifyReceipt).then(function (gate) {
+  var held = false;
+  var gates = hold ? [hold].concat(legacyHolds) : [];
+  var heldNow = gates.some(function (h) { try { return !!h.read(); } catch (_) { return true; } });
+  function settleGates(i) {
+    if (i >= gates.length) return Promise.resolve(null);
+    return heldWriteGate(gates[i], opts.label || opts.functionName, opts.verifyReceipt).then(function (gate) { return gate || settleGates(i + 1); });
+  }
+  var confirmStep = heldNow ? settleGates(0).then(function (gate) {
     if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'done', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
     if (gate) { held = true; callerOnError(gate.line, gate.verificationError ? { submittedHash: gate.submittedHash, error: gate.verificationError, userRejected: false } : undefined); return null; }
     return reviewStep();
