@@ -1496,6 +1496,8 @@ export function offerRelease(line, release) {
 
 export function executeTransaction(opts) {
   // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, reverify, onStatus, onSuccess, onError, skipConfirm, label }
+  // onStatus/onSuccess meta.phase uses the SDK's ReviewedProgress names: simulating, signing, receipt (hash known),
+  // proposed (queued in the Safe), done.
   if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
   var wallet = getWalletClient();
   var reviewedSafe = opts.expectedSafe == null ? isSafeConnected() : opts.expectedSafe;
@@ -1520,7 +1522,7 @@ export function executeTransaction(opts) {
   var held = false, heldNow;
   try { heldNow = !!hold && !!hold.read(); } catch (_) { heldNow = true; }
   var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName, opts.verifyReceipt).then(function (gate) {
-    if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'confirmed', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
+    if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'done', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
     if (gate) { held = true; callerOnError(gate.line, gate.verificationError ? { submittedHash: gate.submittedHash, error: gate.verificationError, userRejected: false } : undefined); return null; }
     return reviewStep();
   }) : reviewStep();
@@ -1637,14 +1639,14 @@ export function executeTransaction(opts) {
         } else txs.push({ to: opts.tokenAddr, value: '0', data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [opts.spenderAddr, BigInt(opts.approvalAmount)] }) });
       }
       txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
-      cbs.onStatus('Proposing to your Safe…', 'pending');
+      cbs.onStatus('Proposing to your Safe…', 'pending', { phase: 'signing' });
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
       return invokeWallet(opts.chainId, account, true, function () {
         walletInvoked = true;
         return proposeSafeTransactions(txs);
       }, function () { assertWalletInvocation(true); }).then(function (safeTxHash) {
-        cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
+        cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
       });
     }).catch(async function (err) {
       try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
@@ -1652,12 +1654,12 @@ export function executeTransaction(opts) {
     });
     return;
   }
-  cbs.onStatus('Checking wallet network…', 'pending');
+  cbs.onStatus('Checking wallet network…', 'pending', { phase: 'simulating' });
   var approvalReceipt = null;
 
   wallet.getChainId().then(function(walletChainId) {
     if (walletChainId !== opts.chainId) {
-      cbs.onStatus('Switching to ' + chainNameFor(opts.chainId) + '…', 'pending');
+      cbs.onStatus('Switching to ' + chainNameFor(opts.chainId) + '…', 'pending', { phase: 'simulating' });
       return switchChain(opts.chainId);
     }
   }).then(function() {
@@ -1674,7 +1676,7 @@ export function executeTransaction(opts) {
   }).then(function() {
     var current = getAccount();
     if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    cbs.onStatus('Simulating the confirmed transaction…', 'pending');
+    cbs.onStatus('Simulating the confirmed transaction…', 'pending', { phase: 'simulating' });
     var pub = createPublicClientForChain(opts.chainId);
     var simulationRequest = {
       account: account,
@@ -1694,7 +1696,7 @@ export function executeTransaction(opts) {
     if (callerBlock != null && (approvalBlock == null || callerBlock > approvalBlock)) approvalBlock = callerBlock;
     if (approvalBlock != null) simulationRequest.blockNumber = approvalBlock;
     return pub.simulateContract(simulationRequest).then(async function(simulation) {
-      cbs.onStatus('Awaiting wallet confirmation…', 'pending');
+      cbs.onStatus('Awaiting wallet confirmation…', 'pending', { phase: 'signing' });
       var gas = await contractGasWithHeadroom(pub, simulation.request);
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
@@ -1715,7 +1717,7 @@ export function executeTransaction(opts) {
     submittedHash = hash;
     // Submitted to the mempool — now waiting to be included onchain. Keep a live pending state up
     // the whole time (waitForTransactionReceipt can take a while).
-    cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'submitted', hash: hash, chainId: opts.chainId });
+    cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'receipt', hash: hash, chainId: opts.chainId });
     var pub = createPublicClientForChain(opts.chainId);
     // Poll receipts directly instead of waiting for a subscription-style
     // watcher to reject before falling back. Some injected/public RPC pairs
@@ -1732,14 +1734,14 @@ export function executeTransaction(opts) {
     }
     if (opts.verifyReceipt) await opts.verifyReceipt(receipt);
     if (heldReservation) await hold.release(heldReservation).catch(function () {});
-    cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
+    cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'done', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(async function(err) {
     try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
     if (submittedHash && err && err.code === 'RULESET_ORDER_UNVERIFIED') {
       cbs.onError(err.message, { userRejected: false, submittedHash: submittedHash, error: err }); return;
     }
     if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {
-      cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'submitted', hash: submittedHash, chainId: opts.chainId, trackingError: true });
+      cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'receipt', hash: submittedHash, chainId: opts.chainId, trackingError: true });
       return;
     }
     if (err && err.heldWrite) { cbs.onError(err.message, { userRejected: false, submittedHash: null, error: err }); return; }
@@ -1888,7 +1890,7 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus, assertWr
   return readErc20Allowance(pub, tokenAddr, owner, spender).then(function(allowance) {
     if (BigInt(allowance) >= BigInt(amount)) return;
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    onStatus('Approving token spend…', 'pending');
+    onStatus('Approving token spend…', 'pending', { phase: 'signing' });
     return pub.simulateContract({
       account: owner,
       address: tokenAddr,

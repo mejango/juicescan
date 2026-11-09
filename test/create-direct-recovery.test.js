@@ -55,8 +55,8 @@ function clientFor(session, overrides = {}) {
   };
 }
 function confirmSend(opts, hash) {
-  opts.onStatus('Submitted', 'pending', { hash, phase: 'submitted', chainId: opts.chainId });
-  opts.onSuccess('Confirmed', { hash, phase: 'confirmed' });
+  opts.onStatus('Submitted', 'pending', { hash, phase: 'receipt', chainId: opts.chainId });
+  opts.onSuccess('Confirmed', { hash, phase: 'done' });
 }
 
 beforeEach(() => {

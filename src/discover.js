@@ -636,7 +636,7 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
     var ah = await invokeWallet(chainId, owner, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId], gas: approvalGas })); });
-    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
+    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'receipt', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, owner, PERMIT2_ADDRESS, amount);
     if (onStatus) onStatus('Token access approved. Next: authorize the payment.', 'pending');
   }
@@ -3603,11 +3603,11 @@ function openMintTierModal(project, tier, itemName) {
       onError: function (message) { submit.disabled = false; status.textContent = message; status.className = 'operator-edit-status error'; loadLive(); },
       onSuccess: function (message, meta) {
         submit.disabled = false;
-        status.textContent = meta && meta.phase === 'safe-proposed'
+        status.textContent = meta && meta.phase === 'proposed'
           ? 'Mint proposed to the Safe. Inventory changes only after the Safe executes it.'
           : 'Items minted to ' + snapshot.beneficiary + '.';
         status.className = 'operator-edit-status success';
-        if (!meta || meta.phase !== 'safe-proposed') { bustTiersCache(project); loadLive(); }
+        if (!meta || meta.phase !== 'proposed') { bustTiersCache(project); loadLive(); }
       },
     });
   });
@@ -5050,7 +5050,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
     var ah = await invokeWallet(chainId, recipient, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas })); });
-    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
+    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'receipt', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, recipient, PERMIT2_ADDRESS, amountIn);
     if (onStatus) onStatus('Token access approved. Next: authorize the swap.', 'pending');
   }
@@ -5099,7 +5099,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
     var approvalHash = await invokeWallet(chainId, recipient, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas })); });
-    if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: approvalHash, chainId: chainId });
+    if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'receipt', hash: approvalHash, chainId: chainId });
     // The same dual-source receipt poll as every other write here: viem's watcher can sit pending forever on
     // some wallet/public-RPC pairs even after the approval mined, which stranded this step at "Confirming".
     var approvalReceipt = await waitForTrackedTransactionReceipt(client, approvalHash, wallet, chainId);
@@ -10367,12 +10367,12 @@ export function renderPayCard(project, cart) {
       skipConfirm: true, // already confirmed via openPayConfirm
       onStatus: function (m, kind, meta) {
         var cls = 'paybox-status' + (kind === 'pending' ? ' pending' : '');
-        if (meta && meta.phase === 'submitted') setPayStatus(cls, processing, meta);
+        if (meta && meta.phase === 'receipt') setPayStatus(cls, processing, meta);
         else { status.className = cls; status.textContent = m; }
-        if (confirmCtx) confirmCtx.showStatus(meta && meta.phase === 'submitted' ? processing : m, kind, meta);
+        if (confirmCtx) confirmCtx.showStatus(meta && meta.phase === 'receipt' ? processing : m, kind, meta);
       },
       onSuccess: function (m, meta) {
-        if (meta && meta.phase === 'safe-proposed') {
+        if (meta && meta.phase === 'proposed') {
           dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
           setPayStatus('paybox-status pending', m, meta);
           if (confirmCtx) confirmCtx.pending(m, meta);
@@ -10958,7 +10958,7 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
       onSending: opts.onSafeRequest ? function () { opts.onSafeRequest({ chainId: Number(chain.id), safe: authorityAddr, fromBlock: String(proposalFloor), tx: { to: call.to, data: call.data, value: '0', operation: 0 } }); } : null,
       onStatus: setStatus,
       onSuccess: function (message, meta) {
-        setStatus(message, meta && meta.phase === 'safe-proposed' ? 'pending' : 'success', meta);
+        setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success', meta);
         var known = snapshotKnownSafeProposal(chain.id, authorityAddr, { to: call.to, data: call.data, value: 0, operation: 0 }, meta && meta.safeTxHash, proposalFloor, true);
         if (opts.onSafeProposal) opts.onSafeProposal(known);
         resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash, proposals: [known] });
@@ -15662,7 +15662,7 @@ export function renderExtrasSection(project) {
               label: 'Deploy payer address', confirmTitle: 'Confirm payer address deployment',
               onStatus: setStatus, onError: function (message) { reject(new Error(message)); },
               onSuccess: function (message, meta) {
-                setStatus(message, meta && meta.phase === 'safe-proposed' ? 'pending' : 'success'); resolve();
+                setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success'); resolve();
               },
             });
           });
@@ -28830,7 +28830,7 @@ function syncAccountingFromPeer(peerChainId, peerSucker, btn, key, project) {
         btn.textContent = m === 'Awaiting wallet confirmation…' ? 'Confirm…' : 'Syncing…';
         // Mark "in flight" the moment the tx hits the mempool (not just on confirmation) and re-render so the
         // row shows "Syncing…" immediately and survives a reload while it's still confirming.
-        if (meta && meta.phase === 'submitted' && key) {
+        if (meta && meta.phase === 'receipt' && key) {
           _gossipSyncAt[key] = Math.floor(Date.now() / 1000); saveGossipSyncAt(_gossipSyncAt);
           document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
         }

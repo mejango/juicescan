@@ -24,7 +24,7 @@ it('keeps a submitted action pending if receipt effects cannot be verified, with
 });
 it('preserves ordinary execution when no receipt verifier is supplied',async()=>{
  const onSuccess=vi.fn();executeTransaction({...args,onSuccess});
- await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({phase:'confirmed',hash})));
+ await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({phase:'done',hash})));
  expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
 
@@ -45,7 +45,7 @@ it('awaits durable reservation before a Safe proposal and preserves proposal sta
  h.safe=true;let reserve;const onSending=vi.fn(()=>new Promise(resolve=>reserve=resolve)),onSuccess=vi.fn();
  executeTransaction({...args,onSending,onSuccess});
  await vi.waitFor(()=>expect(onSending).toHaveBeenCalledTimes(1));expect(h.propose).not.toHaveBeenCalled();
- reserve();await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({phase:'safe-proposed',safeTxHash:hash})));
+ reserve();await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({phase:'proposed',safeTxHash:hash})));
  expect(h.propose).toHaveBeenCalledTimes(1);expect(h.wallet.writeContract).not.toHaveBeenCalled();
 });
 it('does not propose to a Safe when durable reservation fails',async()=>{

@@ -58,7 +58,7 @@ it('settles a held hash from the chain on the next attempt, with no extra click 
  // Mined and successful: the hold settles itself and says so; nothing is sent again.
  h.client.getTransaction.mockResolvedValue({hash,from:h.account,nonce:7,blockNumber:10n});
  const recovered=await run();
- expect(recovered.ok).toMatch(/went through in block 10/i);expect(recovered.meta).toMatchObject({phase:'confirmed',hash,recovered:true});
+ expect(recovered.ok).toMatch(/went through in block 10/i);expect(recovered.meta).toMatchObject({phase:'done',hash,recovered:true});
  expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
  // Settled: the next attempt sends normally.
  expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(2);
@@ -164,4 +164,10 @@ it('a release dialog shown before a hash arrived cannot clear that hash',async()
  expect(JSON.parse(localStorage.getItem(k)).hash).toBe('0x'+'e'.repeat(64));
  h.client.getTransaction.mockResolvedValue({hash:'0x'+'e'.repeat(64),from:h.account,nonce:7,blockNumber:null});
  expect((await run()).error).toMatch(/still pending/i);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});
+it('reports every send stage in the SDK phase names',async()=>{
+ const phases=[];
+ const done=await new Promise(resolve=>executeTransaction({...args,onStatus:(m,k,meta)=>phases.push(meta&&meta.phase),onSuccess:(m,meta)=>resolve(meta),onError:resolve}));
+ expect(phases).toEqual(['simulating','simulating','signing','receipt']);
+ expect(done.phase).toBe('done');
 });
