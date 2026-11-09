@@ -5,7 +5,7 @@
 import {
   el, parseHashDefaults,
   createProjectAndChainInput, createComponentWrapper,
-  executeTransaction, getBeneficiaryAddress, firstChainForNetwork,
+  executeTransaction, getBeneficiaryAddress, firstChainForNetwork, getAccount, heldWriteGate, holdForWrite,
   createPublicClientForChain, getChainTokens,
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
@@ -554,6 +554,23 @@ export function renderPayComponent() {
     state.phase = 'confirming';
     updateUI();
 
+    // A payment this form sent whose outcome is still unknown holds the form until the chain settles it,
+    // whatever payment contract a fresh route would pick (holds are per target).
+    var outstanding = state.outstandingPay;
+    if (outstanding) {
+      heldWriteGate(holdForWrite(outstanding.chainId, outstanding.account, outstanding.request), 'payment').then(function (gate) {
+        if (!gate) { state.outstandingPay = null; executePay(); return; }
+        if (gate.hash) state.outstandingPay = null;
+        state.phase = 'ready';
+        state.error = gate.hash ? null : gate.line;
+        state.txStatus = gate.hash ? { message: gate.line, success: true } : null;
+        updateUI();
+      }, function (err) {
+        state.phase = 'ready'; state.error = (err && err.message) || 'Could not check the earlier payment.'; updateUI();
+      });
+      return;
+    }
+
     // The payment as it was when Pay was pressed: the route is prepared for it, and the review and calldata show it.
     var reviewed = {
       chainId: state.selectedChain, projectId: state.projectId, token: state.selectedToken.address,
@@ -600,7 +617,7 @@ export function renderPayComponent() {
         };
       }
 
-      executeTransaction(Object.assign(buildPayArgs({
+      var payArgs = buildPayArgs({
         chainId: reviewed.chainId,
         projectId: reviewed.projectId,
         token: reviewed.token,
@@ -608,7 +625,10 @@ export function renderPayComponent() {
         beneficiary: beneficiary,
         memo: reviewed.memo,
         route: route,
-      }), {
+      });
+      var sent = { chainId: payArgs.chainId, account: getAccount(),
+        request: { address: payArgs.address, abi: payArgs.abi, functionName: payArgs.functionName, args: payArgs.args, value: payArgs.value } };
+      executeTransaction(Object.assign(payArgs, {
         assertWriteState: function () { if (!unchanged()) throw new Error(CHANGED); },
         // The confirm dialog shows why a pay reverted, when the revert says.
         describeFailure: function (error) { var failure = decodePayFailure(error); return failure && failure.message; },
@@ -620,7 +640,10 @@ export function renderPayComponent() {
           reviewed.memo ? ['Memo', reviewed.memo] : null,
         ].filter(Boolean) },
         // A lost receipt watch ends this send for the form; the write hold still guards a second send.
-        onStatus: function(msg, kind, meta) { if (meta && meta.trackingError) state.phase = 'ready'; state.txStatus = { message: msg, success: false }; updateUI(); },
+        onStatus: function(msg, kind, meta) {
+          if (meta && meta.phase === 'receipt' && meta.hash) state.outstandingPay = sent;
+          if (meta && meta.trackingError) state.phase = 'ready';
+          state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },
       }));
