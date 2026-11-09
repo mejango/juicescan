@@ -26403,7 +26403,7 @@ function renderBridgeTransactionsTable(rows, project) {
             skipConfirm: true,
             chainId: tx.peerChainId, address: tx.peerSucker, abi: suckerClaimAbi, functionName: 'claim', contractName: 'JBSucker',
             args: [{ token: tx.remoteToken || tx.token, leaf: leaf, proof: tx.proof }],
-            onStatus: function (m, kind) { ctx.showStatus(m, kind); },
+            onStatus: function (m, kind, meta) { ctx.showStatus(m, kind, meta); },
             onError: function (m) { ctx.showStatus(m, 'error'); },
             onSuccess: function () { ctx.showStatus('Claimed', 'success'); ctx.modal.close(); cstat.textContent = 'Claimed'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
           });
@@ -31195,7 +31195,7 @@ export {
   lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
   payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
   readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, renderBalanceTables,
-  renderBridgeTransactions, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
+  renderBridgeTransactions, renderBridgeTransactionsTable, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
   revnetOperatorOf, sameAddr, splitsOfAbi, suckerTokenMappingAbi, surplusAllowancesAbi, terminalOfAbi,
   terminalsOfAbi, toBigInt, tokenOfAbi, totalSupplyAbi,
 };
