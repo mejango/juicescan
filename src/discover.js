@@ -24734,33 +24734,32 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     base.type = 'wallet'; base.address = sp.beneficiary || ''; base.projectId = 0; return base;
   }
 
-  var busy = false, queuedToSafe = false, readySafeExecs = null, safeExecDone = false;
+  // stage: editing | submitting | ready-to-execute | executing | queued | done; readySafeExecs belongs to ready-to-execute and executing.
+  var stage = 'editing', readySafeExecs = null;
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     var queueTab = project.isRevnet ? 'Operator' : 'Owner';
-    if (safeExecDone) { modal.close(); return; }
-    if (readySafeExecs && readySafeExecs.length) {
-      if (busy) return;
-      busy = true; submit.textContent = 'Executing…';
+    if (stage === 'done') { modal.close(); return; }
+    if (stage === 'submitting' || stage === 'executing') return;
+    if (stage === 'ready-to-execute') {
+      stage = 'executing'; submit.textContent = 'Executing…';
       executeReadySafeTransactions(readySafeExecs, { title: 'Execute queued ruleset' + (readySafeExecs.length === 1 ? '' : 's') }).then(function (execRes) {
-        busy = false;
         if (execRes && execRes.done) {
           setStatus('Executed on ' + readySafeExecs.length + ' chain' + (readySafeExecs.length === 1 ? '' : 's') + '.', 'success');
-          readySafeExecs = null; safeExecDone = true; submit.textContent = 'Close';
+          readySafeExecs = null; stage = 'done'; submit.textContent = 'Close';
           notifyProjectUpdated(project);
         } else {
-          submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
+          stage = 'ready-to-execute'; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
           setStatus('Cancelled — queued transactions are still in the ' + queueTab + ' tab or Safe app.', '');
         }
       }).catch(function (err) {
-        busy = false; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
+        stage = 'ready-to-execute'; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
         setStatus(errMessage(err, 'Could not execute the transactions.'), 'error');
       });
       return;
     }
     // After a successful Safe propose the button becomes "Go to Owner/Operator tab" for later signing/execution.
-    if (queuedToSafe) { modal.close(); location.hash = projectHash(project, queueTab); return; }
-    if (busy) return;
+    if (stage === 'queued') { modal.close(); location.hash = projectHash(project, queueTab); return; }
     if (state.queueSourceLoading || !state.queueSourceVerified || state.queueSourceError) {
       setStatus('Nothing was sent. The live ruleset, fund access, splits, and shop hook must all be verified before queueing.', 'error');
       return;
@@ -24771,21 +24770,21 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     }
     // Removing a live shop is destructive — confirm explicitly (the silent-drop this whole feature prevents).
     if (state.shopChoice === 'remove' && state.currentShopHook && !window.confirm('Remove the shop? From the next ruleset onward your project stops minting NFTs on payment — payments mint project tokens at the ruleset weight instead. Continue?')) return;
-    busy = true;
+    stage = 'submitting';
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     submitQueueRuleset(project, state, selected, operatorAddr, setStatus).then(function (res) {
-      busy = false;
+      stage = 'editing';
       if (res && res.readyExecs && res.readyExecs.length) {
-        readySafeExecs = res.readyExecs;
+        stage = 'ready-to-execute'; readySafeExecs = res.readyExecs;
         submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
       } else if (res && res.safe && res.queued > 0) {
-        queuedToSafe = true; submit.textContent = 'Go to ' + queueTab + ' tab';
+        stage = 'queued'; submit.textContent = 'Go to ' + queueTab + ' tab';
       } else if (res && res.executed) {
-        safeExecDone = true; submit.textContent = 'Close';
+        stage = 'done'; submit.textContent = 'Close';
         setTimeout(function () { modal.close(); }, 1200);
       }
     }).catch(function (err) {
-      busy = false; setStatus(errMessage(err, 'Queue failed'), 'error');
+      stage = 'editing'; setStatus(errMessage(err, 'Queue failed'), 'error');
     });
   });
 }
