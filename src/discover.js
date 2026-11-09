@@ -10,7 +10,7 @@ import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './p
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { confirmStatusSettles, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
@@ -26632,9 +26632,10 @@ function openTxConfirm(payload, onConfirm, opts) {
   // duration and re-enabling them on failure. Escape / ✕ / backdrop follow that same lock, so a
   // dismissal can't orphan an in-flight transaction's status display (matches confirmTransactionModal).
   var confirmed = false;
+  function sending() { return confirm.disabled && cancel.disabled; }
   var modal = openModal(opts.title || 'Confirm transaction', content, {
     noPrompt: true,
-    canClose: function () { return !(confirm.disabled && cancel.disabled); },
+    canClose: function () { return !sending(); },
     // Closed without Confirm (Cancel, Escape, the close button): the caller may undo what it set up for this review.
     onClose: function () { if (!confirmed && opts.onDismiss) opts.onDismiss(); },
   });
@@ -26690,7 +26691,11 @@ function openTxConfirm(payload, onConfirm, opts) {
           requestAnimationFrame(function () { requestAnimationFrame(resolve); });
         });
       },
-      showStatus: showStatus,
+      // A status that settles a locked send (confirmStatusSettles) unlocks it, as complete/pending/fail do.
+      showStatus: function (message, kind, meta) {
+        if (sending() && confirmStatusSettles(kind, meta)) unlockWithResult(message, kind === 'error' || kind === 'success' ? kind : 'pending', meta);
+        else showStatus(message, kind, meta);
+      },
       complete: function (message, meta) { unlockWithResult(message || 'Payment complete.', 'success', meta); },
       pending: function (message, meta) { unlockWithResult(message || 'Waiting for confirmation.', 'pending', meta); },
       fail: function (message, meta) { unlockWithResult(message || 'The payment could not be completed.', 'error', meta); },
