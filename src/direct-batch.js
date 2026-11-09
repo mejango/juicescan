@@ -42,6 +42,23 @@ export async function clearUnsubmittedDirectBatch(scope, account, calls) {
   });
 }
 
+// The held-no-hash exit for slot `index`: frees it only while it still reads 'sending' for the same batch.
+function releaseUnsent(key, identity, index) {
+  if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return Promise.resolve(false);
+  return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
+    if (!lock) return false;
+    var session = memory.get(key);
+    if (!session) {
+      try { session = JSON.parse(localStorage.getItem(key)); } catch (_) { return false; }
+    }
+    if (!session || session.identity !== identity || !Array.isArray(session.hashes) || session.hashes[index] !== 'sending') return false;
+    session.hashes[index] = null;
+    if (memory.has(key)) return true;
+    localStorage.setItem(key, JSON.stringify(session));
+    return true;
+  });
+}
+
 export async function runDirectBatch(calls, options, locked) {
   var identity = directBatchIdentity(calls);
   var key = PREFIX + String(options.account).toLowerCase() + ':' + (options.scope || identity);
@@ -81,7 +98,11 @@ export async function runDirectBatch(calls, options, locked) {
   for (var i = 0; i < calls.length; i++) {
     var receipt;
     if (session.hashes[i]) {
-      if (session.hashes[i] === 'sending') throw new Error('A wallet request was interrupted before its transaction hash was saved. Verify that request in your wallet before submitting any remaining work.');
+      if (session.hashes[i] === 'sending') {
+        var line = 'A wallet request was interrupted before its transaction hash was saved. Check your wallet; if it was not sent, release it.';
+        if (options.offerRelease) options.offerRelease(line, releaseUnsent.bind(null, key, identity, i));
+        throw new Error(line);
+      }
       // Recovery only checks the previously submitted hash; it never opens another wallet prompt.
       receipt = await options.verifySubmitted(calls[i], session.hashes[i]);
       if (receipt && receipt.status === 'reverted') {

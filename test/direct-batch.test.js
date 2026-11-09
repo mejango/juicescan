@@ -34,6 +34,40 @@ describe('sequential direct transaction recovery', () => {
     expect(hasDirectBatch(scope, ACCOUNT, CALLS)).toBe(false);
   });
 
+  it('offers the held-no-hash exit for an interrupted wallet request and releases only that slot', async () => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn({})) } });
+    const scope = 'interrupted';
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
+      sending(); throw new Error('transport lost');
+    } })).rejects.toThrow('transport lost');
+    const offerRelease = vi.fn();
+    const execute = vi.fn();
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, offerRelease, execute })).rejects.toThrow(/release it/);
+    expect(execute).not.toHaveBeenCalled();
+    expect(offerRelease).toHaveBeenCalledOnce();
+    const [line, release] = offerRelease.mock.calls[0];
+    expect(line).toMatch(/Check your wallet; if it was not sent, release it/);
+    expect(await release()).toBe(true);
+    expect(await clearUnsubmittedDirectBatch(scope, ACCOUNT, CALLS)).toBe(true);
+    expect(await release()).toBe(false);
+  });
+
+  it('a release offered for an interrupted request never frees a hash saved since', async () => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn({})) } });
+    const scope = 'interrupted-then-hashed';
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
+      sending(); throw new Error('transport lost');
+    } })).rejects.toThrow('transport lost');
+    const offerRelease = vi.fn();
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, offerRelease, execute: vi.fn() })).rejects.toThrow();
+    const key = Object.keys(localStorage).find((name) => name.endsWith(':' + scope));
+    const saved = JSON.parse(localStorage.getItem(key));
+    saved.hashes[0] = '0x' + 'cd'.repeat(32);
+    localStorage.setItem(key, JSON.stringify(saved));
+    expect(await offerRelease.mock.calls[0][1]()).toBe(false);
+    expect(JSON.parse(localStorage.getItem(key)).hashes[0]).toBe('0x' + 'cd'.repeat(32));
+  });
+
   it('releases a journal when the final boundary proves the wallet was never invoked', async () => {
     const scope = 'boundary-unsent';
     await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
