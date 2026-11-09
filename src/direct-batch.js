@@ -42,8 +42,13 @@ export async function clearUnsubmittedDirectBatch(scope, account, calls) {
   });
 }
 
-// The held-no-hash exit for slot `index`: frees it only while it still reads 'sending' for the same batch.
-function releaseUnsent(key, identity, index) {
+function newAttemptId() {
+  try { return crypto.randomUUID(); } catch (_) { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+}
+
+// The held-no-hash exit for slot `index`: frees it only while it is still the same interrupted attempt
+// (`attempt`, saved when the slot was marked 'sending') of the same batch.
+function releaseUnsent(key, identity, index, attempt) {
   if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return Promise.resolve(false);
   return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
     if (!lock) return false;
@@ -51,7 +56,8 @@ function releaseUnsent(key, identity, index) {
     if (!session) {
       try { session = JSON.parse(localStorage.getItem(key)); } catch (_) { return false; }
     }
-    if (!session || session.identity !== identity || !Array.isArray(session.hashes) || session.hashes[index] !== 'sending') return false;
+    if (!session || session.identity !== identity || !Array.isArray(session.hashes) || session.hashes[index] !== 'sending'
+        || (session.attempts || [])[index] !== attempt) return false;
     session.hashes[index] = null;
     if (memory.has(key)) return true;
     localStorage.setItem(key, JSON.stringify(session));
@@ -100,7 +106,7 @@ export async function runDirectBatch(calls, options, locked) {
     if (session.hashes[i]) {
       if (session.hashes[i] === 'sending') {
         var line = 'A wallet request was interrupted before its transaction hash was saved. Check your wallet; if it was not sent, release it.';
-        if (options.offerRelease) options.offerRelease(line, releaseUnsent.bind(null, key, identity, i));
+        if (options.offerRelease) options.offerRelease(line, releaseUnsent.bind(null, key, identity, i, (session.attempts || [])[i]));
         throw new Error(line);
       }
       // Recovery only checks the previously submitted hash; it never opens another wallet prompt.
@@ -118,6 +124,8 @@ export async function runDirectBatch(calls, options, locked) {
           persist();
         }, function () {
           session.hashes[index] = 'sending';
+          session.attempts = session.attempts || [];
+          session.attempts[index] = newAttemptId();
           if (!persist()) {
             session.hashes[index] = null;
             throw new Error('The wallet request could not be saved. Enable browser storage before submitting; nothing was sent.');

@@ -68,6 +68,23 @@ describe('sequential direct transaction recovery', () => {
     expect(JSON.parse(localStorage.getItem(key)).hashes[0]).toBe('0x' + 'cd'.repeat(32));
   });
 
+  it('a stale release for an earlier interrupted attempt never frees a later one', async () => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn({})) } });
+    const scope = 'stale-release';
+    const interrupt = async (_call, _index, _submitted, sending) => { sending(); throw new Error('transport lost'); };
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: interrupt })).rejects.toThrow('transport lost');
+    const tab1 = vi.fn(), tab2 = vi.fn();
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, offerRelease: tab1, execute: vi.fn() })).rejects.toThrow(/release it/);
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, offerRelease: tab2, execute: vi.fn() })).rejects.toThrow(/release it/);
+    expect(await tab1.mock.calls[0][1]()).toBe(true);
+    // Attempt B: sent again, and its wallet answer is lost too.
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: interrupt })).rejects.toThrow('transport lost');
+    expect(await tab2.mock.calls[0][1]()).toBe(false);
+    const execute = vi.fn();
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute })).rejects.toThrow(/release it/);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('releases a journal when the final boundary proves the wallet was never invoked', async () => {
     const scope = 'boundary-unsent';
     await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
