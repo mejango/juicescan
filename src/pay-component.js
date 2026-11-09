@@ -619,7 +619,8 @@ export function renderPayComponent() {
           ['To', beneficiary],
           reviewed.memo ? ['Memo', reviewed.memo] : null,
         ].filter(Boolean) },
-        onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
+        // A lost receipt watch ends this send for the form; the write hold still guards a second send.
+        onStatus: function(msg, kind, meta) { if (meta && meta.trackingError) state.phase = 'ready'; state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.phase = 'ready'; state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.phase = 'ready'; state.error = msg; state.txStatus = null; updateUI(); },
       }));
