@@ -31,6 +31,7 @@ vi.mock('../src/component-base.js', () => ({
     return { wrapper, body };
   },
   executeTransaction: payState.execute,
+  payHoldScope: projectId => 'project-' + BigInt(projectId),
   getBeneficiaryAddress: () => payState.BENEFICIARY,
   firstChainForNetwork: () => 1,
   createPublicClientForChain: () => ({ readContract: vi.fn().mockRejectedValue(new Error('no contexts')) }),

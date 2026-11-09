@@ -1407,6 +1407,12 @@ export function confirmTransactionModal(payload, opts) {
 // The hold (write-hold.js) for one direct contract write: `request` is { address, abi, functionName, args, value },
 // with `holdAs` naming the action when one action has more than one entry point (an LP mint's multicall), and
 // `holdScope` standing in for the target when one intent can reach several contracts (a payment's route).
+// The hold scope for a payment (or add to balance) to a project: one per project, whatever its route, and the same
+// for every spelling of its id (007 and 7).
+export function payHoldScope(projectId) {
+  return 'project-' + BigInt(projectId).toString();
+}
+
 export function holdForWrite(chainId, account, request) {
   return writeHold(chainId, account, { to: request.holdScope || request.address, functionName: request.holdAs || request.functionName, value: request.value || 0n,
     data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) });

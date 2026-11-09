@@ -5,7 +5,7 @@
 import {
   el, parseHashDefaults,
   createProjectAndChainInput, createComponentWrapper,
-  executeTransaction, getBeneficiaryAddress, firstChainForNetwork,
+  executeTransaction, getBeneficiaryAddress, firstChainForNetwork, payHoldScope,
   createPublicClientForChain, getChainTokens,
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
@@ -610,7 +610,7 @@ export function renderPayComponent() {
         route: route,
       }), {
         // One hold per payment to this project, whichever terminal or router the route picks.
-        holdScope: 'project-' + String(reviewed.projectId),
+        holdScope: payHoldScope(reviewed.projectId),
         holdLegacyTargets: payRouteCandidates(reviewed.chainId).map(function (candidate) { return candidate.address; }),
         assertWriteState: function () { if (!unchanged()) throw new Error(CHANGED); },
         // The confirm dialog shows why a pay reverted, when the revert says.

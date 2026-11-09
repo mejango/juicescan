@@ -8,13 +8,13 @@ const h = vi.hoisted(() => ({
   ROUTER: '0x1111111111111111111111111111111111111111',
   TERMINAL: '0x2222222222222222222222222222222222222222',
   account: '0x3333333333333333333333333333333333333333',
-  wallet: null, client: null, prepare: null,
+  wallet: null, client: null, prepare: null, projectId: '7',
 }));
 vi.mock('../src/wallet.js', async (original) => ({ ...await original(),
   getAccount: () => h.account, getWalletClient: () => h.wallet, createPublicClientForChain: () => h.client,
   invokeWallet: (...args) => walletInvocationFor(h)(...args), isSafeConnected: () => false, waitForSafeInitialization: async () => {} }));
 vi.mock('../src/component-base.js', async (original) => ({ ...await original(),
-  parseHashDefaults: () => ({ projectId: '7', chain: '1', amount: '1' }),
+  parseHashDefaults: () => ({ projectId: h.projectId, chain: '1', amount: '1' }),
   discoverChains: (_projectId, callback) => callback([1]),
   createProjectAndChainInput: () => document.createElement('div'),
   getBeneficiaryAddress: () => h.account,
@@ -52,6 +52,7 @@ beforeEach(() => {
     readContract: vi.fn(async () => { throw new Error('no reads'); }),
   };
   h.prepare = vi.fn(async () => quote(100n));
+  h.projectId = '7';
 });
 
 async function pressPayAndConfirm(component) {
@@ -132,5 +133,24 @@ describe('Pay tool retry after a lost receipt watch', () => {
       expect(h.wallet.writeContract).not.toHaveBeenCalled();
       expect(JSON.parse(localStorage.getItem(key)).id).toBe('old-build');
     }
+  });
+
+  it('holds a payment typed as 007 against a retry typed as 7 from a new form', async () => {
+    h.projectId = '007';
+    const first = renderPayComponent();
+    document.body.appendChild(first);
+    const dialog = await pressPayAndConfirm(first);
+    await vi.waitFor(() => expect(first.textContent).toContain('confirmation tracking is temporarily unavailable'));
+    dialog.querySelector('.modal-close').click();
+    first.remove();
+
+    h.projectId = '7';
+    h.prepare = vi.fn(async ({ terminal }) => { if (terminal === h.TERMINAL) throw new Error('quote failed'); return quote(100n); });
+    const second = renderPayComponent();
+    document.body.appendChild(second);
+    await pressPayAndConfirm(second);
+    for (let i = 0; i < 20; i++) await flush();
+    expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+    expect(second.textContent).toMatch(/still pending/i);
   });
 });
