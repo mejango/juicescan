@@ -505,9 +505,11 @@ Review: Revnet-only ignored control hidden with existing flavor guard; ordinary 
 - **Verification:** `npm run check` on Node 22, including the schema check against live bendystraw and the browser suite.
 
 - [x] Sync keeps every retired generation deploy-all records (allowlist removed); CI pins deploy-all 8ff50c2.
-- [ ] Defifa 2.0: new games on DefifaDeployer, old games keep their own ABI.
+- [x] Defifa 2.0: new games on DefifaDeployer, old games keep their own ABI.
 - [x] LP split hook card reads the instance generation a project splits to with its registry ABI (1.5.0 ask/bid, one-arg deployPool); hand-written ABI deleted; test added.
 - [x] Rollout, pin and digest tests follow the new naming. Pay vectors: router cases read the registry terminal; unknown router and a direct multi-terminal payment in a pool-less token stay on the mint path (re-recorded, outputs otherwise identical).
-- [ ] Remove the SDK: Defifa review helpers local, canary removed, dependency dropped.
-- [ ] Latest bendystraw schema check passes; new fields used where juicescan needs them.
-- [ ] Full check, PR.
+- [x] Remove the SDK: Defifa review helpers local, canary removed, dependency dropped.
+- [x] Latest bendystraw schema check passes; new fields used where juicescan needs them.
+- [x] Full check, PR #94.
+
+Review: `npm run check` passes on Node 22 (2277 unit tests, 148 browser tests, schema check against live bendystraw). Codex gpt-6.1-sol ran three passes; five concrete findings were fixed with tests. Holds left by the SDK build are adopted, including a later hash or wallet rejection. The LP hook version is resolved per chain. Dismissed: a new hold is invisible to a tab still running the old build until it reloads. Merge waits for jango.
