@@ -44,7 +44,7 @@
         "executeTransaction": 1,
         "relayrPay": 1,
         "relayrPostBundle": 1,
-        "providerRequest": 2
+        "providerRequest": 3
       },
       "actions": [
         "Launch project",
@@ -62,7 +62,7 @@
     },
     "src/direct-batch.js": {
       "counts": {
-        "providerRequest": 2
+        "providerRequest": 3
       },
       "actions": [
         "Sequential direct batch recovery"

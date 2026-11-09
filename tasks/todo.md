@@ -513,3 +513,30 @@ Review: Revnet-only ignored control hidden with existing flavor guard; ordinary 
 - [x] Full check, PR #94.
 
 Review: `npm run check` passes on Node 22 (2277 unit tests, 148 browser tests, schema check against live bendystraw). Codex gpt-6.1-sol ran three passes; five concrete findings were fixed with tests. Holds left by the SDK build are adopted, including a later hash or wallet rejection. The LP hook version is resolved per chain. Dismissed: a new hold is invisible to a tab still running the old build until it reloads. Merge waits for jango.
+
+# Explicit state machines, wave 1 (2026-11-09)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/BRIEF.md. Discovery: same folder, juicescan.md. No SDK dependency (ruling): local copies use the SDK's state names.
+
+- [x] juicescan-1 FIX: confirmTransactionModal lock is an explicit `review | sending | settled` state; success and a lost receipt watch settle it (closable), showNext returns to review. Loan step 2 shows its refusal in the open dialog.
+- [x] juicescan-2 FIX: openTxConfirm settles on a lost receipt watch through the same predicate.
+- [x] juicescan-7 DERIVE: one `projectDiscovery` owner (new project-discovery.js) for the 8 tool forms, behavior-preserving.
+- [x] juicescan-6/7 FIX: the generation advances before the project-id check; pay leaves `confirming` on a lost receipt watch.
+- [x] juicescan-4 FIX: direct-batch offers the held-no-hash exit for a `sending` slot and releases a `sending` slot on a wrapped 4001 (shared isExplicitWalletRejection); create-direct legs keep only their own journal (onWriteRejected).
+- [x] juicescan-5 FIX: a saved launch leg at `awaiting-wallet` gets the held-no-hash exit ("It was not sent, release it").
+- [x] juicescan-12 FIX: document listeners for jb:bridge-updated end once their card leaves the page; the movements table ignores stale loads.
+- [x] juicescan-3 UNION: executeTransaction emits SDK phase names (simulating, signing, receipt, proposed, done) on every callback; callers switch from submitted/confirmed/safe-proposed.
+- [x] juicescan-10 UNION: queue-ruleset submit button is one `stage` value.
+- [x] juicescan-8, 11, 13 and the full juicescan-4 journal merge: not done (see Review).
+- [x] Gate: `npm run check` (Node 22, npm 10.9), PR, no merge.
+
+### Review
+Twelve commits on state-machines-2026-11-09. Skipped: juicescan-8 (Relayr `paymentState` is persisted; SDK names need a migration of saved sessions, no bug), juicescan-11 (Safe propose modal, no bug, large flow with its own tests), juicescan-13 (each connect path resets `connectedViaSafe`; no reproducible bug), full merge of the three journals (persisted encodings in users' browsers; the verified pieces, wrapped 4001, double journal and the two missing exits, are fixed), dialogs 1 and 2 merge (different visible endings: Close versus Done with Confirm hidden); they share the `confirmStatusSettles` rule instead.
+
+## Plan refinement
+- **Objective:** No juicescan dialog, form or saved launch can trap the user in a state without an exit, and the send lifecycle speaks the SDK's state vocabulary; observable as regression tests that fail on origin/main and pass after, plus a green `npm run check`.
+- **System fit:** Outcome (recoverable sends) -> capability (executeTransaction, confirm dialogs, write journals) -> evidence (receipt polling, saved hashes) -> prepared action (reviewed call) -> authority (wallet) -> verified result (receipt) -> learning (lessons). Owners: component-base.js (send + dialog), write-hold.js / direct-batch.js / create-flow.js (journals), discover.js (pay dialog, bridge table, queue button). Relayr, action-plan, pending payments and Safe propose modal are unaffected.
+- **Reuse and simplicity:** Reuse isExplicitWalletRejection, offerHeldRelease's rule and discoverChains; one new module (project-discovery.js) replaces 8 copies; no persisted storage format changes (Relayr `paymentState`, journal encodings stay, since renaming them needs a migration with no bug behind it).
+- **Evidence and unknowns:** Each FIX starts from a failing test on origin/main ac4ebce; viem wraps a 4001 in TransactionExecutionError (code undefined, cause 4001), checked locally. The bridge stale-load race is by construction, not reproduced.
+- **Verification:** New vitest regressions per fix (confirm-recovery, project-discovery, direct-batch, create-direct-recovery, bridge listener), existing suites green, `npm run check` with coverage floors, bundle budget and browser tests.
+- **Resource budget:** One worktree, node_modules cloned copy-on-write, commits per item, suites run one at a time; replan if a refactor breaks existing tests in a way that implies behavior change.
