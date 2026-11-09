@@ -83,4 +83,37 @@ describe('Pay tool retry after a lost receipt watch', () => {
     expect(component.textContent).toMatch(/still pending/i);
     if (second) second.remove();
   });
+
+  it('never signs a second payment after a wallet reply was lost, even on another route', async () => {
+    h.wallet.writeContract = vi.fn(async () => { throw new Error('Wallet connection disappeared'); });
+    const component = renderPayComponent();
+    document.body.appendChild(component);
+    const first = await pressPayAndConfirm(component);
+    await vi.waitFor(() => expect(h.wallet.writeContract).toHaveBeenCalledTimes(1));
+    first.querySelector('.modal-close').click();
+    document.querySelectorAll('dialog').forEach((node) => node.remove());
+
+    h.prepare = vi.fn(async ({ terminal }) => { if (terminal === h.TERMINAL) throw new Error('quote failed'); return quote(100n); });
+    await pressPayAndConfirm(component);
+    for (let i = 0; i < 20; i++) await flush();
+    expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+    expect(h.wallet.writeContract.mock.calls[0][0].address).toBe(h.TERMINAL);
+  });
+
+  it('never signs a second payment from a new form after a hash, even on another route', async () => {
+    const first = renderPayComponent();
+    document.body.appendChild(first);
+    const dialog = await pressPayAndConfirm(first);
+    await vi.waitFor(() => expect(first.textContent).toContain('confirmation tracking is temporarily unavailable'));
+    dialog.querySelector('.modal-close').click();
+    first.remove();
+
+    h.prepare = vi.fn(async ({ terminal }) => { if (terminal === h.TERMINAL) throw new Error('quote failed'); return quote(100n); });
+    const second = renderPayComponent();
+    document.body.appendChild(second);
+    await pressPayAndConfirm(second);
+    for (let i = 0; i < 20; i++) await flush();
+    expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+    expect(second.textContent).toMatch(/still pending/i);
+  });
 });

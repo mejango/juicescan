@@ -10245,6 +10245,8 @@ export function renderPayCard(project, cart) {
         spenderAddr: (isNative || viaRouter) ? null : terminal,
         approvalAmount: (isNative || viaRouter) ? null : amt,
       };
+    // One hold per payment (or add to balance) to this project, whichever terminal or router the route picks.
+    txParams.holdScope = 'project-' + String(reviewedProjectId);
     // Approval, authorization and simulation waits must not outlive the reviewed inputs.
     txParams.assertWriteState = function () {
       if (!payInputsUnchanged()) throw new Error('The payment details, network, quote, or wallet changed. Review and try again.');
