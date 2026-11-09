@@ -1456,20 +1456,30 @@ export function sendHeldWrite(hold, check, send) {
 }
 
 function offerHeldRelease(hold, record, line) {
+  offerRelease(line, function () {
+    var current = hold.read();
+    // Only the attempt this dialog shows, in the state shown: a newer attempt or a hash saved since stays held.
+    if (current && (current.id !== record.id || (current.hash || null) !== (record.hash || null))) return false;
+    return Promise.resolve(current && hold.release(record)).then(function () { return true; });
+  });
+}
+
+// The held-no-hash exit: after the user checks their wallet, `release()` frees exactly the attempt `line` shows.
+// It resolves false when that attempt changed since, and the dialog says so.
+export function offerRelease(line, release) {
   var modal = openDialog('Earlier transaction not settled');
   var content = el('div', 'pay-confirm');
   var note = el('div', 'tx-confirm-note'); note.textContent = line;
   var foot = el('div', 'create-modal-foot');
-  var release = el('button', 'create-btn primary'); release.type = 'button'; release.textContent = 'It was not sent, release it';
-  foot.appendChild(release); content.appendChild(note); content.appendChild(foot);
+  var button = el('button', 'create-btn primary'); button.type = 'button'; button.textContent = 'It was not sent, release it';
+  foot.appendChild(button); content.appendChild(note); content.appendChild(foot);
   modal.panel.appendChild(content);
-  release.addEventListener('click', function () {
-    var current;
-    try { current = hold.read(); } catch (err) { note.textContent = errMessage(err, 'Could not release it.'); return; }
-    // Only the attempt this dialog shows, in the state shown: a newer attempt or a hash saved since stays held.
-    if (current && (current.id !== record.id || (current.hash || null) !== (record.hash || null))) { note.textContent = 'This action changed since this check. Try it again to see where it stands.'; return; }
-    release.disabled = true;
-    Promise.resolve(current && hold.release(record)).then(modal.close, function (err) { release.disabled = false; note.textContent = errMessage(err, 'Could not release it.'); });
+  button.addEventListener('click', function () {
+    button.disabled = true;
+    Promise.resolve().then(release).then(function (released) {
+      if (released) { modal.close(); return; }
+      button.disabled = false; note.textContent = 'This action changed since this check. Try it again to see where it stands.';
+    }, function (err) { button.disabled = false; note.textContent = errMessage(err, 'Could not release it.'); });
   });
 }
 
