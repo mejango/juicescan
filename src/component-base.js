@@ -139,15 +139,10 @@ export function el(tag, className) {
   return e;
 }
 
-// A document event handler for a node's lifetime: `fn` runs while `node` is on the page, and the handler is
-// removed at the first event after the node, once seen mounted, has left it.
+// A document event handler that runs `fn` only while `node` is on the page. It stays subscribed while the node
+// is off the page, since a cached tab panel can be shown again.
 export function onDocumentWhileConnected(node, type, fn) {
-  var mounted = false;
-  function handler(event) {
-    if (node.isConnected) { mounted = true; fn(event); return; }
-    if (mounted) document.removeEventListener(type, handler);
-  }
-  document.addEventListener(type, handler);
+  document.addEventListener(type, function (event) { if (node.isConnected) fn(event); });
 }
 
 export function truncAddr(addr) {

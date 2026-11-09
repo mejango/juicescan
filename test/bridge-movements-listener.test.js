@@ -9,7 +9,7 @@ function projectCountingReads() {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('queued movements table', () => {
-  it('stops rereading its project once it leaves the page', async () => {
+  it('does not reread its project while it is off the page', async () => {
     const project = projectCountingReads();
     const card = renderBridgeTransactions(project);
     document.body.appendChild(card);
@@ -24,5 +24,26 @@ describe('queued movements table', () => {
     document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
     await settle();
     expect(project.reads).toBe(initial + 1);
+  });
+
+  it('keeps refreshing after its tab is hidden and shown again', async () => {
+    const project = projectCountingReads();
+    const tab = document.createElement('div');
+    tab.appendChild(renderBridgeTransactions(project));
+    document.body.appendChild(tab);
+    await settle();
+    document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+    await settle();
+    const shown = project.reads;
+
+    tab.remove();
+    document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+    await settle();
+    expect(project.reads).toBe(shown);
+
+    document.body.appendChild(tab);
+    document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
+    await settle();
+    expect(project.reads).toBe(shown + 1);
   });
 });
