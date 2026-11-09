@@ -154,6 +154,25 @@
     },
     {
       "type": "function",
+      "name": "accumulatedProjectCredits",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "accumulatedProjectCredits",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "accumulatedProjectTokens",
       "inputs": [
         {
@@ -173,7 +192,7 @@
     },
     {
       "type": "function",
-      "name": "activeTickLowerOf",
+      "name": "accumulatedTerminalTokens",
       "inputs": [
         {
           "name": "projectId",
@@ -188,33 +207,9 @@
       ],
       "outputs": [
         {
-          "name": "tickLower",
-          "type": "int24",
-          "internalType": "int24"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "activeTickUpperOf",
-      "inputs": [
-        {
-          "name": "projectId",
+          "name": "",
           "type": "uint256",
           "internalType": "uint256"
-        },
-        {
-          "name": "terminalToken",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "tickUpper",
-          "type": "int24",
-          "internalType": "int24"
         }
       ],
       "stateMutability": "view"
@@ -232,9 +227,75 @@
           "name": "terminalToken",
           "type": "address",
           "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "askTokenIdOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
         },
         {
-          "name": "minCashOutReturn",
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "bidTokenIdOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "burnFeeRemainder",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "count",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -356,9 +417,36 @@
           "name": "projectId",
           "type": "uint256",
           "internalType": "uint256"
-        },
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "deployedTerminalTokenOf",
+      "inputs": [
         {
-          "name": "minCashOutReturn",
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "executeAutomationFor",
+      "inputs": [
+        {
+          "name": "projectId",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -705,30 +793,41 @@
     },
     {
       "type": "function",
-      "name": "rebalanceLiquidity",
+      "name": "sendToTerminal",
       "inputs": [
+        {
+          "name": "terminal",
+          "type": "address",
+          "internalType": "address"
+        },
         {
           "name": "projectId",
           "type": "uint256",
           "internalType": "uint256"
         },
         {
-          "name": "terminalToken",
+          "name": "token",
           "type": "address",
           "internalType": "address"
         },
         {
-          "name": "decreaseAmount0Min",
+          "name": "amount",
           "type": "uint256",
           "internalType": "uint256"
         },
         {
-          "name": "decreaseAmount1Min",
+          "name": "shouldPay",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "beneficiaryTokenCount",
           "type": "uint256",
           "internalType": "uint256"
         }
       ],
-      "outputs": [],
       "stateMutability": "nonpayable"
     },
     {
@@ -743,36 +842,12 @@
       ],
       "outputs": [
         {
-          "name": "",
+          "name": "supported",
           "type": "bool",
           "internalType": "bool"
         }
       ],
       "stateMutability": "pure"
-    },
-    {
-      "type": "function",
-      "name": "tokenIdOf",
-      "inputs": [
-        {
-          "name": "projectId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "terminalToken",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
     },
     {
       "type": "event",
@@ -816,7 +891,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "terminalToken",
+          "name": "token",
           "type": "address",
           "indexed": true,
           "internalType": "address"
@@ -871,16 +946,72 @@
           "internalType": "address"
         },
         {
-          "name": "tokenId",
+          "name": "askTokenId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "bidTokenId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "LiquidityAutomationFailed",
+      "inputs": [
+        {
+          "name": "projectId",
           "type": "uint256",
           "indexed": true,
           "internalType": "uint256"
         },
         {
-          "name": "isNewPosition",
-          "type": "bool",
+          "name": "reasonSelector",
+          "type": "bytes4",
           "indexed": false,
-          "internalType": "bool"
+          "internalType": "bytes4"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "PayoutAccepted",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
         },
         {
           "name": "caller",
@@ -924,49 +1055,6 @@
     },
     {
       "type": "error",
-      "name": "JBMetadataResolver_DataNotPadded",
-      "inputs": [
-        {
-          "name": "dataLength",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "JBMetadataResolver_MetadataTooLong",
-      "inputs": [
-        {
-          "name": "offset",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "maxOffset",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "JBMetadataResolver_MetadataTooShort",
-      "inputs": [
-        {
-          "name": "metadataLength",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "minMetadataLength",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "JBPermissioned_Unauthorized",
       "inputs": [
         {
@@ -998,6 +1086,33 @@
     },
     {
       "type": "error",
+      "name": "JBUniswapV4LPSplitHook_AmountExceedsUint128",
+      "inputs": [
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_EmptyCorridor",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "JBUniswapV4LPSplitHook_ExistingPoolPriceOutOfBounds",
       "inputs": [
         {
@@ -1014,6 +1129,22 @@
           "name": "upperBound",
           "type": "uint160",
           "internalType": "uint160"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_FeeBurnNotExact",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ]
     },
@@ -1046,17 +1177,6 @@
           "name": "required",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "JBUniswapV4LPSplitHook_InsufficientLiquidity",
-      "inputs": [
-        {
-          "name": "liquidity",
-          "type": "uint128",
-          "internalType": "uint128"
         }
       ]
     },
@@ -1099,6 +1219,22 @@
     },
     {
       "type": "error",
+      "name": "JBUniswapV4LPSplitHook_InvalidSplitGroup",
+      "inputs": [
+        {
+          "name": "groupId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "JBUniswapV4LPSplitHook_InvalidStageForAction",
       "inputs": [
         {
@@ -1131,6 +1267,32 @@
           "name": "terminalToken",
           "type": "address",
           "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_NoDeployableLiquidityAtSpot",
+      "inputs": [
+        {
+          "name": "spotTick",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "ceilingTick",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "projectAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalAmount",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ]
     },
@@ -1284,31 +1446,15 @@
     },
     {
       "type": "error",
-      "name": "JBUniswapV4LPSplitHook_TerminalNotFound",
+      "name": "JBUniswapV4LPSplitHook_TransferNotExact",
       "inputs": [
-        {
-          "name": "projectId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
         {
           "name": "token",
           "type": "address",
           "internalType": "address"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "JBUniswapV4LPSplitHook_TerminalTokensNotAllowed",
-      "inputs": [
-        {
-          "name": "groupId",
-          "type": "uint256",
-          "internalType": "uint256"
         },
         {
-          "name": "requiredGroupId",
+          "name": "amount",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1332,6 +1478,11 @@
     },
     {
       "type": "error",
+      "name": "JBUniswapV4LPSplitHook_Unauthorized",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "JBUniswapV4LPSplitHook_UnclaimedFeeTokenChanged",
       "inputs": [
         {
@@ -1348,15 +1499,10 @@
     },
     {
       "type": "error",
-      "name": "JBUniswapV4LPSplitHook_ZeroLiquidity",
+      "name": "JBUniswapV4LPSplitHook_UnexpectedMsgValue",
       "inputs": [
         {
-          "name": "amount0",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "amount1",
+          "name": "value",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1364,24 +1510,8 @@
     },
     {
       "type": "error",
-      "name": "PRBMath_MulDiv_Overflow",
-      "inputs": [
-        {
-          "name": "x",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "y",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "denominator",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
+      "name": "Reentrancy",
+      "inputs": []
     },
     {
       "type": "error",
@@ -1396,11 +1526,18 @@
     }
   ],
   "devdoc": {
-    "addLiquidity(uint256,address,uint256)": {
+    "addLiquidity(uint256,address)": {
       "params": {
-        "minCashOutReturn": "Minimum terminal tokens to accept from the funding cash-out (slippage protection). Pass 0 to use the hook's default tolerance derived from the current cash-out rate.",
         "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
         "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "burnFeeRemainder(uint256,address,uint256)": {
+      "details": "The hook burns its own tokens (`holder == msg.sender`), so the controller needs no permission grant. Core burns a holder's credits BEFORE its ERC-20, so the hook first claims its own credits of this project into the ERC-20 and adds them to the ask ledger (`_claimHookCreditsFor`, the same step a recycle runs); credits sent to the hook from outside therefore cannot divert the burn. Fee-credit claims the hook owes (only when this project is a fee project with claims from before it tokenized) stay credits, and the burn would consume them first, so the burn is accepted only when exactly `count` ERC-20 left the hook and its credit balance is unchanged; anything else reverts (undoing the claim) and is forgiven by the caller.This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the burn is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "count": "The number of project tokens to burn.",
+        "projectId": "The ID of the project whose tokens to burn.",
+        "projectToken": "The project's ERC-20, whose hook balance must fall by exactly `count`."
       }
     },
     "claimFeeTokensFor(uint256,address)": {
@@ -1417,6 +1554,7 @@
       }
     },
     "constructor": {
+      "details": "Chain-specific Uniswap V4 wiring and the fee config are set per clone through `initialize`.",
       "params": {
         "directory": "JBDirectory address.",
         "permissions": "JBPermissions address.",
@@ -1425,10 +1563,15 @@
         "tokens": "JBTokens address."
       }
     },
-    "deployPool(uint256,uint256)": {
+    "deployPool(uint256)": {
       "params": {
-        "minCashOutReturn": "Minimum terminal tokens to accept from the cash-out (slippage protection). Pass 0 to use the hook's default 3% tolerance derived from the current cash-out rate.",
         "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "executeAutomationFor(uint256)": {
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while `processSplitWith` still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the attempt is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "projectId": "The ID of the project to attempt automation for."
       }
     },
     "initialize(uint256,uint256,address,address,address,address)": {
@@ -1436,7 +1579,7 @@
       "params": {
         "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
         "initialFeeProjectId": "Project ID to receive LP fees.",
-        "newBuybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. May be the zero address, in which case no force-direct metadata is attached.",
+        "newBuybackHook": "The buyback-hook registry to configure for this clone. May be the zero address.",
         "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
         "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
         "newPositionManager": "The Uniswap V4 PositionManager on this chain."
@@ -1448,7 +1591,7 @@
         "terminalToken": "The terminal token paired with the project token."
       },
       "returns": {
-        "deployed": "True once a position exists for the pair."
+        "deployed": "True once the project's pool was deployed against this terminal token."
       }
     },
     "poolKeyOf(uint256,address)": {
@@ -1461,14 +1604,22 @@
       }
     },
     "processSplitWith((address,uint256,uint256,uint256,uint256,(uint32,uint64,address,bool,uint48,address)))": {
-      "details": "Only accepts reserved-token splits (groupId == 1). Reverts if the sender is not the project's controller or if the project has no ERC-20 token deployed."
-    },
-    "rebalanceLiquidity(uint256,address,uint256,uint256)": {
+      "details": "Reserved tokens (groupId == 1) come from the project's controller as the project's ERC-20, or as credits while the project has no ERC-20, and feed the ask. A payout (groupId == `uint256(uint160(token))`) comes from a terminal of the project in the deployed pool's terminal token, and feeds the bid. The order matters: validate the caller and context, account the tokens, THEN try to put them to work. Every check that can revert runs before the ledger write; a revert makes Core return the allocation to the project. Once intake has accounted the allocation, nothing in this frame reverts: automation runs behind a gas-bounded self-call whose failure is reported through `LiquidityAutomationFailed` (selector only, revert data is never copied unbounded).",
       "params": {
-        "decreaseAmount0Min": "Minimum amount of token0 to recover from the burned position (slippage protection).",
-        "decreaseAmount1Min": "Minimum amount of token1 to recover from the burned position (slippage protection).",
-        "projectId": "The ID of the project whose LP position should be rebalanced.",
-        "terminalToken": "The terminal token paired with the project token in the pool."
+        "context": "The split hook context Core built for the distribution or payout."
+      }
+    },
+    "sendToTerminal(address,uint256,address,uint256,bool)": {
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the terminal call is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "amount": "The amount to send.",
+        "projectId": "The project to pay or add to the balance of.",
+        "shouldPay": "Whether to `pay` (minting project tokens to this hook) rather than `addToBalanceOf`.",
+        "terminal": "The terminal to send to. A terminal with no code reverts the call.",
+        "token": "The token to send (native sentinel or ERC-20)."
+      },
+      "returns": {
+        "beneficiaryTokenCount": "The token/credit count the terminal reports minting to this hook (0 when adding to balance)."
       }
     },
     "supportsInterface(bytes4)": {
@@ -1476,7 +1627,7 @@
         "interfaceId": "The ERC-165 interface identifier to check."
       },
       "returns": {
-        "_0": "True if `interfaceId` is the hook or split-hook interface."
+        "supported": "True if `interfaceId` is the hook or split-hook interface."
       }
     }
   },
@@ -1508,20 +1659,29 @@
     "TOKENS()": {
       "notice": "The JBTokens registry used to resolve a project's ERC-20."
     },
+    "accumulatedProjectCredits(uint256)": {
+      "notice": "The credit balance (project tokens with no ERC-20 deployed yet) currently accounted for each project."
+    },
     "accumulatedProjectTokens(uint256)": {
-      "notice": "The accumulated project-token balance currently held for each project before its first pool deployment."
+      "notice": "The project-token balance held for each project outside its positions, waiting for the next ask."
     },
-    "activeTickLowerOf(uint256,address)": {
-      "notice": "The lower tick of the currently active LP position for each project and terminal-token pair."
+    "accumulatedTerminalTokens(uint256,address)": {
+      "notice": "The terminal-token balance held for each project outside its positions, waiting for the next bid."
     },
-    "activeTickUpperOf(uint256,address)": {
-      "notice": "The upper tick of the currently active LP position for each project and terminal-token pair."
+    "addLiquidity(uint256,address)": {
+      "notice": "Recycle the project's positions with its post-deployment accumulated reserved tokens: route both positions' fees, burn both, and re-mint the ask and bid single-sided around the live spot — the same executor `deployPool` uses. Callable at any time, with or without new tokens; rejected when the pool's spot has deviated from the oracle TWAP. Permissionless: abuse is bounded by the economic caps (the ask never sells below the cash-out floor, the bid never buys above the issuance ceiling) and the oracle-TWAP deviation guard."
     },
-    "addLiquidity(uint256,address,uint256)": {
-      "notice": "Convert the project's post-deployment accumulated reserved tokens into additional protocol-owned liquidity. Tops up the active position while the live cash-out/issuance corridor still matches the active position's ticks; once the corridor has drifted past `_RERANGE_THRESHOLD_TICKS`, BURNS the stale position to recover its principal and re-mints a single fresh position at the current corridor (folding in the new accumulation) — so all allocated funds stay in one maximally-efficient position rather than fragmenting across stale bands. The funding cash-out is forced DIRECTLY through the bonding curve (never the AMM this hook feeds), and the add is rejected if the pool's spot price has deviated from the oracle TWAP — bounding sandwich/JIT manipulation. Permissionless once the ruleset weight has decayed 10x from when accumulation began; otherwise requires `SET_BUYBACK_POOL` from the project owner. Safe for anyone to call."
+    "askTokenIdOf(uint256,address)": {
+      "notice": "The PositionManager token ID of each project's ask position (project tokens, spot to ceiling)."
+    },
+    "bidTokenIdOf(uint256,address)": {
+      "notice": "The PositionManager token ID of each project's bid position (terminal tokens, spot to floor)."
+    },
+    "burnFeeRemainder(uint256,address,uint256)": {
+      "notice": "Burn `count` of this hook's project ERC-20 through the project's controller, lowering the project's supply. Callable only via this contract's own best-effort `_routeCollectedFees` so its revert can be caught and the remainder kept in the ask ledger instead."
     },
     "buybackHook()": {
-      "notice": "The buyback-hook registry this clone targets for force-direct cash-outs."
+      "notice": "The buyback-hook registry configured for this clone."
     },
     "claimFeeTokensFor(uint256,address)": {
       "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`."
@@ -1536,10 +1696,19 @@
       "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
     },
     "collectAndRouteLPFees(uint256,address)": {
-      "notice": "Collect accrued Uniswap LP trading fees for a project (from its single active position) and route them back to its terminal balance. The terminal-token portion is deposited (minus an optional fee-project cut); the project-token portion is carried into the accumulation ledger to become future liquidity (never burned). Callable by anyone."
+      "notice": "Collect accrued Uniswap LP trading fees from a project's ask and bid positions and route them to the project. A best-effort fee-project cut is taken on EACH side; the remaining terminal-token portion is added to the project's balance in its primary terminal and the remaining project-token portion is burned, both raising the project's cash-out floor. A side whose add or burn fails is carried into its ledger instead (the bid or the ask), becoming liquidity at the next recycle. The positions themselves are not moved. Callable by anyone."
     },
-    "deployPool(uint256,uint256)": {
-      "notice": "Create the Uniswap V4 pool and mint the initial LP position using the project's accumulated reserved tokens. A portion of those tokens is cashed out for terminal tokens so the position is two-sided. Permissionless once the ruleset weight has decayed to 10% of what it was when accumulation began; otherwise requires `SET_BUYBACK_POOL` permission from the project owner."
+    "constructor": {
+      "notice": "Deploy the implementation that every clone delegates to, wiring the chain-same Juicebox contracts."
+    },
+    "deployPool(uint256)": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position as a single-sided ask of the project's accumulated reserved tokens. Permissionless: anyone may seed the pool. Abuse is bounded by the economic gate (asks only reach up to the issuance ceiling, bids only down to the cash-out floor) and, for an already-initialized pool, the oracle-TWAP deviation guard."
+    },
+    "deployedTerminalTokenOf(uint256)": {
+      "notice": "The terminal token the project's one supported pool was deployed against."
+    },
+    "executeAutomationFor(uint256)": {
+      "notice": "Execute an inline automation attempt for a project: deploy the pool if none exists yet, otherwise add the accumulated inventory to the deployed pool's position. Callable only via this contract's own best-effort `_attemptAutomation` so a revert anywhere in the flow can be caught and forgiven while the parent frame's accepted inventory stays intact."
     },
     "feePercent()": {
       "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
@@ -1551,7 +1720,7 @@
       "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
     },
     "initialWeightOf(uint256)": {
-      "notice": "The ruleset weight recorded when the hook first starts accumulating project tokens for each project."
+      "notice": "The first nonzero ruleset weight recorded by a successful deploy or recycle of each project."
     },
     "initialize(uint256,uint256,address,address,address,address)": {
       "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once."
@@ -1575,16 +1744,13 @@
       "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
     },
     "processSplitWith((address,uint256,uint256,uint256,uint256,(uint32,uint64,address,bool,uint48,address)))": {
-      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split. Tokens are accumulated in escrow both before AND after pool deployment: pre-deploy, `deployPool` consumes the accumulation; post-deploy, `addLiquidity` converts it into more liquidity. The hook never burns."
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split, or by one of the project's terminals when a payout is sent to it. The hook FIRST durably accepts and accounts for the allocation, then best-effort attempts pool deployment or liquidity addition if enough gas remains. A failed attempt cannot touch the accepted inventory: it stays in the ledgers, retryable through the permissionless `deployPool`/`addLiquidity` entry points. The hook never burns what it is sent."
     },
-    "rebalanceLiquidity(uint256,address,uint256,uint256)": {
-      "notice": "Burn the existing LP position and re-mint it with tick bounds recalculated from the project's current issuance and cash-out rates. Useful when rate changes have shifted the price range away from the active position. Requires `SET_BUYBACK_POOL` permission from the project owner."
+    "sendToTerminal(address,uint256,address,uint256,bool)": {
+      "notice": "Send `amount` of `token` to `terminal` for `projectId`: `pay` it (the fee-project cut, minting fee-project tokens to this hook) or `addToBalanceOf` it (an LP-fee remainder returned to the project's own treasury). Callable only via this contract's own best-effort self-calls so its revert (from the terminal or the ERC-20 allowance-consumption check) can be caught and forgiven."
     },
     "supportsInterface(bytes4)": {
       "notice": "Whether this contract implements a given interface (ERC-165)."
-    },
-    "tokenIdOf(uint256,address)": {
-      "notice": "The Uniswap V4 PositionManager token ID for each deployed project and terminal-token pair."
     }
   },
   "contractName": "JBUniswapV4LPSplitHook",

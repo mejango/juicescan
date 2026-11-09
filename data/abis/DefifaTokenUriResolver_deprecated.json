@@ -1,0 +1,153 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "deployer",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setChainSpecificConstants",
+      "inputs": [
+        {
+          "name": "newTypeface",
+          "type": "address",
+          "internalType": "contract ITypeface"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "tokenUriOf",
+      "inputs": [
+        {
+          "name": "nft",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "typeface",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract ITypeface"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "error",
+      "name": "DefifaTokenUriResolver_AlreadyConfigured",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "DefifaTokenUriResolver_Unauthorized",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "PRBMath_MulDiv_Overflow",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "y",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "denominator",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "StringsInsufficientHexLength",
+      "inputs": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "length",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "deployer": "The address authorized to call `setChainSpecificConstants` exactly once."
+      }
+    },
+    "setChainSpecificConstants(address)": {
+      "params": {
+        "newTypeface": "The typeface of the SVGs on this chain."
+      }
+    },
+    "tokenUriOf(address,uint256)": {
+      "details": "Defer to the token's tier IPFS URI if set.",
+      "params": {
+        "nft": "The address of the nft the token URI should be oriented to.",
+        "tokenId": "The ID of the token to get the tier URI for."
+      },
+      "returns": {
+        "_0": "The token URI corresponding with the tier."
+      }
+    }
+  },
+  "userdoc": {
+    "setChainSpecificConstants(address)": {
+      "notice": "One-shot setter for this chain's typeface contract."
+    },
+    "tokenUriOf(address,uint256)": {
+      "notice": "The metadata URI of the provided token ID."
+    },
+    "typeface()": {
+      "notice": "The typeface of the SVGs."
+    }
+  },
+  "contractName": "DefifaTokenUriResolver",
+  "sourceName": "node_modules/@ballkidz/defifa/src/DefifaTokenUriResolver.sol"
+}

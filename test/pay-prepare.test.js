@@ -1,5 +1,7 @@
-// The lean pay preparation must answer, and read, exactly as nana-sdk-core does at 557a9fc, case for case: metadata
-// bytes, previews, minimums, refusals, the pay transaction and every read and quote in order.
+// Juicescan's pay preparation must answer, and read, exactly as these vectors record, case for case: metadata bytes,
+// previews, minimums, refusals, the pay transaction and every read and quote in order. They began as nana-sdk-core
+// 557a9fc's answers and are juicescan's own now: router cases read the registry's terminal, and a payment that reaches
+// no router this knows stays on the mint path.
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

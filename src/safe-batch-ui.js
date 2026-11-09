@@ -5,7 +5,7 @@
 // direct sends / one Relayr bundle for an EOA authority. Never N separate Safe proposals.
 import { el, openDialog, confirmTransactionModal, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, invokeWallet, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
 import { chainNameFor, usdcByChain } from './chain.js';
-import { getAddress } from './abi-registry.js';
+import { generationNames, getAddress } from './abi-registry.js';
 import { STEP_KINDS, buildStep, loadTray, saveTray, clearTray, upsertStep, moveStep, removeStep, composeBatch, checkBatchOrder, dependsOnPrior, mirrorBatch, encodeMultiSend, multiSendBatchCalls, simulateBatchCalls, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN, TRAY_UPDATED_EVENT } from './safe-batch.js';
 export { simulateBatchCalls } from './safe-batch.js';
 import { PRESETS, resolvePreset } from './safe-batch-presets.js';
@@ -362,8 +362,8 @@ export function mirrorResolver(project) {
     if (kind === 'setHookFor' || kind === 'setTerminalFor') {
       var hookSelection = kind === 'setHookFor';
       var selected = hookSelection ? step.values.hook : step.values.terminal;
-      var names = hookSelection ? ['JBBuybackHook', 'JBBuybackHook_deprecated1', 'JBBuybackHook_deprecated']
-        : ['JBRouterTerminalGateway', 'JBRouterTerminal', 'JBRouterTerminal_deprecated1', 'JBRouterTerminal_deprecated'];
+      var names = hookSelection ? generationNames('JBBuybackHook')
+        : generationNames('JBRouterTerminalGateway').concat(generationNames('JBRouterTerminal'));
       if (!names.some(function (contract) { return sameAddr(selected, getAddress(contract, toChainId)); })) {
         return { reason: 'the selected generation is not deployed on ' + name };
       }

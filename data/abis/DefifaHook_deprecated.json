@@ -1,0 +1,2864 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        },
+        {
+          "name": "defifaToken",
+          "type": "address",
+          "internalType": "contract IERC20"
+        },
+        {
+          "name": "baseProtocolToken",
+          "type": "address",
+          "internalType": "contract IERC20"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "BASE_PROTOCOL_TOKEN",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IERC20"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "CODE_ORIGIN",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "DEFIFA_TOKEN",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IERC20"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBDirectory"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "METADATA_ID_TARGET",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TOTAL_CASHOUT_WEIGHT",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "adjustedPendingReservesFor",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "afterCashOutRecordedWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBAfterCashOutRecordedContext",
+          "components": [
+            {
+              "name": "holder",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutCount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "reclaimedAmount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "forwardedAmount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "cashOutTaxRate",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address payable"
+            },
+            {
+              "name": "hookMetadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "cashOutMetadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "afterPayRecordedWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBAfterPayRecordedContext",
+          "components": [
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "amount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "forwardedAmount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "weight",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "newlyIssuedTokenCount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "hookMetadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            },
+            {
+              "name": "payerMetadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "amountRedeemed",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "approve",
+      "inputs": [
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "balanceOf",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "baseURI",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "beforeCashOutRecordedWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBBeforeCashOutRecordedContext",
+          "components": [
+            {
+              "name": "terminal",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "holder",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutCount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "totalSupply",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "surplus",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "scopeCashOutsToLocalBalances",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "cashOutTaxRate",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiaryIsFeeless",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cashOutTaxRate",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "cashOutCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "totalSupply",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "effectiveSurplusValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hookSpecifications",
+          "type": "tuple[]",
+          "internalType": "struct JBCashOutHookSpecification[]",
+          "components": [
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBCashOutHook"
+            },
+            {
+              "name": "noop",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "beforePayRecordedWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBBeforePayRecordedContext",
+          "components": [
+            {
+              "name": "terminal",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "payer",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "tuple",
+              "internalType": "struct JBTokenAmount",
+              "components": [
+                {
+                  "name": "token",
+                  "type": "address",
+                  "internalType": "address"
+                },
+                {
+                  "name": "decimals",
+                  "type": "uint8",
+                  "internalType": "uint8"
+                },
+                {
+                  "name": "currency",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "value",
+                  "type": "uint256",
+                  "internalType": "uint256"
+                }
+              ]
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "rulesetId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "beneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "weight",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "reservedPercent",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "weight",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "hookSpecifications",
+          "type": "tuple[]",
+          "internalType": "struct JBPayHookSpecification[]",
+          "components": [
+            {
+              "name": "hook",
+              "type": "address",
+              "internalType": "contract IJBPayHook"
+            },
+            {
+              "name": "noop",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "metadata",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "cashOutWeightIsSet",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "cashOutWeightOf",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "cashOutWeightOf",
+      "inputs": [
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "cumulativeWeight",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "contractURI",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "currentSupplyOfTier",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "defaultAttestationDelegate",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "firstOwnerOf",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "gamePhaseReporter",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IDefifaGamePhaseReporter"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "gamePotReporter",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IDefifaGamePotReporter"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getApproved",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getPastTierAttestationUnitsOf",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tier",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "timestamp",
+          "type": "uint48",
+          "internalType": "uint48"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getPastTierTotalAttestationUnitsOf",
+      "inputs": [
+        {
+          "name": "tier",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "timestamp",
+          "type": "uint48",
+          "internalType": "uint48"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTierAttestationUnitsOf",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tier",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTierDelegateOf",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tier",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTierTotalAttestationUnitsOf",
+      "inputs": [
+        {
+          "name": "tier",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "hasMintPermissionFor",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct JBRuleset",
+          "components": [
+            {
+              "name": "cycleNumber",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "id",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "basedOnId",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "start",
+              "type": "uint48",
+              "internalType": "uint48"
+            },
+            {
+              "name": "duration",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "weight",
+              "type": "uint112",
+              "internalType": "uint112"
+            },
+            {
+              "name": "weightCutPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "approvalHook",
+              "type": "address",
+              "internalType": "contract IJBRulesetApprovalHook"
+            },
+            {
+              "name": "metadata",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "initialize",
+      "inputs": [
+        {
+          "name": "_gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "_name",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "_symbol",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "_rulesets",
+          "type": "address",
+          "internalType": "contract IJBRulesets"
+        },
+        {
+          "name": "_baseUri",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "_tokenUriResolver",
+          "type": "address",
+          "internalType": "contract IJB721TokenUriResolver"
+        },
+        {
+          "name": "_contractUri",
+          "type": "string",
+          "internalType": "string"
+        },
+        {
+          "name": "_tiers",
+          "type": "tuple[]",
+          "internalType": "struct JB721TierConfig[]",
+          "components": [
+            {
+              "name": "price",
+              "type": "uint104",
+              "internalType": "uint104"
+            },
+            {
+              "name": "initialSupply",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "votingUnits",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "reserveFrequency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "reserveBeneficiary",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "encodedIpfsUri",
+              "type": "bytes32",
+              "internalType": "bytes32"
+            },
+            {
+              "name": "category",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "discountPercent",
+              "type": "uint8",
+              "internalType": "uint8"
+            },
+            {
+              "name": "flags",
+              "type": "tuple",
+              "internalType": "struct JB721TierConfigFlags",
+              "components": [
+                {
+                  "name": "allowOwnerMint",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "useReserveBeneficiaryAsDefault",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "transfersPausable",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "useVotingUnits",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBeRemoved",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantIncreaseDiscountPercent",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "cantBuyWithCredits",
+                  "type": "bool",
+                  "internalType": "bool"
+                }
+              ]
+            },
+            {
+              "name": "splitPercent",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "splits",
+              "type": "tuple[]",
+              "internalType": "struct JBSplit[]",
+              "components": [
+                {
+                  "name": "percent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "projectId",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "beneficiary",
+                  "type": "address",
+                  "internalType": "address payable"
+                },
+                {
+                  "name": "preferAddToBalance",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "lockedUntil",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "hook",
+                  "type": "address",
+                  "internalType": "contract IJBSplitHook"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "_currency",
+          "type": "uint48",
+          "internalType": "uint48"
+        },
+        {
+          "name": "_store",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookStore"
+        },
+        {
+          "name": "_gamePhaseReporter",
+          "type": "address",
+          "internalType": "contract IDefifaGamePhaseReporter"
+        },
+        {
+          "name": "_gamePotReporter",
+          "type": "address",
+          "internalType": "contract IDefifaGamePotReporter"
+        },
+        {
+          "name": "_defaultAttestationDelegate",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "_tierNames",
+          "type": "string[]",
+          "internalType": "string[]"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "isApprovedForAll",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "operator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "isReserveMint",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "mintReservesFor",
+      "inputs": [
+        {
+          "name": "mintReservesForTiersData",
+          "type": "tuple[]",
+          "internalType": "struct JB721TiersMintReservesConfig[]",
+          "components": [
+            {
+              "name": "tierId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "count",
+              "type": "uint16",
+              "internalType": "uint16"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "mintReservesFor",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "name",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ownerOf",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "pricingCurrency",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "projectId",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "refundedBurnsFrom",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "rulesets",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBRulesets"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "safeTransferFrom",
+      "inputs": [
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "safeTransferFrom",
+      "inputs": [
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setApprovalForAll",
+      "inputs": [
+        {
+          "name": "operator",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "approved",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setTierCashOutWeightsTo",
+      "inputs": [
+        {
+          "name": "tierWeights",
+          "type": "tuple[]",
+          "internalType": "struct DefifaTierCashOutWeight[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutWeight",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setTierDelegateTo",
+      "inputs": [
+        {
+          "name": "delegatee",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "setTierDelegatesTo",
+      "inputs": [
+        {
+          "name": "delegations",
+          "type": "tuple[]",
+          "internalType": "struct DefifaDelegation[]",
+          "components": [
+            {
+              "name": "delegatee",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "tierId",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "store",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJB721TiersHookStore"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "supportsInterface",
+      "inputs": [
+        {
+          "name": "interfaceId",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "symbol",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierCashOutWeights",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256[128]",
+          "internalType": "uint256[128]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tierNameOf",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tokenURI",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "string",
+          "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tokensClaimableFor",
+      "inputs": [
+        {
+          "name": "tokenIds",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "defifaTokenAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "baseProtocolTokenAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tokensRedeemedFrom",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalCashOutWeight",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "totalMintCost",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "transferFrom",
+      "inputs": [
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "transferOwnership",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "Approval",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "approved",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ApprovalForAll",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "operator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "approved",
+          "type": "bool",
+          "indexed": false,
+          "internalType": "bool"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ClaimedTokens",
+      "inputs": [
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "defifaTokenAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "baseProtocolTokenAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "DelegateChanged",
+      "inputs": [
+        {
+          "name": "delegator",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "fromDelegate",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "toDelegate",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Mint",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "totalAmountContributed",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MintReservedToken",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "OwnershipTransferred",
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "TierCashOutWeightsSet",
+      "inputs": [
+        {
+          "name": "tierWeights",
+          "type": "tuple[]",
+          "indexed": false,
+          "internalType": "struct DefifaTierCashOutWeight[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutWeight",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "TierDelegateAttestationsChanged",
+      "inputs": [
+        {
+          "name": "delegate",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "previousBalance",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "newBalance",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "Transfer",
+      "inputs": [
+        {
+          "name": "from",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "to",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "CheckpointUnorderedInsertion",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_CashoutWeightsAlreadySet",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_DelegateAddressZero",
+      "inputs": [
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_DelegateChangesUnavailableInThisPhase",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "phase",
+          "type": "uint8",
+          "internalType": "enum DefifaGamePhase"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_GameIsntScoringYet",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "phase",
+          "type": "uint8",
+          "internalType": "enum DefifaGamePhase"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_IdenticalTokens",
+      "inputs": [
+        {
+          "name": "defifaToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "baseProtocolToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_NothingToClaim",
+      "inputs": [
+        {
+          "name": "reclaimedAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiaryReceivedTokens",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_NothingToMint",
+      "inputs": [
+        {
+          "name": "metadataFound",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "tierCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_Overspending",
+      "inputs": [
+        {
+          "name": "leftoverAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_ReservedTokenMintingBlockedInNoContest",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_ReservedTokenMintingPaused",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_TransfersPaused",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "from",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_Unauthorized",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "holder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaHook_WrongCurrency",
+      "inputs": [
+        {
+          "name": "expectedCurrency",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "actualCurrency",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721IncorrectOwner",
+      "inputs": [
+        {
+          "name": "sender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721InsufficientApproval",
+      "inputs": [
+        {
+          "name": "operator",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721InvalidApprover",
+      "inputs": [
+        {
+          "name": "approver",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721InvalidOperator",
+      "inputs": [
+        {
+          "name": "operator",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721InvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721InvalidReceiver",
+      "inputs": [
+        {
+          "name": "receiver",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721InvalidSender",
+      "inputs": [
+        {
+          "name": "sender",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ERC721NonexistentToken",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721Hook_InvalidCashOut",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "contextProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "msgValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721Hook_InvalidPay",
+      "inputs": [
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "contextProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721Hook_InvalidPayValue",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "msgValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "forwardedValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721Hook_UnauthorizedToken",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "holder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JB721Hook_UnexpectedTokenCashedOut",
+      "inputs": [
+        {
+          "name": "cashOutCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableInvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableUnauthorizedAccount",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "adjustedPendingReservesFor(uint256)": {
+      "details": "Recalculates reserves from (paidMints - burns) / reserveFrequency since the relationship between burns and reserves is not linear — it depends on the tier's reserve frequency.",
+      "params": {
+        "tierId": "The tier ID."
+      },
+      "returns": {
+        "_0": "The adjusted pending reserve count (floored at 0)."
+      }
+    },
+    "afterCashOutRecordedWith((address,uint256,uint256,uint256,(address,uint8,uint32,uint256),(address,uint8,uint32,uint256),uint256,address,bytes,bytes))": {
+      "details": "Reverts if the calling contract is not one of the project's terminals.",
+      "params": {
+        "context": "The cash-out context passed in by the terminal."
+      }
+    },
+    "afterPayRecordedWith((address,uint256,uint256,(address,uint8,uint32,uint256),(address,uint8,uint32,uint256),uint256,uint256,address,bytes,bytes))": {
+      "details": "Reverts if the calling contract is not one of the project's terminals.",
+      "params": {
+        "context": "The payment context passed in by the terminal."
+      }
+    },
+    "approve(address,uint256)": {
+      "details": "See {IERC721-approve}."
+    },
+    "balanceOf(address)": {
+      "details": "See {IERC721-balanceOf}."
+    },
+    "beforeCashOutRecordedWith((address,address,uint256,uint256,uint256,uint256,(address,uint8,uint32,uint256),bool,uint256,bool,bytes))": {
+      "details": "Sets this contract as the cash-out hook. Part of `IJBRulesetDataHook`.This function is used for NFT cash-outs, and will only be called if the project's ruleset has `useDataHookForCashOut` set to `true`.",
+      "params": {
+        "context": "The cash-out context passed to this contract by the `cashOutTokensOf(...)` function."
+      },
+      "returns": {
+        "cashOutCount": "The amount of tokens that should be considered cashed out.",
+        "cashOutTaxRate": "The cash-out tax rate influencing the reclaim amount.",
+        "effectiveSurplusValue": "The effective surplus value to use for the cash-out.",
+        "hookSpecifications": "The amount and data to send to cash-out hooks (this contract) instead of returning to the beneficiary.",
+        "totalSupply": "The total amount of tokens that are considered to be existing."
+      }
+    },
+    "beforePayRecordedWith((address,address,(address,uint8,uint32,uint256),uint256,uint256,address,uint256,uint256,bytes))": {
+      "details": "Sets this contract as the pay hook. Part of `IJBRulesetDataHook`.",
+      "params": {
+        "context": "The payment context passed to this contract by the `pay(...)` function."
+      },
+      "returns": {
+        "hookSpecifications": "The amount and data to send to pay hooks (this contract) instead of adding to the terminal's balance.",
+        "weight": "The new `weight` to use, overriding the ruleset's `weight`."
+      }
+    },
+    "cashOutWeightOf(uint256)": {
+      "params": {
+        "tokenId": "The ID of the token to get the cashOut weight of."
+      },
+      "returns": {
+        "_0": "The weight."
+      }
+    },
+    "cashOutWeightOf(uint256[])": {
+      "params": {
+        "tokenIds": "The IDs of the tokens to get the cumulative cashOut weight of."
+      },
+      "returns": {
+        "cumulativeWeight": "The weight."
+      }
+    },
+    "constructor": {
+      "details": "The initial owner is msg.sender; ownership is transferred to the governor after initialization."
+    },
+    "currentSupplyOfTier(uint256)": {
+      "params": {
+        "tierId": "The ID of the tier to get the current supply of."
+      },
+      "returns": {
+        "_0": "The current supply count."
+      }
+    },
+    "firstOwnerOf(uint256)": {
+      "params": {
+        "tokenId": "The ID of the token to get the first owner of."
+      },
+      "returns": {
+        "_0": "The first owner of the token."
+      }
+    },
+    "getApproved(uint256)": {
+      "details": "See {IERC721-getApproved}."
+    },
+    "getPastTierAttestationUnitsOf(address,uint256,uint48)": {
+      "params": {
+        "account": "The address to check.",
+        "tier": "The tier to check within.",
+        "timestamp": "The timestamp to check the attestation power at."
+      }
+    },
+    "getPastTierTotalAttestationUnitsOf(uint256,uint48)": {
+      "params": {
+        "tier": "The tier to check.",
+        "timestamp": "The timestamp to check the total attestation units at."
+      }
+    },
+    "getTierAttestationUnitsOf(address,uint256)": {
+      "params": {
+        "account": "The address to check.",
+        "tier": "The tier to check within."
+      }
+    },
+    "getTierDelegateOf(address,uint256)": {
+      "params": {
+        "account": "The account to check for a delegate of.",
+        "tier": "The tier to check within."
+      }
+    },
+    "getTierTotalAttestationUnitsOf(uint256)": {
+      "params": {
+        "tier": "The tier to check."
+      }
+    },
+    "initialize(uint256,string,string,address,string,address,string,(uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint48,address,address,address,address,string[])": {
+      "params": {
+        "_baseUri": "A URI to use as a base for full token URIs.",
+        "_contractUri": "A URI where contract metadata can be found.",
+        "_currency": "The currency that the tier contribution floors are denoted in.",
+        "_defaultAttestationDelegate": "The address that will be set as the attestation delegate by default.",
+        "_gameId": "The ID of the project this contract's functionality applies to.",
+        "_gamePhaseReporter": "The contract that reports the game phase.",
+        "_gamePotReporter": "The contract that reports the game's pot.",
+        "_name": "The name of the token.",
+        "_rulesets": "A contract storing all ruleset configurations.",
+        "_store": "A contract that stores the NFT's data.",
+        "_symbol": "The symbol that the token should be represented by.",
+        "_tierNames": "The names of each tier.",
+        "_tiers": "The tiers to set.",
+        "_tokenUriResolver": "A contract responsible for resolving the token URI for each token ID."
+      }
+    },
+    "isApprovedForAll(address,address)": {
+      "details": "See {IERC721-isApprovedForAll}."
+    },
+    "mintReservesFor((uint32,uint16)[])": {
+      "params": {
+        "mintReservesForTiersData": "Contains information about how many reserved tokens to mint for each tier."
+      }
+    },
+    "mintReservesFor(uint256,uint256)": {
+      "params": {
+        "count": "The number of reserved tokens to mint.",
+        "tierId": "The ID of the tier to mint within."
+      }
+    },
+    "name()": {
+      "details": "See {IERC721Metadata-name}."
+    },
+    "owner()": {
+      "details": "Returns the address of the current owner."
+    },
+    "ownerOf(uint256)": {
+      "details": "See {IERC721-ownerOf}."
+    },
+    "renounceOwnership()": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "safeTransferFrom(address,address,uint256)": {
+      "details": "See {IERC721-safeTransferFrom}."
+    },
+    "safeTransferFrom(address,address,uint256,bytes)": {
+      "details": "See {IERC721-safeTransferFrom}."
+    },
+    "setApprovalForAll(address,bool)": {
+      "details": "See {IERC721-setApprovalForAll}."
+    },
+    "setTierCashOutWeightsTo((uint256,uint256)[])": {
+      "details": "Only this contract's owner can set tier cashOut weights.",
+      "params": {
+        "tierWeights": "The tier weights to set."
+      }
+    },
+    "setTierDelegateTo(address,uint256)": {
+      "params": {
+        "delegatee": "The account to delegate tier attestation units to.",
+        "tierId": "The ID of the tier to delegate attestation units for."
+      }
+    },
+    "setTierDelegatesTo((address,uint256)[])": {
+      "params": {
+        "delegations": "An array of tiers to set delegates for."
+      }
+    },
+    "supportsInterface(bytes4)": {
+      "details": "See {IERC165-supportsInterface}.",
+      "params": {
+        "interfaceId": "The ID of the interface to check for adherence to."
+      }
+    },
+    "symbol()": {
+      "details": "See {IERC721Metadata-symbol}."
+    },
+    "tierCashOutWeights()": {
+      "returns": {
+        "_0": "The array of weights, indexed by tier."
+      }
+    },
+    "tierNameOf(uint256)": {
+      "params": {
+        "tierId": "The ID of the tier."
+      }
+    },
+    "tokenURI(uint256)": {
+      "details": "Defer to the token URI resolver if set; otherwise, use the token URI set with the token's tier.",
+      "params": {
+        "tokenId": "The ID of the token to get the tier URI for."
+      },
+      "returns": {
+        "_0": "The token URI corresponding with the tier or the tokenUriResolver URI."
+      }
+    },
+    "tokensClaimableFor(uint256[])": {
+      "params": {
+        "tokenIds": "The IDs of the tokens that justify a $DEFIFA claim."
+      },
+      "returns": {
+        "baseProtocolTokenAmount": "The amount of $BASE_PROTOCOL that can be claimed.",
+        "defifaTokenAmount": "The amount of $DEFIFA that can be claimed."
+      }
+    },
+    "totalCashOutWeight()": {
+      "details": "An NFT's cash-out weight is its price.",
+      "returns": {
+        "_0": "The total cash-out weight."
+      }
+    },
+    "transferFrom(address,address,uint256)": {
+      "details": "See {IERC721-transferFrom}."
+    },
+    "transferOwnership(address)": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "userdoc": {
+    "BASE_PROTOCOL_TOKEN()": {
+      "notice": "The $BASE_PROTOCOL token that is expected to be issued from paying fees."
+    },
+    "CODE_ORIGIN()": {
+      "notice": "The original DefifaHook implementation address used to distinguish clones during initialization."
+    },
+    "DEFIFA_TOKEN()": {
+      "notice": "The $DEFIFA token that is expected to be issued from paying fees."
+    },
+    "DIRECTORY()": {
+      "notice": "The directory of terminals and controllers for projects."
+    },
+    "METADATA_ID_TARGET()": {
+      "notice": "The ID used when parsing metadata."
+    },
+    "TOTAL_CASHOUT_WEIGHT()": {
+      "notice": "The total cash-out weight that can be divided among tiers."
+    },
+    "adjustedPendingReservesFor(uint256)": {
+      "notice": "Returns the adjusted pending reserve count for a tier, accounting for refund-phase burns."
+    },
+    "afterCashOutRecordedWith((address,uint256,uint256,uint256,(address,uint8,uint32,uint256),(address,uint8,uint32,uint256),uint256,address,bytes,bytes))": {
+      "notice": "Burns the specified NFTs upon token holder cash-out, reclaiming funds from the project's balance for `context.beneficiary`. Part of `IJBCashOutHook`."
+    },
+    "afterPayRecordedWith((address,uint256,uint256,(address,uint8,uint32,uint256),(address,uint8,uint32,uint256),uint256,uint256,address,bytes,bytes))": {
+      "notice": "Mints one or more NFTs to the `context.beneficiary` upon payment if conditions are met."
+    },
+    "amountRedeemed()": {
+      "notice": "The amount redeemed from this game, excluding refunds."
+    },
+    "baseURI()": {
+      "notice": "The common base for token URIs."
+    },
+    "beforeCashOutRecordedWith((address,address,uint256,uint256,uint256,uint256,(address,uint8,uint32,uint256),bool,uint256,bool,bytes))": {
+      "notice": "The data calculated before a cash-out is recorded in the terminal store. This data is provided to the terminal's `cashOutTokensOf(...)` transaction."
+    },
+    "beforePayRecordedWith((address,address,(address,uint8,uint32,uint256),uint256,uint256,address,uint256,uint256,bytes))": {
+      "notice": "The data calculated before a payment is recorded in the terminal store for `pay(...)`."
+    },
+    "cashOutWeightIsSet()": {
+      "notice": "Whether the cash-out weights have been set."
+    },
+    "cashOutWeightOf(uint256)": {
+      "notice": "The weight the given token ID has in cashOuts."
+    },
+    "cashOutWeightOf(uint256[])": {
+      "notice": "The cumulative weight the given token IDs have in cash-outs compared to the `totalCashOutWeight`."
+    },
+    "contractURI()": {
+      "notice": "The contract-level metadata URI used by marketplaces to display collection information."
+    },
+    "currentSupplyOfTier(uint256)": {
+      "notice": "The amount of tokens of a tier that are currently in circulation."
+    },
+    "defaultAttestationDelegate()": {
+      "notice": "The address that will be set as the attestation delegate by default."
+    },
+    "firstOwnerOf(uint256)": {
+      "notice": "The first owner of each token ID, which corresponds to the address that originally contributed to the project to receive the NFT."
+    },
+    "gamePhaseReporter()": {
+      "notice": "The contract reporting game phases."
+    },
+    "gamePotReporter()": {
+      "notice": "The contract reporting the game pot."
+    },
+    "getPastTierAttestationUnitsOf(address,uint256,uint48)": {
+      "notice": "Returns the past attestation units of a specific address for a specific tier."
+    },
+    "getPastTierTotalAttestationUnitsOf(uint256,uint48)": {
+      "notice": "Returns the total amount of attestation units that has existed for a tier."
+    },
+    "getTierAttestationUnitsOf(address,uint256)": {
+      "notice": "Returns the current attestation power of an address for a specific tier."
+    },
+    "getTierDelegateOf(address,uint256)": {
+      "notice": "Returns the delegate of an account for specific tier."
+    },
+    "getTierTotalAttestationUnitsOf(uint256)": {
+      "notice": "Returns the total amount of attestation units that exists for a tier."
+    },
+    "hasMintPermissionFor(uint256,(uint48,uint48,uint48,uint48,uint32,uint112,uint32,address,uint256),address)": {
+      "notice": "Required by the IJBRulesetDataHook interfaces. Return false to not leak any permissions."
+    },
+    "initialize(uint256,string,string,address,string,address,string,(uint104,uint32,uint32,uint16,address,bytes32,uint24,uint8,(bool,bool,bool,bool,bool,bool,bool),uint32,(uint32,uint64,address,bool,uint48,address)[])[],uint48,address,address,address,address,string[])": {
+      "notice": "Initialize a clone of this contract."
+    },
+    "isReserveMint(uint256)": {
+      "notice": "Whether a token was minted through reserves (free) rather than paid for."
+    },
+    "mintReservesFor((uint32,uint16)[])": {
+      "notice": "Mint reserved tokens within the tier for the provided value."
+    },
+    "mintReservesFor(uint256,uint256)": {
+      "notice": "Mint reserved tokens within the tier for the provided value."
+    },
+    "pricingCurrency()": {
+      "notice": "The currency that is accepted when minting tier NFTs."
+    },
+    "projectId()": {
+      "notice": "The ID of the project that this contract is associated with."
+    },
+    "refundedBurnsFrom(uint256)": {
+      "notice": "The number of tokens burned from a tier during non-COMPLETE phases (refund, no-contest)."
+    },
+    "rulesets()": {
+      "notice": "The contract storing all funding cycle configurations."
+    },
+    "setTierCashOutWeightsTo((uint256,uint256)[])": {
+      "notice": "Stores the cashOut weights that should be used in the end game phase."
+    },
+    "setTierDelegateTo(address,uint256)": {
+      "notice": "Delegate this account's voting power for a single tier to a specified delegate."
+    },
+    "setTierDelegatesTo((address,uint256)[])": {
+      "notice": "Delegate this account's voting power across multiple tiers to specified delegates."
+    },
+    "store()": {
+      "notice": "The contract that stores and manages the NFT's data."
+    },
+    "supportsInterface(bytes4)": {
+      "notice": "Indicates if this contract adheres to the specified interface."
+    },
+    "tierCashOutWeights()": {
+      "notice": "The cashOut weight for each tier."
+    },
+    "tierNameOf(uint256)": {
+      "notice": "The name of the tier with the specified ID."
+    },
+    "tokenURI(uint256)": {
+      "notice": "The metadata URI of the provided token ID."
+    },
+    "tokensClaimableFor(uint256[])": {
+      "notice": "The amount of $DEFIFA and $BASE_PROTOCOL tokens claimable for a set of token IDs."
+    },
+    "tokensRedeemedFrom(uint256)": {
+      "notice": "The amount of tokens redeemed from each tier, excluding refunds."
+    },
+    "totalCashOutWeight()": {
+      "notice": "The combined cash-out weight of all outstanding NFTs."
+    },
+    "totalMintCost()": {
+      "notice": "The cumulative mint price of all paid and reserved NFTs. Decremented on burns/refunds. Used as the participation metric — immune to `addToBalanceOf` inflation because only actual mints increment it."
+    }
+  },
+  "contractName": "DefifaHook",
+  "sourceName": "node_modules/@ballkidz/defifa/src/DefifaHook.sol"
+}

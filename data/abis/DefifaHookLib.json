@@ -338,6 +338,17 @@
     },
     {
       "type": "error",
+      "name": "DefifaHook_CantRefundReserveMint",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "DefifaHook_InvalidCashoutWeights",
       "inputs": [
         {
@@ -506,6 +517,18 @@
         "_0": "The current supply."
       }
     },
+    "computeTierCashOutWeight(uint256,IJB721TiersHookStore,address,uint256[128] storage,mapping(uint256 => uint256) storage)": {
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierCashOutWeights": "The tier cash-out weights array.",
+        "tierId": "The tier ID.",
+        "tokensRedeemedFrom": "The mapping of tokens redeemed per tier."
+      },
+      "returns": {
+        "_0": "The cash-out weight."
+      }
+    },
     "computeTokensClaim(uint256[],IJB721TiersHookStore,address,uint256,uint256,uint256)": {
       "params": {
         "baseProtocolBalance": "The current $BASE_PROTOCOL balance.",
@@ -564,6 +587,9 @@
     },
     "computeCurrentSupply(IJB721TiersHookStore,address,uint256)": {
       "notice": "Compute the current supply of a tier (minted - burned)."
+    },
+    "computeTierCashOutWeight(uint256,IJB721TiersHookStore,address,uint256[128] storage,mapping(uint256 => uint256) storage)": {
+      "notice": "Compute the cash-out weight of a single token in a tier."
     },
     "computeTokensClaim(uint256[],IJB721TiersHookStore,address,uint256,uint256,uint256)": {
       "notice": "Compute the claimable token amounts for a set of token IDs."

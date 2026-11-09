@@ -548,6 +548,11 @@ export var SAFE_EXECUTION_FAILURE_TOPIC = keccak256(stringToHex('ExecutionFailur
 // layout and zero payment (Juicescan only executes zero-refund queued transactions), never just a successful
 // outer EVM receipt: Safe.execTransaction can return false and emit ExecutionFailure without reverting.
 export function hasExactSafeExecutionSuccess(logs, safe, safeTxHash) {
+  return hasExactSafeExecutionEvent(logs, safe, safeTxHash, SAFE_EXECUTION_SUCCESS_TOPIC);
+}
+
+// The same exact-layout check for either Safe execution event (`topic`: the success or the failure topic).
+export function hasExactSafeExecutionEvent(logs, safe, safeTxHash, topic) {
   var expectedSafe = String(safe || '').toLowerCase();
   var expectedHash = String(safeTxHash || '').toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(expectedSafe) || !/^0x[0-9a-f]{64}$/.test(expectedHash)) return false;
@@ -555,7 +560,7 @@ export function hasExactSafeExecutionSuccess(logs, safe, safeTxHash) {
     if (!log || String(log.address || '').toLowerCase() !== expectedSafe || !Array.isArray(log.topics)) return false;
     var topics = log.topics.map(function (topic) { return String(topic || '').toLowerCase(); });
     var data = String(log.data || '').toLowerCase();
-    if (topics[0] !== SAFE_EXECUTION_SUCCESS_TOPIC.toLowerCase()) return false;
+    if (topics[0] !== topic.toLowerCase()) return false;
     if (topics.length === 2 && data === '0x' + '0'.repeat(64)) return topics[1] === expectedHash;
     return topics.length === 1 && data === expectedHash + '0'.repeat(64);
   });

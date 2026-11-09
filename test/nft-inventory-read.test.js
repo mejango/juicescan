@@ -1,13 +1,16 @@
-// The lean NFT inventory and Defifa holdings reads must answer, and read, exactly as nana-sdk-core 3.4.1 did, case for case.
+// The NFT inventory and Defifa holdings reads must answer, and read, exactly as recorded (from nana-sdk-core 3.4.1,
+// against Defifa 1 games), case for case, and every Defifa 1 scenario must answer the same as a Defifa 2.0 game.
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, encodeErrorResult, keccak256, toHex } from 'viem';
 import { getAddress } from '../src/abi-registry.js';
+import { asDefifa2, crossGeneration } from './defifa-generations.js';
 import { getDefifaHoldings, getProjectNftInventory, scanDefifaHoldings } from '../src/nft-inventory-read.js';
 
 const revive = (_, v) => (v && typeof v === 'object' && '$bigint' in v ? BigInt(v.$bigint) : v);
-const golden = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/sdk-3.4.1/nft-inventory.json'), 'utf8'), revive);
+const fixture = readFileSync(join(process.cwd(), 'test/fixtures/defifa-games/nft-inventory.json'), 'utf8');
+const golden = JSON.parse(fixture, revive);
 
 const ser = (value) => JSON.stringify(value, (_, x) => (typeof x === 'bigint' ? { $bigint: x.toString() } : x));
 const canon = (v) => JSON.stringify(v, (_, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
@@ -65,7 +68,7 @@ async function run(c) {
 }
 const byName = (name) => golden.cases.find((c) => c.name === name);
 
-describe('inventory matches SDK 3.4.1 golden vectors', () => {
+describe('inventory matches its golden vectors', () => {
   it('replays every recorded scenario with identical results and identical reads, and never touches a wallet', async () => {
     const request = vi.fn();
     window.ethereum = { request };
@@ -147,6 +150,49 @@ describe('inventory matches SDK 3.4.1 golden vectors', () => {
     expect([...blocks]).toEqual(['1000']);
     const page = byName('generic page 2 at the first block');
     expect(new Set(Object.keys(page.reads).filter((k) => k.startsWith('read|')).map((k) => k.split('|').pop()))).toEqual(new Set(['900']));
+  });
+
+  it('reads every Defifa 1 scenario as a Defifa 2.0 game, with the 2.0 provenance and store', async () => {
+    const moved = JSON.parse(asDefifa2(fixture), revive);
+    expect(moved.cases.length).toBe(golden.cases.length);
+    for (const c of moved.cases) {
+      const { actual, calls } = await run(c);
+      expect(actual, c.name).toEqual(c.output);
+      expect(calls.map((key) => Object.keys(c.reads).indexOf(key)), c.name).toEqual(c.trace);
+    }
+  });
+
+  it('verifies each game against its own generation only', async () => {
+    const name = 'defifa game, tierLimit 1';
+    const mixed = (parts) => run(JSON.parse(crossGeneration(fixture, parts), revive).cases.find((c) => c.name === name)).then((r) => r.actual);
+    // A 2.0 deployer's game must be a clone of the 2.0 implementation, on the 2.0 store, and the reverse.
+    expect((await mixed(['deployer'])).$error).toMatch(/clone does not match/);
+    expect((await mixed(['implementation'])).$error).toMatch(/clone does not match/);
+    expect((await mixed(['deployer', 'implementation'])).$error).toMatch(/provenance does not match/);
+    expect((await mixed(['store'])).$error).toMatch(/provenance does not match/);
+  });
+
+  it('reads no Defifa 1155 game as a 721 collection', async () => {
+    const c = byName('defifa game, tierLimit 1');
+    const reads = Object.fromEntries(Object.entries(c.reads).map(([k, v]) => [k, k.includes('|ownerOf|') ? getAddress('Defifa1155Deployer', 8453) : v]));
+    const calls = [];
+    expect(await getProjectNftInventory(strictClient(reads, calls), c.input)).toBeNull();
+    expect(calls.some((key) => key.startsWith('code|') || key.includes('|STORE|'))).toBe(false);
+  });
+
+  it('takes indexed token IDs only as hints: each is proven onchain, and a short or foreign list falls back to the scan', async () => {
+    const c = byName('holdings of a holder');
+    const holdings = async (indexedTokenIds) => {
+      const calls = [];
+      const result = JSON.parse(ser(await getDefifaHoldings(strictClient(c.reads, calls), { ...c.input, indexedTokenIds })), revive);
+      return { result, ownerReads: calls.filter((key) => key.includes('|ownerOf|') && !key.includes('|[{"$bigint":"27"}]|')).length };
+    };
+    // Exactly the held tokens: two ownerOf reads instead of the six-token scan, same answer.
+    expect(await holdings([3000000002n, 1000000001n, 1000000001n])).toEqual({ result: c.output, ownerReads: 2 });
+    // A stale index (one token gone, one never minted by this game) cannot shrink holdings: the scan answers.
+    const stale = await holdings([1000000001n, 1000000002n, 9000000001n]);
+    expect(stale.result).toEqual(c.output);
+    expect(stale.ownerReads).toBe(2 + 6);
   });
 
   it('reads the deployment addresses from the registry for the chain', () => {

@@ -22,6 +22,7 @@ import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
+import { generationAddresses, generationNames, getABI } from './abi-registry.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
@@ -4494,7 +4495,7 @@ export function projectRouterTerminal(project, chainId, opts) {
       return read(chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [pid])
         .then(function (t) { return (t && t !== ZERO_ADDRESS) ? t : null; }).catch(unavailable);
     }
-    var candidates = [directTerminal, getAddress('JBRouterTerminalGateway', chainId), getAddress('JBRouterTerminal_deprecated1', chainId), getAddress('JBRouterTerminal_deprecated', chainId)].filter(Boolean);
+    var candidates = [directTerminal].concat(generationAddresses('JBRouterTerminalGateway', chainId), generationAddresses('JBRouterTerminal', chainId).slice(1)).filter(Boolean);
     return Promise.all(candidates.map(isTerm)).then(function (direct) { var i = direct.indexOf(true); return i < 0 ? null : candidates[i]; });
   }).catch(unavailable);
 }
@@ -4506,8 +4507,8 @@ export async function projectRouterPath(project, chainId) {
   if (!terminal) return null;
   var registry = getAddress('JBRouterTerminalRegistry', chainId);
   var viaRegistry = registry && await read(chainId, 'JBDirectory', isTerminalOfAbi, 'isTerminalOf', [pidOn(project, chainId), registry]);
-  var gateway = getAddress('JBRouterTerminalGateway', chainId);
-  if (!sameAddr(terminal, gateway)) return { registry: viaRegistry ? registry : null, terminal: terminal, gateway: null, router: terminal };
+  var gateway = generationAddresses('JBRouterTerminalGateway', chainId).find(function (address) { return sameAddr(terminal, address); });
+  if (!gateway) return { registry: viaRegistry ? registry : null, terminal: terminal, gateway: null, router: terminal };
   var router = await clientFor(chainId).readContract({ address: terminal, abi: [{ type: 'function', name: 'ROUTER', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] }], functionName: 'ROUTER', args: [] });
   return { registry: viaRegistry ? registry : null, terminal: terminal, gateway: gateway, router: router };
 }
@@ -4524,12 +4525,17 @@ var INSTANCE_DEPLOYER_FAMILIES = [
   { deployment: 'JB721TiersHookDeployer', family: 'JB721TiersHook' },
   { deployment: 'JBUniswapV4LPSplitHookDeployer', family: 'JBUniswapV4LPSplitHook' },
   { deployment: 'DefifaDeployer', family: 'DefifaHook' },
+  { deployment: 'Defifa1155Deployer', family: 'Defifa1155Hook' },
 ];
 
+// Every generation of a deployer produced instances that are still live, so each one classifies its family.
 export function knownInstanceFamilyForDeployer(deployer, chainId) {
   for (var i = 0; i < INSTANCE_DEPLOYER_FAMILIES.length; i++) {
-    var expected = getAddress(INSTANCE_DEPLOYER_FAMILIES[i].deployment, chainId);
-    if (expected && sameAddr(deployer, expected)) return INSTANCE_DEPLOYER_FAMILIES[i];
+    var names = generationNames(INSTANCE_DEPLOYER_FAMILIES[i].deployment);
+    for (var j = 0; j < names.length; j++) {
+      var expected = getAddress(names[j], chainId);
+      if (expected && sameAddr(deployer, expected)) return { deployment: names[j], family: INSTANCE_DEPLOYER_FAMILIES[i].family };
+    }
   }
   return null;
 }
@@ -5258,40 +5264,30 @@ var usedSurplusAllowanceAbi = [{
   outputs: [{ type: 'uint256' }],
 }];
 // JBP6FeeLPSplitHook (JBUniswapV4LPSplitHook) — receives reserved project tokens, accumulates them, then
-// anyone can deploy/seed a Uniswap V4 LP position and route its fees back to the project. Reads + the
-// permissionless keeper actions used by the Market split-hook card.
-var bannyHookAbi = [
-  { type: 'function', name: 'initialWeightOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'accumulatedProjectTokens', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'hasDeployedPool', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'bool' }] },
-  { type: 'function', name: 'claimableFeeTokens', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'claimableFeeTokenOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ type: 'address' }] },
-  { type: 'function', name: 'tokenIdOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'activeTickLowerOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [{ type: 'int24' }] },
-  { type: 'function', name: 'activeTickUpperOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [{ type: 'int24' }] },
-  { type: 'function', name: 'deployPool', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'minCashOutReturn', type: 'uint256' }], outputs: [] },
-  { type: 'function', name: 'addLiquidity', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'minCashOutReturn', type: 'uint256' }], outputs: [] },
-  { type: 'function', name: 'collectAndRouteLPFees', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }], outputs: [] },
-  { type: 'function', name: 'claimFeeTokensFor', stateMutability: 'nonpayable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'beneficiary', type: 'address' }], outputs: [] },
-  // Custom errors — included so viem decodes a reverting simulate/tx to the real reason (else it surfaces the
-  // opaque "the contract function deployPool reverted"). Mapped to friendly copy by lpHookErrorText.
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_ZeroLiquidity', inputs: [{ name: 'amount0', type: 'uint256' }, { name: 'amount1', type: 'uint256' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_InsufficientLiquidity', inputs: [{ name: 'liquidity', type: 'uint128' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_InsufficientBalance', inputs: [{ name: 'available', type: 'uint256' }, { name: 'required', type: 'uint256' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_NoTokensAccumulated', inputs: [{ name: 'projectId', type: 'uint256' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_PoolAlreadyDeployed', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'tokenId', type: 'uint256' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_OnlyOneTerminalTokenSupported', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_InvalidStageForAction', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }, { name: 'tokenId', type: 'uint256' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_TwapUnavailable', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_PriceDeviationTooHigh', inputs: [{ name: 'spotTick', type: 'int24' }, { name: 'twapTick', type: 'int24' }, { name: 'maxDeviationTicks', type: 'int24' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHook_InvalidTerminalToken', inputs: [{ name: 'projectId', type: 'uint256' }, { name: 'terminalToken', type: 'address' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHookMath_InvalidTickBounds', inputs: [{ name: 'tickLower', type: 'int24' }, { name: 'tickUpper', type: 'int24' }] },
-  { type: 'error', name: 'JBUniswapV4LPSplitHookMath_NoTerminalTokenFound', inputs: [{ name: 'projectId', type: 'uint256' }] },
-];
+// anyone can deploy/seed a Uniswap V4 LP position and route its fees back to the project. Every deployed
+// instance generation is read with its own registry ABI (1.5.0 holds ask/bid positions and seeds with one
+// argument; older generations hold one ranged position and take a minimum cash-out return).
+export function lpSplitHookNameFor(project) {
+  var hooks = (project.reservedSplits || []).map(function (s) { return String(s.hook || '').toLowerCase(); });
+  return generationNames('JBP6FeeLPSplitHook').find(function (name) {
+    var address = getAddress(name, project.chainId);
+    return address && hooks.indexOf(address.toLowerCase()) >= 0;
+  }) || null;
+}
+// The LP split hook generation a project's reserved splits route to on `chainId`, from that chain's own current
+// ruleset splits (the home chain's are already loaded).
+function lpSplitHookNameOn(project, chainId) {
+  if (Number(chainId) === Number(project.chainId)) return Promise.resolve(lpSplitHookNameFor(project));
+  return projectDataHook(project, chainId, { strict: true }).then(function (info) {
+    if (!info.rulesetId) return null;
+    return read(chainId, 'JBSplits', splitsOfAbi, 'splitsOf', [pidOn(project, chainId), BigInt(info.rulesetId), RESERVED_TOKEN_SPLIT_GROUP])
+      .then(function (splits) { return lpSplitHookNameFor({ chainId: chainId, reservedSplits: splits }); });
+  });
+}
 // Map a decoded LP-hook revert to plain copy. `sym`/`acctSym` name the project + terminal tokens.
 function lpHookErrorText(msg, sym) {
   var m = String(msg || '');
-  if (/ZeroLiquidity|InvalidTickBounds|InsufficientLiquidity/.test(m)) {
+  if (/ZeroLiquidity|InvalidTickBounds|InsufficientLiquidity|NoDeployableLiquidityAtSpot|EmptyCorridor/.test(m)) {
     return 'Not enough reserved ' + sym + ' has accumulated yet to seed a two-sided pool position. Let more reserved ' + sym + ' collect here, then try again.';
   }
   if (/NoTokensAccumulated/.test(m)) return 'No reserved ' + sym + ' has accumulated here yet.';
@@ -13757,8 +13753,8 @@ function makeMultiselect(config) {
 
 function pendingPaymentReaders(chainId) {
   return { client: clientFor(Number(chainId)), knownGateway: function (gateway, cid) {
-    return ['JBRouterTerminalGateway', 'JBRouterTerminalGateway_deprecated1', 'JBRouterTerminalGateway_deprecated'].some(function (name) {
-      return sameAddr(getAddress(name, cid), gateway);
+    return generationAddresses('JBRouterTerminalGateway', cid).some(function (address) {
+      return sameAddr(address, gateway);
     });
   } };
 }
@@ -23006,10 +23002,9 @@ function renderOwnersAmm(project) {
 // claimable LP fees, and the permissionless keeper actions anyone can call.
 function renderSplitHookCard(project) {
   var host = el('div');
-  var hookAddr = getAddress('JBP6FeeLPSplitHook', project.chainId);
-  if (!hookAddr) return host;
-  var uses = (project.reservedSplits || []).some(function (s) { return s.hook && s.hook.toLowerCase() === hookAddr.toLowerCase(); });
-  if (!uses) return host;
+  var hookName = lpSplitHookNameFor(project);
+  if (!hookName) return host;
+  var hookAddr = getAddress(hookName, project.chainId);
 
   var sym = project.tokenSymbol || 'tokens';
   var card = el('div', 'detail-card'); host.appendChild(card);
@@ -23024,7 +23019,6 @@ function renderSplitHookCard(project) {
 
   var chains = (project.chains && project.chains.length) ? project.chains : [{ id: project.chainId, name: chainNameOf(project.chainId) }];
   chains.forEach(function (c) {
-    if (!getAddress('JBP6FeeLPSplitHook', c.id)) return;
     var pid = pidOn(project, c.id);
     var block = el('div', 'splithook-chain');
     var head = el('div', 'splithook-head'); head.appendChild(chainLogo(c.id, null));
@@ -23033,17 +23027,25 @@ function renderSplitHookCard(project) {
     var body = el('div'); body.appendChild(skel('100%', '40px')); block.appendChild(body);
     card.appendChild(block);
 
-    resolveAcctToken(c.id, pid).then(function (acct) {
+    // Each chain's own reserved splits name its LP split hook generation: linked chains can differ from home.
+    lpSplitHookNameOn(project, c.id).then(function (hookName) {
+    var hookAbi = hookName && getABI(hookName, c.id);
+    if (!hookAbi || !getAddress(hookName, c.id)) { body.innerHTML = ''; body.textContent = 'No LP split hook on ' + c.name + '.'; return; }
+    // 1.5.0 seeds with one argument and holds ask/bid positions; older generations take a minimum cash-out return.
+    var askBid = hookAbi.some(function (e) { return e.type === 'function' && e.name === 'askTokenIdOf'; });
+    return resolveAcctToken(c.id, pid).then(function (acct) {
       var tok = acct.address;
-      var rd = function (fn, args) { return read(c.id, 'JBP6FeeLPSplitHook', bannyHookAbi, fn, args).catch(function () { return null; }); };
+      var rd = function (fn, args) { return read(c.id, hookName, hookAbi, fn, args).catch(function () { return null; }); };
       return Promise.all([
         rd('accumulatedProjectTokens', [pid]),
         rd('hasDeployedPool', [pid]),
         rd('claimableFeeTokens', [pid]),
         rd('initialWeightOf', [pid]),
-        rd('tokenIdOf', [pid, tok]),
-        rd('activeTickLowerOf', [pid, tok]),
-        rd('activeTickUpperOf', [pid, tok]),
+        rd(askBid ? 'askTokenIdOf' : 'tokenIdOf', [pid, tok]),
+        askBid ? rd('bidTokenIdOf', [pid, tok]) : rd('activeTickLowerOf', [pid, tok]),
+        askBid ? null : rd('activeTickUpperOf', [pid, tok]),
+        // 1.5.0 also deploys terminal tokens (payouts) left unpooled, with no new project tokens.
+        askBid ? rd('accumulatedTerminalTokens', [pid, tok]) : null,
       ]).then(function (r) {
         body.innerHTML = '';
         var accumulated = r[0] != null ? BigInt(r[0]) : 0n;
@@ -23051,7 +23053,8 @@ function renderSplitHookCard(project) {
         var fees = r[2] != null ? BigInt(r[2]) : 0n;
         var initialWeight = r[3] != null ? BigInt(r[3]) : 0n;
         var tokenId = r[4] != null ? BigInt(r[4]) : 0n;
-        var tickLo = r[5], tickHi = r[6];
+        var bidTokenId = askBid && r[5] != null ? BigInt(r[5]) : 0n;
+        var tickLo = askBid ? null : r[5], tickHi = r[6];
         // deployPool is permissionless only once the ruleset weight decays to <=10% of the accumulation-time
         // weight; until then it needs the owner (SET_BUYBACK_POOL). Mirror the contract's gate in the UI.
         var curWeight = project.ruleset && project.ruleset.weight != null ? BigInt(project.ruleset.weight) : 0n;
@@ -23059,7 +23062,10 @@ function renderSplitHookCard(project) {
         // Read-only position / balance rows.
         body.appendChild(kvRow('Pool', hasPool ? 'Deployed' : 'Not deployed yet'));
         body.appendChild(kvRow('Accumulated ' + sym, formatBalance(accumulated, 18, sym)));
-        if (hasPool && tokenId > 0n) {
+        if (hasPool && askBid) {
+          if (tokenId > 0n) body.appendChild(kvRow('Ask position', '#' + tokenId.toString()));
+          if (bidTokenId > 0n) body.appendChild(kvRow('Bid position', '#' + bidTokenId.toString()));
+        } else if (hasPool && tokenId > 0n) {
           body.appendChild(kvRow('LP position', '#' + tokenId.toString() + (tickLo != null && tickHi != null ? ' (ticks ' + tickLo + ' → ' + tickHi + ')' : '')));
         }
         body.appendChild(kvRow('Claimable LP fees', formatBalance(fees, acct.decimals, acct.symbol)));
@@ -23072,8 +23078,8 @@ function renderSplitHookCard(project) {
           b.addEventListener('click', function () {
             b.disabled = true;
             executeTransaction({
-              chainId: c.id, address: getAddress('JBP6FeeLPSplitHook', c.id), contractName: 'JBP6FeeLPSplitHook',
-              abi: bannyHookAbi, functionName: fn, args: args(), label: label,
+              chainId: c.id, address: getAddress(hookName, c.id), contractName: hookName,
+              abi: hookAbi, functionName: fn, args: args(), label: label,
               confirmSummary: { action: label, rows: [
                 ['Does', title || label],
                 ['Pool', sym + '/' + acct.symbol + ' LP split hook'],
@@ -23088,7 +23094,7 @@ function renderSplitHookCard(project) {
           foot.appendChild(b);
         }
         if (!hasPool) {
-          actBtn('Deploy pool', 'deployPool', function () { return [pid, 0n]; }, 'Seed the Uniswap V4 pool from accumulated tokens (accepts any cash out return)');
+          actBtn('Deploy pool', 'deployPool', function () { return askBid ? [pid] : [pid, 0n]; }, askBid ? 'Seed the Uniswap V4 pool from accumulated tokens' : 'Seed the Uniswap V4 pool from accumulated tokens (accepts any cash out return)');
           if (deployGated) {
             var gateNote = el('div', 'extras-payer-sub');
             gateNote.textContent = 'Deploying the pool currently requires the project ' + (project.isRevnet ? 'operator' : 'owner')
@@ -23096,14 +23102,15 @@ function renderSplitHookCard(project) {
             foot.appendChild(gateNote);
           }
         } else {
-          if (accumulated > 0n) actBtn('Add liquidity', 'addLiquidity', function () { return [pid, tok, 0n]; }, 'Add accumulated ' + sym + ' to the LP position');
+          if (accumulated > 0n || (r[7] != null && BigInt(r[7]) > 0n)) actBtn('Add liquidity', 'addLiquidity', function () { return askBid ? [pid, tok] : [pid, tok, 0n]; }, 'Add accumulated ' + sym + ' to the LP position');
           actBtn('Collect fees', 'collectAndRouteLPFees', function () { return [pid, tok]; }, 'Collect LP trading fees and route them to the project');
         }
         if (fees > 0n) {
-          actBtn('Claim fees', 'claimFeeTokensFor', function () { var acc = getAccount(); return [pid, acc || hookAddr]; }, 'Claim the routed fee tokens to your wallet');
+          actBtn('Claim fees', 'claimFeeTokensFor', function () { var acc = getAccount(); return [pid, acc || getAddress(hookName, c.id)]; }, 'Claim the routed fee tokens to your wallet');
         }
         if (foot.childNodes.length) { block.appendChild(foot); block.appendChild(status); }
       });
+    });
     }).catch(function () { body.innerHTML = ''; body.textContent = 'Could not read the split hook on ' + c.name + '.'; });
   });
   return host;
@@ -30388,7 +30395,7 @@ async function readUserLpPositions(project, chainId, account) {
   if (!account) return [];
   var lc = function (a) { return (a || '').toLowerCase(); };
   var newHook = await projectBuybackHook(project, chainId, { strict: true });
-  var hooks = ['JBBuybackHook', 'JBBuybackHook_deprecated1', 'JBBuybackHook_deprecated'].map(function (name) { return getAddress(name, chainId); }).filter(Boolean);
+  var hooks = generationAddresses('JBBuybackHook', chainId);
   var tasks = [];
   if (newHook) tasks.push(lpScanPoolPositions(project, chainId, newHook, true));
   hooks.filter(function (hook, index) { return lc(hook) !== lc(newHook) && hooks.findIndex(function (other) { return lc(other) === lc(hook); }) === index; })

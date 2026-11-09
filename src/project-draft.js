@@ -1,6 +1,7 @@
 // Rebuild a live project as an editable .jb create draft. Loaded on demand when someone exports a project.
 import { formatEther } from 'viem';
 import { getAddress, formatAmount, ZERO_ADDRESS, NATIVE_TOKEN } from './component-base.js';
+import { generationAddresses } from './abi-registry.js';
 import { isNativeInventory, nativeActionUnavailable } from './nft-inventory.js';
 import { TIER_UNLIMITED_SUPPLY } from './nft721-build.js';
 import { decode721RulesetMetadata } from './nft721-ruleset.js';
@@ -281,8 +282,8 @@ async function applyDraftAccountingAndTerminals(state, project, sources) {
     var usesRouter = !!(router && lower.indexOf(router.toLowerCase()) !== -1);
     if (usesRouter) {
       var target = await read(source.chainId, 'JBRouterTerminalRegistry', terminalOfAbi, 'terminalOf', [source.projectId]);
-      var canonicalTarget = getAddress('JBRouterTerminalGateway', source.chainId) || getAddress('JBRouterTerminal', source.chainId);
-      if (!canonicalTarget || !sameAddr(target, canonicalTarget)) throw new Error('The project uses a custom router-terminal target on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
+      var knownTargets = generationAddresses('JBRouterTerminalGateway', source.chainId).concat(generationAddresses('JBRouterTerminal', source.chainId));
+      if (!knownTargets.some(function (known) { return sameAddr(target, known); })) throw new Error('The project uses a custom router-terminal target on ' + (source.chain.name || chainNameOf(source.chainId)) + '.');
     }
     return usesRouter;
   }));

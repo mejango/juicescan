@@ -1,14 +1,20 @@
 // src/nft-inventory-read.js
-// NFT inventory discovery and native Defifa holdings. Lean mirror of nana-sdk-core 3.4.1 v6/nftInventory.ts,
-// v6/defifaHoldings.ts and the 721 shop read in v6/nft.ts (@ballkidz/defifa 1.0.2 native interface);
-// test/fixtures/sdk-3.4.1/nft-inventory.json pins identical results and identical reads. Every read is fail-closed:
-// an RPC failure throws, an unrecognized hook returns null, and nothing is ever read as zero.
+// NFT inventory discovery and native Defifa holdings for every Defifa 721 generation (@ballkidz/defifa 1.0.2, now
+// retired, and 2.0.0). Started as a lean mirror of nana-sdk-core 3.4.1 v6/nftInventory.ts, v6/defifaHoldings.ts and
+// the 721 shop read in v6/nft.ts; test/fixtures/defifa-games/nft-inventory.json pins results and reads. Every read is
+// fail-closed: an RPC failure throws, an unrecognized hook returns null, and nothing is ever read as zero.
 
 import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, isAddress, zeroAddress } from 'viem';
 import { getABI, getAddress } from './abi-registry.js';
 
-// The one JB721 tiers hook store every Defifa game uses (@ballkidz/defifa 1.0.2, same address on every chain).
-const DEFIFA_STORE = '0x69913acf79dbba170d9efafe605ee62b42164f9c';
+// Each Defifa 721 generation, current first: the registry names of its deployer and hook implementation, and the
+// tiers store its deployer passes every clone (an immutable constructor argument). A game is verified only against
+// the generation whose deployer owns its project. The retired store is pinned: the registry name it was deployed
+// under (JB721TiersHookStore) can move to a newer store, Defifa 1 games never will.
+const DEFIFA_GENERATIONS = [
+  { deployer: 'DefifaDeployer', implementation: 'DefifaHook', store: 'DefifaTiersHookStore', storeAbi: 'DefifaTiersHookStore' },
+  { deployer: 'DefifaDeployer_deprecated', implementation: 'DefifaHook_deprecated', storeAddress: '0x69913acf79dbba170d9efafe605ee62b42164f9c', storeAbi: 'JB721TiersHookStore' },
+];
 const TOKEN_MULTIPLIER = 1000000000n;
 
 const defifaReadAbi = [
@@ -41,11 +47,19 @@ export function v6Address(contract, chainId) {
   return found;
 }
 
-// The native deployer and its hook implementation, from the deployment registry; null off the Defifa chains.
-export function defifaDeployment(chainId) {
-  const deployer = getAddress('DefifaDeployer', chainId);
-  const implementation = getAddress('DefifaHook', chainId);
-  return deployer && implementation ? { deployer, implementation } : null;
+// Every Defifa 721 generation deployed on the chain, current first: { deployer, implementation, store, storeAbi }.
+export function defifaDeployments(chainId) {
+  return DEFIFA_GENERATIONS.map((generation) => ({
+    deployer: getAddress(generation.deployer, chainId),
+    implementation: getAddress(generation.implementation, chainId),
+    store: generation.storeAddress ?? getAddress(generation.store, chainId),
+    storeAbi: generation.storeAbi,
+  })).filter((deployment) => deployment.deployer && deployment.implementation && deployment.store);
+}
+
+// The generation whose implementation a verified game reports; null for any other implementation.
+export function defifaDeploymentOf(chainId, implementation) {
+  return defifaDeployments(chainId).find((deployment) => sameAddress(deployment.implementation, implementation)) ?? null;
 }
 
 // A proven revert or empty return means the contract lacks the function; transport failures prove nothing.
@@ -140,8 +154,9 @@ async function read721Shop(client, { chainId, projectId, isRevnet, ruleset, tier
 
 /**
  * Discover displayable NFT tiers at one block, including Defifa games before entry starts and after payments
- * stop. Unknown hooks return null; RPC failures throw. Defifa recognition requires the pinned deployer, exact
- * clone runtime, project binding, native implementation/store and both game reporters.
+ * stop. Unknown hooks return null; RPC failures throw. Defifa recognition requires a registry deployer of one
+ * generation owning the project, and that generation's exact clone runtime, implementation and store, the project
+ * binding and both game reporters. Defifa 1155 games (positions, not 721 tokens) return null.
  */
 export async function getProjectNftInventory(client, args) {
   const { chainId, projectId, isRevnet = false, tierLimit = 100, startingId = 0n, categories = [], includeResolvedUri = false } = args;
@@ -156,13 +171,17 @@ export async function getProjectNftInventory(client, args) {
   const snapshot = { ...client, readContract: (parameters) => client.readContract({ ...parameters, blockNumber }) };
   const ruleset = isRevnet ? undefined : await readRuleset(snapshot, 'currentRulesetOf', args);
   const hook = ruleset?.metadata.dataHook;
-  const deployment = defifaDeployment(chainId);
+  const deployments = defifaDeployments(chainId);
+  const deployer1155 = getAddress('Defifa1155Deployer', chainId);
   let owner;
-  // Only project ownership by the native deployer admits a Defifa candidate; arbitrary custom hooks are never probed as Defifa.
-  if (!isRevnet && deployment) {
+  // Only project ownership by a native deployer admits a Defifa candidate; arbitrary custom hooks are never probed as Defifa.
+  if (!isRevnet && (deployments.length || deployer1155)) {
     owner = await snapshot.readContract({ address: v6Address('JBProjects', chainId), abi: getABI('JBProjects', chainId), functionName: 'ownerOf', args: [projectId] });
   }
-  if (!deployment || !owner || !sameAddress(owner, deployment.deployer)) {
+  // A Defifa 1155 game's hook holds ERC-1155 positions: no 721 read here describes it.
+  if (owner && deployer1155 && sameAddress(owner, deployer1155)) return null;
+  const deployment = owner ? deployments.find((candidate) => sameAddress(owner, candidate.deployer)) : undefined;
+  if (!deployment) {
     const shop = await read721Shop(snapshot, { chainId, projectId, isRevnet, ruleset, tierLimit: tierLimit + 1, categories, includeResolvedUri, startingId });
     if (!shop) return null;
     return {
@@ -185,7 +204,7 @@ export async function getProjectNftInventory(client, args) {
   const [store, implementation, hookProjectId, phaseReporter, potReporter, currency, contractUri] = await Promise.all([
     read('store'), read('CODE_ORIGIN'), read('projectId'), read('gamePhaseReporter'), read('gamePotReporter'), read('pricingCurrency'), read('contractURI'),
   ]);
-  if (!sameAddress(store, DEFIFA_STORE) || !sameAddress(implementation, deployment.implementation) || hookProjectId !== projectId
+  if (!sameAddress(store, deployment.store) || !sameAddress(implementation, deployment.implementation) || hookProjectId !== projectId
     || !sameAddress(phaseReporter, deployment.deployer) || !sameAddress(potReporter, deployment.deployer)) {
     throw new Error('Defifa hook provenance does not match the project deployment.');
   }
@@ -194,7 +213,7 @@ export async function getProjectNftInventory(client, args) {
     snapshot.readContract({ address: deployment.deployer, abi: defifaReadAbi, functionName: 'currentGamePhaseOf', args: [projectId] }),
     snapshot.readContract({
       address: store,
-      abi: getABI('JB721TiersHookStore', chainId),
+      abi: getABI(deployment.storeAbi, chainId),
       functionName: 'tiersOf',
       args: [defifaHook, categories, includeResolvedUri, startingId, BigInt(tierLimit + 1)],
     }),
@@ -235,6 +254,20 @@ function cursorOffset(cursor) {
   return cursor === undefined ? 0n : BigInt(cursor);
 }
 
+// The candidates `account` owns at the snapshot; a burned token is not owned, any other failure throws.
+async function ownedAt(client, hook, blockNumber, account, candidates) {
+  const checks = await Promise.all(candidates.map(async (token) => {
+    try {
+      const owner = await client.readContract({ address: hook, abi: ownershipAbi, functionName: 'ownerOf', args: [token.tokenId], blockNumber });
+      return owner.toLowerCase() === account.toLowerCase() ? token : null;
+    } catch (error) {
+      if (nonexistentToken(error)) return null;
+      throw error;
+    }
+  }));
+  return checks.filter((token) => token !== null);
+}
+
 /** Cumulative-mint scan of one holdings page; callers authenticate the snapshot first. */
 export async function scanDefifaHoldings(client, context) {
   const { hook, blockNumber, account, owned, tiers, cursor, limit } = context;
@@ -254,23 +287,19 @@ export async function scanDefifaHoldings(client, context) {
     offset += tier.count;
     if (offset >= end) break;
   }
-  const checks = await Promise.all(candidates.map(async (token) => {
-    try {
-      const owner = await client.readContract({ address: hook, abi: ownershipAbi, functionName: 'ownerOf', args: [token.tokenId], blockNumber });
-      return owner.toLowerCase() === account.toLowerCase() ? token : null;
-    } catch (error) {
-      if (nonexistentToken(error)) return null;
-      throw error;
-    }
-  }));
-  const tokens = checks.filter((token) => token !== null);
+  const tokens = await ownedAt(client, hook, blockNumber, account, candidates);
   const complete = end === total || (start === 0n && BigInt(tokens.length) === owned);
   return { tokens, totalOwned: owned, totalCandidates: total, nextCursor: complete ? null : end.toString(), complete };
 }
 
-/** Authenticated, bounded native holdings at one immutable snapshot; no indexer required. */
+/**
+ * Authenticated, bounded native holdings at one immutable snapshot; no indexer required. `indexedTokenIds`
+ * (optional, first page only) are an indexer's token IDs for the account: each is checked with ownerOf at the
+ * snapshot, and when they account for the whole balance they are the answer, without scanning every minted
+ * token. Otherwise the scan runs as if they were never given.
+ */
 export async function getDefifaHoldings(client, args) {
-  const { chainId, projectId, account, expectedHook, cursor, blockNumber, limit = 100 } = args;
+  const { chainId, projectId, account, expectedHook, cursor, blockNumber, limit = 100, indexedTokenIds } = args;
   if (!isAddress(account) || account === zeroAddress) throw new Error('Provide a nonzero holdings account.');
   if (expectedHook !== undefined && (!isAddress(expectedHook) || expectedHook === zeroAddress)) throw new Error('Provide a valid expected Defifa hook.');
   if (projectId <= 0n || projectId >= 1n << 256n) throw new Error('Provide a valid Defifa project ID.');
@@ -293,7 +322,7 @@ export async function getDefifaHoldings(client, args) {
     cursors.add(startingId);
     const raw = await client.readContract({
       address: identity.store,
-      abi: getABI('JB721TiersHookStore', chainId),
+      abi: getABI(defifaDeploymentOf(chainId, identity.implementation).storeAbi, chainId),
       functionName: 'tiersOf',
       args: [identity.hook, [], false, startingId, 129n],
       blockNumber: snapshot,
@@ -311,6 +340,18 @@ export async function getDefifaHoldings(client, args) {
     if (tiers.length > 4096 || (tiers.length === 4096 && visible[128])) throw new Error('Defifa holdings tier pagination exceeded 4096 tiers.');
     if (!visible[128]) break;
     startingId = BigInt(visible[128].id);
+  }
+  if (indexedTokenIds && cursor === undefined && owned > 0n && indexedTokenIds.length <= 200) {
+    // Only IDs this game can have minted: tier * 10^9 + serial, serial within the tier's minted count.
+    const minted = new Map(tiers.map((tier) => [BigInt(tier.id), BigInt(tier.initialSupply) - BigInt(tier.remainingSupply)]));
+    const ids = [...new Set(indexedTokenIds.filter((id) => typeof id === 'bigint').map(String))].map(BigInt);
+    const candidates = ids.filter((id) => { const serial = id % TOKEN_MULTIPLIER; return serial > 0n && serial <= (minted.get(id / TOKEN_MULTIPLIER) ?? 0n); })
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).map((tokenId) => ({ tierId: Number(tokenId / TOKEN_MULTIPLIER), tokenId }));
+    const tokens = await ownedAt(client, identity.hook, snapshot, account, candidates);
+    if (BigInt(tokens.length) === owned) {
+      const total = [...minted.values()].reduce((sum, count) => sum + count, 0n);
+      return { hook: identity.hook, blockNumber: snapshot, tokens, totalOwned: owned, totalCandidates: total, nextCursor: null, complete: true };
+    }
   }
   const result = await scanDefifaHoldings(client, { hook: identity.hook, blockNumber: snapshot, account, owned, tiers, cursor, limit });
   return { hook: identity.hook, blockNumber: snapshot, ...result };

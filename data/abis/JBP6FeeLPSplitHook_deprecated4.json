@@ -1,0 +1,1758 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "directory",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "permissions",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        },
+        {
+          "name": "tokens",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "permit2",
+          "type": "address",
+          "internalType": "contract IAllowanceTransfer"
+        },
+        {
+          "name": "suckerRegistry",
+          "type": "address",
+          "internalType": "contract IJBSuckerRegistry"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "receive",
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "BPS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "DIRECTORY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PERMISSIONS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBPermissions"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PERMIT2",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IAllowanceTransfer"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "POOL_FEE",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint24",
+          "internalType": "uint24"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "PROJECTS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBProjects"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "SUCKER_REGISTRY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBSuckerRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TICK_SPACING",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "int24",
+          "internalType": "int24"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "TOKENS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "accumulatedProjectCredits",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "accumulatedProjectCredits",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "accumulatedProjectTokens",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "accumulatedProjectTokens",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "accumulatedTerminalTokens",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "addLiquidity",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "askTokenIdOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "bidTokenIdOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "burnFeeRemainder",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "buybackHook",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBBuybackHookRegistry"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "claimFeeTokensFor",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "claimableFeeCredits",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "claimableFeeCredits",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "claimableFeeTokenOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "claimToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "claimableFeeTokens",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "claimableFeeTokens",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "collectAndRouteLPFees",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "deployPool",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "deployedTerminalTokenOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "executeAutomationFor",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "feePercent",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "feeProjectId",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "hasDeployedPool",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "hasDeployedPool",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "initialWeightOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "weight",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "initialize",
+      "inputs": [
+        {
+          "name": "initialFeeProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "initialFeePercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "newPoolManager",
+          "type": "address",
+          "internalType": "contract IPoolManager"
+        },
+        {
+          "name": "newPositionManager",
+          "type": "address",
+          "internalType": "contract IPositionManager"
+        },
+        {
+          "name": "newOracleHook",
+          "type": "address",
+          "internalType": "contract IHooks"
+        },
+        {
+          "name": "newBuybackHook",
+          "type": "address",
+          "internalType": "contract IJBBuybackHookRegistry"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "isPoolDeployed",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "deployed",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "oracleHook",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IHooks"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "poolKeyOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "key",
+          "type": "tuple",
+          "internalType": "struct PoolKey",
+          "components": [
+            {
+              "name": "currency0",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "currency1",
+              "type": "address",
+              "internalType": "Currency"
+            },
+            {
+              "name": "fee",
+              "type": "uint24",
+              "internalType": "uint24"
+            },
+            {
+              "name": "tickSpacing",
+              "type": "int24",
+              "internalType": "int24"
+            },
+            {
+              "name": "hooks",
+              "type": "address",
+              "internalType": "contract IHooks"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "poolKeysOf",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "currency0",
+          "type": "address",
+          "internalType": "Currency"
+        },
+        {
+          "name": "currency1",
+          "type": "address",
+          "internalType": "Currency"
+        },
+        {
+          "name": "fee",
+          "type": "uint24",
+          "internalType": "uint24"
+        },
+        {
+          "name": "tickSpacing",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "hooks",
+          "type": "address",
+          "internalType": "contract IHooks"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "poolManager",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IPoolManager"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "positionManager",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IPositionManager"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "processSplitWith",
+      "inputs": [
+        {
+          "name": "context",
+          "type": "tuple",
+          "internalType": "struct JBSplitHookContext",
+          "components": [
+            {
+              "name": "token",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "amount",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "decimals",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "projectId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "groupId",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "split",
+              "type": "tuple",
+              "internalType": "struct JBSplit",
+              "components": [
+                {
+                  "name": "percent",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "projectId",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "beneficiary",
+                  "type": "address",
+                  "internalType": "address payable"
+                },
+                {
+                  "name": "preferAddToBalance",
+                  "type": "bool",
+                  "internalType": "bool"
+                },
+                {
+                  "name": "lockedUntil",
+                  "type": "uint48",
+                  "internalType": "uint48"
+                },
+                {
+                  "name": "hook",
+                  "type": "address",
+                  "internalType": "contract IJBSplitHook"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sendToTerminal",
+      "inputs": [
+        {
+          "name": "terminal",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "shouldPay",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "beneficiaryTokenCount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "supportsInterface",
+      "inputs": [
+        {
+          "name": "interfaceId",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "supported",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "event",
+      "name": "FeeTokensClaimed",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "LPFeesRouted",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "totalAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "feeAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "remainingAmount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "feeTokensMinted",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "LiquidityAdded",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "askTokenId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "bidTokenId",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "LiquidityAutomationFailed",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "reasonSelector",
+          "type": "bytes4",
+          "indexed": false,
+          "internalType": "bytes4"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "PayoutAccepted",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProjectDeployed",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "poolId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "JBPermissioned_Unauthorized",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "sender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "permissionId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_AlreadyInitialized",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_AmountExceedsUint128",
+      "inputs": [
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_EmptyCorridor",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_ExistingPoolPriceOutOfBounds",
+      "inputs": [
+        {
+          "name": "existingPrice",
+          "type": "uint160",
+          "internalType": "uint160"
+        },
+        {
+          "name": "lowerBound",
+          "type": "uint160",
+          "internalType": "uint160"
+        },
+        {
+          "name": "upperBound",
+          "type": "uint160",
+          "internalType": "uint160"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_FeeBurnNotExact",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_FeePercentWithoutFeeProject",
+      "inputs": [
+        {
+          "name": "feePercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "feeProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_InsufficientBalance",
+      "inputs": [
+        {
+          "name": "available",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "required",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_InvalidFeePercent",
+      "inputs": [
+        {
+          "name": "feePercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "maxFeePercent",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_InvalidProjectId",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "projectToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_InvalidSplitGroup",
+      "inputs": [
+        {
+          "name": "groupId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_InvalidStageForAction",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_InvalidTerminalToken",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_NoDeployableLiquidityAtSpot",
+      "inputs": [
+        {
+          "name": "spotTick",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "ceilingTick",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "projectAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_NoTokensAccumulated",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_NotHookSpecifiedInContext",
+      "inputs": [
+        {
+          "name": "expectedHook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "actualHook",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_OnlyOneTerminalTokenSupported",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_Permit2AmountOverflow",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "maxAmount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_PoolAlreadyDeployed",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_PriceDeviationTooHigh",
+      "inputs": [
+        {
+          "name": "spotTick",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "twapTick",
+          "type": "int24",
+          "internalType": "int24"
+        },
+        {
+          "name": "maxDeviationTicks",
+          "type": "int24",
+          "internalType": "int24"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_SplitSenderNotValidControllerOrTerminal",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "sender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_TemporaryAllowanceNotConsumed",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "spender",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "allowance",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_TransferNotExact",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_TwapUnavailable",
+      "inputs": [
+        {
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "terminalToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_Unauthorized",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_UnclaimedFeeTokenChanged",
+      "inputs": [
+        {
+          "name": "previousToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "nextToken",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JBUniswapV4LPSplitHook_UnexpectedMsgValue",
+      "inputs": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "Reentrancy",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SafeERC20FailedOperation",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "addLiquidity(uint256,address)": {
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "burnFeeRemainder(uint256,address,uint256)": {
+      "details": "The hook burns its own tokens (`holder == msg.sender`), so the controller needs no permission grant. Core burns a holder's credits BEFORE its ERC-20, so the hook first claims its own credits of this project into the ERC-20 and adds them to the ask ledger (`_claimHookCreditsFor`, the same step a recycle runs); credits sent to the hook from outside therefore cannot divert the burn. Fee-credit claims the hook owes (only when this project is a fee project with claims from before it tokenized) stay credits, and the burn would consume them first, so the burn is accepted only when exactly `count` ERC-20 left the hook and its credit balance is unchanged; anything else reverts (undoing the claim) and is forgiven by the caller.This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the burn is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "count": "The number of project tokens to burn.",
+        "projectId": "The ID of the project whose tokens to burn.",
+        "projectToken": "The project's ERC-20, whose hook balance must fall by exactly `count`."
+      }
+    },
+    "claimFeeTokensFor(uint256,address)": {
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees(uint256,address)": {
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "constructor": {
+      "details": "Chain-specific Uniswap V4 wiring and the fee config are set per clone through `initialize`.",
+      "params": {
+        "directory": "JBDirectory address.",
+        "permissions": "JBPermissions address.",
+        "permit2": "The Permit2 utility.",
+        "suckerRegistry": "The sucker registry for cross-chain surplus/supply queries.",
+        "tokens": "JBTokens address."
+      }
+    },
+    "deployPool(uint256)": {
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "executeAutomationFor(uint256)": {
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while `processSplitWith` still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the attempt is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "projectId": "The ID of the project to attempt automation for."
+      }
+    },
+    "initialize(uint256,uint256,address,address,address,address)": {
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry to configure for this clone. May be the zero address.",
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "isPoolDeployed(uint256,address)": {
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      },
+      "returns": {
+        "deployed": "True once the project's pool was deployed against this terminal token."
+      }
+    },
+    "poolKeyOf(uint256,address)": {
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      },
+      "returns": {
+        "key": "The stored pool key (zero-valued if no pool has been deployed for the pair)."
+      }
+    },
+    "processSplitWith((address,uint256,uint256,uint256,uint256,(uint32,uint64,address,bool,uint48,address)))": {
+      "details": "Reserved tokens (groupId == 1) come from the project's controller as the project's ERC-20, or as credits while the project has no ERC-20, and feed the ask. A payout (groupId == `uint256(uint160(token))`) comes from a terminal of the project in the deployed pool's terminal token, and feeds the bid. The order matters: validate the caller and context, account the tokens, THEN try to put them to work. Every check that can revert runs before the ledger write; a revert makes Core return the allocation to the project. Once intake has accounted the allocation, nothing in this frame reverts: automation runs behind a gas-bounded self-call whose failure is reported through `LiquidityAutomationFailed` (selector only, revert data is never copied unbounded).",
+      "params": {
+        "context": "The split hook context Core built for the distribution or payout."
+      }
+    },
+    "sendToTerminal(address,uint256,address,uint256,bool)": {
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the terminal call is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "amount": "The amount to send.",
+        "projectId": "The project to pay or add to the balance of.",
+        "shouldPay": "Whether to `pay` (minting project tokens to this hook) rather than `addToBalanceOf`.",
+        "terminal": "The terminal to send to. A terminal with no code reverts the call.",
+        "token": "The token to send (native sentinel or ERC-20)."
+      },
+      "returns": {
+        "beneficiaryTokenCount": "The token/credit count the terminal reports minting to this hook (0 when adding to balance)."
+      }
+    },
+    "supportsInterface(bytes4)": {
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      },
+      "returns": {
+        "supported": "True if `interfaceId` is the hook or split-hook interface."
+      }
+    }
+  },
+  "userdoc": {
+    "BPS()": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "DIRECTORY()": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "PERMISSIONS()": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2()": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE()": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "PROJECTS()": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY()": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "TICK_SPACING()": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "TOKENS()": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "accumulatedProjectCredits(uint256)": {
+      "notice": "The credit balance (project tokens with no ERC-20 deployed yet) currently accounted for each project."
+    },
+    "accumulatedProjectTokens(uint256)": {
+      "notice": "The project-token balance held for each project outside its positions, waiting for the next ask."
+    },
+    "accumulatedTerminalTokens(uint256,address)": {
+      "notice": "The terminal-token balance held for each project outside its positions, waiting for the next bid."
+    },
+    "addLiquidity(uint256,address)": {
+      "notice": "Recycle the project's positions with its post-deployment accumulated reserved tokens: route both positions' fees, burn both, and re-mint the ask and bid single-sided around the live spot — the same executor `deployPool` uses. Callable at any time, with or without new tokens; rejected when the pool's spot has deviated from the oracle TWAP. Permissionless: abuse is bounded by the economic caps (the ask never sells below the cash-out floor, the bid never buys above the issuance ceiling) and the oracle-TWAP deviation guard."
+    },
+    "askTokenIdOf(uint256,address)": {
+      "notice": "The PositionManager token ID of each project's ask position (project tokens, spot to ceiling)."
+    },
+    "bidTokenIdOf(uint256,address)": {
+      "notice": "The PositionManager token ID of each project's bid position (terminal tokens, spot to floor)."
+    },
+    "burnFeeRemainder(uint256,address,uint256)": {
+      "notice": "Burn `count` of this hook's project ERC-20 through the project's controller, lowering the project's supply. Callable only via this contract's own best-effort `_routeCollectedFees` so its revert can be caught and the remainder kept in the ask ledger instead."
+    },
+    "buybackHook()": {
+      "notice": "The buyback-hook registry configured for this clone."
+    },
+    "claimFeeTokensFor(uint256,address)": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`."
+    },
+    "claimableFeeCredits(uint256)": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf(uint256)": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens(uint256)": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "collectAndRouteLPFees(uint256,address)": {
+      "notice": "Collect accrued Uniswap LP trading fees from a project's ask and bid positions and route them to the project. A best-effort fee-project cut is taken on EACH side; the remaining terminal-token portion is added to the project's balance in its primary terminal and the remaining project-token portion is burned, both raising the project's cash-out floor. A side whose add or burn fails is carried into its ledger instead (the bid or the ask), becoming liquidity at the next recycle. The positions themselves are not moved. Callable by anyone."
+    },
+    "constructor": {
+      "notice": "Deploy the implementation that every clone delegates to, wiring the chain-same Juicebox contracts."
+    },
+    "deployPool(uint256)": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position as a single-sided ask of the project's accumulated reserved tokens. Permissionless: anyone may seed the pool. Abuse is bounded by the economic gate (asks only reach up to the issuance ceiling, bids only down to the cash-out floor) and, for an already-initialized pool, the oracle-TWAP deviation guard."
+    },
+    "deployedTerminalTokenOf(uint256)": {
+      "notice": "The terminal token the project's one supported pool was deployed against."
+    },
+    "executeAutomationFor(uint256)": {
+      "notice": "Execute an inline automation attempt for a project: deploy the pool if none exists yet, otherwise add the accumulated inventory to the deployed pool's position. Callable only via this contract's own best-effort `_attemptAutomation` so a revert anywhere in the flow can be caught and forgiven while the parent frame's accepted inventory stays intact."
+    },
+    "feePercent()": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId()": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool(uint256)": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf(uint256)": {
+      "notice": "The first nonzero ruleset weight recorded by a successful deploy or recycle of each project."
+    },
+    "initialize(uint256,uint256,address,address,address,address)": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once."
+    },
+    "isPoolDeployed(uint256,address)": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair."
+    },
+    "oracleHook()": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "poolKeyOf(uint256,address)": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool."
+    },
+    "poolKeysOf(uint256,address)": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager()": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager()": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "processSplitWith((address,uint256,uint256,uint256,uint256,(uint32,uint64,address,bool,uint48,address)))": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split, or by one of the project's terminals when a payout is sent to it. The hook FIRST durably accepts and accounts for the allocation, then best-effort attempts pool deployment or liquidity addition if enough gas remains. A failed attempt cannot touch the accepted inventory: it stays in the ledgers, retryable through the permissionless `deployPool`/`addLiquidity` entry points. The hook never burns what it is sent."
+    },
+    "sendToTerminal(address,uint256,address,uint256,bool)": {
+      "notice": "Send `amount` of `token` to `terminal` for `projectId`: `pay` it (the fee-project cut, minting fee-project tokens to this hook) or `addToBalanceOf` it (an LP-fee remainder returned to the project's own treasury). Callable only via this contract's own best-effort self-calls so its revert (from the terminal or the ERC-20 allowance-consumption check) can be caught and forgiven."
+    },
+    "supportsInterface(bytes4)": {
+      "notice": "Whether this contract implements a given interface (ERC-165)."
+    }
+  },
+  "contractName": "JBUniswapV4LPSplitHook",
+  "sourceName": "node_modules/@bananapus/univ4-lp-split-hook-v6/src/JBUniswapV4LPSplitHook.sol"
+}

@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', viewAs: null, change: null,
-  connect: vi.fn(), allowance: vi.fn(), approvalProof: vi.fn(), safe: false, resolveSafe: vi.fn(), receipt: vi.fn(), restore: vi.fn(), client: {}, execute: vi.fn(), preparePay: vi.fn(), prepareCashOut: vi.fn(), prepareTransfer: vi.fn(), holdings: vi.fn(), verify: vi.fn(), inventory: vi.fn() }));
+  connect: vi.fn(), allowance: vi.fn(), approvalProof: vi.fn(), safe: false, resolveSafe: vi.fn(), receipt: vi.fn(), restore: vi.fn(), client: {}, execute: vi.fn(), preparePay: vi.fn(), prepareCashOut: vi.fn(), prepareTransfer: vi.fn(), holdings: vi.fn(), verify: vi.fn(), inventory: vi.fn(), indexed: vi.fn() }));
 vi.mock('../src/nft-inventory-read.js', async importOriginal => ({ ...await importOriginal(), getDefifaHoldings: h.holdings }));
-vi.mock('../src/defifa.js', async importOriginal => ({ ...await importOriginal(), prepareDefifaPay: h.preparePay, prepareDefifaCashOut: h.prepareCashOut, prepareDefifaTransfer: h.prepareTransfer, verifyDefifaNftTransaction: h.verify, restoreDefifaNftReceiptContext: h.restore }));
+vi.mock('../src/defifa.js', async importOriginal => ({ ...await importOriginal(), prepareDefifaPay: h.preparePay, prepareDefifaCashOut: h.prepareCashOut, prepareDefifaTransfer: h.prepareTransfer, verifyDefifaNftTransaction: h.verify, restoreDefifaNftReceiptContext: h.restore, proveSavedCall: h.approvalProof }));
 vi.mock('../src/component-base.js', () => ({ getAccount: () => h.account, getViewAs: () => h.viewAs, connect: h.connect, createPublicClientForChain: () => h.client, executeTransaction: h.execute, waitForTrackedTransactionReceipt: h.receipt, isSafeConnected: () => h.safe, readErc20Allowance: h.allowance, NATIVE_TOKEN: '0x000000000000000000000000000000000000EEEe', erc20ApproveAbi: [{ type: 'function', name: 'approve', inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }], outputs: [{ type: 'bool' }], stateMutability: 'nonpayable' }], formatAmount: (amount, decimals) => Number(amount) / 10 ** decimals,
   onEffectiveAccountChange: cb => { h.change = cb; return vi.fn(); }, ZERO_ADDRESS: '0x' + '0'.repeat(40), isAddr: value => /^0x[0-9a-fA-F]{40}$/.test(value) }));
-vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({ ...await importOriginal(), verifyReviewedWriteReceipt: h.approvalProof }));
-vi.mock('../src/nft-inventory.js', () => ({ readProjectNftInventory: h.inventory }));
+vi.mock('../src/nft-inventory.js', () => ({ readProjectNftInventory: h.inventory, indexedDefifaTokenIds: h.indexed }));
 
 vi.mock('../src/safe-app.js', () => ({ txHashForSafeTx: h.resolveSafe }));
 import { renderDefifaNftActions } from '../src/defifa-nft-actions.js';
@@ -19,8 +18,7 @@ const owned = { hook, blockNumber: 50n, tokens: [{ tokenId: 901n, tierId: 7 }], 
 const transaction = { chainId: 8453, address: hook, abi: ['pay', 'transferFrom', 'cashOutTokensOf'].map(name => ({ type: 'function', name, inputs: [{ name: 'id', type: 'uint256' }], outputs: [], stateMutability: 'payable' })), functionName: 'pay', args: [1n], value: 3n };
 const pay = { inventory: native, transaction, amount: 3n, effectiveAttestationDelegate: hook, selectedTiers: [{ tierId: 1n, count: 1n, unitPrice: 3n }] };
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
-// The SDK keeps a call's `:latest` and `:rejected` markers after the write ends; only held records count.
-const heldWrites = () => Object.keys(localStorage).filter(key => !/:(latest|rejected)$/.test(key)).length;
+const heldWrites = () => Object.keys(localStorage).length;
 function click(root, label) { const button = [...root.querySelectorAll('button')].find(node => node.textContent === label); expect(button).toBeTruthy(); button.click(); }
 async function render(options) { const root = renderDefifaNftActions(native, 8453, 27n, value => value + ' ETH', options); document.body.appendChild(root); await flush(); return root; }
 beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (key, options, callback) => callback({ name: key }) } }); h.safe = false; h.connect.mockImplementation(async () => { h.account = '0x1111111111111111111111111111111111111111'; }); h.allowance.mockResolvedValue(0n); h.approvalProof.mockResolvedValue('success'); h.client.getTransactionReceipt = vi.fn().mockRejectedValue(new TransactionReceiptNotFoundError({ hash: TX })); h.execute.mockImplementation(call => call.onSending()); h.verify.mockResolvedValue(undefined); h.receipt.mockResolvedValue({ transactionHash: TX, status: 'success', blockNumber: 70n }); h.restore.mockResolvedValue({ hook, implementation: hook, account: '0x1111111111111111111111111111111111111111', transaction }); h.resolveSafe.mockResolvedValue(null); document.body.replaceChildren(); h.account = '0x1111111111111111111111111111111111111111'; h.viewAs = null; h.inventory.mockResolvedValue(native); h.holdings.mockResolvedValue(owned); h.preparePay.mockResolvedValue(pay); h.prepareTransfer.mockResolvedValue({ inventory: native, transaction: { ...transaction, functionName: 'transferFrom' } }); h.prepareCashOut.mockResolvedValue({ inventory: native, transaction: { ...transaction, functionName: 'cashOutTokensOf', value: 0n }, reclaimAmount: 0n, protocolRewards: { defifaToken: hook, defifaAmount: 2n, baseProtocolToken: hook, baseProtocolAmount: 0n, defifaDecimals: 0, baseProtocolDecimals: 18 } }); });
@@ -175,6 +173,48 @@ describe('native Defifa NFT action boundary', () => {
     const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => { throw new Error('Storage temporarily unavailable'); });
     h.execute.mock.lastCall[0].onError('Receipt unavailable', { submittedHash: TX }); await flush(); write.mockRestore(); expect(root.textContent).toContain('Check original transaction'); click(root, 'Check original transaction'); await flush(); expect(root.textContent).toContain('verified onchain'); expect(root.textContent).toContain('Review NFT mint'); expect(heldWrites()).toBe(0); expect(h.execute).toHaveBeenCalledTimes(1);
   });
+  it('keeps holding an action an earlier SDK-backed build saved, and settles it from its receipt', async () => {
+    const legacy = 'nana-sdk:reviewed-write:v1:namespace:8453:' + h.account.toLowerCase() + ':defifa:pay:27';
+    const sdkRecord = JSON.stringify({ version: 1, id: 'old', chainId: 8453, account: h.account.toLowerCase(), safe: false, namespace: 'defifa:pay:27', hash: TX, call: { to: hook, data: '0x1234', value: '3' } });
+    localStorage.setItem(legacy, sdkRecord);
+    const root = await render(); expect(root.textContent).toContain('Check original transaction'); expect(root.textContent).not.toContain('Review NFT mint');
+    // A tab still on the SDK build keeps reading its record, so it cannot send the same mint again.
+    expect(localStorage.getItem(legacy)).toBe(sdkRecord);
+    const moved = Object.keys(localStorage).find((key) => key !== legacy);
+    expect(JSON.parse(localStorage.getItem(moved))).toMatchObject({ chainId: 8453, safe: false, hash: TX, legacyId: 'old', call: { to: hook, data: '0x1234', value: '3' } });
+    // Another render while it is held reads the moved hold and copies nothing again.
+    await render(); expect(heldWrites()).toBe(2);
+    click(root, 'Check original transaction'); await flush(); expect(h.restore.mock.lastCall[1].record).toMatchObject({ hash: TX, call: { data: '0x1234' } });
+    expect(heldWrites()).toBe(0); expect(root.textContent).toContain('Review NFT mint'); expect(h.execute).not.toHaveBeenCalled();
+    await render(); expect(heldWrites()).toBe(0);
+  });
+  it('takes the hash the SDK build saved after its unanswered wallet request was moved', async () => {
+    const legacy = 'nana-sdk:reviewed-write:v1:namespace:8453:' + h.account.toLowerCase() + ':defifa:pay:27';
+    const pending = { version: 1, id: 'old', chainId: 8453, account: h.account.toLowerCase(), safe: false, hash: null, call: { to: hook, data: '0x1234', value: '3' } };
+    localStorage.setItem(legacy, JSON.stringify(pending));
+    const first = await render(); expect(first.textContent).not.toContain('Check original transaction'); expect(first.textContent).not.toContain('Review NFT mint');
+    localStorage.setItem(legacy, JSON.stringify({ ...pending, hash: TX }));
+    const root = await render(); expect(root.textContent).toContain('Check original transaction');
+    click(root, 'Check original transaction'); await flush(); expect(h.restore.mock.lastCall[1].record).toMatchObject({ hash: TX });
+    expect(heldWrites()).toBe(0); expect(localStorage.getItem(legacy)).toBeNull(); expect(h.execute).not.toHaveBeenCalled();
+  });
+  it('releases a moved hold when the SDK build later records its wallet rejection', async () => {
+    const legacy = 'nana-sdk:reviewed-write:v1:namespace:8453:' + h.account.toLowerCase() + ':defifa:pay:27';
+    localStorage.setItem(legacy, JSON.stringify({ version: 1, id: 'old', chainId: 8453, account: h.account.toLowerCase(), safe: false, hash: null, call: { to: hook, data: '0x1234', value: '3' } }));
+    const first = await render(); expect(first.textContent).not.toContain('Review NFT mint');
+    localStorage.setItem(legacy + ':released:old', '1');
+    await render(); await flush();
+    const root = await render(); expect(Object.keys(localStorage).sort()).toEqual([legacy, legacy + ':released:old']); expect(root.textContent).toContain('Review NFT mint'); expect(h.execute).not.toHaveBeenCalled();
+  });
+  it('leaves a newer attempt the SDK build saved after the moved one in place when the moved hold settles', async () => {
+    const legacy = 'nana-sdk:reviewed-write:v1:namespace:8453:' + h.account.toLowerCase() + ':defifa:pay:27';
+    localStorage.setItem(legacy, JSON.stringify({ version: 1, id: 'old', chainId: 8453, account: h.account.toLowerCase(), safe: false, hash: TX, call: { to: hook, data: '0x1234', value: '3' } }));
+    const root = await render();
+    const newer = JSON.stringify({ version: 1, id: 'newer', chainId: 8453, account: h.account.toLowerCase(), safe: false, hash: SAFE_TX, call: { to: hook, data: '0x5678', value: '3' } });
+    localStorage.setItem(legacy, newer);
+    click(root, 'Check original transaction'); await flush();
+    expect(localStorage.getItem(legacy)).toBe(newer); expect(root.textContent).toContain('Check original transaction'); expect(root.textContent).not.toContain('Review NFT mint');
+  });
   it('keeps hashless unknown submission blocked after remount without accepting candidate hashes', async () => {
     const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onError('Wallet disconnected'); root.dispose(); root.remove(); const remount = await render(); expect(remount.textContent).toContain('submission outcome unknown'); expect(remount.textContent).not.toContain('Review NFT mint'); expect(remount.textContent).not.toContain('Check original transaction'); expect(remount.querySelector('input[aria-label*=hash]')).toBeNull();
   });
@@ -192,6 +232,10 @@ describe('native Defifa NFT action boundary', () => {
   it('shows exact mixed tier names/prices and actual NFT IDs, using bounded snapshot holdings', async () => {
     const root = await render(); expect(root.textContent).toContain('Blue Team, 3 ETH per NFT'); expect(root.textContent).toContain('Orange Team, 5 ETH per NFT'); expect(root.textContent).toContain('NFT 901, tier 7: Orange Team');
     expect(h.holdings).toHaveBeenCalledWith(h.client, { chainId: 8453, projectId: 27n, account: h.account, expectedHook: hook, blockNumber: 50n });
+  });
+  it('hands indexed token IDs to the onchain holdings proof as hints, and reads holdings without them when the indexer fails', async () => {
+    h.indexed.mockResolvedValueOnce([901n]); await render(); expect(h.indexed).toHaveBeenCalledWith(8453, hook, h.account); expect(h.holdings.mock.lastCall[1]).toMatchObject({ indexedTokenIds: [901n], blockNumber: 50n });
+    h.indexed.mockResolvedValueOnce(undefined); await render(); expect(h.holdings.mock.lastCall[1]).not.toHaveProperty('indexedTokenIds');
   });
   it('captures mint account/tier inputs, defaults delegate to zero and reviews existing-NFT effects', async () => {
     const root = await render(); root.querySelector('input[type=number]').value = '2'; click(root, 'Review NFT mint'); await flush();

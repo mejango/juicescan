@@ -134,11 +134,8 @@ function deploymentJsonFiles(chainDir) {
     .readdirSync(chainDir)
     .filter((file) => file.endsWith(".json"))
     .filter((file) => {
-      const deploymentName = file.replace(/\.json$/, "");
-      // Retired buyback/router generations remain available for historical decoding and cohort reads.
-      const retired = /_deprecated\d*$/.test(deploymentName);
-      return (!retired || /^(JBBuybackHook|JBRouterTerminal)_deprecated\d*$/.test(deploymentName))
-        && !deploymentName.endsWith("__TwapOracleUpgrade");
+      // Every retired generation stays: projects and games still use them, and their queued calls decode with their own ABI.
+      return !file.endsWith("__TwapOracleUpgrade.json");
     })
     .sort();
 }
@@ -258,9 +255,8 @@ function main() {
         addresses: {},
       };
       contracts[deploymentName].addresses[chainId] = artifact.address;
-      contracts[deploymentName].generation = /_deprecated1$/.test(deploymentName) ? "previous"
-        : /_deprecated$/.test(deploymentName) ? "v1"
-        : /_deprecated\d+$/.test(deploymentName) ? "retired-" + deploymentName.match(/_deprecated(\d+)$/)[1] : "current";
+      contracts[deploymentName].generation = /_deprecated$/.test(deploymentName) ? "v1"
+        : /_deprecated\d+$/.test(deploymentName) ? "v" + (Number(deploymentName.match(/_deprecated(\d+)$/)[1]) + 1) : "current";
 
       deployments.deployments[deploymentName] =
         deployments.deployments[deploymentName] || {

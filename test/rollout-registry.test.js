@@ -9,7 +9,7 @@ import { encodeFunctionData } from 'viem';
 import { mirrorBatch, buildStep, NATIVE_TOKEN } from '../src/safe-batch.js';
 import { projectRouterPath } from '../src/discover.js';
 import { mirrorResolver } from '../src/safe-batch-ui.js';
-import { getABI, getAddress, meta as contractMeta, registry } from '../src/abi-registry.js';
+import { generationNames, getABI, getAddress, meta as contractMeta, registry } from '../src/abi-registry.js';
 import { contractNameByAddress } from '../src/chain.js';
 import { decodeCallForDisplay } from '../src/component-base.js';
 
@@ -74,13 +74,18 @@ describe('buyback and gateway deployment rollout', () => {
     }
   });
 
-  it('preserves previous and v1 identities and decodes their queued transactions with their own ABI', () => {
-    for (const name of ['JBBuybackHook_deprecated', 'JBBuybackHook_deprecated1', 'JBRouterTerminal_deprecated', 'JBRouterTerminal_deprecated1']) {
+  it('preserves every retired identity and decodes their queued transactions with their own ABI', () => {
+    for (const [name, generation] of [
+      ['JBBuybackHook_deprecated', 'v1'], ['JBBuybackHook_deprecated1', 'v2'], ['JBBuybackHook_deprecated2', 'v3'],
+      ['JBRouterTerminal_deprecated', 'v1'], ['JBRouterTerminal_deprecated1', 'v2'], ['JBRouterTerminal_deprecated2', 'v3'],
+      ['JBRouterTerminalGateway_deprecated', 'v1'],
+    ]) {
       const address = getAddress(name, 11155111);
       expect(address).toMatch(/^0x/);
       expect(contractNameByAddress(address)).toBe(name);
-      expect(contractMeta[name].generation).toBe(name.endsWith('1') ? 'previous' : 'v1');
+      expect(contractMeta[name].generation).toBe(generation);
     }
+    expect(generationNames('JBBuybackHook')).toEqual(['JBBuybackHook', 'JBBuybackHook_deprecated2', 'JBBuybackHook_deprecated1', 'JBBuybackHook_deprecated']);
     const name = 'JBBuybackHook_deprecated1';
     const data = encodeFunctionData({ abi: getABI(name), functionName: 'setTwapWindowOf', args: [2n, '0x' + '00'.repeat(20), 1800n] });
     expect(decodeCallForDisplay({ address: getAddress(name, 11155111), chainId: 11155111, calldata: data }).fn).toBe('setTwapWindowOf');

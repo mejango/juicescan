@@ -68,20 +68,20 @@ describe('deployment source digest', () => {
     for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
   });
 
-  it('is deterministic and includes retired router/hook artifacts while ignoring unrelated snapshots', () => {
+  it('is deterministic and includes every retired generation while ignoring TWAP oracle upgrade snapshots', () => {
     const root = mkdtempSync(join(tmpdir(), 'jb-deployments-'));
     directories.push(root);
     const chain = join(root, 'ethereum');
     mkdirSync(chain);
     writeFileSync(join(chain, 'JBController.json'), '{"address":"0x1"}\n');
-    writeFileSync(join(chain, 'Old_deprecated2.json'), '{"address":"0xold"}\n');
-
-    writeFileSync(join(chain, 'JBRouterTerminal_deprecated1.json'), '{"address":"0xoldRouter"}\n');
+    writeFileSync(join(chain, 'JBBuybackHook__TwapOracleUpgrade.json'), '{"address":"0xupgrade"}\n');
+    writeFileSync(join(chain, 'DefifaHook_deprecated.json'), '{"address":"0xold"}\n');
     const initial = deploymentSourceDigest(root);
-    writeFileSync(join(chain, 'Old_deprecated2.json'), '{"address":"0xchanged"}\n');
+    expect(deploymentSourceDigest(root)).toBe(initial);
+    writeFileSync(join(chain, 'JBBuybackHook__TwapOracleUpgrade.json'), '{"address":"0xchanged"}\n');
     expect(deploymentSourceDigest(root)).toBe(initial);
 
-    writeFileSync(join(chain, 'JBRouterTerminal_deprecated1.json'), '{"address":"0xchangedRouter"}\n');
+    writeFileSync(join(chain, 'DefifaHook_deprecated.json'), '{"address":"0xchangedOld"}\n');
     expect(deploymentSourceDigest(root)).not.toBe(initial);
     writeFileSync(join(chain, 'JBController.json'), '{"address":"0x2"}\n');
     expect(deploymentSourceDigest(root)).not.toBe(initial);

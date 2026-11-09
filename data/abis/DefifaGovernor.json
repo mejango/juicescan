@@ -31,229 +31,6 @@
     },
     {
       "type": "function",
-      "name": "MAX_ATTESTATION_POWER_TIER",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "MIN_ATTESTATION_GRACE_PERIOD",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "attestToScorecardFrom",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "weight",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "attestationCountOf",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "attestationGracePeriodOf",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "attestationStartTimeOf",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "defaultAttestationDelegateProposalOf",
-      "inputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getAttestationWeight",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "timestamp",
-          "type": "uint48",
-          "internalType": "uint48"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "attestationPower",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getBWAAttestationWeight",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "timestamp",
-          "type": "uint48",
-          "internalType": "uint48"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "bwaAttestationPower",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "hasAttestedTo",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "initializeGame",
       "inputs": [
         {
@@ -262,14 +39,9 @@
           "internalType": "uint256"
         },
         {
-          "name": "attestationStartTime",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "attestationGracePeriod",
-          "type": "uint256",
-          "internalType": "uint256"
+          "name": "referee",
+          "type": "address",
+          "internalType": "address"
         },
         {
           "name": "timelockDuration",
@@ -295,10 +67,10 @@
     },
     {
       "type": "function",
-      "name": "quorum",
+      "name": "pendingScorecardIdOf",
       "inputs": [
         {
-          "name": "gameId",
+          "name": "",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -369,26 +141,27 @@
     },
     {
       "type": "function",
-      "name": "renounceOwnership",
-      "inputs": [],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "revokeAttestationFrom",
+      "name": "refereeOf",
       "inputs": [
         {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
+          "name": "",
           "type": "uint256",
           "internalType": "uint256"
         }
       ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
       "outputs": [],
       "stateMutability": "nonpayable"
     },
@@ -421,12 +194,36 @@
       ],
       "outputs": [
         {
-          "name": "",
+          "name": "scorecardId",
           "type": "uint256",
           "internalType": "uint256"
         }
       ],
       "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "scorecardSubmittedAtOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -445,7 +242,7 @@
       ],
       "outputs": [
         {
-          "name": "",
+          "name": "state",
           "type": "uint8",
           "internalType": "enum DefifaScorecardState"
         }
@@ -493,7 +290,7 @@
       "name": "timelockDurationOf",
       "inputs": [
         {
-          "name": "gameId",
+          "name": "",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -522,43 +319,6 @@
     },
     {
       "type": "event",
-      "name": "AttestationRevoked",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "weight",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        },
-        {
-          "name": "caller",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "GameInitialized",
       "inputs": [
         {
@@ -568,16 +328,10 @@
           "internalType": "uint256"
         },
         {
-          "name": "attestationStartTime",
-          "type": "uint256",
+          "name": "referee",
+          "type": "address",
           "indexed": false,
-          "internalType": "uint256"
-        },
-        {
-          "name": "attestationGracePeriod",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
+          "internalType": "address"
         },
         {
           "name": "timelockDuration",
@@ -608,37 +362,6 @@
           "name": "newOwner",
           "type": "address",
           "indexed": true,
-          "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ScorecardAttested",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "weight",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        },
-        {
-          "name": "caller",
-          "type": "address",
-          "indexed": false,
           "internalType": "address"
         }
       ],
@@ -704,12 +427,6 @@
           ]
         },
         {
-          "name": "isDefaultAttestationDelegate",
-          "type": "bool",
-          "indexed": false,
-          "internalType": "bool"
-        },
-        {
           "name": "caller",
           "type": "address",
           "indexed": false,
@@ -717,27 +434,6 @@
         }
       ],
       "anonymous": false
-    },
-    {
-      "type": "error",
-      "name": "DefifaGovernor_AlreadyAttested",
-      "inputs": [
-        {
-          "name": "gameId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "scorecardId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
-          "type": "address",
-          "internalType": "address"
-        }
-      ]
     },
     {
       "type": "error",
@@ -795,22 +491,6 @@
     },
     {
       "type": "error",
-      "name": "DefifaGovernor_GracePeriodTooShort",
-      "inputs": [
-        {
-          "name": "gracePeriod",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "minGracePeriod",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "DefifaGovernor_NotAllowed",
       "inputs": [
         {
@@ -832,7 +512,7 @@
     },
     {
       "type": "error",
-      "name": "DefifaGovernor_NotAttested",
+      "name": "DefifaGovernor_NotReferee",
       "inputs": [
         {
           "name": "gameId",
@@ -840,12 +520,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "scorecardId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
+          "name": "caller",
           "type": "address",
           "internalType": "address"
         }
@@ -906,6 +581,17 @@
     },
     {
       "type": "error",
+      "name": "DefifaGovernor_ZeroReferee",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "FailedCall",
       "inputs": []
     },
@@ -930,119 +616,30 @@
           "internalType": "address"
         }
       ]
-    },
-    {
-      "type": "error",
-      "name": "PRBMath_MulDiv_Overflow",
-      "inputs": [
-        {
-          "name": "x",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "y",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "denominator",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
     }
   ],
   "devdoc": {
-    "attestToScorecardFrom(uint256,uint256)": {
+    "constructor": {
       "params": {
-        "gameId": "The ID of the game to which the scorecard belongs.",
-        "scorecardId": "The scorecard ID."
-      },
-      "returns": {
-        "weight": "The attestation weight that was applied."
+        "controller": "The controller used to find each game's hook, rulesets and project owner.",
+        "owner": "The address that can initialize games: the deployer."
       }
     },
-    "attestationCountOf(uint256,uint256)": {
+    "initializeGame(uint256,address,uint256)": {
       "params": {
-        "gameId": "The ID of the game to which the scorecard belongs.",
-        "scorecardId": "The ID of the scorecard to get attestations of."
-      },
-      "returns": {
-        "_0": "The number of attestations the given scorecard has."
-      }
-    },
-    "attestationGracePeriodOf(uint256)": {
-      "params": {
-        "gameId": "The ID of the game to get the attestation period of."
-      },
-      "returns": {
-        "_0": "The attestation grace period, in seconds."
-      }
-    },
-    "attestationStartTimeOf(uint256)": {
-      "details": "This can be increased to leave time for users to acquire attestation power, or delegate it, before a scorecard becomes live.",
-      "params": {
-        "gameId": "The ID of the game to get the attestation delay of."
-      },
-      "returns": {
-        "_0": "The delay, in seconds."
-      }
-    },
-    "getAttestationWeight(uint256,address,uint48)": {
-      "details": "An account's power per tier = MAX_ATTESTATION_POWER_TIER * (account's units / tier's total units). This means within a tier, power is proportional to token holdings, but across tiers, each tier's total power is capped at MAX_ATTESTATION_POWER_TIER. A holder of 1-of-1 in a tier gets MAX_ATTESTATION_POWER_TIER; a holder of 1-of-100 gets MAX_ATTESTATION_POWER_TIER / 100. This ensures each game outcome (tier) has equal governance weight — the scorecard reflects consensus across outcomes, not dominance by whichever outcome sold the most tokens.",
-      "params": {
-        "account": "The account to get attestations for.",
-        "gameId": "The ID of the game to count attestations for.",
-        "timestamp": "The timestamp to measure attestations from."
-      },
-      "returns": {
-        "attestationPower": "The amount of attestation power of an account."
-      }
-    },
-    "getBWAAttestationWeight(uint256,uint256,address,uint48)": {
-      "details": "BWA (Benefit-Weighted Attestation) reduces a tier's attestation power by how much that tier benefits from the scorecard. Power is reduced by `(tierWeight / totalCashOutWeight)`. This means a tier with 100% of the scorecard weight gets 0 attestation power for that scorecard, while a tier with 0% weight retains full power. This prevents beneficiaries from self-attesting.",
-      "params": {
-        "account": "The account to compute BWA power for.",
         "gameId": "The ID of the game.",
-        "scorecardId": "The ID of the scorecard (determines tier weight lookup).",
-        "timestamp": "The snapshot timestamp."
-      },
-      "returns": {
-        "bwaAttestationPower": "The BWA-adjusted attestation power."
-      }
-    },
-    "hasAttestedTo(uint256,uint256,address)": {
-      "params": {
-        "account": "The address to check the attestation status of.",
-        "gameId": "The ID of the game to which the scorecard belongs.",
-        "scorecardId": "The ID of the scorecard to query attestations from."
-      },
-      "returns": {
-        "_0": "A flag indicating if the given account has already attested to the scorecard."
-      }
-    },
-    "initializeGame(uint256,uint256,uint256,uint256)": {
-      "params": {
-        "attestationGracePeriod": "The amount of time that must go by before a scorecard can be ratified.",
-        "attestationStartTime": "The amount of time between a scorecard submission and attestations becoming enabled, measured in seconds.",
-        "gameId": "The ID of the game.",
-        "timelockDuration": "The cooling period after quorum is met before a scorecard can be ratified."
+        "referee": "The address that judges the game.",
+        "timelockDuration": "The time a submitted scorecard waits before anyone can ratify it, in seconds."
       }
     },
     "owner()": {
       "details": "Returns the address of the current owner."
     },
-    "quorum(uint256)": {
-      "details": "Each tier with participation contributes MAX_ATTESTATION_POWER_TIER to the total eligible weight. A tier counts as \"participated\" if it has circulating tokens OR unminted pending reserves — the latter means mints occurred (triggering reserve accrual) even if all paid tokens were later burned during REFUND. Quorum is 50% of this total. Because every tier has equal max attestation power regardless of supply, each tier's community has equal influence. This prevents high-supply tiers from dominating governance.No snapshot needed: during SCORING, supply is frozen (no new paid mints, no burns). Reserve minting doesn't change which tiers are counted because tiers with pending reserves are already included.",
-      "returns": {
-        "_0": "The quorum number of attestations."
-      }
-    },
     "ratifyScorecardFrom(uint256,(uint256,uint256)[])": {
+      "details": "Records the result before calling the hook and the deployer, so a re-entrant call can't ratify twice. A failed payout doesn't block ratification: `fulfillCommitmentsOf` catches it and still queues the final ruleset.",
       "params": {
         "gameId": "The ID of the game.",
-        "tierWeights": "The weights of each tier in the approved scorecard."
+        "tierWeights": "The weights of each tier in the pending scorecard."
       },
       "returns": {
         "scorecardId": "The scorecard ID that was ratified."
@@ -1051,30 +648,26 @@
     "renounceOwnership()": {
       "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
     },
-    "revokeAttestationFrom(uint256,uint256)": {
-      "details": "Once a scorecard enters QUEUED (grace period ended + quorum met), revocations are disabled. This prevents the griefing loop (attest/revoke cycling) while allowing corrective action during debate.",
-      "params": {
-        "gameId": "The ID of the game.",
-        "scorecardId": "The ID of the scorecard to revoke attestation from."
-      }
-    },
     "scorecardIdOf(address,(uint256,uint256)[])": {
       "params": {
         "gameHook": "The address where the game is played.",
         "tierWeights": "The weights of each tier in the scorecard."
+      },
+      "returns": {
+        "scorecardId": "The scorecard's ID."
       }
     },
     "stateOf(uint256,uint256)": {
-      "details": "Boundary semantics (inclusive):   - At exactly `attestationsBegin`, the state transitions from PENDING to ACTIVE (attestations are open).   - At exactly `gracePeriodEnds`, the grace period has elapsed and the state transitions from ACTIVE to     QUEUED (if quorum met + timelock > 0) or SUCCEEDED (if quorum met + no timelock).",
       "params": {
-        "gameId": "The ID of the game to get a proposal state of.",
-        "scorecardId": "The ID of the proposal to get the state of."
+        "gameId": "The ID of the game.",
+        "scorecardId": "The ID of the scorecard."
       },
       "returns": {
-        "_0": "The state."
+        "state": "QUEUED while its timelock runs, SUCCEEDED once ratifiable, RATIFIED, or DEFEATED if the referee replaced it or another scorecard was ratified."
       }
     },
     "submitScorecardFor(uint256,(uint256,uint256)[])": {
+      "details": "Runs the hook's structural validation now, so a malformed scorecard fails here instead of after the timelock. Resubmitting the pending scorecard reverts, since it would only restart its timelock.",
       "params": {
         "gameId": "The ID of the game.",
         "tierWeights": "The weights of each tier in the scorecard."
@@ -1083,78 +676,46 @@
         "scorecardId": "The scorecard's ID."
       }
     },
-    "timelockDurationOf(uint256)": {
-      "params": {
-        "gameId": "The ID of the game."
-      },
-      "returns": {
-        "_0": "The timelock duration in seconds."
-      }
-    },
     "transferOwnership(address)": {
       "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
     }
   },
   "userdoc": {
     "CONTROLLER()": {
-      "notice": "The controller with which new projects should be deployed."
+      "notice": "The controller used to find each game's hook, rulesets and project owner."
     },
-    "MAX_ATTESTATION_POWER_TIER()": {
-      "notice": "The max attestation power each tier has if every token within the tier attests."
+    "constructor": {
+      "notice": "Creates the governor for the given controller, owned by the deployer that initializes its games."
     },
-    "MIN_ATTESTATION_GRACE_PERIOD()": {
-      "notice": "The minimum attestation grace period enforced during game initialization."
+    "initializeGame(uint256,address,uint256)": {
+      "notice": "Set a game's referee and timelock. Called by the deployer at launch."
     },
-    "attestToScorecardFrom(uint256,uint256)": {
-      "notice": "Cast an attestation supporting a proposed scorecard, weighted by the caller's tier voting power."
-    },
-    "attestationCountOf(uint256,uint256)": {
-      "notice": "The number of attestations the given scorecard has."
-    },
-    "attestationGracePeriodOf(uint256)": {
-      "notice": "The amount of time that must go by before a scorecard can be ratified."
-    },
-    "attestationStartTimeOf(uint256)": {
-      "notice": "The delay, in seconds, between scorecard submission and enabled attestations."
-    },
-    "defaultAttestationDelegateProposalOf(uint256)": {
-      "notice": "The latest proposal submitted by the default attestation delegate."
-    },
-    "getAttestationWeight(uint256,address,uint48)": {
-      "notice": "Gets an account's attestation power given a number of tiers to look through."
-    },
-    "getBWAAttestationWeight(uint256,uint256,address,uint48)": {
-      "notice": "Gets an account's BWA-adjusted attestation power relative to a specific scorecard."
-    },
-    "hasAttestedTo(uint256,uint256,address)": {
-      "notice": "A flag indicating if the given account has already attested to the scorecard."
-    },
-    "initializeGame(uint256,uint256,uint256,uint256)": {
-      "notice": "Initialize governance for a newly deployed game, setting the initial block number for vote accounting."
-    },
-    "quorum(uint256)": {
-      "notice": "The number of attestation units that must have participated in a proposal for it to be ratified."
+    "pendingScorecardIdOf(uint256)": {
+      "notice": "The scorecard waiting out its timelock for each game."
     },
     "ratifiedScorecardIdOf(uint256)": {
       "notice": "The scorecard that has been ratified."
     },
     "ratifyScorecardFrom(uint256,(uint256,uint256)[])": {
-      "notice": "Ratifies a scorecard that has been approved."
+      "notice": "Ratify a game's pending scorecard once its timelock has passed. Anyone can call this."
     },
-    "revokeAttestationFrom(uint256,uint256)": {
-      "notice": "Revoke a previously submitted attestation. Only allowed during the ACTIVE phase."
+    "refereeOf(uint256)": {
+      "notice": "The referee of each game."
     },
     "scorecardIdOf(address,(uint256,uint256)[])": {
       "notice": "The ID of a scorecard representing the provided tier weights."
     },
+    "scorecardSubmittedAtOf(uint256,uint256)": {
+      "notice": "When each scorecard was last submitted. Zero if never."
+    },
     "stateOf(uint256,uint256)": {
-      "notice": "Get the current governance state (pending, active, defeated, succeeded) of a scorecard proposal."
+      "notice": "The state of a submitted scorecard."
     },
     "submitScorecardFor(uint256,(uint256,uint256)[])": {
-      "notice": "Submits a scorecard to be attested to."
+      "notice": "Submit a game's scorecard, replacing any pending one and starting the timelock. Only the game's referee can call this."
     },
     "timelockDurationOf(uint256)": {
-      "notice": "The timelock duration for a game (cooling period after quorum + grace period before ratification)."
+      "notice": "The time each game's submitted scorecard waits before anyone can ratify it, in seconds."
     }
   },
   "contractName": "DefifaGovernor",
