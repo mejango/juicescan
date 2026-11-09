@@ -47,7 +47,7 @@ import { SHOP_MEDIA_METADATA_ABI, shopMediaMetadataArgs, shopMetadataName, prepa
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
-import { contractGasWithHeadroom, gasWithinCap } from './gas.js';
+import { contractGasWithHeadroom, gasWithinCap, TRANSACTION_GAS_CAP } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 
@@ -11929,7 +11929,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         var directClient = clientFor(direct.cid);
         var directGas;
         try { directGas = BigInt(confirmOpts.gasLimitForCall ? await confirmOpts.gasLimitForCall(direct) : gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
-        var directCeiling = confirmOpts.gasLimitForCall ? 16777216n : 5000000n;
+        var directCeiling = confirmOpts.gasLimitForCall ? TRANSACTION_GAS_CAP : 5000000n;
         if (directGas < 21000n || directGas > directCeiling) throw new Error('This transaction gas limit is outside the supported direct-send range.');
         setStatus('Simulating the confirmed transaction…', 'pending');
         var directResult = await directClient.request({
@@ -13761,7 +13761,7 @@ function pendingPaymentReaders(chainId) {
 async function pendingPaymentGasLimit(call) {
   var block = await clientFor(Number(call.chainId == null ? call.cid : call.chainId)).getBlock({ blockTag: 'latest' });
   var limit = BigInt(block.gasLimit);
-  return limit < 16777216n ? limit : 16777216n;
+  return limit < TRANSACTION_GAS_CAP ? limit : TRANSACTION_GAS_CAP;
 }
 
 // Each qualified attempt can need most of a block's transaction allowance. Use durable reviewed

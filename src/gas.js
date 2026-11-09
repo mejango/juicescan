@@ -4,9 +4,14 @@
  * may otherwise produce a successful but undersized estimate. Unused gas is
  * not charged.
  */
-export function gasWithHeadroom(estimate) {
-  return BigInt(estimate) * 2n;
+export function gasWithHeadroom(estimate, cap) {
+  if (cap == null) cap = TRANSACTION_GAS_CAP;
+  var measured = BigInt(estimate), doubled = measured * 2n;
+  return measured <= cap && doubled > cap ? cap : doubled;
 }
+
+/** EIP-7825's per-transaction gas limit: a wallet can't send more. */
+export var TRANSACTION_GAS_CAP = 2n ** 24n;
 
 export async function contractGasWithHeadroom(publicClient, request) {
   return gasWithHeadroom(await publicClient.estimateContractGas(

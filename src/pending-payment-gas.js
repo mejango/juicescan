@@ -1,5 +1,6 @@
 import { decodeFunctionData, encodeFunctionData } from 'viem';
 import { generationNames, getAddress, registry } from './abi-registry.js';
+import { TRANSACTION_GAS_CAP } from './gas.js';
 
 var ABI = registry.contracts.JBRouterTerminalGateway;
 var GATEWAY_NAMES = generationNames('JBRouterTerminalGateway');
@@ -31,5 +32,5 @@ export async function pendingPaymentTransactionGasCap(chainId, tx, client) {
       && !(typeof block.gasLimit === 'string' && /^[1-9][0-9]*$/.test(block.gasLimit)))) throw new Error('The pending payment transaction gas limit could not be verified.');
   var limit = BigInt(block.gasLimit);
   if (limit <= 1500000n) throw new Error('The chain cannot supply the pending payment transaction gas reserve.');
-  return limit < 16777216n ? limit : 16777216n;
+  return limit < TRANSACTION_GAS_CAP ? limit : TRANSACTION_GAS_CAP;
 }
