@@ -6,11 +6,11 @@ import { discoverChains, firstChainForNetwork } from './component-base.js';
 export function projectDiscovery(state, updateUI) {
   var generation = 0;
   return function discover(chosen, ready) {
+    var gen = ++generation;
     var pid = state.projectId;
     if (!pid || !/^\d+$/.test(pid) || pid === '0') { state.phase = 'idle'; updateUI(); return; }
     state.phase = 'discovering';
     updateUI();
-    var gen = ++generation;
     discoverChains(pid, function (live) {
       if (gen !== generation) return;
       state.liveChains = live;
