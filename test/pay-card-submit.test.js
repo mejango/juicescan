@@ -67,6 +67,9 @@ it('sends prepareUserPay metadata and minimum to the terminal for exactly the re
   expect(tx.args).toEqual([601n, NATIVE, 10n ** 18n, runtime.account, 900n, '', '0xaa']);
   expect(tx.value).toBe(10n ** 18n);
   expect(tx.tokenAddr).toBeNull();
+  // One hold per payment to the project, and the previous build's per-route holds still refuse a second send.
+  expect(tx.holdScope).toBe('project-601');
+  expect(tx.holdLegacyTargets).toEqual([terminal, registry]);
 });
 
 it('approves the terminal for exactly the amount of a directly accepted ERC-20', async () => {
@@ -432,7 +435,7 @@ it('ends a loosened tolerance when its review is cancelled, and after its paymen
 
   await quoted('900');
   await shortfallThenReviewAgain();
-  runtime.execute.mockImplementationOnce(tx => tx.onSuccess('Confirmed', { phase: 'confirmed', hash: '0x' + '1'.repeat(64), chainId: 8453 }));
+  runtime.execute.mockImplementationOnce(tx => tx.onSuccess('Confirmed', { phase: 'done', hash: '0x' + '1'.repeat(64), chainId: 8453 }));
   confirmButton().click();
   await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(3));
   type('2'); type('1');

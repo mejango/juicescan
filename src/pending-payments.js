@@ -1,5 +1,6 @@
 import { decodeEventLog, encodeAbiParameters, encodeFunctionData, keccak256, stringToHex, toEventSelector } from 'viem';
 import { registry } from './abi-registry.js';
+import { TRANSACTION_GAS_CAP } from './gas.js';
 
 // Use the generated deployment ABI for the tuple, calls and receipt events. Retried payments
 // remain gateway custody until a matching settlement or refund event proves otherwise.
@@ -11,7 +12,6 @@ var RECEIPT_EVENTS = ABI.filter(function (entry) {
 var RECEIPT_TOPICS = new Set(RECEIPT_EVENTS.map(toEventSelector));
 var ZERO_HASH = '0x' + '0'.repeat(64);
 var GAS_EXHAUSTED = keccak256(stringToHex('JBRouterTerminalGateway: gas exhausted'));
-var TRANSACTION_GAS_CAP = 16777216n;
 var TRANSACTION_GAS_RESERVE = 1500000n;
 var PAGE_SIZE = 250;
 

@@ -1,4 +1,4 @@
-// jsdom has no Web Locks, which held wallet writes (src/write-hold.js) require. Importing this installs one
+// jsdom has no Web Locks (src/browser-locks.js falls back without them). Importing this installs one
 // exclusive in-memory lock per name: `ifAvailable` refuses while held, otherwise requests queue in order.
 const queues = new Map();
 export const webLocks = { request(name, options, callback) {

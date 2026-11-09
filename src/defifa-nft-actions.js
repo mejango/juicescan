@@ -221,7 +221,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
           onStatus: function (value, statusKind, meta) { if (meta && meta.hash && reservation) { try { reservation = hold.submitted(reservation, meta.hash); } catch (err) { message(err.message || String(err)); } } if (meta && meta.trackingError) finishPending(value, meta.hash); else message(value); },
           onError: function (value, meta) { if (reservation) finishPending(value, meta && meta.submittedHash); else { error(new Error(value)); resolve(); } },
           onSuccess: async function (value, meta) {
-            if (!meta || meta.phase !== 'confirmed') return finishPending(value, meta && meta.safeTxHash);
+            if (!meta || meta.phase !== 'done') return finishPending(value, meta && meta.safeTxHash);
             try { if (reservation) hold.releaseLocked(reservation); if (!approvalOnly && reviewedCart !== null && !disposed && active && root.isConnected && ticket === generation && account === getAccount() && cartRevision === reviewedCartRevision && cartSnapshot() === reviewedCart && JSON.stringify(readMintDraft()) === JSON.stringify(reviewedDraft)) options.cart.clear(); resolve(); busy = false; if (await refresh()) message(approvalOnly ? 'Token approval verified onchain. Review NFT mint again to continue.' : 'NFT transaction verified onchain.'); } catch (err) { finishPending(err.message || String(err), meta.hash); } finally { resolve(); }
           },
         }));

@@ -5,11 +5,20 @@ import {
   gasWithHeadroom,
   gasWithinCap,
   transactionGasWithHeadroom,
+  TRANSACTION_GAS_CAP,
 } from '../src/gas.js';
 
 describe('client gas headroom', function () {
   it('sets an explicit 2x limit', function () {
     expect(gasWithHeadroom(1119186n)).toBe(2238372n);
+  });
+
+  it('stops a doubled estimate at the EIP-7825 cap when the estimate fits under it', function () {
+    expect(TRANSACTION_GAS_CAP).toBe(16777216n);
+    expect(gasWithHeadroom(10000000n)).toBe(TRANSACTION_GAS_CAP);
+    expect(gasWithHeadroom(TRANSACTION_GAS_CAP)).toBe(TRANSACTION_GAS_CAP);
+    expect(gasWithHeadroom(TRANSACTION_GAS_CAP + 1n)).toBe((TRANSACTION_GAS_CAP + 1n) * 2n);
+    expect(gasWithHeadroom(600000n, 1000000n)).toBe(1000000n);
   });
 
   it('removes a stale gas cap before estimating contract and raw transactions', async function () {

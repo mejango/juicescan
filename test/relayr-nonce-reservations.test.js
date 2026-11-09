@@ -157,12 +157,16 @@ describe('forwarded nonce publication reservations', () => {
     expect(fetchQuote).not.toHaveBeenCalled();
   });
 
-  it('blocks forwarded publication without a durable scope or Web Locks', async () => {
-    const tx = await entry();
-    await expect(relayrPostBundle([tx])).rejects.toThrow(/durable action scope/);
-    vi.stubGlobal('navigator', {});
-    await expect(relayrPostBundle([tx], journal('no-lock'), true)).rejects.toThrow(/Web Locks/);
+  it('blocks forwarded publication without a durable scope', async () => {
+    await expect(relayrPostBundle([await entry()])).rejects.toThrow(/durable action scope/);
     expect(fetchQuote).not.toHaveBeenCalled();
+  });
+
+  it('publishes forwarded requests on the lock fallback without Web Locks', async () => {
+    const tx = await entry();
+    vi.stubGlobal('navigator', {});
+    await expect(relayrPostBundle([tx], journal('no-lock'), true)).resolves.toHaveProperty('bundle_uuid');
+    expect(reservations()).toHaveLength(1);
   });
 
   it.each(['getItem', 'setItem'])('does not publish when reservation storage %s fails', async method => {

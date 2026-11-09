@@ -31,6 +31,7 @@ vi.mock('../src/component-base.js', () => ({
     return { wrapper, body };
   },
   executeTransaction: payState.execute,
+  payHoldScope: projectId => 'project-' + BigInt(projectId),
   getBeneficiaryAddress: () => payState.BENEFICIARY,
   firstChainForNetwork: () => 1,
   createPublicClientForChain: () => ({ readContract: vi.fn().mockRejectedValue(new Error('no contexts')) }),
@@ -182,6 +183,20 @@ describe('pay route trust boundary', () => {
     await vi.waitFor(() => expect(payState.execute).toHaveBeenCalledOnce());
     expect(alert).not.toHaveBeenCalled();
     expect(payState.execute.mock.calls[0][0].args[2]).toBe(2n * 10n ** 18n);
+  });
+
+  it('leaves the confirming phase when receipt tracking gives up', async () => {
+    payState.prepare.mockResolvedValue(quote(120n));
+    payState.execute.mockImplementation(tx => tx.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'receipt', hash: '0x' + 'ab'.repeat(32), chainId: 1, trackingError: true }));
+    const component = renderPayComponent();
+    document.body.appendChild(component);
+    component.querySelector('.pay-btn').click();
+    await vi.waitFor(() => expect(payState.execute).toHaveBeenCalledOnce());
+    expect(component.textContent).toContain('confirmation tracking is temporarily unavailable');
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    component.querySelector('.pay-btn').click();
+    await vi.waitFor(() => expect(payState.execute).toHaveBeenCalledTimes(2));
+    expect(alert).not.toHaveBeenCalled();
   });
 
   it('sends nothing when the amount changes while the route is prepared', async () => {

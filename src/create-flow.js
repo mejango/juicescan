@@ -34,6 +34,7 @@ import { assertNewTierPolicy, build721TierConfig, build721TierMetadata, mediaTyp
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
 import { gasWithHeadroom } from './gas.js';
+import { browserLocks } from './browser-locks.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { isEnsName, resolveEns, reverseEns, cachedEnsAddress } from './ens.js';
 import {
@@ -3232,13 +3233,30 @@ function renderDeploy(state, render) {
       }
       directNote.appendChild(leg);
     });
+    // A leg held without a hash (the write hold's held-no-hash): only the user's wallet check can release it.
+    var heldNoHash = savedDirect.plans.filter(function (plan) { return plan.status === 'awaiting-wallet' && !plan.hash; });
+    if (heldNoHash.length) {
+      directNote.appendChild(infoNote('The wallet request on ' + heldNoHash.map(function (p) { return chainName(p.chainId); }).join(', ') + ' may have been sent: your wallet did not say. Check your wallet; if it was not sent, release it.'));
+      var releaseDirect = el('button', 'create-btn ghost'); releaseDirect.type = 'button'; releaseDirect.textContent = 'It was not sent, release it'; releaseDirect.disabled = state.deploying;
+      releaseDirect.addEventListener('click', async function () {
+        await browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+          var latest;
+          try { latest = loadCreateDirectSession(true); } catch (_) { latest = null; }
+          // Only the launch this note shows, in the state shown: a hash saved since, or another window's run, stays held.
+          if (lock && latest && latest.id === savedDirect.id && latest.revision === savedDirect.revision) {
+            latest.plans.forEach(function (plan) { if (plan.status === 'awaiting-wallet' && !plan.hash) plan.status = 'ready'; });
+            saveCreateDirectSession(state, latest);
+          } else state.statusLines.push({ text: 'This launch changed or is active in another window. Check its saved transactions before continuing.', err: true });
+          render();
+        });
+      }); directNote.appendChild(releaseDirect);
+    }
     var resumeDirect = el('button', 'create-btn primary'); resumeDirect.textContent = state.deploying ? 'Checking launch…' : 'Resume saved launch'; resumeDirect.disabled = state.deploying;
     resumeDirect.addEventListener('click', function () { deploy(state, render); }); directNote.appendChild(resumeDirect);
     if (savedDirect.plans.every(function (plan) { return plan.status === 'ready' && !plan.hash && !(plan.failedHashes || []).length; })) {
       var discardDirect = el('button', 'create-btn ghost'); discardDirect.textContent = 'Discard unsubmitted launch'; discardDirect.disabled = state.deploying;
       discardDirect.addEventListener('click', async function () {
-        if (!navigator.locks || !navigator.locks.request) return;
-        await navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+        await browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
           var latest = loadCreateDirectSession(true);
           if (lock && latest && latest.id === savedDirect.id && latest.plans.every(function (plan) { return plan.status === 'ready' && !plan.hash && !(plan.failedHashes || []).length; })) clearCreateDirectSession(state);
           else state.statusLines.push({ text: 'This launch is active or has changed in another window. Check its saved transactions before continuing.', err: true });
@@ -3932,8 +3950,7 @@ async function verifyCreateDirectLeg(session, plan) {
 }
 
 async function runCreateDirectSession(state, session, resumed) {
-  if (!navigator.locks || !navigator.locks.request) throw new Error('This browser cannot coordinate a saved launch across windows. Use a browser with Web Locks support for multichain direct creation.');
-  return navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock) {
+  return browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock) {
     if (!lock) throw new Error('This launch is active in another window. Continue there or close that window before resuming.');
     var latest = loadCreateDirectSession(true);
     if (!latest && session.id) throw new Error('This saved launch was cleared in another window. Check its transactions before continuing.');
@@ -3993,6 +4010,10 @@ async function executeCreateDirectSession(state, session, resumed) {
       if (!getAccount() || getAccount().toLowerCase() !== session.account.toLowerCase()) throw new Error('Connected account changed. Reconnect the launching wallet to continue.');
       assertScheduleFresh(plan.scheduleValidUntil);
       push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
+      // This leg's record is its write journal: onWriteRejected keeps executeTransaction from holding it a second time.
+      var releaseUnsent = function () {
+        if (!plan.hash && plan.status === 'awaiting-wallet') { plan.status = 'ready'; saveCreateDirectSession(state, session); }
+      };
       try {
         var hash = await execTx({ chainId: plan.chainId, address: plan.address, abi: plan.abi,
           functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value, skipConfirm: true,
@@ -4002,9 +4023,7 @@ async function executeCreateDirectSession(state, session, resumed) {
             try { saveCreateDirectSession(state, session); }
             catch (error) { plan.status = 'ready'; throw error; }
           },
-          onBeforeWriteAborted: function () {
-            if (!plan.hash && plan.status === 'awaiting-wallet') { plan.status = 'ready'; saveCreateDirectSession(state, session); }
-          },
+          onBeforeWriteAborted: releaseUnsent, onWriteRejected: releaseUnsent,
           assertWriteState: function () { assertScheduleFresh(plan.scheduleValidUntil); }, verifyReceipt: function (receipt) { assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', plan.chainId), null, plan.rulesetCount); },
           onStatus: function (message, kind, meta) {
             if (meta && meta.hash) { plan.hash = meta.hash; plan.status = 'submitted'; saveCreateDirectSession(state, session); }

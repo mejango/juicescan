@@ -4,11 +4,12 @@
 
 import {
   el, createComponentWrapper, createProjectAndChainInput,
-  createBeneficiaryInput, createWalletButton, discoverChains, selectChain,
+  createBeneficiaryInput, createWalletButton, selectChain,
   firstChainForNetwork, executeTransaction, executeRead, renderError, getAddress,
   getAccount, getEffectiveAccount, getChainTokens, parseAmount, formatAmount, parseHashDefaults,
   getBeneficiaryAddress, createPublicClientForChain, truncAddr, tokenByAddress,
 } from './component-base.js';
+import { projectDiscovery } from './project-discovery.js';
 import { cashOutPreviewRulesetId, projectBuybackHook, resolveCashOutPreviewRoute } from './discover.js';
 import { quotedOutputFloor } from './slippage.js';
 
@@ -84,7 +85,7 @@ export function renderCashOutComponent() {
     contextsLoading: false,
   };
 
-  var discoveryGeneration = 0;
+  var discoverProject = projectDiscovery(state, updateUI);
   var tokenGeneration = 0;
 
   var comp = createComponentWrapper('CASH OUT', 'cashout', state, function() {
@@ -224,25 +225,7 @@ export function renderCashOutComponent() {
     state.error = null;
     state.txStatus = null;
 
-    var pid = state.projectId;
-    if (!pid || !/^\d+$/.test(pid) || pid === '0') { state.phase = 'idle'; updateUI(); return; }
-
-    state.phase = 'discovering';
-    updateUI();
-
-    var gen = ++discoveryGeneration;
-    discoverChains(pid, function(live) {
-      if (gen !== discoveryGeneration) return;
-      state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
-      var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
-      selectChain(state, preferred);
-      state._defaultChain = null;
-      state.phase = 'ready';
-      updateUI();
-      loadBalance();
-      loadReclaimTokens(preferred);
-    });
+    discoverProject(function (chainId) { selectChain(state, chainId); }, function (chainId) { loadBalance(); loadReclaimTokens(chainId); });
   }
 
   function loadBalance() {

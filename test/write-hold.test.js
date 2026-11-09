@@ -58,7 +58,7 @@ it('settles a held hash from the chain on the next attempt, with no extra click 
  // Mined and successful: the hold settles itself and says so; nothing is sent again.
  h.client.getTransaction.mockResolvedValue({hash,from:h.account,nonce:7,blockNumber:10n});
  const recovered=await run();
- expect(recovered.ok).toMatch(/went through in block 10/i);expect(recovered.meta).toMatchObject({phase:'confirmed',hash,recovered:true});
+ expect(recovered.ok).toMatch(/went through in block 10/i);expect(recovered.meta).toMatchObject({phase:'done',hash,recovered:true});
  expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
  // Settled: the next attempt sends normally.
  expect((await run()).ok).toBeTruthy();expect(h.wallet.writeContract).toHaveBeenCalledTimes(2);
@@ -119,10 +119,14 @@ it('a stale dialog never releases a newer attempt',async()=>{
  [...document.querySelectorAll('dialog[open] .create-btn.primary')][0].click();
  expect(JSON.parse(localStorage.getItem(k)).id).toBe('newer');
 });
-it('sends nothing where the browser has no Web Locks to keep the send to one window',async()=>{
+it('sends on the lock fallback where the browser has no Web Locks, still once per action',async()=>{
  Object.defineProperty(navigator,'locks',{configurable:true,value:undefined});
- try{expect((await run()).error).toMatch(/one window/i);}finally{Object.defineProperty(navigator,'locks',{configurable:true,value:webLocks});}
- expect(h.wallet.writeContract).not.toHaveBeenCalled();
+ h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
+ try{
+  expect((await run()).error).toMatch(/stays pending/i);
+  expect((await run()).error).toMatch(/earlier/i);
+ }finally{Object.defineProperty(navigator,'locks',{configurable:true,value:webLocks});}
+ expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
 it('a hash kept in memory never lets an old attempt release a newer stored one',async()=>{
  const hold=writeHold(8453,h.account,call);
@@ -164,4 +168,18 @@ it('a release dialog shown before a hash arrived cannot clear that hash',async()
  expect(JSON.parse(localStorage.getItem(k)).hash).toBe('0x'+'e'.repeat(64));
  h.client.getTransaction.mockResolvedValue({hash:'0x'+'e'.repeat(64),from:h.account,nonce:7,blockNumber:null});
  expect((await run()).error).toMatch(/still pending/i);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
+});
+it('reports every send stage in the SDK phase names',async()=>{
+ const phases=[];
+ const done=await new Promise(resolve=>executeTransaction({...args,onStatus:(m,k,meta)=>phases.push(meta&&meta.phase),onSuccess:(m,meta)=>resolve(meta),onError:resolve}));
+ expect(phases).toEqual(['simulating','simulating','signing','receipt']);
+ expect(done.phase).toBe('done');
+});
+it.each([['with a saved hash',hash,/still pending/i],['without a hash',null,/may have been sent/i]])('a scoped send also refuses while a legacy per-target hold is outstanding (%s)',async(_label,saved,line)=>{
+ const legacy='juicescan-write-hold-v1:'+h.account.toLowerCase()+':8453:0x3333333333333333333333333333333333333333:pay';
+ localStorage.setItem(legacy,JSON.stringify({id:'old',account:h.account.toLowerCase(),hash:saved}));
+ h.client.getTransaction=vi.fn(async()=>({hash,from:h.account,blockNumber:null}));
+ const result=await run({holdScope:'project-7',holdLegacyTargets:[args.address,'0x3333333333333333333333333333333333333333']});
+ expect(result.error).toMatch(line);expect(h.wallet.writeContract).not.toHaveBeenCalled();
+ expect(JSON.parse(localStorage.getItem(legacy)).id).toBe('old');
 });

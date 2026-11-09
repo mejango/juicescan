@@ -55,8 +55,8 @@ function clientFor(session, overrides = {}) {
   };
 }
 function confirmSend(opts, hash) {
-  opts.onStatus('Submitted', 'pending', { hash, phase: 'submitted', chainId: opts.chainId });
-  opts.onSuccess('Confirmed', { hash, phase: 'confirmed' });
+  opts.onStatus('Submitted', 'pending', { hash, phase: 'receipt', chainId: opts.chainId });
+  opts.onSuccess('Confirmed', { hash, phase: 'done' });
 }
 
 beforeEach(() => {
@@ -98,6 +98,22 @@ describe('direct multichain creation recovery', () => {
     expect(first.args[3][0].mustStartAtOrAfter).toBe(second.args[3][0].mustStartAtOrAfter);
     expect(mocks.forward).not.toHaveBeenCalled();
     expect(mocks.postBundle).not.toHaveBeenCalled();
+  });
+
+  it('journals each launch leg once: its own record, not also the shared write hold', async () => {
+    const draft = state(), session = { account: ALICE, plans: plans() };
+    __test.saveCreateDirectSession(draft, session);
+    mocks.client.mockImplementation(clientFor(session));
+    mocks.execute.mockImplementation((opts) => {
+      expect(typeof opts.onWriteRejected).toBe('function');
+      opts.onSending();
+      expect(JSON.parse(localStorage.getItem(KEY)).plans.find((p) => p.chainId === opts.chainId).status).toBe('awaiting-wallet');
+      opts.onWriteRejected();
+      expect(JSON.parse(localStorage.getItem(KEY)).plans.find((p) => p.chainId === opts.chainId).status).toBe('ready');
+      opts.onError('Transaction rejected by wallet', { userRejected: true });
+    });
+    await expect(__test.runDeploy(state(), ALICE)).rejects.toThrow('Transaction rejected by wallet');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
   });
 
   it('restores an old direct testnet launch before expanded Relayr eligibility or changed form values', async () => {
@@ -210,6 +226,37 @@ describe('direct multichain creation recovery', () => {
     session.plans[0].status = 'awaiting-wallet';
     await expect(__test.runCreateDirectSession(state(), session, true)).rejects.toThrow(/interrupted before its transaction hash/);
     expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
+  it('offers the held-no-hash exit for an interrupted wallet request, releasing only the state shown', async () => {
+    const draft = state(); const session = { account: ALICE, plans: plans() };
+    session.plans[0].status = 'awaiting-wallet';
+    __test.saveCreateDirectSession(draft, session);
+    const render = vi.fn();
+    const view = __test.renderDeploy(draft, render);
+    const release = [...view.querySelectorAll('button')].find((button) => button.textContent === 'It was not sent, release it');
+    expect(release).toBeTruthy();
+    expect(view.textContent).toContain('Check your wallet');
+
+    release.click();
+    await vi.waitFor(() => expect(render).toHaveBeenCalled());
+    const saved = __test.loadCreateDirectSession(true);
+    expect(saved.plans.map((plan) => plan.status)).toEqual(['ready', 'ready']);
+    expect(__test.renderDeploy(draft, () => {}).textContent).toContain('Discard unsubmitted launch');
+  });
+
+  it('keeps a leg held when the saved launch changed after the exit was shown', async () => {
+    const draft = state(); const session = { account: ALICE, plans: plans() };
+    session.plans[0].status = 'awaiting-wallet';
+    __test.saveCreateDirectSession(draft, session);
+    const view = __test.renderDeploy(draft, vi.fn());
+    const newer = JSON.parse(localStorage.getItem(KEY));
+    newer.plans[0].hash = HASH1; newer.plans[0].status = 'submitted'; newer.revision += 1;
+    localStorage.setItem(KEY, JSON.stringify(newer));
+    const render = vi.fn();
+    [...view.querySelectorAll('button')].find((button) => button.textContent === 'It was not sent, release it').click();
+    await vi.waitFor(() => expect(draft.statusLines.some((line) => /changed/.test(line.text))).toBe(true));
+    expect(JSON.parse(localStorage.getItem(KEY)).plans[0]).toMatchObject({ status: 'submitted', hash: HASH1 });
   });
 
   it('does not infer user cancellation from ambiguous rejection wording', async () => {

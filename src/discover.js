@@ -10,7 +10,7 @@ import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './p
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { confirmStatusSettles, offerRelease, payHoldScope, onDocumentWhileConnected, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
@@ -47,7 +47,7 @@ import { SHOP_MEDIA_METADATA_ABI, shopMediaMetadataArgs, shopMetadataName, prepa
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
-import { contractGasWithHeadroom, gasWithinCap } from './gas.js';
+import { contractGasWithHeadroom, gasWithinCap, TRANSACTION_GAS_CAP } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 
@@ -636,7 +636,7 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
     var ah = await invokeWallet(chainId, owner, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: owner, chain: CHAINS[chainId], gas: approvalGas })); });
-    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
+    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'receipt', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, owner, PERMIT2_ADDRESS, amount);
     if (onStatus) onStatus('Token access approved. Next: authorize the payment.', 'pending');
   }
@@ -1957,8 +1957,7 @@ function renderCustomerYou(project, mediaP) {
   load();
   onEffectiveAccountChange(function () { if (box.isConnected) load(); });
   // A redemption burns items — reload so the owned count reflects it without a manual refresh.
-  var onBridge = function () { if (box.isConnected) load(); };
-  document.addEventListener('jb:bridge-updated', onBridge);
+  onDocumentWhileConnected(box, 'jb:bridge-updated', function () { load(); });
   return box;
 }
 
@@ -3604,11 +3603,11 @@ function openMintTierModal(project, tier, itemName) {
       onError: function (message) { submit.disabled = false; status.textContent = message; status.className = 'operator-edit-status error'; loadLive(); },
       onSuccess: function (message, meta) {
         submit.disabled = false;
-        status.textContent = meta && meta.phase === 'safe-proposed'
+        status.textContent = meta && meta.phase === 'proposed'
           ? 'Mint proposed to the Safe. Inventory changes only after the Safe executes it.'
           : 'Items minted to ' + snapshot.beneficiary + '.';
         status.className = 'operator-edit-status success';
-        if (!meta || meta.phase !== 'safe-proposed') { bustTiersCache(project); loadLive(); }
+        if (!meta || meta.phase !== 'proposed') { bustTiersCache(project); loadLive(); }
       },
     });
   });
@@ -5051,7 +5050,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
     var ah = await invokeWallet(chainId, recipient, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas })); });
-    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: ah, chainId: chainId });
+    if (onStatus) onStatus('Token approval submitted. Confirming onchain…', 'pending', { phase: 'receipt', hash: ah, chainId: chainId });
     await waitForErc20Approval(client, ah, token, recipient, PERMIT2_ADDRESS, amountIn);
     if (onStatus) onStatus('Token access approved. Next: authorize the swap.', 'pending');
   }
@@ -5100,7 +5099,7 @@ async function buildDirectSwapErc20Tx(chainId, pool, token, amountIn, minOut, re
     if (!getAccount() || getAccount().toLowerCase() !== recipient.toLowerCase()) throw new Error('Connected account changed. Review the swap again.');
     var approvalGas = await contractGasWithHeadroom(client, approval.request);
     var approvalHash = await invokeWallet(chainId, recipient, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, approval.request, { account: recipient, chain: CHAINS[chainId], gas: approvalGas })); });
-    if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'submitted', hash: approvalHash, chainId: chainId });
+    if (onStatus) onStatus('Swap-router authorization submitted. Confirming onchain…', 'pending', { phase: 'receipt', hash: approvalHash, chainId: chainId });
     // The same dual-source receipt poll as every other write here: viem's watcher can sit pending forever on
     // some wallet/public-RPC pairs even after the approval mined, which stranded this step at "Confirming".
     var approvalReceipt = await waitForTrackedTransactionReceipt(client, approvalHash, wallet, chainId);
@@ -10246,6 +10245,9 @@ export function renderPayCard(project, cart) {
         spenderAddr: (isNative || viaRouter) ? null : terminal,
         approvalAmount: (isNative || viaRouter) ? null : amt,
       };
+    // One hold per payment (or add to balance) to this project, whichever terminal or router the route picks.
+    txParams.holdScope = payHoldScope(reviewedProjectId);
+    txParams.holdLegacyTargets = [getAddress('JBMultiTerminal', reviewedChainId), routerTerminalFor(reviewedChainId)];
     // Approval, authorization and simulation waits must not outlive the reviewed inputs.
     txParams.assertWriteState = function () {
       if (!payInputsUnchanged()) throw new Error('The payment details, network, quote, or wallet changed. Review and try again.');
@@ -10368,12 +10370,12 @@ export function renderPayCard(project, cart) {
       skipConfirm: true, // already confirmed via openPayConfirm
       onStatus: function (m, kind, meta) {
         var cls = 'paybox-status' + (kind === 'pending' ? ' pending' : '');
-        if (meta && meta.phase === 'submitted') setPayStatus(cls, processing, meta);
+        if (meta && meta.phase === 'receipt') setPayStatus(cls, processing, meta);
         else { status.className = cls; status.textContent = m; }
-        if (confirmCtx) confirmCtx.showStatus(meta && meta.phase === 'submitted' ? processing : m, kind, meta);
+        if (confirmCtx) confirmCtx.showStatus(meta && meta.phase === 'receipt' ? processing : m, kind, meta);
       },
       onSuccess: function (m, meta) {
-        if (meta && meta.phase === 'safe-proposed') {
+        if (meta && meta.phase === 'proposed') {
           dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
           setPayStatus('paybox-status pending', m, meta);
           if (confirmCtx) confirmCtx.pending(m, meta);
@@ -10959,7 +10961,7 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
       onSending: opts.onSafeRequest ? function () { opts.onSafeRequest({ chainId: Number(chain.id), safe: authorityAddr, fromBlock: String(proposalFloor), tx: { to: call.to, data: call.data, value: '0', operation: 0 } }); } : null,
       onStatus: setStatus,
       onSuccess: function (message, meta) {
-        setStatus(message, meta && meta.phase === 'safe-proposed' ? 'pending' : 'success', meta);
+        setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success', meta);
         var known = snapshotKnownSafeProposal(chain.id, authorityAddr, { to: call.to, data: call.data, value: 0, operation: 0 }, meta && meta.safeTxHash, proposalFloor, true);
         if (opts.onSafeProposal) opts.onSafeProposal(known);
         resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash, proposals: [known] });
@@ -11877,7 +11879,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
   }
   if (!useRelayr) {
     var directReceipts = await runDirectBatch(calls, {
-      account: account, scope: confirmOpts.pendingScope,
+      account: account, scope: confirmOpts.pendingScope, offerRelease: offerRelease,
       onComplete: confirmOpts.onVerified ? function (receipts) { return confirmOpts.onVerified({ records: receipts.map(function (receipt) { return { status: { state: 'Completed' }, data: { hash: receipt.transactionHash } }; }) }); } : null,
       onStorageUnavailable: function () { setStatus('Keep this window open to preserve the submitted direct transaction receipts.', 'pending'); },
       verifySubmitted: async function (call, hash) {
@@ -11930,7 +11932,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         var directClient = clientFor(direct.cid);
         var directGas;
         try { directGas = BigInt(confirmOpts.gasLimitForCall ? await confirmOpts.gasLimitForCall(direct) : gas || 500000n); } catch (_) { throw new Error('This transaction is missing a safe gas limit.'); }
-        var directCeiling = confirmOpts.gasLimitForCall ? 16777216n : 5000000n;
+        var directCeiling = confirmOpts.gasLimitForCall ? TRANSACTION_GAS_CAP : 5000000n;
         if (directGas < 21000n || directGas > directCeiling) throw new Error('This transaction gas limit is outside the supported direct-send range.');
         setStatus('Simulating the confirmed transaction…', 'pending');
         var directResult = await directClient.request({
@@ -13762,7 +13764,7 @@ function pendingPaymentReaders(chainId) {
 async function pendingPaymentGasLimit(call) {
   var block = await clientFor(Number(call.chainId == null ? call.cid : call.chainId)).getBlock({ blockTag: 'latest' });
   var limit = BigInt(block.gasLimit);
-  return limit < 16777216n ? limit : 16777216n;
+  return limit < TRANSACTION_GAS_CAP ? limit : TRANSACTION_GAS_CAP;
 }
 
 // Each qualified attempt can need most of a block's transaction allowance. Use durable reviewed
@@ -15663,7 +15665,7 @@ export function renderExtrasSection(project) {
               label: 'Deploy payer address', confirmTitle: 'Confirm payer address deployment',
               onStatus: setStatus, onError: function (message) { reject(new Error(message)); },
               onSuccess: function (message, meta) {
-                setStatus(message, meta && meta.phase === 'safe-proposed' ? 'pending' : 'success'); resolve();
+                setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success'); resolve();
               },
             });
           });
@@ -24735,33 +24737,32 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     base.type = 'wallet'; base.address = sp.beneficiary || ''; base.projectId = 0; return base;
   }
 
-  var busy = false, queuedToSafe = false, readySafeExecs = null, safeExecDone = false;
+  // stage: editing | submitting | ready-to-execute | executing | queued | done; readySafeExecs belongs to ready-to-execute and executing.
+  var stage = 'editing', readySafeExecs = null;
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     var queueTab = project.isRevnet ? 'Operator' : 'Owner';
-    if (safeExecDone) { modal.close(); return; }
-    if (readySafeExecs && readySafeExecs.length) {
-      if (busy) return;
-      busy = true; submit.textContent = 'Executing…';
+    if (stage === 'done') { modal.close(); return; }
+    if (stage === 'submitting' || stage === 'executing') return;
+    if (stage === 'ready-to-execute') {
+      stage = 'executing'; submit.textContent = 'Executing…';
       executeReadySafeTransactions(readySafeExecs, { title: 'Execute queued ruleset' + (readySafeExecs.length === 1 ? '' : 's') }).then(function (execRes) {
-        busy = false;
         if (execRes && execRes.done) {
           setStatus('Executed on ' + readySafeExecs.length + ' chain' + (readySafeExecs.length === 1 ? '' : 's') + '.', 'success');
-          readySafeExecs = null; safeExecDone = true; submit.textContent = 'Close';
+          readySafeExecs = null; stage = 'done'; submit.textContent = 'Close';
           notifyProjectUpdated(project);
         } else {
-          submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
+          stage = 'ready-to-execute'; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
           setStatus('Cancelled — queued transactions are still in the ' + queueTab + ' tab or Safe app.', '');
         }
       }).catch(function (err) {
-        busy = false; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
+        stage = 'ready-to-execute'; submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
         setStatus(errMessage(err, 'Could not execute the transactions.'), 'error');
       });
       return;
     }
     // After a successful Safe propose the button becomes "Go to Owner/Operator tab" for later signing/execution.
-    if (queuedToSafe) { modal.close(); location.hash = projectHash(project, queueTab); return; }
-    if (busy) return;
+    if (stage === 'queued') { modal.close(); location.hash = projectHash(project, queueTab); return; }
     if (state.queueSourceLoading || !state.queueSourceVerified || state.queueSourceError) {
       setStatus('Nothing was sent. The live ruleset, fund access, splits, and shop hook must all be verified before queueing.', 'error');
       return;
@@ -24772,21 +24773,21 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     }
     // Removing a live shop is destructive — confirm explicitly (the silent-drop this whole feature prevents).
     if (state.shopChoice === 'remove' && state.currentShopHook && !window.confirm('Remove the shop? From the next ruleset onward your project stops minting NFTs on payment — payments mint project tokens at the ruleset weight instead. Continue?')) return;
-    busy = true;
+    stage = 'submitting';
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     submitQueueRuleset(project, state, selected, operatorAddr, setStatus).then(function (res) {
-      busy = false;
+      stage = 'editing';
       if (res && res.readyExecs && res.readyExecs.length) {
-        readySafeExecs = res.readyExecs;
+        stage = 'ready-to-execute'; readySafeExecs = res.readyExecs;
         submit.textContent = readySafeExecs.length > 1 ? 'Execute all' : 'Execute';
       } else if (res && res.safe && res.queued > 0) {
-        queuedToSafe = true; submit.textContent = 'Go to ' + queueTab + ' tab';
+        stage = 'queued'; submit.textContent = 'Go to ' + queueTab + ' tab';
       } else if (res && res.executed) {
-        safeExecDone = true; submit.textContent = 'Close';
+        stage = 'done'; submit.textContent = 'Close';
         setTimeout(function () { modal.close(); }, 1200);
       }
     }).catch(function (err) {
-      busy = false; setStatus(errMessage(err, 'Queue failed'), 'error');
+      stage = 'editing'; setStatus(errMessage(err, 'Queue failed'), 'error');
     });
   });
 }
@@ -26256,7 +26257,7 @@ function renderYouCard(project, opts) {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reconcileAfterMount);
   else Promise.resolve().then(reconcileAfterMount);
   onEffectiveAccountChange(function () { if (body.isConnected) load(); });
-  document.addEventListener('jb:bridge-updated', function () { if (body.isConnected) load(); });
+  onDocumentWhileConnected(body, 'jb:bridge-updated', function () { load(); });
   return wrap;
 }
 
@@ -26314,9 +26315,12 @@ function renderBridgeTransactions(project) {
     if (rows.length === 0) emptyRetries++;
     pollTimer = setTimeout(function () { if (body.isConnected) load(); }, rows.length === 0 ? 8000 : 45000);
   }
+  // Only the latest read lands: an older one finishing last never moves a status backwards.
+  var loadSeq = 0;
   function load() {
+    var seq = ++loadSeq;
     fetchBridgeTransactions(project).then(function (data) {
-      if (!body.isConnected) return;
+      if (seq !== loadSeq || !body.isConnected) return;
       data = data || [];
       // Movements never legitimately disappear (a delivered/claimed leaf persists). A transient RPC/getLogs
       // failure returns fewer rows — merge by key (fresh status wins) so the view is monotonic and never
@@ -26332,7 +26336,7 @@ function renderBridgeTransactions(project) {
       draw();
       schedulePoll();
     }).catch(function () {
-      if (!body.isConnected) return;
+      if (seq !== loadSeq || !body.isConnected) return;
       // Don't wipe a populated table on a failed re-read — only show the error when we have nothing.
       if (!rows.length) { body.className = 'detail-card-body bridge-empty'; body.textContent = 'Could not load bridge transactions.'; }
       schedulePoll();
@@ -26341,7 +26345,7 @@ function renderBridgeTransactions(project) {
 
   filter.addEventListener('change', draw);
   // A move/claim/execute elsewhere dispatches this; re-read chain state so statuses stay fresh.
-  document.addEventListener('jb:bridge-updated', load);
+  onDocumentWhileConnected(body, 'jb:bridge-updated', function () { load(); });
   load();
 
   return card;
@@ -26400,7 +26404,7 @@ function renderBridgeTransactionsTable(rows, project) {
             skipConfirm: true,
             chainId: tx.peerChainId, address: tx.peerSucker, abi: suckerClaimAbi, functionName: 'claim', contractName: 'JBSucker',
             args: [{ token: tx.remoteToken || tx.token, leaf: leaf, proof: tx.proof }],
-            onStatus: function (m, kind) { ctx.showStatus(m, kind); },
+            onStatus: function (m, kind, meta) { ctx.showStatus(m, kind, meta); },
             onError: function (m) { ctx.showStatus(m, 'error'); },
             onSuccess: function () { ctx.showStatus('Claimed', 'success'); ctx.modal.close(); cstat.textContent = 'Claimed'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
           });
@@ -26632,9 +26636,10 @@ function openTxConfirm(payload, onConfirm, opts) {
   // duration and re-enabling them on failure. Escape / ✕ / backdrop follow that same lock, so a
   // dismissal can't orphan an in-flight transaction's status display (matches confirmTransactionModal).
   var confirmed = false;
+  function sending() { return confirm.disabled && cancel.disabled; }
   var modal = openModal(opts.title || 'Confirm transaction', content, {
     noPrompt: true,
-    canClose: function () { return !(confirm.disabled && cancel.disabled); },
+    canClose: function () { return !sending(); },
     // Closed without Confirm (Cancel, Escape, the close button): the caller may undo what it set up for this review.
     onClose: function () { if (!confirmed && opts.onDismiss) opts.onDismiss(); },
   });
@@ -26690,7 +26695,11 @@ function openTxConfirm(payload, onConfirm, opts) {
           requestAnimationFrame(function () { requestAnimationFrame(resolve); });
         });
       },
-      showStatus: showStatus,
+      // A status that settles a locked send (confirmStatusSettles) unlocks it, as complete/pending/fail do.
+      showStatus: function (message, kind, meta) {
+        if (sending() && confirmStatusSettles(kind, meta)) unlockWithResult(message, kind === 'error' || kind === 'success' ? kind : 'pending', meta);
+        else showStatus(message, kind, meta);
+      },
       complete: function (message, meta) { unlockWithResult(message || 'Payment complete.', 'success', meta); },
       pending: function (message, meta) { unlockWithResult(message || 'Waiting for confirmation.', 'pending', meta); },
       fail: function (message, meta) { unlockWithResult(message || 'The payment could not be completed.', 'error', meta); },
@@ -28311,7 +28320,7 @@ function buildLoanModal(project, requestClose) {
       ];
     }
     function doBorrow(session, minBorrow, reviewedOutcome) {
-      if (!requireLoanInputs()) return;
+      if (!requireLoanInputs()) { if (session) session.showStatus(status.textContent, 'error'); return; }
       executeTransaction(Object.assign(buildBorrowArgs({
         chainId: chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
         collateral: collateral, beneficiary: acct, prepaidFeePercent: prepaidFee, holder: acct,
@@ -28823,7 +28832,7 @@ function syncAccountingFromPeer(peerChainId, peerSucker, btn, key, project) {
         btn.textContent = m === 'Awaiting wallet confirmation…' ? 'Confirm…' : 'Syncing…';
         // Mark "in flight" the moment the tx hits the mempool (not just on confirmation) and re-render so the
         // row shows "Syncing…" immediately and survives a reload while it's still confirming.
-        if (meta && meta.phase === 'submitted' && key) {
+        if (meta && meta.phase === 'receipt' && key) {
           _gossipSyncAt[key] = Math.floor(Date.now() / 1000); saveGossipSyncAt(_gossipSyncAt);
           document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
         }
@@ -29070,7 +29079,7 @@ function renderGossipSection(project) {
   }
   box.appendChild(skelOpsTable(['Chain', 'Knows'], 3));
   fill();
-  document.addEventListener('jb:bridge-updated', function () { if (section.isConnected) fill(); });
+  onDocumentWhileConnected(section, 'jb:bridge-updated', function () { fill(); });
   return section;
 }
 
@@ -31187,7 +31196,7 @@ export {
   lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
   payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
   readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, renderBalanceTables,
-  renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
+  renderBridgeTransactions, renderBridgeTransactionsTable, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
   revnetOperatorOf, sameAddr, splitsOfAbi, suckerTokenMappingAbi, surplusAllowancesAbi, terminalOfAbi,
   terminalsOfAbi, toBigInt, tokenOfAbi, totalSupplyAbi,
 };

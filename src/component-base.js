@@ -139,6 +139,12 @@ export function el(tag, className) {
   return e;
 }
 
+// A document event handler that runs `fn` only while `node` is on the page. It stays subscribed while the node
+// is off the page, since a cached tab panel can be shown again.
+export function onDocumentWhileConnected(node, type, fn) {
+  document.addEventListener(type, function (event) { if (node.isConnected) fn(event); });
+}
+
 export function truncAddr(addr) {
   if (!addr || addr.length < 10) return addr;
   return addr.slice(0, 6) + '...' + addr.slice(-4);
@@ -1275,6 +1281,12 @@ export function confirmStepsFor(payload, opts) {
   return steps;
 }
 
+// A send's status ends the confirm dialog's lock when nothing more will happen without the user: a failure,
+// a success, or a submitted transaction whose receipt watch gave up (it may still confirm later).
+export function confirmStatusSettles(kind, meta) {
+  return kind === 'error' || kind === 'success' || !!(meta && meta.trackingError);
+}
+
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
   // View-as is browse-only: every confirm funnel refuses here with a clear notice instead of a review.
@@ -1297,11 +1309,12 @@ export function confirmTransactionModal(payload, opts) {
   // resolves like a fresh confirm, so multi-transaction flows never open a second dialog.
   var keepOpen = !!opts.keepOpenForProgress;
   var cancelResult = keepOpen ? { ok: false } : false;
-  var pendingResolve = null, closed = false, inFlight = false;
+  // `dialog`: 'review' (Confirm live), 'sending' (locked, the caller drives showStatus), 'settled' (closable).
+  var pendingResolve = null, closed = false, dialog = 'review';
   var feeReview = null, feeBusy = false, bodyDisabled = false;
   function settle(result) { var r = pendingResolve; pendingResolve = null; if (r) r(result); }
   var modal = openDialog(opts.title || 'Confirm transaction', {
-    canClose: function () { return !inFlight; },
+    canClose: function () { return dialog !== 'sending'; },
     onClose: function () { closed = true; if (feeReview) feeReview.stop(); settle(cancelResult); },
   });
   var content = el('div', 'pay-confirm');
@@ -1346,11 +1359,10 @@ export function confirmTransactionModal(payload, opts) {
     statusEl.style.display = '';
     statusEl.className = 'tx-confirm-status ' + (kind === 'error' ? 'error' : kind === 'success' ? 'success' : 'pending');
     setStatusContent(statusEl, m, meta);
-    // A failed simulation/send is terminal for this reviewed confirmation. Unlock dismissal so the user can
-    // correct the form and try again instead of being trapped behind disabled Cancel/close controls. Confirm
-    // stays disabled because its one-shot promise has already handed the exact reviewed call to executeTransaction.
-    if (kind === 'error') {
-      inFlight = false;
+    // Confirm stays disabled: its one-shot promise already handed the exact reviewed call to executeTransaction.
+    // A follow-on step (showNext) returns the dialog to review.
+    if (dialog === 'sending' && confirmStatusSettles(kind, meta)) {
+      dialog = 'settled';
       cancel.disabled = false;
       cancel.textContent = 'Close';
     }
@@ -1371,7 +1383,7 @@ export function confirmTransactionModal(payload, opts) {
     if (!feeReview) confirm.textContent = nextOpts.confirmText || 'Confirm & send';
     confirm.disabled = bodyDisabled || feeBusy; cancel.disabled = false; cancel.textContent = 'Cancel';
     statusEl.style.display = 'none';
-    inFlight = false;
+    dialog = 'review';
     return waitForConfirm();
   }
   cancel.addEventListener('click', modal.requestClose);
@@ -1383,7 +1395,7 @@ export function confirmTransactionModal(payload, opts) {
     if (keepOpen) {
       // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
       // showStatus()/close() as the tx progresses. Resolve now so the caller can start.
-      inFlight = true; confirm.disabled = true; cancel.disabled = true;
+      dialog = 'sending'; confirm.disabled = true; cancel.disabled = true;
       settle({ ok: true, showStatus: showStatus, close: teardown, showNext: showNext });
     } else {
       settle(true); teardown();
@@ -1393,9 +1405,16 @@ export function confirmTransactionModal(payload, opts) {
 }
 
 // The hold (write-hold.js) for one direct contract write: `request` is { address, abi, functionName, args, value },
-// with `holdAs` naming the action when one action has more than one entry point (an LP mint's multicall).
+// with `holdAs` naming the action when one action has more than one entry point (an LP mint's multicall), and
+// `holdScope` standing in for the target when one intent can reach several contracts (a payment's route).
+// The hold scope for a payment (or add to balance) to a project: one per project, whatever its route, and the same
+// for every spelling of its id (007 and 7).
+export function payHoldScope(projectId) {
+  return 'project-' + BigInt(projectId).toString();
+}
+
 export function holdForWrite(chainId, account, request) {
-  return writeHold(chainId, account, { to: request.address, functionName: request.holdAs || request.functionName, value: request.value || 0n,
+  return writeHold(chainId, account, { to: request.holdScope || request.address, functionName: request.holdAs || request.functionName, value: request.value || 0n,
     data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }) });
 }
 
@@ -1450,25 +1469,37 @@ export function sendHeldWrite(hold, check, send) {
 }
 
 function offerHeldRelease(hold, record, line) {
+  offerRelease(line, function () {
+    var current = hold.read();
+    // Only the attempt this dialog shows, in the state shown: a newer attempt or a hash saved since stays held.
+    if (current && (current.id !== record.id || (current.hash || null) !== (record.hash || null))) return false;
+    return Promise.resolve(current && hold.release(record)).then(function () { return true; });
+  });
+}
+
+// The held-no-hash exit: after the user checks their wallet, `release()` frees exactly the attempt `line` shows.
+// It resolves false when that attempt changed since, and the dialog says so.
+export function offerRelease(line, release) {
   var modal = openDialog('Earlier transaction not settled');
   var content = el('div', 'pay-confirm');
   var note = el('div', 'tx-confirm-note'); note.textContent = line;
   var foot = el('div', 'create-modal-foot');
-  var release = el('button', 'create-btn primary'); release.type = 'button'; release.textContent = 'It was not sent, release it';
-  foot.appendChild(release); content.appendChild(note); content.appendChild(foot);
+  var button = el('button', 'create-btn primary'); button.type = 'button'; button.textContent = 'It was not sent, release it';
+  foot.appendChild(button); content.appendChild(note); content.appendChild(foot);
   modal.panel.appendChild(content);
-  release.addEventListener('click', function () {
-    var current;
-    try { current = hold.read(); } catch (err) { note.textContent = errMessage(err, 'Could not release it.'); return; }
-    // Only the attempt this dialog shows, in the state shown: a newer attempt or a hash saved since stays held.
-    if (current && (current.id !== record.id || (current.hash || null) !== (record.hash || null))) { note.textContent = 'This action changed since this check. Try it again to see where it stands.'; return; }
-    release.disabled = true;
-    Promise.resolve(current && hold.release(record)).then(modal.close, function (err) { release.disabled = false; note.textContent = errMessage(err, 'Could not release it.'); });
+  button.addEventListener('click', function () {
+    button.disabled = true;
+    Promise.resolve().then(release).then(function (released) {
+      if (released) { modal.close(); return; }
+      button.disabled = false; note.textContent = 'This action changed since this check. Try it again to see where it stands.';
+    }, function (err) { button.disabled = false; note.textContent = errMessage(err, 'Could not release it.'); });
   });
 }
 
 export function executeTransaction(opts) {
   // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, reverify, onStatus, onSuccess, onError, skipConfirm, label }
+  // onStatus/onSuccess meta.phase uses the SDK's ReviewedProgress names: simulating, signing, receipt (hash known),
+  // proposed (queued in the Safe), done.
   if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
   var wallet = getWalletClient();
   var reviewedSafe = opts.expectedSafe == null ? isSafeConnected() : opts.expectedSafe;
@@ -1477,6 +1508,10 @@ export function executeTransaction(opts) {
   if (!account) { opts.onError('Connect wallet to transact'); return; }
   // A caller with its own write journal (onWriteRejected) keeps it; every other direct write is held here.
   var hold = opts.onWriteRejected ? null : holdForWrite(opts.chainId, account, opts);
+  // A scoped hold also reads the per-target holds an earlier build saved for the same action (read-only).
+  var legacyHolds = hold && opts.holdScope ? (opts.holdLegacyTargets || []).filter(Boolean).map(function (to) {
+    return holdForWrite(opts.chainId, account, Object.assign({}, opts, { address: to, holdScope: null }));
+  }) : [];
   var heldReservation = null;
 
   // Status/result callbacks. When the confirm modal is shown (not skipConfirm), these get wrapped so tx
@@ -1490,10 +1525,15 @@ export function executeTransaction(opts) {
 
   // Build the review payload and require explicit confirmation, unless the caller already showed its own.
   // A held earlier attempt is settled from the chain first; the review opens only once nothing holds it.
-  var held = false, heldNow;
-  try { heldNow = !!hold && !!hold.read(); } catch (_) { heldNow = true; }
-  var confirmStep = heldNow ? heldWriteGate(hold, opts.label || opts.functionName, opts.verifyReceipt).then(function (gate) {
-    if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'confirmed', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
+  var held = false;
+  var gates = hold ? [hold].concat(legacyHolds) : [];
+  var heldNow = gates.some(function (h) { try { return !!h.read(); } catch (_) { return true; } });
+  function settleGates(i) {
+    if (i >= gates.length) return Promise.resolve(null);
+    return heldWriteGate(gates[i], opts.label || opts.functionName, opts.verifyReceipt).then(function (gate) { return gate || settleGates(i + 1); });
+  }
+  var confirmStep = heldNow ? settleGates(0).then(function (gate) {
+    if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'done', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
     if (gate) { held = true; callerOnError(gate.line, gate.verificationError ? { submittedHash: gate.submittedHash, error: gate.verificationError, userRejected: false } : undefined); return null; }
     return reviewStep();
   }) : reviewStep();
@@ -1610,14 +1650,14 @@ export function executeTransaction(opts) {
         } else txs.push({ to: opts.tokenAddr, value: '0', data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [opts.spenderAddr, BigInt(opts.approvalAmount)] }) });
       }
       txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
-      cbs.onStatus('Proposing to your Safe…', 'pending');
+      cbs.onStatus('Proposing to your Safe…', 'pending', { phase: 'signing' });
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
       return invokeWallet(opts.chainId, account, true, function () {
         walletInvoked = true;
         return proposeSafeTransactions(txs);
       }, function () { assertWalletInvocation(true); }).then(function (safeTxHash) {
-        cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'safe-proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
+        cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
       });
     }).catch(async function (err) {
       try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
@@ -1625,12 +1665,12 @@ export function executeTransaction(opts) {
     });
     return;
   }
-  cbs.onStatus('Checking wallet network…', 'pending');
+  cbs.onStatus('Checking wallet network…', 'pending', { phase: 'simulating' });
   var approvalReceipt = null;
 
   wallet.getChainId().then(function(walletChainId) {
     if (walletChainId !== opts.chainId) {
-      cbs.onStatus('Switching to ' + chainNameFor(opts.chainId) + '…', 'pending');
+      cbs.onStatus('Switching to ' + chainNameFor(opts.chainId) + '…', 'pending', { phase: 'simulating' });
       return switchChain(opts.chainId);
     }
   }).then(function() {
@@ -1647,7 +1687,7 @@ export function executeTransaction(opts) {
   }).then(function() {
     var current = getAccount();
     if (!current || current.toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    cbs.onStatus('Simulating the confirmed transaction…', 'pending');
+    cbs.onStatus('Simulating the confirmed transaction…', 'pending', { phase: 'simulating' });
     var pub = createPublicClientForChain(opts.chainId);
     var simulationRequest = {
       account: account,
@@ -1667,7 +1707,7 @@ export function executeTransaction(opts) {
     if (callerBlock != null && (approvalBlock == null || callerBlock > approvalBlock)) approvalBlock = callerBlock;
     if (approvalBlock != null) simulationRequest.blockNumber = approvalBlock;
     return pub.simulateContract(simulationRequest).then(async function(simulation) {
-      cbs.onStatus('Awaiting wallet confirmation…', 'pending');
+      cbs.onStatus('Awaiting wallet confirmation…', 'pending', { phase: 'signing' });
       var gas = await contractGasWithHeadroom(pub, simulation.request);
       if (opts.onSending) await opts.onSending();
       beforeWriteComplete = true;
@@ -1688,7 +1728,7 @@ export function executeTransaction(opts) {
     submittedHash = hash;
     // Submitted to the mempool — now waiting to be included onchain. Keep a live pending state up
     // the whole time (waitForTransactionReceipt can take a while).
-    cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'submitted', hash: hash, chainId: opts.chainId });
+    cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'receipt', hash: hash, chainId: opts.chainId });
     var pub = createPublicClientForChain(opts.chainId);
     // Poll receipts directly instead of waiting for a subscription-style
     // watcher to reject before falling back. Some injected/public RPC pairs
@@ -1705,14 +1745,14 @@ export function executeTransaction(opts) {
     }
     if (opts.verifyReceipt) await opts.verifyReceipt(receipt);
     if (heldReservation) await hold.release(heldReservation).catch(function () {});
-    cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'confirmed', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
+    cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'done', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(async function(err) {
     try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
     if (submittedHash && err && err.code === 'RULESET_ORDER_UNVERIFIED') {
       cbs.onError(err.message, { userRejected: false, submittedHash: submittedHash, error: err }); return;
     }
     if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {
-      cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'submitted', hash: submittedHash, chainId: opts.chainId, trackingError: true });
+      cbs.onStatus('Transaction submitted; confirmation tracking is temporarily unavailable.', 'pending', { phase: 'receipt', hash: submittedHash, chainId: opts.chainId, trackingError: true });
       return;
     }
     if (err && err.heldWrite) { cbs.onError(err.message, { userRejected: false, submittedHash: null, error: err }); return; }
@@ -1861,7 +1901,7 @@ function checkAndApprove(tokenAddr, spender, amount, chainId, onStatus, assertWr
   return readErc20Allowance(pub, tokenAddr, owner, spender).then(function(allowance) {
     if (BigInt(allowance) >= BigInt(amount)) return;
     if (!getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-    onStatus('Approving token spend…', 'pending');
+    onStatus('Approving token spend…', 'pending', { phase: 'signing' });
     return pub.simulateContract({
       account: owner,
       address: tokenAddr,

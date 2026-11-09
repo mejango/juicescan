@@ -4,10 +4,11 @@
 
 import {
   el, createComponentWrapper, createProjectAndChainInput,
-  createWalletButton, discoverChains, selectChain, firstChainForNetwork,
+  createWalletButton, selectChain, firstChainForNetwork,
   executeTransaction, renderError, getAddress,
   getChainTokens, parseHashDefaults,
 } from './component-base.js';
+import { projectDiscovery } from './project-discovery.js';
 
 export var deployERC20Abi = [{
   type: 'function', name: 'deployERC20For', stateMutability: 'nonpayable',
@@ -47,7 +48,7 @@ export function renderDeployERC20Component() {
     _defaultChain: defaults.chain ? Number(defaults.chain) : null,
   };
 
-  var discoveryGeneration = 0;
+  var discoverProject = projectDiscovery(state, updateUI);
 
   var comp = createComponentWrapper('DEPLOY ERC-20', 'deploy-erc20', state, function() {
     var params = {};
@@ -113,23 +114,7 @@ export function renderDeployERC20Component() {
     state.error = null;
     state.txStatus = null;
 
-    var pid = state.projectId;
-    if (!pid || !/^\d+$/.test(pid) || pid === '0') { state.phase = 'idle'; updateUI(); return; }
-
-    state.phase = 'discovering';
-    updateUI();
-
-    var gen = ++discoveryGeneration;
-    discoverChains(pid, function(live) {
-      if (gen !== discoveryGeneration) return;
-      state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
-      var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
-      selectChain(state, preferred);
-      state._defaultChain = null;
-      state.phase = 'ready';
-      updateUI();
-    });
+    discoverProject(function (chainId) { selectChain(state, chainId); });
   }
 
   function executeDeploy() {

@@ -4,10 +4,11 @@
 
 import {
   el, createComponentWrapper, createProjectAndChainInput,
-  createWalletButton, discoverChains, selectChain, firstChainForNetwork,
+  createWalletButton, selectChain, firstChainForNetwork,
   executeTransaction, executeRead, renderError, getAddress, getAccount, getViewAs,
   getChainTokens, parseAmount, formatAmount, parseHashDefaults,
 } from './component-base.js';
+import { projectDiscovery } from './project-discovery.js';
 
 export var burnTokensAbi = [{
   type: 'function', name: 'burnTokensOf', stateMutability: 'nonpayable',
@@ -63,7 +64,7 @@ export function renderBurnComponent() {
     _defaultChain: defaults.chain ? Number(defaults.chain) : null,
   };
 
-  var discoveryGeneration = 0;
+  var discoverProject = projectDiscovery(state, updateUI);
 
   var comp = createComponentWrapper('BURN TOKENS', 'burn', state, function() {
     var params = {};
@@ -157,24 +158,7 @@ export function renderBurnComponent() {
     state.error = null;
     state.txStatus = null;
 
-    var pid = state.projectId;
-    if (!pid || !/^\d+$/.test(pid) || pid === '0') { state.phase = 'idle'; updateUI(); return; }
-
-    state.phase = 'discovering';
-    updateUI();
-
-    var gen = ++discoveryGeneration;
-    discoverChains(pid, function(live) {
-      if (gen !== discoveryGeneration) return;
-      state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
-      var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
-      selectChain(state, preferred);
-      state._defaultChain = null;
-      state.phase = 'ready';
-      updateUI();
-      loadBalance();
-    });
+    discoverProject(function (chainId) { selectChain(state, chainId); }, function () { loadBalance(); });
   }
 
   function loadBalance() {
