@@ -100,6 +100,22 @@ describe('direct multichain creation recovery', () => {
     expect(mocks.postBundle).not.toHaveBeenCalled();
   });
 
+  it('journals each launch leg once: its own record, not also the shared write hold', async () => {
+    const draft = state(), session = { account: ALICE, plans: plans() };
+    __test.saveCreateDirectSession(draft, session);
+    mocks.client.mockImplementation(clientFor(session));
+    mocks.execute.mockImplementation((opts) => {
+      expect(typeof opts.onWriteRejected).toBe('function');
+      opts.onSending();
+      expect(JSON.parse(localStorage.getItem(KEY)).plans.find((p) => p.chainId === opts.chainId).status).toBe('awaiting-wallet');
+      opts.onWriteRejected();
+      expect(JSON.parse(localStorage.getItem(KEY)).plans.find((p) => p.chainId === opts.chainId).status).toBe('ready');
+      opts.onError('Transaction rejected by wallet', { userRejected: true });
+    });
+    await expect(__test.runDeploy(state(), ALICE)).rejects.toThrow('Transaction rejected by wallet');
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
   it('restores an old direct testnet launch before expanded Relayr eligibility or changed form values', async () => {
     const original = state(), session = { account: ALICE, plans: plans() };
     session.plans[0].hash = HASH1; session.plans[0].status = 'confirmed';
