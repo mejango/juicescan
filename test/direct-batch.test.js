@@ -23,6 +23,17 @@ describe('sequential direct transaction recovery', () => {
     expect(hasDirectBatch(scope, ACCOUNT, CALLS)).toBe(true);
   });
 
+  it('releases a journal when the wallet rejection arrives wrapped, as viem sends it', async () => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn({})) } });
+    const scope = 'wrapped-rejection';
+    const rejection = Object.assign(new Error('User rejected the request.'), { code: 4001 });
+    await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
+      sending(); throw Object.assign(new Error('Transaction execution error.'), { name: 'TransactionExecutionError', cause: rejection });
+    } })).rejects.toThrow('Transaction execution error.');
+    expect(await clearUnsubmittedDirectBatch(scope, ACCOUNT, CALLS)).toBe(true);
+    expect(hasDirectBatch(scope, ACCOUNT, CALLS)).toBe(false);
+  });
+
   it('releases a journal when the final boundary proves the wallet was never invoked', async () => {
     const scope = 'boundary-unsent';
     await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {

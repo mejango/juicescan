@@ -1,6 +1,7 @@
 // Sequential wallet sends retain each submitted hash so a later rejected or unknown leg cannot replay
 // earlier successful calls. A resumed batch must still match the exact reviewed destinations/calldata.
 import { keccak256, stringToHex } from 'viem';
+import { isExplicitWalletRejection } from './write-hold.js';
 
 var memory = new Map();
 var PREFIX = 'jb-direct-batch-v1:';
@@ -102,8 +103,8 @@ export async function runDirectBatch(calls, options, locked) {
           }
         });
       } catch (error) {
-        // A definite wallet rejection did not broadcast. Transport errors remain blocked with the saved marker.
-        if (session.hashes[index] === 'sending' && error && (error.walletNotInvoked || error.code === 4001 || error.code === 'ACTION_REJECTED')) {
+        // A definite wallet rejection (the write hold's rule) did not broadcast. Transport errors remain blocked with the saved marker.
+        if (session.hashes[index] === 'sending' && error && (error.walletNotInvoked || isExplicitWalletRejection(error))) {
           session.hashes[index] = null; persist();
         }
         throw error;
