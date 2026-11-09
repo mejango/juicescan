@@ -3232,6 +3232,25 @@ function renderDeploy(state, render) {
       }
       directNote.appendChild(leg);
     });
+    // A leg held without a hash (the write hold's held-no-hash): only the user's wallet check can release it.
+    var heldNoHash = savedDirect.plans.filter(function (plan) { return plan.status === 'awaiting-wallet' && !plan.hash; });
+    if (heldNoHash.length) {
+      directNote.appendChild(infoNote('The wallet request on ' + heldNoHash.map(function (p) { return chainName(p.chainId); }).join(', ') + ' may have been sent: your wallet did not say. Check your wallet; if it was not sent, release it.'));
+      var releaseDirect = el('button', 'create-btn ghost'); releaseDirect.type = 'button'; releaseDirect.textContent = 'It was not sent, release it'; releaseDirect.disabled = state.deploying;
+      releaseDirect.addEventListener('click', async function () {
+        if (!navigator.locks || !navigator.locks.request) return;
+        await navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+          var latest;
+          try { latest = loadCreateDirectSession(true); } catch (_) { latest = null; }
+          // Only the launch this note shows, in the state shown: a hash saved since, or another window's run, stays held.
+          if (lock && latest && latest.id === savedDirect.id && latest.revision === savedDirect.revision) {
+            latest.plans.forEach(function (plan) { if (plan.status === 'awaiting-wallet' && !plan.hash) plan.status = 'ready'; });
+            saveCreateDirectSession(state, latest);
+          } else state.statusLines.push({ text: 'This launch changed or is active in another window. Check its saved transactions before continuing.', err: true });
+          render();
+        });
+      }); directNote.appendChild(releaseDirect);
+    }
     var resumeDirect = el('button', 'create-btn primary'); resumeDirect.textContent = state.deploying ? 'Checking launch…' : 'Resume saved launch'; resumeDirect.disabled = state.deploying;
     resumeDirect.addEventListener('click', function () { deploy(state, render); }); directNote.appendChild(resumeDirect);
     if (savedDirect.plans.every(function (plan) { return plan.status === 'ready' && !plan.hash && !(plan.failedHashes || []).length; })) {

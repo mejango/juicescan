@@ -228,6 +228,37 @@ describe('direct multichain creation recovery', () => {
     expect(mocks.execute).not.toHaveBeenCalled();
   });
 
+  it('offers the held-no-hash exit for an interrupted wallet request, releasing only the state shown', async () => {
+    const draft = state(); const session = { account: ALICE, plans: plans() };
+    session.plans[0].status = 'awaiting-wallet';
+    __test.saveCreateDirectSession(draft, session);
+    const render = vi.fn();
+    const view = __test.renderDeploy(draft, render);
+    const release = [...view.querySelectorAll('button')].find((button) => button.textContent === 'It was not sent, release it');
+    expect(release).toBeTruthy();
+    expect(view.textContent).toContain('Check your wallet');
+
+    release.click();
+    await vi.waitFor(() => expect(render).toHaveBeenCalled());
+    const saved = __test.loadCreateDirectSession(true);
+    expect(saved.plans.map((plan) => plan.status)).toEqual(['ready', 'ready']);
+    expect(__test.renderDeploy(draft, () => {}).textContent).toContain('Discard unsubmitted launch');
+  });
+
+  it('keeps a leg held when the saved launch changed after the exit was shown', async () => {
+    const draft = state(); const session = { account: ALICE, plans: plans() };
+    session.plans[0].status = 'awaiting-wallet';
+    __test.saveCreateDirectSession(draft, session);
+    const view = __test.renderDeploy(draft, vi.fn());
+    const newer = JSON.parse(localStorage.getItem(KEY));
+    newer.plans[0].hash = HASH1; newer.plans[0].status = 'submitted'; newer.revision += 1;
+    localStorage.setItem(KEY, JSON.stringify(newer));
+    const render = vi.fn();
+    [...view.querySelectorAll('button')].find((button) => button.textContent === 'It was not sent, release it').click();
+    await vi.waitFor(() => expect(draft.statusLines.some((line) => /changed/.test(line.text))).toBe(true));
+    expect(JSON.parse(localStorage.getItem(KEY)).plans[0]).toMatchObject({ status: 'submitted', hash: HASH1 });
+  });
+
   it('does not infer user cancellation from ambiguous rejection wording', async () => {
     const session = { account: ALICE, plans: plans() };
     mocks.execute.mockImplementationOnce(async (opts) => { await opts.onSending(); opts.onError('RPC rejected the broadcast response'); });
