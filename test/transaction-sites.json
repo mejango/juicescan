@@ -9,6 +9,14 @@
         "Selected project action recovery"
       ]
     },
+    "src/browser-locks.js": {
+      "counts": {
+        "providerRequest": 1
+      },
+      "actions": [
+        "Held direct writes"
+      ]
+    },
     "src/burn-component.js": {
       "counts": {
         "executeTransaction": 1

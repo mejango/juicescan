@@ -119,10 +119,14 @@ it('a stale dialog never releases a newer attempt',async()=>{
  [...document.querySelectorAll('dialog[open] .create-btn.primary')][0].click();
  expect(JSON.parse(localStorage.getItem(k)).id).toBe('newer');
 });
-it('sends nothing where the browser has no Web Locks to keep the send to one window',async()=>{
+it('sends on the lock fallback where the browser has no Web Locks, still once per action',async()=>{
  Object.defineProperty(navigator,'locks',{configurable:true,value:undefined});
- try{expect((await run()).error).toMatch(/one window/i);}finally{Object.defineProperty(navigator,'locks',{configurable:true,value:webLocks});}
- expect(h.wallet.writeContract).not.toHaveBeenCalled();
+ h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
+ try{
+  expect((await run()).error).toMatch(/stays pending/i);
+  expect((await run()).error).toMatch(/earlier/i);
+ }finally{Object.defineProperty(navigator,'locks',{configurable:true,value:webLocks});}
+ expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
 it('a hash kept in memory never lets an old attempt release a newer stored one',async()=>{
  const hold=writeHold(8453,h.account,call);

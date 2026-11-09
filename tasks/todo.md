@@ -540,3 +540,7 @@ Fourteen commits on state-machines-2026-11-09. `npm run check` passes (Node 22.2
 - **Evidence and unknowns:** Each FIX starts from a failing test on origin/main ac4ebce; viem wraps a 4001 in TransactionExecutionError (code undefined, cause 4001), checked locally. The bridge stale-load race is by construction, not reproduced.
 - **Verification:** New vitest regressions per fix (confirm-recovery, project-discovery, direct-batch, create-direct-recovery, bridge listener), existing suites green, `npm run check` with coverage floors, bundle budget and browser tests.
 - **Resource budget:** One worktree, node_modules cloned copy-on-write, commits per item, suites run one at a time; replan if a refactor breaks existing tests in a way that implies behavior change.
+
+### R119: writes without Web Locks
+- [x] One local `browserLocks()` (src/browser-locks.js, SDK copy: Web Locks, else IndexedDB lease, else in-tab queue); every refusing lock site routes through it; refusal messages deleted; refusal tests now expect the flow to run on the fallback.
+- [x] Gate: `npm run check` (Node 22.23.4) passes: 222 files / 2306 unit tests, startup 718,941 / 722,000 B gzip (+528), total 2,083,555 / 2,125,000 B (+478), 148 browser tests.

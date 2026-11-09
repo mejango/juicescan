@@ -1,5 +1,7 @@
 // Freeze independent destination calls before any wallet request. A receipt checkpoint is written before
 // the lower-level Relayr/direct journal can clear, so interrupted rounds never start over from new balances.
+import { browserLocks } from './browser-locks.js';
+
 var PREFIX = 'jb-selected-action-v1:';
 var active = new Set();
 
@@ -58,8 +60,8 @@ export function acknowledgeSavedActionPlan(scope, account) {
 // direct and Relayr journals unsubmitted. Anything uncertain keeps the plan for recovery.
 export async function discardUnsubmittedActionPlan(scope, account, planId, journalsClear) {
   var key = keyFor(scope, account);
-  if (active.has(key) || typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return false;
-  return navigator.locks.request(key, { ifAvailable: true }, async function (lock) {
+  if (active.has(key)) return false;
+  return browserLocks().request(key, { ifAvailable: true }, async function (lock) {
     if (!lock || active.has(key)) return false;
     var plan;
     try { plan = read(key); } catch (_) { return false; }
@@ -77,13 +79,10 @@ export async function runSavedActionPlan(options, locked) {
   if (!options.scope || !options.account) throw new Error('This action is missing its account or recovery scope.');
   if (!locked) {
     if (active.has(key)) throw new Error('This action is already open. Resume it in the original window.');
-    if (typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
-      return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
-        if (!lock) throw new Error('This action is running in another window. Resume it there.');
-        return runSavedActionPlan(options, true);
-      });
-    }
-    throw new Error('This browser cannot lock a saved multichain action. Use a browser with Web Locks support to continue.');
+    return browserLocks().request(key, { ifAvailable: true }, function (lock) {
+      if (!lock) throw new Error('This action is running in another window. Resume it there.');
+      return runSavedActionPlan(options, true);
+    });
   }
   active.add(key);
   try {

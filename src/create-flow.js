@@ -34,6 +34,7 @@ import { assertNewTierPolicy, build721TierConfig, build721TierMetadata, mediaTyp
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
 import { gasWithHeadroom } from './gas.js';
+import { browserLocks } from './browser-locks.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { isEnsName, resolveEns, reverseEns, cachedEnsAddress } from './ens.js';
 import {
@@ -3238,8 +3239,7 @@ function renderDeploy(state, render) {
       directNote.appendChild(infoNote('The wallet request on ' + heldNoHash.map(function (p) { return chainName(p.chainId); }).join(', ') + ' may have been sent: your wallet did not say. Check your wallet; if it was not sent, release it.'));
       var releaseDirect = el('button', 'create-btn ghost'); releaseDirect.type = 'button'; releaseDirect.textContent = 'It was not sent, release it'; releaseDirect.disabled = state.deploying;
       releaseDirect.addEventListener('click', async function () {
-        if (!navigator.locks || !navigator.locks.request) return;
-        await navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+        await browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
           var latest;
           try { latest = loadCreateDirectSession(true); } catch (_) { latest = null; }
           // Only the launch this note shows, in the state shown: a hash saved since, or another window's run, stays held.
@@ -3256,8 +3256,7 @@ function renderDeploy(state, render) {
     if (savedDirect.plans.every(function (plan) { return plan.status === 'ready' && !plan.hash && !(plan.failedHashes || []).length; })) {
       var discardDirect = el('button', 'create-btn ghost'); discardDirect.textContent = 'Discard unsubmitted launch'; discardDirect.disabled = state.deploying;
       discardDirect.addEventListener('click', async function () {
-        if (!navigator.locks || !navigator.locks.request) return;
-        await navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+        await browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, function (lock) {
           var latest = loadCreateDirectSession(true);
           if (lock && latest && latest.id === savedDirect.id && latest.plans.every(function (plan) { return plan.status === 'ready' && !plan.hash && !(plan.failedHashes || []).length; })) clearCreateDirectSession(state);
           else state.statusLines.push({ text: 'This launch is active or has changed in another window. Check its saved transactions before continuing.', err: true });
@@ -3951,8 +3950,7 @@ async function verifyCreateDirectLeg(session, plan) {
 }
 
 async function runCreateDirectSession(state, session, resumed) {
-  if (!navigator.locks || !navigator.locks.request) throw new Error('This browser cannot coordinate a saved launch across windows. Use a browser with Web Locks support for multichain direct creation.');
-  return navigator.locks.request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock) {
+  return browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock) {
     if (!lock) throw new Error('This launch is active in another window. Continue there or close that window before resuming.');
     var latest = loadCreateDirectSession(true);
     if (!latest && session.id) throw new Error('This saved launch was cleared in another window. Check its transactions before continuing.');

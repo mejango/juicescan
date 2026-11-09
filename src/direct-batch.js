@@ -2,6 +2,7 @@
 // earlier successful calls. A resumed batch must still match the exact reviewed destinations/calldata.
 import { keccak256, stringToHex } from 'viem';
 import { isExplicitWalletRejection } from './write-hold.js';
+import { browserLocks } from './browser-locks.js';
 
 var memory = new Map();
 var PREFIX = 'jb-direct-batch-v1:';
@@ -28,8 +29,7 @@ export function hasDirectBatch(scope, account, calls) { return !!directBatchStat
 export async function clearUnsubmittedDirectBatch(scope, account, calls) {
   if (!scope || !account || !Array.isArray(calls)) return false;
   var key = PREFIX + String(account).toLowerCase() + ':' + scope;
-  if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return false;
-  return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
+  return browserLocks().request(key, { ifAvailable: true }, function (lock) {
     if (!lock || memory.has(key)) return false;
     var raw = localStorage.getItem(key);
     if (raw == null) return true;
@@ -49,8 +49,7 @@ function newAttemptId() {
 // The held-no-hash exit for slot `index`: frees it only while it is still the same interrupted attempt
 // (`attempt`, saved when the slot was marked 'sending') of the same batch.
 function releaseUnsent(key, identity, index, attempt) {
-  if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) return Promise.resolve(false);
-  return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
+  return browserLocks().request(key, { ifAvailable: true }, function (lock) {
     if (!lock) return false;
     var session = memory.get(key);
     if (!session) {
@@ -68,8 +67,8 @@ function releaseUnsent(key, identity, index, attempt) {
 export async function runDirectBatch(calls, options, locked) {
   var identity = directBatchIdentity(calls);
   var key = PREFIX + String(options.account).toLowerCase() + ':' + (options.scope || identity);
-  if (!locked && typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
-    return navigator.locks.request(key, { ifAvailable: true }, function (lock) {
+  if (!locked) {
+    return browserLocks().request(key, { ifAvailable: true }, function (lock) {
       if (!lock) throw new Error('This direct transaction batch is already running in another window. Check that window before submitting again.');
       return runDirectBatch(calls, options, true);
     });

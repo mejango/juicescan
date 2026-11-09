@@ -18,6 +18,7 @@ import { getWalletClient, invokeWallet, isSafeConnected, getAccount, createPubli
 import { CHAINS, chainNameFor } from './chain.js';
 import { gasWithHeadroom } from './gas.js';
 import { isExplicitWalletRejection } from './write-hold.js';
+import { browserLocks } from './browser-locks.js';
 import { decodeSafeExecRelayrTx, hasExactSafeExecutionSuccess, readSafeUintBounded } from './safe.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
@@ -411,10 +412,7 @@ export async function relayrPostBundle(transactions, journal, locked) {
   }
   var forwarded = forwardedPublicationProofs(transactions, journal);
   if (locked !== RELAYR_PUBLICATION_LOCK && forwarded.length) {
-    if (typeof navigator === 'undefined' || !navigator.locks || typeof navigator.locks.request !== 'function') {
-      throw new Error('This browser cannot lock forwarded Relayr publication across actions. Use a browser with Web Locks support. Nothing was published or paid.');
-    }
-    return navigator.locks.request('jb-relayr-forwarder-publication-v1', function () {
+    return browserLocks().request('jb-relayr-forwarder-publication-v1', function () {
       return relayrPostBundle(transactions, journal, RELAYR_PUBLICATION_LOCK);
     });
   }
@@ -643,7 +641,7 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   async function sendPayment() {
     // Another tab can have opened its own quote while this tab was reviewing. Serialize the final journal
-    // check and wallet submission where Web Locks are available; the journal rejects a competing bundle.
+    // check and wallet submission; the journal rejects a competing bundle.
     details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
     if (reverify) await reverify();
@@ -681,9 +679,7 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
       throw uncertain;
     }
   }
-  var hash = typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function'
-    ? await navigator.locks.request('jb-relayr-payment:' + account.toLowerCase(), sendPayment)
-    : await sendPayment();
+  var hash = await browserLocks().request('jb-relayr-payment:' + account.toLowerCase(), sendPayment);
   if (onSubmitted) { try { onSubmitted(hash); } catch (_) {} }
   var receipt;
   try {
@@ -1017,8 +1013,7 @@ export function relayrScheduleCanBeRetired(session) {
 }
 
 export async function retireExpiredUnpaidRelayrSession(scope, session) {
-  if (typeof navigator === 'undefined' || !navigator.locks || typeof navigator.locks.request !== 'function') throw new Error('Use a browser with Web Locks to check this original launch before rebuilding.');
-  return navigator.locks.request('jb-relayr-payment:' + String(session.account).toLowerCase(), async function () {
+  return browserLocks().request('jb-relayr-payment:' + String(session.account).toLowerCase(), async function () {
     var current = requireUnpaidRelayrSession(scope, session.bundleUuid);
     if (String(current.account).toLowerCase() !== String(session.account).toLowerCase()) throw new Error('The launching wallet changed. Keep this original receipt and reconnect its wallet.');
     if (!relayrScheduleCanBeRetired(current)) throw new Error('This saved request is live or its payment state is uncertain. Keep its original receipt.');

@@ -3,6 +3,8 @@
 // account, chain, target and function, saved in browser storage before the wallet opens. Only an explicit
 // wallet rejection (EIP-1193 4001) drops it before a receipt; any other outcome keeps the action held, across
 // reloads, until a read receipt or the user's own wallet check ends it.
+import { browserLocks } from './browser-locks.js';
+
 var PREFIX = 'juicescan-write-hold-v1:';
 // Only a hash whose save failed after the wallet answered lives here, and only over the stored record of the
 // same attempt: the stored record stays the authority for which attempt holds the slot.
@@ -40,10 +42,7 @@ export function writeHold(chainId, account, call) {
   }
   // `wait`: queue behind another window instead of refusing (releases only).
   function withLock(work, wait) {
-    if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) {
-      return Promise.reject(new Error('This browser cannot keep wallet sends to one window. Update it to send; nothing was sent.'));
-    }
-    return navigator.locks.request(key, wait ? {} : { ifAvailable: true }, function (lock) {
+    return browserLocks().request(key, wait ? {} : { ifAvailable: true }, function (lock) {
       return lock ? work() : Promise.reject(new Error('This wallet action is already open in another window.'));
     });
   }
@@ -79,8 +78,7 @@ export function writeHold(chainId, account, call) {
     },
     releaseLocked: releaseLocked,
     release: function (expected) { return withLock(async function () { releaseLocked(expected); }, true); },
-    // Web Locks make reserve-then-send atomic across tabs; without them (pre-2022 browsers, insecure origins)
-    // nothing is sent rather than risk two tabs sending the same action.
+    // The lock makes reserve-then-send atomic across tabs: Web Locks, or browserLocks()'s fallback without them.
     withLock: withLock,
   };
 }
