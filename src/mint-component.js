@@ -4,10 +4,11 @@
 
 import {
   el, createComponentWrapper, createProjectAndChainInput,
-  createBeneficiaryInput, createWalletButton, discoverChains, selectChain,
+  createBeneficiaryInput, createWalletButton, selectChain,
   firstChainForNetwork, executeTransaction, renderError, getAddress,
   getChainTokens, parseAmount, formatAmount, parseHashDefaults, getBeneficiaryAddress,
 } from './component-base.js';
+import { projectDiscovery } from './project-discovery.js';
 
 export var mintTokensAbi = [{
   type: 'function', name: 'mintTokensOf', stateMutability: 'nonpayable',
@@ -52,7 +53,7 @@ export function renderMintComponent() {
     _defaultChain: defaults.chain ? Number(defaults.chain) : null,
   };
 
-  var discoveryGeneration = 0;
+  var discoverProject = projectDiscovery(state, updateUI);
 
   var comp = createComponentWrapper('MINT TOKENS', 'mint', state, function() {
     var params = {};
@@ -137,23 +138,7 @@ export function renderMintComponent() {
     state.error = null;
     state.txStatus = null;
 
-    var pid = state.projectId;
-    if (!pid || !/^\d+$/.test(pid) || pid === '0') { state.phase = 'idle'; updateUI(); return; }
-
-    state.phase = 'discovering';
-    updateUI();
-
-    var gen = ++discoveryGeneration;
-    discoverChains(pid, function(live) {
-      if (gen !== discoveryGeneration) return;
-      state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
-      var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
-      selectChain(state, preferred);
-      state._defaultChain = null;
-      state.phase = 'ready';
-      updateUI();
-    });
+    discoverProject(function (chainId) { selectChain(state, chainId); });
   }
 
   function executeMint() {

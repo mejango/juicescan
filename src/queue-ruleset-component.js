@@ -4,10 +4,11 @@
 
 import {
   el, createComponentWrapper, createProjectAndChainInput,
-  createWalletButton, discoverChains, selectChain, firstChainForNetwork,
+  createWalletButton, selectChain, firstChainForNetwork,
   executeTransaction, renderError, getAddress, parseHashDefaults,
   createPublicClientForChain, getChainTokens,
 } from './component-base.js';
+import { projectDiscovery } from './project-discovery.js';
 import { createDefaultRuleset, buildRulesetConfigs } from './ruleset-config.js';
 import { renderRulesetFieldset } from './ruleset-ui.js';
 import { requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel } from './create-flow.js';
@@ -136,7 +137,7 @@ export function renderQueueRulesetComponent() {
     _defaultChain: defaults.chain ? Number(defaults.chain) : null,
   };
 
-  var discoveryGeneration = 0;
+  var discoverProject = projectDiscovery(state, updateUI);
 
   var comp = createComponentWrapper('QUEUE RULESET', 'queue-ruleset', state, function() {
     var params = {};
@@ -207,23 +208,7 @@ export function renderQueueRulesetComponent() {
     state.error = null;
     state.txStatus = null;
 
-    var pid = state.projectId;
-    if (!pid || !/^\d+$/.test(pid) || pid === '0') { state.phase = 'idle'; updateUI(); return; }
-
-    state.phase = 'discovering';
-    updateUI();
-
-    var gen = ++discoveryGeneration;
-    discoverChains(pid, function(live) {
-      if (gen !== discoveryGeneration) return;
-      state.liveChains = live;
-      if (!live.length) { state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return; }
-      var preferred = (state._defaultChain && live.indexOf(state._defaultChain) !== -1) ? state._defaultChain : firstChainForNetwork(state) || live[0];
-      selectChain(state, preferred);
-      state._defaultChain = null;
-      state.phase = 'ready';
-      updateUI();
-    });
+    discoverProject(function (chainId) { selectChain(state, chainId); });
   }
 
   function executeQueue() {

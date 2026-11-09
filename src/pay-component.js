@@ -4,12 +4,13 @@
 
 import {
   el, parseHashDefaults,
-  discoverChains, createProjectAndChainInput, createComponentWrapper,
+  createProjectAndChainInput, createComponentWrapper,
   executeTransaction, getBeneficiaryAddress, firstChainForNetwork,
   createPublicClientForChain, getChainTokens,
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
+import { projectDiscovery } from './project-discovery.js';
 import { decodePayFailure } from './pay-failure.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 
@@ -161,7 +162,7 @@ export function renderPayComponent() {
     _defaultChain: defaults.chain ? Number(defaults.chain) : null,
   };
 
-  var discoveryGeneration = 0;
+  var discoverProject = projectDiscovery(state, updateUI);
   var tokenGeneration = 0;
   var previewGeneration = 0;
   var previewTimer = null;
@@ -442,30 +443,9 @@ export function renderPayComponent() {
     state.error = null;
     state.txStatus = null;
 
-    var pid = state.projectId;
-    if (!pid || !/^\d+$/.test(pid) || pid === '0') {
-      state.phase = 'idle';
-      updateUI();
-      return;
-    }
-
-    state.phase = 'discovering';
-    updateUI();
-
-    var gen = ++discoveryGeneration;
-    discoverChains(pid, function(live) {
-      if (gen !== discoveryGeneration) return;
-      state.liveChains = live;
-      if (!live.length) {
-        state.selectedChain = null; state.tokens = []; state.selectedToken = null;
-        state.phase = 'idle'; state.error = 'Could not find the project on the chains we could reach.'; updateUI(); return;
-      }
-
-      var preferredChain = (state._defaultChain && live.indexOf(state._defaultChain) !== -1)
-        ? state._defaultChain : firstChainForNetwork(state) || live[0];
-      state.selectedChain = preferredChain;
-      state.tokens = getChainTokens(preferredChain);
-
+    discoverProject(function (chainId) {
+      state.selectedChain = chainId;
+      state.tokens = getChainTokens(chainId);
       var preferredToken = null;
       if (state._defaultToken) {
         for (var ti = 0; ti < state.tokens.length; ti++) {
@@ -477,11 +457,7 @@ export function renderPayComponent() {
       }
       state.selectedToken = preferredToken || state.tokens[0] || null;
       state.decimals = state.selectedToken ? state.selectedToken.decimals : 18;
-      state._defaultChain = null;
-      state.phase = 'ready';
-      updateUI();
-      loadProjectTokens(preferredChain);
-    });
+    }, loadProjectTokens);
   }
 
   function schedulePreview() {
