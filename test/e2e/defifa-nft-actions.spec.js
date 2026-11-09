@@ -11,7 +11,7 @@ async function source(){
   build.onLoad({filter:/.*/,namespace:'native-ui'},args=>({loader:'js',contents:args.path==='sdk'?`export * from ${JSON.stringify(process.cwd()+'/src/nft-inventory-read.js')};
 export async function getProjectNftInventory(){return window.native.inventory}
 export async function getDefifaHoldings(){return window.native.holdings}
-`:args.path==='defifa'?`export {MAX_DEFIFA_ACTION_NFTS,defifaPhaseAllowsPay,defifaPhaseAllowsCashOut,effectiveTierPrice,DefifaNftTransactionRevertedError} from ${JSON.stringify(process.cwd()+'/src/defifa.js')};
+`:args.path==='defifa'?`export {MAX_DEFIFA_ACTION_NFTS,defifaPhaseAllowsPay,defifaPhaseAllowsCashOut,effectiveTierPrice,DefifaNftTransactionRevertedError,proveSavedCall} from ${JSON.stringify(process.cwd()+'/src/defifa.js')};
 export async function prepareDefifaPay(client,args){window.native.preparations++;const counts=new Map();for(const id of args.tierIdsToMint)counts.set(id,(counts.get(id)||0n)+1n);const selectedTiers=[...counts].map(([tierId,count])=>({tierId,count,unitPrice:window.native.inventory.tiers.find(t=>BigInt(t.id)===tierId).price}));return {...window.native.prepared,selectedTiers,amount:selectedTiers.reduce((sum,t)=>sum+t.unitPrice*t.count,0n),effectiveAttestationDelegate:args.account}}
 export async function prepareDefifaCashOut(){window.native.preparations++;return {...window.native.prepared,reclaimAmount:0n,protocolRewards:{defifaAmount:2n,baseProtocolAmount:0n,defifaToken:window.native.inventory.hook,baseProtocolToken:window.native.inventory.hook,defifaDecimals:18,baseProtocolDecimals:18}}}
 export async function prepareDefifaTransfer(){window.native.preparations++;return window.native.prepared}
@@ -19,6 +19,7 @@ export async function verifyDefifaNftTransaction(){window.native.verifications++
 export async function restoreDefifaNftReceiptContext(){return {}}
 `:args.path==='safe'?`export async function txHashForSafeTx(){return null}`:`export const ZERO_ADDRESS='0x'+'0'.repeat(40),NATIVE_TOKEN='0x000000000000000000000000000000000000EEEe';
 export const getAccount=()=>window.native.account,getViewAs=()=>null,createPublicClientForChain=()=>({});
+export const VIEW_AS_TX_ERROR='Leave View as before transacting.',getWalletClient=()=>null,invokeWallet=async()=>{},switchChain=async()=>{};
 export async function connect(){};export const isAddr=value=>/^0x[0-9a-fA-F]{40}$/.test(value);
 export const isSafeConnected=()=>false;export const formatAmount=(value,decimals)=>String(value)+' / 10^'+decimals;
 export const erc20ApproveAbi=[{type:'function',name:'approve',stateMutability:'nonpayable',inputs:[{name:'spender',type:'address'},{name:'amount',type:'uint256'}],outputs:[{name:'',type:'bool'}]}];

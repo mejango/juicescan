@@ -1,0 +1,723 @@
+{
+  "abi": [
+    {
+      "type": "constructor",
+      "inputs": [
+        {
+          "name": "controller",
+          "type": "address",
+          "internalType": "contract IJBController"
+        },
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "CONTROLLER",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "contract IJBController"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "initializeGame",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "referee",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "timelockDuration",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "pendingScorecardIdOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ratifiedScorecardIdOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "ratifyScorecardFrom",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierWeights",
+          "type": "tuple[]",
+          "internalType": "struct DefifaTierCashOutWeight[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutWeight",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "refereeOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "renounceOwnership",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "scorecardIdOf",
+      "inputs": [
+        {
+          "name": "gameHook",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tierWeights",
+          "type": "tuple[]",
+          "internalType": "struct DefifaTierCashOutWeight[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutWeight",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "scorecardSubmittedAtOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "stateOf",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "state",
+          "type": "uint8",
+          "internalType": "enum DefifaScorecardState"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "submitScorecardFor",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierWeights",
+          "type": "tuple[]",
+          "internalType": "struct DefifaTierCashOutWeight[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutWeight",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "timelockDurationOf",
+      "inputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "transferOwnership",
+      "inputs": [
+        {
+          "name": "newOwner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "event",
+      "name": "GameInitialized",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "referee",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "timelockDuration",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "OwnershipTransferred",
+      "inputs": [
+        {
+          "name": "previousOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "newOwner",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ScorecardRatified",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ScorecardSubmitted",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierWeights",
+          "type": "tuple[]",
+          "indexed": false,
+          "internalType": "struct DefifaTierCashOutWeight[]",
+          "components": [
+            {
+              "name": "id",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "cashOutWeight",
+              "type": "uint256",
+              "internalType": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_AlreadyInitialized",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_AlreadyRatified",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_DuplicateScorecard",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_GameNotFound",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_NotAllowed",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_NotReferee",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "caller",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_Uint48Overflow",
+      "inputs": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_UnknownProposal",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "scorecardId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_UnownedProposedCashoutValue",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "tierId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "cashOutWeight",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DefifaGovernor_ZeroReferee",
+      "inputs": [
+        {
+          "name": "gameId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "FailedCall",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "OwnableInvalidOwner",
+      "inputs": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OwnableUnauthorizedAccount",
+      "inputs": [
+        {
+          "name": "account",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    }
+  ],
+  "devdoc": {
+    "constructor": {
+      "params": {
+        "controller": "The controller used to find each game's hook, rulesets and project owner.",
+        "owner": "The address that can initialize games: the deployer."
+      }
+    },
+    "initializeGame(uint256,address,uint256)": {
+      "params": {
+        "gameId": "The ID of the game.",
+        "referee": "The address that judges the game.",
+        "timelockDuration": "The time a submitted scorecard waits before anyone can ratify it, in seconds."
+      }
+    },
+    "owner()": {
+      "details": "Returns the address of the current owner."
+    },
+    "ratifyScorecardFrom(uint256,(uint256,uint256)[])": {
+      "details": "Records the result before calling the hook and the deployer, so a re-entrant call can't ratify twice. A failed payout doesn't block ratification: `fulfillCommitmentsOf` catches it and still queues the final ruleset.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the pending scorecard."
+      },
+      "returns": {
+        "scorecardId": "The scorecard ID that was ratified."
+      }
+    },
+    "renounceOwnership()": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "scorecardIdOf(address,(uint256,uint256)[])": {
+      "params": {
+        "gameHook": "The address where the game is played.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      },
+      "returns": {
+        "scorecardId": "The scorecard's ID."
+      }
+    },
+    "stateOf(uint256,uint256)": {
+      "params": {
+        "gameId": "The ID of the game.",
+        "scorecardId": "The ID of the scorecard."
+      },
+      "returns": {
+        "state": "QUEUED while its timelock runs, SUCCEEDED once ratifiable, RATIFIED, or DEFEATED if the referee replaced it or another scorecard was ratified."
+      }
+    },
+    "submitScorecardFor(uint256,(uint256,uint256)[])": {
+      "details": "Runs the hook's structural validation now, so a malformed scorecard fails here instead of after the timelock. Resubmitting the pending scorecard reverts, since it would only restart its timelock.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      },
+      "returns": {
+        "scorecardId": "The scorecard's ID."
+      }
+    },
+    "transferOwnership(address)": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "userdoc": {
+    "CONTROLLER()": {
+      "notice": "The controller used to find each game's hook, rulesets and project owner."
+    },
+    "constructor": {
+      "notice": "Creates the governor for the given controller, owned by the deployer that initializes its games."
+    },
+    "initializeGame(uint256,address,uint256)": {
+      "notice": "Set a game's referee and timelock. Called by the deployer at launch."
+    },
+    "pendingScorecardIdOf(uint256)": {
+      "notice": "The scorecard waiting out its timelock for each game."
+    },
+    "ratifiedScorecardIdOf(uint256)": {
+      "notice": "The scorecard that has been ratified."
+    },
+    "ratifyScorecardFrom(uint256,(uint256,uint256)[])": {
+      "notice": "Ratify a game's pending scorecard once its timelock has passed. Anyone can call this."
+    },
+    "refereeOf(uint256)": {
+      "notice": "The referee of each game."
+    },
+    "scorecardIdOf(address,(uint256,uint256)[])": {
+      "notice": "The ID of a scorecard representing the provided tier weights."
+    },
+    "scorecardSubmittedAtOf(uint256,uint256)": {
+      "notice": "When each scorecard was last submitted. Zero if never."
+    },
+    "stateOf(uint256,uint256)": {
+      "notice": "The state of a submitted scorecard."
+    },
+    "submitScorecardFor(uint256,(uint256,uint256)[])": {
+      "notice": "Submit a game's scorecard, replacing any pending one and starting the timelock. Only the game's referee can call this."
+    },
+    "timelockDurationOf(uint256)": {
+      "notice": "The time each game's submitted scorecard waits before anyone can ratify it, in seconds."
+    }
+  },
+  "contractName": "DefifaGovernor",
+  "sourceName": "node_modules/@ballkidz/defifa/src/DefifaGovernor.sol"
+}

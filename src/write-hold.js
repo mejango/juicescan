@@ -61,9 +61,10 @@ export function writeHold(chainId, account, call) {
     account: account,
     read: read,
     // Refuses unless the record is verifiably in browser storage: a hold that cannot survive a reload is no hold.
-    reserve: function () {
+    // `fields` adds what a caller needs to prove the attempt later (Defifa keeps its exact call).
+    reserve: function (fields) {
       if (read()) throw new Error('An earlier transaction for this action is not settled. Check it before sending again.');
-      var record = { id: newId(), account: String(account).toLowerCase(), hash: null };
+      var record = Object.assign({}, fields, { id: newId(), account: String(account).toLowerCase(), hash: null });
       if (!saved(key, JSON.stringify(record))) throw new Error(STORAGE_LINE);
       return record;
     },

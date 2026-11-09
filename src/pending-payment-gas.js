@@ -1,8 +1,8 @@
 import { decodeFunctionData, encodeFunctionData } from 'viem';
-import { getAddress, registry } from './abi-registry.js';
+import { generationNames, getAddress, registry } from './abi-registry.js';
 
 var ABI = registry.contracts.JBRouterTerminalGateway;
-var GATEWAY_NAMES = ['JBRouterTerminalGateway', 'JBRouterTerminalGateway_deprecated1', 'JBRouterTerminalGateway_deprecated'];
+var GATEWAY_NAMES = generationNames('JBRouterTerminalGateway');
 
 // This exception is for the deployed gateway's original, nonpayable retry calldata. A Safe's
 // arbitrary destinations, delegatecalls and ordinary protocol calls retain their existing gas cap.

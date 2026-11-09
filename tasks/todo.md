@@ -495,3 +495,21 @@ No push, merge, deployment, contracts or SDK/dependency-version changes were per
 - [ ] Publish, pass exact-head full CI and merge with readback.
 
 Review: Revnet-only ignored control hidden with existing flavor guard; ordinary DOM checkbox changes actual encoded launch bytes, restored Revnet flag/bytes unchanged.52 focused tests across3 suites,332JS syntax checks, transaction inventory, dependency audit and production bundle/budgets pass on pinnedNode26. Independent Astra approves runtime SHA256905bcca3254e32a8563e0320fb1430b694e17f11466db8def30de37b01a716db and separately passes12DOM/encoding tests onNode22. No dependencies/contracts/SDK changes. Exact-head full CI required before authorized matched-head merge.
+
+# Juicescan on the latest deployment and bendystraw, no SDK — 2026-11-08
+
+## Plan refinement
+- **Objective:** Juicescan reads the deploy-all 8ff50c2 snapshot and the latest bendystraw (PRs #40, #44, #45, #46) directly, and has no `@bananapus/nana-sdk-core` dependency at all (jango, 2026-11-08).
+- **System fit:** deploy-all owns addresses and ABIs, juicescan's sync and generated registry own generation naming, and bendystraw owns indexed history. Retired generations stay readable for projects and games that still use them.
+- **Reuse:** the SDK review helpers Defifa uses move onto juicescan's existing local copies (`write-hold.js`, `relayr.js`). Golden vectors become juicescan's own fixtures. The SDK-parity canary and its workflow go.
+- **Verification:** `npm run check` on Node 22, including the schema check against live bendystraw and the browser suite.
+
+- [x] Sync keeps every retired generation deploy-all records (allowlist removed); CI pins deploy-all 8ff50c2.
+- [x] Defifa 2.0: new games on DefifaDeployer, old games keep their own ABI.
+- [x] LP split hook card reads the instance generation a project splits to with its registry ABI (1.5.0 ask/bid, one-arg deployPool); hand-written ABI deleted; test added.
+- [x] Rollout, pin and digest tests follow the new naming. Pay vectors: router cases read the registry terminal; unknown router and a direct multi-terminal payment in a pool-less token stay on the mint path (re-recorded, outputs otherwise identical).
+- [x] Remove the SDK: Defifa review helpers local, canary removed, dependency dropped.
+- [x] Latest bendystraw schema check passes; new fields used where juicescan needs them.
+- [x] Full check, PR #94.
+
+Review: `npm run check` passes on Node 22 (2277 unit tests, 148 browser tests, schema check against live bendystraw). Codex gpt-6.1-sol ran three passes; five concrete findings were fixed with tests. Holds left by the SDK build are adopted, including a later hash or wallet rejection. The LP hook version is resolved per chain. Dismissed: a new hold is invisible to a tab still running the old build until it reloads. Merge waits for jango.

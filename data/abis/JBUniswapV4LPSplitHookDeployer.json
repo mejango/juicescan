@@ -74,7 +74,7 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "",
+          "name": "implementation",
           "type": "address",
           "internalType": "contract JBUniswapV4LPSplitHook"
         }
@@ -206,7 +206,7 @@
     },
     "deployHookFor(uint256,uint256,address,bytes32)": {
       "params": {
-        "buybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. Pass the zero address for none. Per-deploy so different projects can use different buyback hooks.",
+        "buybackHook": "The buyback-hook registry to store as a configuration reference on this clone. Pass the zero address for none. Per-deploy so different projects can record different buyback registries.",
         "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
         "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
         "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
@@ -217,7 +217,7 @@
     },
     "hookImplementation()": {
       "returns": {
-        "_0": "The hook implementation contract."
+        "implementation": "The hook implementation contract."
       }
     },
     "setChainSpecificConstants(address,address,address)": {

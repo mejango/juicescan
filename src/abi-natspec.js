@@ -523,6 +523,491 @@ export const natspec = {
       }
     }
   },
+  "Defifa1155Deployer": {
+    "launchGameWith": {
+      "notice": "Launches a new game owned by this contract with a DefifaHook attached.",
+      "details": "Forwards `msg.value` to `JBProjects.createFor` to cover any configured project creation fee.",
+      "params": {
+        "launchProjectData": "Data necessary to fulfill the transaction to launch a game."
+      }
+    },
+    "BASE_PROTOCOL_FEE_DIVISOR": {
+      "notice": "The divisor that describes the protocol fee that should be taken."
+    },
+    "BASE_PROTOCOL_PROJECT_ID": {
+      "notice": "The project ID that will receive protocol fees as commitments are fulfilled."
+    },
+    "commitmentsFulfilledFor": {
+      "notice": "Whether commitments have been fulfilled for a game."
+    },
+    "CONTROLLER": {
+      "notice": "The controller with which new projects should be deployed."
+    },
+    "currentGamePhaseOf": {
+      "notice": "Returns the number of the game phase.",
+      "details": "The game phase corresponds to the game's current funding cycle number.NO_CONTEST is returned if the minimum participation threshold is not met, or if the scorecard timeout has elapsed without ratification.",
+      "params": {
+        "gameId": "The ID of the game to get the phase number of."
+      }
+    },
+    "currentGamePotOf": {
+      "notice": "The current pot the game is played with.",
+      "params": {
+        "gameId": "The ID of the game for which the pot applies.",
+        "includeCommitments": "A flag indicating if the portion of the pot committed to fulfill preprogrammed obligations should be included."
+      }
+    },
+    "DEFIFA_FEE_DIVISOR": {
+      "notice": "The divisor that describes the Defifa fee that should be taken."
+    },
+    "DEFIFA_PROJECT_ID": {
+      "notice": "The project ID that receives Defifa game fees as commitments are fulfilled."
+    },
+    "DIRECTORY": {
+      "notice": "The directory of terminals and controllers for each project."
+    },
+    "fulfilledCommitmentsOf": {
+      "notice": "The amount of commitments a game has fulfilled."
+    },
+    "GOVERNOR": {
+      "notice": "The governance contract that ratifies scorecards for each game."
+    },
+    "HOOK_CODE_ORIGIN": {
+      "notice": "The original code for the Defifa hook to base subsequent instances on."
+    },
+    "HOOK_STORE": {
+      "notice": "The 721 tiers hook store used by all games."
+    },
+    "isTrustedForwarder": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
+    },
+    "nextPhaseNeedsQueueing": {
+      "notice": "Whether or not the next phase still needs queuing.",
+      "params": {
+        "gameId": "The ID of the game to get the queue status of."
+      }
+    },
+    "noContestTriggeredFor": {
+      "notice": "Whether the no-contest refund ruleset has been triggered for a game."
+    },
+    "onERC721Received": {
+      "notice": "Allows this contract to receive 721s."
+    },
+    "originalPayer": {
+      "notice": "The account that paid the creation fee for the game currently being launched."
+    },
+    "PROJECTS": {
+      "notice": "The contract which mints ERC-721s that represent project ownership and transfers."
+    },
+    "REGISTRY": {
+      "notice": "The Juicebox 721 tiers hook registry used to register deployed games."
+    },
+    "RULESETS": {
+      "notice": "The contract storing and managing project rulesets."
+    },
+    "safetyParamsOf": {
+      "notice": "The safety mechanism parameters of a game.",
+      "params": {
+        "gameId": "The ID of the game to get the safety params of."
+      }
+    },
+    "timesFor": {
+      "notice": "Get the countdown, minting, and refund deadline timestamps for a game.",
+      "params": {
+        "gameId": "The ID of the game for which the game times apply."
+      }
+    },
+    "TOKEN_URI_RESOLVER": {
+      "notice": "The default Defifa token URI resolver."
+    },
+    "tokenOf": {
+      "notice": "Get the ERC-20 token address associated with a given game.",
+      "params": {
+        "gameId": "The ID of the game to get the token of."
+      }
+    },
+    "trustedForwarder": {
+      "details": "Returns the address of the trusted forwarder."
+    },
+    "fulfillCommitmentsOf": {
+      "notice": "Fulfill split amounts between all splits for a game.",
+      "params": {
+        "gameId": "The ID of the game to fulfill splits for."
+      }
+    },
+    "triggerNoContestFor": {
+      "notice": "Triggers the no-contest refund mechanism for a game.",
+      "details": "Anyone can call this once the game is in the NO_CONTEST phase. This queues a new ruleset without payout limits, making the surplus equal to the balance so users can cash out at their mint price.Analogous to fulfillCommitmentsOf for COMPLETE — must be called before NO_CONTEST cash-outs work.",
+      "params": {
+        "gameId": "The ID of the game to trigger no-contest for."
+      }
+    }
+  },
+  "Defifa1155Governor": {
+    "CONTROLLER": {
+      "notice": "The controller used to find each game's hook, rulesets and project owner."
+    },
+    "owner": {
+      "details": "Returns the address of the current owner."
+    },
+    "pendingScorecardIdOf": {
+      "notice": "The scorecard waiting out its timelock for each game."
+    },
+    "ratifiedScorecardIdOf": {
+      "notice": "The scorecard that has been ratified."
+    },
+    "refereeOf": {
+      "notice": "The referee of each game."
+    },
+    "scorecardIdOf": {
+      "notice": "The ID of a scorecard representing the provided tier weights.",
+      "params": {
+        "gameHook": "The address where the game is played.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      }
+    },
+    "scorecardSubmittedAtOf": {
+      "notice": "When each scorecard was last submitted. Zero if never."
+    },
+    "stateOf": {
+      "notice": "The state of a submitted scorecard.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "scorecardId": "The ID of the scorecard."
+      }
+    },
+    "timelockDurationOf": {
+      "notice": "The time each game's submitted scorecard waits before anyone can ratify it, in seconds."
+    },
+    "initializeGame": {
+      "notice": "Set a game's referee and timelock. Called by the deployer at launch.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "referee": "The address that judges the game.",
+        "timelockDuration": "The time a submitted scorecard waits before anyone can ratify it, in seconds."
+      }
+    },
+    "ratifyScorecardFrom": {
+      "notice": "Ratify a game's pending scorecard once its timelock has passed. Anyone can call this.",
+      "details": "Records the result before calling the hook and the deployer, so a re-entrant call can't ratify twice. A failed payout doesn't block ratification: `fulfillCommitmentsOf` catches it and still queues the final ruleset.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the pending scorecard."
+      }
+    },
+    "renounceOwnership": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "submitScorecardFor": {
+      "notice": "Submit a game's scorecard, replacing any pending one and starting the timelock. Only the game's referee can call this.",
+      "details": "Runs the hook's structural validation now, so a malformed scorecard fails here instead of after the timelock. Resubmitting the pending scorecard reverts, since it would only restart its timelock.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      }
+    },
+    "transferOwnership": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "Defifa1155Hook": {
+    "afterCashOutRecordedWith": {
+      "notice": "Burns the specified positions upon holder cash-out, reclaiming funds from the project's balance for `context.beneficiary`. Part of `IJBCashOutHook`.",
+      "details": "Reverts if the calling contract is not one of the project's terminals.",
+      "params": {
+        "context": "The cash-out context passed in by the terminal."
+      }
+    },
+    "afterPayRecordedWith": {
+      "notice": "Mints positions to the `context.beneficiary` upon payment if conditions are met.",
+      "details": "Reverts if the calling contract is not one of the project's terminals.",
+      "params": {
+        "context": "The payment context passed in by the terminal."
+      }
+    },
+    "cashOutWeightIsSet": {
+      "notice": "Whether the cash-out weights have been set."
+    },
+    "cashOutWeightOf": {
+      "notice": "The cumulative weight the given positions have in cash-outs compared to the `totalCashOutWeight`.",
+      "params": {
+        "amounts": "The number of positions of each token ID.",
+        "tokenIds": "The token IDs (paid or reserve IDs)."
+      }
+    },
+    "mintReservesFor": {
+      "notice": "Mint reserved positions within a tier.",
+      "params": {
+        "count": "The number of reserved positions to mint.",
+        "tierId": "The ID of the tier to mint within."
+      }
+    },
+    "setApprovalForAll": {
+      "details": "Grants or revokes permission to `operator` to transfer the caller's tokens, according to `approved`, Emits an {ApprovalForAll} event. Requirements: - `operator` cannot be the zero address."
+    },
+    "setTierCashOutWeightsTo": {
+      "notice": "Stores the cashOut weights that should be used in the end game phase.",
+      "details": "Only this contract's owner can set tier cashOut weights.",
+      "params": {
+        "tierWeights": "The tier weights to set."
+      }
+    },
+    "setTierDelegatesTo": {
+      "notice": "Delegate this account's voting power across multiple tiers to specified delegates.",
+      "params": {
+        "delegations": "An array of tiers to set delegates for."
+      }
+    },
+    "setTierDelegateTo": {
+      "notice": "Delegate this account's voting power for a single tier to a specified delegate.",
+      "params": {
+        "delegatee": "The account to delegate tier attestation units to.",
+        "tierId": "The ID of the tier to delegate attestation units for."
+      }
+    },
+    "adjustedPendingReservesFor": {
+      "notice": "Returns the adjusted pending reserve count for a tier, accounting for refund-phase burns.",
+      "details": "Recalculates reserves from (paidMints - burns) / reserveFrequency since the relationship between burns and reserves is not linear — it depends on the tier's reserve frequency.",
+      "params": {
+        "tierId": "The tier ID."
+      }
+    },
+    "amountRedeemed": {
+      "notice": "The amount redeemed from this game, excluding refunds."
+    },
+    "balanceOf": {
+      "details": "Returns the value of tokens of token type `id` owned by `account`."
+    },
+    "balanceOfBatch": {
+      "details": "See {IERC1155-balanceOfBatch}. Requirements: - `accounts` and `ids` must have the same length."
+    },
+    "BASE_PROTOCOL_TOKEN": {
+      "notice": "The $BASE_PROTOCOL token that is expected to be issued from paying fees."
+    },
+    "baseURI": {
+      "notice": "The common base for token URIs."
+    },
+    "beforeCashOutRecordedWith": {
+      "notice": "The data calculated before a cash-out is recorded in the terminal store. This data is provided to the terminal's `cashOutTokensOf(...)` transaction.",
+      "details": "Sets this contract as the cash-out hook. Part of `IJBRulesetDataHook`.This function is used for position cash-outs, and will only be called if the project's ruleset has `useDataHookForCashOut` set to `true`.",
+      "params": {
+        "context": "The cash-out context passed to this contract by the `cashOutTokensOf(...)` function."
+      }
+    },
+    "beforePayRecordedWith": {
+      "notice": "The data calculated before a payment is recorded: forwards the ruleset weight and uses this contract as the only pay hook. Part of `IJBRulesetDataHook`.",
+      "params": {
+        "context": "The payment context passed to this contract by the `pay(...)` function."
+      }
+    },
+    "CODE_ORIGIN": {
+      "notice": "The original Defifa1155Hook implementation address used to distinguish clones during initialization."
+    },
+    "contractURI": {
+      "notice": "The contract-level metadata URI used by marketplaces to display collection information."
+    },
+    "currentSupplyOfTier": {
+      "notice": "The number of positions of a tier that are currently in circulation, paid and reserve-minted.",
+      "params": {
+        "tierId": "The ID of the tier to get the current supply of."
+      }
+    },
+    "defaultAttestationDelegate": {
+      "notice": "The address that will be set as the attestation delegate by default."
+    },
+    "DEFIFA_TOKEN": {
+      "notice": "The $DEFIFA token that is expected to be issued from paying fees."
+    },
+    "DIRECTORY": {
+      "notice": "The directory of terminals and controllers for projects."
+    },
+    "gamePhaseReporter": {
+      "notice": "The contract reporting game phases."
+    },
+    "gamePotReporter": {
+      "notice": "The contract reporting the game pot."
+    },
+    "getPastTierAttestationUnitsOf": {
+      "notice": "Returns the past attestation units of a specific address for a specific tier.",
+      "params": {
+        "account": "The address to check.",
+        "tier": "The tier to check within.",
+        "timestamp": "The timestamp to check the attestation power at."
+      }
+    },
+    "getPastTierTotalAttestationUnitsOf": {
+      "notice": "Returns the total amount of attestation units that has existed for a tier.",
+      "params": {
+        "tier": "The tier to check.",
+        "timestamp": "The timestamp to check the total attestation units at."
+      }
+    },
+    "getTierAttestationUnitsOf": {
+      "notice": "Returns the current attestation power of an address for a specific tier.",
+      "params": {
+        "account": "The address to check.",
+        "tier": "The tier to check within."
+      }
+    },
+    "getTierDelegateOf": {
+      "notice": "Returns the delegate of an account for specific tier.",
+      "params": {
+        "account": "The account to check for a delegate of.",
+        "tier": "The tier to check within."
+      }
+    },
+    "getTierTotalAttestationUnitsOf": {
+      "notice": "Returns the total amount of attestation units that exists for a tier.",
+      "params": {
+        "tier": "The tier to check."
+      }
+    },
+    "hasMintPermissionFor": {
+      "notice": "Required by the IJBRulesetDataHook interface. Return false to not leak any permissions."
+    },
+    "isApprovedForAll": {
+      "details": "Returns true if `operator` is approved to transfer ``account``'s tokens. See {setApprovalForAll}."
+    },
+    "METADATA_ID_TARGET": {
+      "notice": "The ID used when parsing pay and cash-out metadata. Clones share the implementation's ID."
+    },
+    "name": {
+      "notice": "The name of the game-piece collection."
+    },
+    "owner": {
+      "details": "Returns the address of the current owner."
+    },
+    "pricingCurrency": {
+      "notice": "The currency that is accepted when minting tier positions."
+    },
+    "projectId": {
+      "notice": "The ID of the project (game) this hook belongs to."
+    },
+    "refundedBurnsFrom": {
+      "notice": "The number of positions burned from a tier during non-COMPLETE phases (refund, no-contest)."
+    },
+    "RESERVE_TOKEN_ID_OFFSET": {
+      "notice": "The offset added to a tier ID to form the token ID of its reserve-minted positions."
+    },
+    "rulesets": {
+      "notice": "The contract storing all funding cycle configurations."
+    },
+    "store": {
+      "notice": "The contract that stores tier configuration, supply, reserve and burn accounting."
+    },
+    "supportsInterface": {
+      "notice": "Indicates if this contract adheres to the specified interface.",
+      "details": "See {IERC165-supportsInterface}.",
+      "params": {
+        "interfaceId": "The ID of the interface to check for adherence to."
+      }
+    },
+    "symbol": {
+      "notice": "The symbol of the game-piece collection."
+    },
+    "tierCashOutWeights": {
+      "notice": "The cashOut weight for each tier."
+    },
+    "tierIdOf": {
+      "notice": "The tier a token ID belongs to.",
+      "params": {
+        "tokenId": "The token ID (paid or reserve ID)."
+      }
+    },
+    "tierNameOf": {
+      "notice": "The name of the tier with the specified ID.",
+      "params": {
+        "tierId": "The ID of the tier."
+      }
+    },
+    "tokensClaimableFor": {
+      "notice": "The amount of $DEFIFA and $BASE_PROTOCOL tokens claimable for a set of positions.",
+      "params": {
+        "amounts": "The number of positions of each token ID.",
+        "tokenIds": "The token IDs (paid or reserve IDs)."
+      }
+    },
+    "tokensRedeemedFrom": {
+      "notice": "The number of positions redeemed from each tier, excluding refunds."
+    },
+    "TOTAL_CASHOUT_WEIGHT": {
+      "notice": "The total cash-out weight that can be divided among tiers."
+    },
+    "totalMintCost": {
+      "notice": "The cumulative mint price of all paid and reserved positions. Decremented on burns/refunds. Used as the participation metric — immune to `addToBalanceOf` inflation because only actual mints increment it."
+    },
+    "uri": {
+      "notice": "The metadata URI of the provided token ID.",
+      "details": "Defers to the token URI resolver.",
+      "params": {
+        "tokenId": "The token ID (paid or reserve ID)."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize a clone of this contract.",
+      "params": {
+        "_baseUri": "A URI to use as a base for full token URIs.",
+        "_contractUri": "A URI where contract metadata can be found.",
+        "_currency": "The currency that the tier contribution floors are denoted in.",
+        "_defaultAttestationDelegate": "The address that will be set as the attestation delegate by default.",
+        "_gameId": "The ID of the project this contract's functionality applies to.",
+        "_gameName": "The name of the game-piece collection.",
+        "_gamePhaseReporter": "The contract that reports the game phase.",
+        "_gamePotReporter": "The contract that reports the game's pot.",
+        "_gameSymbol": "The symbol of the game-piece collection.",
+        "_rulesets": "A contract storing all ruleset configurations.",
+        "_store": "A contract that stores tier configuration and supply accounting.",
+        "_tierNames": "The names of each tier.",
+        "_tiers": "The tiers to set.",
+        "_tokenUriResolver": "A contract responsible for resolving the token URI for each token ID."
+      }
+    },
+    "renounceOwnership": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "safeBatchTransferFrom": {
+      "details": "xref:ROOT:erc1155.adoc#batch-operations[Batched] version of {safeTransferFrom}. WARNING: This function can potentially allow a reentrancy attack when transferring tokens to an untrusted contract, when invoking {IERC1155Receiver-onERC1155BatchReceived} on the receiver. Ensure to follow the checks-effects-interactions pattern and consider employing reentrancy guards when interacting with untrusted contracts. Emits either a {TransferSingle} or a {TransferBatch} event, depending on the length of the array arguments. Requirements: - `ids` and `values` must have the same length. - If `to` refers to a smart contract, it must implement {IERC1155Receiver-onERC1155BatchReceived} and return the acceptance magic value."
+    },
+    "safeTransferFrom": {
+      "details": "Transfers a `value` amount of tokens of type `id` from `from` to `to`. WARNING: This function can potentially allow a reentrancy attack when transferring tokens to an untrusted contract, when invoking {IERC1155Receiver-onERC1155Received} on the receiver. Ensure to follow the checks-effects-interactions pattern and consider employing reentrancy guards when interacting with untrusted contracts. Emits a {TransferSingle} event. Requirements: - `to` cannot be the zero address. - If the caller is not `from`, it must have been approved to spend ``from``'s tokens via {setApprovalForAll}. - `from` must have a balance of tokens of type `id` of at least `value` amount. - If `to` refers to a smart contract, it must implement {IERC1155Receiver-onERC1155Received} and return the acceptance magic value."
+    },
+    "transferOwnership": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "Defifa1155HookLib": {
+    "computeAttestationUnits": {
+      "notice": "Validates a payment's tier counts and computes the attestation units minted in each tier.",
+      "params": {
+        "counts": "The number of positions to mint in each tier.",
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierIds": "The tier IDs to mint, in strictly ascending order."
+      }
+    },
+    "computeCumulativeMintPriceForCashOut": {
+      "notice": "Compute the cumulative mint price of a set of positions.",
+      "params": {
+        "amounts": "The number of positions of each token ID.",
+        "excludeReserveMints": "Whether reserve-minted positions should be excluded.",
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tokenIds": "The token IDs (paid or reserve IDs)."
+      }
+    },
+    "computeTokensClaim": {
+      "notice": "Compute the claimable token amounts for a set of positions.",
+      "params": {
+        "amounts": "The number of positions of each token ID.",
+        "baseProtocolBalance": "The current $BASE_PROTOCOL balance.",
+        "defifaBalance": "The current $DEFIFA balance.",
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tokenIds": "The token IDs (paid or reserve IDs).",
+        "totalMintCost": "The cumulative mint cost."
+      }
+    }
+  },
   "DefifaDeployer": {
     "launchGameWith": {
       "notice": "Launches a new game owned by this contract with a DefifaHook attached.",
@@ -643,7 +1128,194 @@ export const natspec = {
       }
     }
   },
+  "DefifaDeployer_deprecated": {
+    "launchGameWith": {
+      "notice": "Launches a new game owned by this contract with a DefifaHook attached.",
+      "details": "Forwards `msg.value` to `JBProjects.createFor` to cover any configured project creation fee.",
+      "params": {
+        "launchProjectData": "Data necessary to fulfill the transaction to launch a game."
+      }
+    },
+    "BASE_PROTOCOL_FEE_DIVISOR": {
+      "notice": "The divisor that describes the protocol fee that should be taken."
+    },
+    "BASE_PROTOCOL_PROJECT_ID": {
+      "notice": "The project ID that will receive protocol fees as commitments are fulfilled."
+    },
+    "commitmentsFulfilledFor": {
+      "notice": "Whether commitments have been fulfilled for a game."
+    },
+    "CONTROLLER": {
+      "notice": "The controller with which new projects should be deployed."
+    },
+    "currentGamePhaseOf": {
+      "notice": "Returns the number of the game phase.",
+      "details": "The game phase corresponds to the game's current funding cycle number.NO_CONTEST is returned if the minimum participation threshold is not met, or if the scorecard timeout has elapsed without ratification.",
+      "params": {
+        "gameId": "The ID of the game to get the phase number of."
+      }
+    },
+    "currentGamePotOf": {
+      "notice": "The current pot the game is played with.",
+      "params": {
+        "gameId": "The ID of the game for which the pot applies.",
+        "includeCommitments": "A flag indicating if the portion of the pot committed to fulfill preprogrammed obligations should be included."
+      }
+    },
+    "DEFIFA_FEE_DIVISOR": {
+      "notice": "The divisor that describes the Defifa fee that should be taken."
+    },
+    "DEFIFA_PROJECT_ID": {
+      "notice": "The project ID that receives Defifa game fees as commitments are fulfilled."
+    },
+    "DIRECTORY": {
+      "notice": "The directory of terminals and controllers for each project."
+    },
+    "fulfilledCommitmentsOf": {
+      "notice": "The amount of commitments a game has fulfilled."
+    },
+    "GOVERNOR": {
+      "notice": "The governance contract that ratifies scorecards for each game."
+    },
+    "HOOK_CODE_ORIGIN": {
+      "notice": "The original code for the Defifa hook to base subsequent instances on."
+    },
+    "HOOK_STORE": {
+      "notice": "The 721 tiers hook store used by all games."
+    },
+    "isTrustedForwarder": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
+    },
+    "nextPhaseNeedsQueueing": {
+      "notice": "Whether or not the next phase still needs queuing.",
+      "params": {
+        "gameId": "The ID of the game to get the queue status of."
+      }
+    },
+    "noContestTriggeredFor": {
+      "notice": "Whether the no-contest refund ruleset has been triggered for a game."
+    },
+    "onERC721Received": {
+      "notice": "Allows this contract to receive 721s."
+    },
+    "originalPayer": {
+      "notice": "The account that paid the creation fee for the game currently being launched."
+    },
+    "PROJECTS": {
+      "notice": "The contract which mints ERC-721s that represent project ownership and transfers."
+    },
+    "REGISTRY": {
+      "notice": "The Juicebox 721 tiers hook registry used to register deployed games."
+    },
+    "RULESETS": {
+      "notice": "The contract storing and managing project rulesets."
+    },
+    "safetyParamsOf": {
+      "notice": "The safety mechanism parameters of a game.",
+      "params": {
+        "gameId": "The ID of the game to get the safety params of."
+      }
+    },
+    "timesFor": {
+      "notice": "Get the countdown, minting, and refund deadline timestamps for a game.",
+      "params": {
+        "gameId": "The ID of the game for which the game times apply."
+      }
+    },
+    "TOKEN_URI_RESOLVER": {
+      "notice": "The default Defifa token URI resolver."
+    },
+    "tokenOf": {
+      "notice": "Get the ERC-20 token address associated with a given game.",
+      "params": {
+        "gameId": "The ID of the game to get the token of."
+      }
+    },
+    "trustedForwarder": {
+      "details": "Returns the address of the trusted forwarder."
+    },
+    "fulfillCommitmentsOf": {
+      "notice": "Fulfill split amounts between all splits for a game.",
+      "params": {
+        "gameId": "The ID of the game to fulfill splits for."
+      }
+    },
+    "triggerNoContestFor": {
+      "notice": "Triggers the no-contest refund mechanism for a game.",
+      "details": "Anyone can call this once the game is in the NO_CONTEST phase. This queues a new ruleset without payout limits, making the surplus equal to the balance so users can cash out at their mint price.Analogous to fulfillCommitmentsOf for COMPLETE — must be called before NO_CONTEST cash-outs work.",
+      "params": {
+        "gameId": "The ID of the game to trigger no-contest for."
+      }
+    }
+  },
   "DefifaGovernor": {
+    "CONTROLLER": {
+      "notice": "The controller used to find each game's hook, rulesets and project owner."
+    },
+    "owner": {
+      "details": "Returns the address of the current owner."
+    },
+    "pendingScorecardIdOf": {
+      "notice": "The scorecard waiting out its timelock for each game."
+    },
+    "ratifiedScorecardIdOf": {
+      "notice": "The scorecard that has been ratified."
+    },
+    "refereeOf": {
+      "notice": "The referee of each game."
+    },
+    "scorecardIdOf": {
+      "notice": "The ID of a scorecard representing the provided tier weights.",
+      "params": {
+        "gameHook": "The address where the game is played.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      }
+    },
+    "scorecardSubmittedAtOf": {
+      "notice": "When each scorecard was last submitted. Zero if never."
+    },
+    "stateOf": {
+      "notice": "The state of a submitted scorecard.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "scorecardId": "The ID of the scorecard."
+      }
+    },
+    "timelockDurationOf": {
+      "notice": "The time each game's submitted scorecard waits before anyone can ratify it, in seconds."
+    },
+    "initializeGame": {
+      "notice": "Set a game's referee and timelock. Called by the deployer at launch.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "referee": "The address that judges the game.",
+        "timelockDuration": "The time a submitted scorecard waits before anyone can ratify it, in seconds."
+      }
+    },
+    "ratifyScorecardFrom": {
+      "notice": "Ratify a game's pending scorecard once its timelock has passed. Anyone can call this.",
+      "details": "Records the result before calling the hook and the deployer, so a re-entrant call can't ratify twice. A failed payout doesn't block ratification: `fulfillCommitmentsOf` catches it and still queues the final ruleset.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the pending scorecard."
+      }
+    },
+    "renounceOwnership": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "submitScorecardFor": {
+      "notice": "Submit a game's scorecard, replacing any pending one and starting the timelock. Only the game's referee can call this.",
+      "details": "Runs the hook's structural validation now, so a malformed scorecard fails here instead of after the timelock. Resubmitting the pending scorecard reverts, since it would only restart its timelock.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      }
+    },
+    "transferOwnership": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "DefifaGovernor_deprecated": {
     "attestationCountOf": {
       "notice": "The number of attestations the given scorecard has.",
       "params": {
@@ -986,6 +1658,12 @@ export const natspec = {
     "tierCashOutWeights": {
       "notice": "The cashOut weight for each tier."
     },
+    "tierIdOf": {
+      "notice": "The tier a token ID belongs to.",
+      "params": {
+        "tokenId": "The token ID."
+      }
+    },
     "tierNameOf": {
       "notice": "The name of the tier with the specified ID.",
       "params": {
@@ -1118,6 +1796,602 @@ export const natspec = {
       }
     }
   },
+  "DefifaHookLib_deprecated": {
+    "adjustedPendingReservesFor": {
+      "notice": "Returns the adjusted pending reserve count for a tier, accounting for refund-phase burns.",
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "refundBurns": "The number of refund-phase burns for the tier.",
+        "tierId": "The tier ID."
+      }
+    },
+    "computeAttestationUnits": {
+      "notice": "Computes the attestation units for tiers during payment processing.",
+      "details": "Returns parallel arrays: tier IDs, cumulative attestation units per tier, and whether to switch delegate.",
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierIdsToMint": "The tier IDs to mint (must be in ascending order)."
+      }
+    },
+    "computeCashOutCount": {
+      "notice": "Compute the cash-out count for the beforeCashOutRecorded hook.",
+      "params": {
+        "cumulativeCashOutWeight": "The cumulative cash-out weight of the tokens.",
+        "cumulativeMintPrice": "The cumulative mint price of the tokens to cash out.",
+        "gamePhase": "The current game phase.",
+        "surplusValue": "The surplus value from the context.",
+        "totalAmountRedeemed": "The amount already redeemed."
+      }
+    },
+    "computeCumulativeMintPriceForCashOut": {
+      "notice": "Compute the cumulative mint price for a set of token IDs.",
+      "params": {
+        "excludeReserveMints": "Whether reserve-minted tokens should be excluded.",
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tokenIds": "The token IDs."
+      }
+    },
+    "computeCurrentSupply": {
+      "notice": "Compute the current supply of a tier (minted - burned).",
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tierId": "The ID of the tier."
+      }
+    },
+    "computeTokensClaim": {
+      "notice": "Compute the claimable token amounts for a set of token IDs.",
+      "params": {
+        "baseProtocolBalance": "The current $BASE_PROTOCOL balance.",
+        "defifaBalance": "The current $DEFIFA balance.",
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store.",
+        "tokenIds": "The token IDs.",
+        "totalMintCost": "The cumulative mint cost."
+      }
+    },
+    "pendingReserveMintCost": {
+      "notice": "Computes the total mint cost of all pending reserve NFTs across all tiers.",
+      "params": {
+        "hook": "The hook address.",
+        "hookStore": "The 721 tiers hook store."
+      }
+    }
+  },
+  "DefifaHook_deprecated": {
+    "afterCashOutRecordedWith": {
+      "notice": "Burns the specified NFTs upon token holder cash-out, reclaiming funds from the project's balance for `context.beneficiary`. Part of `IJBCashOutHook`.",
+      "details": "Reverts if the calling contract is not one of the project's terminals.",
+      "params": {
+        "context": "The cash-out context passed in by the terminal."
+      }
+    },
+    "afterPayRecordedWith": {
+      "notice": "Mints one or more NFTs to the `context.beneficiary` upon payment if conditions are met.",
+      "details": "Reverts if the calling contract is not one of the project's terminals.",
+      "params": {
+        "context": "The payment context passed in by the terminal."
+      }
+    },
+    "cashOutWeightIsSet": {
+      "notice": "Whether the cash-out weights have been set."
+    },
+    "cashOutWeightOf": {
+      "notice": "The cumulative weight the given token IDs have in cash-outs compared to the `totalCashOutWeight`.",
+      "params": {
+        "tokenIds": "The IDs of the tokens to get the cumulative cashOut weight of."
+      }
+    },
+    "mintReservesFor": {
+      "notice": "Mint reserved tokens within the tier for the provided value.",
+      "params": {
+        "count": "The number of reserved tokens to mint.",
+        "tierId": "The ID of the tier to mint within."
+      }
+    },
+    "setApprovalForAll": {
+      "details": "See {IERC721-setApprovalForAll}."
+    },
+    "setTierCashOutWeightsTo": {
+      "notice": "Stores the cashOut weights that should be used in the end game phase.",
+      "details": "Only this contract's owner can set tier cashOut weights.",
+      "params": {
+        "tierWeights": "The tier weights to set."
+      }
+    },
+    "setTierDelegatesTo": {
+      "notice": "Delegate this account's voting power across multiple tiers to specified delegates.",
+      "params": {
+        "delegations": "An array of tiers to set delegates for."
+      }
+    },
+    "setTierDelegateTo": {
+      "notice": "Delegate this account's voting power for a single tier to a specified delegate.",
+      "params": {
+        "delegatee": "The account to delegate tier attestation units to.",
+        "tierId": "The ID of the tier to delegate attestation units for."
+      }
+    },
+    "adjustedPendingReservesFor": {
+      "notice": "Returns the adjusted pending reserve count for a tier, accounting for refund-phase burns.",
+      "details": "Recalculates reserves from (paidMints - burns) / reserveFrequency since the relationship between burns and reserves is not linear — it depends on the tier's reserve frequency.",
+      "params": {
+        "tierId": "The tier ID."
+      }
+    },
+    "amountRedeemed": {
+      "notice": "The amount redeemed from this game, excluding refunds."
+    },
+    "balanceOf": {
+      "details": "See {IERC721-balanceOf}."
+    },
+    "BASE_PROTOCOL_TOKEN": {
+      "notice": "The $BASE_PROTOCOL token that is expected to be issued from paying fees."
+    },
+    "baseURI": {
+      "notice": "The common base for token URIs."
+    },
+    "beforeCashOutRecordedWith": {
+      "notice": "The data calculated before a cash-out is recorded in the terminal store. This data is provided to the terminal's `cashOutTokensOf(...)` transaction.",
+      "details": "Sets this contract as the cash-out hook. Part of `IJBRulesetDataHook`.This function is used for NFT cash-outs, and will only be called if the project's ruleset has `useDataHookForCashOut` set to `true`.",
+      "params": {
+        "context": "The cash-out context passed to this contract by the `cashOutTokensOf(...)` function."
+      }
+    },
+    "beforePayRecordedWith": {
+      "notice": "The data calculated before a payment is recorded in the terminal store for `pay(...)`.",
+      "details": "Sets this contract as the pay hook. Part of `IJBRulesetDataHook`.",
+      "params": {
+        "context": "The payment context passed to this contract by the `pay(...)` function."
+      }
+    },
+    "CODE_ORIGIN": {
+      "notice": "The original DefifaHook implementation address used to distinguish clones during initialization."
+    },
+    "contractURI": {
+      "notice": "The contract-level metadata URI used by marketplaces to display collection information."
+    },
+    "currentSupplyOfTier": {
+      "notice": "The amount of tokens of a tier that are currently in circulation.",
+      "params": {
+        "tierId": "The ID of the tier to get the current supply of."
+      }
+    },
+    "defaultAttestationDelegate": {
+      "notice": "The address that will be set as the attestation delegate by default."
+    },
+    "DEFIFA_TOKEN": {
+      "notice": "The $DEFIFA token that is expected to be issued from paying fees."
+    },
+    "DIRECTORY": {
+      "notice": "The directory of terminals and controllers for projects."
+    },
+    "firstOwnerOf": {
+      "notice": "The first owner of each token ID, which corresponds to the address that originally contributed to the project to receive the NFT.",
+      "params": {
+        "tokenId": "The ID of the token to get the first owner of."
+      }
+    },
+    "gamePhaseReporter": {
+      "notice": "The contract reporting game phases."
+    },
+    "gamePotReporter": {
+      "notice": "The contract reporting the game pot."
+    },
+    "getApproved": {
+      "details": "See {IERC721-getApproved}."
+    },
+    "getPastTierAttestationUnitsOf": {
+      "notice": "Returns the past attestation units of a specific address for a specific tier.",
+      "params": {
+        "account": "The address to check.",
+        "tier": "The tier to check within.",
+        "timestamp": "The timestamp to check the attestation power at."
+      }
+    },
+    "getPastTierTotalAttestationUnitsOf": {
+      "notice": "Returns the total amount of attestation units that has existed for a tier.",
+      "params": {
+        "tier": "The tier to check.",
+        "timestamp": "The timestamp to check the total attestation units at."
+      }
+    },
+    "getTierAttestationUnitsOf": {
+      "notice": "Returns the current attestation power of an address for a specific tier.",
+      "params": {
+        "account": "The address to check.",
+        "tier": "The tier to check within."
+      }
+    },
+    "getTierDelegateOf": {
+      "notice": "Returns the delegate of an account for specific tier.",
+      "params": {
+        "account": "The account to check for a delegate of.",
+        "tier": "The tier to check within."
+      }
+    },
+    "getTierTotalAttestationUnitsOf": {
+      "notice": "Returns the total amount of attestation units that exists for a tier.",
+      "params": {
+        "tier": "The tier to check."
+      }
+    },
+    "hasMintPermissionFor": {
+      "notice": "Required by the IJBRulesetDataHook interfaces. Return false to not leak any permissions."
+    },
+    "isApprovedForAll": {
+      "details": "See {IERC721-isApprovedForAll}."
+    },
+    "isReserveMint": {
+      "notice": "Whether a token was minted through reserves (free) rather than paid for."
+    },
+    "METADATA_ID_TARGET": {
+      "notice": "The ID used when parsing metadata."
+    },
+    "name": {
+      "details": "See {IERC721Metadata-name}."
+    },
+    "owner": {
+      "details": "Returns the address of the current owner."
+    },
+    "ownerOf": {
+      "details": "See {IERC721-ownerOf}."
+    },
+    "pricingCurrency": {
+      "notice": "The currency that is accepted when minting tier NFTs."
+    },
+    "projectId": {
+      "notice": "The ID of the project that this contract is associated with."
+    },
+    "refundedBurnsFrom": {
+      "notice": "The number of tokens burned from a tier during non-COMPLETE phases (refund, no-contest)."
+    },
+    "rulesets": {
+      "notice": "The contract storing all funding cycle configurations."
+    },
+    "store": {
+      "notice": "The contract that stores and manages the NFT's data."
+    },
+    "supportsInterface": {
+      "notice": "Indicates if this contract adheres to the specified interface.",
+      "details": "See {IERC165-supportsInterface}.",
+      "params": {
+        "interfaceId": "The ID of the interface to check for adherence to."
+      }
+    },
+    "symbol": {
+      "details": "See {IERC721Metadata-symbol}."
+    },
+    "tierCashOutWeights": {
+      "notice": "The cashOut weight for each tier."
+    },
+    "tierNameOf": {
+      "notice": "The name of the tier with the specified ID.",
+      "params": {
+        "tierId": "The ID of the tier."
+      }
+    },
+    "tokensClaimableFor": {
+      "notice": "The amount of $DEFIFA and $BASE_PROTOCOL tokens claimable for a set of token IDs.",
+      "params": {
+        "tokenIds": "The IDs of the tokens that justify a $DEFIFA claim."
+      }
+    },
+    "tokensRedeemedFrom": {
+      "notice": "The amount of tokens redeemed from each tier, excluding refunds."
+    },
+    "tokenURI": {
+      "notice": "The metadata URI of the provided token ID.",
+      "details": "Defer to the token URI resolver if set; otherwise, use the token URI set with the token's tier.",
+      "params": {
+        "tokenId": "The ID of the token to get the tier URI for."
+      }
+    },
+    "TOTAL_CASHOUT_WEIGHT": {
+      "notice": "The total cash-out weight that can be divided among tiers."
+    },
+    "totalCashOutWeight": {
+      "notice": "The combined cash-out weight of all outstanding NFTs.",
+      "details": "An NFT's cash-out weight is its price."
+    },
+    "totalMintCost": {
+      "notice": "The cumulative mint price of all paid and reserved NFTs. Decremented on burns/refunds. Used as the participation metric — immune to `addToBalanceOf` inflation because only actual mints increment it."
+    },
+    "approve": {
+      "details": "See {IERC721-approve}."
+    },
+    "initialize": {
+      "notice": "Initialize a clone of this contract.",
+      "params": {
+        "_baseUri": "A URI to use as a base for full token URIs.",
+        "_contractUri": "A URI where contract metadata can be found.",
+        "_currency": "The currency that the tier contribution floors are denoted in.",
+        "_defaultAttestationDelegate": "The address that will be set as the attestation delegate by default.",
+        "_gameId": "The ID of the project this contract's functionality applies to.",
+        "_gamePhaseReporter": "The contract that reports the game phase.",
+        "_gamePotReporter": "The contract that reports the game's pot.",
+        "_name": "The name of the token.",
+        "_rulesets": "A contract storing all ruleset configurations.",
+        "_store": "A contract that stores the NFT's data.",
+        "_symbol": "The symbol that the token should be represented by.",
+        "_tierNames": "The names of each tier.",
+        "_tiers": "The tiers to set.",
+        "_tokenUriResolver": "A contract responsible for resolving the token URI for each token ID."
+      }
+    },
+    "renounceOwnership": {
+      "details": "Leaves the contract without owner. It will not be possible to call `onlyOwner` functions. Can only be called by the current owner. NOTE: Renouncing ownership will leave the contract without an owner, thereby disabling any functionality that is only available to the owner."
+    },
+    "safeTransferFrom": {
+      "details": "See {IERC721-safeTransferFrom}."
+    },
+    "transferFrom": {
+      "details": "See {IERC721-transferFrom}."
+    },
+    "transferOwnership": {
+      "details": "Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current owner."
+    }
+  },
+  "DefifaTiersHookStore": {
+    "cashOutWeightOf": {
+      "notice": "The combined cash-out weight of specific NFTs. Divide by `totalCashOutWeightOf` to get the fraction of the project's surplus that cashing out these NFTs would reclaim.",
+      "details": "Weight is based on each NFT's original tier price (not the discounted price paid). Discounts are transient purchase incentives and don't affect an NFT's share of the cash-out pool.",
+      "params": {
+        "hook": "The 721 hook contract the NFTs belong to.",
+        "tokenIds": "The token IDs to get the combined cash-out weight of."
+      }
+    },
+    "balanceOf": {
+      "notice": "How many NFTs an address owns from a hook, totaled across all tiers, as a running aggregate so this is O(1) instead of O(maxTierId)."
+    },
+    "defaultReserveBeneficiaryOf": {
+      "notice": "Returns the default reserve beneficiary for the provided 721 contract."
+    },
+    "encodedIpfsUriOf": {
+      "notice": "Returns the encoded IPFS URI for the provided tier ID of the provided 721 contract."
+    },
+    "encodedTierIPFSUriOf": {
+      "notice": "Get the encoded IPFS URI for the tier that a specific NFT belongs to. Used to resolve the NFT's metadata when no custom `tokenUriResolver` is set.",
+      "params": {
+        "hook": "The 721 hook contract the NFT belongs to.",
+        "tokenId": "The token ID of the NFT."
+      }
+    },
+    "flagsOf": {
+      "notice": "Get the behavioral flags for a hook — such as whether transfers are pausable, whether NFT holders can cash out, and whether token issuance occurs for split-routed payments.",
+      "params": {
+        "hook": "The 721 hook contract to get the flags of."
+      }
+    },
+    "heldTierIdsOf": {
+      "notice": "The tier IDs whose balances are nonzero for the provided owner.",
+      "params": {
+        "hook": "The 721 hook contract to get held tier IDs from.",
+        "owner": "The address to get held tier IDs for."
+      }
+    },
+    "heldTierVotingUnitsOf": {
+      "notice": "The tier IDs and voting units whose balances are nonzero for the provided account.",
+      "params": {
+        "account": "The address to get held tier IDs and voting units for.",
+        "hook": "The 721 hook contract to get held tier IDs from."
+      }
+    },
+    "isTierRemoved": {
+      "notice": "Check whether a tier has been removed. Removed tiers can no longer be minted from, but existing NFTs from that tier remain valid and can still be cashed out.",
+      "params": {
+        "hook": "The 721 hook contract the tier belongs to.",
+        "tierId": "The ID of the tier to check."
+      }
+    },
+    "maxTierIdOf": {
+      "notice": "Returns the largest tier ID currently used on the provided 721 contract."
+    },
+    "numberOfBurnedFor": {
+      "notice": "Returns the number of NFTs which have been burned from the provided tier ID of the provided 721 contract."
+    },
+    "numberOfPendingReservesFor": {
+      "notice": "How many reserved NFTs are waiting to be minted for a tier. Reserves accumulate automatically as non-reserve NFTs are minted (based on the tier's `reserveFrequency`). Anyone can mint them via `mintPendingReservesFor`.",
+      "params": {
+        "hook": "The 721 hook contract to check.",
+        "tierId": "The ID of the tier to check."
+      }
+    },
+    "numberOfReservesMintedFor": {
+      "notice": "Returns the number of reserve NFTs which have been minted from the provided tier ID of the provided 721 contract."
+    },
+    "reserveBeneficiaryOf": {
+      "notice": "The address that receives reserved NFTs for a tier. Falls back to the hook's default reserve beneficiary if no tier-specific beneficiary is set.",
+      "params": {
+        "hook": "The 721 hook contract.",
+        "tierId": "The ID of the tier."
+      }
+    },
+    "tierBalanceOf": {
+      "notice": "Returns the number of NFTs which the provided owner address owns from the provided 721 contract and tier ID."
+    },
+    "tierIdOfToken": {
+      "notice": "Derive which tier an NFT belongs to from its token ID. Token IDs encode the tier: `tokenId / 1e9` gives the tier ID.",
+      "params": {
+        "tokenId": "The token ID of the NFT."
+      }
+    },
+    "tierOf": {
+      "notice": "Get the full details of a specific tier by its ID — price, supply, reserve info, metadata, etc.",
+      "params": {
+        "hook": "The 721 hook contract to get the tier from.",
+        "id": "The ID of the tier to get.",
+        "includeResolvedUri": "If `true` and the hook has a `tokenUriResolver`, resolves the URI and includes it."
+      }
+    },
+    "tierOfTokenId": {
+      "notice": "Look up which tier an NFT belongs to and return the full tier details (price, supply, metadata, etc.).",
+      "params": {
+        "hook": "The 721 hook contract the NFT belongs to.",
+        "includeResolvedUri": "If `true` and the hook has a `tokenUriResolver`, resolves the URI and includes it.",
+        "tokenId": "The token ID of the NFT."
+      }
+    },
+    "tierPricingOf": {
+      "notice": "Get only the pricing fields for a tier, avoiding full struct construction.",
+      "params": {
+        "hook": "The 721 contract that the tier belongs to.",
+        "id": "The tier ID."
+      }
+    },
+    "tiersOf": {
+      "notice": "Get all active (non-removed) tiers for a hook, with optional filtering by category and pagination. Tiers are returned sorted by category.",
+      "params": {
+        "categories": "Filter to specific categories. Pass an empty array to include all categories.",
+        "hook": "The 721 hook contract to get tiers from.",
+        "includeResolvedUri": "If `true` and the hook has a `tokenUriResolver`, resolves URIs and includes them.",
+        "size": "The maximum number of tiers to return.",
+        "startingId": "Start from this tier ID (for pagination). Pass 0 to start from the beginning."
+      }
+    },
+    "tierTransferInfoOfTokenId": {
+      "notice": "Get only the tier ID and transfersPausable flag for a token, avoiding full struct construction.",
+      "params": {
+        "hook": "The 721 hook address.",
+        "tokenId": "The token ID."
+      }
+    },
+    "tierVotingUnitsOf": {
+      "notice": "Get an address's voting power from a specific tier. Each NFT in the tier contributes either the tier's custom `votingUnits` (if configured) or the tier's price. Multiply by the holder's balance in the tier.",
+      "params": {
+        "account": "The address to get voting units for.",
+        "hook": "The 721 hook contract that the tier belongs to.",
+        "tierId": "The ID of the tier."
+      }
+    },
+    "tierVotingUnitsOfTokenId": {
+      "notice": "Get only the per-unit voting value for a token's tier, avoiding full struct construction.",
+      "details": "Mirrors the `votingUnits` field computed in `_getTierFrom`: a tier with custom voting units configured (the `useVotingUnits` flag, bit 2 of `packedBools`) contributes its stored voting units per NFT, otherwise it contributes its price per NFT. Multiply by an account's balance in the tier to get its voting power there.",
+      "params": {
+        "hook": "The 721 hook contract that the token belongs to.",
+        "tokenId": "The token ID."
+      }
+    },
+    "tokenUriResolverOf": {
+      "notice": "Returns the custom token URI resolver which overrides the default token URI resolver for the provided 721 contract."
+    },
+    "totalCashOutWeightOf": {
+      "notice": "The combined cash-out weight of all hook NFTs, tracked so cash-out pricing is O(1)."
+    },
+    "totalSupplyOf": {
+      "notice": "The total number of NFTs currently in circulation for a hook (minted minus burned, across all tiers).",
+      "params": {
+        "hook": "The 721 hook contract to get the total supply of."
+      }
+    },
+    "votingUnitsOf": {
+      "notice": "Get an address's total voting power across all tiers of a hook. Sums up the voting units from every tier where the address holds NFTs.",
+      "details": "Each tier contributes: `balance * (customVotingUnits || tierPrice)`.",
+      "params": {
+        "account": "The address to get the voting unit total of.",
+        "hook": "The 721 hook contract to get voting units within."
+      }
+    },
+    "cleanTiers": {
+      "notice": "Walk through the tier sorting sequence and skip over any tiers that have been removed. This compacts the linked list so that `tiersOf` iteration no longer visits removed tiers. Anyone can call this — it's a maintenance operation with no access control.",
+      "details": "Call this after `recordRemoveTierIds` to keep tier iteration efficient. Without cleaning, removed tiers remain in the linked list (they just can't be minted from). The function also updates `_startingTierIdOfCategory` if the previous starting tier for a category was removed.",
+      "params": {
+        "hook": "The 721 contract to clean tiers for."
+      }
+    },
+    "recordAddTiers": {
+      "notice": "Validate and store new tiers for the calling hook. Each tier is assigned a sequential ID, inserted into the category-sorted linked list, and has its reserve beneficiary, voting units, IPFS URI, and flags persisted. Tiers must be provided sorted by category (ascending).",
+      "details": "Only callable by hook contracts (msg.sender is treated as the hook address). WARNING: If any tier in `tiersToAdd` has `useReserveBeneficiaryAsDefault` set to `true`, its `reserveBeneficiary` will overwrite the hook's global `defaultReserveBeneficiaryOf`. This affects ALL existing tiers that do not have a tier-specific reserve beneficiary set via `_reserveBeneficiaryOf`. Callers should be aware of this side effect when using `adjustTiers` to add new tiers.",
+      "params": {
+        "tiersToAdd": "The tiers to add."
+      }
+    },
+    "recordBurn": {
+      "notice": "Increment the burn counter for each token's tier. Does NOT affect `remainingSupply` — burned NFTs cannot be re-minted. The burn count is used by `totalSupplyOf` to compute the circulating supply.",
+      "details": "This function trusts `msg.sender` (the hook contract) to only call it after actually burning the tokens. It does not verify ownership or existence of the token IDs — the hook is responsible for performing those checks before calling this function.",
+      "params": {
+        "tokenIds": "The token IDs of the NFTs to burn."
+      }
+    },
+    "recordBurnCounts": {
+      "notice": "Record burned positions: the count version of `recordBurn`.",
+      "details": "Trusts `msg.sender` (the hook) to call it only after burning the positions.",
+      "params": {
+        "counts": "The number of positions burned in each entry.",
+        "tierIds": "The tier of each burn entry. Entries may repeat a tier."
+      }
+    },
+    "recordFlags": {
+      "notice": "Store the behavioral flags for the calling hook. These flags govern whether new tiers can have voting units, reserves, or owner minting enabled.",
+      "details": "Only callable by hook contracts. Overwrites any previously stored flags for the caller.",
+      "params": {
+        "flags": "The flags to set."
+      }
+    },
+    "recordMint": {
+      "notice": "Record paid mints: deduct each tier's (discounted) price from `amount`, decrement supply, generate token IDs, and enforce that enough supply remains to satisfy pending reserves. Returns the leftover amount and the total cost of credit-restricted tiers so the hook can enforce pay-credit rules.",
+      "details": "Reverts if the tier is removed, unrecognized, sold out, or its price exceeds the remaining amount. For owner mints, the tier must have `allowOwnerMint` set.",
+      "params": {
+        "amount": "The amount to spend on NFTs. The total price must not exceed this amount.",
+        "isOwnerMint": "A flag indicating whether the 721 contract's owner is directly calling this function.",
+        "tierIds": "The IDs of the tiers to mint from."
+      }
+    },
+    "recordMintCounts": {
+      "notice": "Record paid mints: the count version of `recordMint` for non-owner mints.",
+      "details": "Equivalent to `recordMint` with each tier ID repeated `counts[i]` times. Within a tier, pending reserves only grow and remaining supply only shrinks as positions mint, so checking supply against pending reserves after the whole count implies every intermediate check.",
+      "params": {
+        "amount": "The amount to spend. The total price must not exceed it.",
+        "counts": "The number of positions to mint in each tier.",
+        "tierIds": "The tiers to mint from."
+      }
+    },
+    "recordMintReservesFor": {
+      "notice": "Generate token IDs for reserve NFT mints and decrement the tier's remaining supply. Reserves accumulate as non-reserve NFTs are minted (one reserve per `reserveFrequency` mints). Reverts if `count` exceeds the number of pending reserves.",
+      "params": {
+        "count": "The number of reserve NFTs to mint.",
+        "tierId": "The ID of the tier to mint reserves from."
+      }
+    },
+    "recordRemoveTierIds": {
+      "notice": "Mark one or more tiers as removed. Removed tiers cannot be minted from, but existing NFTs from those tiers remain valid (can still be cashed out and transferred). Pending reserves can still be minted.",
+      "details": "Removing a tier only marks it in a bitmap — it does not update the sorted tier linked list. Call `cleanTiers()` after removing tiers to update the sorting sequence and prevent stale tier iteration. Reverts if the tier has `cantBeRemoved` set, or if the tier ID is 0 or exceeds `maxTierIdOf`.",
+      "params": {
+        "tierIds": "The IDs of the tiers to remove."
+      }
+    },
+    "recordSetDiscountPercentOf": {
+      "notice": "Update the discount percentage for a tier. Discounts reduce the price payers pay without affecting the NFT's cash-out weight (which always uses the original price). Reverts if the tier is removed, if the percent exceeds the denominator, or if the tier has `cantIncreaseDiscountPercent` set and the new value is higher.",
+      "params": {
+        "discountPercent": "The new discount percent to apply.",
+        "tierId": "The ID of the tier to record a discount for."
+      }
+    },
+    "recordSetEncodedIpfsUriOf": {
+      "notice": "Record a new encoded IPFS URI for a tier.",
+      "params": {
+        "encodedIpfsUri": "The encoded IPFS URI to set for the tier.",
+        "tierId": "The ID of the tier to set the encoded IPFS URI of."
+      }
+    },
+    "recordSetTokenUriResolver": {
+      "notice": "Record a newly set token URI resolver.",
+      "params": {
+        "resolver": "The resolver to set."
+      }
+    },
+    "recordTransferForTier": {
+      "notice": "Update tier balance accounting when an NFT is transferred. Decrements the sender's balance and increments the receiver's balance for the given tier. Handles mints (from == address(0)) and burns (to == address(0)) as one-sided updates.",
+      "params": {
+        "from": "The address to transfer the 721 from.",
+        "tierId": "The ID of the tier that the 721 to transfer belongs to.",
+        "to": "The address to transfer the 721 to."
+      }
+    }
+  },
   "DefifaTokenUriResolver": {
     "setChainSpecificConstants": {
       "notice": "One-shot setter for this chain's typeface contract.",
@@ -1135,6 +2409,161 @@ export const natspec = {
     },
     "typeface": {
       "notice": "The typeface of the SVGs."
+    }
+  },
+  "DefifaTokenUriResolver_deprecated": {
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for this chain's typeface contract.",
+      "params": {
+        "newTypeface": "The typeface of the SVGs on this chain."
+      }
+    },
+    "tokenUriOf": {
+      "notice": "The metadata URI of the provided token ID.",
+      "details": "Defer to the token's tier IPFS URI if set.",
+      "params": {
+        "nft": "The address of the nft the token URI should be oriented to.",
+        "tokenId": "The ID of the token to get the tier URI for."
+      }
+    },
+    "typeface": {
+      "notice": "The typeface of the SVGs."
+    }
+  },
+  "DefifaVotingReferee": {
+    "attestationCountOf": {
+      "notice": "The attestation weight a scorecard has collected.",
+      "params": {
+        "gameId": "The ID of the game to which the scorecard belongs.",
+        "scorecardId": "The ID of the scorecard to get attestations of."
+      }
+    },
+    "attestationGracePeriodOf": {
+      "notice": "The time after attestations open during which a scorecard can't pass, even at quorum.",
+      "params": {
+        "gameId": "The ID of the game to get the attestation period of."
+      }
+    },
+    "attestationStartTimeOf": {
+      "notice": "The earliest timestamp a game's scorecards accept attestations.",
+      "details": "A scorecard submitted after this opens to attestations one second after submission. Attestation power is read one second before submission, so tokens acquired or delegated after a scorecard is submitted don't count toward it.",
+      "params": {
+        "gameId": "The ID of the game."
+      }
+    },
+    "CONTROLLER": {
+      "notice": "The controller used to find each game's hook, rulesets and project owner."
+    },
+    "forwardedScorecardIdOf": {
+      "notice": "The scorecard forwarded to each game's governor. Zero if none."
+    },
+    "getAttestationWeight": {
+      "notice": "An account's attestation power at a timestamp, before any scorecard's benefit discount.",
+      "details": "An account's power per tier = MAX_ATTESTATION_POWER_TIER * (account's units / tier's total units). This means within a tier, power is proportional to token holdings, but across tiers, each tier's total power is capped at MAX_ATTESTATION_POWER_TIER. A holder of 1-of-1 in a tier gets MAX_ATTESTATION_POWER_TIER; a holder of 1-of-100 gets MAX_ATTESTATION_POWER_TIER / 100. This ensures each game outcome (tier) has equal governance weight — the scorecard reflects consensus across outcomes, not dominance by whichever outcome sold the most tokens.",
+      "params": {
+        "account": "The account to get attestations for.",
+        "gameId": "The ID of the game to count attestations for.",
+        "timestamp": "The timestamp to measure attestations from."
+      }
+    },
+    "getBWAAttestationWeight": {
+      "notice": "Gets an account's BWA-adjusted attestation power relative to a specific scorecard.",
+      "details": "BWA (Benefit-Weighted Attestation) reduces a tier's attestation power by how much that tier benefits from the scorecard. Power is reduced by `(tierWeight / totalCashOutWeight)`. This means a tier with 100% of the scorecard weight gets 0 attestation power for that scorecard, while a tier with 0% weight retains full power. Tiers that split a payout keep the unpaid share of their power.",
+      "params": {
+        "account": "The account to compute BWA power for.",
+        "gameId": "The ID of the game.",
+        "scorecardId": "The ID of the scorecard (determines tier weight lookup).",
+        "timestamp": "The snapshot timestamp."
+      }
+    },
+    "hasAttestedTo": {
+      "notice": "A flag indicating if the given account has already attested to the scorecard.",
+      "params": {
+        "account": "The address to check the attestation status of.",
+        "gameId": "The ID of the game to which the scorecard belongs.",
+        "scorecardId": "The ID of the scorecard to query attestations from."
+      }
+    },
+    "MAX_ATTESTATION_POWER_TIER": {
+      "notice": "The max attestation power each tier has if every token within the tier attests."
+    },
+    "MIN_ATTESTATION_GRACE_PERIOD": {
+      "notice": "The minimum attestation grace period enforced during game initialization."
+    },
+    "quorum": {
+      "notice": "The baseline quorum: 50% of the attestation possible, which a scorecard spread thinly over many tiers approaches.",
+      "details": "The attestation possible is `(N - 1) * MAX_ATTESTATION_POWER_TIER` for N quorum-eligible tiers, because a tier never attests to its own payout. Scorecards need `QUORUM_EVEN_BPS` of it plus more as they concentrate, up to `QUORUM_WINNER_TAKE_ALL_BPS` (see `submitScorecardFor`), so integrations checking a specific scorecard should use `quorumOf`. Every tier has the same power regardless of supply, so each outcome's community has equal influence.",
+      "params": {
+        "gameId": "The ID of the game."
+      }
+    },
+    "QUORUM_EVEN_BPS": {
+      "notice": "The baseline share of the attestation possible that a scorecard needs, in basis points: approached by a scorecard spread thinly over many tiers."
+    },
+    "QUORUM_WINNER_TAKE_ALL_BPS": {
+      "notice": "The share of the attestation possible that a winner-take-all scorecard needs, in basis points."
+    },
+    "quorumOf": {
+      "notice": "The attestation a submitted scorecard needs to pass, fixed at its submission by its concentration.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "scorecardId": "The ID of the scorecard."
+      }
+    },
+    "scorecardIdOf": {
+      "notice": "The ID of a scorecard representing the provided tier weights.",
+      "params": {
+        "gameHook": "The address where the game is played.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      }
+    },
+    "stateOf": {
+      "notice": "The voting state of a submitted scorecard.",
+      "details": "Boundary semantics (inclusive):   - At exactly `attestationsBegin`, the state transitions from PENDING to ACTIVE (attestations are open).   - At exactly `gracePeriodEnds`, the grace period has elapsed and the state transitions from ACTIVE to     SUCCEEDED if quorum is met.",
+      "params": {
+        "gameId": "The ID of the game to get a proposal state of.",
+        "scorecardId": "The ID of the proposal to get the state of."
+      }
+    },
+    "attestToScorecardFrom": {
+      "notice": "Cast an attestation supporting a proposed scorecard, weighted by the caller's tier voting power.",
+      "details": "Power is read at the scorecard's frozen snapshot, one second before submission, so tokens moved in or after the submission block can't add power. Zero-weight attestations revert, so they can't be repeated for free.",
+      "params": {
+        "gameId": "The ID of the game to which the scorecard belongs.",
+        "scorecardId": "The scorecard ID."
+      }
+    },
+    "forwardScorecardFor": {
+      "notice": "Send a scorecard that holders approved to the game's governor, starting the governor's timelock.",
+      "details": "Only the first approved scorecard forwarded counts; later ones revert.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the approved scorecard."
+      }
+    },
+    "initializeGameFor": {
+      "notice": "Set a game's voting windows. Called by the deployer at launch.",
+      "details": "Only the game's project owner (the deployer) can call this, once.",
+      "params": {
+        "data": "`abi.encode(uint256 attestationStartTime, uint256 attestationGracePeriod)`. A zero start time means attestations open as soon as a scorecard is submitted.",
+        "gameId": "The ID of the game."
+      }
+    },
+    "revokeAttestationFrom": {
+      "notice": "Revoke a previously submitted attestation. Only allowed during the ACTIVE phase.",
+      "details": "Once a scorecard is SUCCEEDED (grace period ended + quorum met), revocations are disabled. This prevents the griefing loop (attest/revoke cycling) while allowing corrective action during debate.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "scorecardId": "The ID of the scorecard to revoke attestation from."
+      }
+    },
+    "submitScorecardFor": {
+      "notice": "Submits a scorecard to be attested to.",
+      "details": "Freezes everything the vote depends on: account power is read one second before submission, each tier's total units and pending reserves are snapshotted now, and the quorum is fixed by the scorecard's concentration. Attestations open at the game's start time, or one second after submission, never in the submission block.",
+      "params": {
+        "gameId": "The ID of the game.",
+        "tierWeights": "The weights of each tier in the scorecard."
+      }
     }
   },
   "ERC2771Forwarder": {
@@ -2943,7 +4372,7 @@ export const natspec = {
       "notice": "Sells project tokens into the configured Uniswap V4 pool and sends the proceeds to the beneficiary. Called by the terminal after `beforeCashOutRecordedWith` determined that the pool route beats direct reclaim.",
       "details": "Called after the data-hook path chooses pool execution over protocol cash out.The terminal has already burned the holder's project tokens by the time this callback runs, so this hook remints tokens to itself before executing the sell. The count to remint/sell comes from `hookMetadata` (set during `beforeCashOutRecordedWith`), NOT from `context.cashOutCount`. This distinction matters when a data hook wrapper (e.g. REVDeployer) splits the cash-out into fee and non-fee tranches — the terminal always passes the original full count in `context.cashOutCount`, but only the non-fee portion should be sold.",
       "params": {
-        "context": "Standard Juicebox cash-out hook context. `hookMetadata` encodes (minimumSwapAmountOut, cashOutCountToSell) chosen during `beforeCashOutRecordedWith`, followed by informational sell-side routing metadata."
+        "context": "Standard Juicebox cash-out hook context. `hookMetadata` is the nine-word tuple from `beforeCashOutRecordedWith`: the routing floor and count to sell, routing diagnostics, whether the floor was the caller's, and the no-quote sale's price limit as an output amount for the whole count."
       }
     },
     "afterPayRecordedWith": {
@@ -2963,7 +4392,7 @@ export const natspec = {
     },
     "setPoolFor": {
       "notice": "Set the V4 pool to use for a given project and terminal token pair.",
-      "details": "Pool keys are intentionally immutable once set. This prevents manipulation of swap routing after a project's buyback hook is configured.WARNING: The `poolKey.hooks` field is NOT validated. A malicious or buggy V4 hook address in the pool key could interfere with swaps (e.g. manipulate pricing, revert, or extract value). Because this function is permissioned to the project owner (or a delegate with `SET_BUYBACK_POOL`), this is a self-harming-only risk. Callers MUST ensure the pool key — including its hooks field — references a trusted pool.Operator-only. Configuring the pool turns on the floor + ceiling arbitrage routing above for this `(projectId, terminalToken)` pair. Without a configured pool, the hook is a passthrough.",
+      "details": "Pool keys are intentionally immutable once set. This prevents manipulation of swap routing after a project's buyback hook is configured.`poolKey.hooks` must be the configured `oracleHook`, which prices every route; a pool with any other hook could take a no-minimum sale through its own callbacks.Operator-only. Configuring the pool turns on the floor + ceiling arbitrage routing above for this `(projectId, terminalToken)` pair. Without a configured pool, the hook is a passthrough.",
       "params": {
         "poolKey": "The V4 PoolKey identifying the pool.",
         "projectId": "The ID of the project to set the pool for.",
@@ -2981,7 +4410,7 @@ export const natspec = {
     },
     "beforeCashOutRecordedWith": {
       "notice": "Data-hook callback consulted by the terminal during `cashOutTokensOf()`. Compares the expected output from selling project tokens in the pool against the bonding-curve reclaim amount, and if the pool offers more (net of fees) routes the cash-out through the pool via `afterCashOutRecordedWith`.",
-      "details": "Returns the protocol cash-out values unchanged unless selling the burned project tokens into the configured pool is expected to return more of the terminal token than the direct reclaim path.If the sell path wins, the hook returns an active cash-out hook specification (`noop = false`) and maxes the tax rate so the terminal does not reclaim surplus itself. The sell executes in `afterCashOutRecordedWith`.This function auto-applies the \"floor arbitrage\" path described in ARBITRAGE.md (Path 2, in revnet-core-v6). When the AMM bid is HIGHER than the bonding-curve reclaim, the hook routes the holder's burn through the pool — they get more ETH. When the AMM bid is LOWER, the hook passes through to the terminal — the bonding-curve floor is what they receive. Either way, the holder receives at least the bonding-curve reclaim. The terminal path only wins if the selected terminal can locally settle the gross reclaim; aggregate surplus may price a cash-out, but it cannot fund settlement from a terminal whose own local surplus is insufficient. **Why this matters for protocol health:** when external actors arbitrage between the AMM and the terminal cash-out path directly (buying tokens cheap on the AMM, then cashing out via terminal at the higher floor), the cash-out tax (configured per ruleset, e.g. 10%) is retained in the project surplus — boosting per-token backing for remaining holders. The AMM price corrects upward toward fair value. This hook auto-captures the same incentive for ordinary users. **Diagnostic metadata in returned hook specs:** when the hook chooses to noop (passthrough), the spec carries pool state (twapTick, liquidity, poolId, etc.) so off-chain clients can preview what the routing decision would be. Do not optimize this away — it's the protocol's public preview API for the buyback cash-out decision surface. **Caller-provided sell-side controls (via the `cashOut` metadata entry, encoded as `(uint256 minimumSwapAmountOut, bool skip)`):** - `minimumSwapAmountOut`: a hard slippage floor on the net terminal-token output. It is a protection   value, NOT a venue selector. - `skip` (default false): when true, forces the cash-out through the protocol bonding-curve/terminal   path and skips the pool entirely — even when the pool would pay more. The `minimumSwapAmountOut` floor   is still enforced against the direct reclaim, so an unmeetable floor reverts rather than silently   routing to the AMM.",
+      "details": "Returns the protocol cash-out values unchanged unless selling the burned project tokens into the configured pool is expected to return more of the terminal token than the direct reclaim path.If the sell path wins, the hook returns an active cash-out hook specification (`noop = false`) and maxes the tax rate so the terminal does not reclaim surplus itself. The sell executes in `afterCashOutRecordedWith`.This function auto-applies the \"floor arbitrage\" path described in ARBITRAGE.md (Path 2, in revnet-core-v6). When the AMM bid is HIGHER than the bonding-curve reclaim, the hook routes the holder's burn through the pool — they get more ETH. When the AMM bid is LOWER, the hook passes through to the terminal — the bonding-curve floor is what they receive. Route selection compares estimates; only an explicit minimum is a hard payout floor (INVARIANTS A.2.1). The terminal path only wins if the selected terminal can locally settle the gross reclaim; aggregate surplus may price a cash-out, but it cannot fund settlement from a terminal whose own local surplus is insufficient. **Why this matters for protocol health:** when external actors arbitrage between the AMM and the terminal cash-out path directly (buying tokens cheap on the AMM, then cashing out via terminal at the higher floor), the cash-out tax (configured per ruleset, e.g. 10%) is retained in the project surplus — boosting per-token backing for remaining holders. The AMM price corrects upward toward fair value. This hook auto-captures the same incentive for ordinary users. **Diagnostic metadata in returned hook specs:** when the hook chooses to noop (passthrough), the spec carries pool state (twapTick, liquidity, poolId, etc.) so off-chain clients can preview what the routing decision would be. Do not optimize this away — it's the protocol's public preview API for the buyback cash-out decision surface. **Caller-provided sell-side controls (via the `cashOut` metadata entry, encoded as `(uint256 minimumSwapAmountOut, bool skip)`):** - `minimumSwapAmountOut`: a hard slippage floor on the net terminal-token output. It is a protection   value, NOT a venue selector. - `skip` (default false): when true, forces the cash-out through the protocol bonding-curve/terminal   path and skips the pool entirely — even when the pool would pay more. The `minimumSwapAmountOut` floor   is still enforced against the direct reclaim, so an unmeetable floor reverts rather than silently   routing to the AMM.",
       "params": {
         "context": "Standard Juicebox cash-out data-hook context."
       }
@@ -3452,6 +4881,136 @@ export const natspec = {
         "terminalToken": "The address of the terminal token that payments to the project are made in.",
         "tickSpacing": "The Uniswap V4 pool tick spacing.",
         "twapWindow": "The period of time over which the TWAP is computed."
+      }
+    },
+    "unlockCallback": {
+      "notice": "The V4 PoolManager unlock callback. Executes the swap and settles/takes tokens.",
+      "details": "ONLY callable by the PoolManager singleton.",
+      "params": {
+        "data": "ABI-encoded SwapCallbackData."
+      }
+    }
+  },
+  "JBBuybackHook_deprecated2": {
+    "afterCashOutRecordedWith": {
+      "notice": "Sells project tokens into the configured Uniswap V4 pool and sends the proceeds to the beneficiary. Called by the terminal after `beforeCashOutRecordedWith` determined that the pool route beats direct reclaim.",
+      "details": "Called after the data-hook path chooses pool execution over protocol cash out.The terminal has already burned the holder's project tokens by the time this callback runs, so this hook remints tokens to itself before executing the sell. The count to remint/sell comes from `hookMetadata` (set during `beforeCashOutRecordedWith`), NOT from `context.cashOutCount`. This distinction matters when a data hook wrapper (e.g. REVDeployer) splits the cash-out into fee and non-fee tranches — the terminal always passes the original full count in `context.cashOutCount`, but only the non-fee portion should be sold.",
+      "params": {
+        "context": "Standard Juicebox cash-out hook context. `hookMetadata` encodes (minimumSwapAmountOut, cashOutCountToSell) chosen during `beforeCashOutRecordedWith`, followed by informational sell-side routing metadata."
+      }
+    },
+    "afterPayRecordedWith": {
+      "notice": "Buys project tokens from the Uniswap V4 pool, then mints any leftover at the issuance rate. The swap fills only while the pool price beats the mint rate — leftover input is returned to the project's terminal.",
+      "details": "The swap uses the issuance rate as its price limit: it fills while the pool offers a better rate than minting, and any unswapped tokens are minted at the issuance rate. An explicit caller-provided minimum is a settlement guarantee: if the combined output (swap + leftover mint) falls short, the transaction reverts. An oracle-derived routing minimum never reverts the payment: it is enforced inside the swap attempt, and a miss unwinds the swap so the full payment falls back to minting at the issuance rate. This keeps no-quote (programmatic) payments — protocol fees, split pays, project payers — alive when the TWAP floor is stale, while a manipulated fill can never do better than the protocol's own mint path. If the swap reverts entirely (due to insufficient liquidity or something else), all tokens are likewise minted as a fallback, against which explicit minimums still apply. Offchain observers can detect the fallback as a swap-routed payment that emits `Mint` without a `Swap`.",
+      "params": {
+        "context": "The pay context passed in by the terminal."
+      }
+    },
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for the chain-specific Uniswap V4 PoolManager and oracle hook.",
+      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call both values are effectively immutable for the contract's lifetime. Mirrors the `JBOptimismSuckerDeployer.setChainSpecificConstants` pattern so the contract's CREATE2 inputs stay byte-identical across chains and its deployed address is unified.",
+      "params": {
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on the current chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager singleton on the current chain."
+      }
+    },
+    "setPoolFor": {
+      "notice": "Set the V4 pool to use for a given project and terminal token pair.",
+      "details": "Pool keys are intentionally immutable once set. This prevents manipulation of swap routing after a project's buyback hook is configured.WARNING: The `poolKey.hooks` field is NOT validated. A malicious or buggy V4 hook address in the pool key could interfere with swaps (e.g. manipulate pricing, revert, or extract value). Because this function is permissioned to the project owner (or a delegate with `SET_BUYBACK_POOL`), this is a self-harming-only risk. Callers MUST ensure the pool key — including its hooks field — references a trusted pool.Operator-only. Configuring the pool turns on the floor + ceiling arbitrage routing above for this `(projectId, terminalToken)` pair. Without a configured pool, the hook is a passthrough.",
+      "params": {
+        "poolKey": "The V4 PoolKey identifying the pool.",
+        "projectId": "The ID of the project to set the pool for.",
+        "terminalToken": "The address of the terminal token that payments to the project are made in.",
+        "twapWindow": "The period of time over which the TWAP is computed. Exactly `MAX_TWAP_WINDOW` is stored as the 30-minute default (an immutable deployer's baked-in value, not a tuning choice); use `setTwapWindowOf` for a deliberate max-length window."
+      }
+    },
+    "setTwapWindowOf": {
+      "notice": "Change the TWAP window for a project's terminal token.",
+      "params": {
+        "newWindow": "The new TWAP window.",
+        "projectId": "The ID of the project to set the TWAP window of.",
+        "terminalToken": "The terminal token address (use JBConstants.NATIVE_TOKEN for native ETH)."
+      }
+    },
+    "beforeCashOutRecordedWith": {
+      "notice": "Data-hook callback consulted by the terminal during `cashOutTokensOf()`. Compares the expected output from selling project tokens in the pool against the bonding-curve reclaim amount, and if the pool offers more (net of fees) routes the cash-out through the pool via `afterCashOutRecordedWith`.",
+      "details": "Returns the protocol cash-out values unchanged unless selling the burned project tokens into the configured pool is expected to return more of the terminal token than the direct reclaim path.If the sell path wins, the hook returns an active cash-out hook specification (`noop = false`) and maxes the tax rate so the terminal does not reclaim surplus itself. The sell executes in `afterCashOutRecordedWith`.This function auto-applies the \"floor arbitrage\" path described in ARBITRAGE.md (Path 2, in revnet-core-v6). When the AMM bid is HIGHER than the bonding-curve reclaim, the hook routes the holder's burn through the pool — they get more ETH. When the AMM bid is LOWER, the hook passes through to the terminal — the bonding-curve floor is what they receive. Either way, the holder receives at least the bonding-curve reclaim. The terminal path only wins if the selected terminal can locally settle the gross reclaim; aggregate surplus may price a cash-out, but it cannot fund settlement from a terminal whose own local surplus is insufficient. **Why this matters for protocol health:** when external actors arbitrage between the AMM and the terminal cash-out path directly (buying tokens cheap on the AMM, then cashing out via terminal at the higher floor), the cash-out tax (configured per ruleset, e.g. 10%) is retained in the project surplus — boosting per-token backing for remaining holders. The AMM price corrects upward toward fair value. This hook auto-captures the same incentive for ordinary users. **Diagnostic metadata in returned hook specs:** when the hook chooses to noop (passthrough), the spec carries pool state (twapTick, liquidity, poolId, etc.) so off-chain clients can preview what the routing decision would be. Do not optimize this away — it's the protocol's public preview API for the buyback cash-out decision surface. **Caller-provided sell-side controls (via the `cashOut` metadata entry, encoded as `(uint256 minimumSwapAmountOut, bool skip)`):** - `minimumSwapAmountOut`: a hard slippage floor on the net terminal-token output. It is a protection   value, NOT a venue selector. - `skip` (default false): when true, forces the cash-out through the protocol bonding-curve/terminal   path and skips the pool entirely — even when the pool would pay more. The `minimumSwapAmountOut` floor   is still enforced against the direct reclaim, so an unmeetable floor reverts rather than silently   routing to the AMM.",
+      "params": {
+        "context": "Standard Juicebox cash-out data-hook context."
+      }
+    },
+    "beforePayRecordedWith": {
+      "notice": "Data-hook callback consulted by the terminal during `pay()`. Compares the pool swap rate against the project's mint rate and chooses the better one. If the pool wins, returns weight=0 so all tokens come from the swap executed in `afterPayRecordedWith`.",
+      "details": "This function auto-applies the \"ceiling arbitrage\" path described in ARBITRAGE.md (Path 3, in revnet-core-v6). When the AMM ask is HIGHER than the terminal's pay rate (`weight × ETH`), the hook returns `noop=true` and the terminal mints at the bonding-curve rate — saving the user money. When the AMM ask is LOWER, the hook routes through the pool — the user gets more tokens per ETH. Either way, the user receives at least the bonding-curve mint amount. The `noop` spec is intentionally returned with diagnostic metadata (twapTick, liquidity, poolId, weight ratio, raw swap quote) so off-chain clients (frontends, arbitrage bots, indexers) can preview what the routing decision would be without executing a pay. Do not optimize this away — it's the protocol's public preview API for the buyback decision surface. **Why this matters for protocol health:** when external actors arbitrage between the terminal pay path and the AMM directly (paying terminal at low weight, then selling on AMM at higher price), the AMM price converges downward toward the issuance rate. Their payment lands in project surplus, growing the protocol. This hook auto-captures the same incentive for ordinary users transacting through the terminal — they never need to know whether to mint or swap.",
+      "params": {
+        "context": "Payment context passed to the data hook by `terminalStore.recordPaymentFrom(...)`. `context.metadata` can specify a Uniswap quote and specify how much of the payment should be used to swap. If `context.metadata` does not specify a quote, one will be calculated based on the TWAP. If `context.metadata` does not specify how much of the payment should be used, the hook uses the full amount paid in."
+      }
+    },
+    "DIRECTORY": {
+      "notice": "The directory of terminals and controllers."
+    },
+    "hasMintPermissionFor": {
+      "notice": "Always returns false — the buyback hook never claims mint permission directly. Minting is handled via the controller in `afterPayRecordedWith`/`afterCashOutRecordedWith` using permission from the registry."
+    },
+    "isTrustedForwarder": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
+    },
+    "MAX_TWAP_WINDOW": {
+      "notice": "Projects cannot specify a TWAP window longer than this constant."
+    },
+    "MIN_TWAP_WINDOW": {
+      "notice": "Projects cannot specify a TWAP window shorter than this constant."
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools. Set once by `_DEPLOYER` after construction via `setChainSpecificConstants` and never changed thereafter."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "poolKeyOf": {
+      "notice": "Returns the PoolKey for a given project and terminal token pair.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token address (normalized to address(0) for native)."
+      }
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 PoolManager singleton. Set once by `_DEPLOYER` after construction via `setChainSpecificConstants` and never changed thereafter."
+    },
+    "PRICES": {
+      "notice": "The contract that exposes price feeds."
+    },
+    "PROJECTS": {
+      "notice": "The project registry."
+    },
+    "projectTokenOf": {
+      "notice": "The address of each project's token."
+    },
+    "supportsInterface": {
+      "notice": "Indicates which interfaces this contract implements (ERC-165)."
+    },
+    "TOKENS": {
+      "notice": "The token registry."
+    },
+    "trustedForwarder": {
+      "details": "Returns the address of the trusted forwarder."
+    },
+    "TWAP_SLIPPAGE_DENOMINATOR": {
+      "notice": "The denominator used when calculating TWAP slippage percent values."
+    },
+    "twapWindowOf": {
+      "notice": "The TWAP window for a given project and terminal token pair."
+    },
+    "initializePoolFor": {
+      "notice": "Initialize a Uniswap V4 pool in the PoolManager and configure it as the buyback pool for a project.",
+      "details": "Atomically initializes the pool (if not already initialized) and calls `_setPoolFor`.Operator-only. Configuring the pool turns on the floor + ceiling arbitrage routing above for this `(projectId, terminalToken)` pair. Without a configured pool, the hook is a passthrough.",
+      "params": {
+        "fee": "The Uniswap V4 pool fee tier.",
+        "projectId": "The ID of the project to set the pool for.",
+        "sqrtPriceX96": "The initial sqrtPriceX96 for the pool (if not already initialized).",
+        "terminalToken": "The address of the terminal token that payments to the project are made in.",
+        "tickSpacing": "The Uniswap V4 pool tick spacing.",
+        "twapWindow": "The period of time over which the TWAP is computed. Exactly `MAX_TWAP_WINDOW` is stored as the 30-minute default (an immutable deployer's baked-in value, not a tuning choice); use `setTwapWindowOf` for a deliberate max-length window."
       }
     },
     "unlockCallback": {
@@ -8204,6 +9763,183 @@ export const natspec = {
   },
   "JBP6FeeLPSplitHook": {
     "processSplitWith": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split, or by one of the project's terminals when a payout is sent to it. The hook FIRST durably accepts and accounts for the allocation, then best-effort attempts pool deployment or liquidity addition if enough gas remains. A failed attempt cannot touch the accepted inventory: it stays in the ledgers, retryable through the permissionless `deployPool`/`addLiquidity` entry points. The hook never burns what it is sent.",
+      "details": "Reserved tokens (groupId == 1) come from the project's controller as the project's ERC-20, or as credits while the project has no ERC-20, and feed the ask. A payout (groupId == `uint256(uint160(token))`) comes from a terminal of the project in the deployed pool's terminal token, and feeds the bid. The order matters: validate the caller and context, account the tokens, THEN try to put them to work. Every check that can revert runs before the ledger write; a revert makes Core return the allocation to the project. Once intake has accounted the allocation, nothing in this frame reverts: automation runs behind a gas-bounded self-call whose failure is reported through `LiquidityAutomationFailed` (selector only, revert data is never copied unbounded).",
+      "params": {
+        "context": "The split hook context Core built for the distribution or payout."
+      }
+    },
+    "burnFeeRemainder": {
+      "notice": "Burn `count` of this hook's project ERC-20 through the project's controller, lowering the project's supply. Callable only via this contract's own best-effort `_routeCollectedFees` so its revert can be caught and the remainder kept in the ask ledger instead.",
+      "details": "The hook burns its own tokens (`holder == msg.sender`), so the controller needs no permission grant. Core burns a holder's credits BEFORE its ERC-20, so the hook first claims its own credits of this project into the ERC-20 and adds them to the ask ledger (`_claimHookCreditsFor`, the same step a recycle runs); credits sent to the hook from outside therefore cannot divert the burn. Fee-credit claims the hook owes (only when this project is a fee project with claims from before it tokenized) stay credits, and the burn would consume them first, so the burn is accepted only when exactly `count` ERC-20 left the hook and its credit balance is unchanged; anything else reverts (undoing the claim) and is forgiven by the caller.This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the burn is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "count": "The number of project tokens to burn.",
+        "projectId": "The ID of the project whose tokens to burn.",
+        "projectToken": "The project's ERC-20, whose hook balance must fall by exactly `count`."
+      }
+    },
+    "deployedTerminalTokenOf": {
+      "notice": "The terminal token the project's one supported pool was deployed against."
+    },
+    "deployPool": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position as a single-sided ask of the project's accumulated reserved tokens. Permissionless: anyone may seed the pool. Abuse is bounded by the economic gate (asks only reach up to the issuance ceiling, bids only down to the cash-out floor) and, for an already-initialized pool, the oracle-TWAP deviation guard.",
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "sendToTerminal": {
+      "notice": "Send `amount` of `token` to `terminal` for `projectId`: `pay` it (the fee-project cut, minting fee-project tokens to this hook) or `addToBalanceOf` it (an LP-fee remainder returned to the project's own treasury). Callable only via this contract's own best-effort self-calls so its revert (from the terminal or the ERC-20 allowance-consumption check) can be caught and forgiven.",
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the terminal call is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "amount": "The amount to send.",
+        "projectId": "The project to pay or add to the balance of.",
+        "shouldPay": "Whether to `pay` (minting project tokens to this hook) rather than `addToBalanceOf`.",
+        "terminal": "The terminal to send to. A terminal with no code reverts the call.",
+        "token": "The token to send (native sentinel or ERC-20)."
+      }
+    },
+    "addLiquidity": {
+      "notice": "Recycle the project's positions with its post-deployment accumulated reserved tokens: route both positions' fees, burn both, and re-mint the ask and bid single-sided around the live spot — the same executor `deployPool` uses. Callable at any time, with or without new tokens; rejected when the pool's spot has deviated from the oracle TWAP. Permissionless: abuse is bounded by the economic caps (the ask never sells below the cash-out floor, the bid never buys above the issuance ceiling) and the oracle-TWAP deviation guard.",
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "accumulatedProjectCredits": {
+      "notice": "The credit balance (project tokens with no ERC-20 deployed yet) currently accounted for each project."
+    },
+    "accumulatedProjectTokens": {
+      "notice": "The project-token balance held for each project outside its positions, waiting for the next ask."
+    },
+    "accumulatedTerminalTokens": {
+      "notice": "The terminal-token balance held for each project outside its positions, waiting for the next bid."
+    },
+    "askTokenIdOf": {
+      "notice": "The PositionManager token ID of each project's ask position (project tokens, spot to ceiling)."
+    },
+    "bidTokenIdOf": {
+      "notice": "The PositionManager token ID of each project's bid position (terminal tokens, spot to floor)."
+    },
+    "BPS": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "buybackHook": {
+      "notice": "The buyback-hook registry configured for this clone."
+    },
+    "claimableFeeCredits": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "DIRECTORY": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "feePercent": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf": {
+      "notice": "The first nonzero ruleset weight recorded by a successful deploy or recycle of each project."
+    },
+    "isPoolDeployed": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair.",
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "poolKeyOf": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "poolKeysOf": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "PROJECTS": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "supportsInterface": {
+      "notice": "Whether this contract implements a given interface (ERC-165).",
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      }
+    },
+    "TICK_SPACING": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "TOKENS": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "claimFeeTokensFor": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`.",
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees": {
+      "notice": "Collect accrued Uniswap LP trading fees from a project's ask and bid positions and route them to the project. A best-effort fee-project cut is taken on EACH side; the remaining terminal-token portion is added to the project's balance in its primary terminal and the remaining project-token portion is burned, both raising the project's cash-out floor. A side whose add or burn fails is carried into its ledger instead (the bid or the ask), becoming liquidity at the next recycle. The positions themselves are not moved. Callable by anyone.",
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "executeAutomationFor": {
+      "notice": "Execute an inline automation attempt for a project: deploy the pool if none exists yet, otherwise add the accumulated inventory to the deployed pool's position. Callable only via this contract's own best-effort `_attemptAutomation` so a revert anywhere in the flow can be caught and forgiven while the parent frame's accepted inventory stays intact.",
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while `processSplitWith` still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the attempt is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "projectId": "The ID of the project to attempt automation for."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once.",
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry to configure for this clone. May be the zero address.",
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    }
+  },
+  "JBP6FeeLPSplitHook_deprecated": {
+    "processSplitWith": {
       "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split. Tokens are accumulated in escrow both before AND after pool deployment: pre-deploy, `deployPool` consumes the accumulation; post-deploy, `addLiquidity` converts it into more liquidity. The hook never burns.",
       "details": "Only accepts reserved-token splits (groupId == 1). Reverts if the sender is not the project's controller or if the project has no ERC-20 token deployed."
     },
@@ -8351,6 +10087,487 @@ export const natspec = {
         "decreaseAmount1Min": "Minimum amount of token1 to recover from the burned position (slippage protection).",
         "projectId": "The ID of the project whose LP position should be rebalanced.",
         "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    }
+  },
+  "JBP6FeeLPSplitHook_deprecated2": {
+    "processSplitWith": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split. Tokens are accumulated in escrow both before AND after pool deployment: pre-deploy, `deployPool` consumes the accumulation; post-deploy, `addLiquidity` converts it into more liquidity. The hook never burns.",
+      "details": "Only accepts reserved-token splits (groupId == 1). Reverts if the sender is not the project's controller or if the project has no ERC-20 token deployed."
+    },
+    "deployPool": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position using the project's accumulated reserved tokens. A portion of those tokens is cashed out for terminal tokens so the position is two-sided. Permissionless once the ruleset weight has decayed to 10% of what it was when accumulation began; otherwise requires `SET_BUYBACK_POOL` permission from the project owner.",
+      "params": {
+        "minCashOutReturn": "Minimum terminal tokens to accept from the cash-out (slippage protection). Pass 0 to use the hook's default 3% tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "addLiquidity": {
+      "notice": "Convert the project's post-deployment accumulated reserved tokens into additional protocol-owned liquidity. Tops up the active position while the live cash-out/issuance corridor still matches the active position's ticks; once the corridor has drifted past `_RERANGE_THRESHOLD_TICKS`, BURNS the stale position to recover its principal and re-mints a single fresh position at the current corridor (folding in the new accumulation) — so all allocated funds stay in one maximally-efficient position rather than fragmenting across stale bands. The funding cash-out is forced DIRECTLY through the bonding curve (never the AMM this hook feeds), and the add is rejected if the pool's spot price has deviated from the oracle TWAP — bounding sandwich/JIT manipulation. Permissionless once the ruleset weight has decayed 10x from when accumulation began; otherwise requires `SET_BUYBACK_POOL` from the project owner. Safe for anyone to call.",
+      "params": {
+        "minCashOutReturn": "Minimum terminal tokens to accept from the funding cash-out (slippage protection). Pass 0 to use the hook's default tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "accumulatedProjectTokens": {
+      "notice": "The accumulated project-token balance currently held for each project before its first pool deployment."
+    },
+    "activeTickLowerOf": {
+      "notice": "The lower tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "activeTickUpperOf": {
+      "notice": "The upper tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "BPS": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "buybackHook": {
+      "notice": "The buyback-hook registry this clone targets for force-direct cash-outs."
+    },
+    "claimableFeeCredits": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "DIRECTORY": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "feePercent": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf": {
+      "notice": "The ruleset weight recorded when the hook first starts accumulating project tokens for each project."
+    },
+    "isPoolDeployed": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair.",
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "poolKeyOf": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "poolKeysOf": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "PROJECTS": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "supportsInterface": {
+      "notice": "Whether this contract implements a given interface (ERC-165).",
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      }
+    },
+    "TICK_SPACING": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "tokenIdOf": {
+      "notice": "The Uniswap V4 PositionManager token ID for each deployed project and terminal-token pair."
+    },
+    "TOKENS": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "claimFeeTokensFor": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`.",
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees": {
+      "notice": "Collect accrued Uniswap LP trading fees for a project (from its single active position) and route them back to its terminal balance. The terminal-token portion is deposited (minus an optional fee-project cut); the project-token portion is carried into the accumulation ledger to become future liquidity (never burned). Callable by anyone.",
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once.",
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. May be the zero address, in which case no force-direct metadata is attached.",
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "rebalanceLiquidity": {
+      "notice": "Burn the existing LP position and re-mint it with tick bounds recalculated from the project's current issuance and cash-out rates. Useful when rate changes have shifted the price range away from the active position. Requires `SET_BUYBACK_POOL` permission from the project owner.",
+      "params": {
+        "decreaseAmount0Min": "Minimum amount of token0 to recover from the burned position (slippage protection).",
+        "decreaseAmount1Min": "Minimum amount of token1 to recover from the burned position (slippage protection).",
+        "projectId": "The ID of the project whose LP position should be rebalanced.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    }
+  },
+  "JBP6FeeLPSplitHook_deprecated3": {
+    "processSplitWith": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split. Tokens are accumulated in escrow both before AND after pool deployment: pre-deploy, `deployPool` consumes the accumulation; post-deploy, `addLiquidity` converts it into more liquidity. The hook never burns.",
+      "details": "Only accepts reserved-token splits (groupId == 1). Reverts if the sender is not the project's controller or if the project has no ERC-20 token deployed."
+    },
+    "deployPool": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position using the project's accumulated reserved tokens. A portion of those tokens is cashed out for terminal tokens so the position is two-sided. Permissionless once the ruleset weight has decayed to 10% of what it was when accumulation began; otherwise requires `SET_BUYBACK_POOL` permission from the project owner.",
+      "params": {
+        "minCashOutReturn": "Minimum terminal tokens to accept from the cash-out (slippage protection). Pass 0 to use the hook's default 3% tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "addLiquidity": {
+      "notice": "Convert the project's post-deployment accumulated reserved tokens into additional protocol-owned liquidity. Tops up the active position while the live cash-out/issuance corridor still matches the active position's ticks; once the corridor has drifted past `_RERANGE_THRESHOLD_TICKS`, BURNS the stale position to recover its principal and re-mints a single fresh position at the current corridor (folding in the new accumulation) — so all allocated funds stay in one maximally-efficient position rather than fragmenting across stale bands. The funding cash-out is forced DIRECTLY through the bonding curve (never the AMM this hook feeds), and the add is rejected if the pool's spot price has deviated from the oracle TWAP — bounding sandwich/JIT manipulation. Permissionless once the ruleset weight has decayed 10x from when accumulation began; otherwise requires `SET_BUYBACK_POOL` from the project owner. Safe for anyone to call.",
+      "params": {
+        "minCashOutReturn": "Minimum terminal tokens to accept from the funding cash-out (slippage protection). Pass 0 to use the hook's default tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "accumulatedProjectTokens": {
+      "notice": "The accumulated project-token balance currently held for each project before its first pool deployment."
+    },
+    "activeTickLowerOf": {
+      "notice": "The lower tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "activeTickUpperOf": {
+      "notice": "The upper tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "BPS": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "buybackHook": {
+      "notice": "The buyback-hook registry this clone targets for force-direct cash-outs."
+    },
+    "claimableFeeCredits": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "DIRECTORY": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "feePercent": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf": {
+      "notice": "The ruleset weight recorded when the hook first starts accumulating project tokens for each project."
+    },
+    "isPoolDeployed": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair.",
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "poolKeyOf": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "poolKeysOf": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "PROJECTS": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "supportsInterface": {
+      "notice": "Whether this contract implements a given interface (ERC-165).",
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      }
+    },
+    "TICK_SPACING": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "tokenIdOf": {
+      "notice": "The Uniswap V4 PositionManager token ID for each deployed project and terminal-token pair."
+    },
+    "TOKENS": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "claimFeeTokensFor": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`.",
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees": {
+      "notice": "Collect accrued Uniswap LP trading fees for a project (from its single active position) and route them back to its terminal balance. The terminal-token portion is deposited (minus an optional fee-project cut); the project-token portion is carried into the accumulation ledger to become future liquidity (never burned). Callable by anyone.",
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once.",
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. May be the zero address, in which case no force-direct metadata is attached.",
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "rebalanceLiquidity": {
+      "notice": "Burn the existing LP position and re-mint it with tick bounds recalculated from the project's current issuance and cash-out rates. Useful when rate changes have shifted the price range away from the active position. Requires `SET_BUYBACK_POOL` permission from the project owner.",
+      "params": {
+        "decreaseAmount0Min": "Minimum amount of token0 to recover from the burned position (slippage protection).",
+        "decreaseAmount1Min": "Minimum amount of token1 to recover from the burned position (slippage protection).",
+        "projectId": "The ID of the project whose LP position should be rebalanced.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    }
+  },
+  "JBP6FeeLPSplitHook_deprecated4": {
+    "processSplitWith": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split, or by one of the project's terminals when a payout is sent to it. The hook FIRST durably accepts and accounts for the allocation, then best-effort attempts pool deployment or liquidity addition if enough gas remains. A failed attempt cannot touch the accepted inventory: it stays in the ledgers, retryable through the permissionless `deployPool`/`addLiquidity` entry points. The hook never burns what it is sent.",
+      "details": "Reserved tokens (groupId == 1) come from the project's controller as the project's ERC-20, or as credits while the project has no ERC-20, and feed the ask. A payout (groupId == `uint256(uint160(token))`) comes from a terminal of the project in the deployed pool's terminal token, and feeds the bid. The order matters: validate the caller and context, account the tokens, THEN try to put them to work. Every check that can revert runs before the ledger write; a revert makes Core return the allocation to the project. Once intake has accounted the allocation, nothing in this frame reverts: automation runs behind a gas-bounded self-call whose failure is reported through `LiquidityAutomationFailed` (selector only, revert data is never copied unbounded).",
+      "params": {
+        "context": "The split hook context Core built for the distribution or payout."
+      }
+    },
+    "burnFeeRemainder": {
+      "notice": "Burn `count` of this hook's project ERC-20 through the project's controller, lowering the project's supply. Callable only via this contract's own best-effort `_routeCollectedFees` so its revert can be caught and the remainder kept in the ask ledger instead.",
+      "details": "The hook burns its own tokens (`holder == msg.sender`), so the controller needs no permission grant. Core burns a holder's credits BEFORE its ERC-20, so the hook first claims its own credits of this project into the ERC-20 and adds them to the ask ledger (`_claimHookCreditsFor`, the same step a recycle runs); credits sent to the hook from outside therefore cannot divert the burn. Fee-credit claims the hook owes (only when this project is a fee project with claims from before it tokenized) stay credits, and the burn would consume them first, so the burn is accepted only when exactly `count` ERC-20 left the hook and its credit balance is unchanged; anything else reverts (undoing the claim) and is forgiven by the caller.This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the burn is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "count": "The number of project tokens to burn.",
+        "projectId": "The ID of the project whose tokens to burn.",
+        "projectToken": "The project's ERC-20, whose hook balance must fall by exactly `count`."
+      }
+    },
+    "deployedTerminalTokenOf": {
+      "notice": "The terminal token the project's one supported pool was deployed against."
+    },
+    "deployPool": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position as a single-sided ask of the project's accumulated reserved tokens. Permissionless: anyone may seed the pool. Abuse is bounded by the economic gate (asks only reach up to the issuance ceiling, bids only down to the cash-out floor) and, for an already-initialized pool, the oracle-TWAP deviation guard.",
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "sendToTerminal": {
+      "notice": "Send `amount` of `token` to `terminal` for `projectId`: `pay` it (the fee-project cut, minting fee-project tokens to this hook) or `addToBalanceOf` it (an LP-fee remainder returned to the project's own treasury). Callable only via this contract's own best-effort self-calls so its revert (from the terminal or the ERC-20 allowance-consumption check) can be caught and forgiven.",
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the terminal call is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "amount": "The amount to send.",
+        "projectId": "The project to pay or add to the balance of.",
+        "shouldPay": "Whether to `pay` (minting project tokens to this hook) rather than `addToBalanceOf`.",
+        "terminal": "The terminal to send to. A terminal with no code reverts the call.",
+        "token": "The token to send (native sentinel or ERC-20)."
+      }
+    },
+    "addLiquidity": {
+      "notice": "Recycle the project's positions with its post-deployment accumulated reserved tokens: route both positions' fees, burn both, and re-mint the ask and bid single-sided around the live spot — the same executor `deployPool` uses. Callable at any time, with or without new tokens; rejected when the pool's spot has deviated from the oracle TWAP. Permissionless: abuse is bounded by the economic caps (the ask never sells below the cash-out floor, the bid never buys above the issuance ceiling) and the oracle-TWAP deviation guard.",
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "accumulatedProjectCredits": {
+      "notice": "The credit balance (project tokens with no ERC-20 deployed yet) currently accounted for each project."
+    },
+    "accumulatedProjectTokens": {
+      "notice": "The project-token balance held for each project outside its positions, waiting for the next ask."
+    },
+    "accumulatedTerminalTokens": {
+      "notice": "The terminal-token balance held for each project outside its positions, waiting for the next bid."
+    },
+    "askTokenIdOf": {
+      "notice": "The PositionManager token ID of each project's ask position (project tokens, spot to ceiling)."
+    },
+    "bidTokenIdOf": {
+      "notice": "The PositionManager token ID of each project's bid position (terminal tokens, spot to floor)."
+    },
+    "BPS": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "buybackHook": {
+      "notice": "The buyback-hook registry configured for this clone."
+    },
+    "claimableFeeCredits": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "DIRECTORY": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "feePercent": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf": {
+      "notice": "The first nonzero ruleset weight recorded by a successful deploy or recycle of each project."
+    },
+    "isPoolDeployed": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair.",
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "poolKeyOf": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "poolKeysOf": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "PROJECTS": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "supportsInterface": {
+      "notice": "Whether this contract implements a given interface (ERC-165).",
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      }
+    },
+    "TICK_SPACING": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "TOKENS": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "claimFeeTokensFor": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`.",
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees": {
+      "notice": "Collect accrued Uniswap LP trading fees from a project's ask and bid positions and route them to the project. A best-effort fee-project cut is taken on EACH side; the remaining terminal-token portion is added to the project's balance in its primary terminal and the remaining project-token portion is burned, both raising the project's cash-out floor. A side whose add or burn fails is carried into its ledger instead (the bid or the ask), becoming liquidity at the next recycle. The positions themselves are not moved. Callable by anyone.",
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "executeAutomationFor": {
+      "notice": "Execute an inline automation attempt for a project: deploy the pool if none exists yet, otherwise add the accumulated inventory to the deployed pool's position. Callable only via this contract's own best-effort `_attemptAutomation` so a revert anywhere in the flow can be caught and forgiven while the parent frame's accepted inventory stays intact.",
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while `processSplitWith` still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the attempt is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "projectId": "The ID of the project to attempt automation for."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once.",
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry to configure for this clone. May be the zero address.",
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
       }
     }
   },
@@ -9198,6 +11415,195 @@ export const natspec = {
       }
     }
   },
+  "JBRouterTerminalGateway_deprecated": {
+    "addToBalanceOf": {
+      "notice": "Route an add-to-balance call, retaining failed input only when source-project metadata opts in.",
+      "details": "The opt-in is metadata which is exactly 32 bytes encoding a nonzero raw source project ID. Calls without the opt-in revert synchronously when the routed attempt fails.",
+      "params": {
+        "amount": "The amount of tokens to send.",
+        "memo": "A memo to pass along to the emitted event.",
+        "metadata": "Bytes in `JBMetadataResolver`'s format, or exactly 32 bytes naming the source project.",
+        "projectId": "The ID of the destination project.",
+        "shouldReturnHeldFees": "Whether held fees should be returned based on the amount added.",
+        "token": "The address of the token to pay in."
+      }
+    },
+    "pay": {
+      "notice": "Route a payment, retaining failed zero-minimum input only when source-project metadata opts in.",
+      "details": "Retention requires `minReturnedTokens == 0` and metadata which is exactly 32 bytes encoding a nonzero raw source project ID. All other failed payments revert synchronously.",
+      "params": {
+        "amount": "The amount of tokens to send.",
+        "beneficiary": "The address to receive any tokens minted by the destination project.",
+        "memo": "A memo to pass along to the emitted event.",
+        "metadata": "Bytes in `JBMetadataResolver`'s format, or exactly 32 bytes naming the source project.",
+        "minReturnedTokens": "The minimum number of destination project tokens expected in return.",
+        "projectId": "The ID of the destination project to pay.",
+        "token": "The address of the token to pay with."
+      }
+    },
+    "addAccountingContextsFor": {
+      "notice": "Empty implementation because accounting contexts are delegated to `ROUTER`.",
+      "params": {
+        "accountingContexts": "Ignored because the immutable router derives accounting contexts at runtime.",
+        "projectId": "The ID of the project whose accounting contexts would otherwise be configured."
+      }
+    },
+    "accountingContextForTokenOf": {
+      "notice": "Delegate the accounting-context lookup to the immutable router.",
+      "params": {
+        "projectId": "The ID of the project to get the accounting context for.",
+        "token": "The address of the token to get the accounting context for."
+      }
+    },
+    "accountingContextsOf": {
+      "notice": "Delegate the accounting-context lookup to the immutable router.",
+      "params": {
+        "projectId": "The project whose accounting contexts were requested."
+      }
+    },
+    "currentSurplusOf": {
+      "notice": "Delegate the surplus lookup to the immutable router.",
+      "params": {
+        "currency": "The currency the caller wanted the surplus returned in.",
+        "decimals": "The fixed-point precision the caller wanted the surplus returned in.",
+        "projectId": "The project whose surplus was requested.",
+        "tokens": "The token set the caller wanted surplus measured against."
+      }
+    },
+    "DIRECTORY": {
+      "notice": "The immutable directory used to resolve a source project's current accounting terminal for refunds."
+    },
+    "discoverBestPool": {
+      "notice": "Delegate best-pool discovery to the immutable router.",
+      "params": {
+        "normalizedTokenIn": "The input token (wrapped if native).",
+        "normalizedTokenOut": "The output token (wrapped if native)."
+      }
+    },
+    "discoverPool": {
+      "notice": "Delegate V3 pool discovery to the immutable router.",
+      "params": {
+        "normalizedTokenIn": "The input token (wrapped if native).",
+        "normalizedTokenOut": "The output token (wrapped if native)."
+      }
+    },
+    "FINALIZATION_FAILURE_COUNT": {
+      "notice": "The number of matching, time-separated qualified failures required before finalization."
+    },
+    "isTrustedForwarder": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
+    },
+    "maximumQualifiedCallGas": {
+      "notice": "Return the largest qualified call budget executable under the live chain's block gas limit."
+    },
+    "migrateBalanceOf": {
+      "notice": "Empty implementation because the gateway only escrows retained calls, not project balances.",
+      "params": {
+        "projectId": "The project whose balance migration was requested.",
+        "to": "The destination terminal that would receive migrated funds.",
+        "token": "The token whose balance migration was requested."
+      }
+    },
+    "originalPayer": {
+      "notice": "The original payer propagated into the downstream router during an active attempt."
+    },
+    "pendingCallCommitmentOf": {
+      "notice": "Return the hash commitment of a call retained after its atomic router attempt failed.",
+      "details": "The full call, memo, and metadata are emitted by the queue event; only their hash is stored.",
+      "params": {
+        "id": "The pending call identifier."
+      }
+    },
+    "pendingCallCount": {
+      "notice": "The total number of pending-call identifiers issued."
+    },
+    "pendingCallFailureOf": {
+      "notice": "Return a retained call's consecutive matching failure state.",
+      "params": {
+        "id": "The pending call identifier."
+      }
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 contract used for gasless ERC-20 approvals and transfers."
+    },
+    "previewPayFor": {
+      "notice": "Delegate payment previewing to the immutable router.",
+      "params": {
+        "amount": "The amount of tokens which would be sent.",
+        "beneficiary": "The address which would receive any tokens minted by the destination project.",
+        "metadata": "Bytes in `JBMetadataResolver`'s format.",
+        "projectId": "The ID of the destination project to pay.",
+        "token": "The token to provide to the router."
+      }
+    },
+    "QUALIFIED_CALL_GAS": {
+      "notice": "The base and minimum gas forwarded by a qualified retry or final attempt."
+    },
+    "RETRY_DELAY": {
+      "notice": "The minimum delay between qualified failures and before finalization."
+    },
+    "ROUTER": {
+      "notice": "The immutable router terminal this gateway calls atomically."
+    },
+    "supportsInterface": {
+      "notice": "Indicates whether this gateway implements an interface.",
+      "params": {
+        "interfaceId": "The interface identifier to test."
+      }
+    },
+    "terminalOf": {
+      "notice": "Return the terminal this gateway forwards into.",
+      "details": "One hop only, never the end of the chain. `JBForwardingCheck` walks forwarders link by link to detect cycles, so naming a terminal further downstream would hide the router from that walk and let a route that returns to the router read as non-circular.",
+      "params": {
+        "projectId": "Ignored because every project forwards to the same immutable router."
+      }
+    },
+    "trustedForwarder": {
+      "details": "Returns the address of the trusted forwarder."
+    },
+    "finalizePendingCall": {
+      "notice": "Make one final qualified attempt, refunding only after the same failure class is reproduced.",
+      "details": "Callable permissionlessly once `FINALIZATION_FAILURE_COUNT` matching failures have accumulated and the retry delay has elapsed. A changed failure class resets the streak instead of refunding. The supplied call, memo, and metadata are read from the queue event and authenticated against the stored commitment.",
+      "params": {
+        "call": "The retained call, as emitted when it was queued.",
+        "id": "The pending call identifier.",
+        "memo": "The original memo bound by the pending call.",
+        "metadata": "The original metadata bound by the pending call."
+      }
+    },
+    "finalizePendingCallWithGas": {
+      "notice": "Make one final qualified attempt with an expanded gas budget.",
+      "details": "Behaves like `finalizePendingCall` but forwards a caller-selected budget, which must satisfy the pending call's escalating minimum and fit under the live chain's executable transaction budget.",
+      "params": {
+        "call": "The retained call, as emitted when it was queued.",
+        "gasLimit": "The gas to forward, which must satisfy the pending call's escalating minimum.",
+        "id": "The pending call identifier.",
+        "memo": "The original memo bound by the pending call.",
+        "metadata": "The original metadata bound by the pending call."
+      }
+    },
+    "processPendingCall": {
+      "notice": "Make a permissionless attempt using the default qualified gas budget.",
+      "details": "Once `FINALIZATION_FAILURE_COUNT` matching failures have accumulated, further attempts must go through `finalizePendingCall`. The supplied call, memo, and metadata are read from the queue event and authenticated against the stored commitment.",
+      "params": {
+        "call": "The retained call, as emitted when it was queued.",
+        "id": "The pending call identifier.",
+        "memo": "The original memo bound by the pending call.",
+        "metadata": "The original metadata bound by the pending call."
+      }
+    },
+    "processPendingCallWithGas": {
+      "notice": "Make a permissionless attempt with an expanded qualified gas budget.",
+      "details": "Behaves like `processPendingCall` but forwards a caller-selected budget, which must satisfy the pending call's escalating minimum and fit under the live chain's executable transaction budget.",
+      "params": {
+        "call": "The retained call, as emitted when it was queued.",
+        "gasLimit": "The gas to forward, which must satisfy the pending call's escalating minimum.",
+        "id": "The pending call identifier.",
+        "memo": "The original memo bound by the pending call.",
+        "metadata": "The original metadata bound by the pending call."
+      }
+    }
+  },
   "JBRouterTerminalRegistry": {
     "addToBalanceOf": {
       "notice": "Add funds to a project's balance by forwarding them through the project's resolved router terminal.",
@@ -9571,6 +11977,200 @@ export const natspec = {
     }
   },
   "JBRouterTerminal_deprecated1": {
+    "addToBalanceOf": {
+      "notice": "Add funds to a project's balance by routing the incoming token to whatever token the project accepts.",
+      "params": {
+        "amount": "The amount of tokens to send.",
+        "memo": "A memo to pass along to the emitted event.",
+        "metadata": "Bytes in `JBMetadataResolver`'s format.",
+        "projectId": "The ID of the destination project.",
+        "shouldReturnHeldFees": "Whether held fees should be returned based on the amount added.",
+        "token": "The address of the token to pay in."
+      }
+    },
+    "pay": {
+      "notice": "Pay a project by routing the incoming token to whatever token the project accepts.",
+      "details": "Automatically handles direct forwarding, Uniswap swaps, JB token cashouts, or combinations.",
+      "params": {
+        "amount": "The amount of tokens to send.",
+        "beneficiary": "The address to receive any tokens minted by the destination project.",
+        "memo": "A memo to pass along to the emitted event.",
+        "metadata": "Bytes in `JBMetadataResolver`'s format.",
+        "minReturnedTokens": "The minimum number of destination project tokens expected in return.",
+        "projectId": "The ID of the destination project to pay.",
+        "token": "The address of the token to pay with."
+      }
+    },
+    "addAccountingContextsFor": {
+      "notice": "Empty implementation to satisfy the interface. Accounting contexts are determined dynamically.",
+      "params": {
+        "accountingContexts": "Ignored because this terminal derives accounting contexts at runtime.",
+        "projectId": "The ID of the project whose accounting contexts would otherwise be configured."
+      }
+    },
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for the chain-specific Uniswap and wrapped-native addresses.",
+      "details": "Callable only by `_DEPLOYER` and only once (when `wrappedNativeToken` is still `address(0)`). After this call all four values are effectively immutable for the contract's lifetime. Mirrors the `JBOptimismSuckerDeployer.setChainSpecificConstants` pattern so the contract's CREATE2 inputs stay byte-identical across chains and its deployed address is unified.",
+      "params": {
+        "newFactory": "The Uniswap V3 factory for pool discovery on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain (may be `address(0)` if V4 is not deployed there).",
+        "newUniv4Hook": "The canonical Uniswap V4 router hook on this chain.",
+        "newWrappedNativeToken": "The ERC-20 wrapper for the chain's native token (e.g. WETH on Ethereum, WCELO on Celo)."
+      }
+    },
+    "accountingContextForTokenOf": {
+      "notice": "Returns a best-effort accounting context for any token the router can route.",
+      "details": "This surface is still synthetic for routing discovery, but it probes ERC-20 decimals when available and falls back to 18 if a token omits or breaks `decimals()`.",
+      "params": {
+        "token": "The address of the token to get accounting context for."
+      }
+    },
+    "accountingContextsOf": {
+      "notice": "Returns an empty array because this terminal accepts tokens dynamically rather than through a fixed accounting-context list.",
+      "params": {
+        "projectId": "The project whose accounting contexts were requested."
+      }
+    },
+    "bestPoolLiquidityOf": {
+      "notice": "Return the highest discovered pool liquidity between two normalized tokens.",
+      "params": {
+        "tokenA": "One token in the pair.",
+        "tokenB": "The other token in the pair."
+      }
+    },
+    "BUYBACK_HOOK": {
+      "notice": "The canonical buyback hook whose preview hook specification metadata this router understands."
+    },
+    "currentSurplusOf": {
+      "notice": "This terminal holds no surplus because it routes funds onward instead of accounting for project balances itself.",
+      "params": {
+        "currency": "The currency the caller wanted the surplus returned in.",
+        "decimals": "The fixed-point precision the caller wanted the surplus returned in.",
+        "projectId": "The project whose surplus was requested.",
+        "tokens": "The token set the caller wanted surplus measured against."
+      }
+    },
+    "DEFAULT_TWAP_WINDOW": {
+      "notice": "The default TWAP window used for auto-discovered pools."
+    },
+    "DIRECTORY": {
+      "notice": "The directory of terminals and controllers for projects."
+    },
+    "discoverBestPool": {
+      "notice": "Discover the best pool across both V3 and V4 for a token pair.",
+      "params": {
+        "normalizedTokenIn": "The input token (wrapped if native).",
+        "normalizedTokenOut": "The output token (wrapped if native)."
+      }
+    },
+    "discoverPool": {
+      "notice": "The best Uniswap V3 pool for a token pair, useful for off-chain queries.",
+      "details": "V3-only by design: returns the deepest V3 pool whenever one exists, independent of whether a deeper V4 pool exists for the same pair. Reverts only when no V3 pool exists at all.",
+      "params": {
+        "normalizedTokenIn": "The input token (wrapped if native).",
+        "normalizedTokenOut": "The output token (wrapped if native)."
+      }
+    },
+    "factory": {
+      "notice": "The Uniswap V3 factory used for pool discovery and verification."
+    },
+    "isTrustedForwarder": {
+      "details": "Indicates whether any particular address is the trusted forwarder."
+    },
+    "migrateBalanceOf": {
+      "notice": "Empty implementation to satisfy the interface. This terminal has no balance to migrate.",
+      "params": {
+        "projectId": "The project whose balance migration was requested.",
+        "to": "The destination terminal that would receive migrated funds.",
+        "token": "The token whose balance migration was requested."
+      }
+    },
+    "MIN_TWAP_WINDOW": {
+      "notice": "The minimum acceptable TWAP window (2 minutes). Reverts if the pool's oldest observation is below this floor."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 contract used for token approvals and transfers."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 PoolManager. Can be `address(0)` if V4 is not deployed on this chain."
+    },
+    "previewCashOutLoopOf": {
+      "notice": "Preview the recursive cashout loop the router would use for a project-token input.",
+      "params": {
+        "amount": "The amount of `token` to preview.",
+        "destProjectId": "The destination project the router is trying to pay.",
+        "metadata": "Metadata forwarded into preview helpers.",
+        "preferredToken": "The token the cashout loop should prefer to land on, or `address(0)` for no preference.",
+        "token": "The current token to route."
+      }
+    },
+    "previewPayFor": {
+      "notice": "Preview a payment by simulating the router's routing logic in view context.",
+      "details": "Returns the router's best estimate using current routing and quote data, including swap quotes when needed.",
+      "params": {
+        "amount": "The amount of the input token to provide.",
+        "beneficiary": "The address that would receive any minted project tokens.",
+        "metadata": "Extra data used to preview fund acceptance, routing, and the destination terminal call.",
+        "projectId": "The ID of the destination project to pay.",
+        "token": "The token to provide to the router."
+      }
+    },
+    "previewSwapAmountOutOf": {
+      "notice": "Preview the amount a direct token-to-token swap would return.",
+      "params": {
+        "amount": "The amount of `tokenIn` to swap.",
+        "metadata": "Metadata forwarded into quote selection.",
+        "tokenIn": "The input token.",
+        "tokenOut": "The output token."
+      }
+    },
+    "previewTerminalPayOf": {
+      "notice": "Preview a destination terminal payment from the router's caller context.",
+      "params": {
+        "amount": "The amount of `token` the destination terminal would receive.",
+        "beneficiary": "The address to measure beneficiary token count for.",
+        "destTerminal": "The terminal whose pay preview to query.",
+        "metadata": "Metadata forwarded unchanged into the destination terminal preview.",
+        "projectId": "The destination project that would receive the payment.",
+        "token": "The token the destination terminal would receive."
+      }
+    },
+    "supportsInterface": {
+      "notice": "Indicates if this contract adheres to the specified interface.",
+      "details": "See {IERC165-supportsInterface}.",
+      "params": {
+        "interfaceId": "The ID of the interface to check for adherence to."
+      }
+    },
+    "TOKENS": {
+      "notice": "Manages minting, burning, and balances of projects' tokens and token credits."
+    },
+    "trustedForwarder": {
+      "details": "Returns the address of the trusted forwarder."
+    },
+    "univ4Hook": {
+      "notice": "The canonical Uniswap V4 router hook address used by supported hooked pools."
+    },
+    "wrappedNativeToken": {
+      "notice": "The ERC-20 wrapper for the native token."
+    },
+    "uniswapV3SwapCallback": {
+      "notice": "The Uniswap v3 pool callback where the token transfer is expected to happen.",
+      "details": "Only the pool synchronously entered by `_executeV3Swap` can call this callback.",
+      "params": {
+        "amount0Delta": "The amount of token 0 used for the swap.",
+        "amount1Delta": "The amount of token 1 used for the swap.",
+        "data": "Data passed in by the swap operation: abi.encode(tokenIn)."
+      }
+    },
+    "unlockCallback": {
+      "notice": "The Uniswap V4 unlock callback. Called by the PoolManager during `unlock()`.",
+      "params": {
+        "data": "Encoded swap parameters."
+      }
+    }
+  },
+  "JBRouterTerminal_deprecated2": {
     "addToBalanceOf": {
       "notice": "Add funds to a project's balance by routing the incoming token to whatever token the project accepts.",
       "params": {
@@ -10401,6 +13001,391 @@ export const natspec = {
     },
     "calculateExpectedTokensWithCurrency": {
       "notice": "Estimates how many JB project tokens a user would receive by paying a given amount into the project.",
+      "details": "WARNING: This estimate uses the ruleset's static weight. If the project has a data hook that overrides the weight at payment time, actual token issuance may differ from this helper's output.Live buys use this rate only when the terminal preview forwards the whole payment to a pay hook (see `_issuanceOf`), and the buy's output floor then enforces it.",
+      "params": {
+        "paymentAmount": "The amount to pay (in the token's native decimals)",
+        "paymentToken": "The token to pay with",
+        "projectId": "The Juicebox project ID"
+      }
+    },
+    "DIRECTORY": {
+      "notice": "The Juicebox directory for terminal lookup"
+    },
+    "getHookPermissions": {
+      "notice": "Declares which Uniswap V4 lifecycle callbacks this hook uses (afterInitialize, afterSwap, beforeSwap, etc.)."
+    },
+    "hasObservationCoverage": {
+      "notice": "Whether the oracle has stored observations covering `secondsAgo` for `key`.",
+      "details": "Consumers should require this before trusting `observe([secondsAgo, 0])` as a manipulation-resistant TWAP.",
+      "params": {
+        "key": "The pool key.",
+        "secondsAgo": "The requested lookback window."
+      }
+    },
+    "JB_HOOK_DATA_TAG": {
+      "notice": "The 4-byte prefix that marks `hookData` as carrying a Juicebox `amountOutMin`."
+    },
+    "JB_NATIVE_TOKEN": {
+      "notice": "Juicebox native token address"
+    },
+    "MAX_TWAP_CARDINALITY": {
+      "notice": "Maximum retained observation cardinality for a pool oracle."
+    },
+    "MAX_V4_DELTA": {
+      "notice": "Largest output amount that Uniswap V4 can represent in flash-accounting deltas."
+    },
+    "observationCoverageOf": {
+      "notice": "The oldest retained observation age for `key`.",
+      "details": "Consumers can use this to quote against the longest retained best-effort window when the preferred window is not fully covered.",
+      "params": {
+        "key": "The pool key."
+      }
+    },
+    "observations": {
+      "notice": "The list of observations for a given pool ID"
+    },
+    "observe": {
+      "notice": "Returns cumulative tick and liquidity-time data for specified lookback periods.",
+      "details": "Implements the IGeomeanOracle interface so external contracts (e.g. buyback hooks) can query this pool's TWAP without maintaining their own oracle.",
+      "params": {
+        "key": "The pool key",
+        "secondsAgos": "Array of time periods (in seconds) to look back"
+      }
+    },
+    "observeTWAP": {
+      "notice": "Observe the time-weighted average price (TWAP) tick over the specified lookback window for a pool.",
+      "details": "External-facing wrapper around `_observeTWAP` for contracts that need the time-weighted average tick.",
+      "params": {
+        "cardinality": "Current cardinality",
+        "index": "Current observation index",
+        "liquidity": "Current liquidity",
+        "poolId": "The pool ID",
+        "secondsAgo": "Seconds in the past to calculate TWAP from",
+        "tick": "Current tick"
+      }
+    },
+    "poolManager": {
+      "notice": "The Uniswap v4 PoolManager contract"
+    },
+    "PRICES": {
+      "notice": "The Juicebox prices contract for currency conversion"
+    },
+    "states": {
+      "notice": "The current observation array state for the given pool ID"
+    },
+    "TOKENS": {
+      "notice": "The Juicebox tokens contract for project token lookup"
+    },
+    "UNISWAP_NATIVE_ETH": {
+      "notice": "Native ETH address representation"
+    },
+    "afterAddLiquidity": {
+      "notice": "The hook called after liquidity is added",
+      "params": {
+        "delta": "The caller's balance delta after adding liquidity; the sum of principal delta, fees accrued, and hook delta",
+        "feesAccrued": "The fees accrued since the last time fees were collected from this position",
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for adding liquidity",
+        "sender": "The initial msg.sender for the add liquidity call"
+      }
+    },
+    "afterDonate": {
+      "notice": "The hook called after donate",
+      "params": {
+        "amount0": "The amount of token0 being donated",
+        "amount1": "The amount of token1 being donated",
+        "hookData": "Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook",
+        "key": "The key for the pool",
+        "sender": "The initial msg.sender for the donate call"
+      }
+    },
+    "afterInitialize": {
+      "notice": "The hook called after the state of a pool is initialized",
+      "params": {
+        "key": "The key for the pool being initialized",
+        "sender": "The initial msg.sender for the initialize call",
+        "sqrtPriceX96": "The sqrt(price) of the pool as a Q64.96",
+        "tick": "The current tick after the state of a pool is initialized"
+      }
+    },
+    "afterRemoveLiquidity": {
+      "notice": "The hook called after liquidity is removed",
+      "params": {
+        "delta": "The caller's balance delta after removing liquidity; the sum of principal delta, fees accrued, and hook delta",
+        "feesAccrued": "The fees accrued since the last time fees were collected from this position",
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for removing liquidity",
+        "sender": "The initial msg.sender for the remove liquidity call"
+      }
+    },
+    "afterSwap": {
+      "notice": "The hook called after a swap",
+      "params": {
+        "delta": "The amount owed to the caller (positive) or owed to the pool (negative)",
+        "hookData": "Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for the swap",
+        "sender": "The initial msg.sender for the swap call"
+      }
+    },
+    "beforeAddLiquidity": {
+      "notice": "The hook called before liquidity is added",
+      "params": {
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for adding liquidity",
+        "sender": "The initial msg.sender for the add liquidity call"
+      }
+    },
+    "beforeDonate": {
+      "notice": "The hook called before donate",
+      "params": {
+        "amount0": "The amount of token0 being donated",
+        "amount1": "The amount of token1 being donated",
+        "hookData": "Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook",
+        "key": "The key for the pool",
+        "sender": "The initial msg.sender for the donate call"
+      }
+    },
+    "beforeInitialize": {
+      "notice": "The hook called before the state of a pool is initialized",
+      "params": {
+        "key": "The key for the pool being initialized",
+        "sender": "The initial msg.sender for the initialize call",
+        "sqrtPriceX96": "The sqrt(price) of the pool as a Q64.96"
+      }
+    },
+    "beforeRemoveLiquidity": {
+      "notice": "The hook called before liquidity is removed",
+      "params": {
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for removing liquidity",
+        "sender": "The initial msg.sender for the remove liquidity call"
+      }
+    },
+    "beforeSwap": {
+      "notice": "The hook called before a swap",
+      "params": {
+        "hookData": "Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for the swap",
+        "sender": "The initial msg.sender for the swap call"
+      }
+    },
+    "quoteSwap": {
+      "notice": "Quotes a sell for `_routeSell` by running it in this pool and reverting: a pool leg limited at `legSqrtPriceLimitX96` (none when zero), then whatever input the leg leaves beyond `heldAmount`, limited at the caller's price.",
+      "details": "Always reverts with `JBUniswapV4Hook_SwapQuote`, so it changes nothing for any caller. Its swaps skip this hook's callbacks.",
+      "params": {
+        "heldAmount": "The input left out of the pool after the leg (what a cash-out leg would take).",
+        "key": "The pool key.",
+        "legSqrtPriceLimitX96": "The pool leg's price limit, or zero for no pool leg.",
+        "params": "The caller's swap parameters (exact input)."
+      }
+    }
+  },
+  "JBUniswapV4Hook_deprecated": {
+    "calculateExpectedOutputFromSelling": {
+      "notice": "Calculates how many payment tokens (e.g. ETH or USDC) you'd receive from selling project tokens via the Juicebox terminal's cash out mechanism.",
+      "details": "Prefers the terminal store's `previewCashOutFrom` simulation so sell-side estimates can incorporate cash-out data-hook effects when the underlying store supports that surface. If previewing is unavailable or reverts, this helper intentionally returns `0` and makes the JB sell route ineligible. That conservative degrade rule avoids routing through JB on a stale static reclaim estimate that may disagree with the terminal's live cash-out path.NOTE: Fee calls are best-effort. If the terminal does not expose `FEE()`, this falls back to raw preview.",
+      "params": {
+        "outputToken": "The token to receive (e.g., ETH, USDC)",
+        "projectId": "The Juicebox project ID",
+        "terminal": "The terminal from which the selling is happening.",
+        "tokenAmountIn": "The amount of JB tokens to sell"
+      }
+    },
+    "calculateExpectedTokensWithCurrency": {
+      "notice": "Estimates how many JB project tokens a user would receive by paying a given amount into the project.",
+      "details": "WARNING: This estimate uses the ruleset's static weight. If the project has a data hook that overrides the weight at payment time, actual token issuance may differ from this helper's output.This helper is intentionally more permissive than live routing. `_beforeSwap()` only trusts `previewPayFor()` for buy-side best-execution decisions and uses this helper as an offchain/reference surface.",
+      "params": {
+        "paymentAmount": "The amount to pay (in the token's native decimals)",
+        "paymentToken": "The token to pay with",
+        "projectId": "The Juicebox project ID"
+      }
+    },
+    "DIRECTORY": {
+      "notice": "The Juicebox directory for terminal lookup"
+    },
+    "estimateUniswapOutput": {
+      "params": {
+        "amountIn": "The input amount",
+        "key": "The pool key",
+        "poolId": "The pool ID",
+        "zeroForOne": "Whether swapping token0 for token1"
+      }
+    },
+    "getHookPermissions": {
+      "notice": "Declares which Uniswap V4 lifecycle callbacks this hook uses (afterInitialize, afterSwap, beforeSwap, etc.)."
+    },
+    "JB_HOOK_DATA_TAG": {
+      "notice": "The 4-byte prefix that marks `hookData` as carrying a Juicebox `amountOutMin`."
+    },
+    "JB_NATIVE_TOKEN": {
+      "notice": "Juicebox native token address"
+    },
+    "MAX_TWAP_CARDINALITY": {
+      "notice": "Maximum retained observation cardinality for a pool oracle."
+    },
+    "MAX_V4_DELTA": {
+      "notice": "Largest output amount that Uniswap V4 can represent in flash-accounting deltas."
+    },
+    "observations": {
+      "notice": "The list of observations for a given pool ID"
+    },
+    "observe": {
+      "notice": "Returns cumulative tick and liquidity-time data for specified lookback periods.",
+      "details": "Implements the IGeomeanOracle interface so external contracts (e.g. buyback hooks) can query this pool's TWAP without maintaining their own oracle.",
+      "params": {
+        "key": "The pool key",
+        "secondsAgos": "Array of time periods (in seconds) to look back"
+      }
+    },
+    "observeTWAP": {
+      "notice": "Observe the time-weighted average price (TWAP) tick over the specified lookback window for a pool.",
+      "details": "External-facing wrapper around `_observeTWAP` for contracts that need the time-weighted average tick.",
+      "params": {
+        "cardinality": "Current cardinality",
+        "index": "Current observation index",
+        "liquidity": "Current liquidity",
+        "poolId": "The pool ID",
+        "secondsAgo": "Seconds in the past to calculate TWAP from",
+        "tick": "Current tick"
+      }
+    },
+    "poolManager": {
+      "notice": "The Uniswap v4 PoolManager contract"
+    },
+    "PRICES": {
+      "notice": "The Juicebox prices contract for currency conversion"
+    },
+    "states": {
+      "notice": "The current observation array state for the given pool ID"
+    },
+    "TOKENS": {
+      "notice": "The Juicebox tokens contract for project token lookup"
+    },
+    "TWAP_PERIOD": {
+      "notice": "TWAP period in seconds (30 minutes by default)"
+    },
+    "TWAP_SLIPPAGE_DENOMINATOR": {
+      "notice": "The denominator used when calculating TWAP slippage percent values."
+    },
+    "UNISWAP_NATIVE_ETH": {
+      "notice": "Native ETH address representation"
+    },
+    "afterAddLiquidity": {
+      "notice": "The hook called after liquidity is added",
+      "params": {
+        "delta": "The caller's balance delta after adding liquidity; the sum of principal delta, fees accrued, and hook delta",
+        "feesAccrued": "The fees accrued since the last time fees were collected from this position",
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for adding liquidity",
+        "sender": "The initial msg.sender for the add liquidity call"
+      }
+    },
+    "afterDonate": {
+      "notice": "The hook called after donate",
+      "params": {
+        "amount0": "The amount of token0 being donated",
+        "amount1": "The amount of token1 being donated",
+        "hookData": "Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook",
+        "key": "The key for the pool",
+        "sender": "The initial msg.sender for the donate call"
+      }
+    },
+    "afterInitialize": {
+      "notice": "The hook called after the state of a pool is initialized",
+      "params": {
+        "key": "The key for the pool being initialized",
+        "sender": "The initial msg.sender for the initialize call",
+        "sqrtPriceX96": "The sqrt(price) of the pool as a Q64.96",
+        "tick": "The current tick after the state of a pool is initialized"
+      }
+    },
+    "afterRemoveLiquidity": {
+      "notice": "The hook called after liquidity is removed",
+      "params": {
+        "delta": "The caller's balance delta after removing liquidity; the sum of principal delta, fees accrued, and hook delta",
+        "feesAccrued": "The fees accrued since the last time fees were collected from this position",
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for removing liquidity",
+        "sender": "The initial msg.sender for the remove liquidity call"
+      }
+    },
+    "afterSwap": {
+      "notice": "The hook called after a swap",
+      "params": {
+        "delta": "The amount owed to the caller (positive) or owed to the pool (negative)",
+        "hookData": "Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for the swap",
+        "sender": "The initial msg.sender for the swap call"
+      }
+    },
+    "beforeAddLiquidity": {
+      "notice": "The hook called before liquidity is added",
+      "params": {
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for adding liquidity",
+        "sender": "The initial msg.sender for the add liquidity call"
+      }
+    },
+    "beforeDonate": {
+      "notice": "The hook called before donate",
+      "params": {
+        "amount0": "The amount of token0 being donated",
+        "amount1": "The amount of token1 being donated",
+        "hookData": "Arbitrary data handed into the PoolManager by the donor to be be passed on to the hook",
+        "key": "The key for the pool",
+        "sender": "The initial msg.sender for the donate call"
+      }
+    },
+    "beforeInitialize": {
+      "notice": "The hook called before the state of a pool is initialized",
+      "params": {
+        "key": "The key for the pool being initialized",
+        "sender": "The initial msg.sender for the initialize call",
+        "sqrtPriceX96": "The sqrt(price) of the pool as a Q64.96"
+      }
+    },
+    "beforeRemoveLiquidity": {
+      "notice": "The hook called before liquidity is removed",
+      "params": {
+        "hookData": "Arbitrary data handed into the PoolManager by the liquidity provider to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for removing liquidity",
+        "sender": "The initial msg.sender for the remove liquidity call"
+      }
+    },
+    "beforeSwap": {
+      "notice": "The hook called before a swap",
+      "params": {
+        "hookData": "Arbitrary data handed into the PoolManager by the swapper to be be passed on to the hook",
+        "key": "The key for the pool",
+        "params": "The parameters for the swap",
+        "sender": "The initial msg.sender for the swap call"
+      }
+    }
+  },
+  "JBUniswapV4Hook_deprecated1": {
+    "calculateExpectedOutputFromSelling": {
+      "notice": "Calculates how many payment tokens (e.g. ETH or USDC) you'd receive from selling project tokens via the Juicebox terminal's cash out mechanism.",
+      "details": "Prefers the terminal store's `previewCashOutFrom` simulation so sell-side estimates can incorporate cash-out data-hook effects when the underlying store supports that surface. If previewing is unavailable or reverts, this helper intentionally returns `0` and makes the JB sell route ineligible. That conservative degrade rule avoids routing through JB on a stale static reclaim estimate that may disagree with the terminal's live cash-out path.NOTE: Fee calls are best-effort. If the terminal does not expose `FEE()`, this falls back to raw preview.",
+      "params": {
+        "outputToken": "The token to receive (e.g., ETH, USDC)",
+        "projectId": "The Juicebox project ID",
+        "terminal": "The terminal from which the selling is happening.",
+        "tokenAmountIn": "The amount of JB tokens to sell"
+      }
+    },
+    "calculateExpectedTokensWithCurrency": {
+      "notice": "Estimates how many JB project tokens a user would receive by paying a given amount into the project.",
       "details": "WARNING: This estimate uses the ruleset's static weight. If the project has a data hook that overrides the weight at payment time, actual token issuance may differ from this helper's output.This helper is intentionally more permissive than live routing. `_beforeSwap()` only trusts `previewPayFor()` for buy-side best-execution decisions and uses this helper as an offchain/reference surface.",
       "params": {
         "paymentAmount": "The amount to pay (in the token's native decimals)",
@@ -10592,6 +13577,391 @@ export const natspec = {
   },
   "JBUniswapV4LPSplitHook": {
     "processSplitWith": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split, or by one of the project's terminals when a payout is sent to it. The hook FIRST durably accepts and accounts for the allocation, then best-effort attempts pool deployment or liquidity addition if enough gas remains. A failed attempt cannot touch the accepted inventory: it stays in the ledgers, retryable through the permissionless `deployPool`/`addLiquidity` entry points. The hook never burns what it is sent.",
+      "details": "Reserved tokens (groupId == 1) come from the project's controller as the project's ERC-20, or as credits while the project has no ERC-20, and feed the ask. A payout (groupId == `uint256(uint160(token))`) comes from a terminal of the project in the deployed pool's terminal token, and feeds the bid. The order matters: validate the caller and context, account the tokens, THEN try to put them to work. Every check that can revert runs before the ledger write; a revert makes Core return the allocation to the project. Once intake has accounted the allocation, nothing in this frame reverts: automation runs behind a gas-bounded self-call whose failure is reported through `LiquidityAutomationFailed` (selector only, revert data is never copied unbounded).",
+      "params": {
+        "context": "The split hook context Core built for the distribution or payout."
+      }
+    },
+    "burnFeeRemainder": {
+      "notice": "Burn `count` of this hook's project ERC-20 through the project's controller, lowering the project's supply. Callable only via this contract's own best-effort `_routeCollectedFees` so its revert can be caught and the remainder kept in the ask ledger instead.",
+      "details": "The hook burns its own tokens (`holder == msg.sender`), so the controller needs no permission grant. Core burns a holder's credits BEFORE its ERC-20, so the hook first claims its own credits of this project into the ERC-20 and adds them to the ask ledger (`_claimHookCreditsFor`, the same step a recycle runs); credits sent to the hook from outside therefore cannot divert the burn. Fee-credit claims the hook owes (only when this project is a fee project with claims from before it tokenized) stay credits, and the burn would consume them first, so the burn is accepted only when exactly `count` ERC-20 left the hook and its credit balance is unchanged; anything else reverts (undoing the claim) and is forgiven by the caller.This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the burn is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "count": "The number of project tokens to burn.",
+        "projectId": "The ID of the project whose tokens to burn.",
+        "projectToken": "The project's ERC-20, whose hook balance must fall by exactly `count`."
+      }
+    },
+    "deployedTerminalTokenOf": {
+      "notice": "The terminal token the project's one supported pool was deployed against."
+    },
+    "deployPool": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position as a single-sided ask of the project's accumulated reserved tokens. Permissionless: anyone may seed the pool. Abuse is bounded by the economic gate (asks only reach up to the issuance ceiling, bids only down to the cash-out floor) and, for an already-initialized pool, the oracle-TWAP deviation guard.",
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "sendToTerminal": {
+      "notice": "Send `amount` of `token` to `terminal` for `projectId`: `pay` it (the fee-project cut, minting fee-project tokens to this hook) or `addToBalanceOf` it (an LP-fee remainder returned to the project's own treasury). Callable only via this contract's own best-effort self-calls so its revert (from the terminal or the ERC-20 allowance-consumption check) can be caught and forgiven.",
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while the surrounding entry point still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the terminal call is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "amount": "The amount to send.",
+        "projectId": "The project to pay or add to the balance of.",
+        "shouldPay": "Whether to `pay` (minting project tokens to this hook) rather than `addToBalanceOf`.",
+        "terminal": "The terminal to send to. A terminal with no code reverts the call.",
+        "token": "The token to send (native sentinel or ERC-20)."
+      }
+    },
+    "addLiquidity": {
+      "notice": "Recycle the project's positions with its post-deployment accumulated reserved tokens: route both positions' fees, burn both, and re-mint the ask and bid single-sided around the live spot — the same executor `deployPool` uses. Callable at any time, with or without new tokens; rejected when the pool's spot has deviated from the oracle TWAP. Permissionless: abuse is bounded by the economic caps (the ask never sells below the cash-out floor, the bid never buys above the issuance ceiling) and the oracle-TWAP deviation guard.",
+      "params": {
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "accumulatedProjectCredits": {
+      "notice": "The credit balance (project tokens with no ERC-20 deployed yet) currently accounted for each project."
+    },
+    "accumulatedProjectTokens": {
+      "notice": "The project-token balance held for each project outside its positions, waiting for the next ask."
+    },
+    "accumulatedTerminalTokens": {
+      "notice": "The terminal-token balance held for each project outside its positions, waiting for the next bid."
+    },
+    "askTokenIdOf": {
+      "notice": "The PositionManager token ID of each project's ask position (project tokens, spot to ceiling)."
+    },
+    "bidTokenIdOf": {
+      "notice": "The PositionManager token ID of each project's bid position (terminal tokens, spot to floor)."
+    },
+    "BPS": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "buybackHook": {
+      "notice": "The buyback-hook registry configured for this clone."
+    },
+    "claimableFeeCredits": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "DIRECTORY": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "feePercent": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf": {
+      "notice": "The first nonzero ruleset weight recorded by a successful deploy or recycle of each project."
+    },
+    "isPoolDeployed": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair.",
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "poolKeyOf": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "poolKeysOf": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "PROJECTS": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "supportsInterface": {
+      "notice": "Whether this contract implements a given interface (ERC-165).",
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      }
+    },
+    "TICK_SPACING": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "TOKENS": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "claimFeeTokensFor": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`.",
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees": {
+      "notice": "Collect accrued Uniswap LP trading fees from a project's ask and bid positions and route them to the project. A best-effort fee-project cut is taken on EACH side; the remaining terminal-token portion is added to the project's balance in its primary terminal and the remaining project-token portion is burned, both raising the project's cash-out floor. A side whose add or burn fails is carried into its ledger instead (the bid or the ask), becoming liquidity at the next recycle. The positions themselves are not moved. Callable by anyone.",
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "executeAutomationFor": {
+      "notice": "Execute an inline automation attempt for a project: deploy the pool if none exists yet, otherwise add the accumulated inventory to the deployed pool's position. Callable only via this contract's own best-effort `_attemptAutomation` so a revert anywhere in the flow can be caught and forgiven while the parent frame's accepted inventory stays intact.",
+      "details": "This target is intentionally NOT `nonReentrant`: it is reached through an internal `this.` self-call while `processSplitWith` still holds the reentrancy lock, so guarding it would self-revert. A genuine reentrant call into any guarded entry point during the attempt is still rejected by that outer lock, and the `msg.sender == address(this)` gate blocks any direct external call.",
+      "params": {
+        "projectId": "The ID of the project to attempt automation for."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once.",
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry to configure for this clone. May be the zero address.",
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    }
+  },
+  "JBUniswapV4LPSplitHookDeployer": {
+    "deployHookFor": {
+      "notice": "Deploy a new `JBUniswapV4LPSplitHook` clone with the caller as its initial owner.",
+      "params": {
+        "buybackHook": "The buyback-hook registry to store as a configuration reference on this clone. Pass the zero address for none. Per-deploy so different projects can record different buyback registries.",
+        "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
+        "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
+        "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
+      }
+    },
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for chain-specific Uniswap V4 addresses.",
+      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call the stored V4 addresses are effectively immutable for the contract's lifetime. They are passed into every freshly cloned hook by `deployHookFor`.",
+      "params": {
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "ADDRESS_REGISTRY": {
+      "notice": "A registry which stores references to contracts and their deployers."
+    },
+    "hookImplementation": {
+      "notice": "The implementation contract used as the base for clones."
+    },
+    "oracleHook": {
+      "notice": "The Uniswap V4 oracle hook clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 PoolManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 PositionManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    }
+  },
+  "JBUniswapV4LPSplitHookDeployer_deprecated": {
+    "deployHookFor": {
+      "notice": "Deploy a new `JBUniswapV4LPSplitHook` clone with the caller as its initial owner.",
+      "params": {
+        "buybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. Pass the zero address for none. Per-deploy so different projects can use different buyback hooks.",
+        "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
+        "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
+        "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
+      }
+    },
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for chain-specific Uniswap V4 addresses.",
+      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call the stored V4 addresses are effectively immutable for the contract's lifetime. They are passed into every freshly cloned hook by `deployHookFor`.",
+      "params": {
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "ADDRESS_REGISTRY": {
+      "notice": "A registry which stores references to contracts and their deployers."
+    },
+    "hookImplementation": {
+      "notice": "The implementation contract used as the base for clones."
+    },
+    "oracleHook": {
+      "notice": "The Uniswap V4 oracle hook clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 PoolManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 PositionManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    }
+  },
+  "JBUniswapV4LPSplitHookDeployer_deprecated2": {
+    "deployHookFor": {
+      "notice": "Deploy a new `JBUniswapV4LPSplitHook` clone with the caller as its initial owner.",
+      "params": {
+        "buybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. Pass the zero address for none. Per-deploy so different projects can use different buyback hooks.",
+        "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
+        "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
+        "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
+      }
+    },
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for chain-specific Uniswap V4 addresses.",
+      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call the stored V4 addresses are effectively immutable for the contract's lifetime. They are passed into every freshly cloned hook by `deployHookFor`.",
+      "params": {
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "ADDRESS_REGISTRY": {
+      "notice": "A registry which stores references to contracts and their deployers."
+    },
+    "hookImplementation": {
+      "notice": "The implementation contract used as the base for clones."
+    },
+    "oracleHook": {
+      "notice": "The Uniswap V4 oracle hook clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 PoolManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 PositionManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    }
+  },
+  "JBUniswapV4LPSplitHookDeployer_deprecated3": {
+    "deployHookFor": {
+      "notice": "Deploy a new `JBUniswapV4LPSplitHook` clone with the caller as its initial owner.",
+      "params": {
+        "buybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. Pass the zero address for none. Per-deploy so different projects can use different buyback hooks.",
+        "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
+        "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
+        "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
+      }
+    },
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for chain-specific Uniswap V4 addresses.",
+      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call the stored V4 addresses are effectively immutable for the contract's lifetime. They are passed into every freshly cloned hook by `deployHookFor`.",
+      "params": {
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "ADDRESS_REGISTRY": {
+      "notice": "A registry which stores references to contracts and their deployers."
+    },
+    "hookImplementation": {
+      "notice": "The implementation contract used as the base for clones."
+    },
+    "oracleHook": {
+      "notice": "The Uniswap V4 oracle hook clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 PoolManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 PositionManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    }
+  },
+  "JBUniswapV4LPSplitHookDeployer_deprecated4": {
+    "deployHookFor": {
+      "notice": "Deploy a new `JBUniswapV4LPSplitHook` clone with the caller as its initial owner.",
+      "params": {
+        "buybackHook": "The buyback-hook registry to store as a configuration reference on this clone. Pass the zero address for none. Per-deploy so different projects can record different buyback registries.",
+        "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
+        "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
+        "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
+      }
+    },
+    "setChainSpecificConstants": {
+      "notice": "One-shot setter for chain-specific Uniswap V4 addresses.",
+      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call the stored V4 addresses are effectively immutable for the contract's lifetime. They are passed into every freshly cloned hook by `deployHookFor`.",
+      "params": {
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "ADDRESS_REGISTRY": {
+      "notice": "A registry which stores references to contracts and their deployers."
+    },
+    "hookImplementation": {
+      "notice": "The implementation contract used as the base for clones."
+    },
+    "oracleHook": {
+      "notice": "The Uniswap V4 oracle hook clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 PoolManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 PositionManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    }
+  },
+  "JBUniswapV4LPSplitHookMath": {
+    "findHighestValueTerminalTokenOf": {
+      "notice": "Find the primary terminal token with the highest ETH-denominated value across the project's terminals.",
+      "details": "Converts each token's balance to 18-decimal ETH using price feeds. Falls back to token-decimal-normalized balance comparison when no price feed exists.",
+      "params": {
+        "controller": "The project's controller address.",
+        "directory": "The JBDirectory used to resolve the project's terminals and primary terminals.",
+        "projectId": "The ID of the project."
+      }
+    }
+  },
+  "JBUniswapV4LPSplitHookMath_deprecated": {
+    "findHighestValueTerminalTokenOf": {
+      "notice": "Find the primary terminal token with the highest ETH-denominated value across the project's terminals.",
+      "details": "Converts each token's balance to 18-decimal ETH using price feeds. Falls back to token-decimal-normalized balance comparison when no price feed exists.",
+      "params": {
+        "controller": "The project's controller address.",
+        "directory": "The JBDirectory used to resolve the project's terminals and primary terminals.",
+        "projectId": "The ID of the project."
+      }
+    }
+  },
+  "JBUniswapV4LPSplitHookMath_deprecated1": {
+    "findHighestValueTerminalTokenOf": {
+      "notice": "Find the primary terminal token with the highest ETH-denominated value across the project's terminals.",
+      "details": "Converts each token's balance to 18-decimal ETH using price feeds. Falls back to token-decimal-normalized balance comparison when no price feed exists.",
+      "params": {
+        "controller": "The project's controller address.",
+        "directory": "The JBDirectory used to resolve the project's terminals and primary terminals.",
+        "projectId": "The ID of the project."
+      }
+    }
+  },
+  "JBUniswapV4LPSplitHook_deprecated": {
+    "processSplitWith": {
       "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split. Tokens are accumulated in escrow both before AND after pool deployment: pre-deploy, `deployPool` consumes the accumulation; post-deploy, `addLiquidity` converts it into more liquidity. The hook never burns.",
       "details": "Only accepts reserved-token splits (groupId == 1). Reverts if the sender is not the project's controller or if the project has no ERC-20 token deployed."
     },
@@ -10742,49 +14112,307 @@ export const natspec = {
       }
     }
   },
-  "JBUniswapV4LPSplitHookDeployer": {
-    "deployHookFor": {
-      "notice": "Deploy a new `JBUniswapV4LPSplitHook` clone with the caller as its initial owner.",
+  "JBUniswapV4LPSplitHook_deprecated2": {
+    "processSplitWith": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split. Tokens are accumulated in escrow both before AND after pool deployment: pre-deploy, `deployPool` consumes the accumulation; post-deploy, `addLiquidity` converts it into more liquidity. The hook never burns.",
+      "details": "Only accepts reserved-token splits (groupId == 1). Reverts if the sender is not the project's controller or if the project has no ERC-20 token deployed."
+    },
+    "deployPool": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position using the project's accumulated reserved tokens. A portion of those tokens is cashed out for terminal tokens so the position is two-sided. Permissionless once the ruleset weight has decayed to 10% of what it was when accumulation began; otherwise requires `SET_BUYBACK_POOL` permission from the project owner.",
       "params": {
-        "buybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. Pass the zero address for none. Per-deploy so different projects can use different buyback hooks.",
-        "feePercent": "The percentage of LP fees routed to the fee project, out of `BPS` (e.g. 3800 = 38%).",
-        "feeProjectId": "The Juicebox project ID that receives a share of LP fees.",
-        "salt": "An optional salt for deterministic CREATE2 deployment. Pass `bytes32(0)` for a plain CREATE."
+        "minCashOutReturn": "Minimum terminal tokens to accept from the cash-out (slippage protection). Pass 0 to use the hook's default 3% tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
       }
     },
-    "setChainSpecificConstants": {
-      "notice": "One-shot setter for chain-specific Uniswap V4 addresses.",
-      "details": "Callable only by `_DEPLOYER` and only once (when `poolManager` is still `address(0)`). After this call the stored V4 addresses are effectively immutable for the contract's lifetime. They are passed into every freshly cloned hook by `deployHookFor`.",
+    "addLiquidity": {
+      "notice": "Convert the project's post-deployment accumulated reserved tokens into additional protocol-owned liquidity. Tops up the active position while the live cash-out/issuance corridor still matches the active position's ticks; once the corridor has drifted past `_RERANGE_THRESHOLD_TICKS`, BURNS the stale position to recover its principal and re-mints a single fresh position at the current corridor (folding in the new accumulation) — so all allocated funds stay in one maximally-efficient position rather than fragmenting across stale bands. The funding cash-out is forced DIRECTLY through the bonding curve (never the AMM this hook feeds), and the add is rejected if the pool's spot price has deviated from the oracle TWAP — bounding sandwich/JIT manipulation. Permissionless once the ruleset weight has decayed 10x from when accumulation began; otherwise requires `SET_BUYBACK_POOL` from the project owner. Safe for anyone to call.",
       "params": {
+        "minCashOutReturn": "Minimum terminal tokens to accept from the funding cash-out (slippage protection). Pass 0 to use the hook's default tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "accumulatedProjectTokens": {
+      "notice": "The accumulated project-token balance currently held for each project before its first pool deployment."
+    },
+    "activeTickLowerOf": {
+      "notice": "The lower tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "activeTickUpperOf": {
+      "notice": "The upper tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "BPS": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "buybackHook": {
+      "notice": "The buyback-hook registry this clone targets for force-direct cash-outs."
+    },
+    "claimableFeeCredits": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "DIRECTORY": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "feePercent": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf": {
+      "notice": "The ruleset weight recorded when the hook first starts accumulating project tokens for each project."
+    },
+    "isPoolDeployed": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair.",
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "poolKeyOf": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "poolKeysOf": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "PROJECTS": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "supportsInterface": {
+      "notice": "Whether this contract implements a given interface (ERC-165).",
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      }
+    },
+    "TICK_SPACING": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "tokenIdOf": {
+      "notice": "The Uniswap V4 PositionManager token ID for each deployed project and terminal-token pair."
+    },
+    "TOKENS": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "claimFeeTokensFor": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`.",
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees": {
+      "notice": "Collect accrued Uniswap LP trading fees for a project (from its single active position) and route them back to its terminal balance. The terminal-token portion is deposited (minus an optional fee-project cut); the project-token portion is carried into the accumulation ledger to become future liquidity (never burned). Callable by anyone.",
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once.",
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. May be the zero address, in which case no force-direct metadata is attached.",
         "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
         "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
         "newPositionManager": "The Uniswap V4 PositionManager on this chain."
       }
     },
-    "ADDRESS_REGISTRY": {
-      "notice": "A registry which stores references to contracts and their deployers."
-    },
-    "hookImplementation": {
-      "notice": "The implementation contract used as the base for clones."
-    },
-    "oracleHook": {
-      "notice": "The Uniswap V4 oracle hook clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
-    },
-    "poolManager": {
-      "notice": "The Uniswap V4 PoolManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
-    },
-    "positionManager": {
-      "notice": "The Uniswap V4 PositionManager clones should use, set once by `_DEPLOYER` via `setChainSpecificConstants`."
+    "rebalanceLiquidity": {
+      "notice": "Burn the existing LP position and re-mint it with tick bounds recalculated from the project's current issuance and cash-out rates. Useful when rate changes have shifted the price range away from the active position. Requires `SET_BUYBACK_POOL` permission from the project owner.",
+      "params": {
+        "decreaseAmount0Min": "Minimum amount of token0 to recover from the burned position (slippage protection).",
+        "decreaseAmount1Min": "Minimum amount of token1 to recover from the burned position (slippage protection).",
+        "projectId": "The ID of the project whose LP position should be rebalanced.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
     }
   },
-  "JBUniswapV4LPSplitHookMath": {
-    "findHighestValueTerminalTokenOf": {
-      "notice": "Find the primary terminal token with the highest ETH-denominated value across the project's terminals.",
-      "details": "Converts each token's balance to 18-decimal ETH using price feeds. Falls back to token-decimal-normalized balance comparison when no price feed exists.",
+  "JBUniswapV4LPSplitHook_deprecated3": {
+    "processSplitWith": {
+      "notice": "Called by the Juicebox controller when reserved tokens are distributed to this hook's split. Tokens are accumulated in escrow both before AND after pool deployment: pre-deploy, `deployPool` consumes the accumulation; post-deploy, `addLiquidity` converts it into more liquidity. The hook never burns.",
+      "details": "Only accepts reserved-token splits (groupId == 1). Reverts if the sender is not the project's controller or if the project has no ERC-20 token deployed."
+    },
+    "deployPool": {
+      "notice": "Create the Uniswap V4 pool and mint the initial LP position using the project's accumulated reserved tokens. A portion of those tokens is cashed out for terminal tokens so the position is two-sided. Permissionless once the ruleset weight has decayed to 10% of what it was when accumulation began; otherwise requires `SET_BUYBACK_POOL` permission from the project owner.",
       "params": {
-        "controller": "The project's controller address.",
-        "directory": "The JBDirectory used to resolve the project's terminals and primary terminals.",
-        "projectId": "The ID of the project."
+        "minCashOutReturn": "Minimum terminal tokens to accept from the cash-out (slippage protection). Pass 0 to use the hook's default 3% tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be deployed as LP."
+      }
+    },
+    "addLiquidity": {
+      "notice": "Convert the project's post-deployment accumulated reserved tokens into additional protocol-owned liquidity. Tops up the active position while the live cash-out/issuance corridor still matches the active position's ticks; once the corridor has drifted past `_RERANGE_THRESHOLD_TICKS`, BURNS the stale position to recover its principal and re-mints a single fresh position at the current corridor (folding in the new accumulation) — so all allocated funds stay in one maximally-efficient position rather than fragmenting across stale bands. The funding cash-out is forced DIRECTLY through the bonding curve (never the AMM this hook feeds), and the add is rejected if the pool's spot price has deviated from the oracle TWAP — bounding sandwich/JIT manipulation. Permissionless once the ruleset weight has decayed 10x from when accumulation began; otherwise requires `SET_BUYBACK_POOL` from the project owner. Safe for anyone to call.",
+      "params": {
+        "minCashOutReturn": "Minimum terminal tokens to accept from the funding cash-out (slippage protection). Pass 0 to use the hook's default tolerance derived from the current cash-out rate.",
+        "projectId": "The ID of the project whose accumulated tokens should be added as liquidity.",
+        "terminalToken": "The terminal token paired with the project token in the deployed pool."
+      }
+    },
+    "accumulatedProjectTokens": {
+      "notice": "The accumulated project-token balance currently held for each project before its first pool deployment."
+    },
+    "activeTickLowerOf": {
+      "notice": "The lower tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "activeTickUpperOf": {
+      "notice": "The upper tick of the currently active LP position for each project and terminal-token pair."
+    },
+    "BPS": {
+      "notice": "The basis-points denominator (10_000 = 100%)."
+    },
+    "buybackHook": {
+      "notice": "The buyback-hook registry this clone targets for force-direct cash-outs."
+    },
+    "claimableFeeCredits": {
+      "notice": "The fee-project credits, rather than ERC-20s, currently claimable by each project."
+    },
+    "claimableFeeTokenOf": {
+      "notice": "The fee-project ERC-20 currently backing each project's `claimableFeeTokens` balance."
+    },
+    "claimableFeeTokens": {
+      "notice": "The amount of fee-project ERC-20 tokens claimable by each project."
+    },
+    "DIRECTORY": {
+      "notice": "The JBDirectory used to resolve a project's controller and terminals."
+    },
+    "feePercent": {
+      "notice": "The percentage of LP fees routed to the fee project, in basis points (e.g. 3800 = 38%)."
+    },
+    "feeProjectId": {
+      "notice": "The project ID that receives the LP-fee cut."
+    },
+    "hasDeployedPool": {
+      "notice": "Whether each project has already deployed its single supported Uniswap V4 pool."
+    },
+    "initialWeightOf": {
+      "notice": "The ruleset weight recorded when the hook first starts accumulating project tokens for each project."
+    },
+    "isPoolDeployed": {
+      "notice": "Whether a Uniswap V4 LP position has been minted for a project's terminal-token pair.",
+      "params": {
+        "projectId": "The ID of the project to check.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "oracleHook": {
+      "notice": "The oracle hook used for configured Uniswap V4 pools (provides TWAP via observe())."
+    },
+    "PERMISSIONS": {
+      "notice": "A contract storing permissions."
+    },
+    "PERMIT2": {
+      "notice": "The Permit2 utility used to approve tokens for PositionManager."
+    },
+    "POOL_FEE": {
+      "notice": "The Uniswap V4 pool fee tier this hook deploys into (10_000 = 1%)."
+    },
+    "poolKeyOf": {
+      "notice": "The Uniswap V4 pool key (currency pair, fee, tick spacing, and hook) for a project's deployed pool.",
+      "params": {
+        "projectId": "The ID of the project.",
+        "terminalToken": "The terminal token paired with the project token."
+      }
+    },
+    "poolKeysOf": {
+      "notice": "The Uniswap V4 pool key configured for each project and terminal-token pair."
+    },
+    "poolManager": {
+      "notice": "The Uniswap V4 pool manager contract that coordinates all pool operations."
+    },
+    "positionManager": {
+      "notice": "The Uniswap V4 position manager contract that handles liquidity position NFTs."
+    },
+    "PROJECTS": {
+      "notice": "The JBProjects registry used to resolve project owners."
+    },
+    "SUCKER_REGISTRY": {
+      "notice": "The sucker registry for querying remote cross-chain surplus and supply."
+    },
+    "supportsInterface": {
+      "notice": "Whether this contract implements a given interface (ERC-165).",
+      "params": {
+        "interfaceId": "The ERC-165 interface identifier to check."
+      }
+    },
+    "TICK_SPACING": {
+      "notice": "The tick spacing of the 1% fee tier the hook uses (200)."
+    },
+    "tokenIdOf": {
+      "notice": "The Uniswap V4 PositionManager token ID for each deployed project and terminal-token pair."
+    },
+    "TOKENS": {
+      "notice": "The JBTokens registry used to resolve a project's ERC-20."
+    },
+    "claimFeeTokensFor": {
+      "notice": "Claims accumulated fee proceeds for `projectId` and sends them to `beneficiary`.",
+      "details": "Requires `SET_BUYBACK_POOL` permission from the project's owner.ERC-20 fee tokens are claimed first, followed by any fee credits that were accrued while the fee project had no ERC-20. Credit claims are best-effort: if the downstream controller rejects the transfer, the pending credit balance is restored so it can be retried later without blocking the ERC-20 claim path.",
+      "params": {
+        "beneficiary": "The address that should receive any claimed fee proceeds.",
+        "projectId": "The project to claim accumulated fee proceeds for."
+      }
+    },
+    "collectAndRouteLPFees": {
+      "notice": "Collect accrued Uniswap LP trading fees for a project (from its single active position) and route them back to its terminal balance. The terminal-token portion is deposited (minus an optional fee-project cut); the project-token portion is carried into the accumulation ledger to become future liquidity (never burned). Callable by anyone.",
+      "params": {
+        "projectId": "The ID of the project whose LP fees to collect.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
+      }
+    },
+    "initialize": {
+      "notice": "Initialize per-instance config + chain-specific Uniswap V4 addresses on a clone. Callable once.",
+      "details": "The implementation contract can be initialized by anyone, but this is harmless — each clone gets its own storage, so the implementation's state is never used. In normal production use, the deployer factory's `deployHookFor` atomically clones + initializes in the same transaction, so the call site for `initialize` is uncontested.",
+      "params": {
+        "initialFeePercent": "Percentage of LP fees to route to fee project, out of `BPS` (e.g., 3800 = 38%).",
+        "initialFeeProjectId": "Project ID to receive LP fees.",
+        "newBuybackHook": "The buyback-hook registry this clone targets for force-direct cash-outs. May be the zero address, in which case no force-direct metadata is attached.",
+        "newOracleHook": "The Uniswap V4 oracle hook deployed against `newPoolManager` on this chain.",
+        "newPoolManager": "The Uniswap V4 PoolManager on this chain.",
+        "newPositionManager": "The Uniswap V4 PositionManager on this chain."
+      }
+    },
+    "rebalanceLiquidity": {
+      "notice": "Burn the existing LP position and re-mint it with tick bounds recalculated from the project's current issuance and cash-out rates. Useful when rate changes have shifted the price range away from the active position. Requires `SET_BUYBACK_POOL` permission from the project owner.",
+      "params": {
+        "decreaseAmount0Min": "Minimum amount of token0 to recover from the burned position (slippage protection).",
+        "decreaseAmount1Min": "Minimum amount of token1 to recover from the burned position (slippage protection).",
+        "projectId": "The ID of the project whose LP position should be rebalanced.",
+        "terminalToken": "The terminal token paired with the project token in the pool."
       }
     }
   },

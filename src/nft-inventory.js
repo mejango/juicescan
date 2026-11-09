@@ -1,4 +1,26 @@
 import { getProjectNftInventory } from './nft-inventory-read.js';
+import { bendystrawQueryForNetwork } from './bendystraw-client.js';
+import { isTestnetChain } from './chain.js';
+
+// One account's NFTs in one Defifa game (721 tokens of either generation are indexed as ordinary nfts rows).
+export var DEFIFA_HOLDER_NFTS_QUERY = 'query($chainId: Int!, $hook: String!, $owner: String!, $version: Int!, $limit: Int!) { '
+  + 'nfts(where: { chainId: $chainId, hook: $hook, owner: $owner, version: $version }, limit: $limit) { items { tokenId } } }';
+
+// The account's token IDs in the game, from bendystraw, or undefined when the indexer cannot answer. Hints only:
+// getDefifaHoldings proves each one with ownerOf at its snapshot and scans onchain when they fall short.
+// An indexer that is slow or down never holds up holdings: past INDEXED_HOLDINGS_WAIT_MS the onchain scan answers.
+export var INDEXED_HOLDINGS_WAIT_MS = 3000;
+export async function indexedDefifaTokenIds(chainId, hook, owner) {
+  var timer;
+  try {
+    return await Promise.race([readIndexedDefifaTokenIds(chainId, hook, owner), new Promise(function (resolve) { timer = setTimeout(resolve, INDEXED_HOLDINGS_WAIT_MS); })]);
+  } catch (_) { return undefined; } finally { clearTimeout(timer); }
+}
+async function readIndexedDefifaTokenIds(chainId, hook, owner) {
+  var data = await bendystrawQueryForNetwork(isTestnetChain(chainId) ? 'testnet' : 'mainnet', DEFIFA_HOLDER_NFTS_QUERY,
+    { chainId: Number(chainId), hook: String(hook).toLowerCase(), owner: String(owner).toLowerCase(), version: 6, limit: 201 });
+  return data.nfts.items.map(function (item) { return BigInt(item.tokenId); });
+}
 
 var identities = new Map();
 var projectRequests = new WeakMap();

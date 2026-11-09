@@ -1,16 +1,15 @@
 // src/defifa.js
-// Native Defifa NFT actions: pay, cash out and transfer preparation, receipt-bound effect checks, and the recovery
-// context. Lean mirror of nana-sdk-core 3.4.1 v6/defifa.ts and v6/tierPrice.ts (@ballkidz/defifa 1.0.2 native
-// interface); test/fixtures/sdk-3.4.1/defifa.json pins identical results and identical reads. The reviewed-write proofs and the Relayr
-// destination proof stay on the SDK until the tasks that replace them.
+// Native Defifa NFT actions for every Defifa 721 generation (1.0.2, retired, and 2.0.0; their native interface is
+// the same): pay, cash out and transfer preparation, receipt-bound effect checks, the saved-call proof and the
+// recovery context. Started as a lean mirror of nana-sdk-core 3.4.1 v6/defifa.ts and v6/tierPrice.ts;
+// test/fixtures/defifa-games/defifa.json pins results and reads.
 
-import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, erc721Abi, isAddress, parseEventLogs, zeroAddress } from 'viem';
-import { parseReviewedWriteRecoveryRecord, verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review';
-import { RelayrDestinationRevertedError, verifyRelayrDestination } from '@bananapus/nana-sdk-core/review/relayr';
-import { getABI, getAddress } from './abi-registry.js';
+import { decodeAbiParameters, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, erc721Abi, isAddress, isHash, isHex, parseEventLogs, zeroAddress } from 'viem';
+import { getABI } from './abi-registry.js';
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
-import { defifaDeployment, getProjectNftInventory, sameAddress } from './nft-inventory-read.js';
+import { defifaDeploymentOf, getProjectNftInventory, sameAddress } from './nft-inventory-read.js';
 import { buildPayTx, resolvePaymentTerminal } from './pay-prepare.js';
+import { hasExactSafeExecutionEvent, SAFE_EXECUTION_FAILURE_TOPIC, SAFE_EXECUTION_SUCCESS_TOPIC } from './safe.js';
 
 const defifaActionAbi = [
   { name: 'defaultAttestationDelegate', type: 'function', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
@@ -150,7 +149,7 @@ export async function prepareDefifaPay(client, args) {
     Promise.all([...counts].map(async ([tierId, count]) => {
       const tier = await snapshot.readContract({
         address: inventory.store,
-        abi: getABI('JB721TiersHookStore', args.chainId),
+        abi: getABI(defifaDeploymentOf(args.chainId, inventory.implementation).storeAbi, args.chainId),
         functionName: 'tierOf',
         args: [inventory.hook, tierId, false],
       });
@@ -259,13 +258,77 @@ function cashOutTokenIds(metadata, implementation) {
 }
 
 /**
+ * A saved wallet call, as the Defifa write hold stores it: { chainId, account, safe, hash, call: { to, data, value } },
+ * normalized. `hash` is the transaction hash, or the Safe proposal hash for a Safe call; null before the wallet answers.
+ */
+export function parseSavedCall(record) {
+  const call = record?.call;
+  if (!Number.isSafeInteger(record?.chainId) || record.chainId <= 0 || !isAddress(record.account ?? '', { strict: false }) || typeof record.safe !== 'boolean'
+    || (record.hash != null && !isHash(record.hash)) || !isAddress(call?.to ?? '', { strict: false }) || !isHex(call.data) || call.data.length % 2 !== 0
+    || typeof call.value !== 'string' || !/^(0|[1-9]\d{0,77})$/.test(call.value)) {
+    throw new Error('Invalid saved write recovery record. Keep this action pending.');
+  }
+  return {
+    chainId: record.chainId,
+    account: record.account.toLowerCase(),
+    safe: record.safe,
+    hash: record.hash ? record.hash.toLowerCase() : null,
+    call: { to: call.to.toLowerCase(), data: call.data.toLowerCase(), value: call.value },
+  };
+}
+
+/**
+ * How a saved call ran, proven from the chain: 'success' or 'failed'. A direct call must be the account's own
+ * transaction of exactly that call. A Safe call is proven by the Safe's own ExecutionSuccess or ExecutionFailure
+ * event for the saved proposal hash, whose EIP-712 hash commits to the call (a Safe execution transaction that
+ * reverted outright, returned by the wallet as the saved hash, ran nothing). The block must be canonical, and a
+ * Safe failure final: until then a reorg could let the same signed proposal run again. `transaction` and
+ * `canonical` are the node's reads of `receipt`'s hash. Throws while any of that is unproven: keep the action held.
+ */
+export async function proveSavedCall(client, saved, receipt, transaction, canonical) {
+  const record = parseSavedCall(saved);
+  const pending = () => new Error('The saved wallet write is not yet proven. Keep this action pending.');
+  const hash = receipt?.transactionHash?.toLowerCase();
+  if (!record.hash || !isHash(hash ?? '') || (!record.safe && record.hash !== hash)) throw pending();
+  if (!transaction || !canonical) [transaction, canonical] = await Promise.all([client.getTransaction({ hash }), client.getTransactionReceipt({ hash })]);
+  const blockHash = canonical?.blockHash?.toLowerCase();
+  if ((await client.getChainId()) !== record.chainId || transaction?.hash?.toLowerCase() !== hash || canonical.transactionHash?.toLowerCase() !== hash
+    || !isHash(blockHash ?? '') || blockHash !== receipt.blockHash?.toLowerCase() || blockHash !== transaction.blockHash?.toLowerCase()
+    || typeof canonical.blockNumber !== 'bigint' || canonical.blockNumber !== receipt.blockNumber || canonical.blockNumber !== transaction.blockNumber
+    || (canonical.status !== 'success' && canonical.status !== 'reverted')) throw pending();
+  let status;
+  if (!record.safe) {
+    if (!sameAddress(transaction.from, record.account) || !sameAddress(transaction.to ?? zeroAddress, record.call.to)
+      || (transaction.input ?? '').toLowerCase() !== record.call.data || BigInt(transaction.value ?? 0n) !== BigInt(record.call.value)) throw pending();
+    status = canonical.status === 'success' ? 'success' : 'failed';
+  } else if (canonical.status === 'reverted') {
+    if (hash !== record.hash || !sameAddress(transaction.to ?? zeroAddress, record.account)) throw pending();
+    status = 'failed';
+  } else {
+    if (!Array.isArray(canonical.logs) || canonical.logs.some((log) => log.removed !== false || log.transactionHash?.toLowerCase() !== hash
+      || log.blockHash?.toLowerCase() !== blockHash || log.blockNumber !== canonical.blockNumber)) throw pending();
+    const ran = hasExactSafeExecutionEvent(canonical.logs, record.account, record.hash, SAFE_EXECUTION_SUCCESS_TOPIC);
+    const failed = hasExactSafeExecutionEvent(canonical.logs, record.account, record.hash, SAFE_EXECUTION_FAILURE_TOPIC);
+    if (ran === failed) throw pending();
+    status = ran ? 'success' : 'failed';
+  }
+  if (record.safe && status === 'failed') {
+    const finalized = await client.getBlock({ blockTag: 'finalized' });
+    if (typeof finalized?.number !== 'bigint' || finalized.number < canonical.blockNumber) throw pending();
+  }
+  const block = await client.getBlock({ blockNumber: canonical.blockNumber });
+  if (block?.number !== canonical.blockNumber || block.hash?.toLowerCase() !== blockHash) throw pending();
+  return status;
+}
+
+/**
  * Reconstruct native verification context from an existing reviewed-write journal. Authenticates the
  * project/terminal at the receipt's historical block; never prepares, simulates or sends a new action. Call
  * verifyDefifaNftTransaction afterward: restoration alone proves no outcome.
  */
 export async function restoreDefifaNftReceiptContext(client, args) {
   args = { ...args, receipt: { ...args.receipt } };
-  const saved = parseReviewedWriteRecoveryRecord(args.record);
+  const saved = parseSavedCall(args.record);
   function fail() {
     throw new Error('Saved call is not the reviewed native Defifa action. Keep this attempt pending.');
   }
@@ -309,8 +372,7 @@ export async function restoreDefifaNftReceiptContext(client, args) {
 export function verifyDefifaNftReceipt({ hook, implementation, account, transaction }, receipt) {
   address(hook, 'Defifa receipt hook');
   address(account, 'Defifa receipt account');
-  const deployment = defifaDeployment(transaction.chainId);
-  if (!deployment || !sameAddress(implementation, deployment.implementation)) throw new Error('Defifa receipt context does not match the pinned chain implementation.');
+  if (!defifaDeploymentOf(transaction.chainId, implementation)) throw new Error('Defifa receipt context does not match the pinned chain implementation.');
   if (receipt.status !== 'success') throw new Error('Defifa transaction did not succeed.');
   const multiTerminalAbi = getABI('JBMultiTerminal', transaction.chainId);
   const hookLogs = receipt.logs.filter((log) => sameAddress(log.address, hook));
@@ -364,9 +426,9 @@ export class DefifaNftTransactionRevertedError extends Error {
 }
 
 /**
- * Authenticate canonical execution with the reviewed-write and Relayr proof owners, then prove native NFT
- * effects. Only DefifaNftTransactionRevertedError proves failure; on any other error keep context and receipt
- * and retry this read-only function, never resend.
+ * Authenticate canonical execution of the exact reviewed call (proveSavedCall), then prove native NFT effects.
+ * Only DefifaNftTransactionRevertedError proves failure; on any other error keep context and receipt and retry
+ * this read-only function, never resend.
  */
 export async function verifyDefifaNftTransaction(client, context, receipt) {
   const { transaction, account } = context;
@@ -377,25 +439,11 @@ export async function verifyDefifaNftTransaction(client, context, receipt) {
   if (chainId !== transaction.chainId || canonical.blockHash !== receipt.blockHash || canonical.blockNumber !== receipt.blockNumber || canonical.transactionHash.toLowerCase() !== receipt.transactionHash.toLowerCase()) {
     throw new Error('Defifa receipt identity is unavailable or changed; keep this transaction pending.');
   }
-  // Both proof owners read this same exact transaction and receipt: reuse the fetched evidence.
-  const proofClient = { ...client, getTransaction: async () => actual, getTransactionReceipt: async () => canonical };
-  const record = { version: 1, id: 'defifa-nft', chainId: transaction.chainId, account, safe: Boolean(context.safe), hash: context.safe?.proposalHash ?? receipt.transactionHash, call: { ...call, value: call.value.toString() } };
-  if (context.safe) {
-    const status = await verifyReviewedWriteReceipt(proofClient, record, canonical);
-    if (status !== 'success') throw new DefifaNftTransactionRevertedError(canonical.transactionHash, chainId);
-  } else {
-    if (!sameAddress(actual.from, account)) throw new Error('Defifa transaction sender does not match the reviewed account.');
-    try {
-      await verifyRelayrDestination(proofClient, { entry: { chain: transaction.chainId, target: call.to, data: call.data, value: call.value.toString() }, hash: receipt.transactionHash });
-    } catch (error) {
-      if (!(error instanceof RelayrDestinationRevertedError)) throw error;
-      // The exact call and account are proven; the reviewed-write owner then proves the revert is canonical
-      // without waiting for finality. A block it cannot show canonical keeps this attempt pending.
-      const status = await verifyReviewedWriteReceipt(proofClient, record, canonical, undefined, { finality: false });
-      if (status !== 'failed') throw error;
-      throw new DefifaNftTransactionRevertedError(canonical.transactionHash, chainId);
-    }
-  }
+  if (!context.safe && !sameAddress(actual.from, account)) throw new Error('Defifa transaction sender does not match the reviewed account.');
+  const saved = { chainId: transaction.chainId, account, safe: Boolean(context.safe), hash: context.safe?.proposalHash ?? receipt.transactionHash, call: { ...call, value: call.value.toString() } };
+  // The chain id was read above: the proof re-reads only the canonical block.
+  const status = await proveSavedCall({ ...client, getChainId: async () => chainId }, saved, canonical, actual, canonical);
+  if (status === 'failed') throw new DefifaNftTransactionRevertedError(canonical.transactionHash, chainId);
   // The caller's supplied logs may be stale or fabricated: only fresh canonical logs reach the effect verifier.
   if (canonical.logs.some((log) => log.removed !== false || log.transactionHash?.toLowerCase() !== canonical.transactionHash.toLowerCase() || log.blockHash?.toLowerCase() !== canonical.blockHash.toLowerCase() || log.blockNumber !== canonical.blockNumber || log.transactionIndex !== canonical.transactionIndex)) {
     throw new Error('Defifa receipt logs are not bound to the canonical transaction.');

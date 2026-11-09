@@ -139,19 +139,19 @@ describe('contract-sources.json is pinned to the deployed refs', () => {
     }
   });
 
-  test('current, previous and v1 hook bodies retain their own deployed package refs', () => {
-    for (const [name, version] of [['JBBuybackHook', '1.4.0'], ['JBBuybackHook_deprecated1', '1.1.1'], ['JBBuybackHook_deprecated', '1.0.0']]) {
+  test('every buyback hook generation retains its own deployed package ref', () => {
+    for (const [name, version] of [['JBBuybackHook', '2.0.0'], ['JBBuybackHook_deprecated2', '1.4.0'], ['JBBuybackHook_deprecated1', '1.1.1'], ['JBBuybackHook_deprecated', '1.0.0']]) {
       const ref = `npm:@bananapus/buyback-hook-v6@${version}`;
       expect([...deployedRef(name)]).toEqual([ref]);
       expect(contractSources[name].sourceRef).toBe(ref);
     }
   });
 
-  test('the LP split hook body is the deployed two-argument deployPool', () => {
+  test('the LP split hook body is the deployed 1.5.0 one-argument deployPool', () => {
     const candidates = contractSources.JBUniswapV4LPSplitHook.functionsByName.deployPool;
     expect(candidates).toHaveLength(1);
-    expect(candidates[0].paramTypes).toEqual(['uint256', 'uint256']);
-    expect(candidates[0].source).toContain('uint256 minCashOutReturn');
+    expect(candidates[0].paramTypes).toEqual(['uint256']);
+    expect(contractSources.JBUniswapV4LPSplitHook.sourceRef).toBe('npm:@bananapus/univ4-lp-split-hook-v6@1.5.0');
   });
 });
 

@@ -19,6 +19,9 @@ describe('project contract recognition', () => {
       deployment: 'JB721TiersHookDeployer', family: 'JB721TiersHook',
     });
     expect(knownInstanceFamilyForDeployer(getAddress('JBController', 84532), 84532)).toBeNull();
+    // Retired deployers still classify the instances they made.
+    expect(knownInstanceFamilyForDeployer(getAddress('DefifaDeployer_deprecated', 8453), 8453)).toEqual({ deployment: 'DefifaDeployer_deprecated', family: 'DefifaHook' });
+    expect(knownInstanceFamilyForDeployer(getAddress('JBUniswapV4LPSplitHookDeployer_deprecated', 8453), 8453)).toEqual({ deployment: 'JBUniswapV4LPSplitHookDeployer_deprecated', family: 'JBUniswapV4LPSplitHook' });
   });
 
   test('checks the registered 721 instance identity against its canonical store, target, and project', () => {

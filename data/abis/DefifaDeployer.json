@@ -484,16 +484,6 @@
               ]
             },
             {
-              "name": "attestationStartTime",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
-              "name": "attestationGracePeriod",
-              "type": "uint256",
-              "internalType": "uint256"
-            },
-            {
               "name": "defaultAttestationDelegate",
               "type": "address",
               "internalType": "address"
@@ -522,6 +512,16 @@
               "name": "timelockDuration",
               "type": "uint256",
               "internalType": "uint256"
+            },
+            {
+              "name": "referee",
+              "type": "address",
+              "internalType": "address"
+            },
+            {
+              "name": "refereeData",
+              "type": "bytes",
+              "internalType": "bytes"
             }
           ]
         }
@@ -1011,7 +1011,7 @@
     "isTrustedForwarder(address)": {
       "details": "Indicates whether any particular address is the trusted forwarder."
     },
-    "launchGameWith((string,string,string,string,(string,uint16,address,bytes32,bool)[],uint104,(address,uint8,uint32),uint24,uint24,uint48,(uint32,uint64,address,bool,uint48,address)[],uint256,uint256,address,address,address,uint256,uint32,uint256))": {
+    "launchGameWith((string,string,string,string,(string,uint16,address,bytes32,bool)[],uint104,(address,uint8,uint32),uint24,uint24,uint48,(uint32,uint64,address,bool,uint48,address)[],address,address,address,uint256,uint32,uint256,address,bytes))": {
       "details": "Forwards `msg.value` to `JBProjects.createFor` to cover any configured project creation fee.",
       "params": {
         "launchProjectData": "Data necessary to fulfill the transaction to launch a game."
@@ -1120,7 +1120,7 @@
     "fulfilledCommitmentsOf(uint256)": {
       "notice": "The amount of commitments a game has fulfilled."
     },
-    "launchGameWith((string,string,string,string,(string,uint16,address,bytes32,bool)[],uint104,(address,uint8,uint32),uint24,uint24,uint48,(uint32,uint64,address,bool,uint48,address)[],uint256,uint256,address,address,address,uint256,uint32,uint256))": {
+    "launchGameWith((string,string,string,string,(string,uint16,address,bytes32,bool)[],uint104,(address,uint8,uint32),uint24,uint24,uint48,(uint32,uint64,address,bool,uint48,address)[],address,address,address,uint256,uint32,uint256,address,bytes))": {
       "notice": "Launches a new game owned by this contract with a DefifaHook attached."
     },
     "nextPhaseNeedsQueueing(uint256)": {

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../src/nft-inventory-read.js', () => ({ getProjectNftInventory: vi.fn() }));
 import { getProjectNftInventory } from '../src/nft-inventory-read.js';
-import { readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, requireGenericInventory, renderNativeInventory, isNativeInventory, nativeActionUnavailable } from '../src/nft-inventory.js';
+import { indexedDefifaTokenIds, INDEXED_HOLDINGS_WAIT_MS, readProjectNftIdentity, clearProjectNftIdentity, readProjectNftInventory, requireGenericInventory, renderNativeInventory, isNativeInventory, nativeActionUnavailable } from '../src/nft-inventory.js';
 const args = { chainId: 8453, projectId: 27n };
 const native = { protocol: 'defifa', hook: '0x123', blockNumber: 123n, phase: 1, pricing: { currency: 61166, decimals: 18 }, tiers: [{ id: 1, name: 'Rekt', price: 1000000000000n, currentSupply: 3n }], capabilities: { genericPay: false, genericCashOut: false, manageTiers: false }, nextStartingId: null };
 beforeEach(() => { getProjectNftInventory.mockReset(); clearProjectNftIdentity(); });
@@ -135,4 +135,27 @@ it('uses native NFT participation labels without hiding independently existing E
  expect(document.querySelector('[data-project-token-type]').textContent).toBe('NFTs');
  expect(projectTokenType({...project,tokenAddress:'0x123'})).toBe('ERC-20');
  expect(projectTokenType({id:28,chainId:8453})).toBe('Credits');
+});
+
+describe('indexed Defifa holdings hints', () => {
+  const hook = '0x2222222222222222222222222222222222222222', owner = '0x1111111111111111111111111111111111111111';
+  it('reads the holder\'s token IDs from the chain\'s indexer', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ data: { nfts: { items: [{ tokenId: '1000000001' }] } } }), { headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await indexedDefifaTokenIds(8453, hook, owner)).toEqual([1000000001n]);
+    expect(JSON.parse(fetch.mock.calls[0][1].body).variables).toMatchObject({ chainId: 8453, hook, owner, version: 6 });
+  });
+  it('answers undefined when the indexer fails or stalls, never holding up holdings', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    vi.useFakeTimers();
+    try {
+      const failed = indexedDefifaTokenIds(8453, hook, owner);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await failed).toBeUndefined();
+      vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+      const stalled = indexedDefifaTokenIds(8453, hook, owner);
+      await vi.advanceTimersByTimeAsync(INDEXED_HOLDINGS_WAIT_MS);
+      expect(await stalled).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
 });

@@ -4,7 +4,7 @@
 // test/fixtures/sdk-3.4.1/hook-metadata.json pin identical output.
 
 import { bytesToHex, decodeAbiParameters, encodeAbiParameters, keccak256, toBytes, zeroAddress } from 'viem';
-import { getAddress as registryAddress } from './abi-registry.js';
+import { generationAddresses } from './abi-registry.js';
 
 // bytes4(bytes20(target) ^ bytes20(keccak256(purpose))): the id a hook resolves with JBMetadataResolver.getId.
 export function hookMetadataId(target, purpose) {
@@ -101,13 +101,12 @@ function tierIdCounts(tierIds) {
     .join(', ');
 }
 
-// A lookup id names payload semantics, not provenance: the Defifa hook implementations' "pay" id.
+// A lookup id names payload semantics, not provenance: any Defifa 721 hook implementation's "pay" id, every generation.
 var DEFIFA_CHAINS = [1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614];
 function isDefifaPayLookupId(id) {
   var wanted = id.toLowerCase();
   return DEFIFA_CHAINS.some(function (chainId) {
-    var implementation = registryAddress('DefifaHook', chainId);
-    return implementation !== null && hookMetadataId(implementation, 'pay').toLowerCase() === wanted;
+    return generationAddresses('DefifaHook', chainId).some(function (implementation) { return hookMetadataId(implementation, 'pay').toLowerCase() === wanted; });
   });
 }
 

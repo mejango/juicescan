@@ -1,9 +1,11 @@
-// The lean Defifa actions must answer, and read, exactly as nana-sdk-core 3.4.1 did, case for case.
+// The Defifa actions must answer, and read, exactly as recorded, case for case. The Defifa 1 cases were recorded from
+// nana-sdk-core 3.4.1; the saved-call proof cases since answer with juicescan's own proof (proveSavedCall).
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { erc721Abi, keccak256, toHex } from 'viem';
 import { getABI, getAddress, meta } from '../src/abi-registry.js';
+import { asDefifa2 } from './defifa-generations.js';
 
 const registry = vi.hoisted(() => ({ addresses: {}, abis: {} }));
 vi.mock('../src/abi-registry.js', async (original) => {
@@ -11,6 +13,8 @@ vi.mock('../src/abi-registry.js', async (original) => {
   return { ...real, getAddress: (name, chain) => registry.addresses[name] ?? real.getAddress(name, chain), getABI: (name, chain) => registry.abis[name] ?? real.getABI(name, chain) };
 });
 afterEach(() => { registry.addresses = {}; registry.abis = {}; });
+import { proveSavedCall } from '../src/defifa.js';
+import { SAFE_EXECUTION_FAILURE_TOPIC, SAFE_EXECUTION_SUCCESS_TOPIC } from '../src/safe.js';
 import { DefifaNftTransactionRevertedError, MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsCashOut, defifaPhaseAllowsPay, effectiveTierPrice, prepareDefifaCashOut, prepareDefifaPay, prepareDefifaTransfer, restoreDefifaNftReceiptContext, verifyDefifaNftReceipt, verifyDefifaNftTransaction } from '../src/defifa.js';
 
 const revive = (k, v) => {
@@ -19,7 +23,8 @@ const revive = (k, v) => {
   if (k === 'abi' && v === '$abi:terminal') return getABI('JBMultiTerminal', 8453);
   return v;
 };
-const golden = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/sdk-3.4.1/defifa.json'), 'utf8'), revive);
+const fixture = readFileSync(join(process.cwd(), 'test/fixtures/defifa-games/defifa.json'), 'utf8');
+const golden = JSON.parse(fixture, revive);
 
 function ser(value) {
   return JSON.stringify(value, function (k, x) {
@@ -82,7 +87,7 @@ async function run(c, reads) {
   return { actual, calls };
 }
 
-describe('defifa matches SDK 3.4.1 golden vectors', () => {
+describe('defifa matches its golden vectors', () => {
   it('replays every recorded scenario with identical results and identical reads, and never touches a wallet', async () => {
     const request = vi.fn();
     window.ethereum = { request };
@@ -99,6 +104,19 @@ describe('defifa matches SDK 3.4.1 golden vectors', () => {
     expect(request).not.toHaveBeenCalled();
     delete window.ethereum;
     delete globalThis.ethereum;
+  });
+
+  it('answers every Defifa 1 scenario the same for a Defifa 2.0 game, keyed to the 2.0 implementation', async () => {
+    const moved = JSON.parse(asDefifa2(fixture), revive);
+    // Defifa 2.0 has one implementation address on every chain, so a testnet game with the mainnet one is its own.
+    const sameEverywhere = 'testnet chain with the mainnet implementation fails';
+    expect(moved.cases.some((c) => c.name === sameEverywhere)).toBe(true);
+    for (const c of moved.cases.filter((x) => x.name !== sameEverywhere)) {
+      const reads = c.reads ?? {};
+      const { actual, calls } = await run(c, reads);
+      expect(actual, c.name).toEqual(c.output);
+      expect(calls.map((key) => Object.keys(reads).indexOf(key)), c.name).toEqual(c.trace ?? []);
+    }
   });
 
   it('covers every action, its refusals and its recovery', () => {
@@ -169,7 +187,7 @@ describe('defifa matches SDK 3.4.1 golden vectors', () => {
   it('takes the Defifa addresses and the ABIs from the registry', async () => {
     const receipt = golden.cases.find((x) => x.name === 'pay receipt proves one mint');
     expect(receipt.output).toBeNull();
-    registry.addresses = { DefifaHook: '0x1234567890123456789012345678901234567890' };
+    registry.addresses = { DefifaHook: '0x1234567890123456789012345678901234567890', DefifaHook_deprecated: '0x1234567890123456789012345678901234567891' };
     expect(() => verifyDefifaNftReceipt(receipt.input.context, receipt.input.receipt)).toThrow(/pinned chain implementation/);
     registry.addresses = {};
     for (const [name, fn] of [['pay 1 tier', 'prepareDefifaPay'], ['cash out three NFTs in the mint phase', 'prepareDefifaCashOut']]) {
@@ -180,15 +198,17 @@ describe('defifa matches SDK 3.4.1 golden vectors', () => {
     }
   });
 
-  it('reads the registry, not a pinned table, and agrees with the SDK deployments', () => {
+  it('reads the registry, not a pinned table: the recorded Defifa 1 games are the retired generation', () => {
     const chains = Object.keys(golden.deployments);
     expect(chains.length).toBe(8);
     for (const chain of chains) {
-      expect(getAddress('DefifaDeployer', chain), chain).toBe(golden.deployments[chain].deployer);
-      expect(getAddress('DefifaHook', chain), chain).toBe(golden.deployments[chain].implementation);
+      expect(getAddress('DefifaDeployer_deprecated', chain), chain).toBe(golden.deployments[chain].deployer);
+      expect(getAddress('DefifaHook_deprecated', chain), chain).toBe(golden.deployments[chain].implementation);
+      expect(getAddress('DefifaDeployer', chain), chain).not.toBe(golden.deployments[chain].deployer);
     }
-    expect(Object.keys(meta.DefifaDeployer.addresses).sort()).toEqual([...chains].sort());
-    expect(Object.keys(meta.DefifaHook.addresses).sort()).toEqual([...chains].sort());
+    for (const name of ['DefifaDeployer', 'DefifaHook', 'DefifaTiersHookStore', 'DefifaDeployer_deprecated', 'DefifaHook_deprecated']) {
+      expect(Object.keys(meta[name].addresses).sort(), name).toEqual([...chains].sort());
+    }
   });
 
   it('keeps the ABI fragments the actions call', () => {
@@ -215,5 +235,36 @@ describe('defifa matches SDK 3.4.1 golden vectors', () => {
       try { actual = effectiveTierPrice(row.price, row.discount); } catch (error) { actual = { $error: error.message }; }
       expect(actual, `${row.price} ${String(row.discount)}`).toEqual(row.output);
     }
+  });
+
+  describe('proveSavedCall', () => {
+    const safe = '0x1111111111111111111111111111111111111111', proposal = '0x' + '77'.repeat(32), hash = '0x' + 'a1'.repeat(32), blockHash = '0x' + 'b0'.repeat(32);
+    const saved = (fields) => ({ chainId: 8453, account: safe, safe: true, hash: proposal, call: { to: '0x3333333333333333333333333333333333333333', data: '0x1234', value: '0' }, ...fields });
+    const log = (topic) => ({ address: safe, topics: [topic, proposal], data: '0x' + '0'.repeat(64), removed: false, transactionHash: hash, blockHash, blockNumber: 70n });
+    function client({ logs = [], status = 'success', finalized = 80n, tx = {} } = {}) {
+      const receipt = { transactionHash: hash, blockHash, blockNumber: 70n, status, logs, transactionIndex: 0 };
+      return { receipt, getChainId: async () => 8453, getTransaction: async () => ({ hash, blockHash, blockNumber: 70n, from: '0x5555555555555555555555555555555555555555', to: safe, input: '0x', value: 0n, ...tx }), getTransactionReceipt: async () => receipt,
+        getBlock: async (p) => (p.blockTag === 'finalized' ? { number: finalized, hash: '0x' + 'f0'.repeat(32) } : { number: 70n, hash: blockHash }) };
+    }
+    it('proves a Safe call by its own execution event for the saved proposal hash', async () => {
+      const c = client({ logs: [log(SAFE_EXECUTION_SUCCESS_TOPIC)] });
+      expect(await proveSavedCall(c, saved(), c.receipt)).toBe('success');
+      const none = client();
+      await expect(proveSavedCall(none, saved(), none.receipt)).rejects.toThrow(/not yet proven/);
+    });
+    it('releases a failed Safe call only once its block is final', async () => {
+      const early = client({ logs: [log(SAFE_EXECUTION_FAILURE_TOPIC)], finalized: 69n });
+      await expect(proveSavedCall(early, saved(), early.receipt)).rejects.toThrow(/not yet proven/);
+      const final = client({ logs: [log(SAFE_EXECUTION_FAILURE_TOPIC)], finalized: 70n });
+      expect(await proveSavedCall(final, saved(), final.receipt)).toBe('failed');
+    });
+    it('proves a direct call only as the account\'s own transaction of exactly that call', async () => {
+      const direct = saved({ safe: false, hash, account: '0x5555555555555555555555555555555555555555' });
+      const exact = { to: direct.call.to, input: '0x1234' };
+      const ok = client({ tx: exact, status: 'reverted' });
+      expect(await proveSavedCall(ok, direct, ok.receipt)).toBe('failed');
+      const other = client({ tx: { ...exact, input: '0x1235' } });
+      await expect(proveSavedCall(other, direct, other.receipt)).rejects.toThrow(/not yet proven/);
+    });
   });
 });

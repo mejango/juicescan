@@ -9,14 +9,19 @@
           "internalType": "contract IJBDirectory"
         },
         {
-          "name": "defifaToken",
+          "name": "tokens",
           "type": "address",
-          "internalType": "contract IERC20"
+          "internalType": "contract IJBTokens"
         },
         {
-          "name": "baseProtocolToken",
-          "type": "address",
-          "internalType": "contract IERC20"
+          "name": "defifaProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "baseProtocolProjectId",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ],
       "stateMutability": "nonpayable"
@@ -1607,6 +1612,25 @@
     },
     {
       "type": "function",
+      "name": "tierIdOf",
+      "inputs": [
+        {
+          "name": "tokenId",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "tierNameOf",
       "inputs": [
         {
@@ -2101,17 +2125,12 @@
     },
     {
       "type": "error",
-      "name": "DefifaHook_IdenticalTokens",
+      "name": "DefifaHook_IdenticalFeeProjects",
       "inputs": [
         {
-          "name": "defifaToken",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "baseProtocolToken",
-          "type": "address",
-          "internalType": "address"
+          "name": "projectId",
+          "type": "uint256",
+          "internalType": "uint256"
         }
       ]
     },
@@ -2542,7 +2561,13 @@
       }
     },
     "constructor": {
-      "details": "The initial owner is msg.sender; ownership is transferred to the governor after initialization."
+      "details": "The initial owner is msg.sender; ownership is transferred to the governor after initialization.",
+      "params": {
+        "baseProtocolProjectId": "The protocol project whose token is expected to be issued from paying fees.",
+        "defifaProjectId": "The project whose token is expected to be issued from paying fees.",
+        "directory": "The directory of terminals and controllers for projects.",
+        "tokens": "The contract that stores each project's token."
+      }
     },
     "currentSupplyOfTier(uint256)": {
       "params": {
@@ -2675,6 +2700,14 @@
     "tierCashOutWeights()": {
       "returns": {
         "_0": "The array of weights, indexed by tier."
+      }
+    },
+    "tierIdOf(uint256)": {
+      "params": {
+        "tokenId": "The token ID."
+      },
+      "returns": {
+        "_0": "The tier ID."
       }
     },
     "tierNameOf(uint256)": {
@@ -2839,6 +2872,9 @@
     },
     "tierCashOutWeights()": {
       "notice": "The cashOut weight for each tier."
+    },
+    "tierIdOf(uint256)": {
+      "notice": "The tier a token ID belongs to."
     },
     "tierNameOf(uint256)": {
       "notice": "The name of the tier with the specified ID."
