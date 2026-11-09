@@ -28311,7 +28311,7 @@ function buildLoanModal(project, requestClose) {
       ];
     }
     function doBorrow(session, minBorrow, reviewedOutcome) {
-      if (!requireLoanInputs()) return;
+      if (!requireLoanInputs()) { if (session) session.showStatus(status.textContent, 'error'); return; }
       executeTransaction(Object.assign(buildBorrowArgs({
         chainId: chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
         collateral: collateral, beneficiary: acct, prepaidFeePercent: prepaidFee, holder: acct,

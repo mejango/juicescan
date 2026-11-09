@@ -1275,6 +1275,12 @@ export function confirmStepsFor(payload, opts) {
   return steps;
 }
 
+// A send's status ends the confirm dialog's lock when nothing more will happen without the user: a failure,
+// a success, or a submitted transaction whose receipt watch gave up (it may still confirm later).
+export function confirmStatusSettles(kind, meta) {
+  return kind === 'error' || kind === 'success' || !!(meta && meta.trackingError);
+}
+
 export function confirmTransactionModal(payload, opts) {
   opts = opts || {};
   // View-as is browse-only: every confirm funnel refuses here with a clear notice instead of a review.
@@ -1297,11 +1303,12 @@ export function confirmTransactionModal(payload, opts) {
   // resolves like a fresh confirm, so multi-transaction flows never open a second dialog.
   var keepOpen = !!opts.keepOpenForProgress;
   var cancelResult = keepOpen ? { ok: false } : false;
-  var pendingResolve = null, closed = false, inFlight = false;
+  // `dialog`: 'review' (Confirm live), 'sending' (locked, the caller drives showStatus), 'settled' (closable).
+  var pendingResolve = null, closed = false, dialog = 'review';
   var feeReview = null, feeBusy = false, bodyDisabled = false;
   function settle(result) { var r = pendingResolve; pendingResolve = null; if (r) r(result); }
   var modal = openDialog(opts.title || 'Confirm transaction', {
-    canClose: function () { return !inFlight; },
+    canClose: function () { return dialog !== 'sending'; },
     onClose: function () { closed = true; if (feeReview) feeReview.stop(); settle(cancelResult); },
   });
   var content = el('div', 'pay-confirm');
@@ -1346,11 +1353,10 @@ export function confirmTransactionModal(payload, opts) {
     statusEl.style.display = '';
     statusEl.className = 'tx-confirm-status ' + (kind === 'error' ? 'error' : kind === 'success' ? 'success' : 'pending');
     setStatusContent(statusEl, m, meta);
-    // A failed simulation/send is terminal for this reviewed confirmation. Unlock dismissal so the user can
-    // correct the form and try again instead of being trapped behind disabled Cancel/close controls. Confirm
-    // stays disabled because its one-shot promise has already handed the exact reviewed call to executeTransaction.
-    if (kind === 'error') {
-      inFlight = false;
+    // Confirm stays disabled: its one-shot promise already handed the exact reviewed call to executeTransaction.
+    // A follow-on step (showNext) returns the dialog to review.
+    if (dialog === 'sending' && confirmStatusSettles(kind, meta)) {
+      dialog = 'settled';
       cancel.disabled = false;
       cancel.textContent = 'Close';
     }
@@ -1371,7 +1377,7 @@ export function confirmTransactionModal(payload, opts) {
     if (!feeReview) confirm.textContent = nextOpts.confirmText || 'Confirm & send';
     confirm.disabled = bodyDisabled || feeBusy; cancel.disabled = false; cancel.textContent = 'Cancel';
     statusEl.style.display = 'none';
-    inFlight = false;
+    dialog = 'review';
     return waitForConfirm();
   }
   cancel.addEventListener('click', modal.requestClose);
@@ -1383,7 +1389,7 @@ export function confirmTransactionModal(payload, opts) {
     if (keepOpen) {
       // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
       // showStatus()/close() as the tx progresses. Resolve now so the caller can start.
-      inFlight = true; confirm.disabled = true; cancel.disabled = true;
+      dialog = 'sending'; confirm.disabled = true; cancel.disabled = true;
       settle({ ok: true, showStatus: showStatus, close: teardown, showNext: showNext });
     } else {
       settle(true); teardown();
