@@ -13,7 +13,7 @@ import { getAddress, meta, getABI } from './abi-registry.js';
 import { prettyArgSteps } from './tx-pretty-args.js';
 import { contractGasWithHeadroom } from './gas.js';
 import { writeHold, heldHashState, isExplicitWalletRejection } from './write-hold.js';
-import { assertLocksHeld } from './browser-locks.js';
+import { assertLocksHeld, isLockLost } from './browser-locks.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
 // address is. Suckers and other per-project deployments aren’t in the registry — callers pass contractName.
@@ -1453,19 +1453,10 @@ export async function heldWriteGate(hold, label, verifyReceipt) {
 
 // Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
 // Only an explicit wallet rejection (EIP-1193 4001) releases the reservation; any other wallet error holds.
-// `send(lock)` gives the hold's lock to its wallet call as the fence. The record is written only while that lock
-// is still this window's; once it lapsed, the outcome (hash, or a definite unsent) is written under a fresh lock
-// after this one's work ends (the SDK's fund() keep), to this same attempt's record only.
-export async function sendHeldWrite(hold, check, send) {
-  var late = null;
-  function settle() {
-    return late ? hold.withLock(async function (fresh) { await fresh.assertHeld(); late(); }, true).catch(function () {}) : null;
-  }
-  var result;
-  try { result = await heldSend(); } catch (error) { await settle(); throw error; }
-  await settle();
-  return result;
-  function heldSend() { return hold.withLock(async function (lock) {
+// `send(lock)` gives the hold's lock to its wallet call as the fence. The wallet's outcome (its hash, or a definite
+// unsent) is saved through the hold's keep: under a lapsed lock, it is saved under a fresh one to this attempt only.
+export function sendHeldWrite(hold, check, send) {
+  return hold.withLock(async function (lock, keep) {
     await lock.assertHeld();
     var reservation = hold.reserve();
     try {
@@ -1475,16 +1466,18 @@ export async function sendHeldWrite(hold, check, send) {
     var hash;
     try { hash = await send(lock); } catch (err) {
       if (err.walletNotInvoked || isExplicitWalletRejection(err)) {
-        if (await lock.held()) hold.releaseLocked(reservation); else late = function () { hold.releaseLocked(reservation); };
+        var release = function () { hold.releaseLocked(reservation); };
+        await keep(async function () { await lock.assertHeld(); release(); }, release).catch(function () {});
         throw err;
       }
       throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it, so this action stays pending until it settles.', { cause: err }), { heldWrite: true });
     }
+    // The wallet sent it: a lapsed lock never turns the hash into a failure.
     var sent = { hash: hash, reservation: reservation };
-    if (await lock.held()) sent.reservation = hold.submitted(reservation, hash) || reservation;
-    else late = function () { sent.reservation = hold.submitted(reservation, hash) || reservation; };
+    var record = function () { sent.reservation = hold.submitted(reservation, hash) || reservation; };
+    await keep(async function () { await lock.assertHeld(); record(); }, record).catch(function (error) { if (!isLockLost(error)) throw error; });
     return sent;
-  }); }
+  });
 }
 
 function offerHeldRelease(hold, record, line) {

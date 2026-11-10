@@ -3,7 +3,7 @@
 // account, chain, target and function, saved in browser storage before the wallet opens. Only an explicit
 // wallet rejection (EIP-1193 4001) drops it before a receipt; any other outcome keeps the action held, across
 // reloads, until a read receipt or the user's own wallet check ends it.
-import { browserLocks } from './browser-locks.js';
+import { requestKeeping } from './browser-locks.js';
 
 var PREFIX = 'juicescan-write-hold-v1:';
 // Only a hash whose save failed after the wallet answered lives here, and only over the stored record of the
@@ -40,11 +40,13 @@ export function writeHold(chainId, account, call) {
     if (raw == null) return null;
     try { var record = JSON.parse(raw); return record && typeof record === 'object' ? record : {}; } catch (_) { return {}; }
   }
-  // `wait`: queue behind another window instead of refusing (releases only). `work(lock)` gets the lock's handle:
-  // it calls `await lock.assertHeld()` immediately before each write and gives `[lock]` to its wallet call.
+  // `wait`: queue behind another window instead of refusing (releases only). `work(lock, keep)` gets the lock's
+  // handle: it calls `await lock.assertHeld()` immediately before each write and gives `[lock]` to its wallet call;
+  // it saves a wallet outcome through `keep` (browser-locks requestKeeping), which `submitted`/`releaseLocked`
+  // reconcile safely: both change only the same attempt's record.
   function withLock(work, wait) {
-    return browserLocks().request(key, wait ? {} : { ifAvailable: true }, function (lock) {
-      return lock ? work(lock) : Promise.reject(new Error('This wallet action is already open in another window.'));
+    return requestKeeping(key, wait ? {} : { ifAvailable: true }, function (lock, keep) {
+      return lock ? work(lock, keep) : Promise.reject(new Error('This wallet action is already open in another window.'));
     });
   }
   // The same attempt in the same state: a release queued behind a send never removes the hash it saved.

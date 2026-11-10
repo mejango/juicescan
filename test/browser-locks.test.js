@@ -125,3 +125,27 @@ it('renews its own live lease while the work runs', async () => {
   });
   expect(data.has('jb-action')).toBe(false);
 });
+
+it('requestKeeping reconciles a save refused for a lost lock under a fresh lock, after the lapsed work ends', async () => {
+  const handles = [], order = [];
+  vi.stubGlobal('navigator', { locks: { request: async (name, _options, work) => {
+    const handle = { name, lost: false };
+    handle.held = async () => !handle.lost;
+    handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); };
+    handles.push(handle);
+    try { return await work(handle); } finally { order.push('end ' + handles.indexOf(handle)); }
+  } } });
+  const { requestKeeping } = await import('../src/browser-locks.js');
+  const result = await requestKeeping('journal', {}, async (lock, keep) => {
+    await keep(async () => { await lock.assertHeld(); order.push('saved'); }, () => order.push('never'));
+    lock.lost = true;
+    const refused = await keep(async () => { await lock.assertHeld(); order.push('never'); }, fresh => order.push('reconciled ' + handles.indexOf(fresh))).catch(error => error);
+    expect(refused.code).toBe('LOCK_LOST');
+    // Not a lost lock: no reconcile.
+    await expect(keep(() => { throw new Error('storage'); }, () => order.push('never'))).rejects.toThrow('storage');
+    order.push('work done');
+    return 'result';
+  });
+  expect(result).toBe('result');
+  expect(order).toEqual(['saved', 'work done', 'end 0', 'reconciled 1', 'end 1']);
+});

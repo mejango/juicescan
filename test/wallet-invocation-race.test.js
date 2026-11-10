@@ -1,16 +1,16 @@
 import { encodeFunctionData } from 'viem';
 import { assertShopCallPolicy } from '../src/shop-policy.js';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { assertLocksHeld, LockLostError } from '../src/browser-locks.js';
+import { assertLocksHeld, isLockLost, requestKeeping, LockLostError } from '../src/browser-locks.js';
 
 const source = name => readFileSync(new URL('../src/' + name, import.meta.url), 'utf8');
 const section = (text, start, end) => text.slice(text.indexOf(start), text.indexOf(end, text.indexOf(start))).replace(/^export /, '');
 const invoke = section(source('wallet.js'), 'export async function invokeWallet(', '\nexport function onWalletChange');
 const base = source('component-base.js');
 const execute = section(base, 'export function executeTransaction(opts)', '\nfunction normalizeWalletReceipt');
-const sendHeld = section(base, 'export async function sendHeldWrite(', '\nfunction offerHeldRelease');
+const sendHeld = section(base, 'export function sendHeldWrite(', '\nfunction offerHeldRelease');
 const permit = section(source('discover.js'), 'async function buildRouterPermit2Metadata(', '\n// JBMetadataResolver.addToMetadata:');
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
@@ -21,9 +21,9 @@ function harness() {
   const state = { account: ACCOUNT, safe: false, view: null, chain: 1, wallet: null };
   const wallet = label => ({ getChainId: async () => state.chain, writeContract: async req => { writes.push([label, req]); return HASH; }, signTypedData: async req => { writes.push([label, req]); return '0xsig'; } });
   state.wallet = wallet('A');
-  const hold = { read: () => null, withLock: fn => fn({ assertHeld: async () => {}, held: async () => true }), reserve: () => 1, owns: () => true, submitted: () => 1, release: async () => {}, releaseLocked: r => releases.push(r) };
+  const hold = { read: () => null, withLock: fn => fn({ assertHeld: async () => {}, held: async () => true }, write => write()), reserve: () => 1, owns: () => true, submitted: () => 1, release: async () => {}, releaseLocked: r => releases.push(r) };
   const pub = { readContract: async () => 0n, simulateContract: async req => ({ request: req }) };
-  const context = vm.createContext({ console, Promise, Object, BigInt, Number, Error, assertLocksHeld,
+  const context = vm.createContext({ console, Promise, Object, BigInt, Number, Error, assertLocksHeld, isLockLost,
     encodeFunctionData, assertShopCallPolicy, getViewAs: () => state.view, VIEW_AS_TX_ERROR: 'View as', getWalletClient: () => state.wallet, getAccount: () => state.account,
     isSafeConnected: () => state.safe, holdForWrite: () => hold, waitForSafeInitialization: async () => {},
     createPublicClientForChain: () => pub, clientFor: () => pub,
@@ -124,25 +124,26 @@ describe('final authorization freshness after current wallet chain read', () => 
 });
 
 describe('held write under a lapsed hold lock', () => {
-  // Each withLock gets its own lock: `lapse()` loses the current one; a later withLock takes a fresh one.
+  // The real keep over a lock manager that hands each request its own lock: `lapse()` loses the current one.
   function held() {
     const calls = [], locks = [];
     const lapse = () => { locks.at(-1).lost = true; };
-    const hold = { withLock: fn => {
-      const lock = { lost: false };
+    vi.stubGlobal('navigator', { locks: { request: async (name, _options, fn) => {
+      const lock = { name, lost: false };
       lock.held = async () => !lock.lost;
-      lock.assertHeld = async () => { if (lock.lost) throw new LockLostError('hold'); };
+      lock.assertHeld = async () => { if (lock.lost) throw new LockLostError(name); };
       locks.push(lock);
       return fn(lock);
-    }, reserve: () => { calls.push(['reserve', locks.length]); return 'r'; }, owns: () => true,
-    submitted: (r, hash) => { calls.push(['submitted', locks.length, hash]); return r + ':' + hash; }, releaseLocked: () => calls.push(['release', locks.length]) };
+    } } });
+    const hold = { withLock: work => requestKeeping('hold', {}, work), reserve: () => { calls.push(['reserve', locks.length]); return 'r'; }, owns: () => true,
+      submitted: (r, hash) => { calls.push(['submitted', locks.length, hash]); return r + ':' + hash; }, releaseLocked: () => calls.push(['release', locks.length]) };
     return { calls, locks, lapse, hold, context: harness().context };
   }
+  afterEach(() => vi.unstubAllGlobals());
   it('never reserves or opens the wallet once the lock lapsed', async () => {
     const t = held(), send = vi.fn();
-    const check = () => {};
-    const pending = t.context.sendHeldWrite({ ...t.hold, withLock: fn => t.hold.withLock(lock => { lock.lost = true; return fn(lock); }) }, check, send);
-    await expect(pending).rejects.toBeInstanceOf(LockLostError);
+    const hold = { ...t.hold, withLock: work => t.hold.withLock((lock, keep) => { lock.lost = true; return work(lock, keep); }) };
+    await expect(t.context.sendHeldWrite(hold, () => {}, send)).rejects.toBeInstanceOf(LockLostError);
     expect(t.calls).toEqual([]); expect(send).not.toHaveBeenCalled();
   });
   it('fences the wallet with the hold lock and saves a hash returned after the lapse under a fresh lock', async () => {

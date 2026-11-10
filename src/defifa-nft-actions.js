@@ -2,6 +2,7 @@ import { getDefifaHoldings } from './nft-inventory-read.js';
 import { prepareDefifaPay, prepareDefifaCashOut, prepareDefifaTransfer, verifyDefifaNftTransaction, restoreDefifaNftReceiptContext, proveSavedCall, DefifaNftTransactionRevertedError, MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay, defifaPhaseAllowsCashOut, effectiveTierPrice } from './defifa.js';
 import { encodeFunctionData, decodeFunctionData, TransactionReceiptNotFoundError } from 'viem';
 import { writeHold } from './write-hold.js';
+import { isLockLost } from './browser-locks.js';
 import { txHashForSafeTx } from './safe-app.js';
 import { getAccount, getViewAs, connect, createPublicClientForChain, executeTransaction, waitForTrackedTransactionReceipt, onEffectiveAccountChange, ZERO_ADDRESS, isAddr, isSafeConnected, formatAmount, readErc20Allowance, erc20ApproveAbi, NATIVE_TOKEN } from './component-base.js';
 import { readProjectNftInventory, indexedDefifaTokenIds } from './nft-inventory.js';
@@ -205,20 +206,15 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
       if (approvalOnly) rows = [['Account', account], ['Token', token], ['Spender', reviewed.transaction.address], ['Approval amount', formatPrice(reviewed.amount, reviewed.inventory.pricing)]];
       var context = { hook: reviewed.inventory.hook, implementation: reviewed.inventory.implementation, account: account, transaction: reviewed.transaction };
       var hold = holdFor(kind, account), savedCall = { namespace: namespace(kind), chainId: chainId, safe: safeRoute, call: { to: request.address.toLowerCase(), data: encodeFunctionData(request).toLowerCase(), value: String(request.value || 0n) } };
-      await hold.withLock(function (lock) { return new Promise(function (resolve) {
+      await hold.withLock(function (lock, holdKeep) { return new Promise(function (resolve) {
         if (hold.read()) { error(new Error('Check the original transaction before starting this action again.')); resolve(); return; }
         var reservation = null;
-        // Writes this attempt's outcome under its lock; once that lock is lost (as while suspended in the wallet),
-        // ends its work and writes under a fresh one (the SDK's fund() keep). `submitted` and `releaseLocked`
-        // change only this same attempt's record, so a newer attempt is never touched.
+        // Saves this attempt's outcome through the hold's keep. Once the lock was lost (as while suspended in the
+        // wallet), this ends the lock work so the fresh-lock reconcile can run, and waits for it: `submitted` and
+        // `releaseLocked` change only this same attempt's record.
         async function keep(apply) {
-          try { await lock.assertHeld(); }
-          catch (err) {
-            if (!err || err.code !== 'LOCK_LOST') throw err;
-            resolve();
-            return hold.withLock(async function (fresh) { await fresh.assertHeld(); apply(); }, true);
-          }
-          apply();
+          try { await holdKeep(async function () { await lock.assertHeld(); apply(); }, apply); }
+          catch (err) { if (!isLockLost(err)) throw err; resolve(); await err.reconciled; }
         }
         // The lock guards reserve-then-send only: free it once the hash is saved, before any read, so a slow
         // refresh never keeps another view from checking this hold.

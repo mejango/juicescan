@@ -23,6 +23,33 @@ export async function assertLocksHeld(locks) {
   await Promise.all((locks || []).map(function (lock) { return lock && lock.assertHeld(); }));
 }
 
+// Whether `error` is a lock's LockLostError (by code, so test locks count too).
+export function isLockLost(error) { return !!error && error.code === 'LOCK_LOST'; }
+
+// The SDK's fund() keep, in one home: browserLocks().request plus `keep`. `work(lock, keep)` runs under the lock.
+// `keep(write, reconcile)` runs `write()`, which fences its own lock right before writing. Use it for every save
+// of an outcome the page got from outside (a wallet's hash or rejection, a Safe proposal, a Relayr quote) after
+// an earlier save under the same lock. When the lock was lost meanwhile (as while the page was suspended in a
+// wallet), `reconcile(fresh)` runs once this lock's work has ended, under a fresh lock of the same name: it
+// re-reads the saved record and writes only if the record is still this attempt's. keep still rethrows the
+// LockLostError, with `error.reconciled` (resolves once the reconcile ran; never rejects); this request returns
+// or throws only after every reconcile it queued has run. Unreconciled, a record stays as the lost lock left it.
+export async function requestKeeping(name, options, work) {
+  var end, queue = new Promise(function (resolve) { end = resolve; });
+  function keep(write, reconcile) {
+    return Promise.resolve().then(write).catch(function (error) {
+      if (reconcile && isLockLost(error)) {
+        error.reconciled = queue = queue.then(function () {
+          return browserLocks().request(name, {}, async function (fresh) { await fresh.assertHeld(); return reconcile(fresh); });
+        }).catch(function () {});
+      }
+      throw error;
+    });
+  }
+  try { return await browserLocks().request(name, options, function (lock) { return work(lock, keep); }); }
+  finally { end(); await queue; }
+}
+
 var NEVER = new AbortController().signal;
 
 function handle(name, mode, held, signal) {

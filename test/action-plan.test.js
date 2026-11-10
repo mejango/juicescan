@@ -141,30 +141,71 @@ describe('durable selected action rounds', () => {
 });
 
 describe('lock fencing', () => {
-  function lapsingLock() {
-    const lock = { held: true, name: KEY, assertHeld: vi.fn(async () => { if (!lock.held) throw Object.assign(new Error('The lock was lost.'), { name: 'LockLostError', code: 'LOCK_LOST' }); }) };
-    navigator.locks.request.mockImplementation((_key, _opts, fn) => fn(lock));
-    return lock;
-  }
-  it('never writes a checkpoint once its lock lapsed to another tab', async () => {
-    const lock = lapsingLock();
-    const run = options({ executeRound: vi.fn(async (_calls, _index, _plan, control) => {
-      lock.held = false;
-      await control.checkpoint({ confirmed: true }); return { confirmed: true };
-    }) });
-    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
-    const saved = JSON.parse(localStorage.getItem(KEY));
-    expect(saved.nextRound).toBe(0); expect(saved.results).toEqual([]);
+  // Each request gets its own lock: `lapse()` loses the current one; a later request takes a fresh one.
+  let handles;
+  const lapse = () => { handles.at(-1).lost = true; };
+  const saved = () => JSON.parse(localStorage.getItem(KEY));
+  beforeEach(() => {
+    handles = [];
+    navigator.locks.request.mockImplementation((name, _opts, fn) => {
+      const handle = { name, lost: false };
+      handle.held = async () => !handle.lost;
+      handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('The lock was lost.'), { name: 'LockLostError', code: 'LOCK_LOST' }); };
+      handles.push(handle);
+      return fn(handle);
+    });
   });
-  it('never records a Safe attempt once its lock lapsed', async () => {
-    const lock = lapsingLock();
-    const run = options({ safeMode: true, executionAccount: SAFE, executeRound: vi.fn(async (_calls, _index, _plan, control) => {
-      lock.held = false;
-      await control.beforeSafe({ chainId: 8453 }); return { confirmed: true };
-    }) });
+  const safeRun = executeRound => options({ safeMode: true, executionAccount: SAFE, executeRound: vi.fn(executeRound) });
+  it('never records a Safe attempt once its lock lapsed before the attempt', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => { lapse(); await control.beforeSafe({ chainId: 8453 }); return { confirmed: true }; });
     await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
-    const saved = JSON.parse(localStorage.getItem(KEY));
-    expect(saved.safePending).toBe(false); expect(saved.safeProgress).toBeUndefined();
+    expect(saved().safePending).toBe(false); expect(saved().safeProgress).toBeUndefined();
+  });
+  it('saves a round checkpoint reached after the lapse under a fresh lock, and a resume skips that round', async () => {
+    const run = options({ executeRound: vi.fn(async (_calls, _index, _plan, control) => { lapse(); await control.checkpoint({ confirmed: true }); return { confirmed: true }; }) });
+    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(saved()).toMatchObject({ nextRound: 1, results: [{ confirmed: true }] });
+    const resumed = options();
+    await expect(runSavedActionPlan(resumed)).resolves.toMatchObject({ completed: true, resumed: true });
+    expect(resumed.executeRound.mock.calls.map(call => call[1])).toEqual([1]);
+  });
+  it('saves a Safe rejection after the lapse under a fresh lock, so the action can be retried', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => {
+      await control.beforeSafe({ chainId: 8453 });
+      lapse();
+      // The wallet rejected (4001): the caller reports it and swallows a refused save.
+      await control.safeCancelled().catch(() => {});
+      return { cancelled: true };
+    });
+    await expect(runSavedActionPlan(run)).resolves.toMatchObject({ cancelled: true });
+    expect(saved().safePending).toBe(false); expect(saved().safeProgress.attempt).toBeNull();
+    const retry = safeRun(async () => ({ cancelled: true }));
+    await expect(runSavedActionPlan(retry)).resolves.toMatchObject({ cancelled: true, resumed: true });
+    expect(retry.executeRound).toHaveBeenCalledOnce();
+  });
+  it('saves a Safe proposal returned after the lapse under a fresh lock', async () => {
+    const proposal = { chainId: 8453, safeTxHash: '0x' + 'ab'.repeat(32) };
+    const run = safeRun(async (_calls, _index, _plan, control) => {
+      await control.beforeSafe({ chainId: 8453 });
+      lapse();
+      await control.recordSafeProposal(proposal);
+      return { confirmed: true };
+    });
+    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(saved().safePending).toBe(false);
+    expect(saved().safeProgress).toMatchObject({ index: 0, attempt: null, proposals: [proposal] });
+  });
+  it('never applies a late Safe outcome to a newer attempt', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => {
+      await control.beforeSafe({ chainId: 8453 });
+      lapse();
+      // Another window took the plan and started its own attempt.
+      const current = saved(); current.safeProgress.attempt.id = 'other'; localStorage.setItem(KEY, JSON.stringify(current));
+      await control.safeCancelled().catch(() => {});
+      return { cancelled: true };
+    });
+    await runSavedActionPlan(run);
+    expect(saved().safePending).toBe(true); expect(saved().safeProgress.attempt.id).toBe('other');
   });
 });
 

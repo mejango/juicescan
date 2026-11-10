@@ -34,7 +34,7 @@ import { assertNewTierPolicy, build721TierConfig, build721TierMetadata, mediaTyp
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
 import { gasWithHeadroom } from './gas.js';
-import { browserLocks, assertLocksHeld } from './browser-locks.js';
+import { browserLocks, assertLocksHeld, requestKeeping, isLockLost } from './browser-locks.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { isEnsName, resolveEns, reverseEns, cachedEnsAddress } from './ens.js';
 import {
@@ -3951,25 +3951,10 @@ async function verifyCreateDirectLeg(session, plan) {
   } else throw new Error('The launch on ' + chainName(plan.chainId) + ' is still awaiting confirmation.');
 }
 
-// A leg's outcome (its hash, or a definite unsent) that its lost lock refused is applied under a fresh lock once
-// this run's lock work ends (the SDK's fund() keep): only to the same launch and the same leg attempt.
-async function runCreateDirectSession(state, session, resumed) {
-  var late = null;
-  try {
-    return await runCreateDirectLocked(state, session, resumed, function (settle) { late = settle; });
-  } catch (error) {
-    if (late) {
-      await browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive' }, async function (fresh) {
-        var latest = loadCreateDirectSession(true);
-        if (latest && late(latest)) await saveCreateDirectSession(state, latest, fresh);
-      }).catch(function () { /* Unreconciled, the launch stays as the lost lock left it. */ });
-    }
-    throw error;
-  }
-}
-
-function runCreateDirectLocked(state, session, resumed, onLost) {
-  return browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock) {
+// A leg's outcome (its hash, or a definite unsent) is saved through the launch lock's keep: under a lapsed lock,
+// it is saved under a fresh one, only to the same launch and the same leg attempt.
+function runCreateDirectSession(state, session, resumed) {
+  return requestKeeping(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock, keepSaved) {
     if (!lock) throw new Error('This launch is active in another window. Continue there or close that window before resuming.');
     var latest = loadCreateDirectSession(true);
     if (!latest && session.id) throw new Error('This saved launch was cleared in another window. Check its transactions before continuing.');
@@ -3980,11 +3965,11 @@ function runCreateDirectLocked(state, session, resumed, onLost) {
     }
     session = latest || session;
     await saveCreateDirectSession(state, session, lock);
-    return executeCreateDirectSession(state, session, resumed, lock, onLost);
+    return executeCreateDirectSession(state, session, resumed, lock, keepSaved);
   });
 }
 
-async function executeCreateDirectSession(state, session, resumed, lock, onLost) {
+async function executeCreateDirectSession(state, session, resumed, lock, keepSaved) {
   var push = state._push;
   for (var i = 0; i < session.plans.length; i++) {
     var checked = session.plans[i];
@@ -4030,22 +4015,22 @@ async function executeCreateDirectSession(state, session, resumed, lock, onLost)
       assertScheduleFresh(plan.scheduleValidUntil);
       push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
       // Saves this leg's outcome; under a lost lock, hands it to the fresh-lock reconcile for this same attempt.
-      var keep = async function (hash) {
+      var keep = function (hash) {
         var attempt = plan.attempt, before = { hash: plan.hash, status: plan.status };
         plan.hash = hash; plan.status = hash ? 'submitted' : 'ready';
-        try { await saveCreateDirectSession(state, session, lock); }
-        catch (error) {
-          if (!error || error.code !== 'LOCK_LOST' || !onLost) throw error;
-          // The in-memory launch stays as saved, so the reconcile below matches it like the stored one.
-          plan.hash = before.hash; plan.status = before.status;
-          onLost(function (latest) {
-            var leg = latest.id === session.id && latest.plans.find(function (saved) { return saved.chainId === plan.chainId; });
-            if (!leg || leg.hash || leg.status !== 'awaiting-wallet' || leg.attempt !== attempt) return false;
-            leg.hash = hash; leg.status = hash ? 'submitted' : 'ready';
-            return true;
+        return keepSaved(function () {
+          return saveCreateDirectSession(state, session, lock).catch(function (error) {
+            // Under a lost lock the in-memory launch stays as saved, so the reconcile matches it like the stored one.
+            if (isLockLost(error)) { plan.hash = before.hash; plan.status = before.status; }
+            throw error;
           });
-          throw error;
-        }
+        }, async function (fresh) {
+          var latest = loadCreateDirectSession(true);
+          var leg = latest && latest.id === session.id && latest.plans.find(function (saved) { return saved.chainId === plan.chainId; });
+          if (!leg || leg.hash || leg.status !== 'awaiting-wallet' || leg.attempt !== attempt) return;
+          leg.hash = hash; leg.status = hash ? 'submitted' : 'ready';
+          await saveCreateDirectSession(state, latest, fresh);
+        });
       };
       // This leg's record is its write journal: onWriteRejected keeps executeTransaction from holding it a second time.
       var releaseUnsent = async function () {
