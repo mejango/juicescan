@@ -11102,7 +11102,9 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
       calls.forEach(function (call) {
         if (encodeFunctionData({ abi: call.abi, functionName: call.functionName, args: call.args }).toLowerCase() !== String(call.data).toLowerCase()) throw new Error('The saved call does not match its reviewed arguments.');
       });
-      var roundOpts = Object.assign({}, opts, { gas: plan.gas, pendingScope: roundScope,
+      // Every route of the round (Safe, direct, forwarded signatures, Relayr publication and payment) fences the
+      // plan lock together with its own lock, so a tab whose plan lease lapsed never asks for another send.
+      var roundOpts = Object.assign({}, opts, { gas: plan.gas, pendingScope: roundScope, locks: control.locks,
         title: (opts.title || opts.label || 'Project action') + (plan.rounds.length > 1 ? ' — round ' + (index + 1) + '/' + plan.rounds.length : ''),
         summary: { rows: (opts.summaryForRound ? opts.summaryForRound(calls) : plan.summary && plan.summary.rows || []).concat([['Round', (index + 1) + ' of ' + plan.rounds.length], ['Calls in this round', String(calls.length)]]) },
         reverify: async function (chainId) {
@@ -11140,7 +11142,6 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
       var buildCall = function (chainId) { return calls.find(function (call) { return Number(call.chainId == null ? call.cid : call.chainId) === Number(chainId); }); };
       if (authoritySafe) {
         var requested = false;
-        roundOpts.locks = control.locks;
         roundOpts.onSafeRequest = function (attempt) { requested = true; return control.beforeSafe(attempt); };
         roundOpts.onSafeProposal = function (proposal) { return control.recordSafeProposal(proposal); };
         roundOpts.onSafeExecuted = function (chainId) { return control.recordSafeExecuted(chainId); };
@@ -11195,7 +11196,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
   if (!account) return null;
   var relaySession = await runRelayrAcrossChains(chains, account, buildCall, opts.gas || 500000n, setStatus, {
     label: opts.label, title: opts.title, summary: opts.summary, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro,
-    reverify: opts.reverify, onVerified: opts.onVerified,
+    reverify: opts.reverify, onVerified: opts.onVerified, locks: opts.locks,
     pendingScope: opts.pendingScope || relayrActionScope(project, opts.label || opts.title),
   });
   return { relayr: true, resumed: !!(relaySession && relaySession.resumed), session: relaySession };
@@ -11962,7 +11963,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
           data: direct.data,
           value: 0n,
           gas: directSendGas,
-        }); }, function () { assertScheduleFresh(direct.scheduleValidUntil); }, [lock]);
+        }); }, function () { assertScheduleFresh(direct.scheduleValidUntil); }, [lock].concat(confirmOpts.locks || []));
         await onSubmitted(directHash);
         setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
         // Use the same dual-source receipt poll as the shared transaction boundary. Some wallet/public-RPC
@@ -12001,7 +12002,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
   var txs = [];
   for (var j = 0; j < calls.length; j++) {
     assertScheduleFresh(calls[j].scheduleValidUntil);
-    txs.push(await buildForwardedTx(calls[j].cid, account, calls[j].to, calls[j].data, gas || 400000n, 0n, calls[j].scheduleValidUntil));
+    txs.push(await buildForwardedTx(calls[j].cid, account, calls[j].to, calls[j].data, gas || 400000n, 0n, calls[j].scheduleValidUntil, confirmOpts.locks));
   }
   setStatus('Requesting Relayr quote…', 'pending');
   if (confirmOpts.reverify) await confirmOpts.reverify();
@@ -12009,7 +12010,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
   var scheduleLimit = scheduleLimits.length ? Math.min.apply(Math, scheduleLimits) : null;
   var rulesetParents = Object.fromEntries(calls.filter(function (call) { return call.rulesetParentId != null; }).map(function (call) { return [call.cid, String(call.rulesetParentId)]; }));
   var rulesetCounts = Object.fromEntries(calls.filter(function (call) { return call.rulesetCount; }).map(function (call) { return [call.cid, call.rulesetCount]; }));
-  var bundle = await relayrPostBundle(txs, { scope: confirmOpts.pendingScope, account: account, scheduleValidUntil: scheduleLimit, rulesetCountByChain: rulesetCounts, rulesetParentByChain: rulesetParents,
+  var bundle = await relayrPostBundle(txs, { scope: confirmOpts.pendingScope, account: account, locks: confirmOpts.locks, scheduleValidUntil: scheduleLimit, rulesetCountByChain: rulesetCounts, rulesetParentByChain: rulesetParents,
     chains: calls.map(function (call) { return { id: call.cid, name: call.name }; }) });
   var session = {
     bundleUuid: bundle.bundle_uuid,
@@ -12081,7 +12082,7 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
     }, function () {
       session = restoreUnsentRelayrPayment(confirmOpts.pendingScope, session) || session;
       if (confirmOpts.onSession) confirmOpts.onSession(session);
-    }, function () { assertScheduleFresh(session.scheduleValidUntil); });
+    }, function () { assertScheduleFresh(session.scheduleValidUntil); }, confirmOpts.locks);
   } catch (error) {
     var submitted = session.paymentHash || session.paymentState === 'sending';
     if (submitted && error && typeof error === 'object') error.relayrSession = session;

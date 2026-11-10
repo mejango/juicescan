@@ -316,6 +316,11 @@ describe('Relayr payment receipt tracking', () => {
       await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, reverify, sending, unsent)).rejects.toMatchObject({ code: 'LOCK_LOST' });
       expect(sending).not.toHaveBeenCalled(); expect(unsent).not.toHaveBeenCalled(); expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
     });
+    it('never journals sending or opens the wallet once the caller\'s plan lock lapsed', async () => {
+      const sending = vi.fn(), unsent = vi.fn(), planLock = { held: async () => false, assertHeld: async () => { throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); } };
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, sending, unsent, null, [planLock])).rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(sending).not.toHaveBeenCalled(); expect(unsent).not.toHaveBeenCalled(); expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+    });
     it('restores the quote under a fresh lock when the wallet was refused unsent', async () => {
       const j = journal();
       await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, () => { j.sending(); lapse(); }, j.unsent))

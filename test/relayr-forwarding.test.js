@@ -63,6 +63,12 @@ describe('Relayr preserves the original wallet identity', () => {
     expect(state.wallet.signTypedData).not.toHaveBeenCalled();
   });
 
+  it('never opens the signing prompt once the caller\'s plan lock lapsed', async () => {
+    const planLock = { held: async () => false, assertHeld: async () => { throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); } };
+    await expect(buildForwardedTx(8453, state.account, TARGET, DATA, 400000n, 0n, undefined, [planLock])).rejects.toMatchObject({ code: 'LOCK_LOST', walletNotInvoked: true });
+    expect(state.wallet.signTypedData).not.toHaveBeenCalled();
+  });
+
   it.each([false, undefined, 'true'])('does not sign for a recipient returning %s instead of trusted=true', async value => {
     trusted = value;
     await expect(buildForwardedTx(8453, state.account, TARGET, DATA)).rejects.toThrow(/does not support the trusted forwarder/);

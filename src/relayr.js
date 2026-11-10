@@ -18,7 +18,7 @@ import { getWalletClient, invokeWallet, isSafeConnected, getAccount, createPubli
 import { CHAINS, chainNameFor } from './chain.js';
 import { gasWithHeadroom } from './gas.js';
 import { isExplicitWalletRejection } from './write-hold.js';
-import { browserLocks, requestKeeping, isLockLost } from './browser-locks.js';
+import { browserLocks, requestKeeping, isLockLost, assertLocksHeld } from './browser-locks.js';
 import { decodeSafeExecRelayrTx, hasExactSafeExecutionSuccess, readSafeUintBounded } from './safe.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
@@ -236,7 +236,8 @@ export async function relayrSupportsForwarding(chainId, target) {
 // The EIP-712 domain (name/version) is read from the forwarder at runtime (EIP-5267) so we never guess it.
 // `value` is the ETH forwarded to the target (e.g. a project-creation fee); the relayer sends it with
 // `execute`, so it appears as the bundle tx's `value` and Relayr's quote covers it.
-export async function buildForwardedTx(chainId, from, to, data, gasHint, value, executionDeadline) {
+// `locks` are the caller's run locks (a plan's lock): the signature prompt opens only while they are held.
+export async function buildForwardedTx(chainId, from, to, data, gasHint, value, executionDeadline, locks) {
   assertShopCallPolicy(data, to);
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   if (!relayrSupportsChain(chainId)) throw new Error('Relayr does not support this destination chain. Use a direct wallet transaction.');
@@ -307,7 +308,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value, 
   }); }, function () {
     if (deadline <= Math.floor(Date.now() / 1000) + 15) throw new Error('This ruleset schedule expired. Rebuild and review it before signing.');
     assertShopCallPolicy(data, to);
-  });
+  }, locks);
   if (!getAccount() || getAccount().toLowerCase() !== from.toLowerCase()) throw new Error('Connected account changed. Review the cross-chain request again.');
 
   var requestData = { from: from, to: to, value: val, gas: gas, deadline: deadline, data: data, signature: signature };
@@ -444,7 +445,8 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
       existing.code = 'RELAYR_PUBLICATION_PENDING'; existing.retryable = true; throw existing;
     }
     await reserveForwardedPublication(forwarded, lock);
-    await lock.assertHeld();
+    // The last await before the POST: the publication lock and the caller's run locks (`journal.locks`).
+    await assertLocksHeld([lock].concat(journal.locks || []));
     publication = saveRelayrPendingSession(journal.scope, {
       bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
       paymentState: 'publication', expectedCount: ordered.length,
@@ -611,7 +613,7 @@ export function relayrRequestFingerprint(request) {
 // Send the single prepaid payment that funds execution on every chain. The HTTP quote is authenticated against
 // the exact bundle UUID and immutable payment runtime, then shown as a second exact transaction review before
 // the wallet opens. Returns the payment tx hash.
-export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending, onUnsent, assertWriteState) {
+export async function relayrPay(payment, expectedAccount, onSubmitted, expectedBundleUuid, reverify, onSending, onUnsent, assertWriteState, locks) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
   var chainId = details.chainId;
@@ -672,7 +674,9 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
     await verifyRelayrQuotedRequests(expectedBundleUuid, account);
     details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
-    await lock.assertHeld();
+    // The payment lock and the caller's run locks (`locks`) fence the journal and the wallet prompt.
+    var held = [lock].concat(locks || []);
+    await assertLocksHeld(held);
     if (onSending) await onSending();
     var sent;
     try {
@@ -687,7 +691,7 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
         details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
         assertRelayrShopPolicy(expectedBundleUuid);
         if (assertWriteState) assertWriteState();
-      }, [lock]);
+      }, held);
     } catch (cause) {
       if (cause.walletNotInvoked || isExplicitWalletRejection(cause)) {
         // Release only this definitely unsent attempt, before another window can acquire the lock.
