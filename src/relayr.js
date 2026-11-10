@@ -644,7 +644,10 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   if (reverify) await reverify();
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   // `onSending`, `onUnsent` and `onSubmitted` write the caller's journal synchronously, each right after this
-  // lock's fence: all three run inside the payment lock, and none runs once the lock is lost.
+  // lock's fence. When the lock was lost, the attempt's outcome (unsent, or its hash) is kept in `late` and
+  // applied under a fresh payment lock once this one's work ends (the SDK's fund() keep): `onUnsent` restores
+  // only the same bundle and attempt, and the journal refuses a hash for any other bundle.
+  var late = null;
   async function sendPayment(lock) {
     // Another tab can have opened its own quote while this tab was reviewing. Serialize the final journal
     // check and wallet submission; the journal rejects a competing bundle.
@@ -672,9 +675,8 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
       }, [lock]);
     } catch (cause) {
       if (cause.walletNotInvoked || isExplicitWalletRejection(cause)) {
-        // Release only this definitely unsent attempt, before another window can acquire the lock. A lost lock
-        // leaves the journal to the window that holds it now.
-        if (onUnsent && await lock.held()) await onUnsent();
+        // Release only this definitely unsent attempt, before another window can acquire the lock.
+        if (onUnsent) { if (await lock.held()) await onUnsent(); else late = onUnsent; }
         throw cause;
       }
       // Wallet/RPC transport errors can occur after broadcast but before returning a transaction hash.
@@ -687,14 +689,28 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
       uncertain.cause = cause;
       throw uncertain;
     }
-    // The hash is journaled before another window can take the payment lock, and never under a lost one.
+    // The hash is journaled before another window can take the payment lock; under a lost one, it is saved
+    // under a fresh lock instead.
     if (!(await lock.held())) {
-      throw paymentSubmittedError(sent, chainId, 'Relayr payment ' + sent + ' was submitted, but another window took over this payment before it was saved here. Do not pay again; check the saved bundle.', new LockLostError(lock.name));
+      if (onSubmitted) late = function () { onSubmitted(sent); };
+      throw paymentSubmittedError(sent, chainId, 'Relayr payment ' + sent + ' was submitted. Do not pay again; resume the saved bundle to track it.', new LockLostError(lock.name));
     }
     if (onSubmitted) { try { onSubmitted(sent); } catch (_) {} }
     return sent;
   }
-  var hash = await browserLocks().request('jb-relayr-payment:' + account.toLowerCase(), sendPayment);
+  var hash;
+  try {
+    hash = await browserLocks().request('jb-relayr-payment:' + account.toLowerCase(), sendPayment);
+  } catch (error) {
+    var settle = late;
+    if (settle) {
+      await browserLocks().request('jb-relayr-payment:' + account.toLowerCase(), async function (fresh) {
+        await fresh.assertHeld();
+        await settle();
+      }).catch(function () { /* Unreconciled, the journal stays as the lost lock left it. */ });
+    }
+    throw error;
+  }
   var receipt;
   try {
     receipt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
@@ -851,9 +867,11 @@ export function bindRelayrSafeExecutions(expectedTransactions, proofs) {
 
 // Called only for a definitely unsent payment, inside relayrPay's payment lock. Keep the quote and
 // publication fingerprints, and never roll back a newer bundle or a payment with a returned hash.
+// Only the same bundle and the same attempt (`paymentAttempt`, stamped when it was saved as sending).
 export function restoreUnsentRelayrPayment(scope, session) {
   var current = loadRelayrPendingSession(scope, session);
-  if (!current || current.bundleUuid !== session.bundleUuid || current.paymentHash || current.paymentState !== 'sending') return current;
+  if (!current || current.bundleUuid !== session.bundleUuid || current.paymentHash || current.paymentState !== 'sending'
+    || (current.paymentAttempt || null) !== (session.paymentAttempt || null)) return current;
   return saveRelayrPendingSession(scope, Object.assign({}, current, { paymentState: 'quoted' }), true);
 }
 
@@ -886,6 +904,7 @@ export function saveRelayrPendingSession(scope, session, paymentNotSent) {
     records: (session.records || []).map(relayrRecordSnapshot),
     itemCount: Math.max(0, Number(session.itemCount) || 0),
     paymentState: ['expired', 'sending', 'publication', 'quoted'].indexOf(session.paymentState) !== -1 ? session.paymentState : null,
+    paymentAttempt: typeof session.paymentAttempt === 'string' ? session.paymentAttempt.slice(0, 64) : null,
     publicationRequestHashes: (session.publicationRequestHashes || []).filter(function (hash) {
       return typeof hash === 'string' && /^0x[0-9a-f]{64}$/i.test(hash);
     }).map(function (hash) { return hash.toLowerCase(); }),

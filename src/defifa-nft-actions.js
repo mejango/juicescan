@@ -98,8 +98,21 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
       if (!record) return;
       records.set(kind, record);
       var card = document.createElement('div'); recoveryBody.appendChild(card);
-      text(card, 'p', (approvalOf(record) ? 'Pending token approval' : 'Pending NFT ' + actionNames[kind]) + ': ' + (record.hash || 'Wallet submission outcome unknown. Do not submit this action again.'));
-      if (!record.hash) return;
+      text(card, 'p', (approvalOf(record) ? 'Pending token approval' : 'Pending NFT ' + actionNames[kind]) + ': ' + (record.hash || 'Your wallet did not say whether it was sent. Check your wallet; if it was not sent, release it.'));
+      // The held-no-hash exit: after the user's wallet check, frees exactly the attempt shown.
+      if (!record.hash) {
+        button(card, 'It was not sent, release it', async function (event) {
+          var release = event.currentTarget, ticket = generation; release.disabled = true;
+          try {
+            var hold = holdFor(kind, account);
+            await hold.withLock(function (lock) { return releaseHold(hold, record, kind, account, lock); }, true);
+            if (disposed || !active || ticket !== generation || account !== getAccount()) return;
+            busy = false; await refresh();
+          } catch (err) { if (!disposed && active) message(err.message || String(err)); }
+          finally { if (!disposed) release.disabled = false; }
+        });
+        return;
+      }
       button(card, record.safe ? 'Check Safe execution' : 'Check original transaction', async function (event) {
         var check = event.currentTarget, ticket = generation, resultMessage = ''; check.disabled = true;
         var hold = holdFor(kind, account);
@@ -195,15 +208,26 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
       await hold.withLock(function (lock) { return new Promise(function (resolve) {
         if (hold.read()) { error(new Error('Check the original transaction before starting this action again.')); resolve(); return; }
         var reservation = null;
+        // Writes this attempt's outcome under its lock; once that lock is lost (as while suspended in the wallet),
+        // ends its work and writes under a fresh one (the SDK's fund() keep). `submitted` and `releaseLocked`
+        // change only this same attempt's record, so a newer attempt is never touched.
+        async function keep(apply) {
+          try { await lock.assertHeld(); }
+          catch (err) {
+            if (!err || err.code !== 'LOCK_LOST') throw err;
+            resolve();
+            return hold.withLock(async function (fresh) { await fresh.assertHeld(); apply(); }, true);
+          }
+          apply();
+        }
         // The lock guards reserve-then-send only: free it once the hash is saved, before any read, so a slow
         // refresh never keeps another view from checking this hold.
         async function finishPending(value, hash) {
-          try { if (reservation && hash) { await lock.assertHeld(); reservation = hold.submitted(reservation, hash); } }
+          try { if (reservation && hash) await keep(function () { reservation = hold.submitted(reservation, hash); }); }
           catch (err) { resolve(); busy = false; if (await refresh()) message(err.message || String(err)); return; }
           resolve(); busy = false; if (await refresh()) message(value);
         }
-        // Only while the lock is still this window's: a lost lock leaves the unsent attempt to its new owner.
-        async function releaseBeforeBroadcast() { if (reservation && !reservation.hash && await lock.held()) { hold.releaseLocked(reservation); reservation = null; } }
+        async function releaseBeforeBroadcast() { if (reservation && !reservation.hash) await keep(function () { hold.releaseLocked(reservation); reservation = null; }); }
         executeTransaction(Object.assign({}, request, {
           expectedSafe: safeRoute, safeSingleCall: kind === 'mint', locks: [lock],
           tokenAddr: kind === 'mint' && !approvalOnly ? reviewed.inventory.pricing.token : undefined, spenderAddr: kind === 'mint' && !approvalOnly ? reviewed.transaction.address : undefined, approvalAmount: kind === 'mint' && !approvalOnly ? reviewed.amount : undefined,
@@ -220,12 +244,12 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
             if (outcome !== 'success') throw new Error('Original approval failed onchain. Check the original transaction.');
             await assertApprovalGranted(client, reservation, receipt);
           },
-          onSubmitted: async function (hash) { if (reservation) { await lock.assertHeld(); reservation = hold.submitted(reservation, hash); } },
+          onSubmitted: async function (hash) { if (reservation) await keep(function () { reservation = hold.submitted(reservation, hash); }); },
           onStatus: function (value, statusKind, meta) { if (meta && meta.trackingError) finishPending(value, meta.hash); else message(value); },
           onError: function (value, meta) { if (reservation) finishPending(value, meta && meta.submittedHash); else { error(new Error(value)); resolve(); } },
           onSuccess: async function (value, meta) {
             if (!meta || meta.phase !== 'done') return finishPending(value, meta && meta.safeTxHash);
-            try { if (reservation && await lock.held()) hold.releaseLocked(reservation); if (!approvalOnly && reviewedCart !== null && !disposed && active && root.isConnected && ticket === generation && account === getAccount() && cartRevision === reviewedCartRevision && cartSnapshot() === reviewedCart && JSON.stringify(readMintDraft()) === JSON.stringify(reviewedDraft)) options.cart.clear(); resolve(); busy = false; if (await refresh()) message(approvalOnly ? 'Token approval verified onchain. Review NFT mint again to continue.' : 'NFT transaction verified onchain.'); } catch (err) { finishPending(err.message || String(err), meta.hash); } finally { resolve(); }
+            try { if (reservation) await keep(function () { hold.releaseLocked(reservation); }); if (!approvalOnly && reviewedCart !== null && !disposed && active && root.isConnected && ticket === generation && account === getAccount() && cartRevision === reviewedCartRevision && cartSnapshot() === reviewedCart && JSON.stringify(readMintDraft()) === JSON.stringify(reviewedDraft)) options.cart.clear(); resolve(); busy = false; if (await refresh()) message(approvalOnly ? 'Token approval verified onchain. Review NFT mint again to continue.' : 'NFT transaction verified onchain.'); } catch (err) { finishPending(err.message || String(err), meta.hash); } finally { resolve(); }
           },
         }));
       }); });

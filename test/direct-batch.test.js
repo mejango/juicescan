@@ -107,36 +107,61 @@ describe('sequential direct transaction recovery', () => {
     expect(options.execute.mock.calls[0][1]).toBe(1);
   });
 
-  describe('after its lock lapsed to another window', () => {
-    let lock;
+  describe('after its lock lapsed (suspended in the wallet)', () => {
+    // Each request gets its own lock: `lapse()` loses the current one; a later request takes a fresh one.
+    let handles;
+    const lapse = () => { handles.at(-1).lost = true; };
     beforeEach(() => {
-      lock = { held: true, name: 'direct' };
-      const handle = { name: 'direct', held: async () => lock.held,
-        assertHeld: async () => { if (!lock.held) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); } };
-      Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn(handle)) } });
+      handles = [];
+      Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((key, _options, fn) => {
+        const handle = { name: key, lost: false };
+        handle.held = async () => !handle.lost;
+        handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); };
+        handles.push(handle);
+        return fn(handle);
+      }) } });
     });
     afterEach(() => { Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn({})) } }); });
     const saved = scope => JSON.parse(localStorage.getItem(Object.keys(localStorage).find(name => name.endsWith(':' + scope))) || 'null');
     it('never marks a leg sending, and hands the wallet its lock', async () => {
       let walletLocks;
-      lock.held = false;
       await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope: 'lapsed-sending', execute: async (_call, _index, _submitted, sending, held) => {
-        walletLocks = [held]; await sending(); return receipt('0x1');
+        walletLocks = [held]; lapse(); await sending(); return receipt('0x1');
       } })).rejects.toMatchObject({ code: 'LOCK_LOST' });
-      expect(walletLocks[0].name).toBe('direct');
+      expect(walletLocks[0]).toBe(handles[0]);
       expect(saved('lapsed-sending')).toBeNull();
     });
-    it('never saves a hash it got after the lapse, and says the leg was submitted', async () => {
-      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope: 'lapsed-hash', execute: async (_call, _index, submitted, sending) => {
-        await sending(); lock.held = false; await submitted('0xabc'); return receipt('0xabc');
+    it('saves a hash returned after the lapse under a fresh lock, and a resume verifies it', async () => {
+      const scope = 'lapsed-hash';
+      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, submitted, sending) => {
+        await sending(); lapse(); await submitted('0xabc'); return receipt('0xabc');
       } })).rejects.toMatchObject({ submittedHash: '0xabc', cause: { code: 'LOCK_LOST' } });
-      expect(saved('lapsed-hash').hashes[0]).toBe('sending');
+      expect(saved(scope).hashes[0]).toBe('0xabc');
+      const verifySubmitted = vi.fn(async (_call, hash) => receipt(hash));
+      const execute = vi.fn(async (_call, _index, submitted, sending) => { await sending(); await submitted('0xdef'); return receipt('0xdef'); });
+      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, verifySubmitted, execute })).resolves.toEqual([receipt('0xabc'), receipt('0xdef')]);
+      expect(verifySubmitted).toHaveBeenCalledWith(CALLS[0], '0xabc');
+      expect(execute).toHaveBeenCalledTimes(1); expect(execute.mock.calls[0][1]).toBe(1);
     });
-    it('leaves an unsent leg to the new owner instead of releasing it', async () => {
-      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope: 'lapsed-reject', execute: async (_call, _index, _submitted, sending) => {
-        await sending(); lock.held = false; throw Object.assign(new Error('rejected'), { code: 4001 });
+    it('releases a definitely unsent leg under a fresh lock, so a resume sends it', async () => {
+      const scope = 'lapsed-reject';
+      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, _submitted, sending) => {
+        await sending(); lapse(); throw Object.assign(new Error('rejected'), { code: 4001 });
       } })).rejects.toThrow('rejected');
-      expect(saved('lapsed-reject').hashes[0]).toBe('sending');
+      expect(saved(scope).hashes[0]).toBeNull();
+      const execute = vi.fn(async (_call, _index, submitted, sending) => { await sending(); await submitted('0x1'); return receipt('0x1'); });
+      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute })).resolves.toHaveLength(2);
+      expect(execute).toHaveBeenCalledTimes(2);
+    });
+    it('never settles a newer attempt started after the lapse', async () => {
+      const scope = 'lapsed-newer';
+      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, submitted, sending) => {
+        await sending(); lapse();
+        // Another window took the batch and started its own attempt on this leg.
+        const current = saved(scope); current.attempts[0] = 'other'; localStorage.setItem(Object.keys(localStorage).find(name => name.endsWith(':' + scope)), JSON.stringify(current));
+        await submitted('0xabc'); return receipt('0xabc');
+      } })).rejects.toMatchObject({ submittedHash: '0xabc' });
+      expect(saved(scope).hashes[0]).toBe('sending');
     });
   });
 

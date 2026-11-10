@@ -12067,7 +12067,7 @@ export async function fundRelayrQuotedSession(bundle, session, setStatus, confir
     }, bundle.bundle_uuid, confirmOpts.reverify, function () {
       requireUnpaidRelayrSession(confirmOpts.pendingScope, bundle.bundle_uuid);
       assertScheduleFresh(session.scheduleValidUntil);
-      session.paymentState = 'sending';
+      session.paymentState = 'sending'; session.paymentAttempt = crypto.randomUUID();
       if (confirmOpts.pendingScope) session = saveRelayrPendingSession(confirmOpts.pendingScope, session) || session;
       if (session.persisted === false) {
         session.paymentState = 'quoted';
@@ -12710,7 +12710,7 @@ function runRelayrBundle(entries, opts) {
               paidSession = saveRelayrPendingSession(pendingScope, paidSession) || paidSession;
             }, quote.bundle_uuid, opts.reverify, function () {
               requireUnpaidRelayrSession(pendingScope, quote.bundle_uuid);
-              paidSession.paymentState = 'sending';
+              paidSession.paymentState = 'sending'; paidSession.paymentAttempt = crypto.randomUUID();
               paidSession = saveRelayrPendingSession(pendingScope, paidSession) || paidSession;
               if (paidSession.persisted === false) {
                 paidSession.paymentState = 'quoted';

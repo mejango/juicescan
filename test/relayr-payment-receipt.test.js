@@ -35,6 +35,10 @@ import {
   relayrPostBundle,
   relayrPaymentOptions,
   relayrPaymentDetails,
+  saveRelayrPendingSession,
+  loadRelayrPendingSession,
+  restoreUnsentRelayrPayment,
+  requireUnpaidRelayrSession,
 } from '../src/relayr.js';
 
 const HASH = `0x${'ab'.repeat(32)}`;
@@ -280,34 +284,73 @@ describe('Relayr payment receipt tracking', () => {
     expect(submitted).toHaveBeenCalledWith(HASH);
   });
 
-  describe('after the payment lock lapsed to another window', () => {
-    let lock;
+  describe('after the payment lock lapsed (suspended in the wallet)', () => {
+    // Each request gets its own lock: `lapse()` loses the current one; a later request takes a fresh one.
+    let handles;
+    const lapse = () => { handles.at(-1).lost = true; };
     beforeEach(() => {
-      lock = { held: true, name: 'jb-relayr-payment' };
-      lock.assertHeld = async () => { if (!lock.held) throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); };
-      vi.stubGlobal('navigator', { locks: { request: async (_key, _options, callback) => callback({
-        name: lock.name, assertHeld: lock.assertHeld, held: async () => lock.held,
-      }) } });
+      handles = [];
+      vi.stubGlobal('navigator', { locks: { request: async (key, _options, callback) => {
+        const handle = { name: key, lost: false };
+        handle.held = async () => !handle.lost;
+        handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); };
+        handles.push(handle);
+        return callback(handle);
+      } } });
     });
+    // The caller's real journal: a quote saved as sending for this attempt.
+    const SCOPE = 'lapsed-payment';
+    function journal() {
+      const session = saveRelayrPendingSession(SCOPE, { account: state.account, bundleUuid: BUNDLE_UUID, paymentState: 'quoted', expectedCount: 1 });
+      return {
+        sending: () => { session.paymentState = 'sending'; session.paymentAttempt = 'attempt-1'; saveRelayrPendingSession(SCOPE, session); },
+        unsent: () => restoreUnsentRelayrPayment(SCOPE, session),
+        submitted: hash => { session.paymentHash = hash; session.paymentState = null; saveRelayrPendingSession(SCOPE, session); },
+        saved: () => loadRelayrPendingSession(SCOPE, { account: state.account }),
+      };
+    }
     it('never journals sending or opens the wallet', async () => {
-      lock.held = false;
-      const sending = vi.fn();
-      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, sending)).rejects.toMatchObject({ code: 'LOCK_LOST' });
-      expect(sending).not.toHaveBeenCalled(); expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+      const sending = vi.fn(), unsent = vi.fn();
+      // Lapses inside the payment lock, before its fence.
+      const reverify = () => { if (handles.length) lapse(); };
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, reverify, sending, unsent)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(sending).not.toHaveBeenCalled(); expect(unsent).not.toHaveBeenCalled(); expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
     });
-    it('refuses the wallet unsent and leaves the journal to the new owner', async () => {
-      const unsent = vi.fn();
-      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, () => { lock.held = false; }, unsent))
+    it('restores the quote under a fresh lock when the wallet was refused unsent', async () => {
+      const j = journal();
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, () => { j.sending(); lapse(); }, j.unsent))
         .rejects.toMatchObject({ code: 'LOCK_LOST', walletNotInvoked: true });
-      expect(state.wallet.sendTransaction).not.toHaveBeenCalled(); expect(unsent).not.toHaveBeenCalled();
+      expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+      expect(handles).toHaveLength(2);
+      expect(j.saved()).toMatchObject({ bundleUuid: BUNDLE_UUID, paymentState: 'quoted', paymentHash: null });
+      expect(() => requireUnpaidRelayrSession(SCOPE, BUNDLE_UUID)).not.toThrow();
     });
-    it('reports a payment sent before the lapse as submitted without journaling it', async () => {
-      state.wallet.sendTransaction.mockImplementation(async () => { lock.held = false; return HASH; });
-      const submitted = vi.fn();
-      await expect(relayrPay(paymentFor(), state.account, submitted, BUNDLE_UUID)).rejects.toMatchObject({
+    it('restores the quote under a fresh lock after a definite 4001 rejection', async () => {
+      const j = journal();
+      state.wallet.sendTransaction.mockImplementation(async () => { lapse(); throw Object.assign(new Error('User rejected'), { code: 4001 }); });
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, j.sending, j.unsent)).rejects.toMatchObject({ code: 4001 });
+      expect(j.saved()).toMatchObject({ paymentState: 'quoted', paymentHash: null });
+      expect(() => requireUnpaidRelayrSession(SCOPE, BUNDLE_UUID)).not.toThrow();
+    });
+    it('leaves a newer attempt on the same bundle as it is', async () => {
+      const j = journal();
+      state.wallet.sendTransaction.mockImplementation(async () => {
+        lapse();
+        // Another window took the lock and started its own attempt.
+        saveRelayrPendingSession(SCOPE, { ...j.saved(), paymentAttempt: 'attempt-2' });
+        throw Object.assign(new Error('User rejected'), { code: 4001 });
+      });
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, j.sending, j.unsent)).rejects.toMatchObject({ code: 4001 });
+      expect(j.saved()).toMatchObject({ paymentState: 'sending', paymentAttempt: 'attempt-2' });
+    });
+    it('saves a hash returned after the lapse under a fresh lock and reports it submitted', async () => {
+      const j = journal();
+      state.wallet.sendTransaction.mockImplementation(async () => { lapse(); return HASH; });
+      await expect(relayrPay(paymentFor(), state.account, j.submitted, BUNDLE_UUID, null, j.sending, j.unsent)).rejects.toMatchObject({
         code: 'RELAYR_PAYMENT_SUBMITTED', hash: HASH, chainId: 1, cause: { code: 'LOCK_LOST' },
       });
-      expect(submitted).not.toHaveBeenCalled(); expect(state.client.track).not.toHaveBeenCalled();
+      expect(handles).toHaveLength(2);
+      expect(j.saved()).toMatchObject({ paymentHash: HASH });
     });
   });
 

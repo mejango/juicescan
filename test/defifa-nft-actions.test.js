@@ -216,7 +216,7 @@ describe('native Defifa NFT action boundary', () => {
     expect(localStorage.getItem(legacy)).toBe(newer); expect(root.textContent).toContain('Check original transaction'); expect(root.textContent).not.toContain('Review NFT mint');
   });
   it('keeps hashless unknown submission blocked after remount without accepting candidate hashes', async () => {
-    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onError('Wallet disconnected'); root.dispose(); root.remove(); const remount = await render(); expect(remount.textContent).toContain('submission outcome unknown'); expect(remount.textContent).not.toContain('Review NFT mint'); expect(remount.textContent).not.toContain('Check original transaction'); expect(remount.querySelector('input[aria-label*=hash]')).toBeNull();
+    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onError('Wallet disconnected'); root.dispose(); root.remove(); const remount = await render(); expect(remount.textContent).toContain('did not say whether it was sent'); expect(remount.textContent).not.toContain('Review NFT mint'); expect(remount.textContent).not.toContain('Check original transaction'); expect(remount.querySelector('input[aria-label*=hash]')).toBeNull();
   });
   it('checks unexecuted and executed Safe proposals without preparing or proposing again', async () => {
     h.safe = true; const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onSuccess('Proposed', { phase: 'proposed', safeTxHash: SAFE_TX }); await flush(); click(root, 'Check Safe execution'); await flush(); expect(root.textContent).toContain('remains unverified'); expect(h.restore).not.toHaveBeenCalled();
@@ -226,18 +226,52 @@ describe('native Defifa NFT action boundary', () => {
     const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onError('Reverted', { submittedHash: TX }); await flush(); h.verify.mockRejectedValueOnce(new Error('Network failure')); click(root, 'Check original transaction'); await flush(); expect(root.textContent).not.toContain('Review NFT mint');
     h.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError(TX, 8453)); click(root, 'Check original transaction'); await flush(); expect(root.textContent).toContain('failed onchain'); expect(root.textContent).toContain(TX); expect(root.textContent).toContain('Review NFT mint'); expect(h.execute).toHaveBeenCalledTimes(1);
   });
-  it('never writes its hold once the hold lock lapsed to another window', async () => {
-    let held = true;
-    const handle = { name: 'hold', held: async () => held, assertHeld: async () => { if (!held) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); } };
-    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (key, options, callback) => callback(handle) } });
-    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush();
-    const call = h.execute.mock.lastCall[0];
-    expect(call.locks).toEqual([handle]);
-    const saved = JSON.parse(localStorage.getItem(Object.keys(localStorage)[0]));
-    held = false;
-    await expect(call.onSubmitted(TX)).rejects.toMatchObject({ code: 'LOCK_LOST' });
-    await call.onWriteRejected();
-    expect(JSON.parse(localStorage.getItem(Object.keys(localStorage)[0]))).toEqual(saved);
+  describe('after the hold lock lapsed (suspended in the wallet)', () => {
+    // Each request gets its own lock: `lapse()` loses the current one; a later request takes a fresh one.
+    let handles;
+    const lapse = () => { handles.at(-1).lost = true; };
+    const stored = () => JSON.parse(localStorage.getItem(Object.keys(localStorage)[0]) || 'null');
+    beforeEach(() => {
+      handles = [];
+      Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (key, options, callback) => {
+        const handle = { name: key, lost: false };
+        handle.held = async () => !handle.lost;
+        handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); };
+        handles.push(handle);
+        return callback(handle);
+      } } });
+    });
+    async function mint() {
+      const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush();
+      const call = h.execute.mock.lastCall[0];
+      expect(call.locks).toEqual([handles.at(-1)]);
+      return { root, call };
+    }
+    it('records a hash returned after the lapse under a fresh lock, keeps tracking it, and offers its check', async () => {
+      const { call } = await mint();
+      lapse();
+      await expect(call.onSubmitted(TX)).resolves.toBeUndefined();
+      expect(stored().hash).toBe(TX.toLowerCase());
+      call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX }); await flush();
+      const remount = await render();
+      expect(remount.textContent).toContain('Check original transaction');
+      click(remount, 'Check original transaction'); await flush();
+      expect(remount.textContent).toContain('verified onchain'); expect(heldWrites()).toBe(0);
+    });
+    it('releases a definite rejection after the lapse under a fresh lock', async () => {
+      const { root, call } = await mint();
+      lapse();
+      await call.onWriteRejected(); call.onError('Rejected', { userRejected: true }); await flush();
+      expect(heldWrites()).toBe(0); expect(root.textContent).toContain('Retry');
+    });
+    it('offers the held-no-hash exit, which a reload keeps, until the user releases it', async () => {
+      const { root, call } = await mint();
+      call.onError('Transport lost', { userRejected: false }); await flush(); root.dispose(); root.remove();
+      const remount = await render();
+      expect(remount.textContent).toContain('if it was not sent, release it'); expect(remount.textContent).not.toContain('Review NFT mint');
+      click(remount, 'It was not sent, release it'); await flush();
+      expect(heldWrites()).toBe(0); expect(remount.textContent).toContain('Review NFT mint');
+    });
   });
   it('only releases reservations through specific engine pre-write/rejection callbacks', async () => {
     const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); const call = h.execute.mock.lastCall[0]; await call.onWriteRejected(); call.onError('Rejected', { userRejected: true }); expect(heldWrites()).toBe(0); expect(root.textContent).toContain('Retry');

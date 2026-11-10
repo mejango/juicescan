@@ -52,7 +52,7 @@
         "executeTransaction": 1,
         "relayrPay": 1,
         "relayrPostBundle": 1,
-        "providerRequest": 3
+        "providerRequest": 4
       },
       "actions": [
         "Launch project",
@@ -188,7 +188,7 @@
     },
     "src/relayr.js": {
       "counts": {
-        "providerRequest": 7,
+        "providerRequest": 8,
         "relayrPay": 2,
         "relayrPostBundle": 4,
         "sendTransaction": 1,

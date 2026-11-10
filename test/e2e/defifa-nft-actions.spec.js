@@ -59,10 +59,13 @@ test('a hashless wallet outcome survives reload without offering another mint',a
  await open(page);await page.getByLabel(/Tier 1: Blue Team/).fill('1');await page.getByRole('button',{name:'Review NFT mint',exact:true}).click();
  await expect.poll(()=>page.evaluate(()=>window.native.executions)).toBe(1);
  await page.evaluate(()=>window.native.execution.onError('Wallet connection disappeared'));
- await expect(page.getByText(/Wallet submission outcome unknown/)).toBeVisible();
+ await expect(page.getByText(/Your wallet did not say whether it was sent/)).toBeVisible();
  await open(page);
- await expect(page.getByText(/Wallet submission outcome unknown/)).toBeVisible();
+ await expect(page.getByText(/Your wallet did not say whether it was sent/)).toBeVisible();
  await expect(page.getByRole('button',{name:'Review NFT mint',exact:true})).toHaveCount(0);
  expect(await page.evaluate(()=>window.native.executions)).toBe(0);expect(await page.evaluate(()=>window.native.preparations)).toBe(0);
  await expect(page.getByRole('button',{name:'Review NFT transfer',exact:true})).toBeVisible();
+ // The held-no-hash exit: after the user's wallet check, it frees the mint.
+ await page.getByRole('button',{name:'It was not sent, release it',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Review NFT mint',exact:true})).toBeVisible();
 });

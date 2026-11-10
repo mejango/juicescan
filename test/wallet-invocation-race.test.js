@@ -10,7 +10,7 @@ const section = (text, start, end) => text.slice(text.indexOf(start), text.index
 const invoke = section(source('wallet.js'), 'export async function invokeWallet(', '\nexport function onWalletChange');
 const base = source('component-base.js');
 const execute = section(base, 'export function executeTransaction(opts)', '\nfunction normalizeWalletReceipt');
-const sendHeld = section(base, 'export function sendHeldWrite(', '\nfunction offerHeldRelease');
+const sendHeld = section(base, 'export async function sendHeldWrite(', '\nfunction offerHeldRelease');
 const permit = section(source('discover.js'), 'async function buildRouterPermit2Metadata(', '\n// JBMetadataResolver.addToMetadata:');
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
@@ -124,27 +124,38 @@ describe('final authorization freshness after current wallet chain read', () => 
 });
 
 describe('held write under a lapsed hold lock', () => {
-  function held(state) {
-    const calls = [];
-    const lock = { held: async () => state.held, assertHeld: async () => { if (!state.held) throw new LockLostError('hold'); } };
-    const hold = { withLock: fn => fn(lock), reserve: () => { calls.push('reserve'); return 'r'; }, owns: () => true,
-      submitted: r => { calls.push('submitted'); return r; }, releaseLocked: () => calls.push('release') };
-    return { calls, lock, hold, context: harness().context };
+  // Each withLock gets its own lock: `lapse()` loses the current one; a later withLock takes a fresh one.
+  function held() {
+    const calls = [], locks = [];
+    const lapse = () => { locks.at(-1).lost = true; };
+    const hold = { withLock: fn => {
+      const lock = { lost: false };
+      lock.held = async () => !lock.lost;
+      lock.assertHeld = async () => { if (lock.lost) throw new LockLostError('hold'); };
+      locks.push(lock);
+      return fn(lock);
+    }, reserve: () => { calls.push(['reserve', locks.length]); return 'r'; }, owns: () => true,
+    submitted: (r, hash) => { calls.push(['submitted', locks.length, hash]); return r + ':' + hash; }, releaseLocked: () => calls.push(['release', locks.length]) };
+    return { calls, locks, lapse, hold, context: harness().context };
   }
   it('never reserves or opens the wallet once the lock lapsed', async () => {
-    const t = held({ held: false }), send = vi.fn();
-    await expect(t.context.sendHeldWrite(t.hold, () => {}, send)).rejects.toBeInstanceOf(LockLostError);
+    const t = held(), send = vi.fn();
+    const check = () => {};
+    const pending = t.context.sendHeldWrite({ ...t.hold, withLock: fn => t.hold.withLock(lock => { lock.lost = true; return fn(lock); }) }, check, send);
+    await expect(pending).rejects.toBeInstanceOf(LockLostError);
     expect(t.calls).toEqual([]); expect(send).not.toHaveBeenCalled();
   });
-  it('fences the wallet with the hold lock and never saves a hash returned after the lapse', async () => {
-    const state = { held: true }, t = held(state);
+  it('fences the wallet with the hold lock and saves a hash returned after the lapse under a fresh lock', async () => {
+    const t = held();
     let fence;
-    const sent = await t.context.sendHeldWrite(t.hold, () => {}, lock => { fence = lock; state.held = false; return HASH; });
-    expect(fence).toBe(t.lock); expect(sent).toEqual({ hash: HASH, reservation: 'r' }); expect(t.calls).toEqual(['reserve']);
+    const sent = await t.context.sendHeldWrite(t.hold, () => {}, lock => { fence = lock; t.lapse(); return HASH; });
+    expect(fence).toBe(t.locks[0]); expect(t.locks).toHaveLength(2);
+    expect(t.calls).toEqual([['reserve', 1], ['submitted', 2, HASH]]);
+    expect(sent).toEqual({ hash: HASH, reservation: 'r:' + HASH });
   });
-  it('leaves an unsent reservation to the window that holds the lock now', async () => {
-    const state = { held: true }, t = held(state);
-    await expect(t.context.sendHeldWrite(t.hold, () => {}, () => { state.held = false; throw Object.assign(new Error('unsent'), { walletNotInvoked: true }); })).rejects.toThrow('unsent');
-    expect(t.calls).toEqual(['reserve']);
+  it('releases a definitely unsent reservation under a fresh lock', async () => {
+    const t = held();
+    await expect(t.context.sendHeldWrite(t.hold, () => {}, () => { t.lapse(); throw Object.assign(new Error('unsent'), { walletNotInvoked: true }); })).rejects.toThrow('unsent');
+    expect(t.calls).toEqual([['reserve', 1], ['release', 2]]);
   });
 });

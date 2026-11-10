@@ -47,10 +47,11 @@ function newAttemptId() {
   try { return crypto.randomUUID(); } catch (_) { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 }
 
-// The held-no-hash exit for slot `index`: frees it only while it is still the same interrupted attempt
-// (`attempt`, saved when the slot was marked 'sending') of the same batch.
-function releaseUnsent(key, identity, index, attempt) {
-  return browserLocks().request(key, { ifAvailable: true }, async function (lock) {
+// Settles slot `index` to `value` (null: unsent; a hash: sent) only while it is still the same interrupted
+// attempt (`attempt`, saved when the slot was marked 'sending') of the same batch. `wait` queues behind another
+// window instead of refusing.
+function settleAttempt(key, identity, index, attempt, value, wait) {
+  return browserLocks().request(key, wait ? {} : { ifAvailable: true }, async function (lock) {
     if (!lock) return false;
     var session = memory.get(key);
     if (!session) {
@@ -59,23 +60,41 @@ function releaseUnsent(key, identity, index, attempt) {
     if (!session || session.identity !== identity || !Array.isArray(session.hashes) || session.hashes[index] !== 'sending'
         || (session.attempts || [])[index] !== attempt) return false;
     await lock.assertHeld();
-    session.hashes[index] = null;
+    session.hashes[index] = value;
     if (memory.has(key)) return true;
     localStorage.setItem(key, JSON.stringify(session));
     return true;
   });
 }
 
+// The held-no-hash exit: the user's wallet check frees exactly the attempt shown.
+function releaseUnsent(key, identity, index, attempt) { return settleAttempt(key, identity, index, attempt, null, false); }
+
 // `options.execute(call, index, onSubmitted, onSending, lock)` sends one leg: it awaits `onSending()` before
 // the wallet and `onSubmitted(hash)` after it, and gives `[lock]` to the wallet call as its fence.
-export async function runDirectBatch(calls, options, lock) {
+// A leg's outcome (its hash, or a definite unsent) that its lost lock refused is applied under a fresh lock once
+// this run's lock work ends (the SDK's fund() keep), so a resume verifies the hash instead of stranding it.
+export async function runDirectBatch(calls, options, lock, onLost) {
   var identity = directBatchIdentity(calls);
   var key = PREFIX + String(options.account).toLowerCase() + ':' + (options.scope || identity);
   if (!lock) {
-    return browserLocks().request(key, { ifAvailable: true }, function (held) {
-      if (!held) throw new Error('This direct transaction batch is already running in another window. Check that window before submitting again.');
-      return runDirectBatch(calls, options, held);
-    });
+    var late = null;
+    try {
+      return await browserLocks().request(key, { ifAvailable: true }, function (held) {
+        if (!held) throw new Error('This direct transaction batch is already running in another window. Check that window before submitting again.');
+        return runDirectBatch(calls, options, held, function (settle) { late = settle; });
+      });
+    } catch (error) {
+      // Unreconciled, the record stays as the lost lock left it.
+      if (late) await late().catch(function () {});
+      throw error;
+    }
+  }
+  function lost(error, index, value) {
+    if (!error || error.code !== 'LOCK_LOST' || !onLost) return false;
+    var attempt = (session.attempts || [])[index];
+    onLost(function () { return settleAttempt(key, identity, index, attempt, value, true); });
+    return true;
   }
   var session = memory.get(key);
   if (!session) {
@@ -127,7 +146,8 @@ export async function runDirectBatch(calls, options, lock) {
         receipt = await options.execute(calls[i], i, function (hash) {
           session.hashes[index] = hash;
           return persist().catch(function (cause) {
-            throw Object.assign(new Error('Transaction ' + hash + ' was submitted, but another window took over this action before it was saved here. Do not send it again; check its saved transactions.'), { cause: cause, submittedHash: hash });
+            lost(cause, index, hash);
+            throw Object.assign(new Error('Transaction ' + hash + ' was submitted. Do not send it again; resume this action to check it.'), { cause: cause, submittedHash: hash });
           });
         }, async function () {
           session.hashes[index] = 'sending';
@@ -142,9 +162,9 @@ export async function runDirectBatch(calls, options, lock) {
         }, lock);
       } catch (error) {
         // A definite wallet rejection (the write hold's rule) did not broadcast. Transport errors remain blocked with the saved marker.
-        // A lost lock leaves the saved attempt to the window that holds it now.
-        if (session.hashes[index] === 'sending' && error && (error.walletNotInvoked || isExplicitWalletRejection(error)) && await lock.held()) {
-          session.hashes[index] = null; await persist();
+        if (session.hashes[index] === 'sending' && error && (error.walletNotInvoked || isExplicitWalletRejection(error))) {
+          session.hashes[index] = null;
+          try { await persist(); } catch (cause) { if (!lost(cause, index, null)) throw cause; }
         }
         throw error;
       }

@@ -97,8 +97,11 @@ Every journal written under a lock (selected action plans, direct batches, the d
 publication and nonce reservations, the retire archive, the payment's sending/unsent/submitted records and
 the write hold) checks its lock immediately before the write, and the wallet call checks it last
 (`invokeWallet`'s `locks`). A window whose lock lapsed while it was suspended writes nothing more; a hash it
-got after the lapse is reported as submitted without being saved there (`browser-locks.test.js` and the
-lapse cases in each journal's test).
+got after the lapse, or a definite rejection after it, is written under a fresh lock once the lapsed lock's
+work ends (the SDK's fund() keep), only to the same attempt's record: the Relayr quote returns to quoted, a
+direct-batch or launch leg saves its hash for the resume to verify, and the write hold saves the hash or
+releases. The extra `.request` in `create-flow.js` and `relayr.js` is that fresh lock (`browser-locks.test.js`
+and the lapse cases in each journal's test).
 
 ## Multichain project setters
 

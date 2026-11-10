@@ -3951,7 +3951,24 @@ async function verifyCreateDirectLeg(session, plan) {
   } else throw new Error('The launch on ' + chainName(plan.chainId) + ' is still awaiting confirmation.');
 }
 
+// A leg's outcome (its hash, or a definite unsent) that its lost lock refused is applied under a fresh lock once
+// this run's lock work ends (the SDK's fund() keep): only to the same launch and the same leg attempt.
 async function runCreateDirectSession(state, session, resumed) {
+  var late = null;
+  try {
+    return await runCreateDirectLocked(state, session, resumed, function (settle) { late = settle; });
+  } catch (error) {
+    if (late) {
+      await browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive' }, async function (fresh) {
+        var latest = loadCreateDirectSession(true);
+        if (latest && late(latest)) await saveCreateDirectSession(state, latest, fresh);
+      }).catch(function () { /* Unreconciled, the launch stays as the lost lock left it. */ });
+    }
+    throw error;
+  }
+}
+
+function runCreateDirectLocked(state, session, resumed, onLost) {
   return browserLocks().request(CREATE_DIRECT_KEY, { mode: 'exclusive', ifAvailable: true }, async function (lock) {
     if (!lock) throw new Error('This launch is active in another window. Continue there or close that window before resuming.');
     var latest = loadCreateDirectSession(true);
@@ -3963,11 +3980,11 @@ async function runCreateDirectSession(state, session, resumed) {
     }
     session = latest || session;
     await saveCreateDirectSession(state, session, lock);
-    return executeCreateDirectSession(state, session, resumed, lock);
+    return executeCreateDirectSession(state, session, resumed, lock, onLost);
   });
 }
 
-async function executeCreateDirectSession(state, session, resumed, lock) {
+async function executeCreateDirectSession(state, session, resumed, lock, onLost) {
   var push = state._push;
   for (var i = 0; i < session.plans.length; i++) {
     var checked = session.plans[i];
@@ -4012,21 +4029,38 @@ async function executeCreateDirectSession(state, session, resumed, lock) {
       if (!getAccount() || getAccount().toLowerCase() !== session.account.toLowerCase()) throw new Error('Connected account changed. Reconnect the launching wallet to continue.');
       assertScheduleFresh(plan.scheduleValidUntil);
       push('Confirm the launch on ' + chainName(plan.chainId) + ' in your wallet…');
+      // Saves this leg's outcome; under a lost lock, hands it to the fresh-lock reconcile for this same attempt.
+      var keep = async function (hash) {
+        var attempt = plan.attempt, before = { hash: plan.hash, status: plan.status };
+        plan.hash = hash; plan.status = hash ? 'submitted' : 'ready';
+        try { await saveCreateDirectSession(state, session, lock); }
+        catch (error) {
+          if (!error || error.code !== 'LOCK_LOST' || !onLost) throw error;
+          // The in-memory launch stays as saved, so the reconcile below matches it like the stored one.
+          plan.hash = before.hash; plan.status = before.status;
+          onLost(function (latest) {
+            var leg = latest.id === session.id && latest.plans.find(function (saved) { return saved.chainId === plan.chainId; });
+            if (!leg || leg.hash || leg.status !== 'awaiting-wallet' || leg.attempt !== attempt) return false;
+            leg.hash = hash; leg.status = hash ? 'submitted' : 'ready';
+            return true;
+          });
+          throw error;
+        }
+      };
       // This leg's record is its write journal: onWriteRejected keeps executeTransaction from holding it a second time.
-      // A lost lock leaves an unsent leg to the window that holds the launch now.
       var releaseUnsent = async function () {
-        if (!plan.hash && plan.status === 'awaiting-wallet' && await lock.held()) { plan.status = 'ready'; await saveCreateDirectSession(state, session, lock); }
+        if (!plan.hash && plan.status === 'awaiting-wallet') await keep(null);
       };
       try {
         var hash = await execTx({ chainId: plan.chainId, address: plan.address, abi: plan.abi,
           functionName: plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value, skipConfirm: true,
           trackSavedLaunch: true, locks: [lock],
           onSending: async function () {
-            plan.status = 'awaiting-wallet';
+            plan.status = 'awaiting-wallet'; plan.attempt = crypto.randomUUID();
             try { await saveCreateDirectSession(state, session, lock); }
             catch (error) { plan.status = 'ready'; throw error; }
           },
-          onSubmitted: function (submitted) { plan.hash = submitted; plan.status = 'submitted'; return saveCreateDirectSession(state, session, lock); },
+          onSubmitted: keep,
           onBeforeWriteAborted: releaseUnsent, onWriteRejected: releaseUnsent,
           assertWriteState: function () { assertScheduleFresh(plan.scheduleValidUntil); }, verifyReceipt: function (receipt) { assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', plan.chainId), null, plan.rulesetCount); },
           onStatus: function (message, kind) { push(message, kind); },
@@ -4038,7 +4072,7 @@ async function executeCreateDirectSession(state, session, resumed, lock) {
         if (plan.status !== 'confirmed') throw new Error('The launch on ' + chainName(plan.chainId) + ' reverted. Resume to review the remaining calls.');
       } catch (error) {
         // Only an explicit wallet rejection establishes that an un-hashed request was not submitted.
-        if (!plan.hash && error.userRejected === true && await lock.held()) { plan.status = 'ready'; await saveCreateDirectSession(state, session, lock); }
+        if (!plan.hash && error.userRejected === true && plan.status === 'awaiting-wallet') await keep(null).catch(function () {});
         throw error;
       }
     }
@@ -4467,7 +4501,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   }, quote.bundle_uuid, undefined, function () {
     requireUnpaidRelayrSession(CREATE_RELAYR_SCOPE, quote.bundle_uuid);
     assertScheduleFresh(paidSession.scheduleValidUntil);
-    paidSession.paymentState = 'sending';
+    paidSession.paymentState = 'sending'; paidSession.paymentAttempt = crypto.randomUUID();
     state._relayrPending = saveRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession) || paidSession;
     if (state._relayrPending.persisted === false) throw new Error('The payment request could not be saved. Restore browser storage before funding this quote.');
   }, function () {

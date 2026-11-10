@@ -1454,9 +1454,18 @@ export async function heldWriteGate(hold, label, verifyReceipt) {
 // Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
 // Only an explicit wallet rejection (EIP-1193 4001) releases the reservation; any other wallet error holds.
 // `send(lock)` gives the hold's lock to its wallet call as the fence. The record is written only while that lock
-// is still this window's: a hash returned after it lapsed is not saved here, and the receipt still settles it.
-export function sendHeldWrite(hold, check, send) {
-  return hold.withLock(async function (lock) {
+// is still this window's; once it lapsed, the outcome (hash, or a definite unsent) is written under a fresh lock
+// after this one's work ends (the SDK's fund() keep), to this same attempt's record only.
+export async function sendHeldWrite(hold, check, send) {
+  var late = null;
+  function settle() {
+    return late ? hold.withLock(async function (fresh) { await fresh.assertHeld(); late(); }, true).catch(function () {}) : null;
+  }
+  var result;
+  try { result = await heldSend(); } catch (error) { await settle(); throw error; }
+  await settle();
+  return result;
+  function heldSend() { return hold.withLock(async function (lock) {
     await lock.assertHeld();
     var reservation = hold.reserve();
     try {
@@ -1465,12 +1474,17 @@ export function sendHeldWrite(hold, check, send) {
     } catch (err) { hold.releaseLocked(reservation); throw err; }
     var hash;
     try { hash = await send(lock); } catch (err) {
-      if (err.walletNotInvoked || isExplicitWalletRejection(err)) { if (await lock.held()) hold.releaseLocked(reservation); throw err; }
+      if (err.walletNotInvoked || isExplicitWalletRejection(err)) {
+        if (await lock.held()) hold.releaseLocked(reservation); else late = function () { hold.releaseLocked(reservation); };
+        throw err;
+      }
       throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it, so this action stays pending until it settles.', { cause: err }), { heldWrite: true });
     }
-    if (!(await lock.held())) return { hash: hash, reservation: reservation };
-    return { hash: hash, reservation: hold.submitted(reservation, hash) || reservation };
-  });
+    var sent = { hash: hash, reservation: reservation };
+    if (await lock.held()) sent.reservation = hold.submitted(reservation, hash) || reservation;
+    else late = function () { sent.reservation = hold.submitted(reservation, hash) || reservation; };
+    return sent;
+  }); }
 }
 
 function offerHeldRelease(hold, record, line) {

@@ -192,50 +192,65 @@ describe('direct multichain creation recovery', () => {
     expect(localStorage.getItem(KEY)).toBeNull();
   });
 
-  describe('after the launch lock lapsed to another window', () => {
-    let lock;
+  describe('after the launch lock lapsed (suspended in the wallet)', () => {
+    // Each request gets its own lock: `lapse()` loses the current one; a later request takes a fresh one.
+    let handles;
+    const lapse = () => { handles.at(-1).lost = true; };
     beforeEach(() => {
-      lock = { held: true };
-      const handle = { name: KEY, held: async () => lock.held,
-        assertHeld: async () => { if (!lock.held) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); } };
-      navigator.locks.request.mockImplementation(async (_, options, callback) => callback(handle));
+      handles = [];
+      navigator.locks.request.mockImplementation(async (name, options, callback) => {
+        const handle = { name, lost: false };
+        handle.held = async () => !handle.lost;
+        handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); };
+        handles.push(handle);
+        return callback(handle);
+      });
     });
+    const saved = () => JSON.parse(localStorage.getItem(KEY)).plans;
     it('never marks a leg awaiting the wallet, and fences the wallet with the launch lock', async () => {
       const session = { account: ALICE, plans: plans() };
       mocks.client.mockImplementation(clientFor(session));
       let fence;
       mocks.execute.mockImplementationOnce(async (opts) => {
         fence = opts.locks;
-        lock.held = false;
+        lapse();
         try { await opts.onSending(); } catch (error) { opts.onError(error.message, { userRejected: false }); }
       });
       await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow('lost');
-      expect(fence.map((held) => held.name)).toEqual([KEY]);
-      expect(JSON.parse(localStorage.getItem(KEY)).plans.every((plan) => plan.status === 'ready')).toBe(true);
+      expect(fence).toEqual([handles[0]]);
+      expect(saved().every((plan) => plan.status === 'ready')).toBe(true);
     });
-    it('never saves a hash returned after the lapse, and reports the leg as submitted', async () => {
+    it('saves a hash returned after the lapse under a fresh lock, and a resume verifies it without resending', async () => {
       const session = { account: ALICE, plans: plans() };
       mocks.client.mockImplementation(clientFor(session));
       mocks.execute.mockImplementationOnce(async (opts) => {
         await opts.onSending();
-        lock.held = false;
+        lapse();
         await confirmSend(opts, HASH1);
       });
       await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow('lost');
-      const saved = JSON.parse(localStorage.getItem(KEY)).plans[0];
-      expect(saved).toMatchObject({ status: 'awaiting-wallet', hash: null });
+      expect(saved()[0]).toMatchObject({ status: 'submitted', hash: HASH1 });
+      mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH2));
+      await __test.runCreateDirectSession(state(), session, true);
+      expect(mocks.execute).toHaveBeenCalledTimes(2);
+      expect(mocks.execute.mock.calls[1][0].chainId).toBe(84532);
+      expect(localStorage.getItem(KEY)).toBeNull();
     });
-    it('leaves an unsent leg to the new owner instead of releasing it', async () => {
+    it('releases a definitely unsent leg under a fresh lock, so a resume sends it again', async () => {
       const session = { account: ALICE, plans: plans() };
       mocks.client.mockImplementation(clientFor(session));
       mocks.execute.mockImplementationOnce(async (opts) => {
         await opts.onSending();
-        lock.held = false;
-        await opts.onWriteRejected();
+        lapse();
+        // executeTransaction swallows its rejection callback's failure.
+        await opts.onWriteRejected().catch(() => {});
         opts.onError('Transaction rejected by wallet', { userRejected: true });
       });
       await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow('rejected');
-      expect(JSON.parse(localStorage.getItem(KEY)).plans[0].status).toBe('awaiting-wallet');
+      expect(saved()[0]).toMatchObject({ status: 'ready', hash: null });
+      mocks.execute.mockImplementation((opts) => confirmSend(opts, opts.chainId === 11155111 ? HASH1 : HASH2));
+      await __test.runCreateDirectSession(state(), session, true);
+      expect(localStorage.getItem(KEY)).toBeNull();
     });
   });
 
