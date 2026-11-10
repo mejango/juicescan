@@ -156,6 +156,8 @@ export async function runSavedActionPlan(options, lock, keep) {
       }
       var result = remainingCalls.length ? await options.executeRound(remainingCalls, index, plan, {
         checkpoint: checkpoint,
+        // The plan lock, for the round's own wallet calls (Safe sign, approve, execute) to fence right before the prompt.
+        locks: [lock],
         hasSafeProgress: !!(safeProgress.attempt || safeProgress.proposals.length || safeProgress.executedChains.length),
         // Every control below writes the plan's journal: callers await it.
         replaceUnsubmittedRound: async function (replacement) {

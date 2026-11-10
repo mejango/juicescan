@@ -10947,7 +10947,7 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
       label: opts.label,
       confirmTitle: opts.title,
       confirmSummary: opts.summary ? Object.assign({ action: opts.label }, opts.summary, { rows: (opts.summary.rows || []).concat([['On chain', chain.name || chainNameOf(chain.id)], ['Via', 'your connected Safe']]) }) : undefined,
-      confirmSteps: opts.steps, confirmStepIndex: opts.stepIndex, confirmStepsIntro: opts.stepsIntro,
+      confirmSteps: opts.steps, confirmStepIndex: opts.stepIndex, confirmStepsIntro: opts.stepsIntro, locks: opts.locks,
       reverify: async function () {
         if (!isSafeConnected() || !sameAddr(getAccount(), authorityAddr)) throw new Error('The connected Safe changed. Review the transaction again.');
         var activeChainId = await getWalletClient().getChainId();
@@ -11140,6 +11140,7 @@ export async function runSelectedProjectCallRounds(project, prepare, opts, setSt
       var buildCall = function (chainId) { return calls.find(function (call) { return Number(call.chainId == null ? call.cid : call.chainId) === Number(chainId); }); };
       if (authoritySafe) {
         var requested = false;
+        roundOpts.locks = control.locks;
         roundOpts.onSafeRequest = function (attempt) { requested = true; return control.beforeSafe(attempt); };
         roundOpts.onSafeProposal = function (proposal) { return control.recordSafeProposal(proposal); };
         roundOpts.onSafeExecuted = function (chainId) { return control.recordSafeExecuted(chainId); };
@@ -11188,7 +11189,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
       var executionSafe = await fetchSafeInfoFresh(authorityAddr, homeChainId);
       if (executionSafe) return runConnectedSafeAppAuthorityCall(chains[0], authorityAddr, buildCall, opts, setStatus);
     }
-    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab, reverify: opts.reverify, onSafeRequest: opts.onSafeRequest, onSafeProposal: opts.onSafeProposal, onSafeExecuted: opts.onSafeExecuted, onSafeNotSubmitted: opts.onSafeNotSubmitted, verifyReceipt: opts.verifyReceipt, authorityChainId: authorityChainId, summary: opts.summary ? Object.assign({ action: opts.label }, opts.summary) : undefined, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro });
+    return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab, reverify: opts.reverify, onSafeRequest: opts.onSafeRequest, onSafeProposal: opts.onSafeProposal, onSafeExecuted: opts.onSafeExecuted, onSafeNotSubmitted: opts.onSafeNotSubmitted, verifyReceipt: opts.verifyReceipt, authorityChainId: authorityChainId, summary: opts.summary ? Object.assign({ action: opts.label }, opts.summary) : undefined, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro, locks: opts.locks });
   }
   var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
   if (!account) return null;
@@ -12974,7 +12975,7 @@ async function executeReadySafeTransactions(readyExecs, opts) {
       var direct = ordered[i];
       await executeSafeTx(direct.cid, direct.safe, direct.tx, function () {
         return verifyReadySafeTransactions([direct], expectedSnapshots);
-      }, direct.verifyReceipt);
+      }, direct.verifyReceipt, null, opts.locks);
       await verifyCompletedQueuedProjectHandleTransaction(direct.safe, direct.cid, direct.tx);
     }
     return { done: true, direct: true };
@@ -13148,7 +13149,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
         fetchSafeCreation(safe).then(function (creation) {
           if (!creation) throw new Error('couldn’t read the Safe’s creation config (needs a chain where it already exists + a Safe service)');
           st.textContent = 'Deploying the Safe on ' + c.name + ' — confirm in your wallet…';
-          return deploySafeSameAddress(c.id, creation, safe, Number(opts.authorityChainId || project._urlChainId || project.chainId));
+          return deploySafeSameAddress(c.id, creation, safe, Number(opts.authorityChainId || project._urlChainId || project.chainId), opts.locks);
         }).then(function () {
           block.classList.remove('safe-propose-skip'); rec.nInput = null;
           return fetchSafeInfoFresh(safe, c.id).then(function (info2) {
@@ -13295,7 +13296,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
             });
           }));
         }).then(function () {
-          return executeReadySafeTransactions(readyExecs, { title: 'Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's') });
+          return executeReadySafeTransactions(readyExecs, { title: 'Execute ' + readyExecs.length + ' transaction' + (readyExecs.length === 1 ? '' : 's'), locks: opts.locks });
         }).then(function (res) {
           if (res && res.done) {
             readyExecs.forEach(function (r) { if (r.rec && r.rec.st) r.rec.st.textContent = 'Executed';
@@ -13384,7 +13385,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                   var signature = await confirmSafeTx(r.cid, safe, existing, acct, async function () {
                     await verifySafeRowAction(r, acct, liveSafeInfo);
                     await verifyServiceQueueSnapshot(r, nonce);
-                  }, markSafeRequest);
+                  }, markSafeRequest, opts.locks);
                   existing = Object.assign({}, existing, {
                     confirmations: (existing.confirmations || []).concat([{ owner: acct, signature: signature }]),
                   });
@@ -13394,7 +13395,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                 setStatus('Queueing on ' + r.chain + ' (' + (i + 1) + '/' + live.length + ') — sign in your wallet…', 'pending');
 
                 proposed = await proposeSafeTx({
-                  chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce, onPublishing: markSafeRequest,
+                  chainId: r.cid, safe: safe, to: r.to, data: r.data, value: 0, signer: acct, nonce: nonce, onPublishing: markSafeRequest, locks: opts.locks,
                   reverify: async function () {
                     await verifySafeRowAction(r, acct, liveSafeInfo);
                     await verifyServiceQueueSnapshot(r, nonce);
@@ -13434,7 +13435,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                   if (Number(r.nInput && r.nInput.value) !== Number(chosen) || r.hash !== reviewedHash) {
                     throw new Error('The selected nonce or Safe transaction changed while approving on ' + r.chain + '. Review the action again.');
                   }
-                }, markSafeRequest, { to: r.to, data: r.data, value: 0, nonce: chosen });
+                }, markSafeRequest, { to: r.to, data: r.data, value: 0, nonce: chosen }, opts.locks);
                 await verifySafeRowAction(r, acct, liveSafeInfo);
                 await refreshOnChainStatus(r);
                 chosen = r.chosenNonce; current = Number(r.ctx.nonce);
@@ -13462,7 +13463,7 @@ function proposeSafeAcrossChains(project, safe, signer, buildCall, opts) {
                     if (Number(r.ctx.nonce) !== Number(chosen) || (r.approved || []).length < Number(r.ctx.threshold)) {
                       throw new Error('The Safe nonce or exact approvals changed on ' + r.chain + '. Review the action again.');
                     }
-                  }, opts.verifyReceipt ? opts.verifyReceipt.bind(null, { cid: r.cid }) : null, markSafeRequest);
+                  }, opts.verifyReceipt ? opts.verifyReceipt.bind(null, { cid: r.cid }) : null, markSafeRequest, opts.locks);
                   if (opts.onSafeExecuted) await opts.onSafeExecuted(r.cid);
                   approvedKnown.executed = true; r.done = true; r.st.textContent = 'Executed (nonce ' + chosen + ')';
                   checkpointPartialResult();

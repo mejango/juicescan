@@ -154,8 +154,8 @@ function safeUnsubmittedRejection(error) {
   return wrapped;
 }
 // Sign the SafeTx with the connected wallet. MetaMask/Ledger require the active chain to equal the EIP-712
-// domain chainId, so switch first.
-async function signSafeTx(chainId, safe, fields, signer) {
+// domain chainId, so switch first. `locks` (the caller's run locks) are checked as the last await before the prompt.
+async function signSafeTx(chainId, safe, fields, signer, locks) {
   assertShopCallPolicy(fields.data, fields.to, fields.operation);
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var wallet = getWalletClient();
@@ -174,7 +174,7 @@ async function signSafeTx(chainId, safe, fields, signer) {
     signature = await invokeWallet(chainId, signer, reviewedSafe, function (current) { return current.signTypedData({
       account: signer, domain: { chainId: Number(chainId), verifyingContract: safe },
       types: SAFE_TX_TYPES, primaryType: 'SafeTx', message: safeTxMessage(fields),
-    }); }, function () { assertShopCallPolicy(fields.data, fields.to, fields.operation); });
+    }); }, function () { assertShopCallPolicy(fields.data, fields.to, fields.operation); }, locks);
   } catch (error) { throw safeUnsubmittedRejection(error); }
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   return signature;
@@ -210,7 +210,7 @@ export function getSafeNextNonce(chainId, safe) {
 
 // Propose a transaction to the Safe's queue on `chainId`. Returns { safeTxHash, nonce }.
 export async function proposeSafeTx(opts) {
-  // opts: { chainId, safe, to, data, value, signer, operation?, nonce?, reverify?, onPublishing? }. `reverify` runs
+  // opts: { chainId, safe, to, data, value, signer, operation?, nonce?, reverify?, onPublishing?, locks? }. `reverify` runs
   // after the wallet signature and immediately before the service write so a Safe owner/threshold rotation while
   // the wallet prompt is open cannot post a signature authorized only by stale governance. `operation` is 0 (CALL,
   // the default) or 1 (DELEGATECALL — only ever the canonical MultiSendCallOnly batch).
@@ -223,7 +223,7 @@ export async function proposeSafeTx(opts) {
   if (!Number.isSafeInteger(nonce) || nonce < 0) throw new Error('Could not read a valid Safe nonce on ' + chainNameFor(opts.chainId) + '.');
   var fields = { to: opts.to, value: opts.value || 0, data: opts.data || '0x', operation: operation, safeTxGas: 0, baseGas: 0, gasPrice: 0, gasToken: ZERO, refundReceiver: ZERO, nonce: nonce };
   var safeTxHash = safeTxHashOf(opts.chainId, opts.safe, fields);
-  var signature = await signSafeTx(opts.chainId, opts.safe, fields, opts.signer);
+  var signature = await signSafeTx(opts.chainId, opts.safe, fields, opts.signer, opts.locks);
   if (opts.reverify) await opts.reverify();
   if (!getAccount() || getAccount().toLowerCase() !== opts.signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   var body = {
@@ -307,7 +307,7 @@ async function safeQueuePage(chainId, base, path) {
 }
 
 // Add the connected signer's confirmation to an already-queued tx (sign here instead of in the Safe app).
-export async function confirmSafeTx(chainId, safe, tx, signer, reverify, onPublishing) {
+export async function confirmSafeTx(chainId, safe, tx, signer, reverify, onPublishing, locks) {
   var base = txBase(chainId);
   if (!base) throw new Error('No Safe Transaction Service for this chain');
   // Reconstruct the SafeTx from the queued record and re-sign its hash.
@@ -316,7 +316,7 @@ export async function confirmSafeTx(chainId, safe, tx, signer, reverify, onPubli
     safeTxGas: tx.safeTxGas || 0, baseGas: tx.baseGas || 0, gasPrice: tx.gasPrice || 0,
     gasToken: tx.gasToken || ZERO, refundReceiver: tx.refundReceiver || ZERO, nonce: tx.nonce,
   };
-  var signature = await signSafeTx(chainId, safe, fields, signer);
+  var signature = await signSafeTx(chainId, safe, fields, signer, locks);
   if (reverify) await reverify();
   if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the Safe transaction again.');
   var res = await safeFetch(base + '/api/v1/multisig-transactions/' + tx.safeTxHash + '/confirmations/', {
@@ -406,7 +406,7 @@ async function feeOverrides(chainId) {
 
 // Send a Safe contract write with a buffered fee cap, then WAIT for the receipt so an onchain revert surfaces as
 // an error (writeContract resolves on SUBMIT, not confirmation — a reverted tx would otherwise pass silently).
-async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending, executionGasCap, reviewedSafe, reviewedAccount) {
+async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending, executionGasCap, reviewedSafe, reviewedAccount, locks) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var account = reviewedAccount;
   if (!account) throw new Error('Connect a wallet first');
@@ -455,7 +455,7 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
     if (onSending) await onSending();
     hash = await invokeWallet(chainId, account, reviewedSafe, function (current) { return current.writeContract(Object.assign({}, params, { account: account, chain: CHAINS[chainId], gas: sendGas }, fees)); }, function () {
       assertShopCallPolicy(encodeFunctionData({ abi: params.abi, functionName: params.functionName, args: params.args || [] }), params.address);
-    });
+    }, locks);
   } catch (error) { throw safeUnsubmittedRejection(error); }
   try {
     var rcpt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
@@ -474,7 +474,7 @@ async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddr
   return hash;
 }
 
-export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, onSending) {
+export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, onSending, locks) {
   assertShopCallPolicy(tx.data, tx.to, tx.operation);
   var reviewedAccount = getAccount();
   var wallet = getWalletClient();
@@ -502,7 +502,7 @@ export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, 
       return readDistributionTokens(createPublicClientForChain(chainId), controller);
     });
     if (verifyReceipt) await verifyReceipt(receipt);
-  }, onSending, executionGasCap, reviewedSafe, reviewedAccount);
+  }, onSending, executionGasCap, reviewedSafe, reviewedAccount, locks);
 }
 // A Relayr bundle entry that EXECUTES a ready Safe tx on its chain. execTransaction is permissionless
 // (the owner signatures are embedded), so the relayer can send it — the user pays gas once for all chains.
@@ -1253,7 +1253,7 @@ export async function fetchSafeCreation(safe) {
 
 // Deploy the same-address Safe on `chainId` from a fetched creation record, then verify it actually landed at the
 // expected address (a differing factory/singleton on the target chain would produce a different address).
-export async function deploySafeSameAddress(chainId, creation, expectedSafe, authoritySourceChainId) {
+export async function deploySafeSameAddress(chainId, creation, expectedSafe, authoritySourceChainId, locks) {
   var reviewedAccount = getAccount();
   var reviewedSafe = isSafeConnected();
   var sourceChainId = authoritySourceChainId != null ? Number(authoritySourceChainId) : Number(creation && creation.sourceChainId);
@@ -1276,7 +1276,7 @@ export async function deploySafeSameAddress(chainId, creation, expectedSafe, aut
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   } catch (e) { if (e && e.code === 4001) throw e; throw new Error('Switch your wallet to ' + chainNameFor(chainId) + ' to deploy.'); }
-  var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce', expectedSafe, null, null, null, null, reviewedSafe, reviewedAccount);
+  var hash = await sendAndConfirm(wallet, chainId, { address: cs(creation.factory), abi: PROXY_FACTORY_ABI, functionName: 'createProxyWithNonce', args: [cs(creation.singleton), creation.initializer, creation.saltNonce] }, 'createProxyWithNonce', expectedSafe, null, null, null, null, reviewedSafe, reviewedAccount, locks);
   // Verify the Safe landed at the expected address — but RETRY, because a flaky RPC (Base/OP Sepolia especially) can
   // return empty code for a just-deployed contract and produce a false "did not land". Only fail after several misses.
   var pub = targetPublicClient, code = null;
@@ -1352,7 +1352,7 @@ export async function safeApprovalsOf(chainId, safe, hash, owners) {
 
 // Approve a SafeTx hash onchain from the connected signer (records approvedHashes[signer][hash] = 1). The wallet
 // must be on `chainId` and be a Safe owner. Returns the approveHash tx hash.
-export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSending, reviewedTx) {
+export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSending, reviewedTx, locks) {
   if (!reviewedTx || safeTxHashForQueuedTx(chainId, safe, reviewedTx).toLowerCase() !== String(hash).toLowerCase()) throw new Error('Read and review the original Safe transaction before approving its hash.');
   assertShopCallPolicy(reviewedTx.data, reviewedTx.to, reviewedTx.operation);
   var reviewedAccount = getAccount();
@@ -1367,7 +1367,7 @@ export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSe
     if (reverify) await reverify();
     if (safeTxHashForQueuedTx(chainId, safe, reviewedTx).toLowerCase() !== String(hash).toLowerCase()) throw new Error('The reviewed Safe transaction changed. Review its hash again.');
     assertShopCallPolicy(reviewedTx.data, reviewedTx.to, reviewedTx.operation);
-  }, null, onSending, null, reviewedSafe, reviewedAccount);
+  }, null, onSending, null, reviewedSafe, reviewedAccount, locks);
 }
 
 export { SAFE_PREFIX };

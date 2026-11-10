@@ -11,6 +11,7 @@ vi.mock('../src/component-base.js', () => ({
 }));
 import { approveSafeHashOnChain, confirmSafeTx, executeSafeTx, proposeSafeTx,
   safeTxHashForQueuedTx, SAFE_EXECUTION_SUCCESS_TOPIC } from '../src/safe.js';
+import { LockLostError } from '../src/browser-locks.js';
 
 const OWNER = '0x1111111111111111111111111111111111111111';
 const SAFE = '0x2222222222222222222222222222222222222222';
@@ -122,5 +123,21 @@ describe('Safe wallet submission phase', () => {
   it('never opens a wallet request if the phase checkpoint fails', async () => {
     await expect(approveSafeHashOnChain(1, SAFE, safeTxHashForQueuedTx(1, SAFE, tx()), null, () => { throw new Error('Storage failed'); }, tx())).rejects.toThrow('Storage failed');
     expect(state.wallet.writeContract).not.toHaveBeenCalled();
+  });
+});
+
+// The plan lock reaches every Safe wallet call through invokeWallet: a tab whose lock lapsed never opens a prompt.
+describe('Safe wallet calls under a lapsed plan lock', () => {
+  const lapsed = () => [{ held: () => false, assertHeld: async () => { throw new LockLostError(); } }];
+  it.each([
+    ['proposal', locks => proposeSafeTx(proposal({ reverify, onPublishing, locks }))],
+    ['confirmation', locks => confirmSafeTx(1, SAFE, { ...tx(), safeTxHash: HASH }, OWNER, reverify, onPublishing, locks)],
+    ['approval', locks => approveSafeHashOnChain(1, SAFE, safeTxHashForQueuedTx(1, SAFE, tx()), reverify, null, tx(), locks)],
+    ['execution', locks => executeSafeTx(1, SAFE, tx(), reverify, null, null, locks)],
+  ])('refuses the %s before the wallet prompt, as not sent', async (_kind, run) => {
+    await expect(run(lapsed())).rejects.toMatchObject({ code: 'LOCK_LOST', safeRequestNotSubmitted: true });
+    expect(state.wallet.signTypedData).not.toHaveBeenCalled();
+    expect(state.wallet.writeContract).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

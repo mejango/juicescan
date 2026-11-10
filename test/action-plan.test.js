@@ -156,6 +156,11 @@ describe('lock fencing', () => {
     });
   });
   const safeRun = executeRound => options({ safeMode: true, executionAccount: SAFE, executeRound: vi.fn(executeRound) });
+  it('hands the round the plan lock, so its Safe wallet calls fence it before the prompt', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => { expect(control.locks).toEqual([handles.at(-1)]); return { confirmed: true }; });
+    await expect(runSavedActionPlan(run)).resolves.toMatchObject({ completed: true });
+    expect(run.executeRound).toHaveBeenCalled();
+  });
   it('never records a Safe attempt once its lock lapsed before the attempt', async () => {
     const run = safeRun(async (_calls, _index, _plan, control) => { lapse(); await control.beforeSafe({ chainId: 8453 }); return { confirmed: true }; });
     await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
