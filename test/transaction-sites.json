@@ -3,7 +3,7 @@
   "sites": {
     "src/action-plan.js": {
       "counts": {
-        "providerRequest": 2
+        "providerRequest": 1
       },
       "actions": [
         "Selected project action recovery"
@@ -11,7 +11,7 @@
     },
     "src/browser-locks.js": {
       "counts": {
-        "providerRequest": 1
+        "providerRequest": 4
       },
       "actions": [
         "Held direct writes"
@@ -52,7 +52,7 @@
         "executeTransaction": 1,
         "relayrPay": 1,
         "relayrPostBundle": 1,
-        "providerRequest": 3
+        "providerRequest": 2
       },
       "actions": [
         "Launch project",
@@ -70,7 +70,7 @@
     },
     "src/direct-batch.js": {
       "counts": {
-        "providerRequest": 3
+        "providerRequest": 2
       },
       "actions": [
         "Sequential direct batch recovery"
@@ -188,7 +188,7 @@
     },
     "src/relayr.js": {
       "counts": {
-        "providerRequest": 7,
+        "providerRequest": 4,
         "relayrPay": 2,
         "relayrPostBundle": 4,
         "sendTransaction": 1,
@@ -275,14 +275,6 @@
       },
       "actions": [
         "Defifa NFT mint / transfer / cash out"
-      ]
-    },
-    "src/write-hold.js": {
-      "counts": {
-        "providerRequest": 1
-      },
-      "actions": [
-        "Held direct writes"
       ]
     }
   }

@@ -1,8 +1,9 @@
 import { encodeFunctionData } from 'viem';
 import { assertShopCallPolicy } from '../src/shop-policy.js';
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { assertLocksHeld, isLockLost, requestKeeping, LockLostError } from '../src/browser-locks.js';
 
 const source = name => readFileSync(new URL('../src/' + name, import.meta.url), 'utf8');
 const section = (text, start, end) => text.slice(text.indexOf(start), text.indexOf(end, text.indexOf(start))).replace(/^export /, '');
@@ -20,9 +21,9 @@ function harness() {
   const state = { account: ACCOUNT, safe: false, view: null, chain: 1, wallet: null };
   const wallet = label => ({ getChainId: async () => state.chain, writeContract: async req => { writes.push([label, req]); return HASH; }, signTypedData: async req => { writes.push([label, req]); return '0xsig'; } });
   state.wallet = wallet('A');
-  const hold = { read: () => null, withLock: fn => fn(), reserve: () => 1, owns: () => true, submitted: () => 1, release: async () => {}, releaseLocked: r => releases.push(r) };
+  const hold = { read: () => null, withLock: fn => fn({ assertHeld: async () => {}, held: async () => true }, write => write()), reserve: () => 1, owns: () => true, submitted: () => 1, release: async () => {}, releaseLocked: r => releases.push(r) };
   const pub = { readContract: async () => 0n, simulateContract: async req => ({ request: req }) };
-  const context = vm.createContext({ console, Promise, Object, BigInt, Number, Error,
+  const context = vm.createContext({ console, Promise, Object, BigInt, Number, Error, assertLocksHeld, isLockLost,
     encodeFunctionData, assertShopCallPolicy, getViewAs: () => state.view, VIEW_AS_TX_ERROR: 'View as', getWalletClient: () => state.wallet, getAccount: () => state.account,
     isSafeConnected: () => state.safe, holdForWrite: () => hold, waitForSafeInitialization: async () => {},
     createPublicClientForChain: () => pub, clientFor: () => pub,
@@ -72,6 +73,29 @@ describe('actual-source wallet invocation after awaited preparation', () => {
     await reading.promise; h.state.wallet = h.wallet('B'); chain.resolve(1); await pending;
     expect(h.writes.map(x => x[0])).toEqual(['B']);
   });
+  it('refuses the wallet unsent once the caller lost its lock', async () => {
+    const h = harness(), lost = { assertHeld: async () => { throw new LockLostError('jb-action'); } };
+    const error = await h.context.invokeWallet(1, ACCOUNT, false, current => current.writeContract({}), null, [lost]).catch(e => e);
+    expect(error).toBeInstanceOf(LockLostError); expect(error.walletNotInvoked).toBe(true); expect(h.writes).toEqual([]);
+  });
+  it.each(['account', 'connector', 'state'])('checks the %s again after the lock fence, before the wallet', async change => {
+    const h = harness(), fence = deferred(), fencing = deferred();
+    let fresh = true;
+    const lock = { assertHeld: () => { fencing.resolve(); return fence.promise; } };
+    const pending = h.context.invokeWallet(1, ACCOUNT, false, current => current.writeContract({}), () => { if (!fresh) throw new Error('schedule expired'); }, [lock]).catch(e => e);
+    await fencing.promise;
+    if (change === 'account') h.state.account = OTHER;
+    if (change === 'connector') h.state.wallet = h.wallet('B');
+    if (change === 'state') fresh = false;
+    fence.resolve();
+    const error = await pending;
+    expect(error.walletNotInvoked).toBe(true); expect(h.writes).toEqual([]);
+  });
+  it('sends while every lock is still held', async () => {
+    const h = harness(), lock = { assertHeld: vi.fn(async () => {}) };
+    await h.context.invokeWallet(1, ACCOUNT, false, current => current.writeContract({}), null, [lock, null]);
+    expect(lock.assertHeld).toHaveBeenCalledOnce(); expect(h.writes.map(x => x[0])).toEqual(['A']);
+  });
   it('retains actual send uncertainty and does not mislabel it as pre-invocation', async () => {
     const h = harness(); h.state.wallet.writeContract = () => { throw new Error('transport lost'); };
     const error = await h.context.invokeWallet(1, ACCOUNT, false, current => current.writeContract({})).catch(e => e);
@@ -96,5 +120,43 @@ describe('final authorization freshness after current wallet chain read', () => 
     const pending = h.context.buildForwardedTx(1, ACCOUNT, OTHER, '0x', 100000n, 0n, 120).catch(e => e);
     await reading.promise; now = 130000; chain.resolve(1);
     expect((await pending).message).toMatch(/schedule expired/); expect(h.writes).toEqual([]);
+  });
+});
+
+describe('held write under a lapsed hold lock', () => {
+  // The real keep over a lock manager that hands each request its own lock: `lapse()` loses the current one.
+  function held() {
+    const calls = [], locks = [];
+    const lapse = () => { locks.at(-1).lost = true; };
+    vi.stubGlobal('navigator', { locks: { request: async (name, _options, fn) => {
+      const lock = { name, lost: false };
+      lock.held = async () => !lock.lost;
+      lock.assertHeld = async () => { if (lock.lost) throw new LockLostError(name); };
+      locks.push(lock);
+      return fn(lock);
+    } } });
+    const hold = { withLock: work => requestKeeping('hold', {}, work), reserve: () => { calls.push(['reserve', locks.length]); return 'r'; }, owns: () => true,
+      submitted: (r, hash) => { calls.push(['submitted', locks.length, hash]); return r + ':' + hash; }, releaseLocked: () => calls.push(['release', locks.length]) };
+    return { calls, locks, lapse, hold, context: harness().context };
+  }
+  afterEach(() => vi.unstubAllGlobals());
+  it('never reserves or opens the wallet once the lock lapsed', async () => {
+    const t = held(), send = vi.fn();
+    const hold = { ...t.hold, withLock: work => t.hold.withLock((lock, keep) => { lock.lost = true; return work(lock, keep); }) };
+    await expect(t.context.sendHeldWrite(hold, () => {}, send)).rejects.toBeInstanceOf(LockLostError);
+    expect(t.calls).toEqual([]); expect(send).not.toHaveBeenCalled();
+  });
+  it('fences the wallet with the hold lock and saves a hash returned after the lapse under a fresh lock', async () => {
+    const t = held();
+    let fence;
+    const sent = await t.context.sendHeldWrite(t.hold, () => {}, lock => { fence = lock; t.lapse(); return HASH; });
+    expect(fence).toBe(t.locks[0]); expect(t.locks).toHaveLength(2);
+    expect(t.calls).toEqual([['reserve', 1], ['submitted', 2, HASH]]);
+    expect(sent).toEqual({ hash: HASH, reservation: 'r:' + HASH });
+  });
+  it('releases a definitely unsent reservation under a fresh lock', async () => {
+    const t = held();
+    await expect(t.context.sendHeldWrite(t.hold, () => {}, () => { t.lapse(); throw Object.assign(new Error('unsent'), { walletNotInvoked: true }); })).rejects.toThrow('unsent');
+    expect(t.calls).toEqual([['reserve', 1], ['release', 2]]);
   });
 });

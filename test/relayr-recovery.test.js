@@ -198,6 +198,16 @@ describe('Relayr recovery after payment submission', () => {
     expect(changedCheck).not.toHaveBeenCalled();
   });
 
+  it('hands the plan lock to the payment fence, also when resuming the saved quote', async () => {
+    const quote = { bundle_uuid: BUNDLE, expected_transactions: BINDINGS }, planLock = { assertHeld: async () => {} };
+    saveRelayrPendingSession(SCOPE, { ...session(), paymentState: 'quoted', paymentHash: null });
+    chooseRelayrPayment.mockResolvedValue({ chain: 1 });
+    relayrPay.mockRejectedValue(Object.assign(new Error('lost'), { code: 'LOCK_LOST' }));
+    await expect(fundRelayrQuotedSession(quote, loadRelayrPendingSession(SCOPE), vi.fn(), { pendingScope: SCOPE, resumeQuoted: true, locks: [planLock] }))
+      .rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(relayrPay.mock.calls[0][8]).toEqual([planLock]);
+  });
+
   it('keeps a reloaded quote blocked when its exact in-memory funding options are unavailable', async () => {
     saveRelayrPendingSession(SCOPE, { ...session(), paymentState: 'quoted', paymentHash: null });
     await expect(runProjectPayerRelayrDeploys([], vi.fn(), SCOPE))

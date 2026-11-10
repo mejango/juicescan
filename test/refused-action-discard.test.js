@@ -44,7 +44,7 @@ describe('discarding a refused saved action', () => {
 
   it('keeps a plan with Safe progress or a checkpointed round', async () => {
     const plan = await savedRefusedPlan(async (_calls, _index, _plan, control) => {
-      control.beforeSafe({ chainId: 8453 });
+      await control.beforeSafe({ chainId: 8453 });
       throw new Error('A selected shop changed.');
     });
     await expect(discardUnsubmittedActionPlan(SCOPE, ACCOUNT, plan.id, async () => true)).resolves.toBe(false);

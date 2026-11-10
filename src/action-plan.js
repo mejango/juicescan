@@ -1,6 +1,6 @@
 // Freeze independent destination calls before any wallet request. A receipt checkpoint is written before
 // the lower-level Relayr/direct journal can clear, so interrupted rounds never start over from new balances.
-import { browserLocks } from './browser-locks.js';
+import { browserLocks, assertLocksHeld, requestKeeping } from './browser-locks.js';
 
 var PREFIX = 'jb-selected-action-v1:';
 var active = new Set();
@@ -38,7 +38,9 @@ function read(key) {
     return plan;
   } catch (_) { throw new Error('The saved action plan cannot be read. Check its previous transactions before starting again.'); }
 }
-function save(key, plan) {
+// The plan's journal is bound to the lock its run holds: a tab whose lock lapsed never writes it again.
+async function save(key, plan, lock) {
+  await assertLocksHeld([lock]);
   try {
     var raw = stringify(plan);
     if (raw.length > 750000) throw new Error();
@@ -69,21 +71,25 @@ export async function discardUnsubmittedActionPlan(scope, account, planId, journ
     if (!plan || plan.id !== planId || plan.nextRound !== 0 || (plan.results || []).length || plan.safePending
       || (progress && (progress.attempt || (progress.proposals || []).length || (progress.executedChains || []).length))) return false;
     if (!await journalsClear(plan)) return false;
+    await lock.assertHeld();
     localStorage.removeItem(key);
     return localStorage.getItem(key) == null;
   });
 }
 
-export async function runSavedActionPlan(options, locked) {
+// A round's outcome (its checkpoint, a Safe proposal, execution or definite cancellation) is saved through the
+// plan lock's keep: under a lapsed lock, it is saved under a fresh one, only to the same plan, round and attempt.
+export async function runSavedActionPlan(options, lock, keep) {
   var key = keyFor(options.scope, options.account);
   if (!options.scope || !options.account) throw new Error('This action is missing its account or recovery scope.');
-  if (!locked) {
+  if (!lock) {
     if (active.has(key)) throw new Error('This action is already open. Resume it in the original window.');
-    return browserLocks().request(key, { ifAvailable: true }, function (lock) {
-      if (!lock) throw new Error('This action is running in another window. Resume it there.');
-      return runSavedActionPlan(options, true);
+    return requestKeeping(key, { ifAvailable: true }, function (held, heldKeep) {
+      if (!held) throw new Error('This action is running in another window. Resume it there.');
+      return runSavedActionPlan(options, held, heldKeep);
     });
   }
+  keep = keep || function (write) { return Promise.resolve().then(write); };
   active.add(key);
   try {
     var plan = read(key), resumed = !!plan;
@@ -93,7 +99,7 @@ export async function runSavedActionPlan(options, locked) {
       plan = { version: 1, id: crypto.randomUUID(), account: options.account.toLowerCase(), scope: options.scope, executionAccount: options.executionAccount || options.account, safeMode: !!options.safeMode, rounds: prepared.rounds,
         summary: prepared.summary || null, gas: prepared.gas || options.gas || 500000n,
         nextRound: 0, results: [], safePending: false };
-      save(key, plan);
+      await save(key, plan, lock);
     }
     validateRounds(plan.rounds, options.maxCalls);
     if (!/^[0-9a-f-]{36}$/i.test(plan.id || '') || !Array.isArray(plan.results) || plan.results.length !== plan.nextRound) throw new Error('The saved action checkpoint is malformed. Verify its transactions before starting again.');
@@ -102,7 +108,7 @@ export async function runSavedActionPlan(options, locked) {
     if (options.reconcileResult && plan.safeMode) {
       for (var ri = 0; ri < plan.results.length; ri++) {
         var reconciled = await options.reconcileResult(plan.results[ri], plan.rounds[ri]);
-        if (reconciled) { plan.results[ri] = reconciled; save(key, plan); }
+        if (reconciled) { plan.results[ri] = reconciled; await save(key, plan, lock); }
       }
     }
     if (plan.safePending) throw new Error('A Safe proposal or execution may have been submitted for this saved action. Inspect its exact calls in the Safe queue before starting another batch.');
@@ -110,7 +116,21 @@ export async function runSavedActionPlan(options, locked) {
       var index = plan.nextRound;
       var originalCalls = plan.rounds[index];
       var safeProgress = plan.safeProgress && plan.safeProgress.index === index ? plan.safeProgress : { index: index, proposals: [], executedChains: [] };
-      function saveSafeProgress() { plan.safeProgress = safeProgress; save(key, plan); }
+      function saveSafeProgress() { plan.safeProgress = safeProgress; return save(key, plan, lock); }
+      // Applies one Safe outcome to the in-memory plan and saves it through keep. Under a lapsed lock, `apply`
+      // runs again on the saved plan under a fresh lock, only while it is the same plan, round and attempt.
+      function keepSafe(apply) {
+        var planId = plan.id, round = index, attemptId = (safeProgress.attempt && safeProgress.attempt.id) || null;
+        apply(plan, safeProgress);
+        return keep(saveSafeProgress, async function (fresh) {
+          var stored = read(key);
+          if (!stored || stored.id !== planId || stored.nextRound !== round) return;
+          var progress = stored.safeProgress && stored.safeProgress.index === round ? stored.safeProgress : { index: round, proposals: [], executedChains: [] };
+          if (((progress.attempt && progress.attempt.id) || null) !== attemptId || apply(stored, progress) === false) return;
+          stored.safeProgress = progress;
+          await save(key, stored, fresh);
+        });
+      }
       function combinedSafeResult() {
         return { relayr: false, expectedCount: originalCalls.length, queued: safeProgress.proposals.length,
           immediateExecuted: safeProgress.executedChains.length, proposals: safeProgress.proposals,
@@ -120,39 +140,58 @@ export async function runSavedActionPlan(options, locked) {
       if (new Set(knownChains).size !== knownChains.length || knownChains.some(function (cid) { return !originalCalls.some(function (call) { return Number(call.chainId == null ? call.cid : call.chainId) === cid; }); })) throw new Error('The saved Safe progress does not match its original calls.');
       var remainingCalls = plan.safeMode ? originalCalls.filter(function (call) { return knownChains.indexOf(Number(call.chainId == null ? call.cid : call.chainId)) === -1; }) : originalCalls;
       var checkpointed = false;
-      function checkpoint(result) {
-        if (checkpointed) return;
-        var next = Object.assign({}, plan, { nextRound: index + 1, results: plan.results.concat([result || { confirmed: true }]), safePending: false });
+      function advance(from, result) {
+        var next = Object.assign({}, from, { nextRound: index + 1, results: from.results.concat([result || { confirmed: true }]), safePending: false });
         delete next.safeProgress;
-        save(key, next); plan = next; checkpointed = true;
+        return next;
+      }
+      async function checkpoint(result) {
+        if (checkpointed) return;
+        var next = advance(plan, result), planId = plan.id, round = index;
+        await keep(function () { return save(key, next, lock); }, async function (fresh) {
+          var stored = read(key);
+          if (stored && stored.id === planId && stored.nextRound === round) await save(key, advance(stored, result), fresh);
+        });
+        plan = next; checkpointed = true;
       }
       var result = remainingCalls.length ? await options.executeRound(remainingCalls, index, plan, {
         checkpoint: checkpoint,
+        // The plan lock, for the round's own wallet calls (Safe sign, approve, execute) to fence right before the prompt.
+        locks: [lock],
         hasSafeProgress: !!(safeProgress.attempt || safeProgress.proposals.length || safeProgress.executedChains.length),
-        replaceUnsubmittedRound: function (replacement) {
+        // Every control below writes the plan's journal: callers await it.
+        replaceUnsubmittedRound: async function (replacement) {
           if (checkpointed || plan.safePending || safeProgress.attempt || safeProgress.proposals.length || safeProgress.executedChains.length) throw new Error('A submitted Safe round cannot be changed.');
           validateRounds([replacement], options.maxCalls);
           originalCalls = replacement;
           plan.rounds[index] = replacement;
-          save(key, plan);
+          await save(key, plan, lock);
         },
         beforeSafe: function (attempt) {
           // Execution of an already known exact proposal is recovered by that hash. It never requires
           // another proposal, even if the wallet loses its execution transaction response.
           var known = attempt && attempt.safeTxHash && safeProgress.proposals.some(function (proposal) { return Number(proposal.chainId) === Number(attempt.chainId) && String(proposal.safeTxHash).toLowerCase() === String(attempt.safeTxHash).toLowerCase(); });
-          plan.safePending = !known; safeProgress.attempt = attempt || null; saveSafeProgress();
+          // The attempt's id lets a later outcome, saved under a fresh lock, prove it is this same attempt.
+          plan.safePending = !known; safeProgress.attempt = attempt ? Object.assign({}, attempt, { id: crypto.randomUUID() }) : null;
+          return saveSafeProgress();
         },
         recordSafeProposal: function (proposal) {
-          if (safeProgress.proposals.some(function (old) { return Number(old.chainId) === Number(proposal.chainId); })) throw new Error('This Safe destination already has a known proposal.');
-          safeProgress.proposals.push(proposal); plan.safePending = false; safeProgress.attempt = null; saveSafeProgress();
+          var known = function (progress) { return progress.proposals.some(function (old) { return Number(old.chainId) === Number(proposal.chainId); }); };
+          if (known(safeProgress)) throw new Error('This Safe destination already has a known proposal.');
+          return keepSafe(function (target, progress) {
+            if (progress !== safeProgress && known(progress)) return false;
+            progress.proposals.push(proposal); target.safePending = false; progress.attempt = null;
+          });
         },
         recordSafeExecuted: function (chainId) {
-          var known = safeProgress.proposals.find(function (proposal) { return Number(proposal.chainId) === Number(chainId); });
-          if (known) known.executed = true;
-          else if (safeProgress.executedChains.indexOf(Number(chainId)) === -1) safeProgress.executedChains.push(Number(chainId));
-          plan.safePending = false; safeProgress.attempt = null; saveSafeProgress();
+          return keepSafe(function (target, progress) {
+            var known = progress.proposals.find(function (proposal) { return Number(proposal.chainId) === Number(chainId); });
+            if (known) known.executed = true;
+            else if (progress.executedChains.indexOf(Number(chainId)) === -1) progress.executedChains.push(Number(chainId));
+            target.safePending = false; progress.attempt = null;
+          });
         },
-        safeCancelled: function () { plan.safePending = false; safeProgress.attempt = null; saveSafeProgress(); },
+        safeCancelled: function () { return keepSafe(function (target, progress) { target.safePending = false; progress.attempt = null; }); },
       }) : combinedSafeResult();
       if (!result || result.cancelled) return Object.assign({}, result || {}, { cancelled: true, resumed: resumed });
       if (result.safePending) return Object.assign({}, result, { resumed: resumed });
@@ -163,7 +202,7 @@ export async function runSavedActionPlan(options, locked) {
         result = combinedSafeResult();
         if (options.reconcileResult && remainingCalls.length === 0) result = await options.reconcileResult(result, originalCalls);
       }
-      checkpoint(result);
+      await checkpoint(result);
     }
     return { completed: true, resumed: resumed, rounds: plan.rounds.length, results: plan.results };
   } finally { active.delete(key); }

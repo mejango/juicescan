@@ -20,7 +20,11 @@ describe('LP transaction receipt safety', () => {
     expect(helper).toContain('sendHeldWrite(hold, function');
     expect(helper).toContain('invokeWallet(chainId, expected, reviewedSafe');
     expect(helper.match(/current\.writeContract\(/g)).toHaveLength(1);
-    expect(helper.indexOf('function send()')).toBeLessThan(helper.indexOf('sendHeldWrite('));
+    const send = helper.indexOf('function send(lock)');
+    const held = helper.indexOf('sendHeldWrite(');
+    expect(send).toBeGreaterThanOrEqual(0);
+    expect(held).toBeGreaterThanOrEqual(0);
+    expect(send).toBeLessThan(held);
     expect(helper).toContain('if (receipt && hold) await hold.release(sent.reservation)');
   });
 

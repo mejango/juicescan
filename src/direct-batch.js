@@ -2,7 +2,7 @@
 // earlier successful calls. A resumed batch must still match the exact reviewed destinations/calldata.
 import { keccak256, stringToHex } from 'viem';
 import { isExplicitWalletRejection } from './write-hold.js';
-import { browserLocks } from './browser-locks.js';
+import { browserLocks, requestKeeping, isLockLost, assertLocksHeld } from './browser-locks.js';
 
 var memory = new Map();
 var PREFIX = 'jb-direct-batch-v1:';
@@ -29,7 +29,7 @@ export function hasDirectBatch(scope, account, calls) { return !!directBatchStat
 export async function clearUnsubmittedDirectBatch(scope, account, calls) {
   if (!scope || !account || !Array.isArray(calls)) return false;
   var key = PREFIX + String(account).toLowerCase() + ':' + scope;
-  return browserLocks().request(key, { ifAvailable: true }, function (lock) {
+  return browserLocks().request(key, { ifAvailable: true }, async function (lock) {
     if (!lock || memory.has(key)) return false;
     var raw = localStorage.getItem(key);
     if (raw == null) return true;
@@ -37,6 +37,7 @@ export async function clearUnsubmittedDirectBatch(scope, account, calls) {
     try { session = JSON.parse(raw); } catch (_) { return false; }
     if (!session || session.identity !== directBatchIdentity(calls) || !Array.isArray(session.hashes)
         || session.hashes.length !== calls.length || session.hashes.some(function (hash) { return hash !== null; })) return false;
+    await lock.assertHeld();
     localStorage.removeItem(key);
     return localStorage.getItem(key) == null;
   });
@@ -46,32 +47,49 @@ function newAttemptId() {
   try { return crypto.randomUUID(); } catch (_) { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 }
 
-// The held-no-hash exit for slot `index`: frees it only while it is still the same interrupted attempt
-// (`attempt`, saved when the slot was marked 'sending') of the same batch.
+// Settles slot `index` to `value` (null: unsent; a hash: sent) under `lock`, only while it is still the same
+// interrupted attempt (`attempt`, saved when the slot was marked 'sending') of the same batch.
+async function settleAttempt(key, identity, index, attempt, value, lock) {
+  var session = memory.get(key);
+  if (!session) {
+    try { session = JSON.parse(localStorage.getItem(key)); } catch (_) { return false; }
+  }
+  if (!session || session.identity !== identity || !Array.isArray(session.hashes) || session.hashes[index] !== 'sending'
+      || (session.attempts || [])[index] !== attempt) return false;
+  await lock.assertHeld();
+  session.hashes[index] = value;
+  if (memory.has(key)) return true;
+  localStorage.setItem(key, JSON.stringify(session));
+  return true;
+}
+
+// The held-no-hash exit: the user's wallet check frees exactly the attempt shown.
 function releaseUnsent(key, identity, index, attempt) {
   return browserLocks().request(key, { ifAvailable: true }, function (lock) {
-    if (!lock) return false;
-    var session = memory.get(key);
-    if (!session) {
-      try { session = JSON.parse(localStorage.getItem(key)); } catch (_) { return false; }
-    }
-    if (!session || session.identity !== identity || !Array.isArray(session.hashes) || session.hashes[index] !== 'sending'
-        || (session.attempts || [])[index] !== attempt) return false;
-    session.hashes[index] = null;
-    if (memory.has(key)) return true;
-    localStorage.setItem(key, JSON.stringify(session));
-    return true;
+    return lock ? settleAttempt(key, identity, index, attempt, null, lock) : false;
   });
 }
 
-export async function runDirectBatch(calls, options, locked) {
+// `options.execute(call, index, onSubmitted, onSending, locks)` sends one leg: it awaits `onSending()` before
+// the wallet and `onSubmitted(hash)` after it, and gives `locks` to the wallet call as its fence. `locks` is the
+// batch lock plus the caller's run locks (`options.locks`); they also fence the pre-wallet 'sending' write.
+// A leg's outcome (its hash, or a definite unsent) is saved through the batch lock's keep: under a lapsed lock, it is
+// saved under a fresh one to this same attempt, so a resume verifies the hash instead of stranding it.
+export async function runDirectBatch(calls, options, lock, keep) {
   var identity = directBatchIdentity(calls);
   var key = PREFIX + String(options.account).toLowerCase() + ':' + (options.scope || identity);
-  if (!locked) {
-    return browserLocks().request(key, { ifAvailable: true }, function (lock) {
-      if (!lock) throw new Error('This direct transaction batch is already running in another window. Check that window before submitting again.');
-      return runDirectBatch(calls, options, true);
+  if (!lock) {
+    return requestKeeping(key, { ifAvailable: true }, function (held, heldKeep) {
+      if (!held) throw new Error('This direct transaction batch is already running in another window. Check that window before submitting again.');
+      return runDirectBatch(calls, options, held, heldKeep);
     });
+  }
+  keep = keep || function (write) { return Promise.resolve().then(write); };
+  // Saves slot `index` as `value`; under a lost lock, the same attempt is settled under a fresh one.
+  function keepLeg(index, value) {
+    var attempt = (session.attempts || [])[index];
+    session.hashes[index] = value;
+    return keep(persist, function (fresh) { return settleAttempt(key, identity, index, attempt, value, fresh); });
   }
   var session = memory.get(key);
   if (!session) {
@@ -88,7 +106,10 @@ export async function runDirectBatch(calls, options, locked) {
     throw new Error('A previous direct transaction batch is unfinished. Restore its original inputs and finish checking it before starting a different request.');
   }
   session = session || { identity: identity, hashes: calls.map(function () { return null; }) };
-  function persist() {
+  var fence = [lock].concat(options.locks || []);
+  // The batch's journal is bound to its lock: never written once the lock is lost. `locks` widens the fence.
+  async function persist(locks) {
+    await assertLocksHeld(locks || [lock]);
     try {
       localStorage.setItem(key, JSON.stringify(session));
       memory.delete(key);
@@ -111,7 +132,7 @@ export async function runDirectBatch(calls, options, locked) {
       // Recovery only checks the previously submitted hash; it never opens another wallet prompt.
       receipt = await options.verifySubmitted(calls[i], session.hashes[i]);
       if (receipt && receipt.status === 'reverted') {
-        session.hashes[i] = null; persist();
+        session.hashes[i] = null; await persist();
         throw new Error('The saved transaction reverted. Try again to send only the remaining work; earlier confirmed transactions are preserved.');
       }
       if (!receipt || receipt.status !== 'success') throw new Error('The saved direct transaction is not confirmed. Check the saved receipt before submitting again.');
@@ -119,21 +140,24 @@ export async function runDirectBatch(calls, options, locked) {
       var index = i;
       try {
         receipt = await options.execute(calls[i], i, function (hash) {
-          session.hashes[index] = hash;
-          persist();
-        }, function () {
+          return keepLeg(index, hash).catch(function (cause) {
+            throw Object.assign(new Error('Transaction ' + hash + ' was submitted. Do not send it again; resume this action to check it.'), { cause: cause, submittedHash: hash });
+          });
+        }, async function () {
           session.hashes[index] = 'sending';
           session.attempts = session.attempts || [];
           session.attempts[index] = newAttemptId();
-          if (!persist()) {
+          var saved;
+          try { saved = await persist(fence); } catch (error) { session.hashes[index] = null; throw error; }
+          if (!saved) {
             session.hashes[index] = null;
             throw new Error('The wallet request could not be saved. Enable browser storage before submitting; nothing was sent.');
           }
-        });
+        }, fence);
       } catch (error) {
         // A definite wallet rejection (the write hold's rule) did not broadcast. Transport errors remain blocked with the saved marker.
         if (session.hashes[index] === 'sending' && error && (error.walletNotInvoked || isExplicitWalletRejection(error))) {
-          session.hashes[index] = null; persist();
+          await keepLeg(index, null).catch(function (cause) { if (!isLockLost(cause)) throw cause; });
         }
         throw error;
       }
@@ -142,6 +166,7 @@ export async function runDirectBatch(calls, options, locked) {
     receipts.push(receipt);
   }
   if (options.onComplete) await options.onComplete(receipts);
+  await lock.assertHeld();
   memory.delete(key);
   try { localStorage.removeItem(key); } catch (_) {}
   return receipts;

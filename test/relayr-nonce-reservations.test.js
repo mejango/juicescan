@@ -38,7 +38,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000);
   state.account = ACCOUNT; state.forwarder = '0x2222222222222222222222222222222222222222';
-  state.nonce = 7n; state.timestamp = BigInt(NOW); state.inLock = false;
+  state.nonce = 7n; state.timestamp = BigInt(NOW); state.inLock = false; state.lock = null;
   state.wallet = { getChainId: vi.fn(async () => 8453), signTypedData: vi.fn(async ({ message }) =>
     '0x' + BigInt(message.nonce).toString(16).padStart(128, '0') + '1b') };
   state.client = {
@@ -52,8 +52,8 @@ beforeEach(() => {
     estimateGas: vi.fn(async () => 200000n), request: vi.fn(async () => '0x'),
   };
   let previous = Promise.resolve();
-  locks = vi.fn((name, callback) => {
-    const next = previous.then(async () => { state.inLock = true; try { return await callback({ name }); } finally { state.inLock = false; } });
+  locks = vi.fn((name, options, callback) => {
+    const next = previous.then(async () => { state.inLock = true; try { return await callback(state.lock || { name }); } finally { state.inLock = false; } });
     previous = next.catch(() => {});
     return next;
   });
@@ -76,7 +76,7 @@ describe('forwarded nonce publication reservations', () => {
       return { ok: true, json: async () => quote() };
     });
     const result = await relayrPostBundle([tx], journal('create'));
-    expect(locks).toHaveBeenCalledWith('jb-relayr-forwarder-publication-v1', expect.any(Function));
+    expect(locks).toHaveBeenCalledWith('jb-relayr-forwarder-publication-v1', {}, expect.any(Function));
     expect(relayrResumeQuotedBundle('create')).toBe(result);
     await expect(verifyRelayrQuotedRequests(result.bundle_uuid, ACCOUNT)).resolves.toBeUndefined();
   });
@@ -165,8 +165,72 @@ describe('forwarded nonce publication reservations', () => {
   it('publishes forwarded requests on the lock fallback without Web Locks', async () => {
     const tx = await entry();
     vi.stubGlobal('navigator', {});
-    await expect(relayrPostBundle([tx], journal('no-lock'), true)).resolves.toHaveProperty('bundle_uuid');
+    await expect(relayrPostBundle([tx], journal('no-lock'))).resolves.toHaveProperty('bundle_uuid');
     expect(reservations()).toHaveLength(1);
+  });
+
+  it('never reserves a nonce or publishes once the publication lock lapsed', async () => {
+    const tx = await entry();
+    state.lock = { name: 'jb-relayr-forwarder-publication-v1', assertHeld: async () => { throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); } };
+    await expect(relayrPostBundle([tx], journal('lapsed'))).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(reservations()).toEqual([]);
+    expect(loadRelayrPendingSession('lapsed')).toBeNull();
+    expect(fetchQuote).not.toHaveBeenCalled();
+  });
+
+  describe('when the caller\'s plan lock lapsed, with the publication lock still held', () => {
+    // `holds` is how many fence checks the plan lock passes before it reads as lost.
+    const planLock = holds => ({ assertHeld: async () => { if (holds-- <= 0) throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); } });
+    it.each([
+      ['at the final signature (before the reservation write)', 0],
+      ['after the reservation write, before the POST', 1],
+    ])('lapsed %s: never publishes, leaves no reservation, and a retry publishes', async (_when, holds) => {
+      const tx = await entry();
+      await expect(relayrPostBundle([tx], { ...journal('plan-lapsed'), locks: [planLock(holds)] })).rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(loadRelayrPendingSession('plan-lapsed')).toBeNull();
+      expect(fetchQuote).not.toHaveBeenCalled();
+      expect(reservations()).toEqual([]);
+      await expect(relayrPostBundle([tx], journal('plan-lapsed'))).resolves.toHaveProperty('bundle_uuid');
+      expect(reservations()).toHaveLength(1);
+    });
+  });
+
+  describe('when the publication lock lapses during the quote POST', () => {
+    // Each request gets its own lock; the POST loses the current one, as while the app was in the background.
+    let handles;
+    beforeEach(() => {
+      handles = [];
+      vi.stubGlobal('navigator', { locks: { request: async (name, _options, callback) => {
+        const handle = { name, lost: false };
+        handle.held = async () => !handle.lost;
+        handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); };
+        handles.push(handle);
+        return callback(handle);
+      } } });
+      const answer = fetchQuote.getMockImplementation();
+      fetchQuote.mockImplementation(async (...args) => { handles.at(-1).lost = true; return answer(...args); });
+    });
+    it('adopts the returned quote under a fresh lock, so it can be resumed', async () => {
+      await expect(relayrPostBundle([await entry()], journal('lapsed-quote'))).rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING', cause: { code: 'LOCK_LOST' } });
+      expect(handles).toHaveLength(2);
+      const saved = loadRelayrPendingSession('lapsed-quote');
+      expect(saved.paymentState).toBe('quoted'); expect(saved.bundleUuid).not.toMatch(/^publication-pending:/);
+      const quote = relayrResumeQuotedBundle('lapsed-quote');
+      expect(quote.bundle_uuid).toBe(saved.bundleUuid);
+      await expect(verifyRelayrQuotedRequests(quote.bundle_uuid, ACCOUNT)).resolves.toBeUndefined();
+    });
+    it('never adopts a quote over a different publication saved since', async () => {
+      const answer = fetchQuote.getMockImplementation();
+      fetchQuote.mockImplementation(async (...args) => {
+        const current = loadRelayrPendingSession('lapsed-other');
+        // Another window replaced this window's publication marker.
+        saveRelayrPendingSession('lapsed-other', { ...current, publicationRequestHashes: ['0x' + '11'.repeat(32)] });
+        return answer(...args);
+      });
+      await expect(relayrPostBundle([await entry()], journal('lapsed-other'))).rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+      expect(loadRelayrPendingSession('lapsed-other').paymentState).toBe('publication');
+      expect(relayrResumeQuotedBundle('lapsed-other')).toBeNull();
+    });
   });
 
   it.each(['getItem', 'setItem'])('does not publish when reservation storage %s fails', async method => {
@@ -246,6 +310,13 @@ describe('expired unpaid schedule retirement', () => {
     await expect(retireExpiredUnpaidRelayrSession('staged-create', session)).rejects.toMatchObject({ code: 'RELAYR_PENDING_CONFLICT' });
     expect(loadRelayrPendingSession('staged-create').paymentState).toBe('sending');
     expect(reservations()).toHaveLength(1);
+  });
+  it('never archives or clears the receipt once the payment lock lapsed', async () => {
+    const session = await published(); state.timestamp = BigInt(NOW + 61);
+    state.lock = { name: 'jb-relayr-payment', assertHeld: async () => { throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); } };
+    await expect(retireExpiredUnpaidRelayrSession('staged-create', session)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(loadRelayrPendingSession('staged-create').bundleUuid).toBe(session.bundleUuid);
+    expect(Object.keys(localStorage).filter(key => key.startsWith('jb-relayr-retired-v1:'))).toHaveLength(0);
   });
   it('retains the active receipt if its archive cannot be saved', async () => {
     const session = await published(); state.timestamp = BigInt(NOW + 61);

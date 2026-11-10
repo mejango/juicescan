@@ -54,7 +54,10 @@ function clientFor(session, overrides = {}) {
     };
   };
 }
-function confirmSend(opts, hash) {
+// What executeTransaction does once the wallet returns `hash`: the caller's onSubmitted journals it first.
+async function confirmSend(opts, hash) {
+  try { await opts.onSubmitted?.(hash); }
+  catch (error) { opts.onError(error.message, { userRejected: false, submittedHash: hash, error }); return; }
   opts.onStatus('Submitted', 'pending', { hash, phase: 'receipt', chainId: opts.chainId });
   opts.onSuccess('Confirmed', { hash, phase: 'done' });
 }
@@ -102,13 +105,13 @@ describe('direct multichain creation recovery', () => {
 
   it('journals each launch leg once: its own record, not also the shared write hold', async () => {
     const draft = state(), session = { account: ALICE, plans: plans() };
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     mocks.client.mockImplementation(clientFor(session));
-    mocks.execute.mockImplementation((opts) => {
+    mocks.execute.mockImplementation(async (opts) => {
       expect(typeof opts.onWriteRejected).toBe('function');
-      opts.onSending();
+      await opts.onSending();
       expect(JSON.parse(localStorage.getItem(KEY)).plans.find((p) => p.chainId === opts.chainId).status).toBe('awaiting-wallet');
-      opts.onWriteRejected();
+      await opts.onWriteRejected();
       expect(JSON.parse(localStorage.getItem(KEY)).plans.find((p) => p.chainId === opts.chainId).status).toBe('ready');
       opts.onError('Transaction rejected by wallet', { userRejected: true });
     });
@@ -119,7 +122,7 @@ describe('direct multichain creation recovery', () => {
   it('restores an old direct testnet launch before expanded Relayr eligibility or changed form values', async () => {
     const original = state(), session = { account: ALICE, plans: plans() };
     session.plans[0].hash = HASH1; session.plans[0].status = 'confirmed';
-    __test.saveCreateDirectSession(original, session);
+    await __test.saveCreateDirectSession(original, session);
     const stored = localStorage.getItem(KEY);
     __test.clearCreateDirectSession(original);
     localStorage.setItem(KEY, stored);
@@ -140,7 +143,7 @@ describe('direct multichain creation recovery', () => {
   it('keeps an old direct testnet request with an unknown wallet result blocked instead of switching to Relayr', async () => {
     const original = state(), session = { account: ALICE, plans: plans() };
     session.plans[0].status = 'awaiting-wallet';
-    __test.saveCreateDirectSession(original, session);
+    await __test.saveCreateDirectSession(original, session);
     await expect(__test.runDeploy(state(), ALICE)).rejects.toThrow(/interrupted before its transaction hash/);
     expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled(); expect(mocks.postBundle).not.toHaveBeenCalled();
   });
@@ -155,7 +158,7 @@ describe('direct multichain creation recovery', () => {
     session.plans[1].abi = tierAbi;
     session.plans[1].args = [{ price: 1n, initialSupply: kind === 'custom voting' ? 2 : 1, reserveFrequency: kind === 'custom voting' ? 0 : 1, flags: { useVotingUnits: kind === 'custom voting' } }];
     mocks.client.mockImplementation(clientFor(session));
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     const original = encodeFunctionData({ abi: tierAbi, functionName: 'launchProjectFor', args: session.plans[1].args });
     await expect(__test.runCreateDirectSession(draft, session, true)).rejects.toThrow(kind === 'custom voting' ? /price-based governance/ : /supply of at least 2/);
     expect(mocks.execute).not.toHaveBeenCalled(); expect(mocks.forward).not.toHaveBeenCalled();
@@ -170,7 +173,7 @@ describe('direct multichain creation recovery', () => {
     mocks.client.mockImplementation(clientFor(session));
     mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH1));
     mocks.execute.mockImplementationOnce((opts) => opts.onError('Transaction rejected by wallet', { userRejected: true, submittedHash: null }));
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     await expect(__test.runCreateDirectSession(draft, session, false)).rejects.toThrow(/rejected/);
     expect(session.plans.map((p) => p.status)).toEqual(['confirmed', 'ready']);
 
@@ -189,11 +192,73 @@ describe('direct multichain creation recovery', () => {
     expect(localStorage.getItem(KEY)).toBeNull();
   });
 
+  describe('after the launch lock lapsed (suspended in the wallet)', () => {
+    // Each request gets its own lock: `lapse()` loses the current one; a later request takes a fresh one.
+    let handles;
+    const lapse = () => { handles.at(-1).lost = true; };
+    beforeEach(() => {
+      handles = [];
+      navigator.locks.request.mockImplementation(async (name, options, callback) => {
+        const handle = { name, lost: false };
+        handle.held = async () => !handle.lost;
+        handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); };
+        handles.push(handle);
+        return callback(handle);
+      });
+    });
+    const saved = () => JSON.parse(localStorage.getItem(KEY)).plans;
+    it('never marks a leg awaiting the wallet, and fences the wallet with the launch lock', async () => {
+      const session = { account: ALICE, plans: plans() };
+      mocks.client.mockImplementation(clientFor(session));
+      let fence;
+      mocks.execute.mockImplementationOnce(async (opts) => {
+        fence = opts.locks;
+        lapse();
+        try { await opts.onSending(); } catch (error) { opts.onError(error.message, { userRejected: false }); }
+      });
+      await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow('lost');
+      expect(fence).toEqual([handles[0]]);
+      expect(saved().every((plan) => plan.status === 'ready')).toBe(true);
+    });
+    it('saves a hash returned after the lapse under a fresh lock, and a resume verifies it without resending', async () => {
+      const session = { account: ALICE, plans: plans() };
+      mocks.client.mockImplementation(clientFor(session));
+      mocks.execute.mockImplementationOnce(async (opts) => {
+        await opts.onSending();
+        lapse();
+        await confirmSend(opts, HASH1);
+      });
+      await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow('lost');
+      expect(saved()[0]).toMatchObject({ status: 'submitted', hash: HASH1 });
+      mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH2));
+      await __test.runCreateDirectSession(state(), session, true);
+      expect(mocks.execute).toHaveBeenCalledTimes(2);
+      expect(mocks.execute.mock.calls[1][0].chainId).toBe(84532);
+      expect(localStorage.getItem(KEY)).toBeNull();
+    });
+    it('releases a definitely unsent leg under a fresh lock, so a resume sends it again', async () => {
+      const session = { account: ALICE, plans: plans() };
+      mocks.client.mockImplementation(clientFor(session));
+      mocks.execute.mockImplementationOnce(async (opts) => {
+        await opts.onSending();
+        lapse();
+        // executeTransaction swallows its rejection callback's failure.
+        await opts.onWriteRejected().catch(() => {});
+        opts.onError('Transaction rejected by wallet', { userRejected: true });
+      });
+      await expect(__test.runCreateDirectSession(state(), session, false)).rejects.toThrow('rejected');
+      expect(saved()[0]).toMatchObject({ status: 'ready', hash: null });
+      mocks.execute.mockImplementation((opts) => confirmSend(opts, opts.chainId === 11155111 ? HASH1 : HASH2));
+      await __test.runCreateDirectSession(state(), session, true);
+      expect(localStorage.getItem(KEY)).toBeNull();
+    });
+  });
+
   it('persists a broadcast hash and checks it without resending after receipt tracking fails', async () => {
     const draft = state();
     const session = { account: ALICE, plans: plans() };
     mocks.client.mockImplementation(clientFor(session));
-    mocks.execute.mockImplementationOnce((opts) => opts.onStatus('Tracking unavailable', 'pending', { hash: HASH1, trackingError: true }));
+    mocks.execute.mockImplementationOnce(async (opts) => { await opts.onSubmitted(HASH1); opts.onStatus('Tracking unavailable', 'pending', { hash: HASH1, trackingError: true }); });
     await expect(__test.runCreateDirectSession(draft, session, false)).rejects.toThrow(/confirmation is unavailable/);
     expect(JSON.parse(localStorage.getItem(KEY)).plans[0].hash).toBe(HASH1);
     mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH2));
@@ -231,7 +296,7 @@ describe('direct multichain creation recovery', () => {
   it('offers the held-no-hash exit for an interrupted wallet request, releasing only the state shown', async () => {
     const draft = state(); const session = { account: ALICE, plans: plans() };
     session.plans[0].status = 'awaiting-wallet';
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     const render = vi.fn();
     const view = __test.renderDeploy(draft, render);
     const release = [...view.querySelectorAll('button')].find((button) => button.textContent === 'It was not sent, release it');
@@ -248,7 +313,7 @@ describe('direct multichain creation recovery', () => {
   it('keeps a leg held when the saved launch changed after the exit was shown', async () => {
     const draft = state(); const session = { account: ALICE, plans: plans() };
     session.plans[0].status = 'awaiting-wallet';
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     const view = __test.renderDeploy(draft, vi.fn());
     const newer = JSON.parse(localStorage.getItem(KEY));
     newer.plans[0].hash = HASH1; newer.plans[0].status = 'submitted'; newer.revision += 1;
@@ -277,7 +342,7 @@ describe('direct multichain creation recovery', () => {
   it('cannot revive a session another window already cleared', async () => {
     const draft = state();
     const session = { account: ALICE, plans: plans() };
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     localStorage.removeItem(KEY);
     await expect(__test.runCreateDirectSession(draft, session, true)).rejects.toThrow(/cleared in another window/);
     expect(mocks.execute).not.toHaveBeenCalled();
@@ -286,7 +351,7 @@ describe('direct multichain creation recovery', () => {
   it('reloads a newer journal from another window before considering any remaining send', async () => {
     const draft = state();
     const session = { account: ALICE, plans: plans() };
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     const newer = JSON.parse(localStorage.getItem(KEY));
     newer.revision += 1;
     newer.plans[0].hash = HASH1;
@@ -324,7 +389,7 @@ describe('direct multichain creation recovery', () => {
   it('keeps a single staged launch receipt across retries instead of preparing a second project', async () => {
     const draft = state(); draft.chainIds = [11155111];
     const session = { account: ALICE, plans: [{ ...plans()[0], hash: HASH1, status: 'submitted', rulesetCount: 2 }] };
-    __test.saveCreateDirectSession(draft, session);
+    await __test.saveCreateDirectSession(draft, session);
     const saved = localStorage.getItem(KEY);
     __test.clearCreateDirectSession(draft); localStorage.setItem(KEY, saved);
     mocks.client.mockImplementation(clientFor(session));

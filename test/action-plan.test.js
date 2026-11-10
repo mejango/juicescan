@@ -16,7 +16,7 @@ function call(chainId, count = 12n) {
 function options(overrides = {}) {
   return { scope: SCOPE, account: ACCOUNT,
     prepare: vi.fn(async () => ({ rounds: [[call(8453), call(10)], [call(8453, 5n)]] })),
-    executeRound: vi.fn(async (_calls, _index, _plan, control) => { control.checkpoint({ confirmed: true }); return { confirmed: true }; }), ...overrides };
+    executeRound: vi.fn(async (_calls, _index, _plan, control) => { await control.checkpoint({ confirmed: true }); return { confirmed: true }; }), ...overrides };
 }
 
 beforeEach(() => {
@@ -28,7 +28,7 @@ describe('durable selected action rounds', () => {
   it('retains every allocation and skips verified rounds after an interruption', async () => {
     const first = options({ executeRound: vi.fn(async (_calls, index, _plan, control) => {
       if (index === 1) throw new Error('wallet unavailable');
-      control.checkpoint({ confirmed: true }); return { confirmed: true };
+      await control.checkpoint({ confirmed: true }); return { confirmed: true };
     }) });
     await expect(runSavedActionPlan(first)).rejects.toThrow('wallet unavailable');
     expect(JSON.parse(localStorage.getItem(KEY)).nextRound).toBe(1);
@@ -41,7 +41,7 @@ describe('durable selected action rounds', () => {
 
   it('checkpoints before a child receipt is cleared, including a crash after verification', async () => {
     const first = options({ prepare: vi.fn(async () => ({ rounds: [[call(8453)]] })), executeRound: vi.fn(async (_c, _i, _p, control) => {
-      control.checkpoint({ confirmed: true }); throw new Error('page closed before receipt cleanup');
+      await control.checkpoint({ confirmed: true }); throw new Error('page closed before receipt cleanup');
     }) });
     await expect(runSavedActionPlan(first)).rejects.toThrow('page closed');
     const resumed = options();
@@ -61,7 +61,7 @@ describe('durable selected action rounds', () => {
 
   it('retains unknown Safe publication and does not run new preparation or proposals', async () => {
     const first = options({ safeMode: true, executionAccount: SAFE, executeRound: vi.fn(async (_c, _i, _p, control) => {
-      control.beforeSafe(); throw new Error('lost proposal response');
+      await control.beforeSafe(); throw new Error('lost proposal response');
     }) });
     await expect(runSavedActionPlan(first)).rejects.toThrow('lost proposal');
     const again = options({ safeMode: true, executionAccount: SAFE });
@@ -119,8 +119,8 @@ describe('durable selected action rounds', () => {
 
   it('persists a refreshed unsigned round before a new review and preserves earlier completed rounds', async () => {
     const first = options({ executeRound: async (_calls, index, _plan, control) => {
-      if (!index) { control.checkpoint({ confirmed: true }); return { confirmed: true }; }
-      control.replaceUnsubmittedRound([call(8453, 99n)]);
+      if (!index) { await control.checkpoint({ confirmed: true }); return { confirmed: true }; }
+      await control.replaceUnsubmittedRound([call(8453, 99n)]);
       throw new Error('review closed');
     } });
     await expect(runSavedActionPlan(first)).rejects.toThrow('review closed');
@@ -133,10 +133,84 @@ describe('durable selected action rounds', () => {
 
   it('never replaces a round after a Safe proposal has begun publication', async () => {
     const first = options({ safeMode: true, executionAccount: SAFE, executeRound: async (_calls, _index, _plan, control) => {
-      control.beforeSafe();
-      control.replaceUnsubmittedRound([call(8453, 99n)]);
+      await control.beforeSafe();
+      await control.replaceUnsubmittedRound([call(8453, 99n)]);
     } });
     await expect(runSavedActionPlan(first)).rejects.toThrow('submitted Safe round cannot be changed');
+  });
+});
+
+describe('lock fencing', () => {
+  // Each request gets its own lock: `lapse()` loses the current one; a later request takes a fresh one.
+  let handles;
+  const lapse = () => { handles.at(-1).lost = true; };
+  const saved = () => JSON.parse(localStorage.getItem(KEY));
+  beforeEach(() => {
+    handles = [];
+    navigator.locks.request.mockImplementation((name, _opts, fn) => {
+      const handle = { name, lost: false };
+      handle.held = async () => !handle.lost;
+      handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('The lock was lost.'), { name: 'LockLostError', code: 'LOCK_LOST' }); };
+      handles.push(handle);
+      return fn(handle);
+    });
+  });
+  const safeRun = executeRound => options({ safeMode: true, executionAccount: SAFE, executeRound: vi.fn(executeRound) });
+  it('hands the round the plan lock, so its Safe wallet calls fence it before the prompt', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => { expect(control.locks).toEqual([handles.at(-1)]); return { confirmed: true }; });
+    await expect(runSavedActionPlan(run)).resolves.toMatchObject({ completed: true });
+    expect(run.executeRound).toHaveBeenCalled();
+  });
+  it('never records a Safe attempt once its lock lapsed before the attempt', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => { lapse(); await control.beforeSafe({ chainId: 8453 }); return { confirmed: true }; });
+    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(saved().safePending).toBe(false); expect(saved().safeProgress).toBeUndefined();
+  });
+  it('saves a round checkpoint reached after the lapse under a fresh lock, and a resume skips that round', async () => {
+    const run = options({ executeRound: vi.fn(async (_calls, _index, _plan, control) => { lapse(); await control.checkpoint({ confirmed: true }); return { confirmed: true }; }) });
+    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(saved()).toMatchObject({ nextRound: 1, results: [{ confirmed: true }] });
+    const resumed = options();
+    await expect(runSavedActionPlan(resumed)).resolves.toMatchObject({ completed: true, resumed: true });
+    expect(resumed.executeRound.mock.calls.map(call => call[1])).toEqual([1]);
+  });
+  it('saves a Safe rejection after the lapse under a fresh lock, so the action can be retried', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => {
+      await control.beforeSafe({ chainId: 8453 });
+      lapse();
+      // The wallet rejected (4001): the caller reports it and swallows a refused save.
+      await control.safeCancelled().catch(() => {});
+      return { cancelled: true };
+    });
+    await expect(runSavedActionPlan(run)).resolves.toMatchObject({ cancelled: true });
+    expect(saved().safePending).toBe(false); expect(saved().safeProgress.attempt).toBeNull();
+    const retry = safeRun(async () => ({ cancelled: true }));
+    await expect(runSavedActionPlan(retry)).resolves.toMatchObject({ cancelled: true, resumed: true });
+    expect(retry.executeRound).toHaveBeenCalledOnce();
+  });
+  it('saves a Safe proposal returned after the lapse under a fresh lock', async () => {
+    const proposal = { chainId: 8453, safeTxHash: '0x' + 'ab'.repeat(32) };
+    const run = safeRun(async (_calls, _index, _plan, control) => {
+      await control.beforeSafe({ chainId: 8453 });
+      lapse();
+      await control.recordSafeProposal(proposal);
+      return { confirmed: true };
+    });
+    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    expect(saved().safePending).toBe(false);
+    expect(saved().safeProgress).toMatchObject({ index: 0, attempt: null, proposals: [proposal] });
+  });
+  it('never applies a late Safe outcome to a newer attempt', async () => {
+    const run = safeRun(async (_calls, _index, _plan, control) => {
+      await control.beforeSafe({ chainId: 8453 });
+      lapse();
+      // Another window took the plan and started its own attempt.
+      const current = saved(); current.safeProgress.attempt.id = 'other'; localStorage.setItem(KEY, JSON.stringify(current));
+      await control.safeCancelled().catch(() => {});
+      return { cancelled: true };
+    });
+    await runSavedActionPlan(run);
+    expect(saved().safePending).toBe(true); expect(saved().safeProgress.attempt.id).toBe('other');
   });
 });
 

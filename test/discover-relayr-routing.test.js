@@ -18,6 +18,7 @@ vi.mock('../src/relayr.js', async importOriginal => ({
   relayrSupportsForwarding: vi.fn().mockResolvedValue(true), relayrPostBundle: vi.fn(), relayrPay: vi.fn(), relayrPoll: vi.fn(),
 }));
 
+import { assertLocksHeld } from '../src/browser-locks.js';
 import { buildForwardedTx, relayrPay, relayrPoll, relayrPostBundle, relayrSupportsForwarding, saveRelayrPendingSession } from '../src/relayr.js';
 import { confirmTransactionModal, waitForTrackedTransactionReceipt } from '../src/component-base.js';
 import { runProjectPayerRelayrDeploys, runRelayrAcrossChains, shouldUseRelayrForChains } from '../src/discover.js';
@@ -127,5 +128,38 @@ describe('Discover routing after testnet Relayr enablement', () => {
     await expect(run()).rejects.toThrow(/Both direct transaction receipts and a Relayr request/);
     await expect(runProjectPayerRelayrDeploys(CALLS, vi.fn(), SCOPE)).rejects.toThrow(/Both direct payer receipts/);
     expect(relayrPoll).not.toHaveBeenCalled(); expect(relayrPay).not.toHaveBeenCalled(); expect(runtime.wallet.sendTransaction).not.toHaveBeenCalled();
+  });
+
+  // Codex's two tabs: tab A's plan lease lapses while its review is open; tab B resumes and completes the round
+  // (its journals clear, so nothing saved blocks A). A then confirms its review: no send of any kind follows.
+  describe('a stale tab whose plan lock lapsed during review', () => {
+    let planLock;
+    beforeEach(() => {
+      planLock = { lost: false };
+      planLock.held = async () => !planLock.lost;
+      planLock.assertHeld = async () => { if (planLock.lost) throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); };
+      confirmTransactionModal.mockImplementation(async () => { planLock.lost = true; return true; });
+    });
+    it('direct (EOA) route: never opens the wallet', async () => {
+      runtime.wallet = { getChainId: vi.fn(async () => 84532), sendTransaction: vi.fn(async () => A) };
+      await expect(runRelayrAcrossChains([CHAINS[0]], ACCOUNT, () => CALLS[0], 500000n, vi.fn(), { pendingScope: 'stale-direct', locks: [planLock] }))
+        .rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(runtime.wallet.sendTransaction).not.toHaveBeenCalled();
+    });
+    it('Relayr route: no forward signature, publication or payment', async () => {
+      // buildForwardedTx's own prompt fence is covered in relayr-forwarding; here it stands in with the same check.
+      buildForwardedTx.mockImplementation(async (cid, _account, to, data, _gas, _value, _deadline, locks) => { await assertLocksHeld(locks); return { chain: cid, target: to, data, value: '0' }; });
+      await expect(runRelayrAcrossChains(CHAINS, ACCOUNT, cid => CALLS.find(call => call.chainId === cid), 500000n, vi.fn(), { pendingScope: 'stale-relayr', locks: [planLock] }))
+        .rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(buildForwardedTx.mock.calls[0][7]).toEqual([planLock]);
+      expect(relayrPostBundle).not.toHaveBeenCalled(); expect(relayrPay).not.toHaveBeenCalled();
+    });
+    it('Relayr route: publication and payment carry the plan lock to their own fences', async () => {
+      confirmTransactionModal.mockResolvedValue(true);
+      relayrPostBundle.mockImplementation(async (_txs, journal) => { expect(journal.locks).toEqual([planLock]); throw new Error('Reached the Relayr quote boundary'); });
+      await expect(runRelayrAcrossChains(CHAINS, ACCOUNT, cid => CALLS.find(call => call.chainId === cid), 500000n, vi.fn(), { pendingScope: 'plan-relayr', locks: [planLock] }))
+        .rejects.toThrow(/Relayr quote boundary/);
+      expect(relayrPostBundle).toHaveBeenCalledOnce();
+    });
   });
 });
