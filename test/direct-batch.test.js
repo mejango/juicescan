@@ -126,10 +126,19 @@ describe('sequential direct transaction recovery', () => {
     it('never marks a leg sending, and hands the wallet its lock', async () => {
       let walletLocks;
       await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope: 'lapsed-sending', execute: async (_call, _index, _submitted, sending, held) => {
-        walletLocks = [held]; lapse(); await sending(); return receipt('0x1');
+        walletLocks = held; lapse(); await sending(); return receipt('0x1');
       } })).rejects.toMatchObject({ code: 'LOCK_LOST' });
-      expect(walletLocks[0]).toBe(handles[0]);
+      expect(walletLocks).toEqual([handles[0]]);
       expect(saved('lapsed-sending')).toBeNull();
+    });
+    it('never marks a leg sending once the caller\'s plan lock lapsed, and hands the wallet both locks', async () => {
+      const planLock = { assertHeld: async () => { throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); } };
+      let walletLocks;
+      await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope: 'plan-lapsed', locks: [planLock], execute: async (_call, _index, _submitted, sending, held) => {
+        walletLocks = held; await sending(); return receipt('0x1');
+      } })).rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(walletLocks).toEqual([handles[0], planLock]);
+      expect(saved('plan-lapsed')).toBeNull();
     });
     it('saves a hash returned after the lapse under a fresh lock, and a resume verifies it', async () => {
       const scope = 'lapsed-hash';

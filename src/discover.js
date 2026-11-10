@@ -11883,7 +11883,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
   }
   if (!useRelayr) {
     var directReceipts = await runDirectBatch(calls, {
-      account: account, scope: confirmOpts.pendingScope, offerRelease: offerRelease,
+      account: account, scope: confirmOpts.pendingScope, offerRelease: offerRelease, locks: confirmOpts.locks,
       onComplete: confirmOpts.onVerified ? function (receipts) { return confirmOpts.onVerified({ records: receipts.map(function (receipt) { return { status: { state: 'Completed' }, data: { hash: receipt.transactionHash } }; }) }); } : null,
       onStorageUnavailable: function () { setStatus('Keep this window open to preserve the submitted direct transaction receipts.', 'pending'); },
       verifySubmitted: async function (call, hash) {
@@ -11898,7 +11898,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
         if (receipt && receipt.status === 'success' && confirmOpts.verifyReceipt) await confirmOpts.verifyReceipt(call, receipt);
         return receipt;
       },
-      execute: async function (direct, directIndex, onSubmitted, onSending, lock) {
+      execute: async function (direct, directIndex, onSubmitted, onSending, locks) {
         var directOk = await confirmTransactionModal({
           via: 'Direct wallet transaction',
           action: confirmOpts.label || 'Project update',
@@ -11963,7 +11963,7 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
           data: direct.data,
           value: 0n,
           gas: directSendGas,
-        }); }, function () { assertScheduleFresh(direct.scheduleValidUntil); }, [lock].concat(confirmOpts.locks || []));
+        }); }, function () { assertScheduleFresh(direct.scheduleValidUntil); }, locks);
         await onSubmitted(directHash);
         setStatus('Confirming onchain | ' + truncAddr(directHash), 'pending');
         // Use the same dual-source receipt poll as the shared transaction boundary. Some wallet/public-RPC

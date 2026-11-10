@@ -178,12 +178,21 @@ describe('forwarded nonce publication reservations', () => {
     expect(fetchQuote).not.toHaveBeenCalled();
   });
 
-  it('never publishes once the caller\'s plan lock lapsed, with the publication lock still held', async () => {
-    const tx = await entry();
-    const planLock = { held: async () => false, assertHeld: async () => { throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); } };
-    await expect(relayrPostBundle([tx], { ...journal('plan-lapsed'), locks: [planLock] })).rejects.toMatchObject({ code: 'LOCK_LOST' });
-    expect(loadRelayrPendingSession('plan-lapsed')).toBeNull();
-    expect(fetchQuote).not.toHaveBeenCalled();
+  describe('when the caller\'s plan lock lapsed, with the publication lock still held', () => {
+    // `holds` is how many fence checks the plan lock passes before it reads as lost.
+    const planLock = holds => ({ assertHeld: async () => { if (holds-- <= 0) throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); } });
+    it.each([
+      ['at the final signature (before the reservation write)', 0],
+      ['after the reservation write, before the POST', 1],
+    ])('lapsed %s: never publishes, leaves no reservation, and a retry publishes', async (_when, holds) => {
+      const tx = await entry();
+      await expect(relayrPostBundle([tx], { ...journal('plan-lapsed'), locks: [planLock(holds)] })).rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(loadRelayrPendingSession('plan-lapsed')).toBeNull();
+      expect(fetchQuote).not.toHaveBeenCalled();
+      expect(reservations()).toEqual([]);
+      await expect(relayrPostBundle([tx], journal('plan-lapsed'))).resolves.toHaveProperty('bundle_uuid');
+      expect(reservations()).toHaveLength(1);
+    });
   });
 
   describe('when the publication lock lapses during the quote POST', () => {
