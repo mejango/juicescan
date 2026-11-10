@@ -1,3 +1,25 @@
+# Lock fencing from SDK 6.2.0, ported (2026-11-10)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/ADOPTION_BRIEF.md (no version bump, no SDK dependency). Reference: @bananapus/nana-sdk-core@6.2.0 `review/locks`, `relayrSend`, `contractWrite`, `wallet`.
+
+- [x] 1. `browser-locks.js`: owner-checked lease renewal; every lock is a handle with `held`, `assertHeld`, `signal` (native and test managers wrapped the same way); `assertLocksHeld`; `LockLostError`. Relayr per-scope publication lock goes through `browserLocks()` (R119: it ran unlocked without Web Locks).
+- [x] 2. `invokeWallet(..., lock)`: awaits the fence last, then rechecks connector, account, route and state synchronously before the wallet call; a refused fence is "not sent".
+- [x] 3. Fence the journals under their locks: action-plan `save`/`saveSafeProgress` (bound to the plan lock; callbacks become async and every caller awaits them), `writeNonceReservations`, Relayr publication saves, the retire archive, direct-batch `persist`, `saveCreateDirectSession`, and the write-hold writes in `sendHeldWrite`/`release`/Defifa.
+- [x] 4. `relayrPay`: `onSending`, `onUnsent` and `onSubmitted` run inside the payment lock, each right after a fence; a lock lost after the wallet returned a hash skips the save and reports the payment as submitted. `onUnsent` is skipped when the lock is lost (SDK #295).
+- [x] 5. `executeTransaction`: optional `locks` (fence before `onSending`, wallet fence) and an awaited `onSubmitted(hash)`; create-direct and Defifa save their hash there instead of in the sync `onStatus`.
+- [x] 6. Failing-first tests for lease lapse (renewal after takeover, handle reads lost), the wallet fence, each journal refusing to write after a lapse, and the Relayr onSubmitted gap. Full `npm run check` on Node 22, draft PR, no merge.
+
+### Review
+`npm run check` on Node 22.23.4 (DEPLOY_ALL_DEPLOYMENTS_DIR at the pinned deploy-all 8ff50c2): 0 production vulnerabilities, `check:generated` clean (nothing regenerated), transaction inventory 142 sites, 222 files / 2334 unit tests with coverage floors, startup 719,856 / 722,000 B gzip, total 2,084,569 / 2,125,000 B, browser 147 passed plus one Learn spec that failed on ENOSPC (disk full) and passed on rerun. The new lapse tests fail on origin/main (browser-locks 6, wallet fence 5, action plan 2, direct batch 3, create-direct 3, Relayr pay 4, publication and retire 2) and pass here. Kept as is: Relayr polling and account-view saves have no lock to fence; a plan round's nested Relayr/direct/Safe sends are fenced by their own locks, and the plan's own pre-wallet Safe record refuses under a lost plan lock.
+
+## Plan refinement
+- **Objective:** A tab whose lock lapsed (IndexedDB lease taken over while suspended) never writes a journal or opens the wallet afterwards, matching SDK 6.2.0; no flow refuses for missing Web Locks.
+- **System fit:** Outcome (no double send after a lapse) -> capability (lock handle with a fresh `held()` read) -> prepared action (journal write or wallet call) -> authority (the lock) -> verified result (tests that lapse the lease). Owners: `browser-locks.js` (locks), `wallet.js` `invokeWallet` (every wallet call), each journal module for its save. Read paths, polling saves without a lock and UI are unaffected.
+- **Reuse and simplicity:** Port the SDK code line for line into the existing local copy; one wallet fence in `invokeWallet`; module-private saves are bound to their lock, shared sync writers (`saveRelayrPendingSession`, write hold) are fenced at their locked call sites with `await lock.assertHeld()` immediately before the write. No SDK dependency, no new modules.
+- **Evidence and unknowns:** Reference is the released 6.2.0 dist (`review/locks.js`, `relayrSend.js` sendPayment, `contractWrite.js`, `wallet.js` `fenced`). Unlocked saves (Relayr polling, account view) have no lock to fence and stay as they are.
+- **Verification:** New vitest cases fail on origin/main first; then `npm run check` (unit + coverage + bundle budget + browser) on Node 22; `check:generated` clean.
+- **Resource budget:** One worktree, `node_modules` symlinked from the identical-lockfile sm-juicescan checkout (disk is near full); targeted vitest runs while editing, one full check at the end.
+
 # Bendystraw per-token data: event tokens, single-token check, USD balances (2026-10-20)
 
 Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/7d1fdce3-54c6-4145-93c3-bfa2558645d2/scratchpad/client-round-brief.md. Bendystraw now serves each money event's `token`/`decimals`/`tokenSymbol`, `project.accountingTokenCount`, `projectTokenBalances` and USD balances at current rates.

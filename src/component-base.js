@@ -13,6 +13,7 @@ import { getAddress, meta, getABI } from './abi-registry.js';
 import { prettyArgSteps } from './tx-pretty-args.js';
 import { contractGasWithHeadroom } from './gas.js';
 import { writeHold, heldHashState, isExplicitWalletRejection } from './write-hold.js';
+import { assertLocksHeld } from './browser-locks.js';
 
 // Reverse index (chainId:loweraddr → deployment name) so a confirm modal can show WHICH known contract an
 // address is. Suckers and other per-project deployments aren’t in the registry — callers pass contractName.
@@ -1452,18 +1453,22 @@ export async function heldWriteGate(hold, label, verifyReceipt) {
 
 // Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
 // Only an explicit wallet rejection (EIP-1193 4001) releases the reservation; any other wallet error holds.
+// `send(lock)` gives the hold's lock to its wallet call as the fence. The record is written only while that lock
+// is still this window's: a hash returned after it lapsed is not saved here, and the receipt still settles it.
 export function sendHeldWrite(hold, check, send) {
-  return hold.withLock(async function () {
+  return hold.withLock(async function (lock) {
+    await lock.assertHeld();
     var reservation = hold.reserve();
     try {
       check();
       if (!hold.owns(reservation)) throw new Error('This wallet action was started in another window. Check that window before sending again.');
     } catch (err) { hold.releaseLocked(reservation); throw err; }
     var hash;
-    try { hash = await send(); } catch (err) {
-      if (err.walletNotInvoked || isExplicitWalletRejection(err)) { hold.releaseLocked(reservation); throw err; }
+    try { hash = await send(lock); } catch (err) {
+      if (err.walletNotInvoked || isExplicitWalletRejection(err)) { if (await lock.held()) hold.releaseLocked(reservation); throw err; }
       throw Object.assign(new Error(errMessage(err, 'The wallet request failed.') + ' Your wallet may have sent it, so this action stays pending until it settles.', { cause: err }), { heldWrite: true });
     }
+    if (!(await lock.held())) return { hash: hash, reservation: reservation };
     return { hash: hash, reservation: hold.submitted(reservation, hash) || reservation };
   });
 }
@@ -1651,12 +1656,12 @@ export function executeTransaction(opts) {
       }
       txs.push({ to: opts.address, value: '0x' + (opts.value || 0n).toString(16), data: encodeFunctionData({ abi: opts.abi, functionName: opts.functionName, args: opts.args }) });
       cbs.onStatus('Proposing to your Safe…', 'pending', { phase: 'signing' });
-      if (opts.onSending) await opts.onSending();
+      if (opts.onSending) { await assertLocksHeld(opts.locks); await opts.onSending(); }
       beforeWriteComplete = true;
       return invokeWallet(opts.chainId, account, true, function () {
         walletInvoked = true;
         return proposeSafeTransactions(txs);
-      }, function () { assertWalletInvocation(true); }).then(function (safeTxHash) {
+      }, function () { assertWalletInvocation(true); }, opts.locks).then(function (safeTxHash) {
         cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
       });
     }).catch(async function (err) {
@@ -1709,14 +1714,14 @@ export function executeTransaction(opts) {
     return pub.simulateContract(simulationRequest).then(async function(simulation) {
       cbs.onStatus('Awaiting wallet confirmation…', 'pending', { phase: 'signing' });
       var gas = await contractGasWithHeadroom(pub, simulation.request);
-      if (opts.onSending) await opts.onSending();
+      if (opts.onSending) { await assertLocksHeld(opts.locks); await opts.onSending(); }
       beforeWriteComplete = true;
-      function send() {
+      function send(holdLock) {
         return invokeWallet(opts.chainId, account, false, function (current) {
           wallet = current;
           walletInvoked = true;
           return current.writeContract(Object.assign({}, simulation.request, { account: account, chain: CHAINS[opts.chainId], gas: gas }));
-        }, function () { assertWalletInvocation(false); });
+        }, function () { assertWalletInvocation(false); }, [holdLock].concat(opts.locks || []));
       }
       if (!hold) { assertWalletInvocation(false); return send(); }
       return sendHeldWrite(hold, function () { assertWalletInvocation(false); }, send).then(function (sent) {
@@ -1724,8 +1729,14 @@ export function executeTransaction(opts) {
         return sent.hash;
       });
     });
-  }).then(function(hash) {
+  }).then(async function(hash) {
     submittedHash = hash;
+    // The caller's journal records the hash under its own locks (it fences them). Its failure is reported with
+    // the hash: the transaction was sent, and is never treated as unsent.
+    if (opts.onSubmitted) {
+      try { await opts.onSubmitted(hash); }
+      catch (cause) { throw Object.assign(new Error(errMessage(cause, 'The submitted transaction could not be saved.')), { cause: cause, submittedJournal: true }); }
+    }
     // Submitted to the mempool — now waiting to be included onchain. Keep a live pending state up
     // the whole time (waitForTransactionReceipt can take a while).
     cbs.onStatus('Confirming onchain | ' + truncAddr(hash), 'pending', { phase: 'receipt', hash: hash, chainId: opts.chainId });
@@ -1748,7 +1759,7 @@ export function executeTransaction(opts) {
     cbs.onSuccess('Confirmed in block ' + receipt.blockNumber + ' | TX: ' + truncAddr(receipt.transactionHash), { phase: 'done', hash: receipt.transactionHash, chainId: opts.chainId, blockNumber: receipt.blockNumber });
   }).catch(async function(err) {
     try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }
-    if (submittedHash && err && err.code === 'RULESET_ORDER_UNVERIFIED') {
+    if (submittedHash && err && (err.code === 'RULESET_ORDER_UNVERIFIED' || err.submittedJournal)) {
       cbs.onError(err.message, { userRejected: false, submittedHash: submittedHash, error: err }); return;
     }
     if (shouldKeepSubmittedTransactionPending(submittedHash, err)) {

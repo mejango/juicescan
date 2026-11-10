@@ -40,10 +40,11 @@ export function writeHold(chainId, account, call) {
     if (raw == null) return null;
     try { var record = JSON.parse(raw); return record && typeof record === 'object' ? record : {}; } catch (_) { return {}; }
   }
-  // `wait`: queue behind another window instead of refusing (releases only).
+  // `wait`: queue behind another window instead of refusing (releases only). `work(lock)` gets the lock's handle:
+  // it calls `await lock.assertHeld()` immediately before each write and gives `[lock]` to its wallet call.
   function withLock(work, wait) {
     return browserLocks().request(key, wait ? {} : { ifAvailable: true }, function (lock) {
-      return lock ? work() : Promise.reject(new Error('This wallet action is already open in another window.'));
+      return lock ? work(lock) : Promise.reject(new Error('This wallet action is already open in another window.'));
     });
   }
   // The same attempt in the same state: a release queued behind a send never removes the hash it saved.
@@ -77,7 +78,7 @@ export function writeHold(chainId, account, call) {
       return next;
     },
     releaseLocked: releaseLocked,
-    release: function (expected) { return withLock(async function () { releaseLocked(expected); }, true); },
+    release: function (expected) { return withLock(async function (lock) { await lock.assertHeld(); releaseLocked(expected); }, true); },
     // The lock makes reserve-then-send atomic across tabs: Web Locks, or browserLocks()'s fallback without them.
     withLock: withLock,
   };

@@ -258,15 +258,57 @@ describe('Relayr payment receipt tracking', () => {
     const rejection = Object.assign(new Error('User rejected'), { code: 4001 });
     const error = nested ? new Error('Provider error', { cause: rejection }) : rejection;
     let locked = false;
-    vi.stubGlobal('navigator', { locks: { request: async (_key, callback) => {
+    vi.stubGlobal('navigator', { locks: { request: async (key, _options, callback) => {
       locked = true;
-      try { return await callback(); } finally { locked = false; }
+      try { return await callback({ name: key }); } finally { locked = false; }
     } } });
     const unsent = vi.fn(() => { expect(locked).toBe(true); });
     state.wallet.sendTransaction.mockRejectedValue(error);
     await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, vi.fn(), unsent)).rejects.toBe(error);
     expect(unsent).toHaveBeenCalledOnce();
     expect(state.client.track).not.toHaveBeenCalled();
+  });
+
+  it('journals the submitted hash before the payment lock closes', async () => {
+    let locked = false;
+    vi.stubGlobal('navigator', { locks: { request: async (key, _options, callback) => {
+      locked = true;
+      try { return await callback({ name: key }); } finally { locked = false; }
+    } } });
+    const submitted = vi.fn(() => { expect(locked).toBe(true); });
+    await expect(relayrPay(paymentFor(), state.account, submitted, BUNDLE_UUID)).resolves.toBe(HASH);
+    expect(submitted).toHaveBeenCalledWith(HASH);
+  });
+
+  describe('after the payment lock lapsed to another window', () => {
+    let lock;
+    beforeEach(() => {
+      lock = { held: true, name: 'jb-relayr-payment' };
+      lock.assertHeld = async () => { if (!lock.held) throw Object.assign(new Error('lost'), { name: 'LockLostError', code: 'LOCK_LOST' }); };
+      vi.stubGlobal('navigator', { locks: { request: async (_key, _options, callback) => callback({
+        name: lock.name, assertHeld: lock.assertHeld, held: async () => lock.held,
+      }) } });
+    });
+    it('never journals sending or opens the wallet', async () => {
+      lock.held = false;
+      const sending = vi.fn();
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, sending)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+      expect(sending).not.toHaveBeenCalled(); expect(state.wallet.sendTransaction).not.toHaveBeenCalled();
+    });
+    it('refuses the wallet unsent and leaves the journal to the new owner', async () => {
+      const unsent = vi.fn();
+      await expect(relayrPay(paymentFor(), state.account, null, BUNDLE_UUID, null, () => { lock.held = false; }, unsent))
+        .rejects.toMatchObject({ code: 'LOCK_LOST', walletNotInvoked: true });
+      expect(state.wallet.sendTransaction).not.toHaveBeenCalled(); expect(unsent).not.toHaveBeenCalled();
+    });
+    it('reports a payment sent before the lapse as submitted without journaling it', async () => {
+      state.wallet.sendTransaction.mockImplementation(async () => { lock.held = false; return HASH; });
+      const submitted = vi.fn();
+      await expect(relayrPay(paymentFor(), state.account, submitted, BUNDLE_UUID)).rejects.toMatchObject({
+        code: 'RELAYR_PAYMENT_SUBMITTED', hash: HASH, chainId: 1, cause: { code: 'LOCK_LOST' },
+      });
+      expect(submitted).not.toHaveBeenCalled(); expect(state.client.track).not.toHaveBeenCalled();
+    });
   });
 
   it.each([new Error('Provider disconnected'), Object.assign(new Error('User rejected'), { name: 'UserRejectedRequestError' })])(

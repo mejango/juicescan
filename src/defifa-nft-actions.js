@@ -66,9 +66,10 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
     return old.hash ? hold.submitted(moved, old.hash) : moved;
   }
   function legacyKey(kind, account) { return 'nana-sdk:reviewed-write:v1:namespace:' + chainId + ':' + account.toLowerCase() + ':' + namespace(kind); }
-  // Settle a hold (inside its lock); a hold moved from an SDK record also ends that record, unless the older build
-  // has since saved a newer attempt there.
-  function releaseHold(hold, record, kind, account) {
+  // Settle a hold (inside its lock, while `lock` is still this window's); a hold moved from an SDK record also ends
+  // that record, unless the older build has since saved a newer attempt there.
+  async function releaseHold(hold, record, kind, account, lock) {
+    await lock.assertHeld();
     hold.releaseLocked(record);
     if (record.legacyId === undefined || hold.read()) return;
     var legacy = legacyKey(kind, account);
@@ -103,7 +104,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
         var check = event.currentTarget, ticket = generation, resultMessage = ''; check.disabled = true;
         var hold = holdFor(kind, account);
         try {
-          await hold.withLock(async function () {
+          await hold.withLock(async function (lock) {
             if (!hold.owns(record)) { resultMessage = 'This action changed since it was shown. Check it again.'; return; }
             var receipt;
             if (record.safe) {
@@ -118,7 +119,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
             if (approvalOf(record)) {
               var outcome = await proveSavedCall(client, record, receipt);
               if (outcome === 'success') await assertApprovalGranted(client, record, receipt);
-              releaseHold(hold, record, kind, account);
+              await releaseHold(hold, record, kind, account, lock);
               resultMessage = outcome === 'failed' ? 'Original token approval ' + record.hash + ' failed onchain. Review a new approval if needed.' : 'Token approval ' + record.hash + ' verified onchain. Review NFT mint again to continue.';
               return;
             }
@@ -127,9 +128,9 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
               await verifyDefifaNftTransaction(client, context, receipt);
             } catch (err) {
               if (!(err instanceof DefifaNftTransactionRevertedError)) throw err;
-              releaseHold(hold, record, kind, account); resultMessage = 'Original NFT transaction ' + record.hash + ' failed onchain. You may review a new transaction.'; return;
+              await releaseHold(hold, record, kind, account, lock); resultMessage = 'Original NFT transaction ' + record.hash + ' failed onchain. You may review a new transaction.'; return;
             }
-            releaseHold(hold, record, kind, account); resultMessage = 'Original NFT transaction ' + record.hash + ' verified onchain.';
+            await releaseHold(hold, record, kind, account, lock); resultMessage = 'Original NFT transaction ' + record.hash + ' verified onchain.';
           });
           if (disposed || !active || ticket !== generation || account !== getAccount()) return;
           busy = false; if (await refresh()) message(resultMessage);
@@ -191,19 +192,20 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
       if (approvalOnly) rows = [['Account', account], ['Token', token], ['Spender', reviewed.transaction.address], ['Approval amount', formatPrice(reviewed.amount, reviewed.inventory.pricing)]];
       var context = { hook: reviewed.inventory.hook, implementation: reviewed.inventory.implementation, account: account, transaction: reviewed.transaction };
       var hold = holdFor(kind, account), savedCall = { namespace: namespace(kind), chainId: chainId, safe: safeRoute, call: { to: request.address.toLowerCase(), data: encodeFunctionData(request).toLowerCase(), value: String(request.value || 0n) } };
-      await hold.withLock(function () { return new Promise(function (resolve) {
+      await hold.withLock(function (lock) { return new Promise(function (resolve) {
         if (hold.read()) { error(new Error('Check the original transaction before starting this action again.')); resolve(); return; }
         var reservation = null;
         // The lock guards reserve-then-send only: free it once the hash is saved, before any read, so a slow
         // refresh never keeps another view from checking this hold.
         async function finishPending(value, hash) {
-          try { if (reservation && hash) reservation = hold.submitted(reservation, hash); }
+          try { if (reservation && hash) { await lock.assertHeld(); reservation = hold.submitted(reservation, hash); } }
           catch (err) { resolve(); busy = false; if (await refresh()) message(err.message || String(err)); return; }
           resolve(); busy = false; if (await refresh()) message(value);
         }
-        function releaseBeforeBroadcast() { if (reservation && !reservation.hash) { hold.releaseLocked(reservation); reservation = null; } }
+        // Only while the lock is still this window's: a lost lock leaves the unsent attempt to its new owner.
+        async function releaseBeforeBroadcast() { if (reservation && !reservation.hash && await lock.held()) { hold.releaseLocked(reservation); reservation = null; } }
         executeTransaction(Object.assign({}, request, {
-          expectedSafe: safeRoute, safeSingleCall: kind === 'mint',
+          expectedSafe: safeRoute, safeSingleCall: kind === 'mint', locks: [lock],
           tokenAddr: kind === 'mint' && !approvalOnly ? reviewed.inventory.pricing.token : undefined, spenderAddr: kind === 'mint' && !approvalOnly ? reviewed.transaction.address : undefined, approvalAmount: kind === 'mint' && !approvalOnly ? reviewed.amount : undefined,
           onSending: function () { assertIntent(); if (isSafeConnected() !== safeRoute) throw new Error('Wallet route changed. Review the transaction again.'); reservation = hold.reserve(savedCall); },
           assertWriteState: assertIntent,
@@ -218,11 +220,12 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
             if (outcome !== 'success') throw new Error('Original approval failed onchain. Check the original transaction.');
             await assertApprovalGranted(client, reservation, receipt);
           },
-          onStatus: function (value, statusKind, meta) { if (meta && meta.hash && reservation) { try { reservation = hold.submitted(reservation, meta.hash); } catch (err) { message(err.message || String(err)); } } if (meta && meta.trackingError) finishPending(value, meta.hash); else message(value); },
+          onSubmitted: async function (hash) { if (reservation) { await lock.assertHeld(); reservation = hold.submitted(reservation, hash); } },
+          onStatus: function (value, statusKind, meta) { if (meta && meta.trackingError) finishPending(value, meta.hash); else message(value); },
           onError: function (value, meta) { if (reservation) finishPending(value, meta && meta.submittedHash); else { error(new Error(value)); resolve(); } },
           onSuccess: async function (value, meta) {
             if (!meta || meta.phase !== 'done') return finishPending(value, meta && meta.safeTxHash);
-            try { if (reservation) hold.releaseLocked(reservation); if (!approvalOnly && reviewedCart !== null && !disposed && active && root.isConnected && ticket === generation && account === getAccount() && cartRevision === reviewedCartRevision && cartSnapshot() === reviewedCart && JSON.stringify(readMintDraft()) === JSON.stringify(reviewedDraft)) options.cart.clear(); resolve(); busy = false; if (await refresh()) message(approvalOnly ? 'Token approval verified onchain. Review NFT mint again to continue.' : 'NFT transaction verified onchain.'); } catch (err) { finishPending(err.message || String(err), meta.hash); } finally { resolve(); }
+            try { if (reservation && await lock.held()) hold.releaseLocked(reservation); if (!approvalOnly && reviewedCart !== null && !disposed && active && root.isConnected && ticket === generation && account === getAccount() && cartRevision === reviewedCartRevision && cartSnapshot() === reviewedCart && JSON.stringify(readMintDraft()) === JSON.stringify(reviewedDraft)) options.cart.clear(); resolve(); busy = false; if (await refresh()) message(approvalOnly ? 'Token approval verified onchain. Review NFT mint again to continue.' : 'NFT transaction verified onchain.'); } catch (err) { finishPending(err.message || String(err), meta.hash); } finally { resolve(); }
           },
         }));
       }); });

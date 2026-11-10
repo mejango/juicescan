@@ -3,6 +3,9 @@ import { encodeFunctionData } from 'viem';
 import { MAX_AUTO_ISSUANCE_CALLS, autoIssuanceRounds, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from '../src/auto-issuance-aggregate.js';
 import { acknowledgeSavedActionPlan, runSavedActionPlan } from '../src/action-plan.js';
 
+// A plan lock this test already holds.
+const HELD = { name: 'held', assertHeld: async () => {} };
+
 const ALICE = '0x1111111111111111111111111111111111111111';
 const BOB = '0x2222222222222222222222222222222222222222';
 const REV = '0x3333333333333333333333333333333333333333';
@@ -155,7 +158,7 @@ describe('reviewed auto-issuance revalidation', () => {
     await expect(runSavedActionPlan({ scope, account: ALICE, prepare, executeRound: async (_, index) => {
       if (index === 1) throw new Error('Wallet request pending');
       return { confirmed: true };
-    } }, true)).rejects.toThrow('Wallet request pending');
+    } }, HELD)).rejects.toThrow('Wallet request pending');
     expect(prepare).toHaveBeenCalledTimes(1);
 
     const changedBalances = vi.fn(() => { throw new Error('All displayed amounts have since changed'); });
@@ -166,7 +169,7 @@ describe('reviewed auto-issuance revalidation', () => {
       expect(calls[0].autoIssue.remaining).toBe('50');
       return { confirmed: true };
     });
-    const result = await runSavedActionPlan({ scope, account: ALICE, prepare: changedBalances, executeRound }, true);
+    const result = await runSavedActionPlan({ scope, account: ALICE, prepare: changedBalances, executeRound }, HELD);
     expect(result).toMatchObject({ completed: true, resumed: true, rounds: 2 });
     expect(executeRound).toHaveBeenCalledTimes(1);
     expect(changedBalances).not.toHaveBeenCalled();

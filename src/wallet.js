@@ -8,6 +8,7 @@ import { boundedLogClient } from './rpc-logs.js';
 import { isMobileDevice } from './wallet-links.js';
 import { detectSafeApp, makeSafeProvider, proposeSafeTransactions } from './safe-app.js';
 import { getViewAs, VIEW_AS_TX_ERROR } from './view-as.js';
+import { assertLocksHeld } from './browser-locks.js';
 export { proposeSafeTransactions } from './safe-app.js';
 
 let walletClient = null;
@@ -144,8 +145,16 @@ export function getWalletClient() {
 
 // Resolve after preparation, then invoke without yielding again. A connector may change while its
 // chain read waits: validate the replacement instead of sending through the captured connector.
-export async function invokeWallet(chainId, reviewedAccount, expectedSafe, send, assertState) {
+// `locks` (the handles the caller writes its journal under) are checked last, as the final await before the
+// wallet; a lost lock refuses the call unsent. Every synchronous check then runs again with no await before it.
+export async function invokeWallet(chainId, reviewedAccount, expectedSafe, send, assertState, locks) {
   var wallet;
+  function assertCurrent() {
+    if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
+    if (!getAccount() || !reviewedAccount || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
+    if (isSafeConnected() !== expectedSafe) throw new Error('Wallet route changed. Review the transaction again.');
+    if (assertState) assertState();
+  }
   try {
     for (var attempt = 0; attempt < 3; attempt++) {
       wallet = getWalletClient();
@@ -153,13 +162,15 @@ export async function invokeWallet(chainId, reviewedAccount, expectedSafe, send,
       var chainIdNow = await wallet.getChainId();
       if (wallet !== getWalletClient()) { wallet = null; continue; }
       if (Number(chainIdNow) !== Number(chainId)) throw new Error('Wallet network changed. Review the transaction again.');
-      if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
-      if (!getAccount() || !reviewedAccount || getAccount().toLowerCase() !== reviewedAccount.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
-      if (isSafeConnected() !== expectedSafe) throw new Error('Wallet route changed. Review the transaction again.');
-      if (assertState) assertState();
+      assertCurrent();
       break;
     }
     if (!wallet) throw new Error('Wallet connection is changing. Review the transaction again.');
+    if (locks && locks.length) {
+      await assertLocksHeld(locks);
+      if (wallet !== getWalletClient()) throw new Error('Wallet connection is changing. Review the transaction again.');
+      assertCurrent();
+    }
   } catch (error) {
     // Journal owners can release this attempt: no external wallet method was invoked.
     error.walletNotInvoked = true;

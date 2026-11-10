@@ -1,14 +1,64 @@
-// A lean local copy of the SDK's browserLocks() (nana-sdk-core review/locks, R119). The browser's Web Locks;
+// A lean local copy of the SDK's browserLocks() (nana-sdk-core 6.2.0 review/locks, R119). The browser's Web Locks;
 // where a browser or wallet webview has none, an IndexedDB lease shared by the origin's tabs; with neither, a
 // lock within this tab. It never refuses. Callers keep their lock names, modes and ifAvailable.
+//
+// Every lock is handed as a handle: { name, mode, signal, held(), assertHeld() }. Call `assertHeld()`
+// immediately before every journal write and every wallet submission inside the lock: a lease can lapse while
+// the tab is suspended (as while the user is in a wallet app) and pass to another tab. The check narrows that
+// window to the time between the check and the write.
 
-var TAB_QUEUES = '__juicescanTabLockQueues';
-var tabQueues = globalThis[TAB_QUEUES] || (globalThis[TAB_QUEUES] = new Map());
-var noted = false;
+// Thrown by a handle's assertHeld() once this tab no longer holds the lock.
+export class LockLostError extends Error {
+  constructor(lock) {
+    super('The "' + lock + '" lock was lost. Its work must stop before writing.');
+    this.lock = lock;
+    this.name = 'LockLostError';
+    this.code = 'LOCK_LOST';
+  }
+}
+
+// Throws LockLostError unless every given lock is still this tab's, on a fresh read; null and undefined are
+// skipped. One line before a write under several locks: `await assertLocksHeld([a, b]); save()`.
+export async function assertLocksHeld(locks) {
+  await Promise.all((locks || []).map(function (lock) { return lock && lock.assertHeld(); }));
+}
+
+var NEVER = new AbortController().signal;
+
+function handle(name, mode, held, signal) {
+  return {
+    name: name,
+    mode: mode,
+    signal: signal || NEVER,
+    held: held,
+    assertHeld: async function () { if (!(await held())) throw new LockLostError(name); },
+  };
+}
 
 function args(options, work) {
   return typeof options === 'function' ? { options: {}, work: options } : { options: options || {}, work: work };
 }
+
+// Any Web Locks manager (navigator.locks, a test's) handing a handle: a handle it hands already passes through;
+// any other lock is never lost while its work runs.
+function fencedLocks(locks) {
+  return {
+    request: function (name, options, work) {
+      var a = args(options, work);
+      return locks.request(name, a.options, function (lock) {
+        if (!lock) return a.work(null);
+        if (typeof lock.assertHeld === 'function') return a.work(lock);
+        var running = true;
+        return Promise.resolve(a.work(handle(lock.name || name, lock.mode || 'exclusive', async function () { return running; })))
+          .finally(function () { running = false; });
+      });
+    },
+  };
+}
+
+var TAB_QUEUES = '__juicescanTabLockQueues';
+var tabQueues = globalThis[TAB_QUEUES] || (globalThis[TAB_QUEUES] = new Map());
+var noted = false;
 
 // Without Web Locks, writes in this tab still run one at a time per lock name.
 var tabLocks = {
@@ -21,9 +71,11 @@ var tabLocks = {
     var queue = (held || Promise.resolve()).then(function () { return mine; });
     tabQueues.set(name, queue);
     await held;
+    var running = true;
     try {
-      return await a.work({ name: name, mode: 'exclusive' });
+      return await a.work(handle(name, 'exclusive', async function () { return running; }));
     } finally {
+      running = false;
       release();
       if (tabQueues.get(name) === queue) tabQueues.delete(name);
     }
@@ -31,17 +83,18 @@ var tabLocks = {
 };
 
 // Without Web Locks, tabs share an IndexedDB lease per lock name. A readwrite transaction is atomic across the
-// origin's tabs, so claiming a lease is a compare-and-set. The holder renews it while it works; a tab that
-// closed or froze loses it once it lapses.
+// origin's tabs, so claiming a lease is a compare-and-set. Each acquisition has its own owner token. The holder
+// renews it while it works, only while it is still its own and unexpired; a tab that closed or froze loses it
+// once it lapses, and its handle then reads as lost.
 var LEASE_DB = 'nana-sdk-write-locks';
 var LEASE_STORE = 'leases';
 var LEASE_MS = 15000;
 var LEASE_RENEW_MS = 5000;
 var LEASE_POLL_MS = 50;
 
-function leaseTransaction(db, run) {
+function leaseTransaction(db, mode, run) {
   return new Promise(function (resolve, reject) {
-    var transaction = db.transaction(LEASE_STORE, 'readwrite');
+    var transaction = db.transaction(LEASE_STORE, mode);
     var result;
     run(transaction.objectStore(LEASE_STORE), function (value) { result = value; });
     transaction.oncomplete = function () { resolve(result); };
@@ -49,22 +102,34 @@ function leaseTransaction(db, run) {
   });
 }
 
-// Take or renew `name`'s lease for `owner`; false while another tab holds it.
-function claimLease(db, name, owner) {
-  return leaseTransaction(db, function (store, done) {
+// Whether `lease` is `owner`'s and unexpired.
+function owns(lease, owner) { return !!lease && lease.owner === owner && lease.expires > Date.now(); }
+
+// Take `name`'s lease for `owner` (`renew`: only extend it while still `owner`'s); false while another tab holds
+// it, or once a renewal finds it lost.
+function claimLease(db, name, owner, renew) {
+  return leaseTransaction(db, 'readwrite', function (store, done) {
     done(false);
     var read = store.get(name);
     read.onsuccess = function () {
       var lease = read.result, now = Date.now();
-      if (lease && lease.owner !== owner && lease.expires > now) return;
+      if (renew ? !owns(lease, owner) : lease && lease.expires > now) return;
       store.put({ owner: owner, expires: now + LEASE_MS }, name);
       done(true);
     };
   });
 }
 
+function readLease(db, name) {
+  return leaseTransaction(db, 'readonly', function (store, done) {
+    var read = store.get(name);
+    read.onsuccess = function () { done(read.result); };
+  });
+}
+
+// Drop `name`'s lease only while it is still `owner`'s.
 function dropLease(db, name, owner) {
-  return leaseTransaction(db, function (store) {
+  return leaseTransaction(db, 'readwrite', function (store) {
     var read = store.get(name);
     read.onsuccess = function () { if (read.result && read.result.owner === owner) store.delete(name); };
   });
@@ -96,10 +161,24 @@ function leaseLocks(factory) {
           if (a.options.ifAvailable) return a.work(null);
           await new Promise(function (resolve) { setTimeout(resolve, LEASE_POLL_MS); });
         }
-        var renew = setInterval(function () { claimLease(db, name, owner).catch(function () {}); }, LEASE_RENEW_MS);
+        var lost = new AbortController();
+        var running = true;
+        async function held() {
+          if (!running || lost.signal.aborted) return false;
+          // Never cached: a tab back from suspension reads what is there now.
+          var mine = owns(await readLease(db, name).catch(function () { return undefined; }), owner);
+          if (!mine) lost.abort(new LockLostError(name));
+          return mine && running;
+        }
+        var renew = setInterval(function () {
+          claimLease(db, name, owner, true)
+            .then(function (kept) { if (!kept) lost.abort(new LockLostError(name)); })
+            .catch(function () {});
+        }, LEASE_RENEW_MS);
         try {
-          return await a.work(tabLock);
+          return await a.work(handle(name, 'exclusive', held, lost.signal));
         } finally {
+          running = false;
           clearInterval(renew);
           await dropLease(db, name, owner).catch(function () {});
         }
@@ -108,17 +187,18 @@ function leaseLocks(factory) {
   };
 }
 
-var fallbackLocks;
+var inTabLocks = fencedLocks(tabLocks);
+var leasedLocks;
 
 export function browserLocks() {
   var native = typeof navigator !== 'undefined' && navigator.locks;
-  if (native && typeof native.request === 'function') return native;
+  if (native && typeof native.request === 'function') return fencedLocks(native);
   if (!noted) {
     noted = true;
     console.info(globalThis.indexedDB
       ? 'Web Locks are unavailable, so wallet writes are coordinated across tabs through IndexedDB.'
       : 'Web Locks are unavailable, so wallet writes are coordinated within this tab only.');
   }
-  if (!globalThis.indexedDB) return tabLocks;
-  return fallbackLocks || (fallbackLocks = leaseLocks(globalThis.indexedDB));
+  if (!globalThis.indexedDB) return inTabLocks;
+  return leasedLocks || (leasedLocks = fencedLocks(leaseLocks(globalThis.indexedDB)));
 }

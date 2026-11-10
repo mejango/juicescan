@@ -89,7 +89,7 @@ describe('native Defifa NFT action boundary', () => {
     const cart = cartFixture(), root = await render(mintOptions(cart)); h.execute.mockImplementationOnce(() => {}); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; root.querySelector('.paybox-memo').value = 'Changed'; await expect(call.reverify()).rejects.toThrow('changed'); expect(() => call.onSending()).toThrow('changed'); expect(heldWrites()).toBe(0); call.onError('Checkout changed');
   });
   it('keeps submitted proof and exact record clearing active when checkout is hidden', async () => {
-    const cart = cartFixture(), root = await render(mintOptions(cart)); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX }); root.setActive(false); const reads = h.inventory.mock.calls.length; await call.verifyReceipt({ status: 'success', transactionHash: TX }); await call.onSuccess('Confirmed', { phase: 'done', hash: TX }); expect(heldWrites()).toBe(0); expect(h.inventory).toHaveBeenCalledTimes(reads); expect(cart.clear).not.toHaveBeenCalled();
+    const cart = cartFixture(), root = await render(mintOptions(cart)); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; await call.onSubmitted(TX); call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX }); root.setActive(false); const reads = h.inventory.mock.calls.length; await call.verifyReceipt({ status: 'success', transactionHash: TX }); await call.onSuccess('Confirmed', { phase: 'done', hash: TX }); expect(heldWrites()).toBe(0); expect(h.inventory).toHaveBeenCalledTimes(reads); expect(cart.clear).not.toHaveBeenCalled();
   });
   it('refuses A-to-B-to-A cart mutation even when the final quantities match the old review', async () => {
     const cart = cartFixture(), root = await render(mintOptions(cart)); h.execute.mockImplementationOnce(() => {}); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; cart.change(7, 3); cart.change(7, 2); await expect(call.reverify()).rejects.toThrow('changed'); expect(() => call.assertWriteState()).toThrow('changed'); expect(heldWrites()).toBe(0); call.onError('Cart changed');
@@ -102,12 +102,12 @@ describe('native Defifa NFT action boundary', () => {
     const cart = cartFixture(), root = await render(mintOptions(cart)); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0], reads = h.inventory.mock.calls.length; root.remove(); await call.verifyReceipt({ status: 'success', transactionHash: TX }); await call.onSuccess('Confirmed', { phase: 'done', hash: TX }); expect(heldWrites()).toBe(0); expect(cart.clear).not.toHaveBeenCalled(); expect(h.inventory).toHaveBeenCalledTimes(reads);
   });
   it.each(['cart A-to-B-to-A', 'disposed', 'account'])('clears original evidence but preserves the visible cart after %s changed during submission', async change => {
-    const cart = cartFixture(), root = await render(mintOptions(cart)); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX });
+    const cart = cartFixture(), root = await render(mintOptions(cart)); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; await call.onSubmitted(TX); call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX });
     if (change === 'cart A-to-B-to-A') { cart.change(7, 3); cart.change(7, 2); } else if (change === 'disposed') root.dispose(); else { h.account = hook; h.change(); }
     await call.verifyReceipt({ status: 'success', transactionHash: TX }); await call.onSuccess('Confirmed', { phase: 'done', hash: TX }); expect(heldWrites()).toBe(0); expect(cart.clear).not.toHaveBeenCalled(); expect(cart.entries()).toEqual({ 7: 2, 1: 1 });
   });
   it.each(['memo', 'delegate'])('clears original proof but retains the cart after a new %s draft was entered during submission', async field => {
-    const cart = cartFixture(), root = await render(mintOptions(cart)); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX });
+    const cart = cartFixture(), root = await render(mintOptions(cart)); click(root, 'Pay'); await flush(); const call = h.execute.mock.lastCall[0]; await call.onSubmitted(TX); call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX });
     if (field === 'memo') root.querySelector('.paybox-memo').value = 'Next payment note'; else root.querySelector('input[aria-label="Voting power recipient (optional)"]').value = hook;
     await call.verifyReceipt({ status: 'success', transactionHash: TX }); await call.onSuccess('Confirmed', { phase: 'done', hash: TX }); expect(heldWrites()).toBe(0); expect(cart.clear).not.toHaveBeenCalled(); expect(cart.entries()).toEqual({ 7: 2, 1: 1 });
   });
@@ -166,7 +166,7 @@ describe('native Defifa NFT action boundary', () => {
     const root = await render(); root.querySelector('input[type=number]').value = '128'; click(root, 'Review NFT mint'); await flush(); expect(h.preparePay.mock.lastCall[1].tierIdsToMint).toHaveLength(128);
   });
   it('restores a known submitted intent after remount and cannot send the same action again', async () => {
-    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onError('Receipt unavailable', { submittedHash: TX }); root.dispose(); root.remove(); const remount = await render();
+    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onError('Receipt unavailable', { submittedHash: TX }); await flush(); root.dispose(); root.remove(); const remount = await render();
     expect(remount.textContent).toContain('Check original transaction'); expect(remount.textContent).not.toContain('Review NFT mint'); click(remount, 'Check original transaction'); await flush(); expect(h.execute).toHaveBeenCalledTimes(1); expect(h.preparePay).toHaveBeenCalledTimes(1); expect(remount.textContent).toContain('verified onchain'); expect(remount.textContent).toContain('Review NFT mint');
   });
   it('retries persisting a wallet-returned hash before clearing its verified original reservation', async () => {
@@ -226,8 +226,21 @@ describe('native Defifa NFT action boundary', () => {
     const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); h.execute.mock.lastCall[0].onError('Reverted', { submittedHash: TX }); await flush(); h.verify.mockRejectedValueOnce(new Error('Network failure')); click(root, 'Check original transaction'); await flush(); expect(root.textContent).not.toContain('Review NFT mint');
     h.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError(TX, 8453)); click(root, 'Check original transaction'); await flush(); expect(root.textContent).toContain('failed onchain'); expect(root.textContent).toContain(TX); expect(root.textContent).toContain('Review NFT mint'); expect(h.execute).toHaveBeenCalledTimes(1);
   });
+  it('never writes its hold once the hold lock lapsed to another window', async () => {
+    let held = true;
+    const handle = { name: 'hold', held: async () => held, assertHeld: async () => { if (!held) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); } };
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: (key, options, callback) => callback(handle) } });
+    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush();
+    const call = h.execute.mock.lastCall[0];
+    expect(call.locks).toEqual([handle]);
+    const saved = JSON.parse(localStorage.getItem(Object.keys(localStorage)[0]));
+    held = false;
+    await expect(call.onSubmitted(TX)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    await call.onWriteRejected();
+    expect(JSON.parse(localStorage.getItem(Object.keys(localStorage)[0]))).toEqual(saved);
+  });
   it('only releases reservations through specific engine pre-write/rejection callbacks', async () => {
-    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); const call = h.execute.mock.lastCall[0]; call.onWriteRejected(); call.onError('Rejected', { userRejected: true }); expect(heldWrites()).toBe(0); expect(root.textContent).toContain('Retry');
+    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); const call = h.execute.mock.lastCall[0]; await call.onWriteRejected(); call.onError('Rejected', { userRejected: true }); expect(heldWrites()).toBe(0); expect(root.textContent).toContain('Retry');
   });
   it('shows exact mixed tier names/prices and actual NFT IDs, using bounded snapshot holdings', async () => {
     const root = await render(); expect(root.textContent).toContain('Blue Team, 3 ETH per NFT'); expect(root.textContent).toContain('Orange Team, 5 ETH per NFT'); expect(root.textContent).toContain('NFT 901, tier 7: Orange Team');
@@ -302,7 +315,7 @@ describe('native Defifa NFT action boundary', () => {
     h.inventory.mockResolvedValue({ ...native, tiers: [{ ...native.tiers[0], name: 'A'.repeat(300) }] }); const root = await render(); expect(root.style.overflowWrap).toBe('anywhere'); expect(root.querySelector('label span').style.overflowWrap).toBe('anywhere'); expect(root.querySelector('[role=status]').style.wordBreak).toBe('break-word'); expect(root.querySelector('input[type=number]').max).toBe('128');
   });
   it('finishes original receipt proof and clears its exact saved record after unmount without new reads', async () => {
-    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); const call = h.execute.mock.lastCall[0]; call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX });
+    const root = await render(); root.querySelector('input[type=number]').value = '1'; click(root, 'Review NFT mint'); await flush(); const call = h.execute.mock.lastCall[0]; await call.onSubmitted(TX); call.onStatus('Submitted', 'pending', { phase: 'receipt', hash: TX });
     let finish; h.verify.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })); const proof = call.verifyReceipt({ status: 'success', transactionHash: TX }).then(() => call.onSuccess('Confirmed', { phase: 'done', hash: TX }));
     root.dispose(); root.remove(); finish(); await proof; expect(h.verify).toHaveBeenCalledTimes(1); expect(heldWrites()).toBe(0); expect(h.inventory).toHaveBeenCalledTimes(1); expect(h.holdings).toHaveBeenCalledTimes(1); expect(h.execute).toHaveBeenCalledTimes(1);
   });

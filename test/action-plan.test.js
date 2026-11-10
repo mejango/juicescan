@@ -16,7 +16,7 @@ function call(chainId, count = 12n) {
 function options(overrides = {}) {
   return { scope: SCOPE, account: ACCOUNT,
     prepare: vi.fn(async () => ({ rounds: [[call(8453), call(10)], [call(8453, 5n)]] })),
-    executeRound: vi.fn(async (_calls, _index, _plan, control) => { control.checkpoint({ confirmed: true }); return { confirmed: true }; }), ...overrides };
+    executeRound: vi.fn(async (_calls, _index, _plan, control) => { await control.checkpoint({ confirmed: true }); return { confirmed: true }; }), ...overrides };
 }
 
 beforeEach(() => {
@@ -28,7 +28,7 @@ describe('durable selected action rounds', () => {
   it('retains every allocation and skips verified rounds after an interruption', async () => {
     const first = options({ executeRound: vi.fn(async (_calls, index, _plan, control) => {
       if (index === 1) throw new Error('wallet unavailable');
-      control.checkpoint({ confirmed: true }); return { confirmed: true };
+      await control.checkpoint({ confirmed: true }); return { confirmed: true };
     }) });
     await expect(runSavedActionPlan(first)).rejects.toThrow('wallet unavailable');
     expect(JSON.parse(localStorage.getItem(KEY)).nextRound).toBe(1);
@@ -41,7 +41,7 @@ describe('durable selected action rounds', () => {
 
   it('checkpoints before a child receipt is cleared, including a crash after verification', async () => {
     const first = options({ prepare: vi.fn(async () => ({ rounds: [[call(8453)]] })), executeRound: vi.fn(async (_c, _i, _p, control) => {
-      control.checkpoint({ confirmed: true }); throw new Error('page closed before receipt cleanup');
+      await control.checkpoint({ confirmed: true }); throw new Error('page closed before receipt cleanup');
     }) });
     await expect(runSavedActionPlan(first)).rejects.toThrow('page closed');
     const resumed = options();
@@ -61,7 +61,7 @@ describe('durable selected action rounds', () => {
 
   it('retains unknown Safe publication and does not run new preparation or proposals', async () => {
     const first = options({ safeMode: true, executionAccount: SAFE, executeRound: vi.fn(async (_c, _i, _p, control) => {
-      control.beforeSafe(); throw new Error('lost proposal response');
+      await control.beforeSafe(); throw new Error('lost proposal response');
     }) });
     await expect(runSavedActionPlan(first)).rejects.toThrow('lost proposal');
     const again = options({ safeMode: true, executionAccount: SAFE });
@@ -119,8 +119,8 @@ describe('durable selected action rounds', () => {
 
   it('persists a refreshed unsigned round before a new review and preserves earlier completed rounds', async () => {
     const first = options({ executeRound: async (_calls, index, _plan, control) => {
-      if (!index) { control.checkpoint({ confirmed: true }); return { confirmed: true }; }
-      control.replaceUnsubmittedRound([call(8453, 99n)]);
+      if (!index) { await control.checkpoint({ confirmed: true }); return { confirmed: true }; }
+      await control.replaceUnsubmittedRound([call(8453, 99n)]);
       throw new Error('review closed');
     } });
     await expect(runSavedActionPlan(first)).rejects.toThrow('review closed');
@@ -133,10 +133,38 @@ describe('durable selected action rounds', () => {
 
   it('never replaces a round after a Safe proposal has begun publication', async () => {
     const first = options({ safeMode: true, executionAccount: SAFE, executeRound: async (_calls, _index, _plan, control) => {
-      control.beforeSafe();
-      control.replaceUnsubmittedRound([call(8453, 99n)]);
+      await control.beforeSafe();
+      await control.replaceUnsubmittedRound([call(8453, 99n)]);
     } });
     await expect(runSavedActionPlan(first)).rejects.toThrow('submitted Safe round cannot be changed');
+  });
+});
+
+describe('lock fencing', () => {
+  function lapsingLock() {
+    const lock = { held: true, name: KEY, assertHeld: vi.fn(async () => { if (!lock.held) throw Object.assign(new Error('The lock was lost.'), { name: 'LockLostError', code: 'LOCK_LOST' }); }) };
+    navigator.locks.request.mockImplementation((_key, _opts, fn) => fn(lock));
+    return lock;
+  }
+  it('never writes a checkpoint once its lock lapsed to another tab', async () => {
+    const lock = lapsingLock();
+    const run = options({ executeRound: vi.fn(async (_calls, _index, _plan, control) => {
+      lock.held = false;
+      await control.checkpoint({ confirmed: true }); return { confirmed: true };
+    }) });
+    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    const saved = JSON.parse(localStorage.getItem(KEY));
+    expect(saved.nextRound).toBe(0); expect(saved.results).toEqual([]);
+  });
+  it('never records a Safe attempt once its lock lapsed', async () => {
+    const lock = lapsingLock();
+    const run = options({ safeMode: true, executionAccount: SAFE, executeRound: vi.fn(async (_calls, _index, _plan, control) => {
+      lock.held = false;
+      await control.beforeSafe({ chainId: 8453 }); return { confirmed: true };
+    }) });
+    await expect(runSavedActionPlan(run)).rejects.toMatchObject({ code: 'LOCK_LOST' });
+    const saved = JSON.parse(localStorage.getItem(KEY));
+    expect(saved.safePending).toBe(false); expect(saved.safeProgress).toBeUndefined();
   });
 });
 

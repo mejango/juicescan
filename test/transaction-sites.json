@@ -11,7 +11,7 @@
     },
     "src/browser-locks.js": {
       "counts": {
-        "providerRequest": 1
+        "providerRequest": 2
       },
       "actions": [
         "Held direct writes"

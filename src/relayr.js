@@ -18,7 +18,7 @@ import { getWalletClient, invokeWallet, isSafeConnected, getAccount, createPubli
 import { CHAINS, chainNameFor } from './chain.js';
 import { gasWithHeadroom } from './gas.js';
 import { isExplicitWalletRejection } from './write-hold.js';
-import { browserLocks } from './browser-locks.js';
+import { browserLocks, LockLostError } from './browser-locks.js';
 import { decodeSafeExecRelayrTx, hasExactSafeExecutionSuccess, readSafeUintBounded } from './safe.js';
 
 var RELAYR_API = 'https://api.relayr.ba5ed.com';
@@ -32,7 +32,6 @@ var RELAYR_KNOWN_QUOTES = new Map();
 var RELAYR_QUOTED_REQUESTS = new Map();
 var RELAYR_SIGNED_FORWARD_REQUESTS = new Map();
 var RELAYR_NONCE_RESERVATIONS_KEY = 'jb-relayr-forwarder-nonces-v1';
-var RELAYR_PUBLICATION_LOCK = {};
 
 // Exact quotes remain in memory only. After reload the durable marker prevents fresh signatures, while
 // callers explain that an unpaid quote cannot be reconstructed automatically from its fingerprints.
@@ -358,7 +357,9 @@ function readNonceReservations() {
     return rows;
   } catch (_) { throw new Error('The saved Relayr nonce reservations cannot be read. Keep the original requests and enable browser storage before publishing another bundle.'); }
 }
-function writeNonceReservations(rows) {
+// Written only under the publication lock (`lock`), never once it is lost.
+async function writeNonceReservations(rows, lock) {
+  await lock.assertHeld();
   try {
     if (rows.length > 512) throw new Error();
     var raw = JSON.stringify(rows);
@@ -367,10 +368,10 @@ function writeNonceReservations(rows) {
   } catch (_) { throw new Error('The forwarded nonce reservations could not be saved. Enable browser storage. Nothing was published or paid.'); }
 }
 
-// Called only while the shared publication Web Lock is held. Reservations belong to signer + forwarder +
+// Called only while the shared publication Web Lock (`lock`) is held. Reservations belong to signer + forwarder +
 // chain + signed nonce across ALL action scopes. Clearing an action's UI receipt does not retire this guard.
 // Only a chain-proven expired signature or consumed nonce makes its published request unable to execute.
-async function reserveForwardedPublication(proofs) {
+async function reserveForwardedPublication(proofs, lock) {
   if (!proofs.length) return;
   var rows = readNonceReservations(), seen = new Set();
   for (var proof of proofs) {
@@ -401,19 +402,20 @@ async function reserveForwardedPublication(proofs) {
     }
     rows.push(proof);
   }
-  writeNonceReservations(rows);
+  await writeNonceReservations(rows, lock);
 }
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.
-export async function relayrPostBundle(transactions, journal, locked) {
+// `lock` is the publication lock this call took for itself; its journal writes are fenced by it.
+export async function relayrPostBundle(transactions, journal, lock) {
   (transactions || []).forEach(function (request) { assertShopCallPolicy(request.data, request.target); });
   if (!Array.isArray(transactions) || !relayrNetworkFamily(transactions.map(function (tx) { return tx && tx.chain; }))) {
     throw new Error('Relayr destinations must use one supported network family: Ethereum, Optimism, Base, and Arbitrum mainnets or their Sepolia testnets.');
   }
   var forwarded = forwardedPublicationProofs(transactions, journal);
-  if (locked !== RELAYR_PUBLICATION_LOCK && forwarded.length) {
-    return browserLocks().request('jb-relayr-forwarder-publication-v1', function () {
-      return relayrPostBundle(transactions, journal, RELAYR_PUBLICATION_LOCK);
+  if (!lock && forwarded.length) {
+    return browserLocks().request('jb-relayr-forwarder-publication-v1', function (held) {
+      return relayrPostBundle(transactions, journal, held);
     });
   }
   // Order each chain's transactions by their position in the array (per-chain 0,1,2… virtual nonces) and run in
@@ -429,9 +431,9 @@ export async function relayrPostBundle(transactions, journal, locked) {
   });
   var publication = null;
   if (journal && journal.scope) {
-    if (locked !== RELAYR_PUBLICATION_LOCK && typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request) {
-      return navigator.locks.request('jb-relayr-publish:' + String(journal.account || getAccount()).toLowerCase() + ':' + journal.scope,
-        function () { return relayrPostBundle(transactions, journal, RELAYR_PUBLICATION_LOCK); });
+    if (!lock) {
+      return browserLocks().request('jb-relayr-publish:' + String(journal.account || getAccount()).toLowerCase() + ':' + journal.scope,
+        function (held) { return relayrPostBundle(transactions, journal, held); });
     }
     if (journal.account && (!getAccount() || String(getAccount()).toLowerCase() !== String(journal.account).toLowerCase())) {
       throw new Error('Connected account changed. Review the Relayr request again.');
@@ -440,7 +442,8 @@ export async function relayrPostBundle(transactions, journal, locked) {
       var existing = new Error('A previous Relayr request for this action is still saved. Check that request before publishing another bundle.');
       existing.code = 'RELAYR_PUBLICATION_PENDING'; existing.retryable = true; throw existing;
     }
-    await reserveForwardedPublication(forwarded);
+    await reserveForwardedPublication(forwarded, lock);
+    await lock.assertHeld();
     publication = saveRelayrPendingSession(journal.scope, {
       bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
       paymentState: 'publication', expectedCount: ordered.length,
@@ -506,6 +509,7 @@ export async function relayrPostBundle(transactions, journal, locked) {
   if (publication) {
     // Authenticate every amount/target before retaining the quote that the user can reopen after Cancel.
     body.payment_info = relayrPaymentOptions(body);
+    await lock.assertHeld();
     clearRelayrPendingSession(journal.scope, publication);
     var quoted = saveRelayrPendingSession(journal.scope, Object.assign({}, publication, {
       bundleUuid: body.bundle_uuid, paymentState: 'quoted', expectedTransactions: body.expected_transactions,
@@ -639,7 +643,9 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
   if (reverify) await reverify();
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
-  async function sendPayment() {
+  // `onSending`, `onUnsent` and `onSubmitted` write the caller's journal synchronously, each right after this
+  // lock's fence: all three run inside the payment lock, and none runs once the lock is lost.
+  async function sendPayment(lock) {
     // Another tab can have opened its own quote while this tab was reviewing. Serialize the final journal
     // check and wallet submission; the journal rejects a competing bundle.
     details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
@@ -648,9 +654,11 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
     await verifyRelayrQuotedRequests(expectedBundleUuid, account);
     details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
     if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
+    await lock.assertHeld();
     if (onSending) await onSending();
+    var sent;
     try {
-      return await invokeWallet(chainId, account, reviewedSafe, function (current) { return current.sendTransaction({
+      sent = await invokeWallet(chainId, account, reviewedSafe, function (current) { return current.sendTransaction({
         account: account,
         chain: CHAINS[chainId],
         to: details.target,
@@ -661,11 +669,12 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
         details = relayrBoundPaymentDetails(payment, expectedBundleUuid);
         assertRelayrShopPolicy(expectedBundleUuid);
         if (assertWriteState) assertWriteState();
-      });
+      }, [lock]);
     } catch (cause) {
       if (cause.walletNotInvoked || isExplicitWalletRejection(cause)) {
-        // Release only this definitely unsent attempt, before another window can acquire the lock.
-        if (onUnsent) await onUnsent();
+        // Release only this definitely unsent attempt, before another window can acquire the lock. A lost lock
+        // leaves the journal to the window that holds it now.
+        if (onUnsent && await lock.held()) await onUnsent();
         throw cause;
       }
       // Wallet/RPC transport errors can occur after broadcast but before returning a transaction hash.
@@ -678,23 +687,32 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
       uncertain.cause = cause;
       throw uncertain;
     }
+    // The hash is journaled before another window can take the payment lock, and never under a lost one.
+    if (!(await lock.held())) {
+      throw paymentSubmittedError(sent, chainId, 'Relayr payment ' + sent + ' was submitted, but another window took over this payment before it was saved here. Do not pay again; check the saved bundle.', new LockLostError(lock.name));
+    }
+    if (onSubmitted) { try { onSubmitted(sent); } catch (_) {} }
+    return sent;
   }
   var hash = await browserLocks().request('jb-relayr-payment:' + account.toLowerCase(), sendPayment);
-  if (onSubmitted) { try { onSubmitted(hash); } catch (_) {} }
   var receipt;
   try {
     receipt = await waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
   } catch (cause) {
-    var submitted = new Error('Relayr payment ' + hash + ' was submitted, but confirmation tracking is temporarily unavailable. Do not pay again; resume the saved bundle instead.');
-    submitted.name = 'RelayrPaymentSubmittedError';
-    submitted.code = 'RELAYR_PAYMENT_SUBMITTED';
-    submitted.hash = hash;
-    submitted.chainId = chainId;
-    submitted.cause = cause;
-    throw submitted;
+    throw paymentSubmittedError(hash, chainId, 'Relayr payment ' + hash + ' was submitted, but confirmation tracking is temporarily unavailable. Do not pay again; resume the saved bundle instead.', cause);
   }
   if (receipt && receipt.status && receipt.status !== 'success') throw new Error('Relayr payment reverted onchain.');
   return hash;
+}
+
+function paymentSubmittedError(hash, chainId, message, cause) {
+  var submitted = new Error(message);
+  submitted.name = 'RelayrPaymentSubmittedError';
+  submitted.code = 'RELAYR_PAYMENT_SUBMITTED';
+  submitted.hash = hash;
+  submitted.chainId = chainId;
+  submitted.cause = cause;
+  return submitted;
 }
 
 // Relayr has returned both Success and Completed for terminal successful records. Keep that protocol
@@ -1013,7 +1031,7 @@ export function relayrScheduleCanBeRetired(session) {
 }
 
 export async function retireExpiredUnpaidRelayrSession(scope, session) {
-  return browserLocks().request('jb-relayr-payment:' + String(session.account).toLowerCase(), async function () {
+  return browserLocks().request('jb-relayr-payment:' + String(session.account).toLowerCase(), async function (lock) {
     var current = requireUnpaidRelayrSession(scope, session.bundleUuid);
     if (String(current.account).toLowerCase() !== String(session.account).toLowerCase()) throw new Error('The launching wallet changed. Keep this original receipt and reconnect its wallet.');
     if (!relayrScheduleCanBeRetired(current)) throw new Error('This saved request is live or its payment state is uncertain. Keep its original receipt.');
@@ -1036,6 +1054,7 @@ export async function retireExpiredUnpaidRelayrSession(scope, session) {
     // the normal publication gate independently verifies expiry before replacing them.
     var key = 'jb-relayr-retired-v1:' + relayrAccountPart(current) + scope + ':' + current.bundleUuid;
     var raw = JSON.stringify({ receipt: current, proof: evidence });
+    await lock.assertHeld();
     try { localStorage.setItem(key, raw); if (localStorage.getItem(key) !== raw) throw new Error(); }
     catch (_) { throw new Error('The original receipt could not be archived. Restore browser storage before rebuilding.'); }
     clearRelayrPendingSession(scope, current);
