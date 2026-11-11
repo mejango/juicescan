@@ -357,6 +357,20 @@ describe('Relayr payment receipt tracking', () => {
       expect(handles).toHaveLength(2);
       expect(j.saved()).toMatchObject({ paymentHash: HASH });
     });
+    it('never replays the whole session once another window took the payment lock since', async () => {
+      const j = journal(), submitted = vi.fn(j.submitted);
+      const { browserLocks } = await import('../src/browser-locks.js');
+      state.wallet.sendTransaction.mockImplementation(async () => {
+        lapse();
+        await browserLocks().request('jb-relayr-payment:' + state.account.toLowerCase(), {}, async () => {});
+        return HASH;
+      });
+      await expect(relayrPay(paymentFor(), state.account, submitted, BUNDLE_UUID, null, j.sending, j.unsent)).rejects.toMatchObject({
+        code: 'RELAYR_PAYMENT_SUBMITTED', hash: HASH,
+      });
+      expect(submitted).not.toHaveBeenCalled();
+      expect(j.saved()).toMatchObject({ paymentState: 'sending', paymentAttempt: 'attempt-1', paymentHash: null });
+    });
   });
 
   it.each([new Error('Provider disconnected'), Object.assign(new Error('User rejected'), { name: 'UserRejectedRequestError' })])(

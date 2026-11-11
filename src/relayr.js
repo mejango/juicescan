@@ -680,8 +680,8 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   if (!getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   // `onSending`, `onUnsent` and `onSubmitted` write the caller's journal synchronously, each right after this
   // lock's fence. The wallet's outcome (unsent, or its hash) goes through the payment lock's keep: under a lapsed
-  // lock it is written under a fresh one, where `onUnsent` restores only the same bundle and attempt and the
-  // journal refuses a hash for any other bundle.
+  // lock it is written under a fresh one. `onUnsent` restores only the same bundle and attempt; `onSubmitted`
+  // saves the caller's whole session, so it replays only while no other window took the payment lock since.
   async function sendPayment(lock, keep) {
     // Another tab can have opened its own quote while this tab was reviewing. Serialize the final journal
     // check and wallet submission; the journal rejects a competing bundle.
@@ -726,9 +726,9 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
       throw uncertain;
     }
     // The hash is journaled before another window can take the payment lock; under a lost one, it is saved
-    // under a fresh lock instead, and the payment is reported as submitted.
+    // under a fresh lock instead (only if no other window took it since), and the payment is reported as submitted.
     var submitted = function () { if (onSubmitted) { try { onSubmitted(sent); } catch (_) {} } };
-    try { await keep(async function () { await lock.assertHeld(); submitted(); }, submitted); }
+    try { await keep(async function () { await lock.assertHeld(); submitted(); }, submitted, true); }
     catch (error) {
       if (!isLockLost(error)) throw error;
       throw paymentSubmittedError(sent, chainId, 'Relayr payment ' + sent + ' was submitted. Do not pay again; resume the saved bundle to track it.', error);

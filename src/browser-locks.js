@@ -1,4 +1,4 @@
-// A lean local copy of the SDK's browserLocks() (nana-sdk-core 6.2.0 review/locks, R119). The browser's Web Locks;
+// A lean local copy of the SDK's browserLocks() (nana-sdk-core 6.3.0 review/locks, R119). The browser's Web Locks;
 // where a browser or wallet webview has none, an IndexedDB lease shared by the origin's tabs; with neither, a
 // lock within this tab. It never refuses. Callers keep their lock names, modes and ifAvailable.
 //
@@ -26,28 +26,59 @@ export async function assertLocksHeld(locks) {
 // Whether `error` is a lock's LockLostError (by code, so test locks count too).
 export function isLockLost(error) { return !!error && error.code === 'LOCK_LOST'; }
 
-// The SDK's fund() keep, in one home: browserLocks().request plus `keep`. `work(lock, keep)` runs under the lock.
-// `keep(write, reconcile)` runs `write()`, which fences its own lock right before writing. Use it for every save
-// of an outcome the page got from outside (a wallet's hash or rejection, a Safe proposal, a Relayr quote) after
-// an earlier save under the same lock. When the lock was lost meanwhile (as while the page was suspended in a
-// wallet), `reconcile(fresh)` runs once this lock's work has ended, under a fresh lock of the same name: it
-// re-reads the saved record and writes only if the record is still this attempt's. keep still rethrows the
-// LockLostError, with `error.reconciled` (resolves once the reconcile ran; never rejects); this request returns
-// or throws only after every reconcile it queued has run. Unreconciled, a record stays as the lost lock left it.
+// SDK 6.3.0 keepOutcome, in one home: browserLocks().request plus `keep`. `work(lock, keep)` runs under the lock.
+// `keep(write, reconcile, untouched)` runs `write()`, which fences its own lock right before writing. Use it for
+// every save of an outcome the page got from outside (a wallet's hash or rejection, a Safe proposal, a Relayr
+// quote) after an earlier save under the same lock. When the lock was lost meanwhile (as while the page was
+// suspended in a wallet), the outcome is kept: once this lock's work has ended, `reconcile(fresh)` runs under a
+// fresh lock of the same name, one at a time in the order kept, so a confirmation never lands ahead of the
+// submission kept before it. A reconcile either re-reads the saved record and merges this outcome only into this
+// same attempt (matched by its id), or, with `untouched`, replays as is and runs only if no other acquisition
+// took the lock since. Once the work ended, keep never calls `write()`: the outcome goes straight to the queue.
+// keep rethrows the LockLostError, with `error.reconciled` (resolves once the reconcile ran; never rejects); this
+// request returns or throws only after every reconcile kept during its work has run. Unreconciled, a record stays
+// as the lost lock left it.
 export async function requestKeeping(name, options, work) {
-  var end, queue = new Promise(function (resolve) { end = resolve; });
-  function keep(write, reconcile) {
-    return Promise.resolve().then(write).catch(function (error) {
+  var end, ended = false, owner, queue = new Promise(function (resolve) { end = resolve; });
+  var locks = browserLocks();
+  function keep(write, reconcile, untouched) {
+    var attempt = ended ? Promise.reject(new LockLostError(name)) : Promise.resolve().then(write);
+    return attempt.catch(function (error) {
       if (reconcile && isLockLost(error)) {
         error.reconciled = queue = queue.then(function () {
-          return browserLocks().request(name, {}, async function (fresh) { await fresh.assertHeld(); return reconcile(fresh); });
+          return locks.revive(name, async function (fresh) {
+            await fresh.assertHeld();
+            if (!untouched || stampOf(name) === owner) return reconcile(fresh);
+          });
         }).catch(function () {});
       }
       throw error;
     });
   }
-  try { return await browserLocks().request(name, options, function (lock) { return work(lock, keep); }); }
-  finally { end(); await queue; }
+  try {
+    return await locks.request(name, options, function (lock) {
+      if (lock) owner = stampOf(name);
+      return Promise.resolve().then(function () { return work(lock, keep); }).finally(function () { ended = true; });
+    });
+  } finally { ended = true; end(); await queue; }
+}
+
+// Who took each lock last, origin-wide (SDK 6.3.0 stamps): every acquisition through browserLocks() stamps it
+// under the lock, so an `untouched` reconcile can tell that no other acquisition took the lock since.
+var STAMPS = '__juicescanLockStamps';
+var stampMemory = globalThis[STAMPS] || (globalThis[STAMPS] = new Map());
+function stampKey(name) { return 'nana-sdk:lock-holder:' + name; }
+function stampOf(name) {
+  try {
+    var saved = globalThis.localStorage && globalThis.localStorage.getItem(stampKey(name));
+    if (saved != null) return saved;
+  } catch (_) { /* Unreadable: this tab's own memory. */ }
+  return stampMemory.get(name);
+}
+function stamp(name, owner) {
+  stampMemory.set(name, owner);
+  // ponytail: in-tab memory only where storage is refused; another tab's take then goes unseen, as in the SDK.
+  try { if (globalThis.localStorage) globalThis.localStorage.setItem(stampKey(name), owner); } catch (_) {}
 }
 
 var NEVER = new AbortController().signal;
@@ -67,19 +98,23 @@ function args(options, work) {
 }
 
 // Any Web Locks manager (navigator.locks, a test's) handing a handle: a handle it hands already passes through;
-// any other lock is never lost while its work runs.
+// any other lock is never lost while its work runs. Each acquisition stamps who took the lock last; `revive` takes
+// it again for a kept outcome without stamping, as that is the same holder's work coming back.
 function fencedLocks(locks) {
+  function acquire(name, options, work, stamped) {
+    var a = args(options, work);
+    return locks.request(name, a.options, function (lock) {
+      if (!lock) return a.work(null);
+      if (stamped) stamp(name, globalThis.crypto.randomUUID());
+      if (typeof lock.assertHeld === 'function') return a.work(lock);
+      var running = true;
+      return Promise.resolve(a.work(handle(lock.name || name, lock.mode || 'exclusive', async function () { return running; })))
+        .finally(function () { running = false; });
+    });
+  }
   return {
-    request: function (name, options, work) {
-      var a = args(options, work);
-      return locks.request(name, a.options, function (lock) {
-        if (!lock) return a.work(null);
-        if (typeof lock.assertHeld === 'function') return a.work(lock);
-        var running = true;
-        return Promise.resolve(a.work(handle(lock.name || name, lock.mode || 'exclusive', async function () { return running; })))
-          .finally(function () { running = false; });
-      });
-    },
+    request: function (name, options, work) { return acquire(name, options, work, true); },
+    revive: function (name, work) { return acquire(name, {}, work, false); },
   };
 }
 

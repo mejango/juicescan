@@ -149,3 +149,62 @@ it('requestKeeping reconciles a save refused for a lost lock under a fresh lock,
   expect(result).toBe('result');
   expect(order).toEqual(['saved', 'work done', 'end 0', 'reconciled 1', 'end 1']);
 });
+
+// A lock manager whose every request hands its own lock; `lapse()` loses the current one. `onRequest(n)` runs as
+// request n starts, before its work.
+function lapsingNative(onRequest) {
+  const handles = [];
+  vi.stubGlobal('navigator', { locks: { request: async (name, _options, work) => {
+    const handle = { name, lost: false };
+    handle.held = async () => !handle.lost;
+    handle.assertHeld = async () => { if (handle.lost) throw Object.assign(new Error('lost'), { code: 'LOCK_LOST' }); };
+    handles.push(handle);
+    if (onRequest) await onRequest(handles.length - 1);
+    return work(handle);
+  } } });
+  return { handles, lapse: () => { handles.at(-1).lost = true; } };
+}
+
+it('replays an untouched keep only while no other acquisition took the lock since (SDK 6.3.0 keepOutcome)', async () => {
+  const t = lapsingNative();
+  const { requestKeeping, browserLocks } = await import('../src/browser-locks.js');
+  const order = [];
+  // Untouched since: the replay lands under the fresh lock.
+  await requestKeeping('journal', {}, async (lock, keep) => {
+    t.lapse();
+    await keep(async () => { await lock.assertHeld(); }, () => order.push('replayed'), true).catch(() => {});
+  });
+  // Another window took the lock while this one was suspended: the replay never runs.
+  await requestKeeping('journal', {}, async (lock, keep) => {
+    t.lapse();
+    await browserLocks().request('journal', {}, async () => {});
+    await keep(async () => { await lock.assertHeld(); }, () => order.push('overwrote'), true).catch(() => {});
+  });
+  // An identity-matched reconcile still runs: it decides from the record itself.
+  await requestKeeping('journal', {}, async (lock, keep) => {
+    t.lapse();
+    await browserLocks().request('journal', {}, async () => {});
+    await keep(async () => { await lock.assertHeld(); }, () => order.push('merged')).catch(() => {});
+  });
+  expect(order).toEqual(['replayed', 'merged']);
+});
+
+it('queues an outcome kept after the work ended behind the earlier one, never writing it first', async () => {
+  const order = [];
+  let keep, late;
+  // The submission's reconcile takes lock 1; a confirmation is kept while it waits.
+  const t = lapsingNative(index => {
+    if (index !== 1) return;
+    late = keep(() => order.push('confirmation written directly'), () => order.push('confirmation')).catch(error => error);
+  });
+  const { requestKeeping } = await import('../src/browser-locks.js');
+  await requestKeeping('journal', {}, async (lock, held) => {
+    keep = held;
+    t.lapse();
+    await held(async () => { await lock.assertHeld(); }, () => order.push('submission')).catch(() => {});
+  });
+  const refused = await late;
+  expect(refused.code).toBe('LOCK_LOST');
+  await refused.reconciled;
+  expect(order).toEqual(['submission', 'confirmation']);
+});
