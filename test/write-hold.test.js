@@ -95,6 +95,8 @@ it('leaves holds to a caller that keeps its own journal',async()=>{
 });
 
 import {writeHold} from '../src/write-hold.js';
+// Journal keys only: lock holder stamps (browser-locks) share this storage.
+const storedKeys = () => Object.keys(localStorage).filter((key) => !key.startsWith('nana-sdk:lock-holder:'));
 const call={to:args.address,functionName:'pay',data:'0xabcd',value:1n};
 it('refuses to open the wallet when browser storage cannot keep the hold',async()=>{
  const set=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('quota');});
@@ -106,16 +108,16 @@ it('holds on a non-4001 rejection code',async()=>{
  await run();expect((await run()).error).toMatch(/earlier/i);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
 });
 it('does not open the wallet when another window took the slot before the wallet opened',async()=>{
- const key=Object.keys(localStorage);expect(key).toHaveLength(0);
- const takeOver=()=>{const k=Object.keys(localStorage)[0];if(k)localStorage.setItem(k,JSON.stringify({id:'other',account:h.account}));};
+ const key=storedKeys();expect(key).toHaveLength(0);
+ const takeOver=()=>{const k=storedKeys()[0];if(k)localStorage.setItem(k,JSON.stringify({id:'other',account:h.account}));};
  const first=await run({assertWriteState:takeOver});
  expect(first.error).toMatch(/another window/i);expect(h.wallet.writeContract).not.toHaveBeenCalled();
- expect(JSON.parse(localStorage.getItem(Object.keys(localStorage)[0])).id).toBe('other');
+ expect(JSON.parse(localStorage.getItem(storedKeys()[0])).id).toBe('other');
 });
 it('a stale dialog never releases a newer attempt',async()=>{
  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
  await run();await run();
- const k=Object.keys(localStorage)[0];localStorage.setItem(k,JSON.stringify({id:'newer',account:h.account}));
+ const k=storedKeys()[0];localStorage.setItem(k,JSON.stringify({id:'newer',account:h.account}));
  [...document.querySelectorAll('dialog[open] .create-btn.primary')][0].click();
  expect(JSON.parse(localStorage.getItem(k)).id).toBe('newer');
 });
@@ -134,7 +136,7 @@ it('a hash kept in memory never lets an old attempt release a newer stored one',
  const set=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('quota');});
  let withHash;try{withHash=hold.submitted(a,'0x'+'c'.repeat(64));}finally{set.mockRestore();}
  expect(hold.read().hash).toBe('0x'+'c'.repeat(64));
- const k=Object.keys(localStorage)[0];localStorage.setItem(k,JSON.stringify({id:'b',account:h.account,hash:null}));
+ const k=storedKeys()[0];localStorage.setItem(k,JSON.stringify({id:'b',account:h.account,hash:null}));
  hold.release(withHash);
  expect(hold.read().id).toBe('b');
 });
@@ -162,7 +164,7 @@ it('a release of the no-hash attempt shown never removes the hash its open walle
 it('a release dialog shown before a hash arrived cannot clear that hash',async()=>{
  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
  await run();await run();
- const k=Object.keys(localStorage)[0];const shown=JSON.parse(localStorage.getItem(k));
+ const k=storedKeys()[0];const shown=JSON.parse(localStorage.getItem(k));
  localStorage.setItem(k,JSON.stringify({...shown,hash:'0x'+'e'.repeat(64)}));
  document.querySelector('dialog[open] .create-btn.primary').click();await new Promise(r=>setTimeout(r));
  expect(JSON.parse(localStorage.getItem(k)).hash).toBe('0x'+'e'.repeat(64));

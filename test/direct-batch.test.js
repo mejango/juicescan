@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runDirectBatch, hasDirectBatch, clearUnsubmittedDirectBatch } from '../src/direct-batch.js';
+// Journal keys only: lock holder stamps (browser-locks) share this storage.
+const storedKeys = () => Object.keys(localStorage).filter((key) => !key.startsWith('nana-sdk:lock-holder:'));
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const CALLS = [84532, 11155420].map(cid => ({ cid, to: '0x2222222222222222222222222222222222222222', data: '0x12345678' }));
@@ -60,7 +62,7 @@ describe('sequential direct transaction recovery', () => {
     } })).rejects.toThrow('transport lost');
     const offerRelease = vi.fn();
     await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, offerRelease, execute: vi.fn() })).rejects.toThrow();
-    const key = Object.keys(localStorage).find((name) => name.endsWith(':' + scope));
+    const key = storedKeys().find((name) => name.endsWith(':' + scope));
     const saved = JSON.parse(localStorage.getItem(key));
     saved.hashes[0] = '0x' + 'cd'.repeat(32);
     localStorage.setItem(key, JSON.stringify(saved));
@@ -122,7 +124,7 @@ describe('sequential direct transaction recovery', () => {
       }) } });
     });
     afterEach(() => { Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn((_key, _options, fn) => fn({})) } }); });
-    const saved = scope => JSON.parse(localStorage.getItem(Object.keys(localStorage).find(name => name.endsWith(':' + scope))) || 'null');
+    const saved = scope => JSON.parse(localStorage.getItem(storedKeys().find(name => name.endsWith(':' + scope))) || 'null');
     it('never marks a leg sending, and hands the wallet its lock', async () => {
       let walletLocks;
       await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope: 'lapsed-sending', execute: async (_call, _index, _submitted, sending, held) => {
@@ -167,7 +169,7 @@ describe('sequential direct transaction recovery', () => {
       await expect(runDirectBatch(CALLS, { account: ACCOUNT, scope, execute: async (_call, _index, submitted, sending) => {
         await sending(); lapse();
         // Another window took the batch and started its own attempt on this leg.
-        const current = saved(scope); current.attempts[0] = 'other'; localStorage.setItem(Object.keys(localStorage).find(name => name.endsWith(':' + scope)), JSON.stringify(current));
+        const current = saved(scope); current.attempts[0] = 'other'; localStorage.setItem(storedKeys().find(name => name.endsWith(':' + scope)), JSON.stringify(current));
         await submitted('0xabc'); return receipt('0xabc');
       } })).rejects.toMatchObject({ submittedHash: '0xabc' });
       expect(saved(scope).hashes[0]).toBe('sending');

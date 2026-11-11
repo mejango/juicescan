@@ -1,3 +1,24 @@
+# requestKeeping aligned with SDK 6.3.0 keepOutcome (2026-11-10)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/adopt-630-brief.md steps 3 to 6 (no SDK to bump). Reference: juice-sdk-v4 origin/main 3a5e12f `packages/core/src/review/locks.ts` `keepOutcome`.
+
+- [x] 1. `browser-locks.js`: every acquisition through `browserLocks()` stamps who took the lock last (localStorage `nana-sdk:lock-holder:<name>`, tab memory where refused); a reconcile retakes the lock without stamping.
+- [x] 2. `requestKeeping`'s `keep(write, reconcile?)`: without `reconcile`, a refused write is kept and replayed under the fresh lock only if nobody took the lock since; once the lock's work ended, `keep` queues at once (never writes through the ended handle), behind every outcome kept before it.
+- [x] 3. `relayrPay`: `onSubmitted` writes the caller's whole in-memory session, so it is not attempt-scoped: keep it without `reconcile` (untouched replay). `onUnsent` stays identity-matched (bundle + `paymentAttempt`).
+- [x] 4. Regressions: untouched replay applied/refused, keep after end queues behind an earlier kept outcome (submission before confirmation), Relayr hash not replayed over a lock another window took.
+- [x] 5. Full `npm run check` on Node 22.23.4, PR, Codex `juicescan630` until MERGE.
+
+### Review
+`npm run check` on Node 22.23.4 (deploy-all 8ff50c2): 0 production vulnerabilities, `check:generated` clean, transaction inventory 136 occurrences (browser-locks `.request` 4 -> 3, coverage text updated), 222 files / 2362 unit tests, startup 721,037 / 722,000 B gzip, browser 148 passed. The three new regressions fail on c2c2f0a. Tests that enumerate every storage key now skip the holder stamps (`storedKeys`); production scans already filter by prefix.
+
+## Plan refinement
+- **Objective:** juicescan's one keep helper follows SDK 6.3.0's `keepOutcome` rules for the flows juicescan reaches: a kept write retakes the lock only if untouched, or identity-matched with a reconcile; outcomes for one lock name land in insertion order; a confirmation never lands ahead of a submission.
+- **System fit:** Outcome (a wallet's hash or rejection survives a lease lapse without overwriting a newer attempt) -> capability (`requestKeeping` keep) -> evidence (fresh lock, holder stamp, record identity) -> authority (the lock name) -> verified result (lapse tests). Owner: `src/browser-locks.js`; consumers: write-hold/component-base, Defifa, direct-batch, create-flow, action-plan, relayr. Only relayr's `onSubmitted` changes mode; the others already pass identity-matched reconciles.
+- **Reuse and simplicity:** Extend the existing helper and `fencedLocks`; no new module, no React machinery, no `settled` tell-once (no confirmation claims in juicescan), no multi-lock keep (each journal is written under one lock).
+- **Evidence and unknowns:** SDK source at 3a5e12f and PR #298's API section; juicescan call-site audit (every keep site read). Stamps are lock-scoped like the SDK's; a record written without its lock is out of scope, as in the SDK.
+- **Verification:** New vitest cases fail on origin/main c2c2f0a and pass here; full `npm run check` (unit, coverage, generated, bundle, browser) on Node 22.23.4.
+- **Resource budget:** One worktree, targeted vitest while editing, one full check, Codex passes until MERGE.
+
 # Lock fencing from SDK 6.2.0, ported (2026-11-10)
 
 Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/ADOPTION_BRIEF.md (no version bump, no SDK dependency). Reference: @bananapus/nana-sdk-core@6.2.0 `review/locks`, `relayrSend`, `contractWrite`, `wallet`.
