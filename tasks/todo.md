@@ -591,3 +591,37 @@ Fourteen commits on state-machines-2026-11-09. `npm run check` passes (Node 22.2
 ### R119: writes without Web Locks
 - [x] One local `browserLocks()` (src/browser-locks.js, SDK copy: Web Locks, else IndexedDB lease, else in-tab queue); every refusing lock site routes through it; refusal messages deleted; refusal tests now expect the flow to run on the fallback.
 - [x] Gate: `npm run check` (Node 22.23.4) passes: 222 files / 2306 unit tests, startup 718,941 / 722,000 B gzip (+528), total 2,083,555 / 2,125,000 B (+478), 148 browser tests.
+
+
+# 2026-11-12: Adopt Node 26.13.1 security release
+
+## Plan refinement
+- **Objective:** Move juicescan development, CI and applicable production build/runtime to Node26.13.1, with executable checks passing on the exact reviewed change.
+- **System fit:** Runtime selection belongs to existing .nvmrc, package engines, CI setup and any OCI base image. Wallet authority, protocol data, SDK ownership and application behavior remain unchanged. User authorized this runtime upgrade; main merge is coordinated by the root agent after review and checks.
+- **Reuse and simplicity:** Update existing pins and runtime consistency guards, align the declared npm toolchain with Node26.13.1 bundled npm11.20.0 already used by CI, and reuse the full CI suite. Keep dependency versions and resolved lock entries unchanged, modifying only lockfile root engine metadata where required. Preserve historical measurement records.
+- **Evidence and unknowns:** Current origin/main was fetched into an isolated worktree; official Node release evidence confirms26.13.1 is a security release. Verify the official OCI digest where used. Local static checks establish configuration agreement; GitHub CI establishes Linux build/test compatibility, not live deployment.
+- **Verification:** Run plan checker, diff whitespace and runtime consistency review, existing lightweight deployment/container checks, then full existing CI including coverage/browser and OCI smoke where configured. Investigate failures without weakening checks or increasing existing deadlines. Confirm dependency-lock package entries unchanged.
+- **Resource budget:** Reuse GitHub CI for expensive Linux checks and avoid overlapping local builds with service verification. All commands use this absolute worktree and journal writes use absolute paths with a snapshot. Escalate concrete incompatibility to root for replanning.
+
+- [x] Read required workspace resources, descendant instructions and relevant lessons; inspect current-main runtime configuration.
+- [x] Update exact runtime pins and matching active documentation/guards.
+- [x] Verify minimal lock metadata change and local configuration checks.
+- [ ] Prepare PR and verify full existing CI on its exact head.
+
+## Review
+The existing source checker parsed all343 JavaScript files successfully under verified Node26.13.1. All222 non-root lockfile package records are unchanged. Full Linux CI is required on the PR head before merge.
+
+
+## Plan refinement
+- **Objective:** Complete the Node 26.13.1 upgrade with Juicescan's existing browser-storage tests working unchanged.
+- **System fit:** Vitest uses jsdom for browser globals; Node 26's experimental process-wide localStorage is unrelated to the static application and must not shadow jsdom. The npm lifecycle runtime configuration owns this choice. Browser wallet storage and authority stay unchanged.
+- **Reuse and simplicity:** Reuse the one-line .npmrc node-options policy already used by JBM and Revnet, with no storage mock, dependency update, test weakening or production JavaScript changes.
+- **Evidence and unknowns:** Exact-head CI 43216431733 installed and built successfully but failed storage tests with undefined.clear/getItem and Node's missing localstorage-file warning. Confirm the process-global collision using the locked Vitest/jsdom tree and existing storage tests before applying the runtime flag.
+- **Verification:** Run focused unchanged storage tests without then with the flag, verify package-lock dependency entries remain unchanged, and require complete final-head Linux CI. The configuration change must work through normal npm test commands locally and in CI.
+- **Resource budget:** Install only Juicescan's small exact-lock tree and run a focused regression; full checks remain on GitHub, avoiding contention with local service checks.
+
+- [x] Reproduce the storage failure on Node 26.13.1 with the exact lockfile.
+- [x] Disable experimental Node Web Storage for npm lifecycle processes and pass unchanged storage regressions.
+- [ ] Rerun complete CI on the final head.
+
+Focused unchanged storage regressions reproduced28 failures and3 passes before the flag; both files then passed all31 cases through ordinary npm test with the .npmrc policy. Locked dependency installation left package-lock.json unchanged. Full final-head CI remains required.

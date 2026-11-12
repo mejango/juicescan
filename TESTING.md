@@ -18,6 +18,8 @@ The test stack protects four different contracts with users. Each layer is deter
 | Full local gate | `npm run check` | Verifies the locked dependency graph, runs the production dependency audit, and then runs every deterministic CI check. This is the final pre-publish gate. |
 | Live canary | `npm run test:ui` | Exercises known deployed projects, custom accounting tokens, LP/loan flows, and the create wizard. This is intentionally manual because it depends on live RPC and Bendystraw state. |
 
+Use the Node version pinned in `.nvmrc` and the bundled npm version declared in `package.json`. The repository `.npmrc` disables Node's experimental process-wide Web Storage so jsdom supplies browser storage during unit tests.
+
 CI runs on the fixed Ubuntu 24.04 image. Every reusable GitHub Action is pinned to an immutable full commit SHA, test checkouts disable persisted credentials, and the workflow keeps repository permissions read-only.
 
 Dependabot checks npm and GitHub Actions weekly. Minor and patch updates are grouped; majors remain separate for deliberate review. Action updates must preserve immutable full-SHA pins, and no dependency update should merge until the complete deterministic suite and the high/critical production audit pass.
