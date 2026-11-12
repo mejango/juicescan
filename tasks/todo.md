@@ -610,3 +610,18 @@ Fourteen commits on state-machines-2026-11-09. `npm run check` passes (Node 22.2
 
 ## Review
 The existing source checker parsed all343 JavaScript files successfully under verified Node26.13.1. All222 non-root lockfile package records are unchanged. Full Linux CI is required on the PR head before merge.
+
+
+## Plan refinement
+- **Objective:** Complete the Node 26.13.1 upgrade with Juicescan's existing browser-storage tests working unchanged.
+- **System fit:** Vitest uses jsdom for browser globals; Node 26's experimental process-wide localStorage is unrelated to the static application and must not shadow jsdom. The npm lifecycle runtime configuration owns this choice. Browser wallet storage and authority stay unchanged.
+- **Reuse and simplicity:** Reuse the one-line .npmrc node-options policy already used by JBM and Revnet, with no storage mock, dependency update, test weakening or production JavaScript changes.
+- **Evidence and unknowns:** Exact-head CI 43216431733 installed and built successfully but failed storage tests with undefined.clear/getItem and Node's missing localstorage-file warning. Confirm the process-global collision using the locked Vitest/jsdom tree and existing storage tests before applying the runtime flag.
+- **Verification:** Run focused unchanged storage tests without then with the flag, verify package-lock dependency entries remain unchanged, and require complete final-head Linux CI. The configuration change must work through normal npm test commands locally and in CI.
+- **Resource budget:** Install only Juicescan's small exact-lock tree and run a focused regression; full checks remain on GitHub, avoiding contention with local service checks.
+
+- [x] Reproduce the storage failure on Node 26.13.1 with the exact lockfile.
+- [x] Disable experimental Node Web Storage for npm lifecycle processes and pass unchanged storage regressions.
+- [ ] Rerun complete CI on the final head.
+
+Focused unchanged storage regressions reproduced28 failures and3 passes before the flag; both files then passed all31 cases through ordinary npm test with the .npmrc policy. Locked dependency installation left package-lock.json unchanged. Full final-head CI remains required.
