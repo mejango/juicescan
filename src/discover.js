@@ -18338,6 +18338,10 @@ export function assertPoolParams(v, withPrice) {
   if (twapWindow < BigInt(MIN_TWAP_WINDOW) || twapWindow > BigInt(MAX_TWAP_WINDOW)) {
     throw new Error('The hook only accepts a TWAP window between ' + MIN_TWAP_WINDOW + ' and ' + MAX_TWAP_WINDOW + ' seconds.');
   }
+  // Registering with exactly the maximum stores the hook's 30-minute default (deployers pass it to mean "no preference").
+  if (twapWindow === BigInt(MAX_TWAP_WINDOW)) {
+    throw new Error('A pool registered with exactly ' + MAX_TWAP_WINDOW + 's stores the hook\'s 30-minute default instead (it is the "no preference" sentinel). Use ' + (MAX_TWAP_WINDOW - 1) + ' for the longest real window, or set 1800 deliberately.');
+  }
   if (withPrice) {
     var price = BigInt(v.sqrtPriceX96);
     if (price <= 0n || price >= 2n ** 160n) throw new Error('Initial price must be a positive uint160 value.');

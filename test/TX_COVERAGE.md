@@ -19,6 +19,7 @@ Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg a
 | Queue omnichain rulesets / start shop | `JBOmnichainDeployer.queueRulesetsOf` overloads | `buildOmnichainQueueArgs` / `buildNewShopQueueCall` | **U** (canonical overload selectors + nested args) |
 | Mint | `JBController.mintTokensOf` | `buildMintArgs` | **U** |
 | Burn | `JBController.burnTokensOf` | `buildBurnArgs` | **U** |
+| Build guide code sample | none (text shown to readers, mirrored from juicebox.money) | `src/build-sections.js` | not a wallet call; `test/learn-build.test.js` renders it as text |
 | Deploy ERC-20 | `JBController.deployERC20For` | `buildDeployErc20Args` | **U** |
 | Send reserved | `JBController.sendReservedTokensToSplitsOf` | `buildSendReservedArgs` | **U** |
 | Claim credits | `JBController.claimTokensFor` | `buildClaimTokensArgs` | **U** |
