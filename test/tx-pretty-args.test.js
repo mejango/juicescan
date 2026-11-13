@@ -173,6 +173,13 @@ describe('permissions and splits decoding', () => {
     expect(rows).toContain('Warning=ROOT grants every permission');
   });
 
+  it('names the hook as the recipient of a split with no beneficiary', () => {
+    const steps = describeSplitGroups([
+      { groupId: 1n, splits: [{ percent: 1000000000, projectId: 0n, beneficiary: ZERO, preferAddToBalance: false, lockedUntil: 0, hook: BOB }] },
+    ]);
+    expect(rowsOf(steps)).toEqual([`Split 1: 100%=hook ${BOB}`, 'Total=100%']);
+  });
+
   it('renders split percents with an honest total', () => {
     const steps = describeSplitGroups([
       {
