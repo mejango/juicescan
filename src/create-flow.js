@@ -1250,10 +1250,25 @@ export function noticeClashIssue(state) {
     var chainId = state.queueHomeChainId || state.chainIds[0];
     var firstStart = state.queueEditor
       ? Number(state.queueOption && state.queueOption.requiresStartDate ? state.queueCustomStart : state.queueMustStartAtByChain && state.queueMustStartAtByChain[chainId] || 0)
-      : Number(state.stages[0].schedule) || now + 600;
+      : Number(state.stages[0].schedule) || now + launchStartLead(state, chainId);
     var schedule = stageStarts(state, resolveStages(state), firstStart, now, chainId);
     return scheduleIsFresh(schedule.validUntil, now) ? null : 'This schedule has no usable execution window. Choose a later ruleset start, lengthen an earlier cycle, or shorten its notice.';
   } catch (error) { return error.message; }
+}
+
+// Seconds between review and the shared start. Several rulesets behind a known notice get an hour, so the
+// notice window is still open when the last signature lands; everything else gets ten minutes. Same as juicebox.money.
+export function launchStartLead(state, chainId) {
+  if (state.projectType === 'revnet' || (state.stages || []).length < 2) return 600;
+  return state.stages.some(function (stage) { return stageNoticeSeconds(state, stage, chainId) > 0; }) ? 3600 : 600;
+}
+
+/** A start picked for the first ruleset or stage must be at least an hour out. */
+export function startLeadIssue(state, now) {
+  var first = (state.stages || [])[0];
+  var picked = first && Number(first.schedule);
+  if (!picked || picked >= now + 3600) return '';
+  return (state.projectType === 'revnet' ? 'Stage' : 'Ruleset') + ' #1 needs a start at least an hour from now.';
 }
 
 // Returns the index of the first non-final stage with no duration (which would break sequencing), or -1.
@@ -3328,6 +3343,7 @@ function renderDeploy(state, render) {
   var deadlineBad = deadlinePresetIssue(state); // preset approval hook (JBDeadline) unmanifested on a selected chain
   var lpBad = lpHookIssue(state); // Fund market split with the LP fee hook unmanifested on a selected chain
   var mediaBad = shopMediaUploadIssue(state) || shopItemIssue(state); // never launch with pending/failed media or an unfinished item
+  var leadBad = startLeadIssue(state, Math.floor(Date.now() / 1000));
   var linkBad = state.chainIds.length > 1 && uncoveredPairs(state).length ? 'Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.' : '';
   var noticeBad = noticeClashIssue(state); // a launch-queued stage the JBDeadline hook would reject
   var startBad = isRev ? -1 : state.stages.findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
@@ -3341,7 +3357,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!leadBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3360,6 +3376,7 @@ function renderDeploy(state, render) {
   if (lpBad) wrap.appendChild(warnNote(lpBad));
   if (mediaBad) wrap.appendChild(warnNote(mediaBad));
   if (linkBad) wrap.appendChild(warnNote(linkBad));
+  if (leadBad) wrap.appendChild(warnNote(leadBad));
   if (noticeBad) wrap.appendChild(warnNote(noticeBad));
   if (durationBad) wrap.appendChild(warnNote(durationBad));
   if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start: a whole number of cycles or a date, on the Rulesets step.'));
@@ -4363,7 +4380,7 @@ async function runDeploy(state, owner) {
   // Keep the reviewed pin across every chain and saved retry. Known notice hooks
   // give the plan a concrete execution window; expired unsent plans need fresh review.
   state._schedulePreparedAt = Math.floor(Date.now() / 1000);
-  var deployStart = state._schedulePreparedAt + 600;
+  var deployStart = state._schedulePreparedAt + launchStartLead(state, state.chainIds[0]);
 
   // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
   // BEFORE the user signs or pays anything.

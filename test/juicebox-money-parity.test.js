@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { cashOutTaxValue, omnichainTokenSalt } from '../src/encoding.js';
 import { keccak256, toHex } from 'viem';
 import { chainList } from '../src/chain.js';
-import { applyRevnetTaxDefault, createStage, launchOutcomeText, ownerFieldInvalid, shopItemIssue, tickerOk } from '../src/create-flow.js';
+import { applyRevnetTaxDefault, createStage, launchOutcomeText, launchStartLead, ownerFieldInvalid, startLeadIssue, shopItemIssue, tickerOk } from '../src/create-flow.js';
 
 describe('cash out tax value', () => {
   it('reads a rate out of 10,000 as the 0 to 1 value', () => {
@@ -111,5 +111,23 @@ describe('launch form gates shared with juicebox.money', () => {
     expect(shopItemIssue({ nfts: [{ name: '', price: '0.1' }] })).toBe('Complete or remove unfinished shop items.');
     expect(shopItemIssue({ nfts: [{ name: 'Hat', price: '0' }] })).toBe('Complete or remove unfinished shop items.');
     expect(shopItemIssue({ shopEnabled: false, nfts: [{ name: '', price: '' }] })).toBe('');
+  });
+});
+
+describe('launch start timing shared with juicebox.money', () => {
+  it('gives several rulesets behind a notice an hour, everything else ten minutes', () => {
+    const one = { projectType: 'custom', stages: [{ deadline: '1day', durationSeconds: 86400 }] };
+    const two = { projectType: 'custom', stages: [{ deadline: '1day', durationSeconds: 86400 }, { deadline: '1day', durationSeconds: 86400 }] };
+    const noNotice = { projectType: 'custom', stages: [{ deadline: 'none', durationSeconds: 86400 }, { deadline: 'none', durationSeconds: 86400 }] };
+    expect(launchStartLead(one, 1)).toBe(600);
+    expect(launchStartLead(two, 1)).toBe(3600);
+    expect(launchStartLead(noNotice, 1)).toBe(600);
+    expect(launchStartLead(Object.assign({}, two, { projectType: 'revnet' }), 1)).toBe(600);
+  });
+  it('blocks a picked start less than an hour out', () => {
+    expect(startLeadIssue({ projectType: 'custom', stages: [{ schedule: 1000 + 3599 }] }, 1000)).toBe('Ruleset #1 needs a start at least an hour from now.');
+    expect(startLeadIssue({ projectType: 'revnet', stages: [{ schedule: 1000 + 60 }] }, 1000)).toBe('Stage #1 needs a start at least an hour from now.');
+    expect(startLeadIssue({ projectType: 'custom', stages: [{ schedule: 1000 + 3600 }] }, 1000)).toBe('');
+    expect(startLeadIssue({ projectType: 'custom', stages: [{ schedule: '' }] }, 1000)).toBe('');
   });
 });
