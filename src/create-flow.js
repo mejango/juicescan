@@ -571,6 +571,11 @@ export function parseCreateDraftJson(input) {
     merged.tos = false; // every new deployment must re-acknowledge the risk confirmation
     return merged;
   }
+  // juicebox.money saves a different draft shape (flat: flavor, name, chains). Its rules do not map one to one onto
+  // this form, so the file is named instead of being half read.
+  if (candidates.some(function (c) { return c && typeof c === 'object' && typeof c.flavor === 'string' && typeof c.name === 'string' && Array.isArray(c.stages); })) {
+    throw new Error('This draft was saved on juicebox.money. Open it there.');
+  }
   throw new Error('No Juicebox V6 .jb draft was found. Paste the JSON contents of an exported .jb file.');
 }
 

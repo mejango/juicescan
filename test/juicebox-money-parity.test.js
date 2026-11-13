@@ -54,3 +54,12 @@ describe('reverted versus unread', () => {
     expect(contractReverted(new Error('timeout'))).toBe(false);
   });
 });
+
+describe('.jb drafts from juicebox.money', () => {
+  it('names the other site instead of reporting no draft', async () => {
+    const { parseCreateDraftJson } = await import('../src/create-flow.js');
+    expect(() => parseCreateDraftJson(JSON.stringify({ v: 1, flavor: 'revnet', name: 'X', chains: [1], stages: [{}] })))
+      .toThrow('This draft was saved on juicebox.money. Open it there.');
+    expect(() => parseCreateDraftJson('{"a":1}')).toThrow('No Juicebox V6 .jb draft was found');
+  });
+});
