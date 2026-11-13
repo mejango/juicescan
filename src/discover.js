@@ -7347,6 +7347,59 @@ export function projectMetadataFromBendystraw(row) {
   };
 }
 
+// Cards ask for one row each. Requests made within a few milliseconds share one list query,
+// so a page of cards costs one indexer request instead of one per card.
+var BENDYSTRAW_BATCH_WINDOW_MS = 10;
+var BENDYSTRAW_BATCH_SIZE = 50;
+export function bendystrawBatcher(loadRows) {
+  var pending = [];
+  function send(chunk) {
+    var live = chunk.filter(function (item) {
+      if (item.network === DISCOVER_NETWORK) return true;
+      item.reject(new Error('Bendystraw network changed'));
+      return false;
+    });
+    if (!live.length) return;
+    loadRows(live.map(function (item) { return item.arg; })).then(function (rows) {
+      live.forEach(function (item) { item.resolve(rows[item.key] || null); });
+    }, function (error) {
+      live.forEach(function (item) { item.reject(error); });
+    });
+  }
+  function flush() {
+    var batch = pending;
+    pending = [];
+    for (var i = 0; i < batch.length; i += BENDYSTRAW_BATCH_SIZE) send(batch.slice(i, i + BENDYSTRAW_BATCH_SIZE));
+  }
+  return function (key, arg) {
+    return new Promise(function (resolve, reject) {
+      pending.push({ key: key, arg: arg, network: DISCOVER_NETWORK, resolve: resolve, reject: reject });
+      if (pending.length === 1) setTimeout(flush, BENDYSTRAW_BATCH_WINDOW_MS);
+    });
+  };
+}
+
+var loadBendystrawProjectRow = bendystrawBatcher(function (projects) {
+  return bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
+    where: { version: BENDYSTRAW_VERSION, OR: projects },
+    limit: projects.length,
+  }).then(function (data) {
+    var rows = {};
+    ((data && data.projects && data.projects.items) || []).forEach(function (row) {
+      rows[row.chainId + ':' + row.projectId] = row;
+    });
+    return rows;
+  });
+});
+
+var loadBendystrawSuckerGroupStats = bendystrawBatcher(function (ids) {
+  return bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_STATS_QUERY, { ids: ids, limit: ids.length }).then(function (data) {
+    var rows = {};
+    ((data && data.suckerGroups && data.suckerGroups.items) || []).forEach(function (row) { rows[row.id] = row; });
+    return rows;
+  });
+});
+
 function fetchBendystrawProjectRecord(id, chainId, onFresh) {
   var key = DISCOVER_NETWORK + ':' + chainId + ':' + id;
   var existing = _bendystrawProjectRecordCache[key];
@@ -7357,10 +7410,9 @@ function fetchBendystrawProjectRecord(id, chainId, onFresh) {
 
   var entry = { initial: null, fresh: null, listeners: onFresh ? [onFresh] : [], refreshing: true };
   _bendystrawProjectRecordCache[key] = entry;
-  var request = bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
-    projectId: Number(id), chainId: Number(chainId), version: BENDYSTRAW_VERSION,
-  }).then(function (data) {
-    var row = data && data.project;
+  var request = loadBendystrawProjectRow(Number(chainId) + ':' + Number(id), {
+    projectId: Number(id), chainId: Number(chainId),
+  }).then(function (row) {
     // An indexed miss cannot disprove a previously observed project row. Keep
     // the stale value visibly unconfirmed instead of replacing it with null.
     if (!row) throw new Error('Bendystraw project row unavailable');
@@ -21281,14 +21333,14 @@ function detailSubSection(title, contentNode) {
   return s;
 }
 
-export var BENDYSTRAW_PROJECT_QUERY = 'query($projectId: Float!, $chainId: Float!, $version: Float!) { '
-  + 'project(projectId: $projectId, chainId: $chainId, version: $version) { '
+export var BENDYSTRAW_PROJECT_QUERY = 'query($where: projectFilter, $limit: Int!) { '
+  + 'projects(where: $where, limit: $limit) { items { projectId chainId '
   + 'suckerGroupId tokenSupply volumeUsd paymentsCount contributorsCount createdAt accountingTokenCount token tokenSymbol decimals '
   + 'metadataUri metadata handle name description projectTagline logoUri coverImageUri infoUri payDisclosure '
-  + 'tags twitter farcaster discord telegram domain tokens } }';
+  + 'tags twitter farcaster discord telegram domain tokens } } }';
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
-var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($id: String!) { '
-  + 'suckerGroup(id: $id) { volumeUsd paymentsCount contributorsCount } }';
+var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($ids: [String], $limit: Int!) { '
+  + 'suckerGroups(where: { id_in: $ids }, limit: $limit) { items { id volumeUsd paymentsCount contributorsCount } } }';
 // Handle authority lookup is scoped to the canonical REVOwner permission account rather than an eventually
 // consistent isRevnetOperator marker. Live REVOwner.isOperatorOf checks still decide the one trusted candidate.
 export var BENDYSTRAW_PROJECT_HANDLE_OPERATOR_QUERY = 'query($account: String!, $chainId: Int!, $projectId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
@@ -22006,8 +22058,7 @@ async function fetchProjectIndexedStats(id, chainId) {
       contributorsCount: Number(p.contributorsCount) || 0,
     };
     if (p.suckerGroupId) {
-      var agg = await optionalWithin(bendystrawQuery(BENDYSTRAW_SUCKER_GROUP_STATS_QUERY, { id: p.suckerGroupId })
-        .then(function (d) { return d && d.suckerGroup; })
+      var agg = await optionalWithin(loadBendystrawSuckerGroupStats(p.suckerGroupId, p.suckerGroupId)
         .catch(function () { return null; }), INDEXED_STATS_TIMEOUT_MS, null);
       if (agg) {
         stats.volumeUsd = agg.volumeUsd;

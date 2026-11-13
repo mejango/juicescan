@@ -625,3 +625,19 @@ The existing source checker parsed all343 JavaScript files successfully under ve
 - [ ] Rerun complete CI on the final head.
 
 Focused unchanged storage regressions reproduced28 failures and3 passes before the flag; both files then passed all31 cases through ordinary npm test with the .npmrc policy. Locked dependency installation left package-lock.json unchanged. Full final-head CI remains required.
+
+## Cut Bendystraw request volume on card pages (2026-11-12)
+## Plan refinement
+- **Objective:** A page of project cards loads without tripping Bendystraw's per-IP limit (100 requests a minute). Measured on `#/base/1` before: 313 requests, 171 distinct, 213 rejected with 429 from 2.5 seconds in.
+- **System fit:** `fetchBendystrawProjectRecord` and `fetchProjectIndexedStats` stay the one home for a card's row and stats; they now load through a batcher that turns rows asked for within 10 ms into one list query. `bendystraw-client.js` stays the one home for transport and now waits for `Retry-After`.
+- **Reuse and simplicity:** Uses the existing `projects(where: { OR })` and `suckerGroups(where: { id_in })` list queries from the pinned schema. One 30-line batcher, no dependency. Callers and caches are unchanged.
+- **Evidence and unknowns:** The limit and its `Retry-After` header are in Bendystraw's `rateLimit.ts`. Retries at 250 and 750 ms landed inside the same 60-second window, tripling rejected traffic. Owner counts still cost one participants query per card.
+- **Verification:** Unit tests for the batcher and the wait, full vitest run, bundle budget, and the same page measured against live Bendystraw: 60 requests, none rejected.
+- **Resource budget:** One PR, one CI run, one publish.
+- [x] Batch project rows and group stats
+- [x] Wait for Retry-After on 429
+- [x] Tests, bundle budget, live measurement
+
+### Review
+- `#/base/1` against live Bendystraw: 313 requests with 213 rejected, down to 60 with none rejected. 71 project lookups became 7 list queries (cards arrive in waves), 46 group stats became 2.
+- Not changed: the mobile wallet handoff still rewrites to the `eth.sucks` gateway, which does not serve CIDs today. No gateway without a service worker serves the site, so that waits on a fixed host.
