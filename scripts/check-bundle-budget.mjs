@@ -7,7 +7,9 @@ import { gzipSync } from 'node:zlib';
 // Budgets sit about 2% above the measured build (startup 706,990 B gzip, total 2,016,156 B gzip). Raise them
 // only with a reason in the commit. The registry keeping every retired contract generation (deploy-all 8ff50c2)
 // measures startup 3,833,909 B raw and total 2,082,544 B gzip; only those two ceilings rose.
-const startupBudget = { raw: 3_910_000, gzip: 722_000 };
+// Parity with juicebox.money (2026-11) adds pay card and review logic that must load with the project page:
+// startup measures 722,045 B gzip, and the ceiling rose to about 2% above it.
+const startupBudget = { raw: 3_930_000, gzip: 736_000 };
 
 const budgets = {
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
