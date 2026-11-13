@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderBuildTab, renderLearnTab, renderWhyTab } from '../src/learn-build.js';
 import { BENDYSTRAW_GRAPHQL_ENDPOINTS } from '../src/bendystraw-endpoints.js';
 import { PERMISSION_IDS } from '../src/permission-ids.js';
+import { BUILD_SECTIONS } from '../src/build-sections.js';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,16 +37,20 @@ describe('Learn, Build, and Why guides', () => {
     assertTableOfContents(learn);
     assertTableOfContents(build);
     expect(learn.querySelectorAll('.guide-section').length).toBe(17);
-    expect(build.querySelectorAll('.guide-section').length).toBe(19);
+    // Build mirrors juicebox.money's guide section for section, old anchors included.
+    expect([...build.querySelectorAll('.guide-section')].map(section => section.id)).toEqual(BUILD_SECTIONS.map(section => section.id));
+    for (const alias of BUILD_SECTIONS.flatMap(section => section.aliases || [])) expect(build.querySelector('#' + alias), alias).not.toBeNull();
     expect(build.querySelector('#build-revnet-what')).not.toBeNull();
-    expect(build.querySelector('#build-revnet-fees a').getAttribute('href')).toBe('learn.html#learn-fees');
+    // The two guides link to each other inside this bundle; other site links go to juicebox.money.
+    expect(build.querySelector('a[href="learn.html#learn-fees"]')).not.toBeNull();
     expect(build.querySelector('a[href="learn.html#learn-glossary"]')).not.toBeNull();
-    // The Build table renders the one permission list, including the loan warning.
-    for (const permission of PERMISSION_IDS) expect(build.querySelector('#build-permissions').textContent).toContain(permission.id + ' - ' + permission.name + permission.desc);
+    expect(learn.querySelector('a[href="build.html#founders-launch-from-the-wizard"]')).not.toBeNull();
+    expect(build.querySelector('a[href="https://juicebox.money/create"]')).not.toBeNull();
+    expect(build.textContent).not.toMatch(/\]\(/);
+    // The mirrored permission table names every permission this site knows.
+    for (const permission of PERMISSION_IDS) expect(build.querySelector('#build-permissions').textContent).toContain(permission.id + ' - ' + permission.name);
     expect(PERMISSION_IDS.find(p => p.name === 'REALLOCATE_LOAN').desc).toMatch(/borrows the full current capacity/);
-    for (const endpoint of Object.values(BENDYSTRAW_GRAPHQL_ENDPOINTS)) {
-      expect(build.querySelector('#build-bendystraw').textContent).toContain(endpoint);
-    }
+    expect(build.textContent).toContain(BENDYSTRAW_GRAPHQL_ENDPOINTS.mainnet);
     expect(why.querySelectorAll('.why-want').length).toBe(6);
     // Learn prose links a term to its section or glossary row instead of defining it inline.
     expect(learn.querySelector('.guide-text a[href="#learn-cash-outs"]')).not.toBeNull();

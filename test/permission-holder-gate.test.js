@@ -65,6 +65,8 @@ describe('assertPoolParams', () => {
     expect(() => assertPoolParams({ ...ok, tickSpacing: '0' }, false)).toThrow('Tick spacing must be a positive int24 value.');
     expect(() => assertPoolParams({ ...ok, twapWindow: '299' }, false)).toThrow('between 300 and 172800 seconds');
     expect(() => assertPoolParams({ ...ok, twapWindow: '172801' }, false)).toThrow('between 300 and 172800 seconds');
+    expect(() => assertPoolParams({ ...ok, twapWindow: '172800' }, false)).toThrow("stores the hook's 30-minute default");
+    expect(() => assertPoolParams({ ...ok, twapWindow: '172799' }, false)).not.toThrow();
     expect(() => assertPoolParams({ ...ok, sqrtPriceX96: '0' }, true)).toThrow('Initial price must be a positive uint160 value.');
     expect(() => assertPoolParams({ ...ok, sqrtPriceX96: '0' }, false)).not.toThrow();
   });
