@@ -21,6 +21,7 @@ async function confirmed() {
   const dialog = document.querySelector('dialog.modal-dialog');
   const confirm = dialog.querySelector('.create-modal-foot .create-btn.primary');
   const cancel = dialog.querySelector('.create-modal-foot .create-btn.ghost');
+  (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
   confirm.click();
   const result = await resultPromise;
   expect(result.ok).toBe(true);
@@ -59,6 +60,7 @@ describe('transaction confirmation recovery', () => {
 
     const next = result.showNext(payload, { confirmText: 'Open loan' });
     expect(cancel.textContent).toBe('Cancel');
+    (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
     confirm.click();
     const second = await next;
     expect(second.ok).toBe(true);

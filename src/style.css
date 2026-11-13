@@ -5745,6 +5745,8 @@ th[data-tip]:hover::after {
 /* Deliberate-confirmation gate for irreversible owner actions. */
 .danger-confirm { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0; font-size: 12px; font-weight: bold; color: var(--c-pink); cursor: pointer; line-height: 1.5; }
 .danger-confirm input { margin-top: 2px; }
+.tx-confirm-agree { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0 0; font-size: 12px; cursor: pointer; line-height: 1.5; }
+.tx-confirm-agree input { margin-top: 2px; flex: none; }
 .cta-disabled { opacity: 0.45; }
 
 /* Cash-out "how it's calculated" breakdown. */

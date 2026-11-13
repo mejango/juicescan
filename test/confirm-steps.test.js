@@ -46,6 +46,9 @@ describe('stepped confirm dialog', () => {
 
     const confirm = dialog.querySelector('.create-modal-foot .create-btn.primary');
     expect(confirm.textContent).toBe('Approve');
+    expect(confirm.disabled).toBe(true); // nothing sends before the acknowledgement is ticked
+    expect(dialog.querySelector('.tx-confirm-agree').textContent).toBe('I reviewed the chain, destination, native value and calldata. I agree to send this exact call.');
+    (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
     confirm.click();
     const session = await first;
     expect(session.ok).toBe(true);
@@ -56,9 +59,10 @@ describe('stepped confirm dialog', () => {
     expect(document.querySelectorAll('dialog.modal-dialog').length).toBe(1);
     expect(activeStep(dialog)).toBe(1);
     expect(stepLabels(dialog)[0]).toBe('1Approve the loan contract');
-    expect(confirm.disabled).toBe(false);
+    expect(confirm.disabled).toBe(true); // each call in the dialog needs its own acknowledgement
     expect(confirm.textContent).toBe('Open loan');
     expect(dialog.querySelector('.tx-decoded-argname').textContent).toBe('Collateral: ');
+    (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
     confirm.click();
     const next = await second;
     expect(next.ok).toBe(true);
@@ -69,6 +73,7 @@ describe('stepped confirm dialog', () => {
   it('marks the approval step while an ERC-20 approval runs, then the main step', async () => {
     const pending = confirmTransactionModal(Object.assign({ action: 'Pay', erc20Approval: { token: '0x2', spender: '0x3', amount: 1n } }, call), { keepOpenForProgress: true });
     const dialog = document.querySelector('dialog.modal-dialog');
+    (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
     dialog.querySelector('.create-modal-foot .create-btn.primary').click();
     const session = await pending;
     session.showStatus('Approving token spend…', 'pending');
@@ -81,6 +86,7 @@ describe('stepped confirm dialog', () => {
     const pending = confirmTransactionModal(call, { steps: false, hideCancel: true, confirmText: 'Close' });
     const dialog = document.querySelector('dialog.modal-dialog');
     expect(dialog.querySelector('.pay-confirm-sequence')).toBeNull();
+    (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
     dialog.querySelector('.create-modal-foot .create-btn.primary').click();
     expect(await pending).toBe(true);
     expect(document.body.contains(dialog)).toBe(false);

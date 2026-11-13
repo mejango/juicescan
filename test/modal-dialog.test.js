@@ -182,6 +182,7 @@ describe('confirmTransactionModal on the dialog root', () => {
       function: 'queueRulesetsOf', args: { projectId: 9 }, value: 0n,
     }, { keepOpenForProgress: true });
     const dialog = document.querySelector('dialog.modal-dialog');
+    (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
     dialog.querySelector('.create-modal-foot .create-btn.primary').click();
     const result = await resultPromise;
     expect(result.ok).toBe(true);

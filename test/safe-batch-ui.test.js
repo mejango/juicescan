@@ -96,6 +96,8 @@ describe('batch dialog', () => {
     steps = dlg.querySelectorAll('.safe-batch-step');
     expect(Array.from(steps).map(s => s.querySelector('.safe-batch-step-label').textContent)).toEqual(['Set buyback hook', 'Set buyback pool']);
     expect(dlg.querySelector('.safe-batch-problem')).toBeNull();
+    expect(confirm.disabled).toBe(true); // the order is right, the acknowledgement is not ticked yet
+    (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
     expect(confirm.disabled).toBe(false);
     expect(loadTray(8453, 6).map(s => s.kind)).toEqual(['setHookFor', 'setPoolFor']);
     steps[1].querySelector('[aria-label="Remove"]').click();
