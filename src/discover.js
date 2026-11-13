@@ -21,7 +21,7 @@ import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive 
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
-import { encodeCalldata } from './encoding.js';
+import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { generationAddresses, generationNames, getABI } from './abi-registry.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
@@ -6342,7 +6342,13 @@ function formatOwnerPortion(balance, total) {
   return '<0.01%';
 }
 
-// reservedPercent / cashOutTaxRate are out of 10_000 (= 100%).
+// A ruleset's cash out tax as its row value: the 0 to 1 value, "None" at zero, "Disabled" at the maximum.
+function cashOutTaxLabel(value) {
+  if (value === null || value === undefined) return '—';
+  var rate = Number(value);
+  return rate >= 10000 ? 'Disabled' : rate > 0 ? cashOutTaxValue(rate) : 'None';
+}
+// reservedPercent is out of 10_000 (= 100%).
 function percentFromRuleset(value) {
   if (value === null || value === undefined) return '—';
   return (Number(value) / 100).toFixed(Number(value) % 100 === 0 ? 0 : 2) + '%';
@@ -12618,7 +12624,7 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
   var controllers = await controllerMapFor(chains, project);
 
   // The deterministic salt makes the ERC-20 deploy to the same address on every chain.
-  var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [pidOn(project, project.chainId), symbol]));
+  var salt = omnichainTokenSalt(name, symbol);
   var buildCall = function (cid) {
     var abi = deployed ? setTokenMetadataAbi : deployErc20Abi;
     var functionName = deployed ? 'setTokenMetadataOf' : 'deployERC20For';
@@ -14723,7 +14729,7 @@ export function rulesetRows(r, m, project) {
     ['TOKEN', 'Total issuance rate', (Number(r.weight) === 0 ? '0' : formatAmount(r.weight, 18)) + ' / ' + baseUnit],
     ['TOKEN', 'Reserved rate', percentFromRuleset(m.reservedPercent)],
     ['TOKEN', 'Issuance cut percent', formatCutPercent(r.weightCutPercent)],
-    ['TOKEN', 'Cash out tax rate', percentFromRuleset(m.cashOutTaxRate)],
+    ['TOKEN', 'Cash out tax', cashOutTaxLabel(m.cashOutTaxRate)],
     // On-chain bit is scopeCashOutsToLocalBalances: true = local-only, so total surplus is DISABLED.
     ['TOKEN', 'Cash outs use total surplus', m.scopeCashOutsToLocalBalances ? 'Disabled' : 'Enabled'],
     ['TOKEN', 'Base currency', baseUnit],
@@ -14843,8 +14849,8 @@ export function pastRulesetRows(list) {
       start: Number(r.start),
       weight: Number(r.weight) / 1e18,
       duration: Number(r.duration),
-      // cashOutTaxRate is out of 10000 → percent.
-      tax: m && m.cashOutTaxRate != null ? Number(m.cashOutTaxRate) / 100 : null,
+      // cashOutTaxRate, out of 10000.
+      tax: m && m.cashOutTaxRate != null ? Number(m.cashOutTaxRate) : null,
     };
   });
   rows.sort(function (a, b) { return b.start - a.start; });
@@ -14893,7 +14899,7 @@ function renderPastRulesetsCard(project) {
       rows.forEach(function (row) {
         var tr = document.createElement('tr');
         [row.id, formatDate(row.start), formatRate(row.weight), formatDuration(row.duration),
-          row.tax == null ? '—' : (Number(row.tax.toFixed(2)) + '%')].forEach(function (value) {
+          row.tax == null ? '—' : cashOutTaxValue(row.tax)].forEach(function (value) {
           var td = document.createElement('td'); td.textContent = value; tr.appendChild(td);
         });
         tbody.appendChild(tr);
@@ -19813,7 +19819,7 @@ function renderTermsTable(project, stages) {
     autoCells[i] = c6; tr.appendChild(c6);
 
     // Cash out tax
-    var c7 = document.createElement('td'); c7.textContent = percentFromRuleset(md.cashOutTaxRate); tr.appendChild(c7);
+    var c7 = document.createElement('td'); c7.textContent = cashOutTaxLabel(md.cashOutTaxRate); tr.appendChild(c7);
 
     tbody.appendChild(tr);
   }
@@ -22002,8 +22008,8 @@ export function explainCashOutChange(previous, current) {
     if (supplyFell) causes.push('tokens were burned');
   }
   if (current.cashOutTax !== previous.cashOutTax) {
-    causes.push('the cash out tax changed from ' + percentFromRuleset(previous.cashOutTax)
-      + ' to ' + percentFromRuleset(current.cashOutTax));
+    causes.push('the cash out tax changed from ' + cashOutTaxValue(previous.cashOutTax)
+      + ' to ' + cashOutTaxValue(current.cashOutTax));
   }
   var direction = current.price > previous.price ? 'rose'
     : current.price < previous.price ? 'fell' : 'was unchanged';
@@ -27601,7 +27607,7 @@ function buildCashOutModal(project, requestClose) {
     // cash outs are off (100% tax) or there's no surplus (payout limit covers the whole balance).
     if (f.net != null && f.net === 0n) {
       var why = '';
-      if ((state.cashOutTaxRate || 0) >= 10000) why = 'Cash outs are off this ruleset (100% cash out tax).';
+      if ((state.cashOutTaxRate || 0) >= 10000) why = 'Cash outs are off this ruleset (cash out tax of 1).';
       else if (state.aggSurplus != null && state.aggSurplus === 0n) why = 'No ' + a.symbol + ' surplus: its payout limit covers the whole ' + a.symbol + ' balance.' + (state.kinds && state.kinds.length > 1 ? ' Try reclaiming a different token above.' : '');
       if (why) { var wl = el('div', 'ops-preview-line ops-preview-feetok'); wl.textContent = why; preview.appendChild(wl); }
     }
@@ -27671,7 +27677,7 @@ function buildCashOutModal(project, requestClose) {
       var bh = el('div', 'ops-cash-bd-head'); bh.textContent = 'How this is calculated'; bd.appendChild(bh);
       function bdRow(k, val) { var r = el('div', 'ops-cash-bd-row'); var kk = el('span'); kk.textContent = k; var vv = el('span'); vv.textContent = val; r.appendChild(kk); r.appendChild(vv); bd.appendChild(r); }
       var sharePct = Number(count2) / Number(state.aggSupply) * 100;
-      bdRow('Cash out tax', ((state.cashOutTaxRate || 0) / 100) + '%');
+      bdRow('Cash out tax', cashOutTaxValue(state.cashOutTaxRate || 0));
       bdRow('Total supply' + (multi ? ' (' + state.aggChains + ' chains)' : ''), formatTokens(state.aggSupply) + ' ' + sym);
       bdRow(a.symbol + ' surplus' + (multi ? ' (' + state.aggChains + ' chains)' : ''), formatBalance(state.aggSurplus || 0n, a.decimals, a.symbol));
       bdRow('You’re cashing out', formatTokens(count2) + ' ' + sym + ' (' + (Math.round(sharePct * 100) / 100) + '%)');

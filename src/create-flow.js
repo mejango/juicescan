@@ -15,6 +15,7 @@ import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, for
 import { deriveStartFrom, orderedRulesetSchedule, assertScheduleFresh, scheduleIsFresh, assertOrderedRulesetReceipt } from './ruleset-schedule.js';
 export { deriveStartFrom } from './ruleset-schedule.js';
 import { isSafeConnected } from './wallet.js';
+import { cashOutTaxValue } from './encoding.js';
 import { idMapFromGroup, resolveSuckerGroup } from './sucker-group.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
 import {
@@ -59,9 +60,9 @@ function stepsFor(state) {
 // the actual chain to deploy on. Per-chain overrides are keyed by `canon` so they survive a network switch.
 var CHAIN_PAIRS = [
   { canon: 1, name: 'Ethereum', testnet: 11155111 },
-  { canon: 10, name: 'Optimism', testnet: 11155420 },
-  { canon: 42161, name: 'Arbitrum', testnet: 421614 },
   { canon: 8453, name: 'Base', testnet: 84532 },
+  { canon: 42161, name: 'Arbitrum', testnet: 421614 },
+  { canon: 10, name: 'Optimism', testnet: 11155420 },
 ];
 function actualChainId(canon, network) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === canon; }); return p ? (network === 'mainnet' ? p.canon : p.testnet) : canon; }
 // Flip the wizard between mainnets/testnets: remap every selected chain to its pair twin and force a
@@ -80,10 +81,10 @@ function setWizardNetwork(state, mode) {
 function canonChainId(id) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === id || x.testnet === id; }); return p ? p.canon : id; }
 
 var CHAIN_OPTIONS = [
-  { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
-  { id: 42161, name: 'Arbitrum', testnet: false }, { id: 8453, name: 'Base', testnet: false },
-  { id: 11155111, name: 'Sepolia', testnet: true }, { id: 11155420, name: 'OP Sepolia', testnet: true },
-  { id: 84532, name: 'Base Sepolia', testnet: true }, { id: 421614, name: 'Arb Sepolia', testnet: true },
+  { id: 1, name: 'Ethereum', testnet: false }, { id: 8453, name: 'Base', testnet: false },
+  { id: 42161, name: 'Arbitrum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
+  { id: 11155111, name: 'Sepolia', testnet: true }, { id: 84532, name: 'Base Sepolia', testnet: true },
+  { id: 421614, name: 'Arb Sepolia', testnet: true }, { id: 11155420, name: 'OP Sepolia', testnet: true },
 ];
 
 // USDC per chain (for the "Accepts" accounting-context option, and the immutable sucker token mapping below).
@@ -1587,7 +1588,7 @@ function revStageSummary(stage, idx, state) {
   if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('−' + round2(stage.weightCutPercent) + '%/' + (stage.cutFreqDays || '30') + 'd');
   var splitTotal = revSplitTotalPct(stage);
   if (splitTotal > 0) parts.push(round2(splitTotal) + '% to splits');
-  parts.push(round2(Number(stage.cashOutTaxRate)) + '% cash out tax');
+  parts.push(cashOutTaxValue(Math.round(Number(stage.cashOutTaxRate) * 100)) + ' cash out tax');
   return parts.join(' | ');
 }
 
