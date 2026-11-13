@@ -11,6 +11,10 @@ const API_KEY = (typeof __BENDYSTRAW_API_KEY__ === 'string' && __BENDYSTRAW_API_
 export const BENDYSTRAW_TIMEOUT_MS = 15000;
 export const MAX_BENDYSTRAW_RESPONSE_BYTES = 5 * 1024 * 1024;
 const RETRY_DELAYS_MS = [250, 750];
+// A 429 names when its window reopens. Every request to that host waits for it, so a
+// rate-limited page finishes late instead of failing.
+const MAX_RATE_LIMIT_WAIT_MS = 60000;
+const _resumeAt = {};
 const RETRYABLE_STATUSES = { 408: true, 429: true, 500: true, 502: true, 503: true, 504: true };
 
 // Indexer host follows the Discover network toggle using the shared public origins.
@@ -33,6 +37,8 @@ async function queryAtHost(host, graphql, variables) {
   const url = endpointForHost(host);
   var res;
   for (var attempt = 0; ; attempt++) {
+    var wait = (_resumeAt[host] || 0) - Date.now();
+    if (wait > 0) await new Promise(function (resolve) { setTimeout(resolve, wait); });
     try {
       res = await fetch(url, {
         method: 'POST',
@@ -44,6 +50,10 @@ async function queryAtHost(host, graphql, variables) {
         cache: 'no-store',
         signal: AbortSignal.timeout(BENDYSTRAW_TIMEOUT_MS),
       });
+      if (res.status === 429) {
+        var retryAfter = res.headers && res.headers.get ? Number(res.headers.get('retry-after')) : 0;
+        if (retryAfter > 0) _resumeAt[host] = Date.now() + Math.min(MAX_RATE_LIMIT_WAIT_MS, retryAfter * 1000);
+      }
       if (!RETRYABLE_STATUSES[res.status] || attempt === RETRY_DELAYS_MS.length) break;
       if (res.body && res.body.cancel) await res.body.cancel();
     } catch (error) {
