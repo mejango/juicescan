@@ -3602,13 +3602,16 @@ function openMintTierModal(project, tier, itemName) {
       },
       onStatus: function (message, kind) { status.textContent = message; status.className = 'operator-edit-status ' + (kind || 'pending'); },
       onError: function (message) { submit.disabled = false; status.textContent = message; status.className = 'operator-edit-status error'; loadLive(); },
-      onSuccess: function (message, meta) {
+      onProposed: function () {
         submit.disabled = false;
-        status.textContent = meta && meta.phase === 'proposed'
-          ? 'Mint proposed to the Safe. Inventory changes only after the Safe executes it.'
-          : 'Items minted to ' + snapshot.beneficiary + '.';
+        status.textContent = 'Mint proposed to the Safe. Inventory changes only after the Safe executes it.';
+        status.className = 'operator-edit-status pending';
+      },
+      onSuccess: function () {
+        submit.disabled = false;
+        status.textContent = 'Items minted to ' + snapshot.beneficiary + '.';
         status.className = 'operator-edit-status success';
-        if (!meta || meta.phase !== 'proposed') { bustTiersCache(project); loadLive(); }
+        bustTiersCache(project); loadLive();
       },
     });
   });
@@ -10377,13 +10380,12 @@ export function renderPayCard(project, cart) {
         else { status.className = cls; status.textContent = m; }
         if (confirmCtx) confirmCtx.showStatus(meta && meta.phase === 'receipt' ? processing : m, kind, meta);
       },
+      onProposed: function (m, meta) {
+        dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
+        setPayStatus('paybox-status pending', m, meta);
+        if (confirmCtx) confirmCtx.pending(m, meta);
+      },
       onSuccess: function (m, meta) {
-        if (meta && meta.phase === 'proposed') {
-          dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
-          setPayStatus('paybox-status pending', m, meta);
-          if (confirmCtx) confirmCtx.pending(m, meta);
-          return;
-        }
         dropLoosenedSlippage();
         setPayStatus('paybox-status success', confirmed, meta);
         if (confirmCtx) confirmCtx.complete(confirmed, meta);
@@ -10939,6 +10941,13 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
     throw new Error('This Safe App action is missing a reviewable contract call.');
   }
   return new Promise(function (resolve, reject) {
+    function recordProposal(message, meta) {
+      setStatus(message, 'pending', meta);
+      var known = snapshotKnownSafeProposal(chain.id, authorityAddr, { to: call.to, data: call.data, value: 0, operation: 0 }, meta && meta.safeTxHash, proposalFloor, true);
+      Promise.resolve().then(function () { return opts.onSafeProposal && opts.onSafeProposal(known); }).then(function () {
+          resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash, proposals: [known] });
+      }, reject);
+    }
     executeTransaction({
       chainId: chain.id,
       address: call.to,
@@ -10963,13 +10972,8 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
       },
       onSending: opts.onSafeRequest ? function () { return opts.onSafeRequest({ chainId: Number(chain.id), safe: authorityAddr, fromBlock: String(proposalFloor), tx: { to: call.to, data: call.data, value: '0', operation: 0 } }); } : null,
       onStatus: setStatus,
-      onSuccess: function (message, meta) {
-        setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success', meta);
-        var known = snapshotKnownSafeProposal(chain.id, authorityAddr, { to: call.to, data: call.data, value: 0, operation: 0 }, meta && meta.safeTxHash, proposalFloor, true);
-        Promise.resolve().then(function () { return opts.onSafeProposal && opts.onSafeProposal(known); }).then(function () {
-          resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash, proposals: [known] });
-        }, reject);
-      },
+      onProposed: recordProposal,
+      onSuccess: recordProposal, // a Safe App only proposes; kept so a direct send can never leave this promise open
       onError: function (message, meta) {
         Promise.resolve().then(function () { return meta && meta.userRejected && opts.onSafeNotSubmitted && opts.onSafeNotSubmitted(); }).then(function () {
           if (String(message || '').toLowerCase() === 'cancelled') { resolve({ queued: 0, skipped: [], cancelled: true, safeApp: true }); return; }
@@ -15672,9 +15676,8 @@ export function renderExtrasSection(project) {
               functionName: safeCall.functionName, args: safeCall.args, contractName: 'JBProjectPayerDeployer',
               label: 'Deploy payer address', confirmTitle: 'Confirm payer address deployment',
               onStatus: setStatus, onError: function (message) { reject(new Error(message)); },
-              onSuccess: function (message, meta) {
-                setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success'); resolve();
-              },
+              onProposed: function (message) { setStatus(message, 'pending'); resolve(); },
+              onSuccess: function (message) { setStatus(message, 'success'); resolve(); },
             });
           });
           return;
@@ -24987,6 +24990,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
           ['On chain', chainNameOf(cid0)],
         ].concat(scheduleRows) },
         onStatus: function (m, k) { setStatus(m, k); }, onError: function (m) { reject(new Error(m)); },
+        onProposed: function (m) { setStatus(m, 'pending'); resolve(); },
         onSuccess: function () { setStatus((newShop ? 'New shop deployed + ruleset queued on ' : 'Ruleset queued on ') + chainNameOf(cid0) + '.', 'success'); notifyProjectUpdated(project); resolve(); },
       });
     });
@@ -26515,6 +26519,7 @@ function renderBridgeTransactionsTable(rows, project) {
           // empty so it never pushes the Execute button around. Just re-enable / refresh on terminal states.
           onStatus: function () {},
           onError: function () { execBtn.disabled = false; },
+          onProposed: function (m) { execBtn.disabled = false; estat.classList.add('pending'); estat.textContent = m; },
           onSuccess: function () { execBtn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
         });
       });
@@ -28849,6 +28854,7 @@ function syncAccountingFromPeer(peerChainId, peerSucker, btn, key, project) {
         // Cancelled/reverted → clear any in-flight marker so the row doesn't stick on "Syncing…".
         if (key && _gossipSyncAt[key]) { delete _gossipSyncAt[key]; saveGossipSyncAt(_gossipSyncAt); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }
       },
+      onProposed: function (m) { btn.disabled = false; btn.textContent = 'Proposed'; btn.title = m; },
       onSuccess: function () {
         if (key) { _gossipSyncAt[key] = Math.floor(Date.now() / 1000); saveGossipSyncAt(_gossipSyncAt); }
         document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
