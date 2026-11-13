@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { cashOutTaxValue, omnichainTokenSalt } from '../src/encoding.js';
 import { keccak256, toHex } from 'viem';
 import { chainList } from '../src/chain.js';
-import { applyRevnetTaxDefault, createStage, launchOutcomeText, ownerFieldInvalid } from '../src/create-flow.js';
+import { applyRevnetTaxDefault, createStage, launchOutcomeText, ownerFieldInvalid, shopItemIssue, tickerOk } from '../src/create-flow.js';
 
 describe('cash out tax value', () => {
   it('reads a rate out of 10,000 as the 0 to 1 value', () => {
@@ -95,5 +95,21 @@ describe('launch outcome panel', () => {
   });
   it('says live once a transaction confirmed', () => {
     expect(launchOutcomeText({ details: { name: 'Zed' }, deployed: { chainId: 1, txHash: '0x1' } }, true, 'Ethereum')).toEqual({ title: 'Zed is live', sub: 'Revnet deployed on Ethereum.' });
+  });
+});
+
+describe('launch form gates shared with juicebox.money', () => {
+  it('takes a ticker of 1 to 11 capital letters or digits only', () => {
+    expect(tickerOk('JBX')).toBe(true);
+    expect(tickerOk('A1B2C3D4E5F')).toBe(true);
+    expect(tickerOk('')).toBe(false);
+    expect(tickerOk('$JBX')).toBe(false);
+    expect(tickerOk('TWELVECHARSX')).toBe(false);
+  });
+  it('blocks a shop item with no name or no price', () => {
+    expect(shopItemIssue({ nfts: [{ name: 'Hat', price: '0.1' }] })).toBe('');
+    expect(shopItemIssue({ nfts: [{ name: '', price: '0.1' }] })).toBe('Complete or remove unfinished shop items.');
+    expect(shopItemIssue({ nfts: [{ name: 'Hat', price: '0' }] })).toBe('Complete or remove unfinished shop items.');
+    expect(shopItemIssue({ shopEnabled: false, nfts: [{ name: '', price: '' }] })).toBe('');
   });
 });

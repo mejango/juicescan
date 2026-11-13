@@ -377,7 +377,7 @@ function initState() {
     shopEnabled: false, // off by default — the Shop step starts as a single opt-in checkbox
     storePricingCurrency: 1, // store-item price denomination (1=ETH / 2=USD) — JB721 tiersConfig.currency
     network: network, // mainnet | testnet — follows the Discover toggle; maps the selected canonical chains to actual ids
-    suckerType: 'both', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both — default Both (broadest coverage)
+    suckerType: 'ccip', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both. CCIP by default, as on juicebox.money
     nfts: [], // item drafts — see itemDraft() for shape
     perChain: {}, // multichain overrides: { [chainId]: { addr: { [key]: str } } } — keys: 'p:/r:/pk:' addresses, 'ppid:/rpid:/pkpid:' project ids, 'pamt:/pkamt:' payout amounts, 'isup:' item supplies
     storeCategories: [], // {id, name} named categories the user adds locally in the Shop step
@@ -506,7 +506,7 @@ function mergeDraft(obj) {
     seenAccepts[token] = true; return true;
   });
   if (!s.accepts.length || (s.accepts.indexOf('custom') !== -1 && s.accepts.length !== 1)) s.accepts = ['eth'];
-  if (['native', 'ccip', 'both'].indexOf(s.suckerType) === -1) s.suckerType = 'both';
+  if (['native', 'ccip', 'both'].indexOf(s.suckerType) === -1) s.suckerType = 'ccip';
   if (['wait', 'terminal', 'cycle'].indexOf(s.afterMode) === -1) s.afterMode = 'wait';
   if (!s.perChain || typeof s.perChain !== 'object' || Array.isArray(s.perChain)) s.perChain = {};
   Object.keys(s).forEach(function (k) { if (k.charAt(0) === '_') delete s[k]; });
@@ -3086,7 +3086,7 @@ function chainBridgeBlock(state, render) {
       bRow.appendChild(document.createTextNode('Connect chains via '));
       var bsel = el('select', 'field create-input'); bsel.style.width = 'auto'; bsel.style.minWidth = '0';
       [['native', 'Native bridges'], ['ccip', 'CCIP'], ['both', 'Native and CCIP']].forEach(function (o) {
-        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((state.suckerType || 'both') === o[0]) op.selected = true; bsel.appendChild(op);
+        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((state.suckerType || 'ccip') === o[0]) op.selected = true; bsel.appendChild(op);
       });
       bsel.addEventListener('change', function () { state.suckerType = bsel.value; render(); });
       bRow.appendChild(bsel);
@@ -3315,7 +3315,7 @@ function renderDeploy(state, render) {
   var durationBad = durationIssue(state);
 
   // Network is chosen on the Flavor step's "On [Mainnets ▾]" toggle — no separate picker here.
-  var needTicker = isRev && !state.details.ticker;
+  var needTicker = isRev && !tickerOk(state.details.ticker);
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   // An empty field means the connected wallet; only a typed value that is not an address blocks.
@@ -3327,7 +3327,8 @@ function renderDeploy(state, render) {
   var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
   var deadlineBad = deadlinePresetIssue(state); // preset approval hook (JBDeadline) unmanifested on a selected chain
   var lpBad = lpHookIssue(state); // Fund market split with the LP fee hook unmanifested on a selected chain
-  var mediaBad = shopMediaUploadIssue(state); // never launch while an item attachment is pending/failed
+  var mediaBad = shopMediaUploadIssue(state) || shopItemIssue(state); // never launch with pending/failed media or an unfinished item
+  var linkBad = state.chainIds.length > 1 && uncoveredPairs(state).length ? 'Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.' : '';
   var noticeBad = noticeClashIssue(state); // a launch-queued stage the JBDeadline hook would reject
   var startBad = isRev ? -1 : state.stages.findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
   var exportRow = el('div', 'create-predeploy-export-row');
@@ -3340,7 +3341,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3348,9 +3349,9 @@ function renderDeploy(state, render) {
   wrap.appendChild(launch);
   // Spell out every reason the launch button is disabled, so the user knows exactly what to fix.
   if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
-  if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
-  if (needOwner) wrap.appendChild(infoNote('The project owner on the Flavor step is not a valid address.'));
-  if (needOperator) wrap.appendChild(infoNote('The revnet operator on the Flavor step is not a valid address.'));
+  if (needTicker) wrap.appendChild(infoNote('Ticker: 1–11 letters or numbers.'));
+  if (needOwner) wrap.appendChild(infoNote('Set the owner on each chain, or leave empty for your wallet.'));
+  if (needOperator) wrap.appendChild(infoNote('Set the operator on each chain, or leave empty for your wallet.'));
   if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet, fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying, otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
@@ -3358,6 +3359,7 @@ function renderDeploy(state, render) {
   if (deadlineBad) wrap.appendChild(warnNote(deadlineBad));
   if (lpBad) wrap.appendChild(warnNote(lpBad));
   if (mediaBad) wrap.appendChild(warnNote(mediaBad));
+  if (linkBad) wrap.appendChild(warnNote(linkBad));
   if (noticeBad) wrap.appendChild(warnNote(noticeBad));
   if (durationBad) wrap.appendChild(warnNote(durationBad));
   if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start: a whole number of cycles or a date, on the Rulesets step.'));
@@ -3757,6 +3759,18 @@ function itemDraft() {
 
 // A pending/failed async media upload must never silently become a name-only onchain tier. The transient
 // flags are intentionally excluded from .jb drafts; after a reload, an unpinned file must be selected again.
+/** A revnet ticker: 1 to 11 capital letters or digits, the same rule as juicebox.money. */
+export function tickerOk(ticker) { return /^[A-Z0-9]{1,11}$/.test(String(ticker || '').trim()); }
+
+/** An item with no name or no price above zero is unfinished and blocks the launch. */
+export function shopItemIssue(state) {
+  if (!state || state.shopEnabled === false) return '';
+  var unfinished = ((state && state.nfts) || []).some(function (nft) {
+    return !String(nft.name || '').trim() || !(Number(nft.price) > 0);
+  });
+  return unfinished ? 'Complete or remove unfinished shop items.' : '';
+}
+
 export function shopMediaUploadIssue(state) {
   if (!state || state.shopEnabled === false) return '';
   var items = (state && state.nfts) || [];
