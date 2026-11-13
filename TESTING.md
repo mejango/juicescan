@@ -1,22 +1,23 @@
 # Testing and CI
 
-The test stack protects four different contracts with users. Each layer is deterministic in pull requests; live RPC and Bendystraw checks remain explicit canaries rather than flaky merge gates.
+Every layer below except the indexer schema check and the live canary runs without live services, so a pull request never depends on RPC or indexer uptime.
 
 | Layer | Command | What it protects |
 |---|---|---|
 | Dependency graph | `npm run deps:check` | Rejects missing, invalid, or incompatible packages after the exact lockfile install. |
 | Source parsing | `npm run check:source` | Every shipped/build/test JavaScript file parses on the supported Node runtime. |
-| Deployment parity | `npm run check:deployments` | Recomputes the exact deployment-artifact digest consumed by the generator and compares it with both the reviewed deploy-all-v6 pin and `data/deployments.json`, without writing generated files. |
+| Deployment parity | `npm run check:deployments` | Recomputes the exact deployment-artifact digest consumed by the generator and compares it with both the reviewed deployment-artifact pin and `data/deployments.json`, without writing generated files. |
 | Generated contract data | CI regeneration | Rebuilds `data/abis/`, `data/manifest.json`, `data/deployments.json`, and `src/abi-registry.js` from the independent pinned checkout and rejects any diff, preventing a correct digest from masking stale generated consumers. |
 | Transaction inventory | `npm run transaction:check` | Counts every production direct-write, Relayr, Safe, signature, and raw wallet boundary and ties each site to `test/TX_COVERAGE.md`; a new or moved signing path fails CI until reviewed. |
 | Protocol unit tests | `npm test` | ABI selectors and encode/decode round trips, transaction arguments, currencies/decimals, split totals, slippage floors, Safe/Relayr state, untrusted metadata, and indexer fallbacks. Unstubbed fetch/XHR/WebSocket/EventSource traffic fails closed. |
 | Coverage floor | `npm run test:coverage` | Counts every executable `src/**/*.js` file, including unimported entry points and generated runtime registry code. App/form/guide orchestration and pay/Safe/wallet trust boundaries have tighter per-file floors. |
+| Indexer schema | `npm run schema:check` | Validates every GraphQL document against the live Bendystraw schemas. Part of `test:ci` locally; the CI workflow does not run it. |
 | Production bundle | `npm run bundle` | Builds the same static assets published to IPFS, using committed generated contract data. |
 | Size budget | `npm run check:bundle` | Caps startup separately from the total: startup is `index.html`, its stylesheet, the module entry and every chunk the entry statically imports (read from the built files, not the bundler's report), and every startup chunk must be `modulepreload`ed. Also caps the guides, the lazy PDF runtime/worker, the logo and the whole distribution. Budget increases require an explicit review. |
-| Browser shape | `npm run test:browser` | Runs the production bundle at 320, 390, 768, and 1280 px; checks shell containment, all eight routable surfaces (including the intentionally navigation-hidden Actions route), hash navigation, a visible keyboard focus indicator, reduced-motion preference, and zero serious/critical axe findings across WCAG 2.0/2.1/2.2 AA—including zero color-contrast and target-size debt in the active surface and shared shell. Service workers are blocked, all chain RPCs are redirected to same-origin fail-fast endpoints before app startup, and any external HTTP/WebSocket attempt fails. |
+| Browser shape | `npm run test:browser` | Runs the production bundle at 320, 390, 768, and 1280 px; checks shell containment, all eight routable surfaces (including the intentionally navigation-hidden Actions route), hash navigation, a visible keyboard focus indicator, reduced-motion preference, and zero serious/critical axe findings across WCAG 2.0/2.1/2.2 AA, including zero color-contrast and target-size debt in the active surface and shared shell. Service workers are blocked, all chain RPCs are redirected to same-origin fail-fast endpoints before app startup, and any external HTTP/WebSocket attempt fails. |
 | Production audit | `npm run audit:prod` | Blocks high and critical advisories in runtime dependencies. CI runs this after the exact lockfile install; low and moderate severities remain visible for review rather than triggering an unsafe forced upgrade. |
 | Full local gate | `npm run check` | Verifies the locked dependency graph, runs the production dependency audit, and then runs every deterministic CI check. This is the final pre-publish gate. |
-| Live canary | `npm run test:ui` | Exercises known deployed projects, custom accounting tokens, LP/loan flows, and the create wizard. This is intentionally manual because it depends on live RPC and Bendystraw state. |
+| Live canary | `npm run test:ui` | Exercises known deployed projects, custom accounting tokens, LP/loan flows, and the launch form. This is intentionally manual because it depends on live RPC and Bendystraw state. |
 
 Use the Node version pinned in `.nvmrc` and the bundled npm version declared in `package.json`. The repository `.npmrc` disables Node's experimental process-wide Web Storage so jsdom supplies browser storage during unit tests.
 
@@ -24,7 +25,7 @@ CI runs on the fixed Ubuntu 24.04 image. Every reusable GitHub Action is pinned 
 
 Dependabot checks npm and GitHub Actions weekly. Minor and patch updates are grouped; majors remain separate for deliberate review. Action updates must preserve immutable full-SHA pins, and no dependency update should merge until the complete deterministic suite and the high/critical production audit pass.
 
-`npm run test:ci` runs every deterministic layer locally, including regeneration
+`npm run test:ci` runs every layer above the live canary locally, including regeneration
 and a clean-diff assertion for contract-derived artifacts. `npm run check` adds
 the network-backed `audit:prod` gate; `npm run publish` delegates to that same
 complete gate before invoking the IPFS publisher, so a failed invariant cannot
@@ -42,7 +43,7 @@ CI checks out `Bananapus/deploy-all-v6` at commit `8ff50c28f7f4e4a8f98fdd8f680a6
 
 Updating the pin is an explicit contract review:
 
-1. Check out the proposed deploy-all-v6 commit and review its deployment artifact changes.
+1. Check out the proposed deployment-artifact commit and review its deployment artifact changes.
 2. Run `DEPLOY_ALL_DEPLOYMENTS_DIR=/path/to/deploy-all-v6/deployments npm run sync-deployments` and review the generated ABI, manifest, address, and metadata diff.
 3. Update the commit in `.github/workflows/test.yml`, the commit/digest constants in `scripts/check-deployment-parity.mjs`, and this testing reference to the same reviewed source.
 4. Run `npm run check:deployments` before accepting the generated snapshot. Bendystraw data may describe indexed activity, but it is never accepted as deployment or calldata truth.
@@ -53,7 +54,7 @@ The global all-production floors are 18% statements, 15% branches, 18% functions
 
 ## Browser accessibility policy
 
-The production browser gate contains 40 cases: 32 whole-visible-page axe scans (eight surfaces at four viewports) plus eight shell and route-shape cases. The supported widths are 1280, 768, 390, and 320 px. Every scan includes the active product surface and the shared header, navigation, footer, and font selector; hidden tabs are exercised when they become active in their own case. There are no color-contrast allowances: any serious or critical WCAG 2.0, 2.1, or 2.2 AA axe result fails the build. The current measured result is zero contrast and zero target-size violations in all 32 scans.
+The production browser gate contains 40 cases: 32 whole-visible-page axe scans (eight surfaces at four viewports) plus eight shell and route-shape cases. The supported widths are 1280, 768, 390, and 320 px. Every scan includes the active product surface and the shared header, navigation, footer, and font selector; hidden tabs are exercised when they become active in their own case. There are no color-contrast allowances: any serious or critical WCAG 2.0, 2.1, or 2.2 AA axe result fails the build.
 
 Each viewport explicitly requests reduced motion. Production CSS removes animation and transition motion under that preference, and the media unit test independently prevents autoplay. The browser gate also requires the first keyboard-reachable control to expose a visible outline at least 2 px wide; the production token is a 3 px brand-colored ring. Guide navigation links preserve the compact layout while meeting the WCAG 2.2 24 px minimum target size.
 

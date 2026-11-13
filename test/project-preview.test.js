@@ -81,7 +81,7 @@ describe('project link previews', () => {
       pageUrl: 'https://scan.example/?project=base%3A6',
       imageUrl: 'https://scan.example/project-og.png?project=base%3A6',
     });
-    expect(html.indexOf('Artizen — Juice Scan')).toBeLessThan(html.indexOf('<title>Default</title>'));
+    expect(html.indexOf('Artizen | Juicescan')).toBeLessThan(html.indexOf('<title>Default</title>'));
     expect(html).toContain('property="og:image"');
     expect(html).toContain('summary_large_image');
     expect(html).not.toContain('content="Default" data-default-preview');

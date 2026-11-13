@@ -28,17 +28,17 @@ describe('static security and accessibility shell', () => {
     }
   });
 
-  it('renders the Juice Scan masthead and exact protocol copy', () => {
+  it('renders the Juicescan masthead and exact protocol copy', () => {
     const dom = new JSDOM(html);
     const document = dom.window.document;
     expect(document.querySelector('#header h1')?.textContent).toBe('JUICE SCAN');
     expect([...document.querySelectorAll('.subtitle span')].map(node => node.textContent.trim())).toEqual([
-      'View and interact with the Juicebox protocol —',
-      'unstoppable payments and programmable incentives for the open web',
+      'Look up any Juicebox V6 project, read its rules and balances,',
+      'and send transactions from your own wallet',
     ]);
     expect(document.querySelectorAll('.palette-dot')).toHaveLength(11);
     expect(document.querySelector('.risk-notice')?.textContent).toContain(
-      '100% open source, 100% open money. Use at your own risk.',
+      'Open source. Use at your own risk.',
     );
   });
 

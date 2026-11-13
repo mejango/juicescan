@@ -1,12 +1,10 @@
-# Transaction coverage — JB V6 web app vs the v6 contracts
+# Transaction coverage
 
-How completely the app's transactions are pinned by tests. **Line coverage is the wrong lens here** — the
-app is ~95% DOM rendering, so per-file line % stays low even when the money path is fully tested. The metric
-that matters: **does each transaction have a pure `buildXArgs()` round-tripped through its contract ABI?**
+Each transaction below has a pure argument builder that a test round-trips through its contract ABI.
 
 Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg assertions); **S** = UI smoke.
 
-## Transactions — builder + test status
+## Transactions: builder and test status
 
 | App action | Contract function | Builder | Test |
 |---|---|---|---|
@@ -31,7 +29,7 @@ Legend: **U** = unit/encoding test (round-trips through the contract ABI + arg a
 | Set permissions | `JBPermissions.setPermissionsFor` | `buildSetPermissionsArgs` | **U** (ids vs JBPermissionIds.sol) |
 | Borrow | `REVLoans.borrowFrom` | `buildBorrowArgs` | **U** (+ slippage floor wired) |
 | Repay | `REVLoans.repayLoan` | `buildRepayArgs` | **U** |
-| Move between chains | `JBSucker.prepare` → `toRemote` | `buildSuckerPrepareArgs` / `buildSuckerToRemoteArgs` | **U** |
+| Move between chains | `JBSucker.prepare`, then `toRemote` | `buildSuckerPrepareArgs` / `buildSuckerToRemoteArgs` | **U** |
 | Set ENS project record | exact resolver `setText(node,"juicebox","chainId:projectId")` | `buildSetEnsProjectRecordCall` | **U** (exact Registry resolver only; no resolver replacement; live tuple authority + resolver authorization rechecked at Safe queue boundaries; direct/Safe postcondition) |
 | Publish project handle | `JBProjectHandles.setEnsNamePartsFor` | `buildSetProjectHandleCall` | **U** (canonical reversed labels; encoded tuple’s current owner/operator + exact ENS record rechecked at Safe queue boundaries; direct/Safe postcondition) |
 | Batch step: set buyback hook / register pool / set router terminal / set TWAP window / initialize pool | `JBBuybackHookRegistry.setHookFor` / `.setPoolFor` / `JBRouterTerminalRegistry.setTerminalFor` / `JBBuybackHook.setTwapWindowOf` / `JBBuybackHookRegistry.initializePoolFor` | `buildStep` (safe-batch) | **U** (reference calldata + selectors for the preset trio; every kind re-encodes from its own ABI on load; power descriptors wrapped by `fn`) |
@@ -56,12 +54,12 @@ one cannot silently enter the app.
 | Relayr forwarded bundle / payment | `relayrPostBundle` / `relayrPay` | Same-family eligibility across the four mainnets and four Sepolia testnets, recipient forwarder trust, exact EIP-712 domain and sender suffix, explicit funding choice, account-pinned publication/payment journals, and partial/unknown recovery are unit-tested. Funding options and the final payment boundary use the original published destination family; testnet bundles cannot request real mainnet ETH. Signed request fingerprints are saved before POST; ambiguous publication blocks fresh signatures. Known quotes can reopen in the same window, while reload retains a guard without persisting signatures. Each wallet send requires a durable marker; exact destination verification is required before paid receipts clear. The prepaid native-payment target, selector, runtime hash, token, bundle UUID, and deadline are pinned and decoded client-side; exact target/value/calldata receive mandatory review before bounded simulation and send. Forwarded publication requires a shared Web Lock and persistent signer/forwarder/chain nonce reservation across action scopes, including creation. Chain-proven nonce consumption or signature expiry is required before retirement; funding rechecks the reservation. Raw payer/Safe entries are exempt from forwarder nonce reservations. |
 | Expired unpaid schedule retirement | Local account payment Web Lock, no wallet send | Requires original publication proofs, canonical chain expiry and unchanged nonce; archives evidence before active-marker removal and retains nonce reservations. Live, consumed, unknown and sending requests stay blocked. |
 | Safe proposal / confirmation / execution | Safe App and Safe service boundaries | Proposal hashes remain distinct from execution; canonical Safe proxy/singleton identity, bounded CCIP-off reads, exact `execTransaction` tuples, current owners/threshold/nonce/confirmations, raw bounded simulation, post-review freshness, receipt status, and exact pending-call reuse without duplicate proposals are tested. |
-| Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, post-receipt allowance checks, valid-allowance reuse, and typed-signature fallback to an approval-block-anchored on-chain authorization are tested. |
+| Permit2 and direct approvals | reviewed approval helpers | Canonical Permit2 domain/spender, amount/deadline/nonce, account rechecks, simulations, post-receipt allowance checks, valid-allowance reuse, and typed-signature fallback to an approval-block-anchored onchain authorization are tested. |
 | Project management actions | `discover.js` reviewed action handlers | Individual ABI builders are tracked above; all submission paths must remain behind the shared review, Safe, or Relayr boundaries. |
 | Bounded shop item identity reads | `discover.js` raw `eth_call` | A single live tier lookup has explicit gas and response limits. Discount/removal verifies shared content, price, supply, reserves, category, flags, hook/store, and permissions; divergent items can be edited on the current chain. |
 | Bounded exact ENS / handle reads | `project-handles.js` raw `eth_call` | Exact-node resolver and handle reads use explicit gas, pin Registry + resolver reads where applicable, supply `JBProjectHandles` as caller, bound returndata, reject noncanonical handles, and bypass CCIP redirects. |
 | Wallet connection / network request | EIP-1193 provider requests | Only account permission, account enumeration, chain switching, and the chain-gated `eth_getTransactionReceipt` poll are allowed here; all write/sign APIs are inventoried separately. |
-| Add liquidity through the Safe App | `runAddLiquidityTxs` one `proposeSafeTransactions` batch | When the Safe App holds the wallet and more than one call remains (ERC20→Permit2 approve, onchain Permit2 approve, mint), the sequence is built by the pure `lpAddLiquidityCalls` from the same live allowance reads and call descriptors as the sequential path, guarded against steps already queued (including inside a queued MultiSend), simulated from the Safe with `eth_simulateV1` (per-call fallback skipping the dependent mint), and proposed ONCE; the confirm previews every call with the exact deadline the proposal reuses. Every other connection keeps the per-step path. Remove, move and fee claims are single calls and unchanged. |
+| Add liquidity through the Safe App | `runAddLiquidityTxs` one `proposeSafeTransactions` batch | When the Safe App holds the wallet and more than one call remains (ERC-20 to Permit2 approve, onchain Permit2 approve, mint), the sequence is built by the pure `lpAddLiquidityCalls` from the same live allowance reads and call descriptors as the sequential path, guarded against steps already queued (including inside a queued MultiSend), simulated from the Safe with `eth_simulateV1` (per-call fallback skipping the dependent mint), and proposed ONCE; the confirm previews every call with the exact deadline the proposal reuses. Every other connection keeps the per-step path. Remove, move and fee claims are single calls and unchanged. |
 | Safe operator batch | `safe-batch-ui.js` MultiSend proposal, Safe App batch, and ordered direct sends | Queued steps re-encode from their own ABI on every read or the tray is discarded. A Safe authority gets exactly one proposal: the Safe App's ordered `sendTransactions` list, or one `{ to: MultiSendCallOnly, operation: 1 }` SafeTx at the next free nonce (approveHash + execTransaction where no service exists), after `getCode` on MultiSendCallOnly and a whole-sequence `eth_simulateV1` from the Safe (per-call `eth_call` fallback that skips dependent steps). Never N separate proposals. An EOA authority reuses the reviewed direct/Relayr dispatcher with an ordered array of calls per chain. The batch dialog holds its primary while a dependency is out of order. |
 
 Plus create-flow encoding invariants (**U**): custom-token currency id consistency, `splitState` per recipient
@@ -75,8 +73,7 @@ gates (recipient / over-100% / custom-token / approval), `parseAmount`/`addrOrZe
 | `bendystraw-format` volumeUsd / bigint / bool | **U** (`views.test.js`) |
 | create-flow steps, accounting pills, approval condition, split lock, deploy gating | **S** (`ui-smoke.mjs`) |
 
-## Not yet under unit test
-- Broader view rendering (discover cards, project-detail tabs) — covered by UI smoke + manual CDP, not unit.
+Broader view rendering (discover cards, project detail tabs) is covered by the live UI canary, not by unit tests.
 
 Safe `execTransaction` encoding is covered in `components-tx.test.js`, including
 the exact outer tuple assembled from the queued Safe transaction and signatures.
@@ -145,11 +142,6 @@ interrupted parent storage, immutable resumed calls, Safe count accounting and p
 `selected-safe-recovery.test.js` and `safe-proposal-recovery.test.js` cover immediate known-proposal checkpoints, partial reload, later external execution, native Safe App hashes, canonical block identity, and bounded adaptive event scans. `safe-submission-phases.test.js` checks actual POST/write boundary markers and proven user rejection. Known onchain approveHash records reconcile like hosted proposals; only unknown proposals need original-queue inspection. Frozen Relayr rounds cannot clear their child receipt and silently replay completed legs. Confirming a proposal does not mark its calls executed.
 Payer deployments retain their raw permissionless Relayr entries; dependent create/category steps retain
 separate reviews and completion requirements.
-
-## Adherence
-`verify-tx-builders-vs-contracts` (workflow, 5 agents) confirmed **every builder encodes correctly** against the
-deployed V6 contracts (selectors, arg order, types, payability) — zero HIGH/MEDIUM. The three LOW findings
-(deploy-erc20 permission label, permission display grouping, borrow slippage floor) are fixed.
 
 | Bounded RPC history reads | `rpc-logs.js` | Read-client forwarding only: splits `eth_getLogs` into exact 500-block ranges; does not create, approve or submit a transaction. Other methods retain the existing public-client behavior. `test/rpc-logs.test.js` verifies filters, range coverage, failure propagation and passthrough. |
 

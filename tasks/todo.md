@@ -1,3 +1,20 @@
+# Copy audit, part A: maintainer docs and site shell (2026-11-13)
+
+jango accepted all twelve audit recommendations in-session. The audit read a checkout 129 commits behind main, so each finding is re-checked against origin/main before it is applied.
+
+- [x] 1. README: one name (Juicescan), correct publish and test instructions, duplicates of TESTING.md, RISKS.md and TX_COVERAGE.md replaced by links.
+- [x] 2. RISKS.md headings, "treasury" out, repeated hedges cut. TESTING.md and TX_COVERAGE.md mechanical fixes. Delete test/AUDIT_FOLLOWUPS.md.
+- [x] 3. llms.txt: `#api` route, colons, one description. index.html and manifest.json: name, one description, one risk line, Terms of Service line cut. The defender reward sentence stays as written (jango has not ruled on it). No address is printed until a fixed host exists.
+- [ ] 4. Tests that assert the changed strings updated; `npm run check`.
+
+## Plan refinement
+- **Objective:** Juicescan's maintainer docs and site shell state what is true on main, once, under one product name.
+- **System fit:** Docs and shell copy only. README links to the owners (TESTING.md for test layers, TX_COVERAGE.md for the gated transaction table, RISKS.md for rollout assumptions) instead of repeating them. No route, transaction or build behavior changes.
+- **Reuse and simplicity:** Delete and link over rewrite. No new files.
+- **Evidence and unknowns:** Each stale claim checked against `build/publish-ipfs.js`, `test/ui-smoke.mjs`, `build/bundle.js`, `package.json`, `src/app.js` `NAV_TO_TAB`. Unknown: the fixed public host, so none is printed.
+- **Verification:** `test/site-shell.test.js` and `test/project-preview.test.js` updated with the strings; full `npm run check` with the pinned deployments directory.
+- **Resource budget:** One worktree, one full check per PR.
+
 # requestKeeping aligned with SDK 6.3.0 keepOutcome (2026-11-10)
 
 Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/adopt-630-brief.md steps 3 to 6 (no SDK to bump). Reference: juice-sdk-v4 origin/main 3a5e12f `packages/core/src/review/locks.ts` `keepOutcome`.
