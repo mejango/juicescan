@@ -100,9 +100,14 @@ export function renderSafeBatchTray(project) {
         note.appendChild(button('safe-batch-remove-proposed', 'Remove from the batch', function () { clearTray(source.chain.id, pidOn(project, source.chain.id)); }));
         foot.appendChild(note);
       } else {
-        foot.appendChild(button('operator-cta safe-batch-review', 'Review and propose on ' + chainName(source.chain), function () {
-          openBatchDialog(project, source.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); });
-        }));
+        var review = button('operator-cta safe-batch-review', 'Review and propose on ' + chainName(source.chain), function () {
+          // The route and the Safe queue are read before the dialog opens: the button says so meanwhile.
+          var label = review.textContent;
+          review.disabled = true; review.setAttribute('aria-busy', 'true'); review.textContent = 'Checking who can send…';
+          openBatchDialog(project, source.chain, setStatus).catch(function (e) { setStatus(errMessage(e, 'Could not open the batch.'), 'error'); })
+            .then(function () { review.disabled = false; review.removeAttribute('aria-busy'); review.textContent = label; });
+        });
+        foot.appendChild(review);
         if (!known || known.key !== key) {
           proposed[source.chain.id] = { key: key, tx: null };
           findProposedBatch(source.chain.id, projectAuthorityAddress(project), source.steps)
@@ -158,6 +163,22 @@ export async function resolveBatchRoute(project, chainId, authority) {
     refusal: signer ? 'Connected wallet is not the ' + role + '. Switch to ' + truncAddr(authority) + '.' : 'Connect the ' + role + ' wallet to send the batch.' };
 }
 
+// The nonces a new Safe proposal may take, ascending: each queued nonce from the Safe's own on, where the proposal
+// replaces what is queued there, then the next free one. Nothing below the Safe's nonce and no gap.
+export function proposalNonceChoices(next, pending) {
+  var queued = (pending || []).map(function (t) { return Number(t.nonce); }).filter(function (n) { return Number.isSafeInteger(n) && n >= next; });
+  var free = queued.length ? Math.max.apply(null, queued) + 1 : next;
+  return queued.concat(free).filter(function (n, i, all) { return all.indexOf(n) === i; }).sort(function (a, b) { return a - b; });
+}
+
+export async function readProposalNonces(chainId, safe, name) {
+  var loaded = await Promise.all([getSafeNextNonce(chainId, safe), listPendingSafeTxs(chainId, safe)]);
+  var next = Number(loaded[0]);
+  if (!Number.isSafeInteger(next) || next < 0) throw new Error('Could not read the Safe’s next transaction number (nonce) on ' + name + '.');
+  var choices = proposalNonceChoices(next, loaded[1]);
+  return { choices: choices, next: choices[choices.length - 1] };
+}
+
 // ── Batch dialog ─────────────────────────────────────────────────────────────
 export async function openBatchDialog(project, chain, setStatus) {
   var pid = pidOn(project, chain.id);
@@ -166,11 +187,14 @@ export async function openBatchDialog(project, chain, setStatus) {
   var authority = projectAuthorityAddress(project);
   setStatus('Checking who can send the batch…', 'pending');
   var route = await resolveBatchRoute(project, chain.id, authority);
+  // A Safe owner proposing through the Safe service picks the nonce: the next free one, or a queued one to replace.
+  var nonces = route.safeInfo && route.mode && route.mode !== 'safe-app' && hasSafeService(chain.id)
+    ? await readProposalNonces(chain.id, authority, chainName(chain)) : null;
   setStatus('', '');
   // An EOA authority sends every chain's queued batch in one go: sequentially on one chain, or as one Relayr bundle
   // when two or more chains are queued (same-chain calls keep their order through per-chain virtual nonces).
   var others = route.mode === 'eoa' ? projectChains(project).filter(function (c) { return c.id !== chain.id && trayFor(project, c).length; }) : [];
-  var state = { steps: steps };
+  var state = { steps: steps, nonces: nonces, nonce: nonces ? nonces.next : undefined };
   function eoaCount() { return state.steps.length + others.reduce(function (n, c) { return n + trayFor(project, c).length; }, 0); }
   if (route.mode === 'eoa') {
     route.label = 'Send ' + plural(eoaCount(), 'transaction');
@@ -182,6 +206,15 @@ export async function openBatchDialog(project, chain, setStatus) {
   var session = await confirmTransactionModal({
     action: title, chain: chainName(chain), chainId: chain.id,
     summary: { action: title, rows: [['On', chainName(chain)], ['From', truncAddr(authority) + (route.safeInfo ? ' (Safe)' : ' (wallet)')], ['Route', route.description]] },
+    // The audit prompt carries every step's exact call, and the one MultiSend a Safe route proposes.
+    auditPayload: function () {
+      var calls = composeBatch(state.steps).calls || [];
+      var batch = { action: title, chain: chainName(chain), chainId: chain.id, from: authority,
+        calls: calls.map(function (c, i) { return { step: state.steps[i] && state.steps[i].label, to: c.to, value: '0', data: c.data }; }) };
+      if (route.safeInfo && calls.length) Object.assign(batch, { to: MULTI_SEND_CALL_ONLY, contract: 'MultiSendCallOnly', operation: 1, data: encodeMultiSend(calls) },
+        state.nonce !== undefined ? { safeNonce: state.nonce } : {});
+      return batch;
+    },
   }, {
     title: title, confirmText: route.label, keepOpenForProgress: true, steps: route.steps || [route.label], stepsIntro: route.intro,
     body: function (controls) {
@@ -200,7 +233,7 @@ export async function openBatchDialog(project, chain, setStatus) {
     var common = { chainId: chain.id, chainName: chainName(chain), calls: composed.calls, dependsOnPrior: flags, setStatus: session.showStatus };
     var result = route.mode === 'safe-app'
       ? await proposeBatchThroughSafeApp(Object.assign(common, { authority: authority }))
-      : await proposeBatchAsOwner(Object.assign(common, { safe: authority, signer: route.signer }));
+      : await proposeBatchAsOwner(Object.assign(common, { safe: authority, signer: route.signer, nonce: state.nonce }));
     clearTray(chain.id, pid);
     document.dispatchEvent(new CustomEvent('jb:safe-queued'));
     document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
@@ -229,6 +262,18 @@ function renderBatchBody(project, chain, state, route, others, controls) {
   function update(next) { state.steps = next; saveTray(chain.id, pidOn(project, chain.id), next); repaint(); }
   function repaint() {
     box.innerHTML = '';
+    if (state.nonces) {
+      var nrow = el('label', 'safe-propose-nonce'); nrow.appendChild(document.createTextNode('Safe nonce '));
+      var pick = el('select', 'safe-nonce-input'); pick.style.width = 'auto';
+      state.nonces.choices.forEach(function (n) {
+        var o = el('option'); o.value = String(n);
+        o.textContent = n === state.nonces.next ? n + ', next available' : n + ', replaces what is queued there';
+        pick.appendChild(o);
+      });
+      pick.value = String(state.nonce);
+      pick.addEventListener('change', function () { state.nonce = Number(pick.value); });
+      nrow.appendChild(pick); box.appendChild(nrow);
+    }
     var order = checkBatchOrder(state.steps);
     var list = el('ol', 'safe-batch-steps');
     state.steps.forEach(function (step, i) {
@@ -302,11 +347,11 @@ export async function proposeBatchAsOwner(opts) {
   await simulateBatchCalls(client, safe, opts.calls, opts.dependsOnPrior);
   var data = encodeMultiSend(opts.calls);
   if (hasSafeService(chainId)) {
-    var loaded = await Promise.all([getSafeNextNonce(chainId, safe), listPendingSafeTxs(chainId, safe)]);
-    var next = Number(loaded[0]);
-    if (!Number.isSafeInteger(next) || next < 0) throw new Error('Could not read the Safe’s next transaction number (nonce) on ' + opts.chainName + '.');
-    var queued = (loaded[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (n) { return Number.isSafeInteger(n) && n >= 0; });
-    var nonce = queued.length ? Math.max(next, Math.max.apply(null, queued) + 1) : next;
+    var nonces = await readProposalNonces(chainId, safe, opts.chainName);
+    if (opts.nonce !== undefined && nonces.choices.indexOf(opts.nonce) < 0) {
+      throw new Error('Safe transaction number ' + opts.nonce + ' is not available. Nothing was proposed; pick ' + nonces.choices.join(', ') + '.');
+    }
+    var nonce = opts.nonce !== undefined ? opts.nonce : nonces.next;
     opts.setStatus('Proposing the batch at transaction number ' + nonce + ', sign in your wallet…', 'pending');
     var proposed = await proposeSafeTx({ chainId: chainId, safe: safe, to: MULTI_SEND_CALL_ONLY, data: data, value: 0, operation: 1, signer: opts.signer, nonce: nonce });
     return { safeTxHash: proposed.safeTxHash, nonce: nonce, executed: false };

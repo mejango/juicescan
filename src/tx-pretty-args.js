@@ -205,12 +205,15 @@ export function describeSplitGroups(value) {
       var split = group.splits[i];
       if (!split || typeof split.percent !== 'number' || typeof split.beneficiary !== 'string' || typeof split.projectId !== 'bigint') return null;
       total += split.percent;
+      var hooked = typeof split.hook === 'string' && split.hook.toLowerCase() !== ZERO_ADDR;
+      // A hook with no project and no beneficiary is the split's only recipient.
+      var hookOnly = hooked && split.projectId === 0n && split.beneficiary.toLowerCase() === ZERO_ADDR;
       var parts = [
         split.projectId !== 0n
           ? 'project #' + split.projectId + ' (beneficiary ' + split.beneficiary + ')'
-          : split.beneficiary,
+          : hookOnly ? 'hook ' + split.hook : split.beneficiary,
       ];
-      if (typeof split.hook === 'string' && split.hook.toLowerCase() !== ZERO_ADDR) parts.push('via hook ' + split.hook);
+      if (hooked && !hookOnly) parts.push('via hook ' + split.hook);
       if (split.preferAddToBalance === true) parts.push('prefers add-to-balance');
       if (typeof split.lockedUntil === 'number' && split.lockedUntil > 0) {
         parts.push('locked until ' + new Date(split.lockedUntil * 1000).toLocaleString());

@@ -694,7 +694,8 @@ function appendAuditPromptLink(container, payload) {
   var link = el('button', 'tx-audit-link'); link.textContent = DEFAULT;
   link.addEventListener('click', function (e) {
     e.preventDefault();
-    var text = buildTxAuditPrompt(payload);
+    // A review whose calls are edited in place (the batch dialog) hands over what it would send right now.
+    var text = buildTxAuditPrompt(typeof payload.auditPayload === 'function' ? payload.auditPayload() : payload);
     var p = (navigator.clipboard && navigator.clipboard.writeText) ? navigator.clipboard.writeText(text) : Promise.reject();
     p.then(function () { link.textContent = '[copied: paste into your LLM]'; })
      .catch(function () { link.textContent = '[copy failed: select the payload above]'; });

@@ -18,7 +18,7 @@ vi.mock('../src/safe.js', async importOriginal => ({
 import { proposeSafeTransactions } from '../src/safe-app.js';
 import { proposeSafeTx, getSafeNextNonce, safeTxHashForCall } from '../src/safe.js';
 import { buildStep, composeBatch, dependsOnPrior, encodeMultiSend, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN } from '../src/safe-batch.js';
-import { proposeBatchAsOwner, proposeBatchThroughSafeApp, simulateBatchCalls } from '../src/safe-batch-ui.js';
+import { proposeBatchAsOwner, proposeBatchThroughSafeApp, proposalNonceChoices, readProposalNonces, simulateBatchCalls } from '../src/safe-batch-ui.js';
 
 const OWNER = runtime.account, SAFE = '0x2222222222222222222222222222222222222222', ZERO = '0x0000000000000000000000000000000000000000';
 const SIGNATURE = '0x' + '12'.repeat(65);
@@ -75,6 +75,20 @@ describe('owner route', () => {
     expect(proposeSafeTx).toHaveBeenCalledWith({ chainId: 11155111, safe: SAFE, to: MULTI_SEND_CALL_ONLY, data: encodeMultiSend(calls()), value: 0, operation: 1, signer: OWNER, nonce: 8 });
     expect(result).toEqual({ safeTxHash: '0x' + 'cd'.repeat(32), nonce: 8, executed: false });
     expect(getSafeNextNonce).toHaveBeenCalledWith(11155111, SAFE);
+  });
+
+  it('proposes at a picked queued nonce as a replacement, and refuses one that is not offered', async () => {
+    const opts = { chainId: 11155111, chainName: 'Sepolia', safe: SAFE, signer: OWNER, calls: calls(), dependsOnPrior: flags(), setStatus: vi.fn() };
+    const { choices, next } = await readProposalNonces(11155111, SAFE, 'Sepolia');
+    expect(next).toBe(8);
+    expect(choices[choices.length - 1]).toBe(8);
+    await expect(proposeBatchAsOwner({ ...opts, nonce: 99 })).rejects.toThrow(/Safe transaction number 99 is not available\. Nothing was proposed/);
+    expect(proposeSafeTx).not.toHaveBeenCalled();
+    const result = await proposeBatchAsOwner({ ...opts, nonce: choices[0] });
+    expect(result.nonce).toBe(choices[0]);
+    expect(proposeSafeTx.mock.calls[0][0].nonce).toBe(choices[0]);
+    expect(proposalNonceChoices(5, [{ nonce: 7 }, { nonce: 5 }, { nonce: 5 }, { nonce: 3 }])).toEqual([5, 7, 8]);
+    expect(proposalNonceChoices(5, [])).toEqual([5]);
   });
 
   it('refuses without MultiSendCallOnly code and never proposes a reverting sequence', async () => {
