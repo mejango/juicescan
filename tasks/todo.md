@@ -1,3 +1,17 @@
+# Copy audit, part B: Learn, Build and Why (2026-11-13)
+
+- [x] 1. Learn: `src/learn-sections.js` re-copied from juicebox.money `src/lib/learn-guide.ts` (origin/main d6d94813). The renderer gains what that copy now uses: inline `[label](href)` links, glossary row ids (`#term-…`, routed to Learn), `compare` and `points` blocks, plain table keys.
+- [x] 2. Build: "called X" asides folded into the sentence, hedges cut, rollout narration and the version number out of prose, headings say what the section does, caps emphasis lowered, chain order.
+- [x] 3. Why: six noun lines under "What projects get with Juicebox".
+- [x] 4. `npm run check`: 148 browser tests and the unit suite pass.
+
+## Plan refinement
+- **Objective:** Juicescan's guides follow the copy rules jango ruled on for juicebox.money, with Learn owned by juicebox.money and only mirrored here.
+- **System fit:** Learn copy has one owner (juicebox.money's guide array); Juicescan renders it. Build and Why are Juicescan's own. Section ids are unchanged, so shared links keep working; `learn-next-steps` is new from the source.
+- **Reuse and simplicity:** Copy the array verbatim and port the four small renderer features it needs, with the same row-id rule as the source so `#term-…` links match across sites. No Markdown library.
+- **Evidence and unknowns:** The audit read a stale checkout; on main Learn was already the mirror, 293 lines behind its source. Reworded technical claims checked against contracts (distributor is a split hook; tokens are credits until the ERC-20 exists).
+- **Verification:** guide unit tests (section count, every in-page link resolves, no raw Markdown in the output, `#term-` route), static-guide browser test, full `npm run check`.
+- **Resource budget:** One worktree, one full check.
 # Copy audit, part A: maintainer docs and site shell (2026-11-13)
 
 jango accepted all twelve audit recommendations in-session. The audit read a checkout 129 commits behind main, so each finding is re-checked against origin/main before it is applied.

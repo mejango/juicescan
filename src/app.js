@@ -494,6 +494,7 @@ function applyHash() {
   else if (raw.indexOf(':') !== -1) { nav = 'discover'; projectRoute = raw; } // <slug>:<id>[/tab]
   else if (/^account\//.test(raw)) { nav = 'account'; accountRoute = raw.slice('account/'.length); } // #account/<address-or-ens>[/tab]
   else if (/^(learn|build|why)-/.test(raw)) { nav = raw.split('-')[0]; sectionId = raw; } // guide section deep link
+  else if (/^term-/.test(raw)) { nav = 'learn'; sectionId = raw; } // glossary row deep link
   else { nav = raw.split('/')[0]; }
   var activeTab = NAV_TO_TAB[nav] || 'discover';
   if (activeTab !== 'discover') cancelDiscoverRoute();

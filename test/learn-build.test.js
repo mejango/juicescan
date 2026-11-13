@@ -34,7 +34,7 @@ describe('Learn, Build, and Why guides', () => {
     const why = document.getElementById('tab-why');
     assertTableOfContents(learn);
     assertTableOfContents(build);
-    expect(learn.querySelectorAll('.guide-section').length).toBe(16);
+    expect(learn.querySelectorAll('.guide-section').length).toBe(17);
     expect(build.querySelectorAll('.guide-section').length).toBe(19);
     expect(build.querySelector('#build-revnet-what')).not.toBeNull();
     expect(build.querySelector('#build-revnet-fees a').getAttribute('href')).toBe('learn.html#learn-fees');
@@ -42,8 +42,13 @@ describe('Learn, Build, and Why guides', () => {
     for (const endpoint of Object.values(BENDYSTRAW_GRAPHQL_ENDPOINTS)) {
       expect(build.querySelector('#build-bendystraw').textContent).toContain(endpoint);
     }
-    expect(why.querySelectorAll('.why-want').length).toBe(12);
-    expect(why.textContent).toMatch(/freedom to earn their money, on their terms/i);
+    expect(why.querySelectorAll('.why-want').length).toBe(6);
+    // Learn prose links a term to its section or glossary row instead of defining it inline.
+    expect(learn.querySelector('.guide-text a[href="#learn-cash-outs"]')).not.toBeNull();
+    for (const link of learn.querySelectorAll('a[href^="#"]')) {
+      expect(document.getElementById(link.getAttribute('href').slice(1)), link.getAttribute('href')).not.toBeNull();
+    }
+    expect(learn.textContent).not.toMatch(/\]\(/);
 
     for (const heading of document.querySelectorAll('.guide-section-title')) {
       expect(heading.tagName).toBe('H2');

@@ -16,7 +16,7 @@ const lazy = vi.hoisted(() => ({
   },
   scrolled: [],
 }));
-lazy.renderLearnTab = lazy.guide('learn', ['learn-pricing', 'learn-splits']);
+lazy.renderLearnTab = lazy.guide('learn', ['learn-pricing', 'learn-splits', 'term-nft']);
 lazy.renderBuildTab = lazy.guide('build', ['build-api']);
 lazy.renderWhyTab = lazy.guide('why', []);
 lazy.renderDataTab = vi.fn();
@@ -112,6 +112,11 @@ describe('lazy tab panels', () => {
     await vi.waitFor(() => expect(lazy.scrolled).toEqual(['learn-splits', 'build-api']));
     expect(lazy.renderBuildTab).toHaveBeenCalledOnce();
     expect(document.getElementById('tab-build').classList.contains('active')).toBe(true);
+
+    // A glossary row link opens Learn, not Discover.
+    await go('#term-nft');
+    await vi.waitFor(() => expect(lazy.scrolled).toEqual(['learn-splits', 'build-api', 'term-nft']));
+    expect(document.getElementById('tab-learn').classList.contains('active')).toBe(true);
 
     await go('#data');
     await vi.waitFor(() => expect(lazy.renderDataTab).toHaveBeenCalledOnce());

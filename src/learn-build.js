@@ -48,7 +48,7 @@ export function renderLearnTab() {
       return anchor;
     });
     (section.blocks || []).forEach(function (block) {
-      extras.push.apply(extras, learnBlock(block, section.id === 'learn-glossary'));
+      extras.push.apply(extras, learnBlock(block));
     });
     wrap.appendChild(guideSection(section.id, (i + 1) + '. ' + section.title.toUpperCase(), section.paragraphs || [], extras));
   });
@@ -62,9 +62,62 @@ function learnHref(href) {
   return href.charAt(0) === '/' ? 'https://juicebox.money' + href : href;
 }
 
-function learnBlock(block, isGlossary) {
+// Guide prose may link a word with `[label](href)`; everything else renders as text.
+var INLINE_LINK = /\[([^\]]+)\]\(((?:#|\/|https?:)[^)\s]*)\)/g;
+function inline(node, text) {
+  var last = 0;
+  text.replace(INLINE_LINK, function (match, label, href, index) {
+    node.appendChild(document.createTextNode(text.slice(last, index)));
+    var a = document.createElement('a');
+    a.href = learnHref(href);
+    a.textContent = label;
+    node.appendChild(a);
+    last = index + match.length;
+  });
+  node.appendChild(document.createTextNode(text.slice(last)));
+  return node;
+}
+
+// Same rule as juicebox.money's guideRowId, so `#term-cash-out-tax` works on both sites.
+function rowId(prefix, name) {
+  return prefix + '-' + name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function compareTable(label, columns, rows) {
+  var wrap = document.createElement('div');
+  wrap.className = 'guide-prop-table';
+  var table = document.createElement('table');
+  table.className = 'guide-compare-table';
+  var caption = document.createElement('caption');
+  caption.className = 'guide-prop-title';
+  caption.textContent = label;
+  table.appendChild(caption);
+  [columns].concat(rows).forEach(function (cells, i) {
+    var tr = document.createElement('tr');
+    cells.forEach(function (cell) {
+      var td = document.createElement(i ? 'td' : 'th');
+      if (!i) td.scope = 'col';
+      td.textContent = cell;
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  });
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function learnBlock(block) {
   if (block.type === 'diagram') return [diagram(block.label, block.lines)];
-  if (block.type === 'table') return [isGlossary ? glossaryList(block.rows) : propertyTable(block.label, block.rows)];
+  if (block.type === 'table') return [block.rowIdPrefix ? glossaryList(block.rows, block.rowIdPrefix) : propertyTable(block.label, block.rows, block.plainKeys)];
+  if (block.type === 'compare') return [compareTable(block.label, block.columns, block.rows)];
+  if (block.type === 'points') return block.items.map(function (item) {
+    var p = document.createElement('p');
+    p.className = 'guide-text';
+    var key = document.createElement('strong');
+    key.textContent = item.key + ':';
+    p.appendChild(key);
+    return inline(p, ' ' + item.text);
+  });
   if (block.type === 'steps') return [stepList(block.items)];
   if (block.type === 'info') return [infoBox(block.text)];
   if (block.type === 'text') return [textBlock(block.text)];
@@ -134,12 +187,12 @@ export function renderBuildTab() {
     '<div class="guide-toc-title">TABLE OF CONTENTS</div>' +
     '<div class="guide-toc-group-label">Life of a Project</div>' +
     '<a class="guide-toc-link" href="#build-launch">1. Launch</a>' +
-    '<a class="guide-toc-link" href="#build-configure">2. Configure</a>' +
+    '<a class="guide-toc-link" href="#build-configure">2. Read a Project</a>' +
     '<a class="guide-toc-link" href="#build-fund">3. Get Funded</a>' +
     '<a class="guide-toc-link" href="#build-tokens-mgmt">4. Manage Tokens</a>' +
-    '<a class="guide-toc-link" href="#build-distribute">5. Distribute</a>' +
+    '<a class="guide-toc-link" href="#build-distribute">5. Send Payouts and Reserved Tokens</a>' +
     '<a class="guide-toc-link" href="#build-cashout">6. Cash Out</a>' +
-    '<a class="guide-toc-link" href="#build-evolve">7. Evolve</a>' +
+    '<a class="guide-toc-link" href="#build-evolve">7. Change the Rules</a>' +
     '<div class="guide-toc-group-label" style="margin-top:8px">Life of a Revnet</div>' +
     '<a class="guide-toc-link" href="#build-revnet-deploy">8. Deploy</a>' +
     '<a class="guide-toc-link" href="#build-revnet-stages">9. Stages</a>' +
@@ -165,12 +218,12 @@ export function renderBuildTab() {
   wrap.appendChild(projectHeader);
 
   wrap.appendChild(guideSection('build-launch', '1. LAUNCH', [
-    "To create a project, choose its owner, payment rules, and accepted tokens. The controller is the contract that manages those settings. Call JBController.launchProjectFor() to:"
+    "JBController.launchProjectFor() creates a project in one transaction:"
   ], [
     stepList([
-      'Create the project’s ownership token (an ERC-721 NFT) for the owner',
-      'Set the first scheduled rules, called rulesets',
-      'Choose payment contracts, called terminals, and the tokens they accept',
+      'Mints the project NFT to the owner',
+      'Queues the first rulesets',
+      'Sets the terminals and the tokens they accept',
       'Registers the project in JBDirectory',
     ]),
     codeBlock(
@@ -183,10 +236,10 @@ export function renderBuildTab() {
       '  memo                      // transaction description\n' +
       ')'
     ),
-    infoBox('To connect a project across chains, use JBOmnichainDeployer.launchProjectFor(). It creates the project and local bridge contracts, called suckers. Run it on each chosen chain.')
+    infoBox('To connect a project across chains, use JBOmnichainDeployer.launchProjectFor(). It creates the project and its suckers, the local bridge contracts. Run it on each chosen chain.')
   ]));
 
-  wrap.appendChild(guideSection('build-configure', '2. CONFIGURE', [
+  wrap.appendChild(guideSection('build-configure', '2. READ A PROJECT', [
     "Read the owner, current rules, accepted tokens, and payout recipients before deciding which actions are available. Use both chain ID and project ID to identify the project."
   ], [
     fnRefTable('READING PROJECT STATE', [
@@ -203,7 +256,7 @@ export function renderBuildTab() {
       ['JBFundAccessLimits.payoutLimitOf(...)', 'Maximum distributable per cycle per token'],
       ['JBFundAccessLimits.surplusAllowanceOf(...)', 'How much surplus the owner can withdraw'],
     ]),
-    infoBox('Empty fundAccessLimitGroups = zero payouts (NOT unlimited). Use uint224.max for unlimited payouts.')
+    infoBox('Empty fundAccessLimitGroups means zero payouts, not unlimited. Use uint224.max for unlimited payouts.')
   ]));
 
   wrap.appendChild(guideSection('build-fund', '3. GET FUNDED', [
@@ -225,13 +278,13 @@ export function renderBuildTab() {
     fnRefTable('CHECKING BALANCES', [
       ['JBTerminalStore.balanceOf(terminal, projectId, token)', 'Terminal balance for a specific token'],
       ['JBTerminalStore.currentSurplusOf(...)', 'Surplus across specified terminals and tokens'],
-      ['JBTerminalStore.currentTotalSurplusOf(...)', 'Surplus aggregated across ALL terminals'],
+      ['JBTerminalStore.currentTotalSurplusOf(...)', 'Surplus aggregated across all terminals'],
     ]),
     infoBox('Use addToBalanceOf() to deposit money without receiving project tokens.')
   ]));
 
   wrap.appendChild(guideSection('build-tokens-mgmt', '4. MANAGE TOKENS', [
-    "Project tokens can be recorded as internal balances, called credits. A separate ERC-20 contract makes them transferable through standard wallets and apps. Creating tokens is minting; permanently removing them is burning."
+    "Until a project deploys its ERC-20, holders’ tokens are credits, balances recorded inside Juicebox. Once it exists, holders can claim credits as ERC-20 tokens."
   ], [
     fnRefTable('TOKEN OPERATIONS', [
       ['JBController.deployERC20For(projectId, name, symbol, salt)', 'Deploy the project’s ERC-20 token'],
@@ -241,13 +294,13 @@ export function renderBuildTab() {
       ['JBController.claimTokensFor(holder, projectId, count, beneficiary)', 'Convert credits into ERC-20 tokens'],
     ]),
     fnRefTable('MINTING & BURNING', [
-      ['JBController.mintTokensOf(projectId, tokenCount, beneficiary, memo, useReservedPercent)', 'Owner mints tokens on-demand (if ruleset allows)'],
+      ['JBController.mintTokensOf(projectId, tokenCount, beneficiary, memo, useReservedPercent)', 'Owner mints tokens on demand (if the ruleset allows)'],
       ['JBController.burnTokensOf(holder, projectId, tokenCount, memo)', 'Holder burns their own tokens'],
     ])
   ]));
 
-  wrap.appendChild(guideSection('build-distribute', '5. DISTRIBUTE', [
-    "Payouts send project money to chosen recipients. Reserved tokens are the share of newly created tokens set aside for recipients. Each recipient instruction is called a split. By default anyone can trigger distribution; the rules can restrict payouts to the owner or authorized accounts."
+  wrap.appendChild(guideSection('build-distribute', '5. SEND PAYOUTS AND RESERVED TOKENS', [
+    "Payouts send project money to its splits, and reserved tokens send their share of new tokens to theirs. A split names one recipient and its percentage."
   ], [
     codeBlock(
       'JBMultiTerminal.sendPayoutsOf',
@@ -271,12 +324,12 @@ export function renderBuildTab() {
       ['JBTerminalStore.usedSurplusAllowanceOf(...)', 'How much surplus allowance has been used'],
       ['JBController.pendingReservedTokenBalanceOf(projectId)', 'Undistributed reserved tokens'],
     ]),
-    infoBox('sendPayoutsOf() is permissionless by default — anyone can trigger distributions. To restrict it to the project owner, enable the ownerMustSendPayouts flag in the ruleset metadata.')
+    infoBox('Anyone can call sendPayoutsOf(). Set ownerMustSendPayouts in the ruleset metadata to restrict it to the project owner.')
   ]));
 
   wrap.appendChild(guideSection('build-cashout', '6. CASH OUT', [
-    "A cash out removes a holder’s tokens and returns project money under the current rules. Money above the unused payout limit is called surplus; it is the starting amount for this calculation.",
-    "The cash out tax rate controls how much of a holder’s share stays for others. At 0, the starting calculation is proportional. At 1, ordinary cash outs return nothing. Preview the full operation to account for the project’s configured behavior."
+    "A cash out burns a holder’s tokens and returns a share of the surplus, the money above the unused payout limit.",
+    "The cash out tax rate sets how much of that share stays for other holders. 0 returns a proportional share and 1 returns nothing. Preview the cash out before signing: a data hook can change the result."
   ], [
     codeBlock(
       'JBMultiTerminal.cashOutTokensOf',
@@ -293,8 +346,8 @@ export function renderBuildTab() {
     guideReference('learn.html#learn-fees', 'See the full cash out calculation and where charges go.', 'build-revnet-fees')
   ]));
 
-  wrap.appendChild(guideSection('build-evolve', '7. EVOLVE', [
-    "To change a project’s rules, schedule a replacement ruleset. Its start depends on the current rules, the requested start time, and any required approval. A ruleset without a fixed duration can change when its replacement becomes eligible."
+  wrap.appendChild(guideSection('build-evolve', '7. CHANGE THE RULES', [
+    "To change a project’s rules, queue a replacement ruleset. It starts when the current cycle ends, the requested start time has passed, and any approval hook approves. A ruleset with no duration is replaced as soon as its replacement is eligible."
   ], [
     codeBlock(
       'JBController.queueRulesetsOf',
@@ -325,8 +378,8 @@ export function renderBuildTab() {
   revnetIntroAlias.id = 'build-revnet-what';
   wrap.appendChild(revnetIntroAlias);
   wrap.appendChild(guideSection('build-revnet-deploy', '8. DEPLOY A REVNET', [
-    'A revnet commits its money rules and stage schedule at launch. Its owner contract, REVOwner, enforces those choices. It starts with an ERC-20 token; an operator keeps only the tasks the contracts allow.',
-    'Choose the schedule, accepted tokens, and optional features, then call REVDeployer.deployFor(). The Learn guide explains what these choices mean.'
+    'A revnet fixes its money rules and stage schedule at launch. REVOwner, the contract that owns every revnet, enforces them. A revnet starts with an ERC-20 token, and its operator keeps only the tasks the contracts allow.',
+    'Choose the schedule, accepted tokens, and optional features, then call REVDeployer.deployFor().'
   ], [
     codeBlock(
       'REVDeployer.deployFor',
@@ -339,12 +392,11 @@ export function renderBuildTab() {
       '  allowedPosts[]                   // optional croptop posts\n' +
       ')'
     ),
-    textBlock('Use the same pay(), cashOutTokensOf(), and read functions as other projects. The revnet’s committed schedule limits what can change later.')
+    textBlock('A revnet uses the same pay(), cashOutTokensOf(), and read functions as any other project.')
   ]));
 
   wrap.appendChild(guideSection('build-revnet-stages', '9. STAGES', [
-    "A stage sets the token rate, how it changes over time, the reserved share, and cash out terms. The schedule is committed at launch.",
-    "Stages begin at their configured times. A lower token rate creates fewer tokens per payment; it does not guarantee a higher trading price."
+    "A stage sets the token rate, how it changes over time, the split, and the cash out tax. Each stage begins at the time fixed at launch."
   ], [
     fnRefTable('READING STAGE STATE', [
       ['JBController.currentRulesetOf(projectId)', 'Active stage parameters'],
@@ -376,7 +428,7 @@ export function renderBuildTab() {
     fnRefTable('CHECKING PERMISSIONS', [
       ['JBPermissions.hasPermission(operator, account, projectId, permissionId, includeRoot, includeWildcard)', 'Check a single permission'],
       ['JBPermissions.hasPermissions(operator, account, projectId, permissionIds[], includeRoot, includeWildcard)', 'Check multiple permissions at once'],
-      ['JBPermissions.WILDCARD_PROJECT_ID()', 'Returns 0 — the wildcard project ID'],
+      ['JBPermissions.WILDCARD_PROJECT_ID()', 'Returns 0, the wildcard project ID'],
     ]),
     propertyTable('PERMISSION IDS', [
       ['1 - ROOT', 'Grants all permissions. Use with extreme care.'],
@@ -388,7 +440,7 @@ export function renderBuildTab() {
       ['7 - SET_PROJECT_URI', 'Update project metadata.'],
       ['8 - DEPLOY_ERC20', 'Deploy the project’s ERC-20 token.'],
       ['9 - SET_TOKEN', 'Set a custom token for the project.'],
-      ['10 - MINT_TOKENS', 'Mint tokens on-demand.'],
+      ['10 - MINT_TOKENS', 'Mint tokens on demand.'],
       ['11 - BURN_TOKENS', 'Burn tokens from another holder.'],
       ['12 - CLAIM_TOKENS', 'Claim credits into ERC-20 tokens for a holder.'],
       ['13 - TRANSFER_CREDITS', 'Transfer a holder’s unclaimed credits.'],
@@ -419,7 +471,7 @@ export function renderBuildTab() {
       ['38 - REALLOCATE_LOAN', 'Move collateral between loans. Also borrows the full current capacity.'],
       ['39 - REPAY_LOAN', 'Repay a loan on a holder’s behalf.'],
     ]),
-    infoBox('Permissions are per-operator, per-project. Granting QUEUE_RULESETS to address X for project 5 doesn’t give X any access to project 6.')
+    infoBox('A grant covers one operator and one project. QUEUE_RULESETS for project 5 gives no access to project 6.')
   ]));
 
   wrap.appendChild(guideSection('build-nfts', '11. NFT TIERS', [
@@ -439,10 +491,10 @@ export function renderBuildTab() {
     propertyTable('TIER CONFIGURATION', [
       ['price', 'What one NFT of this tier costs.'],
       ['initialSupply', 'Max NFTs available. Must be at least 1; capped at 999,999,999. 0 is rejected.'],
-      ['category', 'Grouping ID. Tiers MUST be sorted by category (ascending).'],
+      ['category', 'Grouping ID. Tiers must be sorted by category, ascending.'],
       ['reserveFrequency', 'Mint 1 reserved NFT every N minted.'],
       ['reserveBeneficiary', 'Who receives reserved NFTs.'],
-      ['votingUnits', 'Governance weight (via JB721Checkpoints). Applies only when the tier’s flags.useVotingUnits is set — otherwise voting power tracks the tier price.'],
+      ['votingUnits', 'Governance weight (via JB721Checkpoints). Applies only when the tier’s flags.useVotingUnits is set. Otherwise voting power tracks the tier price.'],
       ['encodedIpfsUri', 'IPFS content hash for metadata.'],
       ['flags.cantBeRemoved', 'If true, tier is permanent (one of the nested flags: allowOwnerMint, useVotingUnits, transfersPausable, cantBeRemoved, …).'],
     ]),
@@ -452,16 +504,16 @@ export function renderBuildTab() {
       ['JB721TiersHook.balanceOf(owner)', 'NFTs held by an address'],
       ['JB721TiersHook.cashOutWeightOf(tokenIds[])', 'Cash out weight of specific NFTs (divide by totalCashOutWeight() for the surplus fraction)'],
     ]),
-    infoBox('Tiers are sorted by CATEGORY, not price. The contract reverts with InvalidCategorySortOrder if submitted out of order.')
+    infoBox('Tiers are sorted by category, not price. The contract reverts with InvalidCategorySortOrder if they are submitted out of order.')
   ]));
 
   wrap.appendChild(guideSection('build-hooks', '12. CUSTOM HOOKS', [
-    "To add behavior during a payment, cash out, or rule change, supply a contract the project calls at that point. This contract is called a hook. Choose the interface for the step you need."
+    "A hook is a contract the project calls during a payment, cash out, payout, or rule change. Choose the interface for the step you need."
   ], [
     propertyTable('HOOK INTERFACES', [
-      ['IJBRulesetDataHook', 'Intercepts pay and cash out BEFORE state changes. Can override the weight (pay) or the cash out tax rate / effective counts (cash out), and specify pay and cash out hook specifications.'],
-      ['IJBPayHook', 'Called AFTER payment recorded and tokens minted. Use for rewards, notifications, side effects.'],
-      ['IJBCashOutHook', 'Called AFTER tokens burned and funds transferred. Use for cleanup, analytics, conditional logic.'],
+      ['IJBRulesetDataHook', 'Intercepts pay and cash out before state changes. Can override the weight (pay) or the cash out tax rate / effective counts (cash out), and specify pay and cash out hook specifications.'],
+      ['IJBPayHook', 'Called after the payment is recorded and tokens are minted. Use for rewards, notifications, side effects.'],
+      ['IJBCashOutHook', 'Called after tokens are burned and funds are transferred. Use for cleanup, analytics, conditional logic.'],
       ['IJBSplitHook', 'Called when a split routes funds to a hook address. Use for auto-investing, compounding, forwarding.'],
       ['IJBRulesetApprovalHook', 'Gates queued rulesets. Must return APPROVED before a queued ruleset can activate.'],
     ]),
@@ -476,12 +528,12 @@ export function renderBuildTab() {
       '//   forwardedAmount, weight, newlyIssuedTokenCount,\n' +
       '//   beneficiary, hookMetadata, payerMetadata'
     ),
-    infoBox('Data hooks run BEFORE state changes and can override values. Pay and cash out hooks run AFTER and are for side effects only.')
+    infoBox('Data hooks run before state changes and can override values. Pay and cash out hooks run after and are for side effects only.')
   ]));
 
   wrap.appendChild(guideSection('build-distributor', '13. DISTRIBUTOR', [
-    "A distributor shares deposited rewards with eligible holders in rounds. Rewards unlock gradually over time, called vesting. JBTokenDistributor uses token voting power; JB721Distributor uses NFT holdings. Both are optional contracts a project can deploy.",
-    "At a chosen block, a snapshot records the holdings used to calculate each share. Deposits can come directly or through a payout hook."
+    "A distributor shares deposited rewards with eligible holders in rounds, and each round’s rewards vest over time. JBTokenDistributor uses token voting power; JB721Distributor uses NFT holdings.",
+    "Each round takes a snapshot of holdings at one block and calculates every share from it. Deposits come directly or through a split hook."
   ], [
     fnRefTable('CORE FUNCTIONS', [
       ['fund(hook, token, amount)', 'Directly deposit reward tokens for a specific hook’s staker pool'],
@@ -497,24 +549,24 @@ export function renderBuildTab() {
       ['currentRound()', 'The current round number'],
       ['roundSnapshotBlock(round)', 'The block number used for stake weight lookups'],
     ]),
-    infoBox('A holder’s stake comes from IVotes.getPastVotes() (token distributors) or tier voting units (721 distributors). The TOTAL-stake denominator uses IJBActiveVotes.getPastTotalActiveVotes — which excludes undelegated balances (e.g. AMM-held tokens), so holders must delegate (even to themselves) to count. Rewards are proportional to active stake at the snapshot block.')
+    infoBox('Token holders count only after delegating their votes, including to themselves. A share is the holder’s votes (IVotes.getPastVotes, or tier voting units for NFTs) over IJBActiveVotes.getPastTotalActiveVotes at the snapshot block.')
   ]));
 
   wrap.appendChild(guideSection('build-handles', '14. PROJECT HANDLES', [
-    'JBProjectHandles maps ENS names to Juicebox project IDs using bidirectional verification. Anyone can propose a handle, but only verified ones (where the ENS text record matches) are returned by handleOf().',
-    'All functions take a chainId parameter — handles are chain-aware. Storage is keyed by the setter address, so multiple addresses can propose different handles for the same project.'
+    'JBProjectHandles maps ENS names to project IDs. A handle needs two matching records: the project names the ENS name, and the name’s juicebox text record names the project. handleOf() returns only handles where both match.',
+    'Every function takes a chainId. Storage is keyed by the setter address, so several addresses can propose different handles for one project.'
   ], [
     fnRefTable('HANDLE FUNCTIONS', [
-      ['setEnsNamePartsFor(chainId, projectId, parts[])', 'Associate ENS name parts with a project. Anyone can call this — no access control.'],
+      ['setEnsNamePartsFor(chainId, projectId, parts[])', 'Associate ENS name parts with a project. Anyone can call this.'],
       ['ensNamePartsOf(chainId, projectId, setter)', 'Get the stored name parts as set by a specific setter address.'],
       ['handleOf(chainId, projectId, setter)', 'Returns the verified handle string, or empty if ENS text record doesn’t match.'],
       ['TEXT_KEY', 'The ENS text record key: "juicebox". Expected value: "{chainId}:{projectId}".'],
     ]),
-    textBlock('Name parts are in reverse order. handleOf returns the dot-joined labels without a .eth suffix; the suffix is only added when computing the namehash for verification. `_formatHandle` (JBProjectHandles.sol:220-232) walks the array from the LAST element to the first, so the innermost label goes last. For "myproject.eth" → ["myproject"]. For "sub.myproject.eth" → ["myproject", "sub"]. Parts cannot contain dots, ASCII control characters, DEL, "eth", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s.')
+    textBlock('Store name parts innermost-last: myproject.eth is ["myproject"], and sub.myproject.eth is ["myproject", "sub"]. handleOf returns the labels joined by dots, without .eth. A part cannot be empty, be "eth", or contain dots or control characters. Normalize names (ENSIP-15) before storing; the contract does not.')
   ]));
 
   wrap.appendChild(guideSection('build-payer', '15. PAYER ADDRESS', [
-    "A payer address forwards incoming ETH to a project using saved settings. Deploy JBProjectPayer as a lightweight copy of its implementation, called a clone, then set its defaults with initialize() or setDefaultValues().",
+    "A payer address forwards incoming ETH to a project using saved settings. Deploy JBProjectPayer as a clone of its implementation, then set its defaults with initialize() or setDefaultValues().",
     "With defaultAddToBalance false, ETH triggers pay(); with true, it triggers addToBalanceOf() without creating tokens. An unset beneficiary defaults to the sender. For ERC-20 tokens, approve spending and call pay() or addToBalanceOf(); a direct token transfer does not trigger either."
   ], [
     codeBlock(
@@ -531,28 +583,28 @@ export function renderBuildTab() {
       '//   → looks up DIRECTORY.primaryTerminalOf(projectId, token)\n' +
       '//   → calls pay() or addToBalanceOf() with defaults'
     ),
-    infoBox('Terminal lookup happens at payment time via JBDirectory, so the payer address automatically follows terminal migrations without reconfiguration.')
+    infoBox('The payer address looks up the terminal in JBDirectory at payment time, so it follows terminal migrations.')
   ]));
 
   wrap.appendChild(guideSection('build-swap-terminal', '16. ROUTER TERMINAL', [
-    "If a project does not accept the payer’s token directly, JBRouterTerminal can exchange it for an accepted token and forward the payment. It needs a supported route; accepting a token is not a promise that a usable route exists.",
+    "JBRouterTerminal exchanges a token the project does not accept for one it does, then forwards the payment. The payment fails when no route exists.",
     "JBPayRouteResolver compares supported routes and estimates which returns the most project tokens. It can use a direct payment, a Uniswap trade, a cash out from another project, or a combination. The output token can differ between payments."
   ], [
     fnRefTable('ROUTER TERMINAL FUNCTIONS', [
-      ['pay(...)', 'Same IJBTerminal interface as JBMultiTerminal — resolves the best route, converts the input, then calls pay() on the destination terminal.'],
+      ['pay(...)', 'Same IJBTerminal interface as JBMultiTerminal. Resolves the best route, converts the input, then calls pay() on the destination terminal.'],
       ['addToBalanceOf(...)', 'Same as pay() but forwards via addToBalanceOf() on the destination terminal (no token minting).'],
       ['previewPayFor(...)', 'Preview the chosen route and expected output for a payment without executing it.'],
       ['pendingCallCount(), pendingCallCommitmentOf(id), pendingCallFailureOf(id)', 'Inspect gateway calls that retain custody after a failed protocol-fee route. Count is an ID counter; a nonzero commitment identifies an outstanding call.'],
       ['processPendingCall[WithGas](...), finalizePendingCall[WithGas](...)', 'Retry or finalize a committed gateway call using its original event payload. Review QueuePendingCall, ProcessPendingCall, RefundPendingCall, and RecordTerminalCallFailure to distinguish retained, settled, and refunded funds.'],
       ['bestPoolLiquidityOf(tokenA, tokenB)', 'Report the deepest-liquidity Uniswap pool the router would use for a pair.'],
     ]),
-    textBlock('Rollout availability comes from each chain’s canonical deployment records. Proposals do not activate a chain before execution; OP Sepolia has the JBRatioPriceFeed without a buyback hook, router, or gateway. The ratio feed covers USDC/native and USDC/ETH pricing for ETH-based payments and mixed-balance cash outs.'),
-    textBlock('The router is reached through JBRouterTerminalRegistry, which is what a project adds to JBDirectory alongside JBMultiTerminal; read terminalOf(projectId), then ROUTER() when the selected terminal is JBRouterTerminalGateway. The gateway takes custody before routing. Previous cohorts can still resolve to their old router until an operator migrates them. Routing is internal (JBPayRouteResolver) — there is no per-project pool configuration.')
+    textBlock('Read terminalOf(projectId) on JBRouterTerminalRegistry, the terminal a project lists in JBDirectory alongside JBMultiTerminal. If it returns a JBRouterTerminalGateway, read ROUTER() for the router. The gateway takes custody before routing. Routes are chosen per payment; a project configures no pool.'),
+    textBlock('Check each chain’s deployment record before relying on the router: OP Sepolia has the ratio price feed only.')
   ]));
 
   wrap.appendChild(guideSection('build-buyback', '17. BUYBACK HOOK', [
     "JBBuybackHook compares creating new tokens with buying them from its configured Uniswap V4 pool. It also compares project cash outs with selling into that pool.",
-    "The default minimum return uses an average pool price over a chosen time window, called a time-weighted average price (TWAP). Buyback 1.4.0 payment metadata under getId('pay', hook) must encode three words: (uint256 amountToSwapWith, uint256 minimumSwapAmountOut, bool skipSplits); two-word payment quotes revert. A swap below the TWAP floor falls back to minting. Use the project’s live hook generation when preparing metadata."
+    "The default minimum return is the pool’s time-weighted average price (TWAP) over a chosen window. Payment metadata under getId('pay', hook) encodes (uint256 amountToSwapWith, uint256 minimumSwapAmountOut, bool skipSplits). A swap below the TWAP floor mints instead. Older hook generations use other formats, so read the project’s live hook before preparing metadata."
   ], [
     codeBlock(
       'JBBuybackHook configuration',
@@ -579,7 +631,7 @@ export function renderBuildTab() {
       '     └─ minting gives equal or more tokens',
       '        └─▶ normal mint flow (weight × amount)',
     ]),
-    infoBox('Preview the complete operation and set a minimum return. A comparison with one configured pool does not establish the best price across all markets.')
+    infoBox('Preview the payment and set a minimum return. The hook compares minting with one pool, not with every market.')
   ]));
 
   // --- Build Your Own ---
@@ -589,11 +641,11 @@ export function renderBuildTab() {
   wrap.appendChild(ownHeader);
 
   wrap.appendChild(guideSection('build-bendystraw', '18. INDEXED DATA (BENDYSTRAW)', [
-    "Bendystraw collects contract events into a searchable database, called an indexer. It serves project lists, activity, charts, and holdings through GraphQL, a query API.",
-    "Use it for browsing. Before a wallet signs, read current balances, rules, spending approvals, and quotes directly from the chain. An indexer can be behind or incomplete; missing results do not prove nothing happened."
+    "Bendystraw indexes contract events and serves project lists, activity, charts, and holdings through GraphQL.",
+    "Use it for browsing. Before a wallet signs, read balances, rules, approvals, and quotes from the chain: the indexer can be behind or incomplete."
   ], [
     fnRefTable('ENDPOINTS', [
-      [BENDYSTRAW_GRAPHQL_ENDPOINTS.mainnet, 'Mainnets: Ethereum, Optimism, Base, Arbitrum. No API key needed'],
+      [BENDYSTRAW_GRAPHQL_ENDPOINTS.mainnet, 'Mainnets: Ethereum, Base, Arbitrum, Optimism. No API key needed'],
       [BENDYSTRAW_GRAPHQL_ENDPOINTS.testnet, 'Testnets: Sepolia and the L2 Sepolias'],
       ['…/schema', 'A playground with the schema explorer; POST an introspection query to the graphql URL for codegen (same schema on both databases)'],
     ]),
@@ -617,39 +669,33 @@ export function renderBuildTab() {
       ['suckerTransactions', 'Cross-chain moves and where each one is in its lifecycle'],
     ]),
     stepList([
-      'Every V6 row is versioned: filter with version: 6, and key a project by chainId + projectId, never projectId alone — the same number exists on every chain.',
+      'Every V6 row is versioned: filter with version: 6, and key a project by chainId and projectId, never projectId alone. The same number exists on every chain.',
       'Numeric arguments on singular queries are Float!, not Int! (Ponder’s choice). Declare variables as Float! or the request fails validation with no data.',
       'Lists page with limit and offset and return totalCount; loop until you have them all rather than trusting one page.',
       'suckerGroupId is as-of-event: when chains are linked later, old event rows keep the group id they were written with. Query by every project in the group when you need the full history.',
       'The SDK’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId.',
     ]),
-    infoBox('Building with an agent? The /jb-bendystraw skill in the Juicebox V6 skills library carries the schema, the query patterns above, and the gotchas — hand it over before asking for a feed, chart, or holder table. Source: github.com/peripheralist/bendystraw.')
+    infoBox('Building with an agent? The /jb-bendystraw skill in the Juicebox V6 skills library carries the schema and the query patterns above. Hand it over before asking for a feed, chart, or holder table.')
   ]));
 
   wrap.appendChild(guideSection('build-clients', '19. COPY THIS SITE', [
-    "This explorer runs in the browser. Its files are published to IPFS, and it reads live data from chain connections and Bendystraw. Its source is readable, including the code that builds transactions.",
-    "Each guide section has a copy-link button. Each action card has a prompt naming its source file and contract function. Share these with an assistant to start building your own app."
+    "This explorer is static files on IPFS. It reads chain RPCs and Bendystraw, and builds every transaction in the browser."
   ], [
     stepList([
-      'In Discover, click the link icon at the bottom of a component (e.g. the Pay card) to copy a recreation prompt; or in Build/Learn, click the icon by a section header to copy its link.',
+      'In Discover, click the link icon at the bottom of a card, such as Pay, to copy a prompt naming its source file and contract function. In Learn and Build, the icon by a section heading copies its link.',
       'Paste it to your LLM and ask: "Recreate this against the Juicebox V6 contracts."',
-      'Give it the two repos below. The README’s transaction→contract map shows exactly which function each action calls.',
-      'Mirror the pattern: every transaction is a pure buildXArgs() that round-trips through the contract ABI — copy the builder and keep its round-trip test.'
+      'Give it the two repositories below. The transaction coverage record in this site’s repository lists the function each action calls.',
+      'Keep the pattern: every transaction is a pure buildXArgs() that a test round-trips through the contract ABI.'
     ]),
     (function () {
       var box = document.createElement('p'); box.className = 'guide-text';
       box.appendChild(document.createTextNode('Reference: '));
       var lk = function (href, text) { var a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = text; return a; };
-      box.appendChild(lk('https://github.com/mejango/juicescan', 'this site’s repo (README + tests)'));
+      box.appendChild(lk('https://github.com/mejango/juicescan', 'this site’s source'));
       box.appendChild(document.createTextNode(' and '));
-      box.appendChild(lk('https://github.com/Bananapus/version-6', 'V6 contracts (version-6)'));
+      box.appendChild(lk('https://github.com/Bananapus/version-6', 'the V6 contracts'));
       box.appendChild(document.createTextNode('.'));
       return box;
-    })(),
-    (function () {
-      var p = document.createElement('p'); p.className = 'guide-text';
-      p.textContent = 'The whole app is open source: clone the repo at the commit in the footer and build it, or fetch the IPFS bundle. Nothing is hidden server-side: the transaction your wallet signs is built entirely in this code.';
-      return p;
     })()
   ]));
 
@@ -657,9 +703,6 @@ export function renderBuildTab() {
   initSmoothScroll(container);
 }
 
-// Wants version — the "Why?" page as the answer to "what do project owners
-// actually want?". Opens with a single setup paragraph, then a list of
-// "They want…" beats culminating in the closer: earn money on their terms.
 export function renderWhyTab() {
   var container = document.getElementById('tab-why');
   if (!container) return;
@@ -678,24 +721,18 @@ export function renderWhyTab() {
 
   var title = document.createElement('div');
   title.className = 'why-title';
-  title.textContent = 'What open source businesses, campaigns, and indie projects actually want:';
+  title.textContent = 'What projects get with Juicebox';
   hero.appendChild(title);
 
   wrap.appendChild(hero);
 
   var wants = [
-    "They want people to pay from the apps and chains they use.",
-    "They want to share project tokens with the people who support them.",
-    "They want clear rules for who can use the money and how.",
-    "They want to keep rules flexible or commit to a schedule.",
-    "They want anyone to be able to check their money and rules.",
-    "They want to use their own websites and tools.",
-    "They want to connect their project with other projects.",
-    "They want to understand their choices before making them.",
-    "They want their community to see what is promised and what can change.",
-    "They want assistants to help them build and check their work.",
-    "They want to read and use the code behind their money.",
-    "They want the freedom to earn their money, on their terms."
+    "Payments from any app or chain",
+    "Tokens for supporters",
+    "Rules anyone can check",
+    "Flexible rules or a committed schedule",
+    "Your own site and tools",
+    "Open code"
   ];
 
   var list = document.createElement('div');
@@ -745,11 +782,12 @@ function guideReference(href, label, id) {
   return p;
 }
 
-function glossaryList(rows) {
+function glossaryList(rows, idPrefix) {
   var list = document.createElement('dl');
   list.className = 'guide-glossary';
   rows.forEach(function (row) {
     var term = document.createElement('dt');
+    term.id = rowId(idPrefix, row[0]);
     term.textContent = row[0];
     var meaning = document.createElement('dd');
     meaning.textContent = row[1];
@@ -795,8 +833,7 @@ function guideSection(id, title, paragraphs, extras) {
   for (var i = 0; i < paragraphs.length; i++) {
     var p = document.createElement('p');
     p.className = 'guide-text';
-    p.textContent = paragraphs[i];
-    section.appendChild(p);
+    section.appendChild(inline(p, paragraphs[i]));
   }
 
   if (extras) {
@@ -825,7 +862,7 @@ function diagram(label, lines) {
   return el;
 }
 
-function propertyTable(label, rows) {
+function propertyTable(label, rows, plainKeys) {
   var el = document.createElement('div');
   el.className = 'guide-prop-table';
   if (label) {
@@ -838,7 +875,7 @@ function propertyTable(label, rows) {
     var row = document.createElement('div');
     row.className = 'guide-prop-row';
     var name = document.createElement('code');
-    name.className = 'guide-prop-name';
+    name.className = plainKeys ? 'guide-prop-name guide-prop-name-plain' : 'guide-prop-name';
     name.textContent = rows[i][0];
     var desc = document.createElement('span');
     desc.className = 'guide-prop-desc';
@@ -897,15 +934,13 @@ function codeBlock(label, code) {
 function infoBox(text) {
   var el = document.createElement('div');
   el.className = 'guide-info';
-  el.textContent = text;
-  return el;
+  return inline(el, text);
 }
 
 function textBlock(text) {
   var p = document.createElement('p');
   p.className = 'guide-text';
-  p.textContent = text;
-  return p;
+  return inline(p, text);
 }
 
 function stepList(items) {
@@ -919,7 +954,7 @@ function stepList(items) {
     num.textContent = (i + 1);
     var text = document.createElement('span');
     text.className = 'guide-step-text';
-    text.textContent = items[i];
+    inline(text, items[i]);
     step.appendChild(num);
     step.appendChild(text);
     el.appendChild(step);
