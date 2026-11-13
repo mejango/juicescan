@@ -306,19 +306,22 @@ function bridgesForType(suckerType) { return suckerType === 'both' ? ['native', 
 // address → bytes32 (left-padded) for a sucker token mapping's remoteToken.
 function addrToBytes32(a) { return '0x000000000000000000000000' + String(a).slice(2).toLowerCase(); }
 
-// The token mapping for one (local→remote) sucker over one bridge, or null when that bridge can't
-// safely carry the accounting token. Canonical USDC over an OP-stack/Arbitrum NATIVE bridge locks funds
-// in bridge escrow (USDC is not a mintable-pair token; JBOptimismSucker passes the mapping straight into
-// bridgeERC20To, and the Arbitrum gateway delivers USDC.e while leaves reference canonical USDC) — so
-// only CCIP suckers may carry the USDC mapping. Native suckers bridge native ETH only.
-function tokenMappingFor(localId, remoteId, accepts, bridge) {
-  if ((accepts && accepts[0]) === 'usdc') {
-    if (bridge !== 'ccip') return null;
+// The token mappings for one (local→remote) sucker over one bridge, or null when that bridge links nothing
+// for these accounting tokens. Same rule as juicebox.money's SDK call: every accepted token of ETH and USDC is
+// mapped, a custom token maps nothing (its project tokens still bridge over CCIP). Canonical USDC over an
+// OP-stack/Arbitrum NATIVE bridge locks funds in bridge escrow (the bridge delivers USDC.e while leaves
+// reference canonical USDC), so native suckers carry native ETH only.
+function tokenMappingsFor(localId, remoteId, accepts, bridge) {
+  var list = accepts || [];
+  var out = [];
+  if (list.indexOf('eth') !== -1) out.push({ localToken: NATIVE_TOKEN, minGas: 200000, remoteToken: addrToBytes32(NATIVE_TOKEN) });
+  if (bridge !== 'ccip') return out.length ? out : null;
+  if (list.indexOf('usdc') !== -1) {
     var local = USDC_BY_CHAIN[localId], remote = USDC_BY_CHAIN[remoteId];
-    if (local && remote) return { localToken: local, minGas: 200000, remoteToken: addrToBytes32(remote) };
-    return null;
+    if (!local || !remote) return null;
+    out.push({ localToken: local, minGas: 200000, remoteToken: addrToBytes32(remote) });
   }
-  return { localToken: NATIVE_TOKEN, minGas: 200000, remoteToken: addrToBytes32(NATIVE_TOKEN) };
+  return out;
 }
 
 function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
@@ -328,13 +331,13 @@ function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
     bridgesForType(suckerType).forEach(function (bridge) {
       var deployer = suckerDeployerForBridge(localId, remoteId, bridge);
       if (!deployer) return; // bridge not available for this pair
-      var mapping = tokenMappingFor(localId, remoteId, accepts, bridge);
-      if (!mapping) return; // this bridge can't safely carry the accounting token (USDC over a native bridge)
+      var mappings = tokenMappingsFor(localId, remoteId, accepts, bridge);
+      if (!mappings) return; // this bridge can't safely carry the accounting token (USDC over a native bridge)
       covered[remoteId] = true;
       deployerConfigurations.push({
         deployer: deployer,
         peer: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        mappings: [mapping],
+        mappings: mappings,
       });
     });
   });
@@ -374,7 +377,7 @@ function initState() {
     shopEnabled: false, // off by default — the Shop step starts as a single opt-in checkbox
     storePricingCurrency: 1, // store-item price denomination (1=ETH / 2=USD) — JB721 tiersConfig.currency
     network: network, // mainnet | testnet — follows the Discover toggle; maps the selected canonical chains to actual ids
-    suckerType: 'both', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both — default Both (broadest coverage)
+    suckerType: 'ccip', // bridge between chains: native (Ethereum↔L2 only) | ccip (any pair) | both. CCIP by default, as on juicebox.money
     nfts: [], // item drafts — see itemDraft() for shape
     perChain: {}, // multichain overrides: { [chainId]: { addr: { [key]: str } } } — keys: 'p:/r:/pk:' addresses, 'ppid:/rpid:/pkpid:' project ids, 'pamt:/pkamt:' payout amounts, 'isup:' item supplies
     storeCategories: [], // {id, name} named categories the user adds locally in the Shop step
@@ -503,7 +506,7 @@ function mergeDraft(obj) {
     seenAccepts[token] = true; return true;
   });
   if (!s.accepts.length || (s.accepts.indexOf('custom') !== -1 && s.accepts.length !== 1)) s.accepts = ['eth'];
-  if (['native', 'ccip', 'both'].indexOf(s.suckerType) === -1) s.suckerType = 'both';
+  if (['native', 'ccip', 'both'].indexOf(s.suckerType) === -1) s.suckerType = 'ccip';
   if (['wait', 'terminal', 'cycle'].indexOf(s.afterMode) === -1) s.afterMode = 'wait';
   if (!s.perChain || typeof s.perChain !== 'object' || Array.isArray(s.perChain)) s.perChain = {};
   Object.keys(s).forEach(function (k) { if (k.charAt(0) === '_') delete s[k]; });
@@ -1247,10 +1250,25 @@ export function noticeClashIssue(state) {
     var chainId = state.queueHomeChainId || state.chainIds[0];
     var firstStart = state.queueEditor
       ? Number(state.queueOption && state.queueOption.requiresStartDate ? state.queueCustomStart : state.queueMustStartAtByChain && state.queueMustStartAtByChain[chainId] || 0)
-      : Number(state.stages[0].schedule) || now + 600;
+      : Number(state.stages[0].schedule) || now + launchStartLead(state, chainId);
     var schedule = stageStarts(state, resolveStages(state), firstStart, now, chainId);
     return scheduleIsFresh(schedule.validUntil, now) ? null : 'This schedule has no usable execution window. Choose a later ruleset start, lengthen an earlier cycle, or shorten its notice.';
   } catch (error) { return error.message; }
+}
+
+// Seconds between review and the shared start. Several rulesets behind a known notice get an hour, so the
+// notice window is still open when the last signature lands; everything else gets ten minutes. Same as juicebox.money.
+export function launchStartLead(state, chainId) {
+  if (state.projectType === 'revnet' || (state.stages || []).length < 2) return 600;
+  return state.stages.some(function (stage) { return stageNoticeSeconds(state, stage, chainId) > 0; }) ? 3600 : 600;
+}
+
+/** A start picked for the first ruleset or stage must be at least an hour out. */
+export function startLeadIssue(state, now) {
+  var first = (state.stages || [])[0];
+  var picked = first && Number(first.schedule);
+  if (!picked || picked >= now + 3600) return '';
+  return (state.projectType === 'revnet' ? 'Stage' : 'Ruleset') + ' #1 needs a start at least an hour from now.';
 }
 
 // Returns the index of the first non-final stage with no duration (which would break sequencing), or -1.
@@ -3083,7 +3101,7 @@ function chainBridgeBlock(state, render) {
       bRow.appendChild(document.createTextNode('Connect chains via '));
       var bsel = el('select', 'field create-input'); bsel.style.width = 'auto'; bsel.style.minWidth = '0';
       [['native', 'Native bridges'], ['ccip', 'CCIP'], ['both', 'Native and CCIP']].forEach(function (o) {
-        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((state.suckerType || 'both') === o[0]) op.selected = true; bsel.appendChild(op);
+        var op = el('option'); op.value = o[0]; op.textContent = o[1]; if ((state.suckerType || 'ccip') === o[0]) op.selected = true; bsel.appendChild(op);
       });
       bsel.addEventListener('change', function () { state.suckerType = bsel.value; render(); });
       bRow.appendChild(bsel);
@@ -3114,7 +3132,7 @@ function uncoveredPairs(state) {
   for (var i = 0; i < ids.length; i++) for (var j = i + 1; j < ids.length; j++) {
     var a = ids[i], b = ids[j];
     var ok = bridgesForType(state.suckerType).some(function (br) {
-      return suckerDeployerForBridge(a, b, br) && tokenMappingFor(a, b, state.accepts, br);
+      return suckerDeployerForBridge(a, b, br) && tokenMappingsFor(a, b, state.accepts, br);
     });
     if (!ok) out.push([a, b]);
   }
@@ -3175,9 +3193,10 @@ function renderDeploy(state, render) {
   // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
   if (state.done) {
     var panel = el('div', 'create-success');
-    var st = el('div', 'create-success-title'); st.textContent = (state.details.name || 'Your project') + ' is live'; panel.appendChild(st);
+    var outcome = launchOutcomeText(state, isRev, (state._deployedChains || state.chainIds).map(chainName).join(', '));
+    var st = el('div', 'create-success-title'); st.textContent = outcome.title; panel.appendChild(st);
     var sub = el('div', 'create-success-sub');
-    sub.textContent = (isRev ? 'Revnet' : 'Project') + ' deployed on ' + (state._deployedChains || state.chainIds).map(chainName).join(', ') + '.';
+    sub.textContent = outcome.sub;
     panel.appendChild(sub);
     if (state.deployed && state.deployed.txHash) {
       var txp = el('div', 'create-success-sub'); txp.textContent = 'Transaction: ' + truncAddr(state.deployed.txHash);
@@ -3187,7 +3206,7 @@ function renderDeploy(state, render) {
       var go = el('button', 'create-btn primary big'); go.style.marginTop = '14px'; go.textContent = 'Go to project →';
       go.addEventListener('click', function () { window.location.hash = state.deployed.route; if (state._close) state._close(); });
       panel.appendChild(go);
-    } else {
+    } else if (!state.deployed || !state.deployed.proposed) {
       var noteFinding = el('div', 'create-success-sub'); noteFinding.textContent = 'Find it in Discover in a moment.'; panel.appendChild(noteFinding);
     }
     wrap.appendChild(panel);
@@ -3311,18 +3330,21 @@ function renderDeploy(state, render) {
   var durationBad = durationIssue(state);
 
   // Network is chosen on the Flavor step's "On [Mainnets ▾]" toggle — no separate picker here.
-  var needTicker = isRev && !state.details.ticker;
+  var needTicker = isRev && !tickerOk(state.details.ticker);
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  var needOwner = !isRev && !isAddr(ownerRaw);
-  var needOperator = isRev && !isAddr(opRaw);
+  // An empty field means the connected wallet; only a typed value that is not an address blocks.
+  var needOwner = !isRev && ownerFieldInvalid(state.details.owner, ownerRaw);
+  var needOperator = isRev && ownerFieldInvalid(state.revOperator, opRaw);
   var needCustomToken = customAccounting(state) && !customReady(state); // custom accounting token not resolved yet
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
   var approvalBad = approvalIssue(state); // custom approval condition with no valid hook address on some chain
   var deadlineBad = deadlinePresetIssue(state); // preset approval hook (JBDeadline) unmanifested on a selected chain
   var lpBad = lpHookIssue(state); // Fund market split with the LP fee hook unmanifested on a selected chain
-  var mediaBad = shopMediaUploadIssue(state); // never launch while an item attachment is pending/failed
+  var mediaBad = shopMediaUploadIssue(state) || shopItemIssue(state); // never launch with pending/failed media or an unfinished item
+  var leadBad = startLeadIssue(state, Math.floor(Date.now() / 1000));
+  var linkBad = state.chainIds.length > 1 && uncoveredPairs(state).length ? 'Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.' : '';
   var noticeBad = noticeClashIssue(state); // a launch-queued stage the JBDeadline hook would reject
   var startBad = isRev ? -1 : state.stages.findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
   var exportRow = el('div', 'create-predeploy-export-row');
@@ -3335,7 +3357,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!leadBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3343,9 +3365,9 @@ function renderDeploy(state, render) {
   wrap.appendChild(launch);
   // Spell out every reason the launch button is disabled, so the user knows exactly what to fix.
   if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
-  if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
-  if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Flavor step to launch.'));
-  if (needOperator) wrap.appendChild(infoNote('Set a revnet operator on the Flavor step to deploy your revnet.'));
+  if (needTicker) wrap.appendChild(infoNote('Ticker: 1–11 letters or numbers.'));
+  if (needOwner) wrap.appendChild(infoNote('Set the owner on each chain, or leave empty for your wallet.'));
+  if (needOperator) wrap.appendChild(infoNote('Set the operator on each chain, or leave empty for your wallet.'));
   if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet, fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying, otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
@@ -3353,6 +3375,8 @@ function renderDeploy(state, render) {
   if (deadlineBad) wrap.appendChild(warnNote(deadlineBad));
   if (lpBad) wrap.appendChild(warnNote(lpBad));
   if (mediaBad) wrap.appendChild(warnNote(mediaBad));
+  if (linkBad) wrap.appendChild(warnNote(linkBad));
+  if (leadBad) wrap.appendChild(warnNote(leadBad));
   if (noticeBad) wrap.appendChild(warnNote(noticeBad));
   if (durationBad) wrap.appendChild(warnNote(durationBad));
   if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start: a whole number of cycles or a date, on the Rulesets step.'));
@@ -3706,7 +3730,7 @@ function reviewSummary(state) {
       'Revnet operator',
       String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
         ? 'No retained authority'
-        : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || '—')),
+        : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || 'Your connected wallet')),
     ));
     c.appendChild(row('Stages', String(state.stages.length)));
     state.stages.forEach(function (s, i) { c.appendChild(row('Stage #' + (i + 1), revStageSummary(s, i, state))); });
@@ -3752,6 +3776,18 @@ function itemDraft() {
 
 // A pending/failed async media upload must never silently become a name-only onchain tier. The transient
 // flags are intentionally excluded from .jb drafts; after a reload, an unpinned file must be selected again.
+/** A revnet ticker: 1 to 11 capital letters or digits, the same rule as juicebox.money. */
+export function tickerOk(ticker) { return /^[A-Z0-9]{1,11}$/.test(String(ticker || '').trim()); }
+
+/** An item with no name or no price above zero is unfinished and blocks the launch. */
+export function shopItemIssue(state) {
+  if (!state || state.shopEnabled === false) return '';
+  var unfinished = ((state && state.nfts) || []).some(function (nft) {
+    return !String(nft.name || '').trim() || !(Number(nft.price) > 0);
+  });
+  return unfinished ? 'Complete or remove unfinished shop items.' : '';
+}
+
 export function shopMediaUploadIssue(state) {
   if (!state || state.shopEnabled === false) return '';
   var items = (state && state.nfts) || [];
@@ -4216,8 +4252,9 @@ function deploy(state, render) {
   if (new Set(state.chainIds.map(Number)).size !== state.chainIds.length) {
     state.statusLines.push({ text: 'Select each destination chain only once.', err: true }); render(); return;
   }
-  if (state.chainIds.length > 1 && !relayrSupportsChains(state.chainIds) && isSafeConnected()) {
-    state.statusLines.push({ text: 'Multichain direct launches require a wallet that can confirm each chain’s transaction. A Safe can launch one chain at a time.', err: true }); render(); return;
+  // A Safe never takes the Relayr path: that path asks the signer for forwarder signatures, which a contract cannot give.
+  if (state.chainIds.length > 1 && isSafeConnected()) {
+    state.statusLines.push({ text: 'A Safe can launch one chain at a time here. Choose one chain.', err: true }); render(); return;
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
@@ -4226,11 +4263,25 @@ function deploy(state, render) {
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  if (state.projectType === 'revnet' ? !isAddr(operatorRaw) : !isAddr(ownerRaw)) {
+  if (state.projectType === 'revnet' ? ownerFieldInvalid(state.revOperator, operatorRaw) : ownerFieldInvalid(state.details.owner, ownerRaw)) {
     state.statusLines.push({ text: state.projectType === 'revnet' ? 'Set a valid revnet operator before deploying.' : 'Set a valid project owner before launching.', err: true }); render(); return;
   }
   var owner = isAddr(ownerRaw) ? ownerRaw : signer;
   beginDeployRun(state, render, owner);
+}
+
+/** Title and line of the panel that replaces the form after a launch. A Safe proposal is not a launch. */
+export function launchOutcomeText(state, isRev, chains) {
+  var name = state.details.name || 'Your project';
+  if (state.deployed && state.deployed.proposed) {
+    return { title: name + ' is proposed to your Safe', sub: 'Nothing is launched yet. Sign and execute the proposal in your Safe, then find the ' + (isRev ? 'revnet' : 'project') + ' in Discover.' };
+  }
+  return { title: name + ' is live', sub: (isRev ? 'Revnet' : 'Project') + ' deployed on ' + chains + '.' };
+}
+
+/** True when an owner or operator field holds text that did not resolve to an address. Empty is fine. */
+export function ownerFieldInvalid(typed, resolved) {
+  return !!String(typed || '').trim() && !isAddr(resolved);
 }
 
 function beginDeployRun(state, render, owner) {
@@ -4242,11 +4293,12 @@ function beginDeployRun(state, render, owner) {
     state.deploying = false;
     if (res === false) { render(); return; } // user cancelled at the raw-data review — not a success
     state.done = true;
-    state.statusLines.push({ text: 'All done.', ok: true });
+    var proposedOnly = !!(state.deployed && state.deployed.proposed);
+    state.statusLines.push({ text: proposedOnly ? 'Proposed to your Safe. Nothing is launched until it executes.' : 'All done.', ok: !proposedOnly });
     // Discover owns its own onchain/indexer caches. Tell it a project was created so it can switch to the
     // deployed network, drop the old project count, and enumerate the new project immediately.
     state.launchSalt = null; // the next launch from this form gets its own salt
-    if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
+    if (!proposedOnly && typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
     render();
   }).catch(function (e) {
     state.deploying = false;
@@ -4328,7 +4380,7 @@ async function runDeploy(state, owner) {
   // Keep the reviewed pin across every chain and saved retry. Known notice hooks
   // give the plan a concrete execution window; expired unsent plans need fresh review.
   state._schedulePreparedAt = Math.floor(Date.now() / 1000);
-  var deployStart = state._schedulePreparedAt + 600;
+  var deployStart = state._schedulePreparedAt + launchStartLead(state, state.chainIds[0]);
 
   // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
   // BEFORE the user signs or pays anything.
@@ -4353,7 +4405,7 @@ async function runDeploy(state, owner) {
   // is the per-chain calldata that gets wrapped into ERC-2771 forward requests and posted to Relayr for a
   // quote; for single chain it's the wallet transaction. Simulation runs only AFTER the user confirms.
   var multichain = plans.length > 1;
-  var useRelayr = multichain && relayrSupportsChains(plans.map(function (plan) { return plan.chainId; }));
+  var useRelayr = multichain && !isSafeConnected() && relayrSupportsChains(plans.map(function (plan) { return plan.chainId; }));
   var reviewPayload = {
     action: (state.projectType === 'revnet' ? 'Deploy revnet' : 'Launch project') + ' on ' + plans.map(function (p) { return chainName(p.chainId); }).join(', '),
     transactions: plans.map(function (p) {
@@ -4565,7 +4617,8 @@ function execTx(opts) {
 // After a successful deploy, decode this transaction's JBProjects.Create event for the exact project id.
 // Reading the global count here is race-prone: another project could be created before the receipt is processed.
 function captureDeployed(state, chainId, txHash, expectedCount) {
-  if (!txHash) { state.deployed = { chainId: chainId, txHash: null }; return Promise.resolve(); }
+  // No hash means a Safe proposal: nothing exists onchain until the Safe executes it.
+  if (!txHash) { state.deployed = { chainId: chainId, txHash: null, proposed: true }; return Promise.resolve(); }
   var projects = getAddress('JBProjects', chainId);
   var createEvent = [{ type: 'event', name: 'Create', inputs: [
     { name: 'projectId', type: 'uint256', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'caller', type: 'address', indexed: false },
@@ -4698,25 +4751,15 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var addr = getAddress('REVDeployer', chainId);
   var missing = sucker.missing && sucker.missing.length > 0;
 
-  // With store items, use the 6-arg overload (tiered ERC-721 hook). Otherwise the 4-arg builds an empty hook.
-  var hasItems = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
-  if (hasItems) {
-    return {
-      rulesetCount: stages.length,
-      contract: 'REVDeployer', address: addr, abi: revDeploy721Abi, functionName: 'deployFor', missingSuckers: missing,
-      args: [0n, configuration, accept, suckerArg, buildRevnet721Config(state, projectUri, chainId, salt), []],
-    };
-  }
+  // Always the 6-argument overload, as juicebox.money sends it: an empty shop still carries its pricing and the
+  // operator's shop permissions, so those choices hold when items are added later.
   return {
-      rulesetCount: stages.length,
-    contract: 'REVDeployer', address: addr, abi: revDeployAbi, functionName: 'deployFor', missingSuckers: missing,
-    args: [0n, configuration, accept, suckerArg],
+    rulesetCount: stages.length,
+    contract: 'REVDeployer', address: addr, abi: revDeploy721Abi, functionName: 'deployFor', missingSuckers: missing,
+    args: [0n, configuration, accept, suckerArg, buildRevnet721Config(state, projectUri, chainId, salt), []],
   };
 }
 
-// REVDeploy721TiersHookConfig from the Shop step. Reuses build721Config (tiers priced in standard
-// JBCurrencyIds — ETH=1 / USD=2, bridged to the accounting context by JBPrices), then strips
-// issueTokensForSplits (revnets force it false).
 function buildRevnet721Config(state, projectUri, chainId, salt) {
   var base = build721Config(state, projectUri, chainId);
   var baseline = {
@@ -4970,7 +5013,9 @@ function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter
   rs.allowTerminalMigration = stage.allowTerminalMigration;
   rs.allowSetCustomToken = !!stage.allowSetCustomToken;
   rs.allowAddAccountingContext = !!stage.allowAddAccountingContext;
-  rs.allowAddPriceFeed = !!stage.allowAddPriceFeed;
+  // A custom-token project prices in the token itself; adding a feed later is the only way to price it in
+  // ETH or USD, so the power stays on whatever the toggle says (juicebox.money encodes the same).
+  rs.allowAddPriceFeed = !!stage.allowAddPriceFeed || customAccounting(state);
 
   // Splits + fund access.
   rs.splitGroups = [];
@@ -5558,7 +5603,7 @@ function ipfsHttp(uri) {
 export const __test = {
   resolveEns, attachEns,
   renderDeploy, runDeploy, captureDeployed, createRelayrReceiptNode, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
-  suckerConfigFor, tokenMappingFor, verifyLegacyItemSplitIds,
+  suckerConfigFor, tokenMappingsFor, verifyLegacyItemSplitIds,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,

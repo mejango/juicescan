@@ -5,21 +5,31 @@
 import { describe, expect, it } from 'vitest';
 import { __test } from '../src/create-flow.js';
 
-const { suckerConfigFor, tokenMappingFor } = __test;
+const { suckerConfigFor, tokenMappingsFor } = __test;
 const SALT = '0x' + '0'.repeat(64);
 const NATIVE = '0x000000000000000000000000000000000000eeee';
 const USDC_MAINNET = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 
 describe('USDC sucker mappings are CCIP-only', () => {
   it('tokenMappingFor refuses a USDC mapping for a native bridge', () => {
-    expect(tokenMappingFor(1, 10, ['usdc'], 'native')).toBeNull();
-    const ccip = tokenMappingFor(1, 10, ['usdc'], 'ccip');
-    expect(ccip.localToken.toLowerCase()).toBe(USDC_MAINNET);
+    expect(tokenMappingsFor(1, 10, ['usdc'], 'native')).toBeNull();
+    const ccip = tokenMappingsFor(1, 10, ['usdc'], 'ccip');
+    expect(ccip.map((m) => m.localToken.toLowerCase())).toEqual([USDC_MAINNET]);
   });
 
   it('ETH projects still map native over native bridges', () => {
-    const m = tokenMappingFor(1, 10, ['eth'], 'native');
-    expect(m.localToken.toLowerCase()).toBe(NATIVE);
+    const m = tokenMappingsFor(1, 10, ['eth'], 'native');
+    expect(m.map((x) => x.localToken.toLowerCase())).toEqual([NATIVE]);
+  });
+
+  it('a project accepting ETH and USDC maps both over CCIP and ETH alone over a native bridge', () => {
+    expect(tokenMappingsFor(1, 10, ['eth', 'usdc'], 'ccip').map((x) => x.localToken.toLowerCase())).toEqual([NATIVE, USDC_MAINNET]);
+    expect(tokenMappingsFor(1, 10, ['eth', 'usdc'], 'native').map((x) => x.localToken.toLowerCase())).toEqual([NATIVE]);
+  });
+
+  it('a custom token maps nothing: CCIP still links the chains, a native bridge does not', () => {
+    expect(tokenMappingsFor(1, 10, ['custom'], 'ccip')).toEqual([]);
+    expect(tokenMappingsFor(1, 10, ['custom'], 'native')).toBeNull();
   });
 
   it('a USDC project with Native and CCIP gets only CCIP deployer configs', () => {

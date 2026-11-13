@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { encodeFunctionData } from 'viem';
 import { __test } from '../src/create-flow.js';
 
 const { initState, buildLaunchArgs, buildRevnetArgs } = __test;
@@ -27,5 +28,20 @@ describe('create authority defaults', () => {
     expect(state.revOperator).toBe(DEAD);
     const tx = buildRevnetArgs(state, 1, DEAD, 'ipfs://revnet', SALT, 0);
     expect(tx.args[1].operator).toBe(DEAD);
+  });
+
+  it('deploys a revnet with no shop items through the overload that carries the shop config', () => {
+    const state = initState();
+    state.projectType = 'revnet';
+    state.chainIds = [1];
+    state.details.name = 'Shopless revnet';
+    state.details.ticker = 'REV';
+    state.collection = Object.assign({}, state.collection, { opCanMint: false });
+
+    const tx = buildRevnetArgs(state, 1, DEAD, 'ipfs://revnet', SALT, 0);
+    expect(tx.args).toHaveLength(6);
+    expect(tx.args[4].baseline721HookConfiguration.tiersConfig.tiers).toEqual([]);
+    expect(tx.args[4].preventOperatorMinting).toBe(true);
+    expect(() => encodeFunctionData(tx)).not.toThrow();
   });
 });
