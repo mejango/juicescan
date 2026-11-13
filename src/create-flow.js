@@ -306,19 +306,22 @@ function bridgesForType(suckerType) { return suckerType === 'both' ? ['native', 
 // address → bytes32 (left-padded) for a sucker token mapping's remoteToken.
 function addrToBytes32(a) { return '0x000000000000000000000000' + String(a).slice(2).toLowerCase(); }
 
-// The token mapping for one (local→remote) sucker over one bridge, or null when that bridge can't
-// safely carry the accounting token. Canonical USDC over an OP-stack/Arbitrum NATIVE bridge locks funds
-// in bridge escrow (USDC is not a mintable-pair token; JBOptimismSucker passes the mapping straight into
-// bridgeERC20To, and the Arbitrum gateway delivers USDC.e while leaves reference canonical USDC) — so
-// only CCIP suckers may carry the USDC mapping. Native suckers bridge native ETH only.
-function tokenMappingFor(localId, remoteId, accepts, bridge) {
-  if ((accepts && accepts[0]) === 'usdc') {
-    if (bridge !== 'ccip') return null;
+// The token mappings for one (local→remote) sucker over one bridge, or null when that bridge links nothing
+// for these accounting tokens. Same rule as juicebox.money's SDK call: every accepted token of ETH and USDC is
+// mapped, a custom token maps nothing (its project tokens still bridge over CCIP). Canonical USDC over an
+// OP-stack/Arbitrum NATIVE bridge locks funds in bridge escrow (the bridge delivers USDC.e while leaves
+// reference canonical USDC), so native suckers carry native ETH only.
+function tokenMappingsFor(localId, remoteId, accepts, bridge) {
+  var list = accepts || [];
+  var out = [];
+  if (list.indexOf('eth') !== -1) out.push({ localToken: NATIVE_TOKEN, minGas: 200000, remoteToken: addrToBytes32(NATIVE_TOKEN) });
+  if (bridge !== 'ccip') return out.length ? out : null;
+  if (list.indexOf('usdc') !== -1) {
     var local = USDC_BY_CHAIN[localId], remote = USDC_BY_CHAIN[remoteId];
-    if (local && remote) return { localToken: local, minGas: 200000, remoteToken: addrToBytes32(remote) };
-    return null;
+    if (!local || !remote) return null;
+    out.push({ localToken: local, minGas: 200000, remoteToken: addrToBytes32(remote) });
   }
-  return { localToken: NATIVE_TOKEN, minGas: 200000, remoteToken: addrToBytes32(NATIVE_TOKEN) };
+  return out;
 }
 
 function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
@@ -328,13 +331,13 @@ function suckerConfigFor(localId, otherChainIds, salt, suckerType, accepts) {
     bridgesForType(suckerType).forEach(function (bridge) {
       var deployer = suckerDeployerForBridge(localId, remoteId, bridge);
       if (!deployer) return; // bridge not available for this pair
-      var mapping = tokenMappingFor(localId, remoteId, accepts, bridge);
-      if (!mapping) return; // this bridge can't safely carry the accounting token (USDC over a native bridge)
+      var mappings = tokenMappingsFor(localId, remoteId, accepts, bridge);
+      if (!mappings) return; // this bridge can't safely carry the accounting token (USDC over a native bridge)
       covered[remoteId] = true;
       deployerConfigurations.push({
         deployer: deployer,
         peer: '0x0000000000000000000000000000000000000000000000000000000000000000',
-        mappings: [mapping],
+        mappings: mappings,
       });
     });
   });
@@ -3114,7 +3117,7 @@ function uncoveredPairs(state) {
   for (var i = 0; i < ids.length; i++) for (var j = i + 1; j < ids.length; j++) {
     var a = ids[i], b = ids[j];
     var ok = bridgesForType(state.suckerType).some(function (br) {
-      return suckerDeployerForBridge(a, b, br) && tokenMappingFor(a, b, state.accepts, br);
+      return suckerDeployerForBridge(a, b, br) && tokenMappingsFor(a, b, state.accepts, br);
     });
     if (!ok) out.push([a, b]);
   }
@@ -4989,7 +4992,9 @@ function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter
   rs.allowTerminalMigration = stage.allowTerminalMigration;
   rs.allowSetCustomToken = !!stage.allowSetCustomToken;
   rs.allowAddAccountingContext = !!stage.allowAddAccountingContext;
-  rs.allowAddPriceFeed = !!stage.allowAddPriceFeed;
+  // A custom-token project prices in the token itself; adding a feed later is the only way to price it in
+  // ETH or USD, so the power stays on whatever the toggle says (juicebox.money encodes the same).
+  rs.allowAddPriceFeed = !!stage.allowAddPriceFeed || customAccounting(state);
 
   // Splits + fund access.
   rs.splitGroups = [];
@@ -5577,7 +5582,7 @@ function ipfsHttp(uri) {
 export const __test = {
   resolveEns, attachEns,
   renderDeploy, runDeploy, captureDeployed, createRelayrReceiptNode, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
-  suckerConfigFor, tokenMappingFor, verifyLegacyItemSplitIds,
+  suckerConfigFor, tokenMappingsFor, verifyLegacyItemSplitIds,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
   customAccounting, applyAccountingDefaults, recipientIssue, splitTotalIssue, currentPayoutKinds,

@@ -186,3 +186,19 @@ describe('split lock encode-gating (audit L-3/L-4 — stale lock must not reach 
     expect(sp.lockedUntil).toBe(1893456000);
   });
 });
+
+describe('custom-token projects keep the power to add price feeds', () => {
+  it('encodes allowAddPriceFeed on even when the toggle is off', () => {
+    const s = baseState();
+    s.accepts = ['custom'];
+    s.stages.forEach((st) => { st.allowAddPriceFeed = false; });
+    const rs = assembleRuleset(s, s.stages[0], 0, 1, true, true, 0);
+    expect(JSON.stringify(rs, (k, v) => (typeof v === 'bigint' ? String(v) : v))).toMatch(/"allowAddPriceFeed":true/);
+  });
+  it('leaves the toggle alone for ETH projects', () => {
+    const s = baseState();
+    s.stages.forEach((st) => { st.allowAddPriceFeed = false; });
+    const rs = assembleRuleset(s, s.stages[0], 0, 1, true, true, 0);
+    expect(JSON.stringify(rs, (k, v) => (typeof v === 'bigint' ? String(v) : v))).toMatch(/"allowAddPriceFeed":false/);
+  });
+});
