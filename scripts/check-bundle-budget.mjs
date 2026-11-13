@@ -14,7 +14,8 @@ const startupBudget = { raw: 3_930_000, gzip: 736_000 };
 const budgets = {
   'dist/style.css': { raw: 248_000, gzip: 50_000 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
-  'dist/build.html': { raw: 53_000, gzip: 14_200 },
+  // The Build guide mirrors juicebox.money's 39 sections (2026-11); the page measures 114,994 B raw, 28,983 B gzip.
+  'dist/build.html': { raw: 118_000, gzip: 30_000 },
   'dist/index.html': { raw: 20_000, gzip: 5_000 },
   'dist/pdf.min.mjs': { raw: 470_000, gzip: 140_000 },
   'dist/pdf.worker.min.mjs': { raw: 1_350_000, gzip: 400_000 },
