@@ -216,14 +216,13 @@ describe('ruleset currency/decimals — the money-pricing path', () => {
   });
 });
 
-describe('deploy salt — deterministic + omnichain-consistent', () => {
-  it('same name + owner → same salt; different name → different salt', () => {
+describe('deploy salt: random per launch, shared by every chain of that launch', () => {
+  it('one form state keeps one salt; another launch with the same name and owner gets a different one', () => {
     const s = baseState();
-    const a = deploySalt(s, ALICE);
-    const b = deploySalt(s, ALICE);
-    expect(a).toBe(b); // deterministic so omnichain addresses match across chains
-    s.details.name = 'Other';
-    expect(deploySalt(s, ALICE)).not.toBe(a);
+    const a = deploySalt(s);
+    expect(a).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(deploySalt(s)).toBe(a); // every chain and every retry of this launch
+    expect(deploySalt(baseState())).not.toBe(a); // same name, same owner, new launch
   });
 });
 

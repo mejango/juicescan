@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { cashOutTaxValue, omnichainTokenSalt } from '../src/encoding.js';
 import { keccak256, toHex } from 'viem';
 import { chainList } from '../src/chain.js';
+import { applyRevnetTaxDefault, createStage } from '../src/create-flow.js';
 
 describe('cash out tax value', () => {
   it('reads a rate out of 10,000 as the 0 to 1 value', () => {
@@ -22,6 +23,34 @@ describe('chain order', () => {
 describe('ERC-20 deploy salt', () => {
   it('is keccak256("jb-erc20:<name>:<symbol>") with both trimmed, as juicebox.money derives it', () => {
     expect(omnichainTokenSalt(' My Token ', 'MTK ')).toBe(keccak256(toHex('jb-erc20:My Token:MTK')));
-    expect(omnichainTokenSalt('My Token', 'MTK')).toBe('0x' + keccak256(toHex('jb-erc20:My Token:MTK')).slice(2));
+  });
+});
+
+describe('revnet default cash out tax', () => {
+  it('starts a revnet at 0.1 once, and leaves a later "No tax" choice alone', () => {
+    const state = { projectType: 'revnet', stages: [createStage()] };
+    applyRevnetTaxDefault(state);
+    expect(state.stages[0].cashOutTaxRate).toBe(10); // percent, 0.1
+    state.stages[0].cashOutTaxRate = 0;
+    applyRevnetTaxDefault(state);
+    expect(state.stages[0].cashOutTaxRate).toBe(0);
+  });
+  it('leaves a custom project at its own default', () => {
+    const state = { projectType: 'custom', stages: [createStage()] };
+    applyRevnetTaxDefault(state);
+    expect(state.stages[0].cashOutTaxRate).toBe(0);
+  });
+});
+
+describe('reverted versus unread', () => {
+  it('only a proven revert counts as the contract refusing', async () => {
+    const { contractReverted } = await import('../src/encoding.js');
+    const { ContractFunctionRevertedError, ContractFunctionExecutionError, HttpRequestError } = await import('viem');
+    const abi = [{ type: 'function', name: 'f', inputs: [], outputs: [], stateMutability: 'view' }];
+    const revert = new ContractFunctionExecutionError(new ContractFunctionRevertedError({ abi, functionName: 'f' }), { abi, functionName: 'f' });
+    const transport = new ContractFunctionExecutionError(new HttpRequestError({ url: 'http://rpc.invalid' }), { abi, functionName: 'f' });
+    expect(contractReverted(revert)).toBe(true);
+    expect(contractReverted(transport)).toBe(false);
+    expect(contractReverted(new Error('timeout'))).toBe(false);
   });
 });

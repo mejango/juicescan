@@ -2,7 +2,7 @@
 // ABI encoding/decoding — thin wrappers around viem
 // All blockchain data transformation in one place for auditability
 
-import { encodeFunctionData, decodeErrorResult, parseEther, parseUnits, formatEther, formatUnits, keccak256, stringToHex } from 'viem';
+import { encodeFunctionData, decodeErrorResult, parseEther, parseUnits, formatEther, formatUnits, keccak256, stringToHex, BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError } from 'viem';
 
 export function encodeCalldata(abi, functionName, args) {
   return encodeFunctionData({ abi, functionName, args });
@@ -37,4 +37,10 @@ export function cashOutTaxValue(rate) {
 // A zero salt would deploy a nonce-keyed clone at a different address per chain.
 export function omnichainTokenSalt(name, symbol) {
   return keccak256(stringToHex('jb-erc20:' + String(name).trim() + ':' + String(symbol).trim()));
+}
+
+// A proven revert or empty return says what the contract did. A transport failure proves nothing, so a caller must
+// not read it as "the contract refused".
+export function contractReverted(error) {
+  return error instanceof BaseError && error.walk((cause) => cause instanceof ContractFunctionRevertedError || cause instanceof ContractFunctionZeroDataError) !== null;
 }

@@ -128,9 +128,16 @@ export function toggleRow(label, desc, checked, onChange) {
   return w;
 }
 
-// Deterministic salt — same on every chain (so omnichain sucker addresses match). No Math.random.
-export function deploySalt(state, owner) {
-  return keccak256(stringToHex((state.details.name || 'project') + ':' + String(owner).toLowerCase()));
+// One random salt per launch, the same on every chain so omnichain sucker and hook addresses match. A salt derived
+// from the name and owner collided when the same owner launched a second project with the same name. The salt is
+// kept on the form state so every chain and every retry of one launch shares it; a saved launch session replays
+// its own calldata and never recomputes it. juicebox.money uses a random salt per launch too.
+export function deploySalt(state) {
+  if (!state.launchSalt) {
+    var bytes = crypto.getRandomValues(new Uint8Array(32));
+    state.launchSalt = '0x' + Array.from(bytes, function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+  }
+  return state.launchSalt;
 }
 
 // Adjust a list of integer split shares so they sum to EXACTLY SPLITS_TOTAL (1e9). Per-row rounding can

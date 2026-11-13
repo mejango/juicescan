@@ -21,7 +21,7 @@ import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive 
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
-import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt } from './encoding.js';
+import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt, contractReverted } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { generationAddresses, generationNames, getABI } from './abi-registry.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
@@ -4189,7 +4189,7 @@ function isFeelessAddress(chainId, addr, projectId) {
 // swap, or cash-out loop). A dead route previews an all-zero ruleset. This does not determine fee forgiveness:
 // an eligible fee payment can succeed at the gateway while retaining its input for a later routing attempt.
 var _payRouteCache = {};
-function routerPayRouteWorks(chainId, projectId, token, decimals) {
+export function routerPayRouteWorks(chainId, projectId, token, decimals) {
   var registry = routerTerminalFor(chainId);
   if (!registry) return Promise.resolve(false);
   var key = Number(chainId) + ':' + String(projectId) + ':' + String(token || '').toLowerCase();
@@ -4198,7 +4198,9 @@ function routerPayRouteWorks(chainId, projectId, token, decimals) {
       address: registry, abi: feePreviewPayAbi, functionName: 'previewPayFor',
       args: [BigInt(projectId), token, 10n ** BigInt(decimals == null ? 18 : decimals), '0x0000000000000000000000000000000000000001', '0x'],
     }).then(function (o) { return toBigInt(o[0] && o[0].id) !== 0n; })
-      .catch(function () { delete _payRouteCache[key]; return false; }); // unverified: not offered now, read again next time
+      // A revert means the registry cannot route this token. A failed read leaves that unknown: the token list fails
+      // with a retry instead of quietly dropping the option.
+      .catch(function (error) { delete _payRouteCache[key]; if (contractReverted(error)) return false; throw error; });
   }
   return _payRouteCache[key];
 }
@@ -5416,11 +5418,10 @@ export function buildNewShopQueueCall(o) {
     args: [pid, o.deployConfig, { projectId: pid, rulesetConfigurations: o.cfgs, memo: o.memo || '' }, o.controller, o.salt] };
 }
 
-// A direct 721 collection can use nonce-based CREATE, which avoids colliding with any prior collection that used
-// the same project name/owner. Omnichain deployment still needs one deterministic salt so every chain derives the
-// same hook address.
-export function newShopDeploymentSalt(state, owner, isOmnichain) {
-  return isOmnichain ? deploySalt(state, owner) : ('0x' + '0'.repeat(64));
+// A direct 721 collection can use nonce-based CREATE. Omnichain deployment needs one salt shared by every chain so
+// each derives the same hook address.
+export function newShopDeploymentSalt(state, isOmnichain) {
+  return isOmnichain ? deploySalt(state) : ('0x' + '0'.repeat(64));
 }
 // Map an approval-hook address → friendly deadline label for the current chain ('Custom' if unknown).
 function deadlineLabelOf(addr, chainId) {
@@ -9779,7 +9780,10 @@ export function renderPayCard(project, cart) {
     if (state.contextsError) {
       terminalNotice.style.display = '';
       terminalNotice.className = 'paybox-contract-warning blocked';
-      terminalNotice.textContent = 'Could not verify which tokens this project accepts. Payments are unavailable until that check succeeds.';
+      terminalNotice.textContent = 'Could not verify which tokens this project accepts. Payments are unavailable until that check succeeds. ';
+      var retryTokens = el('button'); retryTokens.type = 'button'; retryTokens.textContent = 'Retry';
+      retryTokens.addEventListener('click', function () { loadAcceptedTokens(state.chainId); renderTerminalNotice(); });
+      terminalNotice.appendChild(retryTokens);
       return;
     }
     var surface = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
@@ -25005,7 +25009,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // A direct one-chain collection does not need a CREATE2 address. Use the deployer's nonce-based CREATE path so
   // starting another shop can never collide with an older collection that used the same project name/owner salt.
   // Omnichain wrappers retain one shared deterministic salt so their hook addresses match across chains.
-  var newShopSalt = newShop ? newShopDeploymentSalt(state, operatorAddr, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
+  var newShopSalt = newShop ? newShopDeploymentSalt(state, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
   var projUri = project.metadataUri || project.uri || '';
   if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); await createFlow.resolveItemSplitProjects(state, selected[0].id); }
 

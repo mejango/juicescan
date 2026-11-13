@@ -130,9 +130,9 @@ describe('build721Config produces a valid deploy-fresh config (tiers.length > 0)
 describe('buildNewShopQueueCall — routes "new shop" to the right deployer + encodes cleanly', () => {
   it('uses nonce-based CREATE for a fresh direct shop and reserves deterministic salt for omnichain hooks', () => {
     const s = newShopState();
-    expect(newShopDeploymentSalt(s, ALICE, false)).toBe(SALT);
-    expect(newShopDeploymentSalt(s, ALICE, true)).toMatch(/^0x[0-9a-f]{64}$/i);
-    expect(newShopDeploymentSalt(s, ALICE, true)).not.toBe(SALT);
+    expect(newShopDeploymentSalt(s, false)).toBe(SALT);
+    expect(newShopDeploymentSalt(s, true)).toMatch(/^0x[0-9a-f]{64}$/i);
+    expect(newShopDeploymentSalt(s, true)).not.toBe(SALT);
   });
 
   it('single-chain → JB721TiersHookProjectDeployer (deployTiersHookConfig + controller + salt)', () => {

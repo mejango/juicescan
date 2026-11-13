@@ -474,6 +474,7 @@ function mergeDraft(obj) {
   var defaults = initState();
   var s = mergeKnownDraftFields(defaults, obj);
   s.projectType = obj.projectType === 'revnet' ? 'revnet' : 'custom';
+  s._revnetTaxDefaulted = s.projectType === 'revnet'; // a saved revnet draft keeps the tax it was saved with
   s.network = obj.network === 'testnet' ? 'testnet' : 'mainnet';
   s.details = mergeKnownDraftFields(defaults.details, obj.details);
   s.details.tags = Array.isArray(s.details.tags) ? s.details.tags.slice(0, 50).map(String) : [];
@@ -768,6 +769,7 @@ function renderType(state, render) {
     state.projectType = sel.value;
     // Revnets hold a single reserve asset — collapse a custom ETH+USDC selection to one.
     if (sel.value === 'revnet' && state.accepts.length > 1) state.accepts = [state.accepts[0] || 'eth'];
+    applyRevnetTaxDefault(state);
     state.step = Math.min(state.step, stepsFor(state).length - 1); // clamp if the new flow has fewer steps
     render();
   });
@@ -1534,6 +1536,13 @@ function renderStageCard(stage, idx, state, render) {
 // Revnet Stages (REVStageConfig[]) — a reduced, revnet-oriented stage editor.
 // ---------------------------------------------------------------------------
 
+// A revnet starts at a cash out tax of 0.1, as on juicebox.money: its rules are permanent, so accepting the defaults
+// must commit to the same terms in both clients. Applied once per form, so a chosen "No tax" is never overwritten.
+export function applyRevnetTaxDefault(state) {
+  if (state.projectType !== 'revnet' || state._revnetTaxDefaulted) return;
+  state._revnetTaxDefaulted = true;
+  state.stages.forEach(function (stage) { if (!Number(stage.cashOutTaxRate)) stage.cashOutTaxRate = 10; });
+}
 function tickerLabel(state) { return state.details.ticker || 'TOKEN'; }
 
 function renderRevnetStages(state, render) {
@@ -1865,7 +1874,7 @@ function stageSummaryRaw(stage, idx, state) {
   } else parts.push('no issuance');
 
   // Cash outs.
-  if (stage.cashOutEnabled && stage.payoutMode !== 'unlimited') parts.push('cash outs on, ' + round2(Number(stage.cashOutTaxRate)) + '% tax');
+  if (stage.cashOutEnabled && stage.payoutMode !== 'unlimited') parts.push('cash outs on, ' + cashOutTaxValue(Math.round(Number(stage.cashOutTaxRate) * 100)) + ' tax');
 
   // Payouts — list each recipient's share.
   if (stage.payoutMode === 'unlimited') {
@@ -4231,6 +4240,7 @@ function beginDeployRun(state, render, owner) {
     state.statusLines.push({ text: 'All done.', ok: true });
     // Discover owns its own onchain/indexer caches. Tell it a project was created so it can switch to the
     // deployed network, drop the old project count, and enumerate the new project immediately.
+    state.launchSalt = null; // the next launch from this form gets its own salt
     if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
     render();
   }).catch(function (e) {
@@ -4302,7 +4312,7 @@ async function runDeploy(state, owner) {
     }
   }
 
-  var salt = deploySalt(state, owner);
+  var salt = deploySalt(state);
   var signer = getAccount();
   if (!signer) throw new Error('Connect a wallet to deploy.');
   // One shared start timestamp for ALL chains, ~10 min ahead. Computed ONCE here — and recomputed every

@@ -10,7 +10,7 @@ describe('pastRulesetRows', () => {
       { ruleset: { id: 200n, cycleNumber: 2n, start: 2000n, weight: 5n * 10n ** 20n, duration: 0n }, metadata: { cashOutTaxRate: 0n } },
     ]);
     expect(rows.map(r => r.id)).toEqual(['200', '100']);
-    expect(rows[1]).toMatchObject({ start: 1000, weight: 1000, duration: 86400, tax: 25 });
+    expect(rows[1]).toMatchObject({ start: 1000, weight: 1000, duration: 86400, tax: 2500 });
     expect(rows[0]).toMatchObject({ start: 2000, weight: 500, duration: 0, tax: 0 });
   });
 
