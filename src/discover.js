@@ -11209,8 +11209,15 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
   return { relayr: true, resumed: !!(relaySession && relaySession.resumed), session: relaySession };
 }
 
+export function transferAcknowledgement(isRevnet, destination) {
+  if (!isRevnet) return 'I verified the new project owner. Transferring the project NFT hands over every owner-only power.';
+  return String(destination || '').trim().toLowerCase() === ZERO_ADDRESS
+    ? 'I understand that relinquishing the revnet operator role is permanent.'
+    : 'I verified the new revnet operator. They receive every power attached to this role.';
+}
+
 // Transfer operator (revnet) / ownership (custom) across the requested chain group, routed by authority type.
-function openTransferAuthorityModal(project, opts) {
+export function openTransferAuthorityModal(project, opts) {
   opts = opts || {};
   var isRev = project.isRevnet;
   var authorityAddr = opts.authorityAddr || projectAuthorityAddress(project);
@@ -11230,15 +11237,27 @@ function openTransferAuthorityModal(project, opts) {
   var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'revnet operator' : 'project owner') + ' address'; content.appendChild(addrInput);
   var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
   var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New revnet operator' : 'New project owner' });
+  // The acknowledgement is for the address on screen: editing the address clears it.
+  var ackRow = el('label', 'danger-confirm');
+  var ack = document.createElement('input'); ack.type = 'checkbox';
+  var ackText = el('span'); ackRow.appendChild(ack); ackRow.appendChild(ackText); content.appendChild(ackRow);
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = isRev ? 'Transfer revnet operator' : 'Transfer project ownership';
   actions.appendChild(submit); content.appendChild(actions);
+  function syncAck() {
+    ackText.textContent = transferAcknowledgement(isRev, addrInput.value);
+    submit.classList.toggle('cta-disabled', !ack.checked);
+  }
+  addrInput.addEventListener('input', function () { ack.checked = false; syncAck(); });
+  ack.addEventListener('change', syncAck); syncAck();
   var modal = openModal(isRev ? 'Transfer revnet operator' : 'Transfer project ownership', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
-    e.preventDefault(); if (busy) return; busy = true;
+    e.preventDefault(); if (busy) return;
+    if (!ack.checked) { setStatus('Tick the confirmation box to proceed.', 'error'); return; }
+    busy = true;
     (async function () {
       var to;
       try { to = authorityValueOf(); }
@@ -18022,12 +18041,18 @@ var POWER_SET_CONTROLLER = {
   fields: [{ name: 'controller', label: 'Controller', kind: 'address', placeholder: '0x… controller', infra: 'JBController' }],
   buildArgs: function (v, cid, pid) { return [pid, v.controller || getAddress('JBController', cid)]; },
 };
-var POWER_SET_TERMINALS = {
+export var POWER_SET_TERMINALS = {
   title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', gas: 250000n, chainsDefault: 'all',
-  note: 'Sets the project’s payment terminals (comma-separated). Defaults to the current JBMultiTerminal on each chain.',
-  danger: 'Dangerous: this reroutes where funds are paid in. A wrong terminal can misdirect or strand funds.',
-  fields: [{ name: 'terminals', label: 'Terminals', kind: 'addressList', placeholder: '0x…, 0x…', infra: 'JBMultiTerminal' }],
-  buildArgs: function (v, cid, pid) { var list = (v.terminals && v.terminals.length) ? v.terminals : [getAddress('JBMultiTerminal', cid)]; return [pid, list]; },
+  note: 'Sets the complete list of terminals funds can be paid in through (comma-separated). Prefilled with what is set onchain now.',
+  danger: 'Dangerous: this replaces the entire terminal list. Every terminal left out stops accepting payments and stops routing fees. Most projects launch with two (the standard terminal and the any-token router), so keep the ones you still want.',
+  // The call replaces the whole list, so the field starts from the live list and a blank field is refused: a
+  // default of one terminal would silently drop the router terminal.
+  fields: [{ name: 'terminals', label: 'Terminals', kind: 'addressList', placeholder: '0x…, 0x…',
+    listRead: function (project, cid) { return read(cid, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pidOn(project, cid)]); } }],
+  buildArgs: function (v, cid, pid) {
+    if (!v.terminals || !v.terminals.length) throw new Error('Enter the full terminal list for ' + chainNameOf(cid) + '.');
+    return [pid, v.terminals];
+  },
 };
 var POWER_MIGRATE = {
   title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', gas: 400000n, chainsDefault: 'primary',
@@ -18268,6 +18293,15 @@ function openPowerModal(project, action) {
     return '';
   }
 
+  // Starts a replace-all list field from the live list. Typing wins over a late read; a failed read leaves the
+  // field empty, and the action's buildArgs refuses an empty list.
+  function prefillLiveList(f, cid, input, state) {
+    state.reading = true; var before = input.value; input.placeholder = 'reading current…';
+    f.listRead(project, cid).then(function (list) {
+      if (input.value === before && list && list.length) { input.value = list.join(', '); input.dispatchEvent(new Event('input')); }
+    }).catch(function () {}).then(function () { state.reading = false; input.placeholder = f.placeholder || ''; });
+  }
+
   var inputs = {}; // name → { get(): value-or-throw }
   action.fields.forEach(function (f) {
     var lab = el('div', 'operator-edit-label'); lab.style.marginTop = '12px'; lab.textContent = f.label; content.appendChild(lab);
@@ -18355,6 +18389,7 @@ function openPowerModal(project, action) {
         listRows[c.id] = { input: input2, hint: hint2 };
         chainFieldRows.push({ cid: c.id, node: row2, input: input2, available: avail2 });
         describeAddressListInput(input2, hint2, c.id);
+        if (f.listRead && avail2) prefillLiveList(f, c.id, input2, listRows[c.id]);
       });
       content.appendChild(listWrap);
       if (f.help) { var h3 = el('div', 'operator-edit-cur'); h3.textContent = f.help; content.appendChild(h3); }
@@ -18363,6 +18398,7 @@ function openPowerModal(project, action) {
         return chainValue(function (cid) {
           var row = listRows[cid];
           if (!row) throw new Error('No ' + f.label + ' field for ' + chainNameOf(cid));
+          if (row.reading) throw new Error('Still reading the current ' + f.label + ' on ' + chainNameOf(cid) + '. Try again in a moment.');
           var list = parseAddressListInput(row.input, f.label + ' on ' + chainNameOf(cid));
           if (!list.length && f.infra) return [];
           return list;
@@ -18378,6 +18414,8 @@ function openPowerModal(project, action) {
     // unless the user has already typed. No fallback default — blank stays blank.
     if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') { input.value = val; input.dispatchEvent(new Event('input')); } input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = 'Could not read the current value'; }); })(inp); }
     content.appendChild(inp);
+    var listState = {};
+    if (f.listRead) prefillLiveList(f, project.chainId, inp, listState);
     var scalarAddressValue = null;
     if (f.kind === 'address') {
       var ah = el('div', 'operator-edit-token-name'); content.appendChild(ah);
@@ -18408,6 +18446,7 @@ function openPowerModal(project, action) {
         return scalarAddressValue ? scalarAddressValue() : raw;
       }
       if (f.kind === 'addressList') {
+        if (listState.reading) throw new Error('Still reading the current ' + f.label + '. Try again in a moment.');
         if (!raw && f.infra) return [];
         var list = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
         list.forEach(function (a2) { if (!isAddr(a2)) throw new Error('Invalid address in ' + f.label + ': ' + a2); });
