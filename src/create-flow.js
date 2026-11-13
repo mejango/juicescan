@@ -3175,9 +3175,10 @@ function renderDeploy(state, render) {
   // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
   if (state.done) {
     var panel = el('div', 'create-success');
-    var st = el('div', 'create-success-title'); st.textContent = (state.details.name || 'Your project') + ' is live'; panel.appendChild(st);
+    var outcome = launchOutcomeText(state, isRev, (state._deployedChains || state.chainIds).map(chainName).join(', '));
+    var st = el('div', 'create-success-title'); st.textContent = outcome.title; panel.appendChild(st);
     var sub = el('div', 'create-success-sub');
-    sub.textContent = (isRev ? 'Revnet' : 'Project') + ' deployed on ' + (state._deployedChains || state.chainIds).map(chainName).join(', ') + '.';
+    sub.textContent = outcome.sub;
     panel.appendChild(sub);
     if (state.deployed && state.deployed.txHash) {
       var txp = el('div', 'create-success-sub'); txp.textContent = 'Transaction: ' + truncAddr(state.deployed.txHash);
@@ -3187,7 +3188,7 @@ function renderDeploy(state, render) {
       var go = el('button', 'create-btn primary big'); go.style.marginTop = '14px'; go.textContent = 'Go to project →';
       go.addEventListener('click', function () { window.location.hash = state.deployed.route; if (state._close) state._close(); });
       panel.appendChild(go);
-    } else {
+    } else if (!state.deployed || !state.deployed.proposed) {
       var noteFinding = el('div', 'create-success-sub'); noteFinding.textContent = 'Find it in Discover in a moment.'; panel.appendChild(noteFinding);
     }
     wrap.appendChild(panel);
@@ -4217,8 +4218,9 @@ function deploy(state, render) {
   if (new Set(state.chainIds.map(Number)).size !== state.chainIds.length) {
     state.statusLines.push({ text: 'Select each destination chain only once.', err: true }); render(); return;
   }
-  if (state.chainIds.length > 1 && !relayrSupportsChains(state.chainIds) && isSafeConnected()) {
-    state.statusLines.push({ text: 'Multichain direct launches require a wallet that can confirm each chain’s transaction. A Safe can launch one chain at a time.', err: true }); render(); return;
+  // A Safe never takes the Relayr path: that path asks the signer for forwarder signatures, which a contract cannot give.
+  if (state.chainIds.length > 1 && isSafeConnected()) {
+    state.statusLines.push({ text: 'A Safe can launch one chain at a time here. Choose one chain.', err: true }); render(); return;
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
@@ -4232,6 +4234,15 @@ function deploy(state, render) {
   }
   var owner = isAddr(ownerRaw) ? ownerRaw : signer;
   beginDeployRun(state, render, owner);
+}
+
+/** Title and line of the panel that replaces the form after a launch. A Safe proposal is not a launch. */
+export function launchOutcomeText(state, isRev, chains) {
+  var name = state.details.name || 'Your project';
+  if (state.deployed && state.deployed.proposed) {
+    return { title: name + ' is proposed to your Safe', sub: 'Nothing is launched yet. Sign and execute the proposal in your Safe, then find the ' + (isRev ? 'revnet' : 'project') + ' in Discover.' };
+  }
+  return { title: name + ' is live', sub: (isRev ? 'Revnet' : 'Project') + ' deployed on ' + chains + '.' };
 }
 
 /** True when an owner or operator field holds text that did not resolve to an address. Empty is fine. */
@@ -4248,11 +4259,12 @@ function beginDeployRun(state, render, owner) {
     state.deploying = false;
     if (res === false) { render(); return; } // user cancelled at the raw-data review — not a success
     state.done = true;
-    state.statusLines.push({ text: 'All done.', ok: true });
+    var proposedOnly = !!(state.deployed && state.deployed.proposed);
+    state.statusLines.push({ text: proposedOnly ? 'Proposed to your Safe. Nothing is launched until it executes.' : 'All done.', ok: !proposedOnly });
     // Discover owns its own onchain/indexer caches. Tell it a project was created so it can switch to the
     // deployed network, drop the old project count, and enumerate the new project immediately.
     state.launchSalt = null; // the next launch from this form gets its own salt
-    if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
+    if (!proposedOnly && typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
     render();
   }).catch(function (e) {
     state.deploying = false;
@@ -4359,7 +4371,7 @@ async function runDeploy(state, owner) {
   // is the per-chain calldata that gets wrapped into ERC-2771 forward requests and posted to Relayr for a
   // quote; for single chain it's the wallet transaction. Simulation runs only AFTER the user confirms.
   var multichain = plans.length > 1;
-  var useRelayr = multichain && relayrSupportsChains(plans.map(function (plan) { return plan.chainId; }));
+  var useRelayr = multichain && !isSafeConnected() && relayrSupportsChains(plans.map(function (plan) { return plan.chainId; }));
   var reviewPayload = {
     action: (state.projectType === 'revnet' ? 'Deploy revnet' : 'Launch project') + ' on ' + plans.map(function (p) { return chainName(p.chainId); }).join(', '),
     transactions: plans.map(function (p) {
@@ -4571,7 +4583,8 @@ function execTx(opts) {
 // After a successful deploy, decode this transaction's JBProjects.Create event for the exact project id.
 // Reading the global count here is race-prone: another project could be created before the receipt is processed.
 function captureDeployed(state, chainId, txHash, expectedCount) {
-  if (!txHash) { state.deployed = { chainId: chainId, txHash: null }; return Promise.resolve(); }
+  // No hash means a Safe proposal: nothing exists onchain until the Safe executes it.
+  if (!txHash) { state.deployed = { chainId: chainId, txHash: null, proposed: true }; return Promise.resolve(); }
   var projects = getAddress('JBProjects', chainId);
   var createEvent = [{ type: 'event', name: 'Create', inputs: [
     { name: 'projectId', type: 'uint256', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'caller', type: 'address', indexed: false },

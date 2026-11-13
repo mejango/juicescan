@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { cashOutTaxValue, omnichainTokenSalt } from '../src/encoding.js';
 import { keccak256, toHex } from 'viem';
 import { chainList } from '../src/chain.js';
-import { applyRevnetTaxDefault, createStage, ownerFieldInvalid } from '../src/create-flow.js';
+import { applyRevnetTaxDefault, createStage, launchOutcomeText, ownerFieldInvalid } from '../src/create-flow.js';
 
 describe('cash out tax value', () => {
   it('reads a rate out of 10,000 as the 0 to 1 value', () => {
@@ -84,5 +84,16 @@ describe('launch owner and operator fields', () => {
   it('blocks typed text that did not resolve to an address', () => {
     expect(ownerFieldInvalid('nobody.eth', 'nobody.eth')).toBe(true);
     expect(ownerFieldInvalid('vitalik.eth', '0x' + '1'.repeat(40))).toBe(false);
+  });
+});
+
+describe('launch outcome panel', () => {
+  it('never calls a Safe proposal live', () => {
+    const text = launchOutcomeText({ details: { name: 'Zed' }, deployed: { chainId: 1, txHash: null, proposed: true } }, false, 'Ethereum');
+    expect(text.title).toBe('Zed is proposed to your Safe');
+    expect(text.sub).toMatch(/Nothing is launched yet/);
+  });
+  it('says live once a transaction confirmed', () => {
+    expect(launchOutcomeText({ details: { name: 'Zed' }, deployed: { chainId: 1, txHash: '0x1' } }, true, 'Ethereum')).toEqual({ title: 'Zed is live', sub: 'Revnet deployed on Ethereum.' });
   });
 });
