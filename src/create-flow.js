@@ -4734,25 +4734,15 @@ function buildRevnetArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var addr = getAddress('REVDeployer', chainId);
   var missing = sucker.missing && sucker.missing.length > 0;
 
-  // With store items, use the 6-arg overload (tiered ERC-721 hook). Otherwise the 4-arg builds an empty hook.
-  var hasItems = state.shopEnabled && state.nfts.some(function (_, idx) { return chainItemIncluded(state, chainId, idx); });
-  if (hasItems) {
-    return {
-      rulesetCount: stages.length,
-      contract: 'REVDeployer', address: addr, abi: revDeploy721Abi, functionName: 'deployFor', missingSuckers: missing,
-      args: [0n, configuration, accept, suckerArg, buildRevnet721Config(state, projectUri, chainId, salt), []],
-    };
-  }
+  // Always the 6-argument overload, as juicebox.money sends it: an empty shop still carries its pricing and the
+  // operator's shop permissions, so those choices hold when items are added later.
   return {
-      rulesetCount: stages.length,
-    contract: 'REVDeployer', address: addr, abi: revDeployAbi, functionName: 'deployFor', missingSuckers: missing,
-    args: [0n, configuration, accept, suckerArg],
+    rulesetCount: stages.length,
+    contract: 'REVDeployer', address: addr, abi: revDeploy721Abi, functionName: 'deployFor', missingSuckers: missing,
+    args: [0n, configuration, accept, suckerArg, buildRevnet721Config(state, projectUri, chainId, salt), []],
   };
 }
 
-// REVDeploy721TiersHookConfig from the Shop step. Reuses build721Config (tiers priced in standard
-// JBCurrencyIds — ETH=1 / USD=2, bridged to the accounting context by JBPrices), then strips
-// issueTokensForSplits (revnets force it false).
 function buildRevnet721Config(state, projectUri, chainId, salt) {
   var base = build721Config(state, projectUri, chainId);
   var baseline = {
