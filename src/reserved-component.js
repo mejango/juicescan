@@ -56,7 +56,7 @@ export function renderReservedComponent() {
     if (state.selectedChain) params.chain = state.selectedChain;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Send tokens set aside for the project to its chosen recipients. Anyone can do this.' });
+  }, { permissionNote: 'Send the project’s reserved tokens to their recipients. Anyone can do this.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 

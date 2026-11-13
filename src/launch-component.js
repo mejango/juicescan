@@ -93,10 +93,10 @@ export var launchProjectAbi = [{
 }];
 
 var CHAIN_OPTIONS = [
-  { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
-  { id: 42161, name: 'Arbitrum', testnet: false }, { id: 8453, name: 'Base', testnet: false },
-  { id: 11155111, name: 'Sepolia', testnet: true }, { id: 11155420, name: 'OP Sepolia', testnet: true },
-  { id: 84532, name: 'Base Sepolia', testnet: true }, { id: 421614, name: 'Arb Sepolia', testnet: true },
+  { id: 1, name: 'Ethereum', testnet: false }, { id: 8453, name: 'Base', testnet: false },
+  { id: 42161, name: 'Arbitrum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
+  { id: 11155111, name: 'Sepolia', testnet: true }, { id: 84532, name: 'Base Sepolia', testnet: true },
+  { id: 421614, name: 'Arb Sepolia', testnet: true }, { id: 11155420, name: 'OP Sepolia', testnet: true },
 ];
 
 export function renderLaunchComponent() {
@@ -184,7 +184,7 @@ export function renderLaunchComponent() {
     state.txStatus = null;
 
     var owner = getAccount();
-    if (!owner) { state.error = 'Connect wallet first'; updateUI(); return; }
+    if (!owner) { state.error = 'Connect a wallet to continue'; updateUI(); return; }
 
     var controllerAddr = getAddress('JBController', state.chainIds[0]);
     if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }

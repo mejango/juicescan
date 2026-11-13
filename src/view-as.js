@@ -7,7 +7,7 @@
 var KEY = 'js-view-as-v1';
 var listeners = [];
 
-export var VIEW_AS_TX_ERROR = "You're viewing the site as another account — exit View as to transact.";
+export var VIEW_AS_TX_ERROR = "You're viewing the site as another account, exit View as to transact.";
 
 function readStored() {
   try {

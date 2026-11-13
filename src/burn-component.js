@@ -74,7 +74,7 @@ export function renderBurnComponent() {
     if (state.memo) params.memo = state.memo;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Permanently destroy your own tokens. This is called burning. You receive no funds.' });
+  }, { permissionNote: 'Burn your own tokens permanently. You receive no funds.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -199,7 +199,7 @@ export function renderBurnComponent() {
     }
 
     var holder = getAccount();
-    if (!holder) { state.error = 'Connect wallet first'; updateUI(); return; }
+    if (!holder) { state.error = 'Connect a wallet to continue'; updateUI(); return; }
 
     var tokensAddr = getAddress('JBTokens', state.selectedChain);
     var directoryAddr = getAddress('JBDirectory', state.selectedChain);
@@ -240,7 +240,7 @@ export function renderBurnComponent() {
     executeTransaction({
       ...buildBurnArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, holder: holder, projectId: state.projectId, tokenCount: tokenCount, memo: state.memo || '' }),
       confirmSummary: { action: 'Burn tokens', rows: [
-        ['Burning', formatAmount(tokenCount, 18) + ' tokens — gone for good'],
+        ['Burning', formatAmount(tokenCount, 18) + ' tokens: gone for good'],
         ['From', holder],
         ['Project', '#' + String(state.projectId)],
         state.memo ? ['Memo', state.memo] : null,

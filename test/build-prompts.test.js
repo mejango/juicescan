@@ -46,7 +46,7 @@ describe('copy build prompts', () => {
     const prompt = componentReproPrompt('Cash out', 'cashout');
 
     expect(prompt).toContain('MANDATORY EMPTY-METADATA PREVIEW');
-    expect(prompt).toContain('TREASURY ROUTE');
+    expect(prompt).toContain('TERMINAL ROUTE');
     expect(prompt).toContain('BUYBACK-HOOK ROUTE');
     expect(prompt).toContain('DIRECT POOL SALE');
     expect(prompt).toContain('ITEM REDEMPTION');

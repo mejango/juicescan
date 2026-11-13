@@ -55,7 +55,7 @@ describe('stepped confirm dialog', () => {
     const second = session.showNext(Object.assign({ summary: { action: 'Open the loan', rows: [['Collateral', '10 TOK']] } }, call), { confirmText: 'Open loan' });
     expect(document.querySelectorAll('dialog.modal-dialog').length).toBe(1);
     expect(activeStep(dialog)).toBe(1);
-    expect(stepLabels(dialog)[0]).toBe('✓Approve the loan contract');
+    expect(stepLabels(dialog)[0]).toBe('1Approve the loan contract');
     expect(confirm.disabled).toBe(false);
     expect(confirm.textContent).toBe('Open loan');
     expect(dialog.querySelector('.tx-decoded-argname').textContent).toBe('Collateral: ');
@@ -63,7 +63,7 @@ describe('stepped confirm dialog', () => {
     const next = await second;
     expect(next.ok).toBe(true);
     next.showStatus('Confirmed in block 1', 'success');
-    expect(stepLabels(dialog)[1]).toBe('✓Open the loan');
+    expect(stepLabels(dialog)[1]).toBe('2Open the loan');
   });
 
   it('marks the approval step while an ERC-20 approval runs, then the main step', async () => {

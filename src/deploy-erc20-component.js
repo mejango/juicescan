@@ -58,7 +58,7 @@ export function renderDeployERC20Component() {
     if (state.tokenSymbol) params.symbol = state.tokenSymbol;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Create the project’s transferable token (ERC-20). Requires the project owner or DEPLOY_ERC20 permission.' });
+  }, { permissionNote: 'Create the project’s ERC-20 token. Requires the project owner or DEPLOY_ERC20 permission.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 

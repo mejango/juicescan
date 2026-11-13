@@ -33,7 +33,7 @@ function ethOnly() {
   return s;
 }
 
-describe('requiredFeedPairs — the pairs the terminal must resolve', () => {
+describe('requiredFeedPairs: the pairs the terminal must resolve', () => {
   const ctxs = [{ currency: NATIVE }, { currency: USDC_MAINNET }];
 
   it('lists context↔base and context↔context pairs, deduped', () => {
@@ -43,7 +43,7 @@ describe('requiredFeedPairs — the pairs the terminal must resolve', () => {
     expect(requiredFeedPairs(ctxs, [2, 2])).toHaveLength(3);
   });
 
-  it('skips equal currencies — the terminal short-circuits, no feed is read', () => {
+  it('skips equal currencies: the terminal short-circuits, no feed is read', () => {
     expect(requiredFeedPairs([{ currency: NATIVE }], [NATIVE])).toEqual([]);
   });
 
@@ -54,7 +54,7 @@ describe('requiredFeedPairs — the pairs the terminal must resolve', () => {
   });
 });
 
-describe('verifyLaunchFeedCoverage — fail-closed launch gate', () => {
+describe('verifyLaunchFeedCoverage: fail-closed launch gate', () => {
   it('blocks an ETH + USDC launch on a missing cross-context feed, naming the pair and chain', async () => {
     const s = ethUsdc();
     const probe = vi.fn((pair) => (pair.a !== 2 && pair.b !== 2) ? Promise.reject(revertErr()) : price());
@@ -82,11 +82,11 @@ describe('verifyLaunchFeedCoverage — fail-closed launch gate', () => {
     expect(probe).not.toHaveBeenCalled();
   });
 
-  it('blocks with distinct retry copy on a probe outage — never a silent pass', async () => {
+  it('blocks with distinct retry copy on a probe outage, never a silent pass', async () => {
     const s = ethUsdc();
     const probe = vi.fn(() => Promise.reject(rpcErr()));
     const err = await verifyLaunchFeedCoverage(s, 1, probe).catch((e) => e);
-    expect(err.message).toMatch(/Couldn’t verify price feed coverage on Ethereum right now — nothing was sent\. Try again\./);
+    expect(err.message).toMatch(/Couldn’t verify price feed coverage on Ethereum right now\. Nothing was sent\. Try again\./);
     expect(err.message).not.toMatch(/No price feed is registered/);
   });
 

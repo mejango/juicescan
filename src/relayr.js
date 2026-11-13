@@ -246,7 +246,7 @@ export async function buildForwardedTx(chainId, from, to, data, gasHint, value, 
   var pub = createPublicClientForChain(chainId);
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
-  if (!wallet) throw new Error('Connect a wallet first');
+  if (!wallet) throw new Error('Connect a wallet to continue');
   var val = value || 0n;
 
   // Forwarding only preserves the wallet's identity when the recipient explicitly trusts this deployment.
@@ -636,9 +636,9 @@ export async function relayrPay(payment, expectedAccount, onSubmitted, expectedB
   var chainId = details.chainId;
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
-  if (!wallet) throw new Error('Connect a wallet first');
+  if (!wallet) throw new Error('Connect a wallet to continue');
   var account = getAccount();
-  if (!account) throw new Error('Connect a wallet first');
+  if (!account) throw new Error('Connect a wallet to continue');
   if (expectedAccount && account.toLowerCase() !== expectedAccount.toLowerCase()) throw new Error('Connected account changed. Review the Relayr payment again.');
   var pub = createPublicClientForChain(chainId);
   await requireRelayrPaymentRuntime(pub);

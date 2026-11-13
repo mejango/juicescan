@@ -243,7 +243,7 @@ function renderContractAddresses(contractName, addresses) {
     return makeCopyAddressButton(
       uniqueAddresses[0],
       contractName,
-      'Copy address — ' + deployments.map(function(deployment) { return deployment.chainName; }).join(', ')
+      'Copy address: ' + deployments.map(function(deployment) { return deployment.chainName; }).join(', ')
     );
   }
 
@@ -292,7 +292,7 @@ function renderContractSection(contractName) {
   arrow.textContent = '\u25B8'; // ▸
   var nameSpan = document.createElement('span');
   nameSpan.className = 'contract-name';
-  nameSpan.textContent = contractName + (contractMeta && contractMeta.generation !== 'current' ? ' [' + contractMeta.generation + ' — retired]' : '');
+  nameSpan.textContent = contractName + (contractMeta && contractMeta.generation !== 'current' ? ' [' + contractMeta.generation + ', retired]' : '');
   var countSpan = document.createElement('span');
   countSpan.className = 'contract-fn-count';
   countSpan.textContent = '(' + fns.length + ' functions)';
@@ -347,7 +347,7 @@ function renderContractSection(contractName) {
         addrGroup.className = 'address-override';
         var addrLabel = document.createElement('label');
         addrLabel.className = 'input-label';
-        addrLabel.innerHTML = 'contract address <span class="type-hint">required — this contract is deployed per-project</span>';
+        addrLabel.innerHTML = 'contract address <span class="type-hint">required: this contract is deployed per-project</span>';
         addrGroup.appendChild(addrLabel);
         var addrInput = document.createElement('input');
         addrInput.type = 'text';

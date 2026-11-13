@@ -52,7 +52,7 @@ export function describeSuckerClaim(value) {
     ['Terminal token amount', leaf.terminalTokenAmount.toString()],
   ];
   if (typeof leaf.metadata === 'string' && !/^0x0+$/.test(leaf.metadata)) rows.push(['Leaf metadata', leaf.metadata]);
-  rows.push(['Merkle proof', '32 hashes — exact bytes in the raw data below']);
+  rows.push(['Merkle proof', '32 hashes: exact bytes in the raw data below']);
   return [{ title: "Claim a bridged balance from the sucker's inbox tree", rows: rows }];
 }
 
@@ -81,7 +81,7 @@ export function describeSafeInnerCall(value) {
         return [name, bigintJson(argument)];
       });
       return [{
-        title: 'Queued call — ' + candidate.name + '.' + decoded.functionName + '(…)',
+        title: 'Queued call: ' + candidate.name + '.' + decoded.functionName + '(…)',
         rows: rows.length ? rows : [['Arguments', 'none']],
       }];
     } catch (e) { /* try the next candidate ABI */ }
@@ -135,7 +135,7 @@ export function describeSafeInitializer(value) {
   if (String(to).toLowerCase() === ZERO_ADDR && data === '0x') {
     rows.push(['Setup hook', 'none']);
   } else {
-    var hook = 'DELEGATECALL to ' + to + ' — data in the raw view below';
+    var hook = 'DELEGATECALL to ' + to + ', data in the raw view below';
     try {
       var inner = decodeFunctionData({ abi: SAFE_TO_L2_SETUP_ABI, data: data });
       if (inner.functionName === 'setupToL2' && inner.args &&
@@ -146,7 +146,7 @@ export function describeSafeInitializer(value) {
     rows.push(['Setup hook', hook]);
   }
   if (payment !== 0n || String(paymentToken).toLowerCase() !== ZERO_ADDR) {
-    rows.push(['Deployment payment', payment.toString() + ' of ' + paymentToken + ' to ' + paymentReceiver + ' — unusual, verify']);
+    rows.push(['Deployment payment', payment.toString() + ' of ' + paymentToken + ' to ' + paymentReceiver + ', unusual, verify']);
   }
   return [{ title: 'Safe setup', rows: rows }];
 }
@@ -172,8 +172,8 @@ export function describePermissionsData(value) {
   });
   var rows = [
     ['Operator', data.operator],
-    ['Scope', projectId === 0n ? 'project 0 — EVERY project this account ever owns' : 'project #' + projectId],
-    ['Permissions', names.length ? names.join(', ') : 'none — revokes everything previously granted'],
+    ['Scope', projectId === 0n ? 'project 0: EVERY project this account ever owns' : 'project #' + projectId],
+    ['Permissions', names.length ? names.join(', ') : 'none: revokes everything previously granted'],
   ];
   if (data.permissionIds.indexOf(1) >= 0) {
     rows.push(['Warning', 'ROOT grants every permission across all Juicebox contracts']);
@@ -215,9 +215,9 @@ export function describeSplitGroups(value) {
       if (typeof split.lockedUntil === 'number' && split.lockedUntil > 0) {
         parts.push('locked until ' + new Date(split.lockedUntil * 1000).toLocaleString());
       }
-      rows.push(['Split ' + (i + 1) + ' — ' + splitPercent(split.percent), parts.join(' | ')]);
+      rows.push(['Split ' + (i + 1) + ': ' + splitPercent(split.percent), parts.join(' | ')]);
     }
-    rows.push(['Total', splitPercent(total) + (total === SPLITS_TOTAL_PERCENT ? '' : " — the remainder follows the ruleset's default")]);
+    rows.push(['Total', splitPercent(total) + (total === SPLITS_TOTAL_PERCENT ? '' : ", the remainder follows the ruleset's default")]);
     steps.push({ title: groupLabel, rows: rows.length > 1 ? rows : [['Splits', 'none']] });
   }
   return steps.length ? steps : null;

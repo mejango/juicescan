@@ -67,7 +67,7 @@ describe('view-as store', () => {
 
   it('exports the exact transact-refusal message', async () => {
     const store = await fresh();
-    expect(store.VIEW_AS_TX_ERROR).toBe("You're viewing the site as another account — exit View as to transact.");
+    expect(store.VIEW_AS_TX_ERROR).toBe("You're viewing the site as another account, exit View as to transact.");
   });
 });
 

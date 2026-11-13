@@ -329,7 +329,7 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
   var pub = createPublicClientForChain(chainId);
-  if (!wallet) { outputArea.appendChild(renderError('Connect wallet to transact')); return; }
+  if (!wallet) { outputArea.appendChild(renderError('Connect a wallet to continue')); return; }
   if (!contractAddress) { outputArea.appendChild(renderError('No contract address for this chain')); return; }
 
   var validationErr = validateInputs(inputs);
@@ -339,7 +339,7 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
   catch (_) { outputArea.appendChild(renderError('msg.value: enter a valid non-negative ETH amount')); return; }
   if (value != null && value < 0n) { outputArea.appendChild(renderError('msg.value cannot be negative.')); return; }
   var reviewedAccount = getAccount();
-  if (!reviewedAccount) { outputArea.appendChild(renderError('Connect wallet to transact')); return; }
+  if (!reviewedAccount) { outputArea.appendChild(renderError('Connect a wallet to continue')); return; }
 
   // Switch the wallet to the selected chain before reviewing; only a refused switch stops the flow.
   wallet.getChainId().then(function(walletChainId) {
@@ -396,7 +396,7 @@ function executeWrite(fn, contractName, inputs, valueInput, contractAddress, abi
         return sent.hash;
       }).then(function(hash) {
         submittedHash = hash;
-        setOutputMessage(outputArea, 'tx-pending', 'TX submitted: ' + hash + ' — confirming onchain…');
+        setOutputMessage(outputArea, 'tx-pending', 'TX submitted: ' + hash + ', confirming onchain…');
         return waitForTrackedTransactionReceipt(pub, hash, wallet, chainId);
       }).then(async function(receipt) {
         if (receipt) await hold.release(heldReservation).catch(function () {});

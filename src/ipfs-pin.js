@@ -41,7 +41,7 @@ export function hasPinata() { return !!getPinataJwt(); }
 // Pin a File/Blob. Returns "ipfs://<cid>". Throws on misconfig or HTTP error (caller shows the message).
 export async function pinFile(file, name) {
   var jwt = getPinataJwt();
-  if (!jwt) throw new Error('No Pinata JWT set — add one in settings, or paste an ipfs:// hash.');
+  if (!jwt) throw new Error('No Pinata JWT set: add one in settings, or paste an ipfs:// hash.');
   var fname = (file && file.name) || name || 'upload';
   var form = new FormData();
   form.append('file', file, fname);
@@ -59,7 +59,7 @@ export async function pinFile(file, name) {
 // the same multihash, while the CIDv0 codec correctly unwraps the node back to the original JSON.
 export async function pinJson(obj, name) {
   var jwt = getPinataJwt();
-  if (!jwt) throw new Error('No Pinata JWT set — add one in settings, or paste an ipfs:// hash.');
+  if (!jwt) throw new Error('No Pinata JWT set: add one in settings, or paste an ipfs:// hash.');
   var base = name || obj.name || 'metadata';
   var block = unixFsFileBlock(new TextEncoder().encode(JSON.stringify(obj)));
   var blob = new Blob([block], { type: 'application/octet-stream' });

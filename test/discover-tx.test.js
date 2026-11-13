@@ -80,7 +80,7 @@ function minimalRuleset(overrides = {}) {
   };
 }
 
-describe('loan — REVLoans.borrowFrom', () => {
+describe('loan: REVLoans.borrowFrom', () => {
   it('keeps the net opening quote aligned with its fee breakdown', () => {
     expect(loanOpeningAmounts(1_000_000n, 25, false)).toEqual({
       gross: 1_000_000n,
@@ -93,7 +93,7 @@ describe('loan — REVLoans.borrowFrom', () => {
   });
 
   it('describes a fully prepaid unlock fee without saying “after never”', () => {
-    expect(loanUnlockFeeText(500, '0.5 USDC')).toBe('Never grows — fully prepaid');
+    expect(loanUnlockFeeText(500, '0.5 USDC')).toBe('Never grows: fully prepaid');
     expect(loanUnlockFeeText(25, '0.975 USDC')).toBe('Grows after 6 months; up to ~ 0.975 USDC by year 10');
   });
 
@@ -132,7 +132,7 @@ describe('loan — REVLoans.borrowFrom', () => {
   });
 });
 
-describe('loan — REVLoans.repayLoan (payable)', () => {
+describe('loan: REVLoans.repayLoan (payable)', () => {
   it('value = maxRepay buffer; empty permit2 tuple; round-trips', () => {
     const v = parseEther('10');
     const tx = buildRepayArgs({ chainId: 1, loansAddr: LOANS, loanId: 42, maxRepay: v, collateralToReturn: parseEther('5'), beneficiary: BOB, value: v });
@@ -232,7 +232,7 @@ describe('source-of-truth data guards', () => {
   });
 });
 
-describe('move between chains — JBSucker.prepare → toRemote', () => {
+describe('move between chains: JBSucker.prepare → toRemote', () => {
   it('prepare: bridges the accounting token, approves the sucker, round-trips', () => {
     const tx = buildSuckerPrepareArgs({ chainId: 1, sucker: SUCKER, projectTokenCount: parseEther('100'), beneficiary32: BEN32, minReclaimed: 0n, termToken: NATIVE_TOKEN, metadata: META32, approvalToken: NATIVE_TOKEN, approvalAmount: parseEther('100') });
     expect(tx.args[0]).toBe(parseEther('100'));
@@ -251,7 +251,7 @@ describe('move between chains — JBSucker.prepare → toRemote', () => {
   });
 });
 
-describe('claim credits — JBController.claimTokensFor', () => {
+describe('claim credits: JBController.claimTokensFor', () => {
   it('args (holder, projectId, count, beneficiary) + round-trip', () => {
     const tx = buildClaimTokensArgs({ chainId: 1, controllerAddr: LOANS, holder: BOB, projectId: 4, tokenCount: parseEther('50'), beneficiary: BOB });
     expect(tx.args[0]).toBe(BOB);
@@ -262,7 +262,7 @@ describe('claim credits — JBController.claimTokensFor', () => {
   });
 });
 
-describe('queue rulesets — JBController.queueRulesetsOf', () => {
+describe('queue rulesets: JBController.queueRulesetsOf', () => {
   it('args (projectId, configs, memo) + round-trip with empty configs', () => {
     const tx = buildQueueRulesetsArgs({ chainId: 1, controllerAddr: LOANS, projectId: 12, rulesetConfigs: [], memo: 'note' });
     expect(tx.args[0]).toBe(12n);

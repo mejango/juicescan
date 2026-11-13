@@ -253,7 +253,7 @@ function renderBatchBody(project, chain, state, route, others, controls) {
       var also = el('div', 'safe-batch-also');
       var head = el('div', 'safe-batch-step-head'); var lab = el('span', 'safe-batch-step-label'); lab.textContent = 'Also on ' + chainName(c); head.appendChild(lab); also.appendChild(head);
       var lines = el('ol', 'safe-batch-also-steps');
-      trayFor(project, c).forEach(function (s) { var li = el('li'); li.textContent = s.label + (s.detail ? ' — ' + s.detail : ''); lines.appendChild(li); });
+      trayFor(project, c).forEach(function (s) { var li = el('li'); li.textContent = s.label + (s.detail ? ': ' + s.detail : ''); lines.appendChild(li); });
       also.appendChild(lines);
       var hint = el('div', 'safe-batch-step-detail'); hint.textContent = 'Select that chain to reorder or remove its steps.'; also.appendChild(hint);
       box.appendChild(also);
@@ -283,7 +283,7 @@ export async function proposeBatchThroughSafeApp(opts) {
   var client = opts.client || createPublicClientForChain(opts.chainId);
   opts.setStatus('Simulating the batch from the Safe…', 'pending');
   await simulateBatchCalls(client, opts.authority, opts.calls, opts.dependsOnPrior);
-  opts.setStatus('Proposing the batch to the Safe — confirm in Safe{Wallet}…', 'pending');
+  opts.setStatus('Proposing the batch to the Safe, confirm in Safe{Wallet}…', 'pending');
   var safeTxHash = await invokeWallet(opts.chainId, opts.authority, true, function () {
     return proposeSafeTransactions(opts.calls.map(function (c) { return { to: c.to, value: '0', data: c.data }; }));
   });
@@ -307,7 +307,7 @@ export async function proposeBatchAsOwner(opts) {
     if (!Number.isSafeInteger(next) || next < 0) throw new Error('Could not read the Safe’s next transaction number (nonce) on ' + opts.chainName + '.');
     var queued = (loaded[1] || []).map(function (t) { return Number(t.nonce); }).filter(function (n) { return Number.isSafeInteger(n) && n >= 0; });
     var nonce = queued.length ? Math.max(next, Math.max.apply(null, queued) + 1) : next;
-    opts.setStatus('Proposing the batch at transaction number ' + nonce + ' — sign in your wallet…', 'pending');
+    opts.setStatus('Proposing the batch at transaction number ' + nonce + ', sign in your wallet…', 'pending');
     var proposed = await proposeSafeTx({ chainId: chainId, safe: safe, to: MULTI_SEND_CALL_ONLY, data: data, value: 0, operation: 1, signer: opts.signer, nonce: nonce });
     return { safeTxHash: proposed.safeTxHash, nonce: nonce, executed: false };
   }
@@ -315,12 +315,12 @@ export async function proposeBatchAsOwner(opts) {
   var hash = safeTxHashForCall(chainId, safe, { to: MULTI_SEND_CALL_ONLY, data: data, value: 0, nonce: ctx.nonce, operation: 1 });
   var approved = await safeApprovalsOf(chainId, safe, hash, ctx.owners);
   if (!approved.some(function (owner) { return sameAddr(owner, opts.signer); })) {
-    opts.setStatus('Approving the batch on the blockchain at transaction number ' + ctx.nonce + ' — confirm in your wallet…', 'pending');
+    opts.setStatus('Approving the batch on the blockchain at transaction number ' + ctx.nonce + ', confirm in your wallet…', 'pending');
     await approveSafeHashOnChain(chainId, safe, hash, null, null, { to: MULTI_SEND_CALL_ONLY, data: data, value: 0, nonce: ctx.nonce, operation: 1 });
     approved = await safeApprovalsOf(chainId, safe, hash, ctx.owners);
   }
   if (approved.length >= ctx.threshold) {
-    opts.setStatus('Executing the batch — confirm in your wallet…', 'pending');
+    opts.setStatus('Executing the batch: confirm in your wallet…', 'pending');
     await executeSafeTx(chainId, safe, { to: MULTI_SEND_CALL_ONLY, value: 0, data: data, operation: 1, nonce: ctx.nonce, safeTxGas: 0, baseGas: 0, gasPrice: 0,
       gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS, confirmations: approved.map(function (owner) { return { owner: owner, approvedHash: true }; }) });
     return { safeTxHash: hash, nonce: ctx.nonce, executed: true };
@@ -420,7 +420,7 @@ export async function mirrorAcrossChains(project, sourceChainId) {
       saveTray(target.id, pid, tray);
       mirrored.push(chainName(target) + ' (' + result.steps.length + ')');
     }
-    result.skipped.forEach(function (s) { skipped.push(chainName(target) + ': ' + s.label + ' — ' + s.reason); });
+    result.skipped.forEach(function (s) { skipped.push(chainName(target) + ': ' + s.label + ': ' + s.reason); });
   }
   var message = (mirrored.length ? 'Mirrored ' + chainName(source) + '’s batch to ' + mirrored.join(', ') + '.' : 'Nothing could be mirrored from ' + chainName(source) + '.')
     + (skipped.length ? ' Skipped ' + skipped.join('; ') + '.' : '');
@@ -477,7 +477,7 @@ export function openPresetDialog(project, setTrayStatus) {
         var line = el('div', 'safe-batch-preset-step');
         var text = el('span'); line.appendChild(text);
         // The pool line's window is the editable input beside it, so the description drops its own TWAP suffix.
-        text.textContent = (i + 1) + '. ' + def.label + ' — ' + (s.kind === 'setPoolFor' ? def.describe(s.values).replace(/, TWAP \d+s$/, '') : def.describe(s.values));
+        text.textContent = (i + 1) + '. ' + def.label + ': ' + (s.kind === 'setPoolFor' ? def.describe(s.values).replace(/, TWAP \d+s$/, '') : def.describe(s.values));
         if (s.kind === 'setPoolFor') {
           var input = el('input', 'safe-batch-twap'); input.type = 'number'; input.min = String(MIN_TWAP_WINDOW); input.max = String(MAX_TWAP_WINDOW);
           input.value = String(s.values.twapWindow); input.setAttribute('aria-label', 'Price averaging period in seconds (TWAP)');

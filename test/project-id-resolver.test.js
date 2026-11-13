@@ -26,7 +26,7 @@ describe('project ID field resolution', () => {
     expect(projectIdentityHint(11, [84532, 11155111], [
       { chainId: 84532, found: true, name: 'KMAC', suckerGroupId: '0xabc' },
       { chainId: 11155111, found: false, name: null, suckerGroupId: null },
-    ])).toEqual({ kind: 'warn', text: 'KMAC found on Base Sepolia only — set project IDs per chain.' });
+    ])).toEqual({ kind: 'warn', text: 'KMAC found on Base Sepolia only: set project IDs per chain.' });
   });
 
   // An indexer outage is not evidence that a project is missing. Reporting "No project #N found"
@@ -36,7 +36,7 @@ describe('project ID field resolution', () => {
       { chainId: 84532, found: false, name: null, suckerGroupId: null, unavailable: true },
     ])).toEqual({
       kind: 'warn',
-      text: 'Could not check project #11 right now — verify it before submitting.',
+      text: 'Could not check project #11 right now. Verify it before submitting.',
     });
     expect(projectIdentityHint(11, [84532], [
       { chainId: 84532, found: false, name: null, suckerGroupId: null, unavailable: false },

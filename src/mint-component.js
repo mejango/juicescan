@@ -64,7 +64,7 @@ export function renderMintComponent() {
     if (state.memo) params.memo = state.memo;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Create new tokens. The current rules must allow it, and you must own the project or have MINT_TOKENS permission.' });
+  }, { permissionNote: 'Create new tokens, if the current rules allow it. Requires the project owner or MINT_TOKENS permission.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -118,7 +118,7 @@ export function renderMintComponent() {
     checkbox.checked = state.useReservedPercent;
     checkbox.addEventListener('change', function() { state.useReservedPercent = checkbox.checked; });
     reservedLabel.appendChild(checkbox);
-    reservedLabel.appendChild(document.createTextNode('Set aside the project’s reserved share'));
+    reservedLabel.appendChild(document.createTextNode('Apply the project’s reserved tokens'));
     reservedSection.appendChild(reservedLabel);
     body.appendChild(reservedSection);
 
@@ -158,7 +158,7 @@ export function renderMintComponent() {
 
     var beneficiary = getBeneficiaryAddress(state);
     if (!beneficiary) {
-      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect wallet first';
+      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect a wallet to continue';
       updateUI(); return;
     }
 
@@ -170,7 +170,7 @@ export function renderMintComponent() {
       confirmSummary: { action: 'Mint tokens', rows: [
         ['Minting', formatAmount(tokenCount, 18) + ' tokens'],
         ['To', beneficiary],
-        ['Reserved share', state.useReservedPercent ? 'applied — the project’s share is set aside' : 'not applied — the recipient gets the full amount'],
+        ['Reserved tokens', state.useReservedPercent ? 'applied: reserved tokens are held back' : 'not applied: the recipient gets the full amount'],
         ['Project', '#' + String(state.projectId)],
       ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },

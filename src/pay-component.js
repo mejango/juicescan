@@ -347,7 +347,7 @@ export function renderPayComponent() {
     // "Splits get" line — the reserved portion.
     if (state.preview && state.preview.reservedTokens && state.preview.reservedTokens !== '0') {
       var splits = el('div', 'pay-splits-line');
-      splits.textContent = 'Set aside for the project: ' + state.preview.reservedTokens + ' tokens';
+      splits.textContent = 'Reserved tokens: ' + state.preview.reservedTokens;
       body.appendChild(splits);
     }
 
@@ -543,7 +543,7 @@ export function renderPayComponent() {
 
     var beneficiary = getBeneficiaryAddress(state);
     if (!beneficiary) {
-      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect wallet first';
+      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect a wallet to continue';
       updateUI(); return;
     }
 
@@ -618,7 +618,7 @@ export function renderPayComponent() {
         confirmSummary: { action: 'Pay project #' + String(reviewed.projectId), rows: [
           ['Paying', reviewed.amountText + ' ' + reviewed.symbol],
           ['You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
-          ['Minimum', formatTokenCount(route.preview.minReturnedTokens) + ' tokens — fails if you receive less'],
+          ['Minimum', formatTokenCount(route.preview.minReturnedTokens) + ' tokens: fails if you receive less'],
           ['To', beneficiary],
           reviewed.memo ? ['Memo', reviewed.memo] : null,
         ].filter(Boolean) },

@@ -1,3 +1,22 @@
+# Copy audit, parts C and D: UI strings and agent prompts (2026-11-13)
+
+- [x] 1. Em dashes out of every UI string (colon after a short label, comma or a new sentence otherwise). Comments, the bare `—` empty-value glyph and agent prompt text are untouched.
+- [x] 2. One wallet string, "Connect a wallet to continue". "cash out" open in UI strings. "treasury" out of UI and prompt text. Bare tickers in the launch form.
+- [x] 3. Card notes: no "called X", one "Requires the project owner or X permission" pattern, "reserved tokens" for the reserved share, "burn" on the Burn card.
+- [x] 4. Payout confirmation shows a formatted minimum with its symbol; the raw value stays in the raw data view. Currency hint is one short line.
+- [x] 5. Completed confirmation steps keep their number and the existing filled style instead of a check mark. Trailing arrows removed from text labels. Launch card chains in display order.
+- [x] 6. Prompts, vocabulary only: Croptop's 5% goes to CPN, chain order, "cash out", "terminal route".
+- [x] 7. `npm run check`: 2,365 unit tests and 148 browser tests pass.
+
+Not changed: `hook-metadata.js` and `defifa.js` strings, which must match the SDK's recorded vectors.
+
+## Plan refinement
+- **Objective:** Juicescan's UI strings follow the ruled copy rules, and one state reads the same on every card.
+- **System fit:** String changes only, except the payout minimum row (formatted through the existing `formatAmount`) and the step marker (number kept, existing `.complete` style). No transaction arguments change.
+- **Reuse and simplicity:** A scripted pass over string literals for the dashes, reviewed line by line, then targeted edits. Strings mirrored from the SDK are left to the SDK.
+- **Evidence and unknowns:** Every changed string that a test asserts was updated with it; SDK golden-vector tests caught the two mirrored files and they were restored.
+- **Verification:** 2,365 unit tests, then the full `npm run check` with the browser suite.
+- **Resource budget:** One worktree, one full check.
 # Copy audit, part B: Learn, Build and Why (2026-11-13)
 
 - [x] 1. Learn: `src/learn-sections.js` re-copied from juicebox.money `src/lib/learn-guide.ts` (origin/main d6d94813). The renderer gains what that copy now uses: inline `[label](href)` links, glossary row ids (`#term-…`, routed to Learn), `compare` and `points` blocks, plain table keys.

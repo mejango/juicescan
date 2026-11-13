@@ -160,7 +160,7 @@ async function signSafeTx(chainId, safe, fields, signer, locks) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
-  if (!wallet) throw new Error('Connect a wallet first');
+  if (!wallet) throw new Error('Connect a wallet to continue');
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
@@ -409,7 +409,7 @@ async function feeOverrides(chainId) {
 async function sendAndConfirm(wallet, chainId, params, label, expectedResultAddress, reverify, verifyReceipt, onSending, executionGasCap, reviewedSafe, reviewedAccount, locks) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   var account = reviewedAccount;
-  if (!account) throw new Error('Connect a wallet first');
+  if (!account) throw new Error('Connect a wallet to continue');
   var active = await wallet.getChainId().catch(function () { return null; });
   if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
   if (!wallet || !getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Review the transaction again.');
@@ -479,7 +479,7 @@ export async function executeSafeTx(chainId, safe, tx, reverify, verifyReceipt, 
   var reviewedAccount = getAccount();
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
-  if (!wallet) throw new Error('Connect a wallet first');
+  if (!wallet) throw new Error('Connect a wallet to continue');
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
@@ -1271,7 +1271,7 @@ export async function deploySafeSameAddress(chainId, creation, expectedSafe, aut
   try { await verifySafeDeploymentDestination(targetPublicClient, creation, expectedSafe, sourceGovernance); }
   catch (error) { throw new Error((error && error.message) || 'Could not verify the Safe deployment contracts on the target chain.'); }
   var wallet = getWalletClient();
-  if (!wallet) throw new Error('Connect a wallet first');
+  if (!wallet) throw new Error('Connect a wallet to continue');
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }
@@ -1285,7 +1285,7 @@ export async function deploySafeSameAddress(chainId, creation, expectedSafe, aut
     if (code && code !== '0x') break;
     await new Promise(function (r) { setTimeout(r, 1500); });
   }
-  if (!code || code === '0x') throw new Error('Deployed, but the Safe isn’t readable at ' + expectedSafe + ' yet — the RPC may be lagging. Reload to check; if it stays missing, the factory/singleton on this chain differ from the original.');
+  if (!code || code === '0x') throw new Error('Deployed, but the Safe isn’t readable at ' + expectedSafe + ' yet: the RPC may be lagging. Reload to check; if it stays missing, the factory/singleton on this chain differ from the original.');
   var postDeploymentPolicies = null, postDeploymentError = null;
   for (var governanceAttempt = 0; governanceAttempt < 4; governanceAttempt++) {
     try {
@@ -1358,7 +1358,7 @@ export async function approveSafeHashOnChain(chainId, safe, hash, reverify, onSe
   var reviewedAccount = getAccount();
   var wallet = getWalletClient();
   var reviewedSafe = isSafeConnected();
-  if (!wallet) throw new Error('Connect a wallet first');
+  if (!wallet) throw new Error('Connect a wallet to continue');
   try {
     var active = await wallet.getChainId();
     if (active !== Number(chainId)) { await switchChain(Number(chainId)); wallet = getWalletClient(); }

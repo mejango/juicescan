@@ -145,7 +145,7 @@ export function renderQueueRulesetComponent() {
     if (state.selectedChain) params.chain = state.selectedChain;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Schedule new project rules, called a ruleset. Requires the project owner or QUEUE_RULESETS permission.', wide: true });
+  }, { permissionNote: 'Schedule new project rules. Requires the project owner or QUEUE_RULESETS permission.', wide: true });
 
   var wrapper = comp.wrapper;
   var body = comp.body;

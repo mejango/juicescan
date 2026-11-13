@@ -10,6 +10,7 @@ import {
   tokenByAddress,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
+import { formatAmount } from './encoding.js';
 import { quotedOutputFloor } from './slippage.js';
 
 export var sendPayoutsAbi = [{
@@ -158,7 +159,7 @@ export function renderPayoutsComponent() {
     else if (state.currencyMode && state.currencyMode !== 'token') params.currency = state.currencyMode;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Send project funds to its chosen recipients, within its payout limit. Anyone can do this unless the rules restrict it to the owner or an approved address.' });
+  }, { permissionNote: 'Send project funds to its recipients, up to the payout limit. Anyone can, unless the rules restrict it.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -287,9 +288,9 @@ export function renderPayoutsComponent() {
     if (state.currencyMode !== 'token') {
       var curHint = el('div');
       curHint.style.fontSize = '12px'; curHint.style.color = 'var(--muted)'; curHint.style.marginTop = '4px';
-      curHint.textContent = state.currencyMode === 'eth' ? 'Enter the amount in ETH. It supports ' + state.decimals + ' decimal places and is converted to the selected token by the contract.'
-        : state.currencyMode === 'usd' ? 'Enter the amount in USD. It supports ' + state.decimals + ' decimal places and is converted to the selected token by the contract.'
-        : 'Enter the amount in this currency. It supports ' + state.decimals + ' decimal places.';
+      curHint.textContent = state.currencyMode === 'eth' ? 'In ETH, up to ' + state.decimals + ' decimals.'
+        : state.currencyMode === 'usd' ? 'In USD, up to ' + state.decimals + ' decimals.'
+        : 'In this currency, up to ' + state.decimals + ' decimals.';
       curSection.appendChild(curHint);
     }
     body.appendChild(curSection);
@@ -393,10 +394,9 @@ export function renderPayoutsComponent() {
         confirmSummary: { action: 'Send payouts', rows: [
           ['Sending', amountText + ' (currency ' + String(currency) + ') to the chosen recipients'],
           ['Token', state.selectedToken.symbol || tokenAddr],
-          ['Minimum paid out', String(minPaidOut) + ' smallest token units — fails if less is sent'],
+          ['Minimum paid out', formatAmount(minPaidOut, state.decimals) + ' ' + (state.selectedToken.symbol || 'tokens') + ', fails if less is sent'],
           ['Project', '#' + String(state.projectId)],
         ] },
-        confirmNote: 'The preview returned ' + String(quoted) + ' smallest token units (10^' + state.decimals + ' units = 1 token). This transaction fails if less than ' + String(minPaidOut) + ' is sent.',
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

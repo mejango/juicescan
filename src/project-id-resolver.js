@@ -66,7 +66,7 @@ export function projectIdentityHint(projectId, chainIds, lookups) {
     if (unavailable) {
       return {
         kind: 'warn',
-        text: 'Could not check project #' + projectId + ' right now — verify it before submitting.',
+        text: 'Could not check project #' + projectId + ' right now. Verify it before submitting.',
       };
     }
     return {
@@ -81,14 +81,14 @@ export function projectIdentityHint(projectId, chainIds, lookups) {
     return {
       kind: 'warn',
       text: label + ' found on ' + found.map(function (result) { return chainName(result.chainId); }).join(', ')
-        + ' only — set project IDs per chain.',
+        + ' only: set project IDs per chain.',
     };
   }
   var groups = new Set(found.map(function (result) { return result.suckerGroupId; }).filter(Boolean));
   if (groups.size !== 1 || found.some(function (result) { return !result.suckerGroupId; })) {
     return {
       kind: 'warn',
-      text: 'Project #' + projectId + ' exists on every selected chain, but those deployments are not linked — confirm each ID.',
+      text: 'Project #' + projectId + ' exists on every selected chain, but those deployments are not linked. Confirm each ID.',
     };
   }
   return { kind: 'ok', text: label + ' on all selected chains' };
