@@ -6,7 +6,7 @@
 // anything is signed, failing closed on both a missing feed (pair named) and a probe outage
 // (distinct retry copy — never a silent pass).
 import { describe, it, expect, vi } from 'vitest';
-import { requiredFeedPairs, feedCurrencyLabel, __test } from '../src/create-flow.js';
+import { requiredFeedPairs, feedCurrencyLabel, launchFeedIssues, launchFeedGate, resetLaunchFeedGate, __test } from '../src/create-flow.js';
 
 const { initState, applyAccountingDefaults, verifyLaunchFeedCoverage } = __test;
 
@@ -106,5 +106,35 @@ describe('feedCurrencyLabel', () => {
     expect(feedCurrencyLabel(NATIVE, [])).toBe('ETH');
     expect(feedCurrencyLabel(USDC_MAINNET, [{ currency: USDC_MAINNET, token: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', symbol: 'USDC' }])).toBe('USDC');
     expect(feedCurrencyLabel(12345, [])).toBe('currency 12345');
+  });
+});
+
+describe('launch review: live feed gate on every chain', () => {
+  it('names every failing chain in one pass instead of stopping at the first', async () => {
+    const s = ethUsdc(); s.chainIds = [1, 8453];
+    const probe = vi.fn((pair) => (pair.a !== 2 && pair.b !== 2) ? Promise.reject(revertErr()) : price());
+    const issues = await launchFeedIssues(s, probe);
+    expect(issues).toHaveLength(2);
+    expect(issues[0]).toMatch(/on Ethereum/);
+    expect(issues[1]).toMatch(/on Base/);
+  });
+
+  it('holds the button while checking, blocks on a failure, and probes one configuration once', async () => {
+    resetLaunchFeedGate();
+    const s = ethUsdc();
+    const probe = vi.fn(() => Promise.reject(rpcErr()));
+    const settled = vi.fn();
+    const first = launchFeedGate(s, settled, probe);
+    expect(first.status).toBe('checking');
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledTimes(1));
+    const again = launchFeedGate(s, settled, probe);
+    expect(again.status).toBe('bad');
+    expect(again.issues[0]).toMatch(/Couldn’t verify price feed coverage on Ethereum/);
+    expect(probe).toHaveBeenCalledTimes(3);
+    resetLaunchFeedGate(); // Retry
+    expect(launchFeedGate(s, settled, vi.fn(price)).status).toBe('checking');
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledTimes(2));
+    expect(launchFeedGate(s, settled, probe).status).toBe('ok');
+    resetLaunchFeedGate();
   });
 });

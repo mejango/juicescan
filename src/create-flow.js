@@ -3346,6 +3346,7 @@ function renderDeploy(state, render) {
   var leadBad = startLeadIssue(state, Math.floor(Date.now() / 1000));
   var linkBad = state.chainIds.length > 1 && uncoveredPairs(state).length ? 'Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.' : '';
   var noticeBad = noticeClashIssue(state); // a launch-queued stage the JBDeadline hook would reject
+  var feeds = state.chainIds.length && !state.deploying ? launchFeedGate(state, render) : { status: 'ok', issues: [] };
   var startBad = isRev ? -1 : state.stages.findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
   var exportRow = el('div', 'create-predeploy-export-row');
   var exportBeforeDeploy = el('button', 'create-io-btn create-predeploy-export');
@@ -3357,7 +3358,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!leadBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!leadBad || !!noticeBad || feeds.status !== 'ok' || !!durationBad || startBad !== -1 || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3378,6 +3379,14 @@ function renderDeploy(state, render) {
   if (linkBad) wrap.appendChild(warnNote(linkBad));
   if (leadBad) wrap.appendChild(warnNote(leadBad));
   if (noticeBad) wrap.appendChild(warnNote(noticeBad));
+  if (feeds.status === 'checking') wrap.appendChild(infoNote('Checking price feeds on each chain…'));
+  if (feeds.status === 'bad') {
+    feeds.issues.forEach(function (issue) { wrap.appendChild(warnNote(issue)); });
+    var feedRetry = el('button', 'create-io-btn');
+    feedRetry.type = 'button'; feedRetry.textContent = 'Retry';
+    feedRetry.addEventListener('click', function () { resetLaunchFeedGate(); render(); });
+    wrap.appendChild(feedRetry);
+  }
   if (durationBad) wrap.appendChild(warnNote(durationBad));
   if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start: a whole number of cycles or a date, on the Rulesets step.'));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
@@ -4334,6 +4343,11 @@ async function runDeploy(state, owner) {
     state._directPending = restoredDirect;
     return runCreateDirectSession(state, restoredDirect, true);
   }
+  // Fail closed on JBPrices reachability before anything is pinned: accounting contexts are immutable,
+  // and a missing feed pair means payments or cash outs revert onchain after launch. Probed live, so a
+  // later default-feed registration unblocks the same configuration with no client change.
+  var feedIssues = await launchFeedIssues(state);
+  if (feedIssues.length) throw new Error(feedIssues.join(' '));
   // 1) Pin metadata (best-effort).
   var projectUri = '';
   if (hasPinata()) {
@@ -4392,10 +4406,6 @@ async function runDeploy(state, owner) {
       ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
       : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
     if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
-    // Fail closed on JBPrices reachability: accounting contexts are immutable, and a missing feed
-    // pair means payments or cash outs revert onchain after launch. Probed live, so a later
-    // default-feed registration unblocks the same configuration with no client change.
-    await verifyLaunchFeedCoverage(state, cid);
     if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
     plan.chainId = cid;
     plan.value = await creationFeeOf(cid); // the deploy charges msg.value == JBProjects.creationFee()
@@ -5416,6 +5426,36 @@ function verifyLaunchFeedCoverage(state, chainId, probe) {
   var pairs = requiredFeedPairs(contexts, launchBaseCurrencies(state));
   return verifyFeedCoverage(chainId, pairs, function (cur) { return feedCurrencyLabel(cur, contexts); }, { probe: probe });
 }
+
+// Every selected chain's coverage in one pass, so one answer names every failing chain.
+export function launchFeedIssues(state, probe) {
+  return Promise.all(state.chainIds.map(function (cid) {
+    return Promise.resolve().then(function () { return verifyLaunchFeedCoverage(state, cid, probe); })
+      .then(function () { return ''; }, function (err) { return (err && err.message) || String(err); });
+  })).then(function (messages) { return messages.filter(Boolean); });
+}
+
+// The review step's live gate: probed once per configuration, the launch button waits on it.
+var feedGate = { key: '', status: 'ok', issues: [] };
+export function launchFeedGate(state, onSettled, probe) {
+  var key;
+  try {
+    key = JSON.stringify(state.chainIds.map(function (cid) {
+      return [cid, requiredFeedPairs(launchProbeContexts(state, cid), launchBaseCurrencies(state))];
+    }));
+  } catch (e) {
+    return { key: '', status: 'ok', issues: [] }; // an unfinished form is stopped by its own gates
+  }
+  if (feedGate.key === key) return feedGate;
+  var mine = feedGate = { key: key, status: 'checking', issues: [] };
+  launchFeedIssues(state, probe).then(function (issues) {
+    mine.issues = issues;
+    mine.status = issues.length ? 'bad' : 'ok';
+    if (feedGate === mine && onSettled) onSettled();
+  });
+  return mine;
+}
+export function resetLaunchFeedGate() { feedGate = { key: '', status: 'ok', issues: [] }; }
 
 function storeCategoryName(state, category) {
   var id = Number(category) || 0;
