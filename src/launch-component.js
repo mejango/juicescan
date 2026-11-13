@@ -187,7 +187,7 @@ export function renderLaunchComponent() {
     if (!owner) { state.error = 'Connect a wallet to continue'; updateUI(); return; }
 
     var controllerAddr = getAddress('JBController', state.chainIds[0]);
-    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
     // launchProjectFor charges msg.value == JBProjects.creationFee() — omitting it reverts on fee chains.
     var creationFee = 0n;

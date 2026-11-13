@@ -234,7 +234,7 @@ export function renderPermissionsComponent() {
     }
 
     var permissionsAddr = getAddress('JBPermissions', state.chainId);
-    if (!permissionsAddr) { state.error = 'No JBPermissions address for this chain'; updateUI(); return; }
+    if (!permissionsAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
     var projectId = parseProjectId(state.projectId);
     if (projectId === null) {

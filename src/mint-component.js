@@ -148,7 +148,7 @@ export function renderMintComponent() {
     if (!state.selectedChain || !state.projectId) {
       state.error = 'Select a project and chain'; updateUI(); return;
     }
-    if (!state.amount) { state.error = 'Enter a token count'; updateUI(); return; }
+    if (!state.amount) { state.error = 'Enter a token count above zero'; updateUI(); return; }
 
     var tokenCount;
     try { tokenCount = parseAmount(state.amount, 18); } catch (_) {
@@ -163,7 +163,7 @@ export function renderMintComponent() {
     }
 
     var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
     executeTransaction({
       ...buildMintArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, tokenCount: tokenCount, beneficiary: beneficiary, memo: state.memo || '', useReservedPercent: state.useReservedPercent }),

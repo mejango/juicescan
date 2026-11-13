@@ -2,6 +2,7 @@
 // Generate LLM prompts for protocol auditing and per-function context
 
 import { registry } from './abi-registry.js';
+import { V6_SOURCE_RULE, SIGN_AUDIT_CHECKS } from './sign-audit.js';
 
 var ECOSYSTEM_REPO_URL = 'https://github.com/Bananapus/version-6';
 
@@ -229,6 +230,8 @@ export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl
   lines.push('');
 
   pushRepoContext(lines, contractName);
+  lines.push(V6_SOURCE_RULE);
+  lines.push('');
 
   // What component
   var title = componentEl.querySelector('.component-title');
@@ -293,9 +296,7 @@ export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl
   lines.push('1. Do my input values correctly map to the function parameters?');
   lines.push('2. Will the onchain effect match what I intend (based on the action name and values)?');
   lines.push('3. Are there any risks, gotchas, or edge cases with these specific values?');
-  if (fn.stateMutability === 'payable') {
-    lines.push('4. This function accepts ETH via msg.value — is the amount and token correct?');
-  }
+  SIGN_AUDIT_CHECKS.slice(1).forEach(function (check, n) { lines.push((n + 4) + '. ' + check); });
   lines.push('');
 
   // Protocol context

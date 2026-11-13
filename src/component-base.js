@@ -8,6 +8,7 @@ import { getViewAs, onViewAsChange, VIEW_AS_TX_ERROR } from './view-as.js';
 import { CHAINS, chainNameFor, getManifestChains, getChainTokens, contractNameByAddress } from './chain.js';
 import { parseAmount, formatAmount } from './encoding.js';
 import { renderError } from './errors.js';
+import { V6_SOURCE_RULE, SIGN_AUDIT_CHECKS } from './sign-audit.js';
 import { decodeFunctionData, encodeFunctionData, isAddress } from 'viem';
 import { getAddress, meta, getABI } from './abi-registry.js';
 import { prettyArgSteps } from './tx-pretty-args.js';
@@ -530,7 +531,7 @@ export function buildTxDebugPrompt(chains) {
   lines.push('');
   lines.push("If your agent has Etherscan's skills installed (`npx skills add etherscan/skills`), use `etherscan-transaction-debugger` in security mode on each hash. Otherwise work from the explorer page: receipt status, decoded input, event logs, and internal transactions.");
   lines.push('');
-  lines.push('Verify contract source only against the Juicebox V6 repositories: https://github.com/Bananapus/version-6 (repositories ending in `-v6`; same-named repositories without that suffix are older versions).');
+  lines.push(V6_SOURCE_RULE);
   lines.push('');
   lines.push('Report the decoded method and arguments, every native and token movement with its recipient, every permission, ownership, or ruleset change, and, if it reverted, the narrowest root cause the evidence supports. Mark each claim observed, derived, or inferred. Never invent a function name, amount, or revert reason. End with one line: what the transaction did in plain English, and anything that looks wrong.');
   return lines.join('\n');
@@ -559,8 +560,7 @@ function buildTxAuditPrompt(payload) {
   lines.push('');
 
   // 2 + 3) Contract source: ecosystem umbrella + the specific repo(s) for the target contract(s), + explorers.
-  lines.push('Verify the contract source — this is Juicebox **V6** (a.k.a. the `nana` V6 / revnet V6 release). CRITICAL: audit only the **V6** repositories — their names end in `-v6`. The older same-named repos WITHOUT the `-v6` suffix (e.g. `Bananapus/nana-suckers`, `Bananapus/nana-core`) are PRIOR protocol versions and will NOT match the deployed bytecode — do not use them. Match against each repo\'s default branch:');
-  lines.push('- Full Juicebox V6 ecosystem (umbrella of all V6 repos): https://github.com/Bananapus/version-6');
+  lines.push(V6_SOURCE_RULE);
   contractSourceRefs(payload).forEach(function (r) { lines.push('- ' + r); });
   auditLinksFromPayload(payload).forEach(function (l) { lines.push('- ' + l.label + ' onchain (confirm verified source + legit address): ' + l.url); });
   lines.push('- ' + ETHERSCAN_SKILL_LINE);
@@ -575,12 +575,7 @@ function buildTxAuditPrompt(payload) {
   }
 
   lines.push('Check specifically:');
-  lines.push('1. Decode the `function` and each `arg` — do they match what I believe I am doing?');
-  lines.push('2. Is `value` (native token sent with the call) what I expect? Flag any unexpected non-zero value.');
-  lines.push('3. If there is an `erc20Approval`, is the amount bounded and the spender expected? Warn on unlimited / uint256-max approvals.');
-  lines.push('4. Are any addresses in the args recipients of funds, tokens, ownership, or operator/permission rights? Are they my address or one I explicitly named?');
-  lines.push('5. For cross-chain (relayr) calls, is the SAME change applied consistently across every listed chain, with no extra chain slipped in?');
-  lines.push('6. Any sign of a drain, ownership/operator transfer, or permission grant I did not intend?');
+  SIGN_AUDIT_CHECKS.forEach(function (check, n) { lines.push((n + 1) + '. ' + check); });
   lines.push('');
 
   // 4) Quiz me on intent before the verdict.

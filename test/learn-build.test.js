@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderBuildTab, renderLearnTab, renderWhyTab } from '../src/learn-build.js';
 import { BENDYSTRAW_GRAPHQL_ENDPOINTS } from '../src/bendystraw-endpoints.js';
+import { PERMISSION_IDS } from '../src/permission-ids.js';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,6 +40,9 @@ describe('Learn, Build, and Why guides', () => {
     expect(build.querySelector('#build-revnet-what')).not.toBeNull();
     expect(build.querySelector('#build-revnet-fees a').getAttribute('href')).toBe('learn.html#learn-fees');
     expect(build.querySelector('a[href="learn.html#learn-glossary"]')).not.toBeNull();
+    // The Build table renders the one permission list, including the loan warning.
+    for (const permission of PERMISSION_IDS) expect(build.querySelector('#build-permissions').textContent).toContain(permission.id + ' - ' + permission.name + permission.desc);
+    expect(PERMISSION_IDS.find(p => p.name === 'REALLOCATE_LOAN').desc).toMatch(/borrows the full current capacity/);
     for (const endpoint of Object.values(BENDYSTRAW_GRAPHQL_ENDPOINTS)) {
       expect(build.querySelector('#build-bendystraw').textContent).toContain(endpoint);
     }

@@ -1,3 +1,22 @@
+# Copy audit, leftovers (2026-11-13)
+
+jango: "do the things not done from the audit".
+
+- [x] 1. One permission list: `src/permission-ids.js` holds id, contract name, label and description. The project page maps and the Build table render from it. `REALLOCATE_LOAN` carries the borrowing warning everywhere.
+- [x] 2. One string per card state: contracts unavailable, zero amount, over balance, token list failure.
+- [x] 3. Sign-audit prompts share one source rule and one checklist (`src/sign-audit.js`); the pre-sign prompt stated the V6-only rule three times.
+- [x] 4. `noscript` notice linking the static guides.
+- [x] 5. Prompt contradictions (Celo, contract counts, source line references) are already gone on main; nothing to change.
+- [x] 6. `npm run check`: 2,365 unit tests, 148 browser tests, startup 720,643 of 722,000 B.
+
+## Plan refinement
+- **Objective:** Close the audit items left open, each with one owner.
+- **System fit:** Permission wording is data in an import-free module that four consumers read; the sign-audit rule and checklist are data in another. No transaction arguments, routes or permission ids change.
+- **Reuse and simplicity:** The two sign-audit prompts take different inputs (form values before a payload exists, and the final payload), so they stay two builders that share the rule and checklist rather than one merged builder.
+- **Evidence and unknowns:** `permission-ids.js` ids and names are unchanged (the tx decoder reads names). The import-free module keeps component-base out of the lazy prompts chunk, so the startup budget is unaffected; the bundle budget check confirms.
+- **Verification:** unit suite, a new assertion that the Build table renders every list row, full `npm run check`.
+- **Resource budget:** One worktree, one full check.
+
 # Copy audit, parts C and D: UI strings and agent prompts (2026-11-13)
 
 - [x] 1. Em dashes out of every UI string (colon after a short label, comma or a new sentence otherwise). Comments, the bare `—` empty-value glyph and agent prompt text are untouched.

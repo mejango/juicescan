@@ -132,7 +132,7 @@ export function renderReservedComponent() {
     }
 
     var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
     executeTransaction({
       ...buildSendReservedArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId }),
