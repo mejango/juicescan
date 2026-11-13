@@ -17,6 +17,14 @@
         "Held direct writes"
       ]
     },
+    "src/build-sections.js": {
+      "counts": {
+        "writeContract": 1
+      },
+      "actions": [
+        "Build guide code sample"
+      ]
+    },
     "src/burn-component.js": {
       "counts": {
         "executeTransaction": 1
@@ -58,6 +66,14 @@
         "Launch project",
         "Deploy revnet",
         "Relayr forwarded bundle / payment"
+      ]
+    },
+    "src/defifa-nft-actions.js": {
+      "counts": {
+        "executeTransaction": 1
+      },
+      "actions": [
+        "Defifa NFT mint / transfer / cash out"
       ]
     },
     "src/deploy-erc20-component.js": {
@@ -267,14 +283,6 @@
       },
       "actions": [
         "Wallet connection / network request"
-      ]
-    },
-    "src/defifa-nft-actions.js": {
-      "counts": {
-        "executeTransaction": 1
-      },
-      "actions": [
-        "Defifa NFT mint / transfer / cash out"
       ]
     }
   }
