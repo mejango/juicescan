@@ -39,3 +39,33 @@ describe('accountHoldsPermissionOn', () => {
     expect(await accountHoldsPermissionOn({ chainId: 1, id: 7 }, chains, HOLDER, 2, reader({ 1: true, 8453: true }))).toBe(false);
   });
 });
+
+describe('powerChainRefusal', () => {
+  const action = { title: 'Mint tokens', flagKey: 'allowOwnerMinting' };
+  const picked = [{ id: 1, name: 'Ethereum' }, { id: 8453, name: 'Base' }];
+  it('passes only when every selected chain enables the power', async () => {
+    const { powerChainRefusal } = await import('../src/discover.js');
+    expect(await powerChainRefusal(action, picked, () => Promise.resolve({ allowOwnerMinting: true }))).toBeNull();
+    expect(await powerChainRefusal(action, picked, cid => Promise.resolve({ allowOwnerMinting: cid === 1 })))
+      .toBe('Mint tokens is disabled on Base under the current rules. Untick that chain.');
+  });
+  it('does not treat an unread chain as enabled', async () => {
+    const { powerChainRefusal } = await import('../src/discover.js');
+    expect(await powerChainRefusal(action, picked, cid => cid === 1 ? Promise.resolve({ allowOwnerMinting: true }) : Promise.reject(new Error('rpc'))))
+      .toBe('Could not read the current rules on Base. Try again.');
+  });
+});
+
+describe('assertPoolParams', () => {
+  const ok = { fee: '3000', tickSpacing: '60', twapWindow: '1800', sqrtPriceX96: '79228162514264337593543950336' };
+  it('accepts values inside the hook and pool key bounds, and refuses the rest before review', async () => {
+    const { assertPoolParams } = await import('../src/discover.js');
+    expect(() => assertPoolParams(ok, true)).not.toThrow();
+    expect(() => assertPoolParams({ ...ok, fee: '16777216' }, false)).toThrow('Fee must fit uint24.');
+    expect(() => assertPoolParams({ ...ok, tickSpacing: '0' }, false)).toThrow('Tick spacing must be a positive int24 value.');
+    expect(() => assertPoolParams({ ...ok, twapWindow: '299' }, false)).toThrow('between 300 and 172800 seconds');
+    expect(() => assertPoolParams({ ...ok, twapWindow: '172801' }, false)).toThrow('between 300 and 172800 seconds');
+    expect(() => assertPoolParams({ ...ok, sqrtPriceX96: '0' }, true)).toThrow('Initial price must be a positive uint160 value.');
+    expect(() => assertPoolParams({ ...ok, sqrtPriceX96: '0' }, false)).not.toThrow();
+  });
+});

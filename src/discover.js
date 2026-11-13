@@ -18137,6 +18137,7 @@ function openSetPermissionsModal(project, grant, presetIds) {
 // buildArgs(v, cid, pid) → the function args. chainsDefault: 'all' (JB infra, same address everywhere) or
 // 'primary' (per-chain values like feeds/mints — only the current chain checked by default).
 var POWER_MINT = {
+  flagKey: 'allowOwnerMinting',
   title: 'Mint tokens', actionVerb: 'Minted', contract: 'JBController', abi: mintTokensAbi, fn: 'mintTokensOf', gas: 300000n, chainsDefault: 'primary',
   note: 'Mints new project tokens to an address without a payment.',
   danger: 'Irreversible: minting dilutes every existing token holder and cannot be undone.',
@@ -18148,6 +18149,7 @@ var POWER_MINT = {
   buildArgs: function (v, cid, pid) { return [pid, v.tokenCount, v.beneficiary, '', !!v.useReservedPercent]; },
 };
 var POWER_SET_CONTROLLER = {
+  flagKey: 'allowSetController',
   title: 'Set controller', actionVerb: 'Set', contract: 'JBDirectory', abi: setControllerAbi, fn: 'setControllerOf', gas: 200000n, chainsDefault: 'all',
   note: 'Points the project at a new controller contract. Defaults to the current JBController on each chain.',
   danger: 'Dangerous: this hands control of the project’s rules and tokens to a new contract. A wrong address can permanently brick or compromise the project.',
@@ -18155,6 +18157,7 @@ var POWER_SET_CONTROLLER = {
   buildArgs: function (v, cid, pid) { return [pid, v.controller || getAddress('JBController', cid)]; },
 };
 export var POWER_SET_TERMINALS = {
+  flagKey: 'allowSetTerminals',
   title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', gas: 250000n, chainsDefault: 'all',
   note: 'Sets the complete list of terminals funds can be paid in through (comma-separated). Prefilled with what is set onchain now.',
   danger: 'Dangerous: this replaces the entire terminal list. Every terminal left out stops accepting payments and stops routing fees. Most projects launch with two (the standard terminal and the any-token router), so keep the ones you still want.',
@@ -18168,6 +18171,7 @@ export var POWER_SET_TERMINALS = {
   },
 };
 var POWER_MIGRATE = {
+  flagKey: 'allowTerminalMigration',
   title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', gas: 400000n, chainsDefault: 'primary',
   note: 'Moves the project’s balance for a token from the current terminal to another terminal.',
   danger: 'Dangerous: this moves the project’s funds to another terminal. A wrong destination can lose the funds.',
@@ -18178,6 +18182,7 @@ var POWER_MIGRATE = {
   buildArgs: function (v, cid, pid) { return [pid, v.token, v.to]; },
 };
 var POWER_ADD_PRICE_FEED = {
+  flagKey: 'allowAddPriceFeed',
   title: 'Add price feed', actionVerb: 'Added', contract: 'JBController', abi: addPriceFeedAbi, fn: 'addPriceFeedFor', gas: 200000n, chainsDefault: 'primary',
   note: 'Registers a price feed converting one currency to another. Currencies are JB currency ids (1 = ETH, 2 = USD, or uint32(uint160(token)) for a token).',
   danger: 'Irreversible: a price feed cannot be removed once added, and a wrong feed misprices the project.',
@@ -18189,6 +18194,7 @@ var POWER_ADD_PRICE_FEED = {
   buildArgs: function (v, cid, pid) { return [pid, v.pricingCurrency, v.unitCurrency, v.feed]; },
 };
 var POWER_SET_TOKEN = {
+  flagKey: 'allowSetCustomToken',
   title: 'Set custom token', actionVerb: 'Set', contract: 'JBController', abi: setTokenAbi, fn: 'setTokenFor', gas: 250000n, chainsDefault: 'all',
   note: 'Replaces the project’s token with a custom ERC-20 (it must conform to IJBToken). Set the token address per selected chain when it differs.',
   danger: 'Irreversible: replacing the project token is permanent and affects every holder.',
@@ -18296,6 +18302,7 @@ export var POWER_INIT_BUYBACK_POOL = {
   ],
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
+    assertPoolParams(v, true);
     return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken, BigInt(v.sqrtPriceX96)];
   },
 };
@@ -18316,11 +18323,26 @@ export var POWER_SET_BUYBACK_POOL = {
   ],
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
+    assertPoolParams(v, false);
     return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken];
   },
 };
 // JBBuybackHook._requireValidTwapWindow: 5 minutes to 2 days.
 var MIN_TWAP_WINDOW = 300, MAX_TWAP_WINDOW = 172800;
+// The bounds the hook and the pool key enforce, checked before review so an out-of-range value never reaches a
+// signature. juicebox.money refuses the same values with the same words.
+export function assertPoolParams(v, withPrice) {
+  var fee = BigInt(v.fee), tickSpacing = BigInt(v.tickSpacing), twapWindow = BigInt(v.twapWindow);
+  if (fee < 0n || fee > 0xffffffn) throw new Error('Fee must fit uint24.');
+  if (tickSpacing < 1n || tickSpacing > 0x7fffffn) throw new Error('Tick spacing must be a positive int24 value.');
+  if (twapWindow < BigInt(MIN_TWAP_WINDOW) || twapWindow > BigInt(MAX_TWAP_WINDOW)) {
+    throw new Error('The hook only accepts a TWAP window between ' + MIN_TWAP_WINDOW + ' and ' + MAX_TWAP_WINDOW + ' seconds.');
+  }
+  if (withPrice) {
+    var price = BigInt(v.sqrtPriceX96);
+    if (price <= 0n || price >= 2n ** 160n) throw new Error('Initial price must be a positive uint160 value.');
+  }
+}
 export var POWER_SET_BUYBACK_TWAP = {
   title: 'Set TWAP window', actionVerb: 'Set', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, fn: 'setTwapWindowOf', gas: 150000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
@@ -18369,6 +18391,20 @@ function appendDangerGate(content, text, submitBtn, confirmLabel) {
   function sync() { submitBtn.classList.toggle('cta-disabled', !cb.checked); }
   cb.addEventListener('change', sync); sync();
   return { ok: function () { return cb.checked; } };
+}
+
+// A power is set per chain by that chain's current rules. Returns why the selected chains cannot all run `action`,
+// or null. The home chain's flag says nothing about the others, and an unread chain is not an enabled one.
+export async function powerChainRefusal(action, selected, readMetadata) {
+  var states = await Promise.all(selected.map(function (c) {
+    return readMetadata(c.id).then(function (m) { return m ? !!m[action.flagKey] : null; }, function () { return null; });
+  }));
+  var name = function (c) { return c.name || chainNameOf(c.id); };
+  var unread = selected.filter(function (_, i) { return states[i] === null; }).map(name);
+  if (unread.length) return 'Could not read the current rules on ' + unread.join(', ') + '. Try again.';
+  var off = selected.filter(function (_, i) { return states[i] === false; }).map(name);
+  if (off.length) return action.title + ' is disabled on ' + off.join(', ') + ' under the current rules. Untick ' + (off.length === 1 ? 'that chain' : 'those chains') + '.';
+  return null;
 }
 
 // Generic owner-power action modal. Renders the action's fields + chain picker, then routes the tx by
@@ -18602,6 +18638,15 @@ function openPowerModal(project, action) {
   async function prepareCalls() {
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     if (!selected.length) { setStatus('Select at least one chain', 'error'); return null; }
+    if (action.flagKey) {
+      setStatus('Checking the current rules on each chain…', 'pending');
+      var refusal = await powerChainRefusal(action, selected, function (cid) {
+        var pid = pidOn(project, cid);
+        return controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (current) { return current && current[1]; });
+      });
+      if (refusal) { setStatus(refusal, 'error'); return null; }
+      setStatus('', '');
+    }
     var values;
     try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
     catch (err) { setStatus(err.message || String(err), 'error'); return null; }
