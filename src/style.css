@@ -2222,6 +2222,14 @@ input[type="checkbox"].field {
   color: var(--muted);
   line-height: 1.5;
 }
+/* Contract paths and URLs have no spaces to break at; let them wrap inside the row on a phone. */
+.guide-prop-name, .guide-prop-desc, .guide-text, .guide-info { overflow-wrap: anywhere; }
+/* A long name takes its own line and the description drops under it, instead of squeezing to a sliver. */
+.guide-prop-row { flex-wrap: wrap; }
+.guide-prop-name { max-width: 100%; flex-shrink: 1; }
+.guide-prop-desc { flex: 1 1 220px; min-width: 0; }
+/* Teal on the pink info box is under 4.5:1; a link there takes the box's own text color, underlined. */
+.guide-info a { color: inherit; }
 
 /* Function reference tables */
 .guide-fn-table {
