@@ -4615,6 +4615,18 @@ export function payReviewRows(r) {
   return rows;
 }
 
+// One toRemote ships the entire outbox of one (source sucker, token), so queued movements group by chain pair,
+// source sucker and token: an Execute under a group must never send a different sucker's or token's outbox.
+export function groupQueuedMovements(rows) {
+  var groups = [], byKey = {};
+  (rows || []).forEach(function (tx) {
+    var key = [tx.chainId, tx.peerChainId, String(tx.sourceSucker || '').toLowerCase(), String(tx.token || '').toLowerCase()].join('|');
+    if (!byKey[key]) { byKey[key] = { from: tx.chainId, to: tx.peerChainId, sample: tx, rows: [] }; groups.push(byKey[key]); }
+    byKey[key].rows.push(tx);
+  });
+  return groups;
+}
+
 export var PAYMENTS_PAUSED_MESSAGE = 'Payments are paused under the current rules.';
 
 function paySurfaceBlockedMessage(surface, terminal, chainId) {
@@ -19124,6 +19136,8 @@ function buildPayoutsModal(project, acctKind) {
       executeTransaction({
         chainId: cid, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', contractName: 'JBMultiTerminal',
         args: [pid, acct.address, amount, BigInt(currency), minOut], label: 'Distribute payouts',
+        // A confirmed payout can still have returned a reverted split to the balance: check each split's effect.
+        verifyReceipt: function (receipt) { verifyDistributionReceipt({ to: term, functionName: 'sendPayoutsOf', args: [pid, acct.address, amount, BigInt(currency), minOut], validation: { sender: account } }, receipt); },
         confirmSummary: { action: 'Distribute payouts', rows: [
           ['Sending', formatBalance(amount, acct.decimals, acct.symbol) + ' to the payout splits'],
           ['Quoted', formatBalance(quoted, acct.decimals, acct.symbol)],
@@ -25768,10 +25782,16 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
     }
     btn.disabled = true; btn.textContent = 'Distributing…';
     var localPid = pidOn(project, pc.id);
+    var sender = getAccount();
     controllerAddressFor(pc.id, localPid).then(function (ctrl) {
+      return readDistributionTokens(clientFor(pc.id), ctrl).then(function (tokens) { return { ctrl: ctrl, tokens: tokens }; });
+    }).then(function (live) {
+    var ctrl = live.ctrl;
     executeTransaction({
       chainId: pc.id, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf', args: [localPid],
       label: 'Distribute reserved tokens',
+      // A confirmed distribution can still have burned a hook's unconsumed tokens or used a fallback recipient.
+      verifyReceipt: function (receipt) { verifyDistributionReceipt({ to: ctrl, functionName: 'sendReservedTokensToSplitsOf', args: [localPid], validation: { sender: sender, tokens: live.tokens } }, receipt); },
       confirmSummary: { action: 'Distribute reserved tokens', rows: [
         ['Sends', (pc.pending != null ? formatTokens(pc.pending) + ' ' + (project.tokenSymbol || 'tokens') : 'all pending reserved tokens') + ' to the reserved splits'],
         ['Project', '#' + String(localPid)],
@@ -26528,14 +26548,7 @@ function renderBridgeTransactionsTable(rows, project) {
     action.appendChild(claimBtn); action.appendChild(cstat);
   }
 
-  // Group by from→to pair. One toRemote ships the ENTIRE outbox for a (source sucker, token) pair, so the
-  // "Execute" lives once per pair (a footer below its rows) rather than inline on every queued row.
-  var groups = [], byKey = {};
-  rows.forEach(function (tx) {
-    var key = tx.chainId + '->' + tx.peerChainId;
-    if (!byKey[key]) { byKey[key] = { from: tx.chainId, to: tx.peerChainId, sample: tx, rows: [] }; groups.push(byKey[key]); }
-    byKey[key].rows.push(tx);
-  });
+  var groups = groupQueuedMovements(rows);
 
   groups.forEach(function (g) {
     g.rows.forEach(function (tx) {
@@ -26590,7 +26603,7 @@ function renderBridgeTransactionsTable(rows, project) {
     var s = g.sample;
     var foot = el('div', 'bridge-group-foot');
     var lbl = el('span', 'bridge-group-foot-lbl');
-    lbl.textContent = sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + ' to ' + moveChainName(g.to) + ', send all in one bridge message:';
+    lbl.textContent = sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + (g.sample.tokenSymbol ? ' of ' + g.sample.tokenSymbol : '') + ' to ' + moveChainName(g.to) + ', send all in one bridge message:';
     foot.appendChild(lbl);
     var estat = el('span', 'bridge-action-stat');
     var execBtn = document.createElement('button'); execBtn.className = 'ops-percent-btn'; execBtn.textContent = 'Execute';
@@ -27787,7 +27800,7 @@ function buildCashOutModal(project, requestClose) {
         confirmSummary: { action: 'Cash out ' + sym, rows: [
           ['Cashing out', formatTokens(count) + ' ' + sym],
           ['You receive', (preparedRoute.via === 'amm' ? '≈ ' : '') + formatBalance(preparedRoute.expected, reviewedAcct.decimals, reviewedAcct.symbol)],
-          ['Minimum', formatBalance(preparedRoute.terminalMinimum, reviewedAcct.decimals, reviewedAcct.symbol) + ', reverts below this'],
+          ['Minimum', formatBalance(preparedRoute.minimum, reviewedAcct.decimals, reviewedAcct.symbol) + ', reverts below this'],
           ['Route', preparedRoute.via === 'amm' ? 'terminal, sold through the buyback pool' : 'terminal (burns tokens against the project surplus)'],
           ['To', acct],
           ['On chain', chainNameOf(cid)],
