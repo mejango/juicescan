@@ -1,6 +1,6 @@
 {
-  "name": "Juicebox",
-  "description": "Unstoppable payments and programmable incentives for the open web.",
+  "name": "Juicescan",
+  "description": "Explorer for Juicebox V6: read any project and send its transactions from your Safe.",
   "iconPath": "favicon.svg",
   "safe_apps_permissions": []
 }

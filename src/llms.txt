@@ -1,43 +1,44 @@
-# Juice Scan
+# Juicescan
 
-> Explore Juicebox V6 projects, payments, and contracts. The app reads blockchain
-> data and the Bendystraw indexer, a service that organizes contract events. Its
-> files are published to IPFS and can be checked by their content identifier (CID).
-> Live data needs a chain or indexer connection.
+> Explorer for Juicebox V6: look up a project, read its rules and balances, and build
+> its transactions. A static app on IPFS that reads chain RPCs and the Bendystraw indexer.
 
 ## How to read this site as an agent
 
 The app is hash-routed and renders in the browser, so fetching a route returns the
 same shell every time. These resources are readable without running JavaScript:
 
-- [Learn Juicebox](./learn.html) — the complete Learn guide, generated from the same
+- [Learn Juicebox](./learn.html): the complete Learn guide, generated from the same
   source as the interactive tab. Section fragments such as `#learn-revnets` work.
-- [Build with Juicebox](./build.html) — the complete Build guide and code examples.
-- [Glossary](./learn.html#learn-glossary) — short definitions in learning order.
-- [Fees and shared networks](./learn.html#learn-fees) — how charges are calculated
-  and how fee payers share in the receiving revnets.
-- [First payment journey](https://juicebox.money/build/first-payment) — read a
+- [Build with Juicebox](./build.html): the complete Build guide and code examples.
+- [Glossary](./learn.html#learn-glossary): short definitions in learning order.
+- [Fees](./learn.html#learn-fees): what each fee is, and the tokens fee payers get back.
+- [First payment journey](https://juicebox.money/build/first-payment): read a
   testnet project without a wallet, then make and verify a reviewed test payment.
+- `/manifest.json`: app identity (also what Safe reads to add this as a Safe App).
 
-- `/?project=<chain>:<projectId>` on an HTTP host — the server injects that project's
-  Open Graph title, description and card image, and `GET /project-og.png?project=<chain>:<projectId>`
-  renders the card as a 1200x630 PNG. Chain slugs: `eth`, `op`, `base`, `arb`, `sep`,
-  `opsep`, `basesep`, `arbsep`.
-- `/manifest.json` — app identity (also what Safe reads to add this as a Safe App).
+Served only by an HTTP host:
 
-Live project views need the bundle. On an IPFS gateway there is no server at all, so
-the query form above resolves to the generic site card.
+- `/?project=<chain>:<projectId>`: the server injects that project's Open Graph title,
+  description and card image, and `GET /project-og.png?project=<chain>:<projectId>`
+  renders the card as a 1200x630 PNG. Chain slugs: `eth`, `base`, `arb`, `op`, `sep`,
+  `basesep`, `arbsep`, `opsep`.
+
+Live project views need the bundle. On an IPFS gateway there is no server, so the
+query form above resolves to the generic site card.
 
 ## Routes (hash fragments, resolved in the browser)
 
-- `#<chain>:<projectId>` — one project: activity, funds, tokens, owners, shop, terms.
-- `#@<handle>` — the same project by its verified ENS handle. The handle is served only
+- `#<chain>:<projectId>`: one project's activity, balance, tokens, holders, shop and rules.
+- `#@<handle>`: the same project by its verified ENS handle. The handle is served only
   when ENS and the JBProjectHandles registry agree that the project's current owner or
   operator claimed it.
-- `#account/<address-or-ens>` — holdings, roles and activity for one account.
-- `#directory` — every deployed V6 contract, with ABI, source and read/write forms.
-- `#learn`, `#build`, `#why` — protocol guides, integration notes, and the reasoning.
-- `#data` — raw indexer queries and CSV exports.
+- `#account/<address-or-ens>`: holdings, roles and activity for one account.
+- `#api`: every deployed V6 contract, with ABI, source and read and write forms.
+- `#learn`, `#build`, `#why`: the protocol guide, the integration guide, and why Juicebox
+  works this way. `#learn-<section>` and `#build-<section>` open a section.
+- `#data`: raw indexer queries and CSV exports.
+- `#admin`: operator batches.
 
 ## Building on this
 

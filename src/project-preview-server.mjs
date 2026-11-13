@@ -363,8 +363,8 @@ function escapeHtmlAttribute(value) {
 }
 
 export function injectProjectPreviewMeta(html, preview, { pageUrl, imageUrl }) {
-  const title = `${preview.name} — Juice Scan`;
-  const description = preview.tagline || `View ${preview.name} on Juice Scan.`;
+  const title = `${preview.name} | Juicescan`;
+  const description = preview.tagline || `View ${preview.name} on Juicescan.`;
   const tags = [
     `<meta name="description" content="${escapeHtmlAttribute(description)}" data-project-preview>`,
     `<meta property="og:type" content="website" data-project-preview>`,
