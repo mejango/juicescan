@@ -59,3 +59,21 @@ describe('canonical testnet USDC catalog', () => {
     });
   });
 });
+
+import { payTokenCarriedAcrossChains } from '../src/discover.js';
+describe('payTokenCarriedAcrossChains: typed digits stay with their token', () => {
+  const usdcBase = { address: '0x' + 'b1'.repeat(20), symbol: 'USDC', viaRouter: false };
+  const usdcRouter = { address: '0x' + 'b1'.repeat(20), symbol: 'USDC', viaRouter: true };
+  const eth = { address: '0x000000000000000000000000000000000000EEEe', symbol: 'ETH', viaRouter: false };
+  it('keeps the same symbol on the new chain although its address differs', () => {
+    expect(payTokenCarriedAcrossChains([eth, usdcBase], 'USDC')).toBe(usdcBase);
+  });
+  it('prefers the directly accepted token over the router option', () => {
+    expect(payTokenCarriedAcrossChains([usdcRouter, usdcBase], 'USDC')).toBe(usdcBase);
+    expect(payTokenCarriedAcrossChains([eth, usdcRouter], 'USDC')).toBe(usdcRouter);
+  });
+  it('returns null when the new chain does not take the token, so the caller clears the amount', () => {
+    expect(payTokenCarriedAcrossChains([eth], 'USDC')).toBeNull();
+    expect(payTokenCarriedAcrossChains([eth], null)).toBeNull();
+  });
+});

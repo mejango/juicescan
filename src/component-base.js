@@ -1504,9 +1504,9 @@ export function offerRelease(line, release) {
 }
 
 export function executeTransaction(opts) {
-  // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, reverify, onStatus, onSuccess, onError, skipConfirm, label }
-  // onStatus/onSuccess meta.phase uses the SDK's ReviewedProgress names: simulating, signing, receipt (hash known),
-  // proposed (queued in the Safe), done.
+  // opts: { chainId, address, abi, functionName, args, value, tokenAddr, spenderAddr, approvalAmount, reverify, onStatus, onSuccess, onProposed, onError, skipConfirm, label }
+  // meta.phase uses the SDK's ReviewedProgress names: simulating, signing, receipt (hash known), proposed (queued in
+  // the Safe, reported through onProposed or as a pending status, never onSuccess), done.
   if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
   var wallet = getWalletClient();
   var reviewedSafe = opts.expectedSafe == null ? isSafeConnected() : opts.expectedSafe;
@@ -1528,7 +1528,10 @@ export function executeTransaction(opts) {
   function failureLine(m, meta) {
     return (opts.describeFailure && meta && meta.error && opts.describeFailure(meta.error)) || m;
   }
-  var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onError: opts.describeFailure ? function (m, meta) { callerOnError(failureLine(m, meta), meta); } : callerOnError };
+  // A Safe proposal is not execution. A caller with nothing special to do gets the line as a pending status and
+  // its success work is skipped; a caller that must record the proposal passes onProposed.
+  function callerOnProposed(m, meta) { if (opts.onProposed) opts.onProposed(m, meta); else (opts.onStatus || function () {})(m, 'pending', meta); }
+  var cbs = { onStatus: opts.onStatus || function () {}, onSuccess: opts.onSuccess || function () {}, onProposed: callerOnProposed, onError: opts.describeFailure ? function (m, meta) { callerOnError(failureLine(m, meta), meta); } : callerOnError };
 
   // Build the review payload and require explicit confirmation, unless the caller already showed its own.
   // A held earlier attempt is settled from the chain first; the review opens only once nothing holds it.
@@ -1595,6 +1598,7 @@ export function executeTransaction(opts) {
           r.showStatus(m, 'success', meta);
           base.onSuccess(m, Object.assign({}, meta || {}, { confirmSession: r }));
         },
+        onProposed: function (m, meta) { if (r.close) r.close(); base.onProposed(m, meta); },
         onError: function (m, meta) { m = failureLine(m, meta); r.showStatus(m, 'error', meta); base.onError(m, meta); },
       };
     }
@@ -1664,7 +1668,7 @@ export function executeTransaction(opts) {
         walletInvoked = true;
         return proposeSafeTransactions(txs);
       }, function () { assertWalletInvocation(true); }, opts.locks).then(function (safeTxHash) {
-        cbs.onSuccess('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
+        cbs.onProposed('Proposed to your Safe' + (txs.length > 1 ? ' (approval + ' + (opts.label || opts.functionName) + ', one batch)' : '') + '. Safe’s confirmation screen defaults to the next available nonce and lists queued nonces if you want to replace one. Sign & execute it there.', { phase: 'proposed', safeTxHash: safeTxHash, chainId: opts.chainId });
       });
     }).catch(async function (err) {
       try { await reportWriteBoundaryFailure(err); } catch (_) { /* Retain the original failure and saved attempt. */ }

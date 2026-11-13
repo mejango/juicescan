@@ -18,7 +18,7 @@ import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
-import { V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
+import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
@@ -349,6 +349,13 @@ export function chooseRefinedPayToken(list, currentToken, tokenTouched) {
     return currentToken && t.address.toLowerCase() === currentToken.address.toLowerCase() && t.viaRouter === currentToken.viaRouter;
   })[0];
   return keep || list[0] || null;
+}
+
+// Digits typed for a token stay with that token across a chain switch. Returns the new chain's token with the
+// same symbol (a directly accepted one first), or null when that chain does not take it and the amount must clear.
+export function payTokenCarriedAcrossChains(list, symbol) {
+  var same = (list || []).filter(function (t) { return symbol && t.symbol === symbol; });
+  return same.filter(function (t) { return !t.viaRouter; })[0] || same[0] || null;
 }
 
 function isZeroishAddress(address) {
@@ -3602,13 +3609,16 @@ function openMintTierModal(project, tier, itemName) {
       },
       onStatus: function (message, kind) { status.textContent = message; status.className = 'operator-edit-status ' + (kind || 'pending'); },
       onError: function (message) { submit.disabled = false; status.textContent = message; status.className = 'operator-edit-status error'; loadLive(); },
-      onSuccess: function (message, meta) {
+      onProposed: function () {
         submit.disabled = false;
-        status.textContent = meta && meta.phase === 'proposed'
-          ? 'Mint proposed to the Safe. Inventory changes only after the Safe executes it.'
-          : 'Items minted to ' + snapshot.beneficiary + '.';
+        status.textContent = 'Mint proposed to the Safe. Inventory changes only after the Safe executes it.';
+        status.className = 'operator-edit-status pending';
+      },
+      onSuccess: function () {
+        submit.disabled = false;
+        status.textContent = 'Items minted to ' + snapshot.beneficiary + '.';
         status.className = 'operator-edit-status success';
-        if (!meta || meta.phase !== 'proposed') { bustTiersCache(project); loadLive(); }
+        bustTiersCache(project); loadLive();
       },
     });
   });
@@ -4554,14 +4564,19 @@ function isKnown721HookClone(address, chainId, projectId) {
 
 function readProjectPaymentSurface(project, chainId) {
   var pid = pidOn(project, chainId);
-  return read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]).then(function (terminals) {
-    terminals = (terminals || []).filter(Boolean);
+  return Promise.all([
+    read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]),
+    // Paused payments revert in the terminal. An unread ruleset is not a pause: the preview still gates the send.
+    controllerRead(chainId, pid, currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (current) { return !!(current && current[1] && current[1].pausePay); }, function () { return false; }),
+  ]).then(function (loaded) {
+    var terminals = (loaded[0] || []).filter(Boolean);
     var direct = getAddress('JBMultiTerminal', chainId);
     var router = routerTerminalFor(chainId);
     var directRouter = getAddress('JBRouterTerminal', chainId);
     return {
       chainId: chainId,
       terminals: terminals,
+      pausePay: loaded[1],
       hasDirect: terminals.some(function (t) { return sameAddr(t, direct); }),
       // Swap payment options execute through the registry. Directly attached gateways/routers remain
       // recognizable, but must not advertise a route whose entry terminal is not in the directory.
@@ -4585,6 +4600,34 @@ function paySurfaceAllows(surface, terminal) {
   if (!surface || !terminal) return false;
   return (surface.terminals || []).some(function (t) { return sameAddr(t, terminal); });
 }
+
+// The pay review reads in plain rows first; the decoded call and raw payload stay behind "Show raw data".
+// The project's payment notice is shown before the payer agrees.
+export function payReviewRows(r) {
+  var rows = [['Send', r.amount], ['On', r.chain]];
+  if (r.items) rows.push(['Items', r.items]);
+  if (!r.addBalance && r.minimum) rows.push(['You get at least', r.minimum]);
+  if (r.lands) rows.push(['Lands', r.lands]);
+  if (!r.addBalance) rows.push(['Beneficiary', r.beneficiary]);
+  if (r.memo && String(r.memo).trim()) rows.push(['Note', String(r.memo).trim()]);
+  if (!r.addBalance && r.quoteFailed) rows.push(['Quote', PAY_QUOTE_FAILED_MESSAGE]);
+  if (r.notice && String(r.notice).trim()) rows.push(['Project notice', String(r.notice).trim()]);
+  return rows;
+}
+
+// One toRemote ships the entire outbox of one (source sucker, token), so queued movements group by chain pair,
+// source sucker and token: an Execute under a group must never send a different sucker's or token's outbox.
+export function groupQueuedMovements(rows) {
+  var groups = [], byKey = {};
+  (rows || []).forEach(function (tx) {
+    var key = [tx.chainId, tx.peerChainId, String(tx.sourceSucker || '').toLowerCase(), String(tx.token || '').toLowerCase()].join('|');
+    if (!byKey[key]) { byKey[key] = { from: tx.chainId, to: tx.peerChainId, sample: tx, rows: [] }; groups.push(byKey[key]); }
+    byKey[key].rows.push(tx);
+  });
+  return groups;
+}
+
+export var PAYMENTS_PAUSED_MESSAGE = 'Payments are paused under the current rules.';
 
 function paySurfaceBlockedMessage(surface, terminal, chainId) {
   var name = resolveContractName(terminal, chainId) || truncAddr(terminal);
@@ -9155,6 +9198,12 @@ export function renderPayCard(project, cart) {
           // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
           // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
           state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
+          if (state.carrySymbol) {
+            var carried = payTokenCarriedAcrossChains(list, state.carrySymbol);
+            if (carried) { state.token = carried; state.tokenTouched = true; }
+            else { state.droppedToken = state.carrySymbol; state.amount = ''; amtInput.value = ''; }
+            state.carrySymbol = null;
+          }
           renderTerminalNotice();
           if (selectedTierIds().length) refreshNftCheckoutRoutes();
           else { rebuildCurrency(); schedulePreview(); }
@@ -9578,9 +9627,13 @@ export function renderPayCard(project, cart) {
       state.contextsReady = false; state.contextsError = false;
       state.nftRoutes = {}; state.nftRoutesLoading = false;
       state.nftCredits = 0n;
+      // An amount typed for one token never becomes the same digits of another: the token is kept by symbol
+      // once this chain's accepted list is read, or the amount is cleared.
+      state.carrySymbol = state.amount && state.token ? state.token.symbol : null;
+      state.droppedToken = null;
       state.tokenTouched = false; // a new chain re-defaults to that chain's accounting token
       state.tokens = tokensForChain(state.chainId);
-      state.token = state.tokens[0] || null;
+      state.token = payTokenCarriedAcrossChains(state.tokens, state.carrySymbol) || state.tokens[0] || null;
       sizeSelectToText(
         chainSel,
         applyPayChainFontSize(chainSel, chainSel.options[chainSel.selectedIndex] && chainSel.options[chainSel.selectedIndex].textContent),
@@ -9664,7 +9717,11 @@ export function renderPayCard(project, cart) {
   var amtInput = el('input', 'paybox-amount');
   amtInput.type = 'number'; amtInput.step = 'any'; // decimals are valid; without step the default (1) marks any fractional amount invalid
   amtInput.placeholder = '0.00';
-  amtInput.addEventListener('input', function () { state.amount = amtInput.value.trim(); schedulePreview(); });
+  amtInput.addEventListener('input', function () {
+    state.amount = amtInput.value.trim();
+    if (state.droppedToken) { state.droppedToken = null; renderTerminalNotice(); }
+    schedulePreview();
+  });
   field.appendChild(amtInput);
   field.appendChild(currWrap); // currency dropdown, stuck to the right of the field, left of Pay
   amountRow.appendChild(field);
@@ -9721,6 +9778,12 @@ export function renderPayCard(project, cart) {
     }
     var surface = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
     if (!surface) return;
+    if (surface.pausePay && state.mode === 'pay') {
+      terminalNotice.style.display = '';
+      terminalNotice.className = 'paybox-contract-warning blocked';
+      terminalNotice.textContent = PAYMENTS_PAUSED_MESSAGE;
+      return;
+    }
     var target = state.token && state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
     if (target && !paySurfaceAllows(surface, target)) {
       terminalNotice.style.display = '';
@@ -9735,6 +9798,12 @@ export function renderPayCard(project, cart) {
         + (surface.unknown.length > 1 ? 's' : '') + ': '
         + surface.unknown.map(truncAddr).join(', ')
         + '. This form only sends to a recognized Juicebox terminal.';
+      return;
+    }
+    if (state.droppedToken) {
+      terminalNotice.style.display = '';
+      terminalNotice.className = 'paybox-contract-warning';
+      terminalNotice.textContent = state.droppedToken + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.';
     }
   }
 
@@ -10201,6 +10270,7 @@ export function renderPayCard(project, cart) {
       state.terminalSurface = surface;
       state.terminalSurfaceChain = reviewedChainId;
       renderTerminalNotice();
+      if (surface.pausePay && !addBalance) { status.className = 'paybox-status error'; status.textContent = PAYMENTS_PAUSED_MESSAGE; return; }
       if (!paySurfaceAllows(surface, terminal)) {
         status.className = 'paybox-status error';
         status.textContent = paySurfaceBlockedMessage(surface, terminal, reviewedChainId);
@@ -10308,6 +10378,14 @@ export function renderPayCard(project, cart) {
             : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless), bounded to this payment. If this token has never been approved to Permit2, a one-time UNLIMITED approval to the audited Permit2 contract is signed first, the router can still only pull the amount the signature authorizes.', spender: terminal })
           : { token: reviewedToken.address, spender: terminal, amount: amt.toString() }),
       args: confirmArgs,
+      summary: { action: addBalance ? 'Add to balance' : 'Pay', rows: payReviewRows({
+        amount: human, chain: chainName, addBalance: addBalance,
+        minimum: addBalance ? null : formatTokenCount(minTokens) + ' ' + sym,
+        items: tierIds.length ? confirmArgs.mints : null,
+        lands: confirmArgs.landsOnChain || null,
+        beneficiary: beneficiary, memo: reviewedMemo, quoteFailed: !!(reviewedPreview && reviewedPreview.quoteFailed),
+        notice: project.payDisclosure,
+      }) },
     }, function send(confirmCtx) {
       if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
         var accountError = 'Connected account changed. Review the payment again.';
@@ -10377,13 +10455,12 @@ export function renderPayCard(project, cart) {
         else { status.className = cls; status.textContent = m; }
         if (confirmCtx) confirmCtx.showStatus(meta && meta.phase === 'receipt' ? processing : m, kind, meta);
       },
+      onProposed: function (m, meta) {
+        dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
+        setPayStatus('paybox-status pending', m, meta);
+        if (confirmCtx) confirmCtx.pending(m, meta);
+      },
       onSuccess: function (m, meta) {
-        if (meta && meta.phase === 'proposed') {
-          dropLoosenedSlippage(); // the next payment is quoted at the default tolerance, ready for one click
-          setPayStatus('paybox-status pending', m, meta);
-          if (confirmCtx) confirmCtx.pending(m, meta);
-          return;
-        }
         dropLoosenedSlippage();
         setPayStatus('paybox-status success', confirmed, meta);
         if (confirmCtx) confirmCtx.complete(confirmed, meta);
@@ -10939,6 +11016,13 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
     throw new Error('This Safe App action is missing a reviewable contract call.');
   }
   return new Promise(function (resolve, reject) {
+    function recordProposal(message, meta) {
+      setStatus(message, 'pending', meta);
+      var known = snapshotKnownSafeProposal(chain.id, authorityAddr, { to: call.to, data: call.data, value: 0, operation: 0 }, meta && meta.safeTxHash, proposalFloor, true);
+      Promise.resolve().then(function () { return opts.onSafeProposal && opts.onSafeProposal(known); }).then(function () {
+          resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash, proposals: [known] });
+      }, reject);
+    }
     executeTransaction({
       chainId: chain.id,
       address: call.to,
@@ -10963,13 +11047,8 @@ async function runConnectedSafeAppAuthorityCall(chain, authorityAddr, buildCall,
       },
       onSending: opts.onSafeRequest ? function () { return opts.onSafeRequest({ chainId: Number(chain.id), safe: authorityAddr, fromBlock: String(proposalFloor), tx: { to: call.to, data: call.data, value: '0', operation: 0 } }); } : null,
       onStatus: setStatus,
-      onSuccess: function (message, meta) {
-        setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success', meta);
-        var known = snapshotKnownSafeProposal(chain.id, authorityAddr, { to: call.to, data: call.data, value: 0, operation: 0 }, meta && meta.safeTxHash, proposalFloor, true);
-        Promise.resolve().then(function () { return opts.onSafeProposal && opts.onSafeProposal(known); }).then(function () {
-          resolve({ queued: 1, skipped: [], cancelled: false, safeApp: true, safeTxHash: meta && meta.safeTxHash, proposals: [known] });
-        }, reject);
-      },
+      onProposed: recordProposal,
+      onSuccess: recordProposal, // a Safe App only proposes; kept so a direct send can never leave this promise open
       onError: function (message, meta) {
         Promise.resolve().then(function () { return meta && meta.userRejected && opts.onSafeNotSubmitted && opts.onSafeNotSubmitted(); }).then(function () {
           if (String(message || '').toLowerCase() === 'cancelled') { resolve({ queued: 0, skipped: [], cancelled: true, safeApp: true }); return; }
@@ -11205,8 +11284,15 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
   return { relayr: true, resumed: !!(relaySession && relaySession.resumed), session: relaySession };
 }
 
+export function transferAcknowledgement(isRevnet, destination) {
+  if (!isRevnet) return 'I verified the new project owner. Transferring the project NFT hands over every owner-only power.';
+  return String(destination || '').trim().toLowerCase() === ZERO_ADDRESS
+    ? 'I understand that relinquishing the revnet operator role is permanent.'
+    : 'I verified the new revnet operator. They receive every power attached to this role.';
+}
+
 // Transfer operator (revnet) / ownership (custom) across the requested chain group, routed by authority type.
-function openTransferAuthorityModal(project, opts) {
+export function openTransferAuthorityModal(project, opts) {
   opts = opts || {};
   var isRev = project.isRevnet;
   var authorityAddr = opts.authorityAddr || projectAuthorityAddress(project);
@@ -11226,15 +11312,27 @@ function openTransferAuthorityModal(project, opts) {
   var addrInput = el('input', 'operator-edit-jwt'); addrInput.type = 'text'; addrInput.placeholder = '0x… new ' + (isRev ? 'revnet operator' : 'project owner') + ' address'; content.appendChild(addrInput);
   var addrHint = el('div', 'operator-edit-token-name'); content.appendChild(addrHint);
   var authorityValueOf = attachAddressRecognition(addrInput, addrHint, homeChainId, { label: isRev ? 'New revnet operator' : 'New project owner' });
+  // The acknowledgement is for the address on screen: editing the address clears it.
+  var ackRow = el('label', 'danger-confirm');
+  var ack = document.createElement('input'); ack.type = 'checkbox';
+  var ackText = el('span'); ackRow.appendChild(ack); ackRow.appendChild(ackText); content.appendChild(ackRow);
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
   var submit = el('button', 'operator-cta operator-edit-submit'); submit.textContent = isRev ? 'Transfer revnet operator' : 'Transfer project ownership';
   actions.appendChild(submit); content.appendChild(actions);
+  function syncAck() {
+    ackText.textContent = transferAcknowledgement(isRev, addrInput.value);
+    submit.classList.toggle('cta-disabled', !ack.checked);
+  }
+  addrInput.addEventListener('input', function () { ack.checked = false; syncAck(); });
+  ack.addEventListener('change', syncAck); syncAck();
   var modal = openModal(isRev ? 'Transfer revnet operator' : 'Transfer project ownership', content);
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   submit.addEventListener('click', function (e) {
-    e.preventDefault(); if (busy) return; busy = true;
+    e.preventDefault(); if (busy) return;
+    if (!ack.checked) { setStatus('Tick the confirmation box to proceed.', 'error'); return; }
+    busy = true;
     (async function () {
       var to;
       try { to = authorityValueOf(); }
@@ -15672,9 +15770,8 @@ export function renderExtrasSection(project) {
               functionName: safeCall.functionName, args: safeCall.args, contractName: 'JBProjectPayerDeployer',
               label: 'Deploy payer address', confirmTitle: 'Confirm payer address deployment',
               onStatus: setStatus, onError: function (message) { reject(new Error(message)); },
-              onSuccess: function (message, meta) {
-                setStatus(message, meta && meta.phase === 'proposed' ? 'pending' : 'success'); resolve();
-              },
+              onProposed: function (message) { setStatus(message, 'pending'); resolve(); },
+              onSuccess: function (message) { setStatus(message, 'success'); resolve(); },
             });
           });
           return;
@@ -18019,12 +18116,18 @@ var POWER_SET_CONTROLLER = {
   fields: [{ name: 'controller', label: 'Controller', kind: 'address', placeholder: '0x… controller', infra: 'JBController' }],
   buildArgs: function (v, cid, pid) { return [pid, v.controller || getAddress('JBController', cid)]; },
 };
-var POWER_SET_TERMINALS = {
+export var POWER_SET_TERMINALS = {
   title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', gas: 250000n, chainsDefault: 'all',
-  note: 'Sets the project’s payment terminals (comma-separated). Defaults to the current JBMultiTerminal on each chain.',
-  danger: 'Dangerous: this reroutes where funds are paid in. A wrong terminal can misdirect or strand funds.',
-  fields: [{ name: 'terminals', label: 'Terminals', kind: 'addressList', placeholder: '0x…, 0x…', infra: 'JBMultiTerminal' }],
-  buildArgs: function (v, cid, pid) { var list = (v.terminals && v.terminals.length) ? v.terminals : [getAddress('JBMultiTerminal', cid)]; return [pid, list]; },
+  note: 'Sets the complete list of terminals funds can be paid in through (comma-separated). Prefilled with what is set onchain now.',
+  danger: 'Dangerous: this replaces the entire terminal list. Every terminal left out stops accepting payments and stops routing fees. Most projects launch with two (the standard terminal and the any-token router), so keep the ones you still want.',
+  // The call replaces the whole list, so the field starts from the live list and a blank field is refused: a
+  // default of one terminal would silently drop the router terminal.
+  fields: [{ name: 'terminals', label: 'Terminals', kind: 'addressList', placeholder: '0x…, 0x…',
+    listRead: function (project, cid) { return read(cid, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pidOn(project, cid)]); } }],
+  buildArgs: function (v, cid, pid) {
+    if (!v.terminals || !v.terminals.length) throw new Error('Enter the full terminal list for ' + chainNameOf(cid) + '.');
+    return [pid, v.terminals];
+  },
 };
 var POWER_MIGRATE = {
   title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', gas: 400000n, chainsDefault: 'primary',
@@ -18265,6 +18368,15 @@ function openPowerModal(project, action) {
     return '';
   }
 
+  // Starts a replace-all list field from the live list. Typing wins over a late read; a failed read leaves the
+  // field empty, and the action's buildArgs refuses an empty list.
+  function prefillLiveList(f, cid, input, state) {
+    state.reading = true; var before = input.value; input.placeholder = 'reading current…';
+    f.listRead(project, cid).then(function (list) {
+      if (input.value === before && list && list.length) { input.value = list.join(', '); input.dispatchEvent(new Event('input')); }
+    }).catch(function () {}).then(function () { state.reading = false; input.placeholder = f.placeholder || ''; });
+  }
+
   var inputs = {}; // name → { get(): value-or-throw }
   action.fields.forEach(function (f) {
     var lab = el('div', 'operator-edit-label'); lab.style.marginTop = '12px'; lab.textContent = f.label; content.appendChild(lab);
@@ -18352,6 +18464,7 @@ function openPowerModal(project, action) {
         listRows[c.id] = { input: input2, hint: hint2 };
         chainFieldRows.push({ cid: c.id, node: row2, input: input2, available: avail2 });
         describeAddressListInput(input2, hint2, c.id);
+        if (f.listRead && avail2) prefillLiveList(f, c.id, input2, listRows[c.id]);
       });
       content.appendChild(listWrap);
       if (f.help) { var h3 = el('div', 'operator-edit-cur'); h3.textContent = f.help; content.appendChild(h3); }
@@ -18360,6 +18473,7 @@ function openPowerModal(project, action) {
         return chainValue(function (cid) {
           var row = listRows[cid];
           if (!row) throw new Error('No ' + f.label + ' field for ' + chainNameOf(cid));
+          if (row.reading) throw new Error('Still reading the current ' + f.label + ' on ' + chainNameOf(cid) + '. Try again in a moment.');
           var list = parseAddressListInput(row.input, f.label + ' on ' + chainNameOf(cid));
           if (!list.length && f.infra) return [];
           return list;
@@ -18375,6 +18489,8 @@ function openPowerModal(project, action) {
     // unless the user has already typed. No fallback default — blank stays blank.
     if (f.defaultRead) { (function (input) { input.placeholder = 'reading current…'; f.defaultRead(project).then(function (val) { if (val && input.value === '') { input.value = val; input.dispatchEvent(new Event('input')); } input.placeholder = f.placeholder || ''; }).catch(function () { input.placeholder = 'Could not read the current value'; }); })(inp); }
     content.appendChild(inp);
+    var listState = {};
+    if (f.listRead) prefillLiveList(f, project.chainId, inp, listState);
     var scalarAddressValue = null;
     if (f.kind === 'address') {
       var ah = el('div', 'operator-edit-token-name'); content.appendChild(ah);
@@ -18405,6 +18521,7 @@ function openPowerModal(project, action) {
         return scalarAddressValue ? scalarAddressValue() : raw;
       }
       if (f.kind === 'addressList') {
+        if (listState.reading) throw new Error('Still reading the current ' + f.label + '. Try again in a moment.');
         if (!raw && f.infra) return [];
         var list = raw.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
         list.forEach(function (a2) { if (!isAddr(a2)) throw new Error('Invalid address in ' + f.label + ': ' + a2); });
@@ -19019,6 +19136,8 @@ function buildPayoutsModal(project, acctKind) {
       executeTransaction({
         chainId: cid, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', contractName: 'JBMultiTerminal',
         args: [pid, acct.address, amount, BigInt(currency), minOut], label: 'Distribute payouts',
+        // A confirmed payout can still have returned a reverted split to the balance: check each split's effect.
+        verifyReceipt: function (receipt) { verifyDistributionReceipt({ to: term, functionName: 'sendPayoutsOf', args: [pid, acct.address, amount, BigInt(currency), minOut], validation: { sender: account } }, receipt); },
         confirmSummary: { action: 'Distribute payouts', rows: [
           ['Sending', formatBalance(amount, acct.decimals, acct.symbol) + ' to the payout splits'],
           ['Quoted', formatBalance(quoted, acct.decimals, acct.symbol)],
@@ -24987,6 +25106,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
           ['On chain', chainNameOf(cid0)],
         ].concat(scheduleRows) },
         onStatus: function (m, k) { setStatus(m, k); }, onError: function (m) { reject(new Error(m)); },
+        onProposed: function (m) { setStatus(m, 'pending'); resolve(); },
         onSuccess: function () { setStatus((newShop ? 'New shop deployed + ruleset queued on ' : 'Ruleset queued on ') + chainNameOf(cid0) + '.', 'success'); notifyProjectUpdated(project); resolve(); },
       });
     });
@@ -25662,10 +25782,16 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
     }
     btn.disabled = true; btn.textContent = 'Distributing…';
     var localPid = pidOn(project, pc.id);
+    var sender = getAccount();
     controllerAddressFor(pc.id, localPid).then(function (ctrl) {
+      return readDistributionTokens(clientFor(pc.id), ctrl).then(function (tokens) { return { ctrl: ctrl, tokens: tokens }; });
+    }).then(function (live) {
+    var ctrl = live.ctrl;
     executeTransaction({
       chainId: pc.id, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf', args: [localPid],
       label: 'Distribute reserved tokens',
+      // A confirmed distribution can still have burned a hook's unconsumed tokens or used a fallback recipient.
+      verifyReceipt: function (receipt) { verifyDistributionReceipt({ to: ctrl, functionName: 'sendReservedTokensToSplitsOf', args: [localPid], validation: { sender: sender, tokens: live.tokens } }, receipt); },
       confirmSummary: { action: 'Distribute reserved tokens', rows: [
         ['Sends', (pc.pending != null ? formatTokens(pc.pending) + ' ' + (project.tokenSymbol || 'tokens') : 'all pending reserved tokens') + ' to the reserved splits'],
         ['Project', '#' + String(localPid)],
@@ -26422,14 +26548,7 @@ function renderBridgeTransactionsTable(rows, project) {
     action.appendChild(claimBtn); action.appendChild(cstat);
   }
 
-  // Group by from→to pair. One toRemote ships the ENTIRE outbox for a (source sucker, token) pair, so the
-  // "Execute" lives once per pair (a footer below its rows) rather than inline on every queued row.
-  var groups = [], byKey = {};
-  rows.forEach(function (tx) {
-    var key = tx.chainId + '->' + tx.peerChainId;
-    if (!byKey[key]) { byKey[key] = { from: tx.chainId, to: tx.peerChainId, sample: tx, rows: [] }; groups.push(byKey[key]); }
-    byKey[key].rows.push(tx);
-  });
+  var groups = groupQueuedMovements(rows);
 
   groups.forEach(function (g) {
     g.rows.forEach(function (tx) {
@@ -26484,7 +26603,7 @@ function renderBridgeTransactionsTable(rows, project) {
     var s = g.sample;
     var foot = el('div', 'bridge-group-foot');
     var lbl = el('span', 'bridge-group-foot-lbl');
-    lbl.textContent = sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + ' to ' + moveChainName(g.to) + ', send all in one bridge message:';
+    lbl.textContent = sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + (g.sample.tokenSymbol ? ' of ' + g.sample.tokenSymbol : '') + ' to ' + moveChainName(g.to) + ', send all in one bridge message:';
     foot.appendChild(lbl);
     var estat = el('span', 'bridge-action-stat');
     var execBtn = document.createElement('button'); execBtn.className = 'ops-percent-btn'; execBtn.textContent = 'Execute';
@@ -26515,6 +26634,7 @@ function renderBridgeTransactionsTable(rows, project) {
           // empty so it never pushes the Execute button around. Just re-enable / refresh on terminal states.
           onStatus: function () {},
           onError: function () { execBtn.disabled = false; },
+          onProposed: function (m) { execBtn.disabled = false; estat.classList.add('pending'); estat.textContent = m; },
           onSuccess: function () { execBtn.disabled = false; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
         });
       });
@@ -27680,7 +27800,7 @@ function buildCashOutModal(project, requestClose) {
         confirmSummary: { action: 'Cash out ' + sym, rows: [
           ['Cashing out', formatTokens(count) + ' ' + sym],
           ['You receive', (preparedRoute.via === 'amm' ? '≈ ' : '') + formatBalance(preparedRoute.expected, reviewedAcct.decimals, reviewedAcct.symbol)],
-          ['Minimum', formatBalance(preparedRoute.terminalMinimum, reviewedAcct.decimals, reviewedAcct.symbol) + ', reverts below this'],
+          ['Minimum', formatBalance(preparedRoute.minimum, reviewedAcct.decimals, reviewedAcct.symbol) + ', reverts below this'],
           ['Route', preparedRoute.via === 'amm' ? 'terminal, sold through the buyback pool' : 'terminal (burns tokens against the project surplus)'],
           ['To', acct],
           ['On chain', chainNameOf(cid)],
@@ -28849,6 +28969,7 @@ function syncAccountingFromPeer(peerChainId, peerSucker, btn, key, project) {
         // Cancelled/reverted → clear any in-flight marker so the row doesn't stick on "Syncing…".
         if (key && _gossipSyncAt[key]) { delete _gossipSyncAt[key]; saveGossipSyncAt(_gossipSyncAt); document.dispatchEvent(new CustomEvent('jb:bridge-updated')); }
       },
+      onProposed: function (m) { btn.disabled = false; btn.textContent = 'Proposed'; btn.title = m; },
       onSuccess: function () {
         if (key) { _gossipSyncAt[key] = Math.floor(Date.now() / 1000); saveGossipSyncAt(_gossipSyncAt); }
         document.dispatchEvent(new CustomEvent('jb:bridge-updated'));

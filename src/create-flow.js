@@ -4540,6 +4540,7 @@ function execTx(opts) {
         if (opts.trackSavedLaunch && meta && meta.trackingError) reject(new Error('The transaction was submitted, but confirmation is unavailable. Check the saved launch before continuing.'));
       },
       onSuccess: function (m, meta) { resolve((meta && meta.hash) || null); },
+      onProposed: function () { resolve(null); }, // a Safe proposal has no onchain hash; callers treat null as not launched
       onError: function (m, meta) { var error = new Error(m); error.userRejected = !!(meta && meta.userRejected && !meta.submittedHash); reject(error); },
     }));
   });

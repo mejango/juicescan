@@ -240,7 +240,7 @@ export async function openBatchDialog(project, chain, setStatus) {
     var count = plural(composed.calls.length, 'call');
     session.showStatus(result.executed ? 'Executed the batch of ' + count + '.'
       : result.threshold ? 'Approved the batch of ' + count + ' onchain (' + result.approvals + ' of ' + result.threshold + ' signers). It executes once the Safe threshold is met.'
-      : 'Proposed to Safe as one batch of ' + count + '.', 'success');
+      : 'Proposed to Safe as one batch of ' + count + '.', result.executed ? 'success' : 'pending'); // approved or proposed is not executed
     setTimeout(session.close, 2200);
     return result;
   } catch (e) {

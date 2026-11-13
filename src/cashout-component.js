@@ -360,7 +360,7 @@ export function renderCashOutComponent() {
       confirmSummary: { action: 'Cash out', rows: [
         ['Cashing out', formatAmount(cashOutCount, 18) + ' tokens'],
         ['You receive', (preparedRoute.via === 'amm' ? '≈ ' : '') + formatAmount(preparedRoute.expected, reclaimDecimals) + ' ' + reclaimSymbol],
-        ['Minimum', formatAmount(preparedRoute.terminalMinimum, reclaimDecimals) + ' ' + reclaimSymbol + ', fails if you receive less'],
+        ['Minimum', formatAmount(preparedRoute.minimum, reclaimDecimals) + ' ' + reclaimSymbol + ', fails if you receive less'],
         ['Route', preparedRoute.via === 'amm' ? 'sold on Uniswap' : 'destroyed in return for available project funds'],
         ['To', beneficiary],
       ] },

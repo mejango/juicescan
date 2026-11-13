@@ -41,12 +41,18 @@ it('does not send when durable reservation refuses the reviewed attempt',async()
  await vi.waitFor(()=>expect(onError).toHaveBeenCalledWith('Recovery storage unavailable',expect.any(Object)));
  expect(h.wallet.writeContract).not.toHaveBeenCalled();
 });
-it('awaits durable reservation before a Safe proposal and preserves proposal status',async()=>{
- h.safe=true;let reserve;const onSending=vi.fn(()=>new Promise(resolve=>reserve=resolve)),onSuccess=vi.fn();
- executeTransaction({...args,onSending,onSuccess});
+it('awaits durable reservation before a Safe proposal and reports it as proposed, never as success',async()=>{
+ h.safe=true;let reserve;const onSending=vi.fn(()=>new Promise(resolve=>reserve=resolve)),onSuccess=vi.fn(),onProposed=vi.fn();
+ executeTransaction({...args,onSending,onSuccess,onProposed});
  await vi.waitFor(()=>expect(onSending).toHaveBeenCalledTimes(1));expect(h.propose).not.toHaveBeenCalled();
- reserve();await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({phase:'proposed',safeTxHash:hash})));
- expect(h.propose).toHaveBeenCalledTimes(1);expect(h.wallet.writeContract).not.toHaveBeenCalled();
+ reserve();await vi.waitFor(()=>expect(onProposed).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({phase:'proposed',safeTxHash:hash})));
+ expect(h.propose).toHaveBeenCalledTimes(1);expect(h.wallet.writeContract).not.toHaveBeenCalled();expect(onSuccess).not.toHaveBeenCalled();
+});
+it('gives a caller without a proposal handler the proposal as a pending status',async()=>{
+ h.safe=true;const onStatus=vi.fn(),onSuccess=vi.fn();
+ executeTransaction({...args,onStatus,onSuccess});
+ await vi.waitFor(()=>expect(onStatus).toHaveBeenCalledWith(expect.stringContaining('Proposed to your Safe'),'pending',expect.objectContaining({phase:'proposed',safeTxHash:hash})));
+ expect(onSuccess).not.toHaveBeenCalled();
 });
 it('does not propose to a Safe when durable reservation fails',async()=>{
  h.safe=true;const onError=vi.fn();executeTransaction({...args,onSending:async()=>{throw new Error('Recovery storage unavailable')},onError});
@@ -85,13 +91,13 @@ it.each(['account','view','route'])('refuses Safe %s changes while the final net
  finish(8453);await vi.waitFor(()=>expect(onBeforeWriteAborted).toHaveBeenCalledTimes(1));expect(h.propose).not.toHaveBeenCalled();expect(h.wallet.writeContract).not.toHaveBeenCalled();
 });
 it('preserves ordinary Safe approval-plus-payment batches',async()=>{
- h.safe=true;const onSuccess=vi.fn();executeTransaction({...args,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,onSuccess});
- await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledTimes(1));expect(h.propose.mock.calls[0][0]).toHaveLength(2);
+ h.safe=true;const onProposed=vi.fn();executeTransaction({...args,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,onProposed});
+ await vi.waitFor(()=>expect(onProposed).toHaveBeenCalledTimes(1));expect(h.propose.mock.calls[0][0]).toHaveLength(2);
 });
 it('proposes only the native requested call after sufficient separate approval',async()=>{
- h.safe=true;h.client.readContract=vi.fn(async()=>10n);const onSuccess=vi.fn();
- executeTransaction({...args,expectedSafe:true,safeSingleCall:true,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,onSuccess});
- await vi.waitFor(()=>expect(onSuccess).toHaveBeenCalledTimes(1));expect(h.propose.mock.calls[0][0]).toHaveLength(1);
+ h.safe=true;h.client.readContract=vi.fn(async()=>10n);const onProposed=vi.fn();
+ executeTransaction({...args,expectedSafe:true,safeSingleCall:true,tokenAddr:args.address,spenderAddr:args.address,approvalAmount:10n,onProposed});
+ await vi.waitFor(()=>expect(onProposed).toHaveBeenCalledTimes(1));expect(h.propose.mock.calls[0][0]).toHaveLength(1);
  expect(h.client.readContract).toHaveBeenCalledWith(expect.objectContaining({functionName:'allowance',args:[h.account,args.address]}));
 });
 it('does not reserve or propose native payment before the separate approval is verified',async()=>{
