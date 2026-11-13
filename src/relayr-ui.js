@@ -22,7 +22,7 @@ export function chooseRelayrPayment(quote) {
     var placeholder = el('option'); placeholder.value = ''; placeholder.textContent = 'Choose a chain'; select.appendChild(placeholder);
     options.forEach(function (payment, index) {
       var option = el('option'); option.value = String(index);
-      option.textContent = chainNameFor(payment.chain) + ' — ' + formatEther(BigInt(payment.amount)) + ' ETH';
+      option.textContent = chainNameFor(payment.chain) + ': ' + formatEther(BigInt(payment.amount)) + ' ETH';
       select.appendChild(option);
     });
     label.appendChild(select); body.appendChild(label);
@@ -45,7 +45,7 @@ export function relayrReceiptStateLabel(record, verifiedOnchain) {
   var state = String(record && record.status && record.status.state || '');
   if (relayrStateIsSuccess(state)) return verifiedOnchain
     ? { text: 'Confirmed', kind: 'ok' }
-    : { text: 'Relayr reported success — verifying', kind: 'pending' };
+    : { text: 'Relayr reported success: verifying', kind: 'pending' };
   if (relayrStateIsFailed(state)) return { text: 'Failed', kind: 'err' };
   return { text: state || 'Waiting for Relayr', kind: 'pending' };
 }

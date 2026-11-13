@@ -26,7 +26,7 @@ describe('Relayr funding-chain choice', () => {
     expect(next.disabled).toBe(true);
     expect(select.value).toBe('');
     expect([...select.options].map(option => option.textContent)).toEqual([
-      'Choose a chain', 'Ethereum — 0.001 ETH', 'Optimism — 0.001 ETH', 'Base — 0.002 ETH',
+      'Choose a chain', 'Ethereum: 0.001 ETH', 'Optimism: 0.001 ETH', 'Base: 0.002 ETH',
     ]);
     next.dispatchEvent(new Event('click'));
     expect(document.querySelector('dialog')).not.toBeNull();
@@ -90,7 +90,7 @@ describe('Relayr paid-receipt UI', () => {
   });
 
   it('normalizes terminal and pending states without treating unknown states as success', () => {
-    expect(relayrReceiptStateLabel({ status: { state: 'Success' } })).toEqual({ text: 'Relayr reported success — verifying', kind: 'pending' });
+    expect(relayrReceiptStateLabel({ status: { state: 'Success' } })).toEqual({ text: 'Relayr reported success: verifying', kind: 'pending' });
     expect(relayrReceiptStateLabel({ status: { state: 'Completed' } }, true)).toEqual({ text: 'Confirmed', kind: 'ok' });
     expect(relayrReceiptStateLabel({ status: { state: 'Failed' } })).toEqual({ text: 'Failed', kind: 'err' });
     expect(relayrReceiptStateLabel({ status: { state: 'Included' } })).toEqual({ text: 'Included', kind: 'pending' });

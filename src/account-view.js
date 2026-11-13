@@ -713,7 +713,7 @@ function renderPendingRelayrSection() {
     if (!session) return;
     var panel = el('div', 'relayr-pending-panel');
     var verified = false;
-    var note = 'Saved on this device' + (scope ? ' (' + scope + ')' : '') + '. Status is checked against Relayr by bundle ID — nothing is ever re-submitted.';
+    var note = 'Saved on this device' + (scope ? ' (' + scope + ')' : '') + '. Status is checked against Relayr by bundle ID, nothing is ever re-submitted.';
     function paint() {
       var displaySession = session;
       if (!verified && relayrProgress(session.records, session.expectedCount).confirmed > 0) {

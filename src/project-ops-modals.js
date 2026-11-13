@@ -110,7 +110,7 @@ export function buildMoveModal(project) {
       state.balance = r.balance; state.balanceVerified = !!r.verified; state.token = r.token;
       if (!getEffectiveAccount()) { bal.textContent = 'Connect a wallet to see your balance.'; updateMoveBtn(); return; }
       if (!r.verified) { bal.textContent = 'Could not verify your bridgeable balance on ' + moveChainName(from) + '. Try again shortly.'; updateMoveBtn(); return; }
-      if (!r.token) { bal.textContent = 'No ERC-20 ' + sym + ' on ' + moveChainName(from) + ' — claim your tokens there first to bridge.'; updateMoveBtn(); return; }
+      if (!r.token) { bal.textContent = 'No ERC-20 ' + sym + ' on ' + moveChainName(from) + ', claim your tokens there first to bridge.'; updateMoveBtn(); return; }
       bal.textContent = 'Your ' + sym + ' available on ' + moveChainName(from) + ': ' + formatTokens(r.balance) + ' ' + sym;
       updateMoveBtn();
     });
@@ -125,7 +125,7 @@ export function buildMoveModal(project) {
     if (!state.sucker) return 'No verified bridge route connects these chains.';
     if (!state.backing) return 'Loading the verified backing token…';
     if (!state.balanceVerified) return 'Could not verify your bridgeable balance. Try again shortly.';
-    if (!state.token) return 'No ERC-20 ' + sym + ' on ' + moveChainName(state.from) + ' yet — claim your ' + sym + ' to an ERC-20 there first, then bridge.';
+    if (!state.token) return 'No ERC-20 ' + sym + ' on ' + moveChainName(state.from) + ' yet: claim your ' + sym + ' to an ERC-20 there first, then bridge.';
     if (state.balance != null && state.balance === 0n) return 'You have no ' + sym + ' to bridge on ' + moveChainName(state.from) + '.';
     return '';
   }
@@ -184,7 +184,7 @@ export function buildMoveModal(project) {
     backing.appendChild(document.createTextNode(formatBalance(moved, state.backing.decimals, state.backing.symbol)));
     // Explain a zero: the token's payout limit covers its whole balance, so there's no surplus to bridge.
     if (state.fromBacking === 0n) {
-      var why = el('div', 'move-backing-why'); why.textContent = 'No ' + state.backing.symbol + ' surplus on ' + moveChainName(state.from) + ' — its payout limit covers the whole balance' + (state.kinds && state.kinds.length > 1 ? '. Try another token above.' : '.');
+      var why = el('div', 'move-backing-why'); why.textContent = 'No ' + state.backing.symbol + ' surplus on ' + moveChainName(state.from) + ', its payout limit covers the whole balance' + (state.kinds && state.kinds.length > 1 ? '. Try another token above.' : '.');
       backing.appendChild(why);
     }
     backing.style.display = '';
@@ -196,10 +196,10 @@ export function buildMoveModal(project) {
     bridgeNote.innerHTML = '';
     var txt, href, linkLabel;
     if (m._infra === 'CCIP') {
-      txt = 'CCIP delivers in minutes by relaying through Chainlink’s cross-chain network — faster, but it depends on Chainlink.';
+      txt = 'CCIP delivers in minutes by relaying through Chainlink’s cross-chain network, faster, but it depends on Chainlink.';
       href = 'https://docs.chain.link/ccip'; linkLabel = 'About Chainlink CCIP ↗';
     } else if (m._infra === 'native') {
-      txt = 'Native bridges route through the chain’s own canonical bridge — slower, but their security comes from the chain itself, not a third party.';
+      txt = 'Native bridges route through the chain’s own canonical bridge, slower, but their security comes from the chain itself, not a third party.';
       href = 'https://docs.juicebox.money/v4/learn/glossary/sucker/'; linkLabel = 'About suckers ↗';
     } else {
       txt = 'The bridge type could not be verified. Fee-sensitive actions stay unavailable until this route can be read again.';
@@ -239,7 +239,7 @@ export function buildMoveModal(project) {
       return;
     }
     // Two suckers connect this pair (a native bridge and a CCIP bridge) — classify each and let the user pick.
-    route.textContent = 'Two bridges connect these chains — pick one:';
+    route.textContent = 'Two bridges connect these chains, pick one:';
     var from = state.from, to = state.to; // guard against chain switches mid-classification
     Promise.all(matches.map(function (m) {
       return m._infra ? Promise.resolve(m._infra) : classifySuckerInfra(state.from, m.local).then(function (i) { m._infra = i; return i; });
@@ -340,7 +340,7 @@ export function buildMoveModal(project) {
         // Canonical ERC-20s (USDC) over an OP-stack/Arbitrum NATIVE sucker strand in bridge escrow — the
         // mapping may exist on-chain (the guards are bridge-blind) but the delivery leg can never settle.
         if (checks[5] === 'native' && termToken.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
-          throw new Error('This pair’s native bridge can’t deliver ' + ((state.backing && state.backing.symbol) || 'this backing token') + ' — canonical tokens sent over a native bridge get stuck in escrow. Pick the CCIP bridge for this move.');
+          throw new Error('This pair’s native bridge can’t deliver ' + ((state.backing && state.backing.symbol) || 'this backing token') + ', canonical tokens sent over a native bridge get stuck in escrow. Pick the CCIP bridge for this move.');
         }
         if (checks[3] == null) throw new Error('The bridge fee status could not be verified. Nothing was sent.');
         var remoteBacking = checks[6];
@@ -365,7 +365,7 @@ export function buildMoveModal(project) {
         // token count to the remote chain, but the confirmation calls that out explicitly instead of hiding min=0.
         var backingText = net > 0n
           ? '≈ ' + formatBalance(net, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + ' (at least ' + formatBalance(minReclaimed, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + ')'
-          : 'none — this chain currently contributes zero backing';
+          : 'none: this chain currently contributes zero backing';
         var moveSteps = ['Approve token access if needed', 'Prepare the movement', 'Send the queued movements to ' + moveChainName(to)];
         executeTransaction(Object.assign(buildSuckerPrepareArgs({
           chainId: from, sucker: sucker, projectTokenCount: amount, beneficiary32: beneficiary32, minReclaimed: minReclaimed,
@@ -389,11 +389,11 @@ export function buildMoveModal(project) {
           var session = meta && meta.confirmSession;
           // Step 2: ship the outbox root to the remote chain. Discover the exact msg.value the bridge needs
           // by simulating toRemote at increasing values (handles native-bridge fee-only AND CCIP messaging).
-          onStatus('Prepared — finding bridge fee…', 'pending');
+          onStatus('Prepared: finding bridge fee…', 'pending');
           if (session) session.showStatus('Prepared. Finding the bridge fee…', 'pending');
           findToRemoteValue(from, sucker, termToken, acct).then(function (fee) {
             if (fee == null) {
-              var notReady = 'Prepared, but the bridge queue isn’t ready to send yet — reopen and try again shortly.';
+              var notReady = 'Prepared, but the bridge queue isn’t ready to send yet, reopen and try again shortly.';
               if (session) session.showStatus(notReady, 'error');
               fail(notReady); return;
             }
@@ -406,19 +406,19 @@ export function buildMoveModal(project) {
               confirmSession: session, confirmSteps: moveSteps, confirmStepIndex: 2,
               confirmSummary: { action: 'Send the queued movements to ' + moveChainName(to), rows: [
                 ['Sends', 'every queued movement (yours and anyone else’s) in one bridge message'],
-                ['Bridge fee', formatEth(fee) + ' — paid to relay the message, not the bridged tokens'],
+                ['Bridge fee', formatEth(fee) + ', paid to relay the message, not the bridged tokens'],
                 ['From', moveChainName(from)],
                 ['To', moveChainName(to)],
               ] },
               confirmDescription: 'The prepare step queued your move into the bridge’s outbox. '
-                + 'This step ships that queued batch to ' + moveChainName(to) + ' — it delivers every pending move in the '
+                + 'This step ships that queued batch to ' + moveChainName(to) + ', it delivers every pending move in the '
                 + 'queue (yours and anyone else’s) in one bridge message, so anyone can trigger it. The small value is the '
-                + 'bridge’s messaging fee — you pay it to relay the message; it’s not the bridged tokens (those move from the '
+                + 'bridge’s messaging fee: you pay it to relay the message; it’s not the bridged tokens (those move from the '
                 + 'project’s funds). Once it lands, claim your tokens on ' + moveChainName(to) + ' from the Queued movements table.',
               onStatus: onStatus, onError: fail,
               onSuccess: function () {
                 status.classList.remove('pending');
-                status.textContent = 'Bridging to ' + moveChainName(to) + ' — once it delivers (a few minutes for native bridges) claim it from the Queued movements table.';
+                status.textContent = 'Bridging to ' + moveChainName(to) + ', once it delivers (a few minutes for native bridges) claim it from the Queued movements table.';
                 btn.disabled = false;
                 document.dispatchEvent(new CustomEvent('jb:bridge-updated'));
               },
@@ -515,18 +515,18 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
   if (pairMax > 1n) deposit.push(formatBalance(pairMax, pair.decimals, pair.symbol));
   var approvalRows = (prep.erc20 || []).map(function (s) {
     var label = (s.currency || '').toLowerCase() === (pair.addr || '').toLowerCase() ? pair.symbol : sym;
-    return [label + ' approval', s.approved && s.permitReady ? 'already set — no approval step will run'
-      : s.approved ? 'token allowance reused — only the Permit2 step remains'
+    return [label + ' approval', s.approved && s.permitReady ? 'already set: no approval step will run'
+      : s.approved ? 'token allowance reused: only the Permit2 step remains'
       : 'runs before the mint'];
   });
   return {
     summary: {
       action: 'Add liquidity to the ' + sym + '/' + pair.symbol + ' pool',
       rows: [
-        ['Deposit up to', deposit.join(' + ') + ' — the mint pulls only what the position needs'],
+        ['Deposit up to', deposit.join(' + ') + ', the mint pulls only what the position needs'],
         prep.pa > 0 && prep.pb > prep.pa ? ['Price range', formatPrice(prep.pa) + ' – ' + formatPrice(prep.pb) + ' ' + pair.symbol + ' per ' + sym] : null,
         ['Position NFT to', prep.acct],
-        ['Mint deadline', lpFmtDuration(lpDeadlineSecs(prep)) + (prep.smartWallet ? ' — survives a multisig signing queue' : '')],
+        ['Mint deadline', lpFmtDuration(lpDeadlineSecs(prep)) + (prep.smartWallet ? ', survives a multisig signing queue' : '')],
       ].concat(approvalRows).filter(Boolean),
     },
     chain: chainName,
@@ -538,8 +538,8 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
     value: prep.value > 0n ? (prep.value.toString() + ' wei (' + formatEth(prep.value) + ')') : '0',
     erc20Approvals: (prep.erc20 || []).map(function (s) {
       return { token: s.currency, via: 'Permit2', spender: prep.posm, amount: s.max.toString(),
-        status: s.approved && s.permitReady ? 'already approved — no approval step will run'
-          : s.approved ? 'token allowance already set (reused) — only the Permit2 approval step remains'
+        status: s.approved && s.permitReady ? 'already approved: no approval step will run'
+          : s.approved ? 'token allowance already set (reused), only the Permit2 approval step remains'
           : 'approval will run first' };
     }),
     position: {
@@ -815,7 +815,7 @@ export function buildAddLiquidityModal(project) {
   var dlRow = el('div', 'ops-chainrow'); dlRow.style.marginTop = '8px';
   var dlLab = el('span', 'modal-balance'); dlLab.textContent = 'Execution deadline';
   var dlSel = el('select', 'field create-input'); dlSel.style.width = 'auto'; dlSel.style.minWidth = '0';
-  [['', 'Auto — 20 min (30 days from a multisig)'], ['1200', '20 minutes'], ['3600', '1 hour'], ['86400', '1 day'], ['604800', '7 days'], ['2592000', '30 days']].forEach(function (o) {
+  [['', 'Auto: 20 min (30 days from a multisig)'], ['1200', '20 minutes'], ['3600', '1 hour'], ['86400', '1 day'], ['604800', '7 days'], ['2592000', '30 days']].forEach(function (o) {
     var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; dlSel.appendChild(op);
   });
   dlSel.title = 'The mint reverts if executed after this. Price protection comes from the bounded max amounts, not the deadline.';
@@ -824,10 +824,10 @@ export function buildAddLiquidityModal(project) {
   // Resolve the Auto label to what it will actually pick for the connected account (EOA vs multisig).
   function updateDlAuto() {
     var acct = getAccount && getAccount(), cid = state.chainId;
-    if (!acct) { dlSel.options[0].textContent = 'Auto — 20 min (30 days from a multisig)'; return; }
+    if (!acct) { dlSel.options[0].textContent = 'Auto: 20 min (30 days from a multisig)'; return; }
     lpIsSmartWallet(cid, acct).then(function (smart) {
       if (state.chainId !== cid || !getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) return;
-      dlSel.options[0].textContent = smart ? 'Auto — 30 days (multisig connected)' : 'Auto — 20 minutes';
+      dlSel.options[0].textContent = smart ? 'Auto: 30 days (multisig connected)' : 'Auto: 20 minutes';
     }).catch(function () {});
   }
 
@@ -868,8 +868,8 @@ export function buildAddLiquidityModal(project) {
     else {
       sideNote.style.display = '';
       sideNote.textContent = s.eth
-        ? 'At the current price (top of your range) the position is single-sided ' + pairSym() + ' — add ' + pairSym() + ' only. To seed ' + sym + ', the pool price has to be lower within your range (move the price down with a swap, or widen the range).'
-        : 'At the current price (bottom of your range) the position is single-sided ' + sym + ' — add ' + sym + ' only. To seed ' + pairSym() + ', the pool price has to be higher within your range.';
+        ? 'At the current price (top of your range) the position is single-sided ' + pairSym() + ', add ' + pairSym() + ' only. To seed ' + sym + ', the pool price has to be lower within your range (move the price down with a swap, or widen the range).'
+        : 'At the current price (bottom of your range) the position is single-sided ' + sym + ', add ' + sym + ' only. To seed ' + pairSym() + ', the pool price has to be higher within your range.';
     }
   }
   function autofill() {
@@ -1017,7 +1017,7 @@ export function buildAddLiquidityModal(project) {
           if (result && result.safeTxHash) {
             // A proposal, not an execution: keep the dialog up, let it close, and watch the Safe for the executed tx.
             ctx.cancel.disabled = false; ctx.cancel.textContent = 'Close';
-            ctx.showStatus('Proposed to your Safe as one batch of ' + result.calls + ' calls — sign and execute it in your Safe queue. This page watches for the execution.', 'pending');
+            ctx.showStatus('Proposed to your Safe as one batch of ' + result.calls + ' calls: sign and execute it in your Safe queue. This page watches for the execution.', 'pending');
             (function watch(tries) {
               if (tries > 40) return;
               setTimeout(function () {
@@ -1053,7 +1053,7 @@ export function buildAddLiquidityModal(project) {
               if (tries > 40) return;
               setTimeout(function () {
                 e.recheck().then(function (ok) {
-                  if (ok) ctx.showStatus('Your multisig executed this step — click Confirm & add liquidity to continue.', 'success');
+                  if (ok) ctx.showStatus('Your multisig executed this step, click Confirm & add liquidity to continue.', 'success');
                   else watch(tries + 1);
                 }, function () { watch(tries + 1); });
               }, 15000);
@@ -1069,7 +1069,7 @@ export function buildAddLiquidityModal(project) {
         sequenceIntro: plan ? 'Goes to your Safe as one batch of ' + plan.calls.length + ' calls: approved once, executed together.' : undefined,
         description: plan ? 'Execute the batch within days of queueing it: the mint’s price-drift headroom and its 30-day approvals are finite. Already-queued steps are detected and refused, so a second confirm never double-proposes.'
           : prep.smartWallet
-          ? 'Multisig detected: this runs as up to 3 sequential Safe transactions (token approval → Permit2 approval → mint), each proposed here and executed from your Safe queue. If you leave while one is pending, come back and confirm again — completed and already-queued steps are detected and skipped. Execute the mint within days of queueing it: its price-drift headroom and 30-day approvals are finite.'
+          ? 'Multisig detected: this runs as up to 3 sequential Safe transactions (token approval → Permit2 approval → mint), each proposed here and executed from your Safe queue. If you leave while one is pending, come back and confirm again, completed and already-queued steps are detected and skipped. Execute the mint within days of queueing it: its price-drift headroom and 30-day approvals are finite.'
           : undefined,
       });
     }).catch(function (e) {

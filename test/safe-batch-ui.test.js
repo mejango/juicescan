@@ -170,7 +170,7 @@ describe('Same on every chain', () => {
     saveTray(8453, 6, [hook(), pool()]);
     const report = await mirrorAcrossChains(project());
     expect(report.mirrored).toEqual([]);
-    expect(report.skipped).toContain('Optimism: Set buyback hook — offline');
+    expect(report.skipped).toContain('Optimism: Set buyback hook: offline');
     expect(loadTray(10, 7)).toEqual([]);
   });
 });

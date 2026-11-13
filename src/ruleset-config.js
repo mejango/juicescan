@@ -30,7 +30,7 @@ export function parseRulesetWeight(value, mode) {
   try {
     weight = parseEther(String(value).trim());
   } catch (_) {
-    throw new Error('Invalid issuance weight "' + String(value).trim() + '" — enter a plain decimal number of tokens (no commas, spaces, or exponents), or leave the field blank.');
+    throw new Error('Invalid issuance weight "' + String(value).trim() + '": enter a plain decimal number of tokens (no commas, spaces, or exponents), or leave the field blank.');
   }
   if (weight < 0n) return 0n;
   return weight > UINT112_MAX ? UINT112_MAX : weight;

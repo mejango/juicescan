@@ -521,7 +521,7 @@ function mergeDraft(obj) {
         }));
     if (inconsistent) {
       applyAccountingDefaults(s);
-      s._importNotice = 'Adjusted the issuance denomination to match the accepted asset — the imported draft priced issuance in a currency the accepted token can’t convert to.';
+      s._importNotice = 'Adjusted the issuance denomination to match the accepted asset, the imported draft priced issuance in a currency the accepted token can’t convert to.';
     }
   }
   s.deploying = false; s.statusLines = []; s.done = false; delete s.deployed; s.quoteChoice = null;
@@ -897,7 +897,7 @@ function lookupCustomToken(state, render) {
     var bad = results.filter(function (r) { return !r.ok || r.symbol !== first.symbol || Number(r.decimals) !== Number(first.decimals); });
     if (bad.length) {
       ct.status = 'error';
-      ct.error = 'Not the same token on ' + bad.map(function (r) { return chainName(r.cid) + (r.ok ? ' (' + r.symbol + ', ' + r.decimals + ' dec)' : ' — not found'); }).join('; ') + '. Deploy ' + ct.symbol + ' at this exact address on every selected chain, or deselect those chains.';
+      ct.error = 'Not the same token on ' + bad.map(function (r) { return chainName(r.cid) + (r.ok ? ' (' + r.symbol + ', ' + r.decimals + ' dec)' : ', not found'); }).join('; ') + '. Deploy ' + ct.symbol + ' at this exact address on every selected chain, or deselect those chains.';
     } else { ct.status = 'ok'; ct.error = ''; }
     applyAccountingDefaults(state); render();
   }).catch(function () {
@@ -939,7 +939,7 @@ function accountingBlock(state, render) {
     w.appendChild(note);
     // Multi-asset revnet: the backing is fixed by the proportion of payments received and can't be rebalanced.
     if (isRev && state.accepts.length > 1) {
-      var revWarn = pinkNote('Your revnet’s token will be backed by both ETH and USDC paid in by users. Holders can cash out for either, and the backing mix is set entirely by the proportion of payments received in each — you can’t rebalance between them later.');
+      var revWarn = pinkNote('Your revnet’s token will be backed by both ETH and USDC paid in by users. Holders can cash out for either, and the backing mix is set entirely by the proportion of payments received in each, you can’t rebalance between them later.');
       revWarn.style.marginTop = '10px'; // gap between the accounting note and the warning box
       w.appendChild(revWarn);
     }
@@ -974,7 +974,7 @@ function customTokenBlock(state, render) {
     if (ct.status === 'loading') { status.textContent = 'Looking up token…'; status.style.color = ''; }
     else if (ct.status === 'ok') {
       var n = (state.chainIds || []).length;
-      status.textContent = (ct.name ? ct.name + ' — ' : '') + ct.symbol + ' | ' + ct.decimals + ' decimals' + (n > 1 ? ' | verified on all ' + n + ' chains' : '');
+      status.textContent = (ct.name ? ct.name + ': ' : '') + ct.symbol + ' | ' + ct.decimals + ' decimals' + (n > 1 ? ' | verified on all ' + n + ' chains' : '');
       status.style.color = 'var(--c-teal)';
     }
     else if (ct.status === 'error') { status.textContent = ct.error; status.className = 'create-hint warn'; status.style.color = ''; }
@@ -996,7 +996,7 @@ function customTokenBlock(state, render) {
   wrap.appendChild(input);
   wrap.appendChild(status);
   var note = el('div', 'create-hint');
-  note.textContent = 'Must be deployed at the SAME address on every selected chain. Every ruleset, payout, and shop price is denominated in ' + (ct.symbol || 'this token') + ' itself, so issuing tokens and paying need no price feed. Pricing in ETH or USD instead requires the project owner to add a ' + (ct.symbol || 'token') + ' price feed after deploy (Owner tab → Add price feed) — the “Allow adding price feeds” rule is on by default for custom-token projects.';
+  note.textContent = 'Must be deployed at the SAME address on every selected chain. Every ruleset, payout, and shop price is denominated in ' + (ct.symbol || 'this token') + ' itself, so issuing tokens and paying need no price feed. Pricing in ETH or USD instead requires the project owner to add a ' + (ct.symbol || 'token') + ' price feed after deploy (Owner tab → Add price feed), the “Allow adding price feeds” rule is on by default for custom-token projects.';
   wrap.appendChild(note);
   renderStatus();
   return wrap;
@@ -1357,7 +1357,7 @@ function renderImagePicker(uri, busy, onChange) {
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
     if (!f) { onChange('', false); return; } // picker dismissed → clear
-    if (!hasPinata()) { alert('IPFS pinning isn’t available right now — you can add a logo later by editing the project.'); return; }
+    if (!hasPinata()) { alert('IPFS pinning isn’t available right now, you can add a logo later by editing the project.'); return; }
     onChange(uri, true);
     pinFile(f, f.name).then(function (ipfs) { onChange(ipfs, false); })
       .catch(function (e) { alert('Could not upload: ' + (e && e.message || e)); onChange(uri, false); });
@@ -1438,7 +1438,7 @@ export function renderStages(state, render, opts) {
     afterRow.appendChild(sel);
     wrap.appendChild(afterRow);
     var notes = {
-      wait: 'The project idles safely — no issuance, payments paused, cash outs preserved — until the project owner changes it.',
+      wait: 'The project idles safely: no issuance, payments paused, cash outs preserved, until the project owner changes it.',
       terminal: (state.queueEditor ? 'The new ruleset’s' : 'Ruleset #1’s') + ' terms continue on forever, without cycling again.',
       cycle: (state.queueEditor ? 'The new ruleset' : 'Ruleset #1') + ' repeats its cycle until the project owner changes it. Changes can only take effect once a cycled ruleset ends.' + (state.queueEditor ? '' : ' To hand off to new rules after a set number of cycles or on a date, pick Custom and set when Ruleset #2 starts.'),
     };
@@ -1643,7 +1643,7 @@ function revStageEditor(stage, idx, state, render) {
     var tot = revSplitTotalPct(stage);
     if (tot > 100) {
       splitHead.className = 'create-hint warn';
-      splitHead.textContent = 'Splits total ' + round2(tot) + '% — over 100%. Reduce a share so they sum to 100% or less.';
+      splitHead.textContent = 'Splits total ' + round2(tot) + '%: over 100%. Reduce a share so they sum to 100% or less.';
     } else {
       splitHead.className = 'create-hint';
       splitHead.textContent = tot > 0
@@ -1659,7 +1659,7 @@ function revStageEditor(stage, idx, state, render) {
   s1.appendChild(splitHead);
 
   // Auto-issuance — inline rows (no box).
-  var aiHint = el('div', 'create-hint'); aiHint.textContent = 'Set aside $' + tk + ' for named recipients. Anyone can create and send these tokens once the stage starts.'; aiHint.style.marginTop = '22px'; s1.appendChild(aiHint);
+  var aiHint = el('div', 'create-hint'); aiHint.textContent = 'Set aside ' + tk + ' for named recipients. Anyone can create and send these tokens once the stage starts.'; aiHint.style.marginTop = '22px'; s1.appendChild(aiHint);
   (stage.autoIssuances || []).forEach(function (ai, i) { s1.appendChild(autoIssuanceRow(stage, ai, i, tk, render, state, idx)); });
   var addAi = el('button', 'create-add-btn'); addAi.textContent = '+ Set aside tokens';
   addAi.addEventListener('click', function (e) { e.preventDefault(); stage.autoIssuances.push({ count: '', address: '', chainId: null }); render(); });
@@ -1675,7 +1675,7 @@ function revStageEditor(stage, idx, state, render) {
         var n = Number(a.count) || 0;
         if (n > 0) { var c = aiMintChain(state, a); byChain[c] = (byChain[c] || 0) + n; }
       });
-      aiText += ' — ' + state.chainIds.filter(function (cid) { return byChain[cid]; })
+      aiText += ': ' + state.chainIds.filter(function (cid) { return byChain[cid]; })
         .map(function (cid) { return round2(byChain[cid]) + ' on ' + chainName(cid); }).join(', ');
     }
     aiSum.textContent = aiText + '.';
@@ -1686,7 +1686,7 @@ function revStageEditor(stage, idx, state, render) {
   // 2. Cash outs (always on for a revnet — the only exit besides loans)
   var acctSym = surplusTokenLabel(state);
   var s2 = el('div', 'create-rev-sec');
-  var h2 = el('div', 'create-rev-h'); h2.textContent = '$' + tk + ' cash outs'; s2.appendChild(h2);
+  var h2 = el('div', 'create-rev-h'); h2.textContent = tk + ' cash outs'; s2.appendChild(h2);
   var d2 = el('div', 'create-hint'); d2.textContent = 'Holders can access the ' + acctSym + ' in the revnet by cashing out or taking a loan. The cash out tax leaves more funds behind for remaining $' + tk + ' holders and lowers the amount available to borrow.'; s2.appendChild(d2);
   stage.cashOutEnabled = true; // revnets always allow cash outs
   s2.appendChild(cashOutTaxCard(stage, render, acctSym, tk, true));
@@ -1766,7 +1766,7 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
   var cnt = el('input', ''); cnt.type = 'number'; cnt.min = '0'; cnt.step = 'any';
   cnt.value = ai.count || ''; cnt.addEventListener('input', function () { ai.count = cnt.value.trim(); });
   amtWrap.appendChild(cnt);
-  var suf = el('span', 'create-amt-suffix-label'); suf.textContent = '$' + tk; amtWrap.appendChild(suf);
+  var suf = el('span', 'create-amt-suffix-label'); suf.textContent = tk; amtWrap.appendChild(suf);
   row.appendChild(amtWrap);
   var to = el('span', 'create-split-to'); to.textContent = 'to';
   var toField = el('div', 'create-split-tofield'); toField.appendChild(to);
@@ -1803,7 +1803,7 @@ function autoIssuanceRow(stage, ai, idx, tk, render, state, stageIdx) {
     var stillSelected = selIds.some(function (cid) { return canonChainId(cid) === canonChainId(Number(ai.chainId)); });
     if (!stillSelected && selIds.length) {
       var chainWarn = el('div', 'create-hint create-ai-chain-warn');
-      chainWarn.textContent = 'Was set to mint on ' + chainName(ai.chainId) + ', which is no longer selected — now minting on '
+      chainWarn.textContent = 'Was set to mint on ' + chainName(ai.chainId) + ', which is no longer selected, now minting on '
         + chainName(aiMintChain(state, ai)) + '.';
       wrap.appendChild(chainWarn);
     }
@@ -2087,7 +2087,7 @@ function splitLockRow(stage, rec, render) {
       getTimestamp: function () { return rec.lockedUntil; },
       getMinTimestamp: function () { return Math.floor(Date.now() / 1000); },
     }));
-    wrap.appendChild(infoNote("Locked until this date — the split can’t be edited or removed for the rest of this ruleset."));
+    wrap.appendChild(infoNote("Locked until this date: the split can’t be edited or removed for the rest of this ruleset."));
   }
   return wrap;
 }
@@ -2225,7 +2225,7 @@ function payoutsSection(stage, render, state) {
     } else {
       // Surplus is the project's TOTAL across all accepted tokens (cash out reclaim prices against the
       // cumulative surplus). Owner access is unlimited-across-tokens here to avoid per-token cap ambiguity.
-      wrap.appendChild(toggleRow('Give project owner access to surplus funds', dz('The project owner can withdraw the project’s surplus (funds beyond payouts) — an unlimited allowance per accepted token (ETH, USDC, …), each in its own currency.', 'The project owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
+      wrap.appendChild(toggleRow('Give project owner access to surplus funds', dz('The project owner can withdraw the project’s surplus (funds beyond payouts), an unlimited allowance per accepted token (ETH, USDC, …), each in its own currency.', 'The project owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; stage.surplusAllowanceUnlimited = true; render(); }));
       wrap.appendChild(cashOutSection(state, stage, render));
     }
     return wrap;
@@ -2264,7 +2264,7 @@ function payoutsSection(stage, render, state) {
     wrap.appendChild(toggleRow('Give project owner access to surplus funds', dz('The project owner can withdraw from the project’s surplus (funds beyond payouts).', 'The project owner can’t withdraw from the project’s surplus.'), stage.surplusAllowanceOn, function (v) { stage.surplusAllowanceOn = v; render(); }));
     if (stage.surplusAllowanceOn) {
       var saCard = el('div', 'create-subcard');
-      saCard.appendChild(toggleRow('Unlimited', dz('No cap — the project owner can withdraw the entire surplus.', 'Capped at the amount set below.'), stage.surplusAllowanceUnlimited, function (v) { stage.surplusAllowanceUnlimited = v; render(); }));
+      saCard.appendChild(toggleRow('Unlimited', dz('No cap: the project owner can withdraw the entire surplus.', 'Capped at the amount set below.'), stage.surplusAllowanceUnlimited, function (v) { stage.surplusAllowanceUnlimited = v; render(); }));
       if (!stage.surplusAllowanceUnlimited) {
         var saRow = el('div', 'create-inline-row');
         var saAmt = el('input', 'field create-inline-num'); saAmt.type = 'text'; saAmt.placeholder = '0.0'; saAmt.value = stage.surplusAllowanceAmount;
@@ -2522,7 +2522,7 @@ function cashOutSection(state, stage, render) {
   // Item cash out (Shop) overrides token cash out — they can't both be on. Idle the token toggle, but keep the
   // tax card: the same ruleset cashOutTaxRate governs item redemption (JB721Hook forwards it).
   if (itemCashOutOn(state) && !t.cashOutEnabled) {
-    wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'Items cash out for surplus instead (enabled in the Shop) — tokens and items can’t both be cashed out.'));
+    wrap.appendChild(idleToggle('Give tokens cash out access to surplus funds', 'Items cash out for surplus instead (enabled in the Shop), tokens and items can’t both be cashed out.'));
     wrap.appendChild(cashOutTaxCard(t, render, label));
     wrap.appendChild(infoNote('This cash out tax applies to item redemptions.'));
     return wrap;
@@ -2695,7 +2695,7 @@ function collectionExtrasSection(state, render) {
     jwtField.appendChild(jwt); f.appendChild(jwtField);
   }
 
-  f.appendChild(toggleRow('Require exact payment', dz('Payers must pay an item’s exact price — anything extra is turned away.', 'Payers can overpay; the extra is kept as spendable credit.'), c.preventOverspending, function (v) { c.preventOverspending = v; }));
+  f.appendChild(toggleRow('Require exact payment', dz('Payers must pay an item’s exact price, anything extra is turned away.', 'Payers can overpay; the extra is kept as spendable credit.'), c.preventOverspending, function (v) { c.preventOverspending = v; }));
   f.appendChild(toggleRow('Lock reserved items after launch', dz('New items added after launch can’t set aside reserved inventory.', 'New items added after launch can set aside reserved inventory.'), c.noNewTiersWithReserves, function (v) { c.noNewTiersWithReserves = v; }));
   f.appendChild(toggleRow('Lock voting items after launch', dz('Only free items can be added after launch. Governance weight follows the item price.', 'Paid and free items can be added after launch. Governance weight follows the item price.'), c.noNewTiersWithVotes, function (v) { c.noNewTiersWithVotes = v; }));
   f.appendChild(toggleRow('Lock project owner minting after launch', dz('New items added after launch can’t let the project owner mint for free.', 'New items added after launch can let the project owner mint for free.'), c.noNewTiersWithOwnerMinting, function (v) { c.noNewTiersWithOwnerMinting = v; }));
@@ -2706,9 +2706,9 @@ function collectionExtrasSection(state, render) {
     // The revnet deployer fixes split-sale token credit instead of using this choice.
     f.appendChild(toggleRow(SPLIT_SALES_TOKEN_CREDIT_TITLE, dz(SPLIT_SALES_TOKEN_CREDIT_ON, SPLIT_SALES_TOKEN_CREDIT_OFF), c.issueTokensForSplits, function (v) { c.issueTokensForSplits = v; }));
     if (anyTokenCashOut(state) && !c.useForRedemptions) {
-      f.appendChild(idleToggle('Give items cash out access to surplus funds', 'Token cash outs are enabled in your rulesets — tokens and items can’t both be cashed out. Turn off token cash outs to let items redeem.'));
+      f.appendChild(idleToggle('Give items cash out access to surplus funds', 'Token cash outs are enabled in your rulesets, tokens and items can’t both be cashed out. Turn off token cash outs to let items redeem.'));
     } else {
-      f.appendChild(toggleRow('Give items cash out access to surplus funds', dz('Item holders can cash out their items for a share of the project’s surplus ' + surplusTokenLabel(state) + '.', 'Items can’t be cashed out — they grant no claim on surplus.'), c.useForRedemptions, function (v) { c.useForRedemptions = v; render(); }));
+      f.appendChild(toggleRow('Give items cash out access to surplus funds', dz('Item holders can cash out their items for a share of the project’s surplus ' + surplusTokenLabel(state) + '.', 'Items can’t be cashed out, they grant no claim on surplus.'), c.useForRedemptions, function (v) { c.useForRedemptions = v; render(); }));
       if (c.useForRedemptions) f.appendChild(infoNote('Items redeem at the cash out tax you set in your rulesets.'));
     }
   }
@@ -2819,7 +2819,7 @@ function itemMediaPicker(state, nft, render) {
     if (!f) return;
     function fail(msg) { nft._mediaBusy = false; nft._mediaError = msg; render(); alert(msg); }
     if (!hasPinata()) { fail('Add a Pinata JWT in the Store config section to upload media.'); return; }
-    if (f.size > ITEM_MAX_MEDIA_BYTES) { fail('That file is ' + itemFileSize(f.size) + ' — over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
+    if (f.size > ITEM_MAX_MEDIA_BYTES) { fail('That file is ' + itemFileSize(f.size) + ', over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
     nft._mediaBusy = true; nft._mediaError = ''; render();
     pinFile(f, nft.name || f.name).then(function (uri) {
       nft.imageUri = uri; nft.mediaType = mediaTypeForFile(f); nft._mediaBusy = false; nft._mediaError = ''; render();
@@ -2866,7 +2866,7 @@ function itemEditor(state, nft, idx, render) {
       var addS = el('button', 'operator-cta create-add-link'); addS.textContent = '+ Add recipient'; addS.style.marginTop = '12px';
       addS.addEventListener('click', function (e) { e.preventDefault(); nft.splitRecipients.push({ pct: '', recip: '', benef: '' }); render(); });
       sc.appendChild(addS);
-      if (nft.flags.allowCredits) sc.appendChild(warnNote('Buying with shop credit bypasses this split — the split only divides new payment, and a credit purchase brings in little or none. To make every sale honor the split, turn off “Allow credit purchases” under Extra options.'));
+      if (nft.flags.allowCredits) sc.appendChild(warnNote('Buying with shop credit bypasses this split, the split only divides new payment, and a credit purchase brings in little or none. To make every sale honor the split, turn off “Allow credit purchases” under Extra options.'));
       c.appendChild(sc);
     }
     c.appendChild(toggleRow('Initial discount', dz('The item starts at a percent off its price.', 'The item sells at full price.'), nft.discountOn, function (v) { nft.discountOn = v; if (!v) nft.discountPct = ''; render(); }));
@@ -3078,7 +3078,7 @@ function chainBridgeBlock(state, render) {
     var usdcAcct = (state.accepts || [])[0] === 'usdc';
     if (usdcAcct && state.suckerType !== 'ccip') {
       wrap.appendChild(state.suckerType === 'native'
-        ? warnNote('USDC moves between chains over CCIP only — native bridges can’t carry canonical USDC. Choose CCIP (or Native and CCIP) to link these chains.')
+        ? warnNote('USDC moves between chains over CCIP only, native bridges can’t carry canonical USDC. Choose CCIP (or Native and CCIP) to link these chains.')
         : infoNote('USDC moves between chains over CCIP only, so this project links its chains with CCIP suckers.'));
     }
     var unc = uncoveredPairs(state);
@@ -3117,7 +3117,7 @@ function renderDeploy(state, render) {
   // The exact transaction for each chain is shown in a confirmation screen (with a copy-able LLM audit
   // prompt) right before you sign it — no need to re-review raw calldata here.
   if (state.chainIds.length > 1) {
-    wrap.appendChild(pinkNote('Your wallet will switch networks and prompt for a signature once per chain (' + state.chainIds.length + ' chains) — each request is bound to its own chain, so the wallet must be on that network to sign it. After signing all ' + state.chainIds.length + ', you pay gas once and Relayr deploys to every chain.'));
+    wrap.appendChild(pinkNote('Your wallet will switch networks and prompt for a signature once per chain (' + state.chainIds.length + ' chains), each request is bound to its own chain, so the wallet must be on that network to sign it. After signing all ' + state.chainIds.length + ', you pay gas once and Relayr deploys to every chain.'));
     wrap.appendChild(infoNote('Each chain’s exact transaction is shown for review before you sign it.'));
   } else {
     wrap.appendChild(infoNote('The exact transaction data is shown for review before you sign it.'));
@@ -3129,7 +3129,7 @@ function renderDeploy(state, render) {
   // launch whose stage 1 already began, with issuance-cut cycles elapsed against what was
   // reviewed. Nothing can be re-derived at execution time without breaking the hash, so say so.
   if (isSafeConnected()) {
-    wrap.appendChild(infoNote('This launch pins its start time now (about 10 minutes out) so every chain encodes the same value — that shared value is what links your chains together. If your multisig executes days later, stage 1 will already have begun and some of its scheduled issuance cuts may have passed. Execute promptly, or re-create the launch when you are ready to sign.'));
+    wrap.appendChild(infoNote('This launch pins its start time now (about 10 minutes out) so every chain encodes the same value, that shared value is what links your chains together. If your multisig executes days later, stage 1 will already have begun and some of its scheduled issuance cuts may have passed. Execute promptly, or re-create the launch when you are ready to sign.'));
   }
 
   // ToS + launch
@@ -3155,7 +3155,7 @@ function renderDeploy(state, render) {
   tos.appendChild(tosContent);
   wrap.appendChild(tos);
 
-  if (!hasPinata()) wrap.appendChild(infoNote('IPFS pinning isn’t configured, so your logo & metadata will be skipped at launch — you can add them later by editing the project.'));
+  if (!hasPinata()) wrap.appendChild(infoNote('IPFS pinning isn’t configured, so your logo & metadata will be skipped at launch, you can add them later by editing the project.'));
 
   // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
   if (state.done) {
@@ -3277,7 +3277,7 @@ function renderDeploy(state, render) {
     qSel.setAttribute('aria-label', 'Funding chain');
     var qPlaceholder = el('option'); qPlaceholder.value = ''; qPlaceholder.textContent = 'Choose a funding chain'; qPlaceholder.disabled = true; qPlaceholder.selected = true; qSel.appendChild(qPlaceholder);
     state.quoteChoice.options.forEach(function (o, i) {
-      var op = el('option'); op.value = String(i); op.textContent = o.chain + ' — ' + o.eth + ' ETH'; qSel.appendChild(op);
+      var op = el('option'); op.value = String(i); op.textContent = o.chain + ': ' + o.eth + ' ETH'; qSel.appendChild(op);
     });
     qc.appendChild(qSel);
     var qFoot = el('div', 'create-modal-foot'); qFoot.style.marginTop = '10px';
@@ -3331,8 +3331,8 @@ function renderDeploy(state, render) {
   if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
   if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Flavor step to launch.'));
   if (needOperator) wrap.appendChild(infoNote('Set a revnet operator on the Flavor step to deploy your revnet.'));
-  if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet — fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
-  if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying — otherwise those funds/tokens go to the zero address.'));
+  if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet, fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
+  if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying, otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
   if (approvalBad) wrap.appendChild(warnNote(approvalBad + ' Without it the approval condition silently becomes “none” (no review window for edits).'));
   if (deadlineBad) wrap.appendChild(warnNote(deadlineBad));
@@ -3340,7 +3340,7 @@ function renderDeploy(state, render) {
   if (mediaBad) wrap.appendChild(warnNote(mediaBad));
   if (noticeBad) wrap.appendChild(warnNote(noticeBad));
   if (durationBad) wrap.appendChild(warnNote(durationBad));
-  if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start — a whole number of cycles or a date — on the Rulesets step.'));
+  if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start: a whole number of cycles or a date, on the Rulesets step.'));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
   if (bad !== -1) wrap.appendChild(warnNote('Stage ' + (bad + 1) + ' has no duration but isn’t the last stage. Give it a duration on the Stages step so Stage ' + (bad + 2) + ' starts when its cycle ends.'));
   if (!state.tos) wrap.appendChild(infoNote('Check the box above to confirm you accept the risks before ' + (isRev ? 'deploying.' : 'launching.')));
@@ -3378,7 +3378,7 @@ function lpHookIssue(state) {
   var bad = (state.chainIds || []).filter(function (cid) { return !getAddress('JBP6FeeLPSplitHook', cid); });
   if (!bad.length) return null;
   return 'The Fund market (LP fee) hook isn’t deployed on ' + bad.map(chainName).join(', ')
-    + ' — remove the buyback-liquidity split or deselect the chain.';
+    + ', remove the buyback-liquidity split or deselect the chain.';
 }
 
 // A preset approval condition ("1-day deadline" etc.) encodes a shared JBDeadline contract address.
@@ -3393,7 +3393,7 @@ function deadlinePresetIssue(state) {
     var bad = (state.chainIds || []).filter(function (cid) { return !getAddress(dl.contract, cid); });
     if (bad.length) {
       return 'The ' + dl.label + ' approval hook isn’t deployed on ' + bad.map(chainName).join(', ')
-        + ' — pick a different approval condition or deselect the chain.';
+        + ', pick a different approval condition or deselect the chain.';
     }
   }
   return null;
@@ -3684,7 +3684,7 @@ function reviewSummary(state) {
   if (state.projectType === 'revnet') {
     c.appendChild(row('Flavor', 'Revnet'));
     c.appendChild(row('Name', state.details.name || '—'));
-    c.appendChild(row('Token', '$' + tickerLabel(state)));
+    c.appendChild(row('Token', tickerLabel(state)));
     c.appendChild(row('Accounting token', surplusTokenLabel(state)));
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
     c.appendChild(row(
@@ -3840,8 +3840,8 @@ function itemSplits(d, state, chainId, itemIdx) {
 
 // Known JB/REV revert selectors → friendly, actionable guidance pointing at the step the user can fix.
 var DEPLOY_ERROR_GUIDE = [
-  { sel: '0x584f1c49', name: 'jbcontroller_invalidcreationfee', msg: 'The project creation fee didn’t match what the contract expects. Refresh and try again — the fee may have just changed.' },
-  { sel: '0x2e373fa3', name: 'jbprojects_invalidcreationfee', msg: 'The project creation fee didn’t match what the contract expects. Refresh and try again — the fee may have just changed.' },
+  { sel: '0x584f1c49', name: 'jbcontroller_invalidcreationfee', msg: 'The project creation fee didn’t match what the contract expects. Refresh and try again, the fee may have just changed.' },
+  { sel: '0x2e373fa3', name: 'jbprojects_invalidcreationfee', msg: 'The project creation fee didn’t match what the contract expects. Refresh and try again, the fee may have just changed.' },
   { sel: '0x50dcc307', name: 'jbprojects_zerocreationfeereceiver', msg: 'The protocol’s creation-fee receiver isn’t configured on this chain, so deploys aren’t available here right now. Try a different chain.' },
   { sel: '0xba2fe6f3', name: 'revdeployer_stagetimesmustincrease', msg: 'Each stage must start after the previous one. On the Stages step, give a later stage a larger “days after”.' },
   { sel: '0x8249b409', name: 'revdeployer_musthavesplits', msg: 'A stage has a split percentage but no recipients. On the Stages step, add a split recipient or remove the split.' },
@@ -4130,7 +4130,7 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear) {
       : session.paymentState === 'sending'
       ? 'The wallet payment request was started, but its transaction hash has not been captured. Check the wallet’s activity and this same bundle before starting another launch.'
       : progress.failed
-      ? 'Some chain outcomes may differ. Nothing was resubmitted—review the project state before clearing this receipt or retrying missing work.'
+      ? 'Some chain outcomes may differ. Nothing was resubmitted. Review the project state before clearing this receipt or retrying missing work.'
       : (session.persisted === false
         ? 'The payment was submitted, but this browser could not save the receipt. Keep this window open or copy the bundle ID. Checking status never signs or pays again.'
         : 'The payment receipt is saved. Checking status never signs, pays, or creates another bundle.'),
@@ -4181,7 +4181,7 @@ function deploy(state, render) {
   // A connected wallet is always required — it signs/sends (and pays once, for multichain via Relayr).
   var signer = getAccount && getAccount();
   if (!signer) {
-    connect().then(function () { state.statusLines.push({ text: 'Wallet connected — click Launch again.' }); render(); })
+    connect().then(function () { state.statusLines.push({ text: 'Wallet connected: click Launch again.' }); render(); })
       .catch(function (e) { state.statusLines.push({ text: 'Could not connect: ' + (e && e.message || e), err: true }); render(); });
     return;
   }
@@ -4251,7 +4251,7 @@ async function runDeploy(state, owner) {
       if (!restoredQuote) throw new Error('The saved quote’s funding options are unavailable after this reload. Verify the existing bundle externally before starting another launch; no new requests will be signed.');
       return fundCreateRelayrQuote(state, restoredRelayr.account, restoredQuote, restoredRelayr.chains);
     }
-    push('Checking the saved paid Relayr bundle — no new transaction will be created.');
+    push('Checking the saved paid Relayr bundle, no new transaction will be created.');
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
@@ -4274,11 +4274,11 @@ async function runDeploy(state, owner) {
       projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
       push('Metadata pinned: ' + projectUri, 'ok');
     } catch (e) {
-      push('Could not pin metadata (' + (e && e.message || e) + ') — nothing was sent.', 'err');
+      push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
       throw e;
     }
   } else {
-    push('No Pinata JWT — launching without metadata; you can edit the project later.');
+    push('No Pinata JWT: launching without metadata; you can edit the project later.');
   }
 
   // Pin each store item's metadata JSON (name + media) so its tier resolves to {name, image/animation_url}.
@@ -4295,7 +4295,7 @@ async function runDeploy(state, owner) {
         it.metaUri = await pinJson(meta, (it.name || 'item') + '-item');
         it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri);
       } catch (e) {
-        push('Could not pin item metadata (' + (e && e.message || e) + ') — nothing was sent.', 'err');
+        push('Could not pin item metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
         throw e;
       }
     }
@@ -4377,11 +4377,11 @@ async function runDeploy(state, owner) {
       ? plans.map(function (p) { return 'Sign for ' + chainName(p.chainId); }).concat(['Pay the relay fee once'])
       : plans.map(function (p) { return (isRev ? 'Deploy the revnet' : 'Launch the project') + ' on ' + chainName(p.chainId); }),
     note: useRelayr
-      ? 'This is the exact per-chain calldata that will be wrapped into ERC-2771 forward requests and sent to Relayr for a quote. Nothing is signed or sent until you confirm — simulation runs next, then you pay once.'
+      ? 'This is the exact per-chain calldata that will be wrapped into ERC-2771 forward requests and sent to Relayr for a quote. Nothing is signed or sent until you confirm, simulation runs next, then you pay once.'
       : multichain ? 'These exact transactions will be sent in sequence. Each chain requires its own wallet confirmation and gas. The shared launch configuration is saved so interrupted launches can resume without redeploying confirmed chains.'
-      : 'This is the exact transaction. Nothing is sent until you confirm — it’s simulated next, then sent to your wallet to sign.',
+      : 'This is the exact transaction. Nothing is sent until you confirm, it’s simulated next, then sent to your wallet to sign.',
   });
-  if (!reviewOk || (typeof reviewOk === 'object' && !reviewOk.ok)) { push('Launch cancelled — nothing was simulated or sent.'); return false; }
+  if (!reviewOk || (typeof reviewOk === 'object' && !reviewOk.ok)) { push('Launch cancelled: nothing was simulated or sent.'); return false; }
   var confirmCtx = typeof reviewOk === 'object' ? reviewOk : null;
   function pushLive(text, kind) { push(text, kind); if (confirmCtx) confirmCtx.showStatus(text, kind === 'err' ? 'error' : 'pending'); }
 
@@ -4402,7 +4402,7 @@ async function runDeploy(state, owner) {
         await simulateTransaction({ chainId: p0.chainId, address: p0.address, abi: p0.abi, functionName: p0.functionName || 'launchProjectFor', args: p0.args, value: p0.value, account: signer });
         push('Simulation passed on ' + chainName(p0.chainId), 'ok');
       } catch (e) {
-        throw new Error('Could not simulate on ' + chainName(p0.chainId) + ' — ' + friendlyDeployError(e));
+        throw new Error('Could not simulate on ' + chainName(p0.chainId) + ': ' + friendlyDeployError(e));
       }
       if (!getAccount() || getAccount().toLowerCase() !== signer.toLowerCase()) throw new Error('Connected account changed. Review the launch transaction again.');
       assertScheduleFresh(p0.scheduleValidUntil);
@@ -4426,7 +4426,7 @@ async function runDeploy(state, owner) {
   // Multichain → Relayr (two-step, like revnet-app). We DON'T eth_call-simulate locally — Relayr simulates
   // each chain server-side and only returns a quote if every leg would succeed. Sign one request per chain,
   // post the bundle for a quote, let the user CHOOSE which chain to pay gas on, then pay once.
-  push('Sign one request per chain — gas is paid once at the end.');
+  push('Sign one request per chain, gas is paid once at the end.');
   var txs = [];
   for (var k = 0; k < plans.length; k++) {
     var pk = plans[k];
@@ -4460,13 +4460,13 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
       options: options.map(function (o) { return { opt: o, chain: chainName(o.chain), eth: formatEther(BigInt(o.amount)) }; }),
       resolve: function (o) { state.quoteChoice = null; resolve(o); },
     };
-    push('Relayr quoted ' + options.length + ' pay option' + (options.length > 1 ? 's' : '') + ' — choose where to pay gas once to fund all chains.');
+    push('Relayr quoted ' + options.length + ' pay option' + (options.length > 1 ? 's' : '') + ', choose where to pay gas once to fund all chains.');
   });
   if (!pay) { push('Funding cancelled. The same saved quote remains available in this window.'); return false; }
   var wallet = getWalletClient();
   var cur = await wallet.getChainId();
   if (cur !== pay.chain) { push('Switching wallet to ' + chainName(pay.chain) + '…'); await switchChain(pay.chain); }
-  push('Pay once on ' + chainName(pay.chain) + ' (' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains — confirm in wallet…');
+  push('Pay once on ' + chainName(pay.chain) + ' (' + formatEther(BigInt(pay.amount)) + ' ETH) to fund all chains, confirm in wallet…');
   var savedSchedule = state._relayrPending || {};
   var paidSession = {
     scheduleValidUntil: savedSchedule.scheduleValidUntil, rulesetCountByChain: savedSchedule.rulesetCountByChain,
@@ -4493,7 +4493,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
     state._relayrPending = restoreUnsentRelayrPayment(CREATE_RELAYR_SCOPE, paidSession) || state._relayrPending;
   }, function () { assertScheduleFresh(paidSession.scheduleValidUntil); });
   paidSession.paymentHash = payHash;
-  push('Payment sent | ' + truncAddr(payHash) + ' — relayers are deploying on each chain…');
+  push('Payment sent | ' + truncAddr(payHash) + ', relayers are deploying on each chain…');
   // Relayr's per-tx records don't carry a chain field, but they come back in submission order — map by
   // index to the chains we deployed, and render a friendly per-chain checklist (see renderDeploy).
   state.deployChains = chains.map(function (chain) { return Number(chain.id); });
@@ -4940,7 +4940,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter
       // (no review window) on an immutable deploy. deadlinePresetIssue gates the button with the same text.
       if (!dlAddr) {
         throw new Error('The ' + dl.label + ' approval hook isn’t deployed on ' + chainName(chainId)
-          + ' — pick a different approval condition or deselect the chain.');
+          + ', pick a different approval condition or deselect the chain.');
       }
       rs.approvalHook = dlAddr;
     } else {
@@ -5087,7 +5087,7 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
     // deploy button with the same message; this throw is the encoder backstop.
     if (!hookAddr) {
       throw new Error('The Fund market (LP fee) hook isn’t deployed on ' + chainName(chainId)
-        + ' — remove the buyback-liquidity split or deselect the chain.');
+        + ', remove the buyback-liquidity split or deselect the chain.');
     }
     var b = getAccount && getAccount();
     return { preferAddToBalance: false, percent: rawPercent, projectId: 0,
@@ -5294,7 +5294,7 @@ export function verifyFeedCoverage(chainId, pairs, labelOf, opts) {
   opts = opts || {};
   if (!pairs || !pairs.length) return Promise.resolve();
   var name = chainName(chainId);
-  var retry = new Error('Couldn’t verify price feed coverage on ' + name + ' right now — nothing was sent. Try again.');
+  var retry = new Error('Couldn’t verify price feed coverage on ' + name + ' right now. Nothing was sent. Try again.');
   var probe = opts.probe;
   if (!probe) {
     var prices = getAddress('JBPrices', chainId);
@@ -5319,7 +5319,7 @@ export function verifyFeedCoverage(chainId, pairs, labelOf, opts) {
     if (!missing.length) throw retry;
     var named = missing.map(function (f) { return labelOf(f.pair.a) + ' and ' + labelOf(f.pair.b); }).join(', ');
     throw new Error('No price feed is registered between ' + named + ' on ' + name +
-      ', so the protocol cannot convert between them — payments or cash outs would revert onchain. ' +
+      ', so the protocol cannot convert between them, payments or cash outs would revert onchain. ' +
       'This is blocked until the protocol registers the missing default feed (registration lifts this automatically). Nothing was sent.');
   });
 }
@@ -5501,7 +5501,7 @@ function attachEns(input, store, opts) {
       } else if (/^0x/i.test(v)) {
         // Malformed 0x (valid = 40 hex chars). Half-typed ENS without a dot stays silent (no mid-typing nag).
         hint.style.display = ''; hint.className = 'create-resolve-hint warn';
-        hint.textContent = 'Not a valid address — needs 0x followed by 40 hex characters.';
+        hint.textContent = 'Not a valid address: needs 0x followed by 40 hex characters.';
       } else { hint.style.display = 'none'; }
       return;
     }

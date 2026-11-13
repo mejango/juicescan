@@ -70,7 +70,7 @@ describe('runAddLiquidityTxs inside the Safe App', () => {
     expect(simulate.params[0].blockStateCalls[0].calls.map(c => [c.from, c.to, c.value])).toEqual([[SAFE, TOKEN, '0x0'], [SAFE, PERMIT2, '0x0'], [SAFE, POSM, '0x5']]);
     expect(runtime.wallet.writeContract).not.toHaveBeenCalled();
     expect(queued).toHaveBeenCalledOnce();
-    expect(status.mock.calls.map(c => c[0])).toEqual(['Simulating the batch from your Safe…', 'Proposing the batch of 3 calls to your Safe — confirm in Safe{Wallet}…']);
+    expect(status.mock.calls.map(c => c[0])).toEqual(['Simulating the batch from your Safe…', 'Proposing the batch of 3 calls to your Safe. Confirm in Safe{Wallet}…']);
     document.removeEventListener('jb:safe-queued', queued);
   });
 

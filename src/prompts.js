@@ -70,7 +70,7 @@ var CONTRACT_DESCRIPTIONS = {
   DefifaDeployer: 'Deploys and manages Defifa prediction-market games — each game has tiers representing outcomes; players mint tier NFTs during the MINT phase, a scorecard assigns cash out weights after the event, and the pooled funds are distributed proportionally to winning holders. Phases: COUNTDOWN → MINT → REFUND → SCORING → COMPLETE/NO_CONTEST.',
   DefifaHook: 'The 721 hook powering Defifa games — enforces game-phase rules on minting and cash out, and applies the scorecard cash out weights per tier.',
   DefifaGovernor: 'Manages ratification of Defifa scorecards via token-weighted attestation — NFT holders attest to proposed cash out weights with power proportional to NFTs held; a scorecard ratifies once it reaches quorum.',
-  CTPublisher: 'The Croptop publishing engine. Anyone can publish NFT posts to a project’s 721 hook subject to per-category criteria (min price, supply bounds, allowlist) set by the collection owner; routes a 5% fee to the fee project, pays the remainder into the project terminal, and dedups duplicate IPFS URIs to reuse existing tiers.',
+  CTPublisher: 'The Croptop publishing engine. Anyone can publish NFT posts to a project’s 721 hook subject to per-category criteria (min price, supply bounds, allowlist) set by the collection owner; routes a 5% fee to the Croptop Publishing Network project (CPN), pays the remainder into the project terminal, and dedups duplicate IPFS URIs to reuse existing tiers.',
   CTDeployer: 'Deploys Juicebox projects pre-configured for Croptop — a permissionless NFT publishing system — and registers posting permissions/criteria.',
   CTProjectOwner: 'A dead-end project owner that locks ownership while preserving Croptop posting permissions.',
   JBMatchingPriceFeed: 'A 1:1 price feed used when a payout limit is denominated in the same currency as the terminal token, so no conversion is needed.',
@@ -80,7 +80,7 @@ var CONTRACT_DESCRIPTIONS = {
 // Mirrors AUDIT_BODY in juicebox-money src/lib/audit-prompt.ts; keep the two in sync.
 export function getAuditPrompt() {
   return [
-    'You are a security engineer auditing the Juicebox V6 protocol and its web apps: open-source, permissionless programmable money on Ethereum, Optimism, Base, and Arbitrum. Find every practical way an attacker, malformed integration, stale deployment, or wrong UI assumption could steal or strand funds, brick a project, corrupt owner or token holder invariants, mislead a user about the transaction they sign, or make the system less safe, efficient, or clear for people and AIs.',
+    'You are a security engineer auditing the Juicebox V6 protocol and its web apps: open-source, permissionless programmable money on Ethereum, Base, Arbitrum, and Optimism. Find every practical way an attacker, malformed integration, stale deployment, or wrong UI assumption could steal or strand funds, brick a project, corrupt owner or token holder invariants, mislead a user about the transaction they sign, or make the system less safe, efficient, or clear for people and AIs.',
     '',
     'Do not stop at the first finding. Work from first principles, check claims against code and tests, and write proofs of concept wherever you can. Treat existing audits as evidence, not as a priority guide. Use a new .md file as a scratchpad and for results.',
     '',
@@ -300,9 +300,9 @@ export function getComponentAuditPrompt(fn, contractName, fnNatspec, componentEl
 
   // Protocol context
   lines.push('## Protocol Context');
-  lines.push('Juicebox V6 is an open-source programmable money protocol. Key invariants: terminal solvency, no over-withdrawal, correct bonding curve cashout, privilege containment via JBPermissions.');
+  lines.push('Juicebox V6 is an open-source programmable money protocol. Key invariants: terminal solvency, no over-withdrawal, correct bonding curve cash out, privilege containment via JBPermissions.');
   lines.push('');
-  lines.push('Known gotchas: empty fundAccessLimitGroups = zero payouts (not unlimited), pending reserved tokens inflate totalSupply reducing cashout value, currency (uint32) != baseCurrency (1=ETH, 2=USD).');
+  lines.push('Known gotchas: empty fundAccessLimitGroups = zero payouts (not unlimited), pending reserved tokens inflate totalSupply reducing cash out value, currency (uint32) != baseCurrency (1=ETH, 2=USD).');
 
   return lines.join('\n');
 }

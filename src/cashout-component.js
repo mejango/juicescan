@@ -97,7 +97,7 @@ export function renderCashOutComponent() {
     if (state.beneficiary === 'custom' && state.customBeneficiary) params.beneficiary = state.customBeneficiary;
     if (state.network === 'testnet') params.network = 'testnet';
     return params;
-  }, { permissionNote: 'Give up your project tokens to receive funds under the project’s cash-out rules.' });
+  }, { permissionNote: 'Return your project tokens for funds under the project’s cash out rules.' });
   var wrapper = comp.wrapper;
   var body = comp.body;
 
@@ -291,11 +291,11 @@ export function renderCashOutComponent() {
     if (state.balance != null && cashOutCount > BigInt(state.balance)) { state.error = 'Amount exceeds your project token balance'; updateUI(); return; }
 
     var holder = getAccount();
-    if (!holder) { state.error = 'Connect wallet first'; updateUI(); return; }
+    if (!holder) { state.error = 'Connect a wallet to continue'; updateUI(); return; }
 
     var beneficiary = getBeneficiaryAddress(state);
     if (!beneficiary) {
-      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect wallet first';
+      state.error = state.beneficiary === 'custom' ? 'Enter a valid recipient address' : 'Connect a wallet to continue';
       updateUI(); return;
     }
 
@@ -360,7 +360,7 @@ export function renderCashOutComponent() {
       confirmSummary: { action: 'Cash out', rows: [
         ['Cashing out', formatAmount(cashOutCount, 18) + ' tokens'],
         ['You receive', (preparedRoute.via === 'amm' ? '≈ ' : '') + formatAmount(preparedRoute.expected, reclaimDecimals) + ' ' + reclaimSymbol],
-        ['Minimum', formatAmount(preparedRoute.terminalMinimum, reclaimDecimals) + ' ' + reclaimSymbol + ' — fails if you receive less'],
+        ['Minimum', formatAmount(preparedRoute.terminalMinimum, reclaimDecimals) + ' ' + reclaimSymbol + ', fails if you receive less'],
         ['Route', preparedRoute.via === 'amm' ? 'sold on Uniswap' : 'destroyed in return for available project funds'],
         ['To', beneficiary],
       ] },

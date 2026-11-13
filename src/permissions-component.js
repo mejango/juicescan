@@ -222,7 +222,7 @@ export function renderPermissionsComponent() {
     }
 
     var account = getAccount();
-    if (!account) { state.error = 'Connect wallet first'; updateUI(); return; }
+    if (!account) { state.error = 'Connect a wallet to continue'; updateUI(); return; }
 
     var selectedArr = Object.keys(state.selectedIds)
       .filter(function(k) { return state.selectedIds[k]; })
@@ -244,7 +244,7 @@ export function renderPermissionsComponent() {
     // Flag the two highest-stakes grants explicitly in the confirm (the decoded `permissionIds: [1]` alone
     // doesn't convey "full control"): ROOT (id 1) = every permission; projectId 0 = ALL of your projects.
     var danger = [];
-    if (selectedArr.indexOf(1) !== -1) danger.push('ROOT grants ' + truncAddr(state.operator) + ' EVERY permission — full operator control of your project(s).');
+    if (selectedArr.indexOf(1) !== -1) danger.push('ROOT grants ' + truncAddr(state.operator) + ' EVERY permission: full operator control of your project(s).');
     if (projectId === 0) danger.push('Project ID 0 applies these permissions to ALL your projects on this chain, not just one.');
 
     executeTransaction({
@@ -253,7 +253,7 @@ export function renderPermissionsComponent() {
         ['Operator', state.operator],
         ['On behalf of', account],
         ['Scope', projectId === 0 ? 'all your projects on this chain' : 'project #' + String(projectId)],
-        ['Permissions', selectedArr.length ? selectedArr.join(', ') + ' (replaces the current set)' : 'none — removes all access'],
+        ['Permissions', selectedArr.length ? selectedArr.join(', ') + ' (replaces the current set)' : 'none: removes all access'],
       ] },
       confirmDescription: danger.join(' ') || undefined,
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },

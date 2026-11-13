@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { lpAmountsModeNote, lpFullRangeBounds, lpSolveRangeFromAmounts } from '../src/discover.js';
 
 // The solver turns "I have X project tokens and Y pair tokens" into a concrete
-// price range. It pins the floor at the cash-out price and solves the ceiling;
+// price range. It pins the floor at the cash out price and solves the ceiling;
 // when the token side is too heavy for any ceiling, it pins the ceiling at the
 // issuance price and solves the floor instead. Round-tripped below through the
 // independent lpCounterpart-style math.
@@ -117,7 +117,7 @@ describe('lpAmountsModeNote', () => {
   });
 
   it('explains each anchor and fallback', () => {
-    expect(note(1000, 0.08, FLOOR, CEILING)).toContain('cash-out');
+    expect(note(1000, 0.08, FLOOR, CEILING)).toContain('cash out');
     expect(note(1000, 0.08, null, CEILING)).toContain('half the current price');
     expect(note(100000, 0.08, FLOOR, CEILING)).toContain('issuance');
     expect(note(100000, 0.08, FLOOR, null)).toContain('twice the current price');

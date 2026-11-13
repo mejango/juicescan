@@ -124,7 +124,7 @@ describe('Safe execution decoding', () => {
       args: [41n],
     });
     const steps = describeSafeInnerCall(data);
-    expect(steps[0].title).toBe('Queued call — JBController.sendReservedTokensToSplitsOf(…)');
+    expect(steps[0].title).toBe('Queued call: JBController.sendReservedTokensToSplitsOf(…)');
     expect(rowsOf(steps)).toContain('projectId="41"');
     expect(describeSafeInnerCall('0xdeadbeef')).toBeNull();
   });
@@ -185,8 +185,8 @@ describe('permissions and splits decoding', () => {
     ]);
     expect(steps[0].title).toBe('Reserved tokens');
     const rows = rowsOf(steps).join('\n');
-    expect(rows).toContain('Split 1 — 50%');
+    expect(rows).toContain('Split 1: 50%');
     expect(rows).toContain(`project #3 (beneficiary ${BOB})`);
-    expect(rows).toContain("Total=75% — the remainder follows the ruleset's default");
+    expect(rows).toContain("Total=75%, the remainder follows the ruleset's default");
   });
 });
