@@ -3,7 +3,7 @@
 - [x] 1. Learn: `src/learn-sections.js` re-copied from juicebox.money `src/lib/learn-guide.ts` (origin/main d6d94813). The renderer gains what that copy now uses: inline `[label](href)` links, glossary row ids (`#term-…`, routed to Learn), `compare` and `points` blocks, plain table keys.
 - [x] 2. Build: "called X" asides folded into the sentence, hedges cut, rollout narration and the version number out of prose, headings say what the section does, caps emphasis lowered, chain order.
 - [x] 3. Why: six noun lines under "What projects get with Juicebox".
-- [ ] 4. `npm run check`.
+- [x] 4. `npm run check`: 148 browser tests and the unit suite pass.
 
 ## Plan refinement
 - **Objective:** Juicescan's guides follow the copy rules jango ruled on for juicebox.money, with Learn owned by juicebox.money and only mirrored here.
