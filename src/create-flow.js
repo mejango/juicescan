@@ -945,7 +945,7 @@ function accountingBlock(state, render) {
     if (isCustom) { w.appendChild(customTokenBlock(state, render)); return w; }
     var note = el('div', 'create-hint');
     note.textContent = isRev
-      ? ('The funds holders of $' + tickerLabel(state) + ' can cash out or borrow against under the revnet’s rules.')
+      ? ('The funds holders of ' + tickerLabel(state) + ' can cash out or borrow against under the revnet’s rules.')
       : 'The token(s) that make up your project’s balance.';
     w.appendChild(note);
     // Multi-asset revnet: the backing is fixed by the proportion of payments received and can't be rebalanced.
@@ -1615,7 +1615,7 @@ function revStageSummary(stage, idx, state) {
   var tk = tickerLabel(state);
   var unit = state.revBaseCurrency === 2 ? 'USD' : 'ETH';
   var parts = [];
-  if (idx === 0 || stage.weight) parts.push((stage.weight || '0') + ' $' + tk + '/' + unit);
+  if (idx === 0 || stage.weight) parts.push((stage.weight || '0') + ' ' + tk + '/' + unit);
   else parts.push('keeps previous rate');
   if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('−' + round2(stage.weightCutPercent) + '%/' + (stage.cutFreqDays || '30') + 'd');
   var splitTotal = revSplitTotalPct(stage);
@@ -1634,15 +1634,15 @@ function revStageEditor(stage, idx, state, render) {
 
   // 1. Issuance
   var s1 = el('div', 'create-rev-sec');
-  var h1 = el('div', 'create-rev-h'); h1.textContent = 'New $' + tk + ' per payment'; s1.appendChild(h1);
-  var d1 = el('div', 'create-hint'); d1.textContent = 'How many $' + tk + ' to create per unit paid, before the project’s share.'; s1.appendChild(d1);
+  var h1 = el('div', 'create-rev-h'); h1.textContent = 'New ' + tk + ' per payment'; s1.appendChild(h1);
+  var d1 = el('div', 'create-hint'); d1.textContent = 'How many ' + tk + ' to create per unit paid, before the project’s share.'; s1.appendChild(d1);
   // Issuance row: "[10000] $TOKEN / ETH"
   var issRow = el('div', 'create-inline-row');
   var issIn = el('input', 'field create-inline-num'); issIn.type = 'number'; issIn.min = '0'; issIn.step = 'any';
   issIn.placeholder = idx === 0 ? '10000' : 'inherit'; issIn.value = stage.weight || '';
   issIn.addEventListener('input', function () { stage.weight = issIn.value.trim(); });
   issRow.appendChild(issIn);
-  issRow.appendChild(document.createTextNode(' $' + tk + ' per '));
+  issRow.appendChild(document.createTextNode(' ' + tk + ' per '));
   // Base currency (revnet-wide): issue per ETH or per USD. Small inline dropdown (no full-width `field`).
   issRow.appendChild(currencySelect(state.revBaseCurrency, function (v) { state.revBaseCurrency = v; render(); }, null, lockedCurrencySym(state)));
   // "add auto cuts?" prompt + checkbox sit to the right of the currency selector (kept even when checked).
@@ -1700,7 +1700,7 @@ function revStageEditor(stage, idx, state, render) {
   var aiTotal = (stage.autoIssuances || []).reduce(function (s, a) { return s + (Number(a.count) || 0); }, 0);
   if (aiTotal > 0) {
     var aiSum = el('div', 'create-hint');
-    var aiText = 'Tokens available from stage start: ' + round2(aiTotal) + ' $' + tk;
+    var aiText = 'Tokens available from stage start: ' + round2(aiTotal) + ' ' + tk;
     if ((state.chainIds || []).length > 1) {
       // Break the total down by mint chain — each row only mints on its chosen chain.
       var byChain = {};
@@ -1720,7 +1720,7 @@ function revStageEditor(stage, idx, state, render) {
   var acctSym = surplusTokenLabel(state);
   var s2 = el('div', 'create-rev-sec');
   var h2 = el('div', 'create-rev-h'); h2.textContent = tk + ' cash outs'; s2.appendChild(h2);
-  var d2 = el('div', 'create-hint'); d2.textContent = 'Holders can access the ' + acctSym + ' in the revnet by cashing out or taking a loan. The cash out tax leaves more funds behind for remaining $' + tk + ' holders and lowers the amount available to borrow.'; s2.appendChild(d2);
+  var d2 = el('div', 'create-hint'); d2.textContent = 'Holders can access the ' + acctSym + ' in the revnet by cashing out or taking a loan. The cash out tax leaves more funds behind for remaining ' + tk + ' holders and lowers the amount available to borrow.'; s2.appendChild(d2);
   stage.cashOutEnabled = true; // revnets always allow cash outs
   s2.appendChild(cashOutTaxCard(stage, render, acctSym, tk, true));
   w.appendChild(s2);
@@ -2601,7 +2601,7 @@ function cashOutTaxCard(t, render, acctSym, reclaimVerb, bare) {
     var r = Math.max(0, Math.min(100, Number(t.cashOutTaxRate) || 0)) / 100;
     var pct10 = 0.1 * ((1 - r) + r * 0.1) * 100; // % of funds for cashing out 10% of supply
     sub.textContent = reclaimVerb
-      ? ('Cashing out 10% of $' + reclaimVerb + ' gets ' + (Math.round(pct10 * 10) / 10) + '% of the revnet’s ' + acctSym + '.')
+      ? ('Cashing out 10% of ' + reclaimVerb + ' gets ' + (Math.round(pct10 * 10) / 10) + '% of the revnet’s ' + acctSym + '.')
       : ('Cashing out 10% of your tokens returns ' + (Math.round(pct10 * 10) / 10) + '% of the project’s surplus ' + acctSym + '.');
     svgHolder.innerHTML = cashOutCurveSvg(r);
   };
@@ -3198,10 +3198,18 @@ function renderDeploy(state, render) {
     var sub = el('div', 'create-success-sub');
     sub.textContent = outcome.sub;
     panel.appendChild(sub);
-    if (state.deployed && state.deployed.txHash) {
-      var txp = el('div', 'create-success-sub'); txp.textContent = 'Transaction: ' + truncAddr(state.deployed.txHash);
-      panel.appendChild(txp);
-    }
+    (state.deployedLegs || (state.deployed ? [state.deployed] : [])).forEach(function (leg) {
+      var line = deployedLegLine(leg);
+      if (!line) return;
+      var row = el('div', 'create-success-sub');
+      if (leg.route) {
+        var legLink = el('a'); legLink.href = leg.route; legLink.textContent = line;
+        legLink.addEventListener('click', function () { if (state._close) state._close(); });
+        row.appendChild(legLink);
+      } else row.textContent = line;
+      if (leg.txHash) row.appendChild(document.createTextNode(' | Transaction ' + truncAddr(leg.txHash)));
+      panel.appendChild(row);
+    });
     if (state.deployed && state.deployed.route) {
       var go = el('button', 'create-btn primary big'); go.style.marginTop = '14px'; go.textContent = 'Go to project →';
       go.addEventListener('click', function () { window.location.hash = state.deployed.route; if (state._close) state._close(); });
@@ -4122,7 +4130,7 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
       }
     }
   }
-  await captureDeployed(state, session.plans[0].chainId, session.plans[0].hash, session.plans[0].rulesetCount);
+  await captureDeployedLegs(state, session.plans.map(function (plan) { return { chainId: plan.chainId, hash: plan.hash, rulesetCount: plan.rulesetCount }; }));
   state._deployedChains = session.plans.map(function (plan) { return plan.chainId; });
   await lock.assertHeld();
   clearCreateDirectSession(state);
@@ -4332,7 +4340,7 @@ async function runDeploy(state, owner) {
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
-    await captureDeployed(state, restoredChain, relayrDestinationHash(restoredTxs[0]), restoredRelayr.rulesetCountByChain && restoredRelayr.rulesetCountByChain[restoredChain]);
+    await captureDeployedLegs(state, relayrLegs(restoredRelayr.chains && restoredRelayr.chains.length ? restoredRelayr.chains : [{ id: restoredChain }], restoredTxs, restoredRelayr.rulesetCountByChain));
     state._deployedChains = restoredRelayr.chains.map(function (chain) { return Number(chain.id); });
     clearRelayrPendingSession(CREATE_RELAYR_SCOPE, restoredRelayr);
     state._relayrPending = null;
@@ -4577,7 +4585,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   state.deployChains = chains.map(function (chain) { return Number(chain.id); });
   var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
-  await captureDeployed(state, Number(chains[0].id), relayrDestinationHash(finalRelayrTxs[0]), paidSession.rulesetCountByChain && paidSession.rulesetCountByChain[chains[0].id]);
+  await captureDeployedLegs(state, relayrLegs(chains, finalRelayrTxs, paidSession.rulesetCountByChain));
   state._deployedChains = state.deployChains.slice();
   clearRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession);
   state._relayrPending = null;
@@ -4650,6 +4658,30 @@ function captureDeployed(state, chainId, txHash, expectedCount) {
     if (error.code === 'RULESET_ORDER_UNVERIFIED') { state.deployed = null; throw error; }
     state.deployed = { chainId: chainId, txHash: txHash };
   });
+}
+
+// One receipt per launched chain, in launch order. `state.deployed` stays the first chain's.
+async function captureDeployedLegs(state, legs) {
+  var out = [];
+  for (var i = 0; i < legs.length; i++) {
+    await captureDeployed(state, legs[i].chainId, legs[i].hash, legs[i].rulesetCount);
+    out.push(state.deployed);
+  }
+  state.deployedLegs = out;
+  state.deployed = out[0];
+}
+// Relayr returns its transactions in submission order, one per chain.
+function relayrLegs(chains, txs, rulesetCountByChain) {
+  return chains.map(function (chain, i) {
+    return { chainId: Number(chain.id), hash: relayrDestinationHash(txs[i]), rulesetCount: rulesetCountByChain && rulesetCountByChain[chain.id] };
+  });
+}
+/** The success panel's line for one launched chain. An unreadable id is sent, so never resubmitted. */
+export function deployedLegLine(leg) {
+  if (!leg || leg.proposed) return '';
+  return chainName(leg.chainId) + ': ' + (leg.projectId != null
+    ? 'project #' + leg.projectId
+    : 'sent, but its project ID could not be read. Do not submit it again.');
 }
 
 // Chain-id → discover route slug (must match discover.js CHAIN_SLUGS exactly) for the "Go to project" link.

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { cashOutTaxValue, omnichainTokenSalt } from '../src/encoding.js';
 import { keccak256, toHex } from 'viem';
 import { chainList } from '../src/chain.js';
-import { applyRevnetTaxDefault, createStage, launchOutcomeText, launchStartLead, ownerFieldInvalid, startLeadIssue, shopItemIssue, tickerOk } from '../src/create-flow.js';
+import { applyRevnetTaxDefault, createStage, deployedLegLine, launchOutcomeText, launchStartLead, ownerFieldInvalid, startLeadIssue, shopItemIssue, tickerOk } from '../src/create-flow.js';
 
 describe('cash out tax value', () => {
   it('reads a rate out of 10,000 as the 0 to 1 value', () => {
@@ -129,5 +129,13 @@ describe('launch start timing shared with juicebox.money', () => {
     expect(startLeadIssue({ projectType: 'revnet', stages: [{ schedule: 1000 + 60 }] }, 1000)).toBe('Stage #1 needs a start at least an hour from now.');
     expect(startLeadIssue({ projectType: 'custom', stages: [{ schedule: 1000 + 3600 }] }, 1000)).toBe('');
     expect(startLeadIssue({ projectType: 'custom', stages: [{ schedule: '' }] }, 1000)).toBe('');
+  });
+});
+
+describe('launch receipt', () => {
+  it('names each chain with its project, and never invites a resend when the ID is unreadable', () => {
+    expect(deployedLegLine({ chainId: 8453, projectId: 12n, txHash: '0x1' })).toBe('Base: project #12');
+    expect(deployedLegLine({ chainId: 1, txHash: '0x1' })).toBe('Ethereum: sent, but its project ID could not be read. Do not submit it again.');
+    expect(deployedLegLine({ chainId: 1, txHash: null, proposed: true })).toBe('');
   });
 });
