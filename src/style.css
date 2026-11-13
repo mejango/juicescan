@@ -6495,6 +6495,12 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .safe-batch-twap { width: 90px; font-family: inherit; font-size: 12px; padding: 2px 4px; }
 
 /* Plain definitions shared by the live and static guides. */
+.guide-prop-name-plain { font-family: inherit; color: var(--text); }
+.guide-compare-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; color: var(--muted); }
+.guide-compare-table caption { text-align: left; }
+.guide-compare-table th, .guide-compare-table td { padding: 4px 10px; border-bottom: 1px solid var(--c-orange-light); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.guide-compare-table th { color: var(--text); }
+.guide-compare-table tr:last-child td { border-bottom: none; }
 .guide-glossary dt { font-weight: 600; }
 .guide-glossary dd { margin: 0 0 12px; }
 
