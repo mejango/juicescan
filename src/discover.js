@@ -18,7 +18,7 @@ import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
-import { V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
+import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
 import { encodeCalldata } from './encoding.js';
@@ -349,6 +349,13 @@ export function chooseRefinedPayToken(list, currentToken, tokenTouched) {
     return currentToken && t.address.toLowerCase() === currentToken.address.toLowerCase() && t.viaRouter === currentToken.viaRouter;
   })[0];
   return keep || list[0] || null;
+}
+
+// Digits typed for a token stay with that token across a chain switch. Returns the new chain's token with the
+// same symbol (a directly accepted one first), or null when that chain does not take it and the amount must clear.
+export function payTokenCarriedAcrossChains(list, symbol) {
+  var same = (list || []).filter(function (t) { return symbol && t.symbol === symbol; });
+  return same.filter(function (t) { return !t.viaRouter; })[0] || same[0] || null;
 }
 
 function isZeroishAddress(address) {
@@ -4557,14 +4564,19 @@ function isKnown721HookClone(address, chainId, projectId) {
 
 function readProjectPaymentSurface(project, chainId) {
   var pid = pidOn(project, chainId);
-  return read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]).then(function (terminals) {
-    terminals = (terminals || []).filter(Boolean);
+  return Promise.all([
+    read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]),
+    // Paused payments revert in the terminal. An unread ruleset is not a pause: the preview still gates the send.
+    controllerRead(chainId, pid, currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (current) { return !!(current && current[1] && current[1].pausePay); }, function () { return false; }),
+  ]).then(function (loaded) {
+    var terminals = (loaded[0] || []).filter(Boolean);
     var direct = getAddress('JBMultiTerminal', chainId);
     var router = routerTerminalFor(chainId);
     var directRouter = getAddress('JBRouterTerminal', chainId);
     return {
       chainId: chainId,
       terminals: terminals,
+      pausePay: loaded[1],
       hasDirect: terminals.some(function (t) { return sameAddr(t, direct); }),
       // Swap payment options execute through the registry. Directly attached gateways/routers remain
       // recognizable, but must not advertise a route whose entry terminal is not in the directory.
@@ -4588,6 +4600,22 @@ function paySurfaceAllows(surface, terminal) {
   if (!surface || !terminal) return false;
   return (surface.terminals || []).some(function (t) { return sameAddr(t, terminal); });
 }
+
+// The pay review reads in plain rows first; the decoded call and raw payload stay behind "Show raw data".
+// The project's payment notice is shown before the payer agrees.
+export function payReviewRows(r) {
+  var rows = [['Send', r.amount], ['On', r.chain]];
+  if (r.items) rows.push(['Items', r.items]);
+  if (!r.addBalance && r.minimum) rows.push(['You get at least', r.minimum]);
+  if (r.lands) rows.push(['Lands', r.lands]);
+  if (!r.addBalance) rows.push(['Beneficiary', r.beneficiary]);
+  if (r.memo && String(r.memo).trim()) rows.push(['Note', String(r.memo).trim()]);
+  if (!r.addBalance && r.quoteFailed) rows.push(['Quote', PAY_QUOTE_FAILED_MESSAGE]);
+  if (r.notice && String(r.notice).trim()) rows.push(['Project notice', String(r.notice).trim()]);
+  return rows;
+}
+
+export var PAYMENTS_PAUSED_MESSAGE = 'Payments are paused under the current rules.';
 
 function paySurfaceBlockedMessage(surface, terminal, chainId) {
   var name = resolveContractName(terminal, chainId) || truncAddr(terminal);
@@ -9158,6 +9186,12 @@ export function renderPayCard(project, cart) {
           // Preserve the selection ONLY if the USER picked it — otherwise the initial sync-default (native ETH)
           // would shadow the project's real accounting token (would pay 1 ETH instead of 1 USDC). See chooseRefinedPayToken.
           state.token = chooseRefinedPayToken(list, state.token, state.tokenTouched);
+          if (state.carrySymbol) {
+            var carried = payTokenCarriedAcrossChains(list, state.carrySymbol);
+            if (carried) { state.token = carried; state.tokenTouched = true; }
+            else { state.droppedToken = state.carrySymbol; state.amount = ''; amtInput.value = ''; }
+            state.carrySymbol = null;
+          }
           renderTerminalNotice();
           if (selectedTierIds().length) refreshNftCheckoutRoutes();
           else { rebuildCurrency(); schedulePreview(); }
@@ -9581,9 +9615,13 @@ export function renderPayCard(project, cart) {
       state.contextsReady = false; state.contextsError = false;
       state.nftRoutes = {}; state.nftRoutesLoading = false;
       state.nftCredits = 0n;
+      // An amount typed for one token never becomes the same digits of another: the token is kept by symbol
+      // once this chain's accepted list is read, or the amount is cleared.
+      state.carrySymbol = state.amount && state.token ? state.token.symbol : null;
+      state.droppedToken = null;
       state.tokenTouched = false; // a new chain re-defaults to that chain's accounting token
       state.tokens = tokensForChain(state.chainId);
-      state.token = state.tokens[0] || null;
+      state.token = payTokenCarriedAcrossChains(state.tokens, state.carrySymbol) || state.tokens[0] || null;
       sizeSelectToText(
         chainSel,
         applyPayChainFontSize(chainSel, chainSel.options[chainSel.selectedIndex] && chainSel.options[chainSel.selectedIndex].textContent),
@@ -9667,7 +9705,11 @@ export function renderPayCard(project, cart) {
   var amtInput = el('input', 'paybox-amount');
   amtInput.type = 'number'; amtInput.step = 'any'; // decimals are valid; without step the default (1) marks any fractional amount invalid
   amtInput.placeholder = '0.00';
-  amtInput.addEventListener('input', function () { state.amount = amtInput.value.trim(); schedulePreview(); });
+  amtInput.addEventListener('input', function () {
+    state.amount = amtInput.value.trim();
+    if (state.droppedToken) { state.droppedToken = null; renderTerminalNotice(); }
+    schedulePreview();
+  });
   field.appendChild(amtInput);
   field.appendChild(currWrap); // currency dropdown, stuck to the right of the field, left of Pay
   amountRow.appendChild(field);
@@ -9724,6 +9766,12 @@ export function renderPayCard(project, cart) {
     }
     var surface = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
     if (!surface) return;
+    if (surface.pausePay && state.mode === 'pay') {
+      terminalNotice.style.display = '';
+      terminalNotice.className = 'paybox-contract-warning blocked';
+      terminalNotice.textContent = PAYMENTS_PAUSED_MESSAGE;
+      return;
+    }
     var target = state.token && state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
     if (target && !paySurfaceAllows(surface, target)) {
       terminalNotice.style.display = '';
@@ -9738,6 +9786,12 @@ export function renderPayCard(project, cart) {
         + (surface.unknown.length > 1 ? 's' : '') + ': '
         + surface.unknown.map(truncAddr).join(', ')
         + '. This form only sends to a recognized Juicebox terminal.';
+      return;
+    }
+    if (state.droppedToken) {
+      terminalNotice.style.display = '';
+      terminalNotice.className = 'paybox-contract-warning';
+      terminalNotice.textContent = state.droppedToken + ' isn’t accepted on ' + chainNameOf(state.chainId) + '.';
     }
   }
 
@@ -10204,6 +10258,7 @@ export function renderPayCard(project, cart) {
       state.terminalSurface = surface;
       state.terminalSurfaceChain = reviewedChainId;
       renderTerminalNotice();
+      if (surface.pausePay && !addBalance) { status.className = 'paybox-status error'; status.textContent = PAYMENTS_PAUSED_MESSAGE; return; }
       if (!paySurfaceAllows(surface, terminal)) {
         status.className = 'paybox-status error';
         status.textContent = paySurfaceBlockedMessage(surface, terminal, reviewedChainId);
@@ -10311,6 +10366,14 @@ export function renderPayCard(project, cart) {
             : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless), bounded to this payment. If this token has never been approved to Permit2, a one-time UNLIMITED approval to the audited Permit2 contract is signed first, the router can still only pull the amount the signature authorizes.', spender: terminal })
           : { token: reviewedToken.address, spender: terminal, amount: amt.toString() }),
       args: confirmArgs,
+      summary: { action: addBalance ? 'Add to balance' : 'Pay', rows: payReviewRows({
+        amount: human, chain: chainName, addBalance: addBalance,
+        minimum: addBalance ? null : formatTokenCount(minTokens) + ' ' + sym,
+        items: tierIds.length ? confirmArgs.mints : null,
+        lands: confirmArgs.landsOnChain || null,
+        beneficiary: beneficiary, memo: reviewedMemo, quoteFailed: !!(reviewedPreview && reviewedPreview.quoteFailed),
+        notice: project.payDisclosure,
+      }) },
     }, function send(confirmCtx) {
       if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
         var accountError = 'Connected account changed. Review the payment again.';
