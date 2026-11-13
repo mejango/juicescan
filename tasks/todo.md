@@ -7,7 +7,7 @@ jango: "do the things not done from the audit".
 - [x] 3. Sign-audit prompts share one source rule and one checklist (`src/sign-audit.js`); the pre-sign prompt stated the V6-only rule three times.
 - [x] 4. `noscript` notice linking the static guides.
 - [x] 5. Prompt contradictions (Celo, contract counts, source line references) are already gone on main; nothing to change.
-- [ ] 6. `npm run check`.
+- [x] 6. `npm run check`: 2,365 unit tests, 148 browser tests, startup 720,643 of 722,000 B.
 
 ## Plan refinement
 - **Objective:** Close the audit items left open, each with one owner.
