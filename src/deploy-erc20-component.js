@@ -9,6 +9,7 @@ import {
   getChainTokens, parseHashDefaults,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
+import { omnichainTokenSalt } from './encoding.js';
 
 export var deployERC20Abi = [{
   type: 'function', name: 'deployERC20For', stateMutability: 'nonpayable',
@@ -130,7 +131,7 @@ export function renderDeployERC20Component() {
     var controllerAddr = getAddress('JBController', state.selectedChain);
     if (!controllerAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
-    var salt = '0x0000000000000000000000000000000000000000000000000000000000000000';
+    var salt = omnichainTokenSalt(state.tokenName, state.tokenSymbol);
 
     executeTransaction({
       ...buildDeployErc20Args({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, name: state.tokenName.trim(), symbol: state.tokenSymbol.trim(), salt: salt }),

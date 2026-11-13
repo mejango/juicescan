@@ -60,6 +60,7 @@ async function pressPayAndConfirm(component) {
   for (let i = 0; i < 50 && !document.querySelector('dialog.modal-dialog'); i++) await flush();
   const dialog = document.querySelector('dialog.modal-dialog');
   if (!dialog) return false;
+  (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
   dialog.querySelector('.create-modal-foot .create-btn.primary').click();
   for (let i = 0; i < 20; i++) await flush();
   return dialog;

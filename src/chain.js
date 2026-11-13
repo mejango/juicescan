@@ -68,7 +68,7 @@ export function getManifestChains() {
 // Display order for the chains we ship UI for. This is an ORDER hint, not a membership list: chains present in
 // the manifest but missing here are appended rather than dropped, so a newly deployed chain can never fall out
 // of a picker or get classified as mainnet just because a hand-maintained copy wasn't updated.
-const CHAIN_DISPLAY_ORDER = [1, 10, 42161, 8453, 11155111, 11155420, 84532, 421614];
+const CHAIN_DISPLAY_ORDER = [1, 8453, 42161, 10, 11155111, 84532, 421614, 11155420];
 
 /** Every chain in the deployment manifest as `{ id, name, testnet }`, in display order. */
 export function chainList() {

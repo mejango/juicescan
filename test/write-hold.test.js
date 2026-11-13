@@ -83,6 +83,7 @@ it('keeps one in-app confirmation on the normal send path',async()=>{
  const setAbi=[{type:'function',name:'setThing',inputs:[],outputs:[],stateMutability:'nonpayable'}];
  const done=new Promise(resolve=>executeTransaction({chainId:8453,address:args.address,abi:setAbi,functionName:'setThing',args:[],onSuccess:resolve,onError:resolve}));
  await vi.waitFor(()=>expect(document.querySelector('dialog[open] .create-btn.primary')).not.toBeNull());
+ (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
  document.querySelector('dialog[open] .create-btn.primary').click();
  await done;
  expect(showModal).toHaveBeenCalledTimes(1);expect(h.wallet.writeContract).toHaveBeenCalledTimes(1);
@@ -118,6 +119,7 @@ it('a stale dialog never releases a newer attempt',async()=>{
  h.wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection disappeared'));
  await run();await run();
  const k=storedKeys()[0];localStorage.setItem(k,JSON.stringify({id:'newer',account:h.account}));
+ (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
  [...document.querySelectorAll('dialog[open] .create-btn.primary')][0].click();
  expect(JSON.parse(localStorage.getItem(k)).id).toBe('newer');
 });
@@ -166,6 +168,7 @@ it('a release dialog shown before a hash arrived cannot clear that hash',async()
  await run();await run();
  const k=storedKeys()[0];const shown=JSON.parse(localStorage.getItem(k));
  localStorage.setItem(k,JSON.stringify({...shown,hash:'0x'+'e'.repeat(64)}));
+ (b => b && !b.checked && b.click())(document.querySelector('dialog[open] .tx-confirm-agree input'));
  document.querySelector('dialog[open] .create-btn.primary').click();await new Promise(r=>setTimeout(r));
  expect(JSON.parse(localStorage.getItem(k)).hash).toBe('0x'+'e'.repeat(64));
  h.client.getTransaction.mockResolvedValue({hash:'0x'+'e'.repeat(64),from:h.account,nonce:7,blockNumber:null});

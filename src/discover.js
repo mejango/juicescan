@@ -21,7 +21,7 @@ import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive 
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
-import { encodeCalldata } from './encoding.js';
+import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt, contractReverted } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { generationAddresses, generationNames, getABI } from './abi-registry.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
@@ -2965,6 +2965,7 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   var cats = local.metadata.storeCategories;
   var actionResult = await runAuthorityActionAcrossChains(project, chains, operatorAddr, plan.buildCall, {
     gas: 400000n,
+    permissionId: JB_PERMISSION_SET_PROJECT_URI,
     label: 'Add store categories', title: 'Confirm categories', pendingScope: relayrActionScope(project, 'add-store-categories'),
     reverify: plan.reverify,
     summary: { rows: [['Adds', names.join(', ')], ['Metadata', 'Existing properties and category labels stay local to each chain']] },
@@ -4189,7 +4190,7 @@ function isFeelessAddress(chainId, addr, projectId) {
 // swap, or cash-out loop). A dead route previews an all-zero ruleset. This does not determine fee forgiveness:
 // an eligible fee payment can succeed at the gateway while retaining its input for a later routing attempt.
 var _payRouteCache = {};
-function routerPayRouteWorks(chainId, projectId, token, decimals) {
+export function routerPayRouteWorks(chainId, projectId, token, decimals) {
   var registry = routerTerminalFor(chainId);
   if (!registry) return Promise.resolve(false);
   var key = Number(chainId) + ':' + String(projectId) + ':' + String(token || '').toLowerCase();
@@ -4198,7 +4199,9 @@ function routerPayRouteWorks(chainId, projectId, token, decimals) {
       address: registry, abi: feePreviewPayAbi, functionName: 'previewPayFor',
       args: [BigInt(projectId), token, 10n ** BigInt(decimals == null ? 18 : decimals), '0x0000000000000000000000000000000000000001', '0x'],
     }).then(function (o) { return toBigInt(o[0] && o[0].id) !== 0n; })
-      .catch(function () { delete _payRouteCache[key]; return false; }); // unverified: not offered now, read again next time
+      // A revert means the registry cannot route this token. A failed read leaves that unknown: the token list fails
+      // with a retry instead of quietly dropping the option.
+      .catch(function (error) { delete _payRouteCache[key]; if (contractReverted(error)) return false; throw error; });
   }
   return _payRouteCache[key];
 }
@@ -5416,11 +5419,10 @@ export function buildNewShopQueueCall(o) {
     args: [pid, o.deployConfig, { projectId: pid, rulesetConfigurations: o.cfgs, memo: o.memo || '' }, o.controller, o.salt] };
 }
 
-// A direct 721 collection can use nonce-based CREATE, which avoids colliding with any prior collection that used
-// the same project name/owner. Omnichain deployment still needs one deterministic salt so every chain derives the
-// same hook address.
-export function newShopDeploymentSalt(state, owner, isOmnichain) {
-  return isOmnichain ? deploySalt(state, owner) : ('0x' + '0'.repeat(64));
+// A direct 721 collection can use nonce-based CREATE. Omnichain deployment needs one salt shared by every chain so
+// each derives the same hook address.
+export function newShopDeploymentSalt(state, isOmnichain) {
+  return isOmnichain ? deploySalt(state) : ('0x' + '0'.repeat(64));
 }
 // Map an approval-hook address → friendly deadline label for the current chain ('Custom' if unknown).
 function deadlineLabelOf(addr, chainId) {
@@ -6342,7 +6344,23 @@ function formatOwnerPortion(balance, total) {
   return '<0.01%';
 }
 
-// reservedPercent / cashOutTaxRate are out of 10_000 (= 100%).
+// A ruleset's cash out tax as its row value: the 0 to 1 value, "None" at zero, "Disabled" at the maximum.
+function cashOutTaxLabel(value) {
+  if (value === null || value === undefined) return '—';
+  var rate = Number(value);
+  return rate >= 10000 ? 'Disabled' : rate > 0 ? cashOutTaxValue(rate) : 'None';
+}
+// The part of a cart that credits cannot pay for. A tier whose flags were not read counts as restricted, as on
+// juicebox.money: charging fresh funds is safer than underfunding a credit-restricted mint.
+export function creditRestrictedTotal(selection, tierById) {
+  var total = 0n;
+  Object.keys(selection).forEach(function (id) {
+    var tier = tierById(Number(id));
+    if (tier && (!tier.flags || tier.flags.cantBuyWithCredits)) total += tierEffectivePrice(tier.price, tier.discountPercent) * BigInt(selection[id]);
+  });
+  return total;
+}
+// reservedPercent is out of 10_000 (= 100%).
 function percentFromRuleset(value) {
   if (value === null || value === undefined) return '—';
   return (Number(value) / 100).toFixed(Number(value) % 100 === 0 ? 0 : 2) + '%';
@@ -9281,14 +9299,7 @@ export function renderPayCard(project, cart) {
     (candidates || state.tokens || []).forEach(function (t) { var score = nftPayTokenScore(t); if (score > bestScore) { best = t; bestScore = score; } });
     return best || ((candidates || [])[0]) || null;
   }
-  function nftRestrictedWei() {
-    var s = 0n, sel = cart.entries();
-    Object.keys(sel).forEach(function (id) {
-      var t = nftTierById(Number(id));
-      if (t && t.flags && t.flags.cantBuyWithCredits) s += tierEffectivePrice(t.price, t.discountPercent) * BigInt(sel[id]);
-    });
-    return s;
-  }
+  function nftRestrictedWei() { return creditRestrictedTotal(cart.entries(), nftTierById); }
   function nftCheckoutBreakdown() { return nftCreditBreakdown(nftTotalWei(), nftRestrictedWei(), state.nftCredits); }
   function nftFloorForToken(token) {
     if (nftCheckoutBlock()) return null;
@@ -9773,7 +9784,10 @@ export function renderPayCard(project, cart) {
     if (state.contextsError) {
       terminalNotice.style.display = '';
       terminalNotice.className = 'paybox-contract-warning blocked';
-      terminalNotice.textContent = 'Could not verify which tokens this project accepts. Payments are unavailable until that check succeeds.';
+      terminalNotice.textContent = 'Could not verify which tokens this project accepts. Payments are unavailable until that check succeeds. ';
+      var retryTokens = el('button'); retryTokens.type = 'button'; retryTokens.textContent = 'Retry';
+      retryTokens.addEventListener('click', function () { loadAcceptedTokens(state.chainId); renderTerminalNotice(); });
+      terminalNotice.appendChild(retryTokens);
       return;
     }
     var surface = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
@@ -10714,28 +10728,38 @@ export function tokenUiCapabilities(project) {
   };
 }
 
+var JB_PERMISSION_QUEUE_RULESETS = 2;
+var JB_PERMISSION_SET_PROJECT_URI = 7;
+var JB_PERMISSION_SET_SPLIT_GROUPS = 19;
 var JB_PERMISSION_DEPLOY_ERC20 = 8;
 var JB_PERMISSION_SET_TOKEN_METADATA = 22;
+
+// Whether `account` is the live owner, or holds `permissionId` from the live owner (ROOT and wildcard grants
+// included), on EVERY chain in `chains`. An unread chain counts as not allowed.
+export async function accountHoldsPermissionOn(project, chains, account, permissionId, readFn) {
+  if (!account || !chains || !chains.length) return false;
+  var reader = readFn || read;
+  var allowed = await Promise.all(chains.map(function (chain) {
+    var pid;
+    try { pid = pidOn(project, chain.id); } catch (_) { return false; }
+    return reader(chain.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).then(function (owner) {
+      if (!owner) return false;
+      if (owner.toLowerCase() === account.toLowerCase()) return true;
+      return reader(chain.id, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
+        account, owner, pid, BigInt(permissionId), true, true,
+      ]).then(Boolean).catch(function () { return false; });
+    }).catch(function () { return false; });
+  }));
+  return allowed.every(Boolean);
+}
 
 async function accountCanManageProjectToken(project, account, permissionId) {
   if (!project || !account || !isAddr(account)) return false;
   var accountKey = account.toLowerCase();
   var authority = projectAuthorityAddress(project);
 
-  // Delegated operators call the controller directly. Verify the relevant permission against the live owner on
-  // every project chain because the token edit/deploy flow deliberately fans the same change across all chains.
-  var chains = projectChains(project);
-  var allowed = await Promise.all(chains.map(function (chain) {
-    var pid = pidOn(project, chain.id);
-    return read(chain.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).then(function (owner) {
-      if (owner && owner.toLowerCase() === accountKey) return true;
-      if (!owner) return false;
-      return read(chain.id, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
-        account, owner, pid, BigInt(permissionId), true, true,
-      ]).then(Boolean).catch(function () { return false; });
-    }).catch(function () { return false; });
-  }));
-  if (allowed.length > 0 && allowed.every(Boolean)) return true;
+  // Delegated operators call the controller directly. The token edit/deploy flow fans the same change across all chains.
+  if (await accountHoldsPermissionOn(project, projectChains(project), account, permissionId)) return true;
 
   // A Safe signer can propose the owner/operator call even though the signer itself is not the project owner.
   if (authority) {
@@ -11262,9 +11286,14 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     if (!signer) { setStatus('Connecting wallet…', 'pending'); signer = await connect().then(getAccount).catch(function () { return null; }); }
     if (!signer) { setStatus('Connect a wallet to continue', 'error'); return null; }
     var accessMode = safeAuthorityAccessMode(signer, authorityAddr, safeInfo, isSafeConnected());
-    if (!accessMode) {
+    // A wallet the Safe granted this permission to acts for itself, with no proposal.
+    var delegated = !accessMode && opts.permissionId && await accountHoldsPermissionOn(project, chains, signer, opts.permissionId);
+    if (!accessMode && !delegated) {
       setStatus('Connected wallet isn’t a signer of the Safe (' + truncAddr(authorityAddr) + ').', 'error'); return null;
     }
+    if (delegated) safeInfo = null;
+  }
+  if (safeInfo) {
     // If the same-address Safe exists on the execution chain, Safe Apps can submit through their native proposal
     // provider. If it only exists on the project chain, fall through to the standard proposal modal: it offers
     // the reviewed same-address deployment flow for Ethereum before an EOA owner signs there.
@@ -11274,7 +11303,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     }
     return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab, reverify: opts.reverify, onSafeRequest: opts.onSafeRequest, onSafeProposal: opts.onSafeProposal, onSafeExecuted: opts.onSafeExecuted, onSafeNotSubmitted: opts.onSafeNotSubmitted, verifyReceipt: opts.verifyReceipt, authorityChainId: authorityChainId, summary: opts.summary ? Object.assign({ action: opts.label }, opts.summary) : undefined, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro, locks: opts.locks });
   }
-  var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
+  var account = await ensureOperatorAccount(project, authorityAddr, setStatus, opts.permissionId ? { id: opts.permissionId, chains: chains } : null);
   if (!account) return null;
   var relaySession = await runRelayrAcrossChains(chains, account, buildCall, opts.gas || 500000n, setStatus, {
     label: opts.label, title: opts.title, summary: opts.summary, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro,
@@ -11676,7 +11705,9 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
 }
 
 // Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
-export async function ensureOperatorAccount(project, operatorAddr, setStatus) {
+// `permission` ({ id, chains }) admits a wallet that is not the owner or operator but holds that permission from the
+// live owner on every chain of the action, as the contracts and juicebox.money do.
+export async function ensureOperatorAccount(project, operatorAddr, setStatus, permission) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   // An unread operator is not an absent one. Without this, the `operatorAddr &&` check below is skipped
   // entirely and any wallet is waved through to sign a transaction the chain will reject.
@@ -11688,6 +11719,10 @@ export async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
   if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
   if (operatorAddr && account.toLowerCase() !== operatorAddr.toLowerCase()) {
+    if (permission && permission.id) {
+      setStatus('Checking permissions…', 'pending');
+      if (await accountHoldsPermissionOn(project, permission.chains || projectChains(project), account, permission.id)) return account;
+    }
     setStatus('Connected wallet is not the ' + (projectAuthorityLabel(project) || 'operator').toLowerCase() + '. Switch to ' + truncAddr(operatorAddr) + '.', 'error');
     return null;
   }
@@ -12427,10 +12462,12 @@ export async function prepareProjectMetadataUpdates(project, chains, transform, 
 async function ensureMetadataEditorAccount(project, chains, operatorAddr, setStatus) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   var safe = await safeInfoForAuthority(operatorAddr, (chains[0] || {}).id || project.chainId, project.chainId);
-  if (!safe) return ensureOperatorAccount(project, operatorAddr, setStatus);
+  var permission = { id: JB_PERMISSION_SET_PROJECT_URI, chains: chains };
+  if (!safe) return ensureOperatorAccount(project, operatorAddr, setStatus, permission);
   var account = getAccount();
   if (!account) account = await connect().then(getAccount).catch(function () { return null; });
-  if (!safeAuthorityAccessMode(account, operatorAddr, safe, isSafeConnected())) {
+  if (!safeAuthorityAccessMode(account, operatorAddr, safe, isSafeConnected())
+    && !await accountHoldsPermissionOn(project, chains, account, permission.id)) {
     setStatus('Connect the project Safe or one of its signers to propose these metadata changes.', 'error'); return null;
   }
   return account;
@@ -12455,6 +12492,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   var meta = local.metadata;
   var actionResult = await runAuthorityActionAcrossChains(project, chains, operatorAddr, plan.buildCall, {
     gas: 400000n,
+    permissionId: JB_PERMISSION_SET_PROJECT_URI,
     label: 'Edit project details', title: 'Confirm edit', pendingScope: relayrActionScope(project, 'edit-project-details'),
     reverify: plan.reverify,
     summary: { rows: [['Updates', 'the edited project details; untouched metadata stays local to each chain']] },
@@ -12618,7 +12656,7 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
   var controllers = await controllerMapFor(chains, project);
 
   // The deterministic salt makes the ERC-20 deploy to the same address on every chain.
-  var salt = keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [pidOn(project, project.chainId), symbol]));
+  var salt = omnichainTokenSalt(name, symbol);
   var buildCall = function (cid) {
     var abi = deployed ? setTokenMetadataAbi : deployErc20Abi;
     var functionName = deployed ? 'setTokenMetadataOf' : 'deployERC20For';
@@ -14723,7 +14761,7 @@ export function rulesetRows(r, m, project) {
     ['TOKEN', 'Total issuance rate', (Number(r.weight) === 0 ? '0' : formatAmount(r.weight, 18)) + ' / ' + baseUnit],
     ['TOKEN', 'Reserved rate', percentFromRuleset(m.reservedPercent)],
     ['TOKEN', 'Issuance cut percent', formatCutPercent(r.weightCutPercent)],
-    ['TOKEN', 'Cash out tax rate', percentFromRuleset(m.cashOutTaxRate)],
+    ['TOKEN', 'Cash out tax', cashOutTaxLabel(m.cashOutTaxRate)],
     // On-chain bit is scopeCashOutsToLocalBalances: true = local-only, so total surplus is DISABLED.
     ['TOKEN', 'Cash outs use total surplus', m.scopeCashOutsToLocalBalances ? 'Disabled' : 'Enabled'],
     ['TOKEN', 'Base currency', baseUnit],
@@ -14843,8 +14881,8 @@ export function pastRulesetRows(list) {
       start: Number(r.start),
       weight: Number(r.weight) / 1e18,
       duration: Number(r.duration),
-      // cashOutTaxRate is out of 10000 → percent.
-      tax: m && m.cashOutTaxRate != null ? Number(m.cashOutTaxRate) / 100 : null,
+      // cashOutTaxRate, out of 10000.
+      tax: m && m.cashOutTaxRate != null ? Number(m.cashOutTaxRate) : null,
     };
   });
   rows.sort(function (a, b) { return b.start - a.start; });
@@ -14893,7 +14931,7 @@ function renderPastRulesetsCard(project) {
       rows.forEach(function (row) {
         var tr = document.createElement('tr');
         [row.id, formatDate(row.start), formatRate(row.weight), formatDuration(row.duration),
-          row.tax == null ? '—' : (Number(row.tax.toFixed(2)) + '%')].forEach(function (value) {
+          row.tax == null ? '—' : cashOutTaxValue(row.tax)].forEach(function (value) {
           var td = document.createElement('td'); td.textContent = value; tr.appendChild(td);
         });
         tbody.appendChild(tr);
@@ -18099,6 +18137,7 @@ function openSetPermissionsModal(project, grant, presetIds) {
 // buildArgs(v, cid, pid) → the function args. chainsDefault: 'all' (JB infra, same address everywhere) or
 // 'primary' (per-chain values like feeds/mints — only the current chain checked by default).
 var POWER_MINT = {
+  flagKey: 'allowOwnerMinting',
   title: 'Mint tokens', actionVerb: 'Minted', contract: 'JBController', abi: mintTokensAbi, fn: 'mintTokensOf', gas: 300000n, chainsDefault: 'primary',
   note: 'Mints new project tokens to an address without a payment.',
   danger: 'Irreversible: minting dilutes every existing token holder and cannot be undone.',
@@ -18110,6 +18149,7 @@ var POWER_MINT = {
   buildArgs: function (v, cid, pid) { return [pid, v.tokenCount, v.beneficiary, '', !!v.useReservedPercent]; },
 };
 var POWER_SET_CONTROLLER = {
+  flagKey: 'allowSetController',
   title: 'Set controller', actionVerb: 'Set', contract: 'JBDirectory', abi: setControllerAbi, fn: 'setControllerOf', gas: 200000n, chainsDefault: 'all',
   note: 'Points the project at a new controller contract. Defaults to the current JBController on each chain.',
   danger: 'Dangerous: this hands control of the project’s rules and tokens to a new contract. A wrong address can permanently brick or compromise the project.',
@@ -18117,6 +18157,7 @@ var POWER_SET_CONTROLLER = {
   buildArgs: function (v, cid, pid) { return [pid, v.controller || getAddress('JBController', cid)]; },
 };
 export var POWER_SET_TERMINALS = {
+  flagKey: 'allowSetTerminals',
   title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', gas: 250000n, chainsDefault: 'all',
   note: 'Sets the complete list of terminals funds can be paid in through (comma-separated). Prefilled with what is set onchain now.',
   danger: 'Dangerous: this replaces the entire terminal list. Every terminal left out stops accepting payments and stops routing fees. Most projects launch with two (the standard terminal and the any-token router), so keep the ones you still want.',
@@ -18130,6 +18171,7 @@ export var POWER_SET_TERMINALS = {
   },
 };
 var POWER_MIGRATE = {
+  flagKey: 'allowTerminalMigration',
   title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', gas: 400000n, chainsDefault: 'primary',
   note: 'Moves the project’s balance for a token from the current terminal to another terminal.',
   danger: 'Dangerous: this moves the project’s funds to another terminal. A wrong destination can lose the funds.',
@@ -18140,6 +18182,7 @@ var POWER_MIGRATE = {
   buildArgs: function (v, cid, pid) { return [pid, v.token, v.to]; },
 };
 var POWER_ADD_PRICE_FEED = {
+  flagKey: 'allowAddPriceFeed',
   title: 'Add price feed', actionVerb: 'Added', contract: 'JBController', abi: addPriceFeedAbi, fn: 'addPriceFeedFor', gas: 200000n, chainsDefault: 'primary',
   note: 'Registers a price feed converting one currency to another. Currencies are JB currency ids (1 = ETH, 2 = USD, or uint32(uint160(token)) for a token).',
   danger: 'Irreversible: a price feed cannot be removed once added, and a wrong feed misprices the project.',
@@ -18151,6 +18194,7 @@ var POWER_ADD_PRICE_FEED = {
   buildArgs: function (v, cid, pid) { return [pid, v.pricingCurrency, v.unitCurrency, v.feed]; },
 };
 var POWER_SET_TOKEN = {
+  flagKey: 'allowSetCustomToken',
   title: 'Set custom token', actionVerb: 'Set', contract: 'JBController', abi: setTokenAbi, fn: 'setTokenFor', gas: 250000n, chainsDefault: 'all',
   note: 'Replaces the project’s token with a custom ERC-20 (it must conform to IJBToken). Set the token address per selected chain when it differs.',
   danger: 'Irreversible: replacing the project token is permanent and affects every holder.',
@@ -18258,6 +18302,7 @@ export var POWER_INIT_BUYBACK_POOL = {
   ],
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
+    assertPoolParams(v, true);
     return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken, BigInt(v.sqrtPriceX96)];
   },
 };
@@ -18278,11 +18323,26 @@ export var POWER_SET_BUYBACK_POOL = {
   ],
   buildArgs: function (v, cid, pid) {
     var terminalToken = typeof v.terminalToken === 'function' ? v.terminalToken(cid) : v.terminalToken;
+    assertPoolParams(v, false);
     return [pid, BigInt(v.fee), BigInt(v.tickSpacing), BigInt(v.twapWindow), terminalToken];
   },
 };
 // JBBuybackHook._requireValidTwapWindow: 5 minutes to 2 days.
 var MIN_TWAP_WINDOW = 300, MAX_TWAP_WINDOW = 172800;
+// The bounds the hook and the pool key enforce, checked before review so an out-of-range value never reaches a
+// signature. juicebox.money refuses the same values with the same words.
+export function assertPoolParams(v, withPrice) {
+  var fee = BigInt(v.fee), tickSpacing = BigInt(v.tickSpacing), twapWindow = BigInt(v.twapWindow);
+  if (fee < 0n || fee > 0xffffffn) throw new Error('Fee must fit uint24.');
+  if (tickSpacing < 1n || tickSpacing > 0x7fffffn) throw new Error('Tick spacing must be a positive int24 value.');
+  if (twapWindow < BigInt(MIN_TWAP_WINDOW) || twapWindow > BigInt(MAX_TWAP_WINDOW)) {
+    throw new Error('The hook only accepts a TWAP window between ' + MIN_TWAP_WINDOW + ' and ' + MAX_TWAP_WINDOW + ' seconds.');
+  }
+  if (withPrice) {
+    var price = BigInt(v.sqrtPriceX96);
+    if (price <= 0n || price >= 2n ** 160n) throw new Error('Initial price must be a positive uint160 value.');
+  }
+}
 export var POWER_SET_BUYBACK_TWAP = {
   title: 'Set TWAP window', actionVerb: 'Set', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, fn: 'setTwapWindowOf', gas: 150000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
@@ -18331,6 +18391,20 @@ function appendDangerGate(content, text, submitBtn, confirmLabel) {
   function sync() { submitBtn.classList.toggle('cta-disabled', !cb.checked); }
   cb.addEventListener('change', sync); sync();
   return { ok: function () { return cb.checked; } };
+}
+
+// A power is set per chain by that chain's current rules. Returns why the selected chains cannot all run `action`,
+// or null. The home chain's flag says nothing about the others, and an unread chain is not an enabled one.
+export async function powerChainRefusal(action, selected, readMetadata) {
+  var states = await Promise.all(selected.map(function (c) {
+    return readMetadata(c.id).then(function (m) { return m ? !!m[action.flagKey] : null; }, function () { return null; });
+  }));
+  var name = function (c) { return c.name || chainNameOf(c.id); };
+  var unread = selected.filter(function (_, i) { return states[i] === null; }).map(name);
+  if (unread.length) return 'Could not read the current rules on ' + unread.join(', ') + '. Try again.';
+  var off = selected.filter(function (_, i) { return states[i] === false; }).map(name);
+  if (off.length) return action.title + ' is disabled on ' + off.join(', ') + ' under the current rules. Untick ' + (off.length === 1 ? 'that chain' : 'those chains') + '.';
+  return null;
 }
 
 // Generic owner-power action modal. Renders the action's fields + chain picker, then routes the tx by
@@ -18564,6 +18638,15 @@ function openPowerModal(project, action) {
   async function prepareCalls() {
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     if (!selected.length) { setStatus('Select at least one chain', 'error'); return null; }
+    if (action.flagKey) {
+      setStatus('Checking the current rules on each chain…', 'pending');
+      var refusal = await powerChainRefusal(action, selected, function (cid) {
+        var pid = pidOn(project, cid);
+        return controllerRead(cid, pid, currentRulesetAbi, 'currentRulesetOf', [pid]).then(function (current) { return current && current[1]; });
+      });
+      if (refusal) { setStatus(refusal, 'error'); return null; }
+      setStatus('', '');
+    }
     var values;
     try { values = {}; action.fields.forEach(function (f) { values[f.name] = inputs[f.name].get(); }); }
     catch (err) { setStatus(err.message || String(err), 'error'); return null; }
@@ -19813,7 +19896,7 @@ function renderTermsTable(project, stages) {
     autoCells[i] = c6; tr.appendChild(c6);
 
     // Cash out tax
-    var c7 = document.createElement('td'); c7.textContent = percentFromRuleset(md.cashOutTaxRate); tr.appendChild(c7);
+    var c7 = document.createElement('td'); c7.textContent = cashOutTaxLabel(md.cashOutTaxRate); tr.appendChild(c7);
 
     tbody.appendChild(tr);
   }
@@ -22002,8 +22085,8 @@ export function explainCashOutChange(previous, current) {
     if (supplyFell) causes.push('tokens were burned');
   }
   if (current.cashOutTax !== previous.cashOutTax) {
-    causes.push('the cash out tax changed from ' + percentFromRuleset(previous.cashOutTax)
-      + ' to ' + percentFromRuleset(current.cashOutTax));
+    causes.push('the cash out tax changed from ' + cashOutTaxValue(previous.cashOutTax)
+      + ' to ' + cashOutTaxValue(current.cashOutTax));
   }
   var direction = current.price > previous.price ? 'rose'
     : current.price < previous.price ? 'fell' : 'was unchanged';
@@ -24999,7 +25082,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   // A direct one-chain collection does not need a CREATE2 address. Use the deployer's nonce-based CREATE path so
   // starting another shop can never collide with an older collection that used the same project name/owner salt.
   // Omnichain wrappers retain one shared deterministic salt so their hook addresses match across chains.
-  var newShopSalt = newShop ? newShopDeploymentSalt(state, operatorAddr, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
+  var newShopSalt = newShop ? newShopDeploymentSalt(state, usesOmnichainWrapper) : ('0x' + '0'.repeat(64));
   var projUri = project.metadataUri || project.uri || '';
   if (newShop) { setStatus('Pinning new shop items…', 'pending'); await createFlow.pinShopItemsMetadata(state); await createFlow.resolveItemSplitProjects(state, selected[0].id); }
 
@@ -25047,8 +25130,12 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     if (!signer) { setStatus('Connecting wallet…', 'pending'); signer = await connect().then(getAccount).catch(function () { return null; }); }
     if (!signer) { setStatus('Connect a wallet to continue', 'error'); return; }
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
-      setStatus('Connected wallet isn’t a signer of the owner Safe (' + truncAddr(operatorAddr) + ').', 'error'); return;
+      // A wallet the Safe granted QUEUE_RULESETS to queues for itself, with no proposal.
+      if (await accountHoldsPermissionOn(project, selected, signer, JB_PERMISSION_QUEUE_RULESETS)) safeInfo = null;
+      else { setStatus('Connected wallet isn’t a signer of the owner Safe (' + truncAddr(operatorAddr) + ').', 'error'); return; }
     }
+  }
+  if (safeInfo) {
     try { buildCall(selected[0].id); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var shim = Object.assign({}, project, { chains: selected });
     var tabName = project.isRevnet ? 'Operator' : 'Owner';
@@ -25069,8 +25156,8 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     return { safe: true, queued: res.queued, readyExecs: res.readyExecs || [], executed: !!res.executedReady };
   }
 
-  // EOA owner — the connected wallet must be the owner.
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  // The connected wallet must be the owner, or hold QUEUE_RULESETS from the owner on every selected chain.
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus, { id: JB_PERMISSION_QUEUE_RULESETS, chains: selected });
   if (!account) return;
 
   if (!multi) {
@@ -25512,7 +25599,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     var args = [pidOn(project, cid), BigInt(ridMap[cid]), groups];
     return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args }),
       contract: 'JBController', abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args };
-  }, { label: 'Edit splits', title: 'Confirm edit splits', gas: 600000n, pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
+  }, { label: 'Edit splits', title: 'Confirm edit splits', gas: 600000n, permissionId: JB_PERMISSION_SET_SPLIT_GROUPS, pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
     summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts'], ['Recipients', splits.length ? splits.length + ' split' + (splits.length === 1 ? '' : 's') + ' (replaces the current set)' : 'none: clears the group']] } }, setStatus);
 
   if (!result) return;
@@ -27601,7 +27688,7 @@ function buildCashOutModal(project, requestClose) {
     // cash outs are off (100% tax) or there's no surplus (payout limit covers the whole balance).
     if (f.net != null && f.net === 0n) {
       var why = '';
-      if ((state.cashOutTaxRate || 0) >= 10000) why = 'Cash outs are off this ruleset (100% cash out tax).';
+      if ((state.cashOutTaxRate || 0) >= 10000) why = 'Cash outs are off this ruleset (cash out tax of 1).';
       else if (state.aggSurplus != null && state.aggSurplus === 0n) why = 'No ' + a.symbol + ' surplus: its payout limit covers the whole ' + a.symbol + ' balance.' + (state.kinds && state.kinds.length > 1 ? ' Try reclaiming a different token above.' : '');
       if (why) { var wl = el('div', 'ops-preview-line ops-preview-feetok'); wl.textContent = why; preview.appendChild(wl); }
     }
@@ -27671,7 +27758,7 @@ function buildCashOutModal(project, requestClose) {
       var bh = el('div', 'ops-cash-bd-head'); bh.textContent = 'How this is calculated'; bd.appendChild(bh);
       function bdRow(k, val) { var r = el('div', 'ops-cash-bd-row'); var kk = el('span'); kk.textContent = k; var vv = el('span'); vv.textContent = val; r.appendChild(kk); r.appendChild(vv); bd.appendChild(r); }
       var sharePct = Number(count2) / Number(state.aggSupply) * 100;
-      bdRow('Cash out tax', ((state.cashOutTaxRate || 0) / 100) + '%');
+      bdRow('Cash out tax', cashOutTaxValue(state.cashOutTaxRate || 0));
       bdRow('Total supply' + (multi ? ' (' + state.aggChains + ' chains)' : ''), formatTokens(state.aggSupply) + ' ' + sym);
       bdRow(a.symbol + ' surplus' + (multi ? ' (' + state.aggChains + ' chains)' : ''), formatBalance(state.aggSurplus || 0n, a.decimals, a.symbol));
       bdRow('You’re cashing out', formatTokens(count2) + ' ' + sym + ' (' + (Math.round(sharePct * 100) / 100) + '%)');

@@ -1,0 +1,77 @@
+// Rules Juicescan shares with juicebox.money. Each must give the same result in both clients.
+import { describe, it, expect } from 'vitest';
+import { cashOutTaxValue, omnichainTokenSalt } from '../src/encoding.js';
+import { keccak256, toHex } from 'viem';
+import { chainList } from '../src/chain.js';
+import { applyRevnetTaxDefault, createStage } from '../src/create-flow.js';
+
+describe('cash out tax value', () => {
+  it('reads a rate out of 10,000 as the 0 to 1 value', () => {
+    expect(cashOutTaxValue(1000)).toBe('0.1');
+    expect(cashOutTaxValue(9999)).toBe('0.9999');
+    expect(cashOutTaxValue(0)).toBe('0');
+    expect(cashOutTaxValue(10000n)).toBe('1');
+  });
+});
+
+describe('chain order', () => {
+  it('lists Ethereum, Base, Arbitrum, Optimism, then their testnets in the same order', () => {
+    expect(chainList().map(c => Number(c.id))).toEqual([1, 8453, 42161, 10, 11155111, 84532, 421614, 11155420]);
+  });
+});
+
+describe('ERC-20 deploy salt', () => {
+  it('is keccak256("jb-erc20:<name>:<symbol>") with both trimmed, as juicebox.money derives it', () => {
+    expect(omnichainTokenSalt(' My Token ', 'MTK ')).toBe(keccak256(toHex('jb-erc20:My Token:MTK')));
+  });
+});
+
+describe('revnet default cash out tax', () => {
+  it('starts a revnet at 0.1 once, and leaves a later "No tax" choice alone', () => {
+    const state = { projectType: 'revnet', stages: [createStage()] };
+    applyRevnetTaxDefault(state);
+    expect(state.stages[0].cashOutTaxRate).toBe(10); // percent, 0.1
+    state.stages[0].cashOutTaxRate = 0;
+    applyRevnetTaxDefault(state);
+    expect(state.stages[0].cashOutTaxRate).toBe(0);
+  });
+  it('leaves a custom project at its own default', () => {
+    const state = { projectType: 'custom', stages: [createStage()] };
+    applyRevnetTaxDefault(state);
+    expect(state.stages[0].cashOutTaxRate).toBe(0);
+  });
+});
+
+describe('reverted versus unread', () => {
+  it('only a proven revert counts as the contract refusing', async () => {
+    const { contractReverted } = await import('../src/encoding.js');
+    const { ContractFunctionRevertedError, ContractFunctionExecutionError, HttpRequestError } = await import('viem');
+    const abi = [{ type: 'function', name: 'f', inputs: [], outputs: [], stateMutability: 'view' }];
+    const revert = new ContractFunctionExecutionError(new ContractFunctionRevertedError({ abi, functionName: 'f' }), { abi, functionName: 'f' });
+    const transport = new ContractFunctionExecutionError(new HttpRequestError({ url: 'http://rpc.invalid' }), { abi, functionName: 'f' });
+    expect(contractReverted(revert)).toBe(true);
+    expect(contractReverted(transport)).toBe(false);
+    expect(contractReverted(new Error('timeout'))).toBe(false);
+  });
+});
+
+describe('.jb drafts from juicebox.money', () => {
+  it('names the other site instead of reporting no draft', async () => {
+    const { parseCreateDraftJson } = await import('../src/create-flow.js');
+    expect(() => parseCreateDraftJson(JSON.stringify({ v: 1, flavor: 'revnet', name: 'X', chains: [1], stages: [{}] })))
+      .toThrow('This draft was saved on juicebox.money. Open it there.');
+    expect(() => parseCreateDraftJson('{"a":1}')).toThrow('No Juicebox V6 .jb draft was found');
+  });
+});
+
+describe('shop credit flag', () => {
+  it('counts a tier with unread flags as not buyable with credits', async () => {
+    const { creditRestrictedTotal } = await import('../src/discover.js');
+    const tiers = {
+      1: { price: 100n, discountPercent: 0, flags: { cantBuyWithCredits: false } },
+      2: { price: 200n, discountPercent: 0, flags: { cantBuyWithCredits: true } },
+      3: { price: 400n, discountPercent: 0 },
+    };
+    expect(creditRestrictedTotal({ 1: 1, 2: 1, 3: 2 }, id => tiers[id])).toBe(1000n);
+  });
+});

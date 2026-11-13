@@ -1308,6 +1308,10 @@ export function confirmTransactionModal(payload, opts) {
   // `dialog`: 'review' (Confirm live), 'sending' (locked, the caller drives showStatus), 'settled' (closable).
   var pendingResolve = null, closed = false, dialog = 'review';
   var feeReview = null, feeBusy = false, bodyDisabled = false;
+  // Every send needs a ticked acknowledgement of the exact call on screen, as on juicebox.money. A follow-on call
+  // in the same dialog needs its own. The read-only details view (`steps: false`) sends nothing and has none.
+  var needsAgreement = opts.steps !== false, agreed = !needsAgreement;
+  function syncConfirm() { confirm.disabled = bodyDisabled || feeBusy || !agreed; }
   function settle(result) { var r = pendingResolve; pendingResolve = null; if (r) r(result); }
   var modal = openDialog(opts.title || 'Confirm transaction', {
     canClose: function () { return dialog !== 'sending'; },
@@ -1327,11 +1331,11 @@ export function confirmTransactionModal(payload, opts) {
     feeReview = null; feeBusy = false; bodyDisabled = false;
     reviewHost.innerHTML = '';
     // safety note + decoded summary + raw-in-details + audit link
-    renderConfirmBody(reviewHost, nextPayload, Object.assign({}, nextOpts, { bodyControls: { setConfirmDisabled: function (disabled) { bodyDisabled = !!disabled; confirm.disabled = bodyDisabled || feeBusy; }, setConfirmText: function (text) { confirm.textContent = text; } } }));
+    renderConfirmBody(reviewHost, nextPayload, Object.assign({}, nextOpts, { bodyControls: { setConfirmDisabled: function (disabled) { bodyDisabled = !!disabled; syncConfirm(); }, setConfirmText: function (text) { confirm.textContent = text; } } }));
     if (nextOpts.feeCall) {
       feeReview = mountFeeBuybackReview(reviewHost, nextOpts.feeCall, function (state) {
         feeBusy = state.busy;
-        confirm.disabled = bodyDisabled || feeBusy;
+        syncConfirm();
         confirm.textContent = state.label || nextOpts.confirmText || 'Confirm & send';
       });
     }
@@ -1339,7 +1343,14 @@ export function confirmTransactionModal(payload, opts) {
   var foot = el('div', 'create-modal-foot');
   var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
   var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
+  var agree = el('label', 'tx-confirm-agree');
+  var agreeBox = el('input'); agreeBox.type = 'checkbox';
+  var agreeText = el('span'); agreeText.textContent = 'I reviewed the chain, destination, native value and calldata. I agree to send this exact call.';
+  agree.appendChild(agreeBox); agree.appendChild(agreeText);
+  agreeBox.addEventListener('change', function () { agreed = agreeBox.checked; syncConfirm(); });
   showAction(payload, opts);
+  syncConfirm();
+  if (needsAgreement) content.appendChild(agree);
   if (!opts.hideCancel) foot.appendChild(cancel);
   foot.appendChild(confirm); content.appendChild(foot);
   // Post-confirm progress shows HERE, inside the modal — the modal stays open after "Confirm" so callers
@@ -1377,7 +1388,8 @@ export function confirmTransactionModal(payload, opts) {
     if (nextOpts.title) modal.title.textContent = nextOpts.title;
     showAction(nextPayload, nextOpts);
     if (!feeReview) confirm.textContent = nextOpts.confirmText || 'Confirm & send';
-    confirm.disabled = bodyDisabled || feeBusy; cancel.disabled = false; cancel.textContent = 'Cancel';
+    agreed = !needsAgreement; agreeBox.checked = false; agreeBox.disabled = false;
+    syncConfirm(); cancel.disabled = false; cancel.textContent = 'Cancel';
     statusEl.style.display = 'none';
     dialog = 'review';
     return waitForConfirm();
@@ -1391,7 +1403,7 @@ export function confirmTransactionModal(payload, opts) {
     if (keepOpen) {
       // Hand control to the caller: keep the modal open, disable the buttons, and let it drive
       // showStatus()/close() as the tx progresses. Resolve now so the caller can start.
-      dialog = 'sending'; confirm.disabled = true; cancel.disabled = true;
+      dialog = 'sending'; confirm.disabled = true; cancel.disabled = true; agreeBox.disabled = true;
       settle({ ok: true, showStatus: showStatus, close: teardown, showNext: showNext });
     } else {
       settle(true); teardown();

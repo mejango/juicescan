@@ -15,6 +15,7 @@ import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, for
 import { deriveStartFrom, orderedRulesetSchedule, assertScheduleFresh, scheduleIsFresh, assertOrderedRulesetReceipt } from './ruleset-schedule.js';
 export { deriveStartFrom } from './ruleset-schedule.js';
 import { isSafeConnected } from './wallet.js';
+import { cashOutTaxValue } from './encoding.js';
 import { idMapFromGroup, resolveSuckerGroup } from './sucker-group.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
 import {
@@ -59,9 +60,9 @@ function stepsFor(state) {
 // the actual chain to deploy on. Per-chain overrides are keyed by `canon` so they survive a network switch.
 var CHAIN_PAIRS = [
   { canon: 1, name: 'Ethereum', testnet: 11155111 },
-  { canon: 10, name: 'Optimism', testnet: 11155420 },
-  { canon: 42161, name: 'Arbitrum', testnet: 421614 },
   { canon: 8453, name: 'Base', testnet: 84532 },
+  { canon: 42161, name: 'Arbitrum', testnet: 421614 },
+  { canon: 10, name: 'Optimism', testnet: 11155420 },
 ];
 function actualChainId(canon, network) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === canon; }); return p ? (network === 'mainnet' ? p.canon : p.testnet) : canon; }
 // Flip the wizard between mainnets/testnets: remap every selected chain to its pair twin and force a
@@ -80,10 +81,10 @@ function setWizardNetwork(state, mode) {
 function canonChainId(id) { var p = CHAIN_PAIRS.find(function (x) { return x.canon === id || x.testnet === id; }); return p ? p.canon : id; }
 
 var CHAIN_OPTIONS = [
-  { id: 1, name: 'Ethereum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
-  { id: 42161, name: 'Arbitrum', testnet: false }, { id: 8453, name: 'Base', testnet: false },
-  { id: 11155111, name: 'Sepolia', testnet: true }, { id: 11155420, name: 'OP Sepolia', testnet: true },
-  { id: 84532, name: 'Base Sepolia', testnet: true }, { id: 421614, name: 'Arb Sepolia', testnet: true },
+  { id: 1, name: 'Ethereum', testnet: false }, { id: 8453, name: 'Base', testnet: false },
+  { id: 42161, name: 'Arbitrum', testnet: false }, { id: 10, name: 'Optimism', testnet: false },
+  { id: 11155111, name: 'Sepolia', testnet: true }, { id: 84532, name: 'Base Sepolia', testnet: true },
+  { id: 421614, name: 'Arb Sepolia', testnet: true }, { id: 11155420, name: 'OP Sepolia', testnet: true },
 ];
 
 // USDC per chain (for the "Accepts" accounting-context option, and the immutable sucker token mapping below).
@@ -473,6 +474,7 @@ function mergeDraft(obj) {
   var defaults = initState();
   var s = mergeKnownDraftFields(defaults, obj);
   s.projectType = obj.projectType === 'revnet' ? 'revnet' : 'custom';
+  s._revnetTaxDefaulted = s.projectType === 'revnet'; // a saved revnet draft keeps the tax it was saved with
   s.network = obj.network === 'testnet' ? 'testnet' : 'mainnet';
   s.details = mergeKnownDraftFields(defaults.details, obj.details);
   s.details.tags = Array.isArray(s.details.tags) ? s.details.tags.slice(0, 50).map(String) : [];
@@ -568,6 +570,11 @@ export function parseCreateDraftJson(input) {
     merged.step = 0;
     merged.tos = false; // every new deployment must re-acknowledge the risk confirmation
     return merged;
+  }
+  // juicebox.money saves a different draft shape (flat: flavor, name, chains). Its rules do not map one to one onto
+  // this form, so the file is named instead of being half read.
+  if (candidates.some(function (c) { return c && typeof c === 'object' && typeof c.flavor === 'string' && typeof c.name === 'string' && Array.isArray(c.stages); })) {
+    throw new Error('This draft was saved on juicebox.money. Open it there.');
   }
   throw new Error('No Juicebox V6 .jb draft was found. Paste the JSON contents of an exported .jb file.');
 }
@@ -767,6 +774,7 @@ function renderType(state, render) {
     state.projectType = sel.value;
     // Revnets hold a single reserve asset — collapse a custom ETH+USDC selection to one.
     if (sel.value === 'revnet' && state.accepts.length > 1) state.accepts = [state.accepts[0] || 'eth'];
+    applyRevnetTaxDefault(state);
     state.step = Math.min(state.step, stepsFor(state).length - 1); // clamp if the new flow has fewer steps
     render();
   });
@@ -1533,6 +1541,13 @@ function renderStageCard(stage, idx, state, render) {
 // Revnet Stages (REVStageConfig[]) — a reduced, revnet-oriented stage editor.
 // ---------------------------------------------------------------------------
 
+// A revnet starts at a cash out tax of 0.1, as on juicebox.money: its rules are permanent, so accepting the defaults
+// must commit to the same terms in both clients. Applied once per form, so a chosen "No tax" is never overwritten.
+export function applyRevnetTaxDefault(state) {
+  if (state.projectType !== 'revnet' || state._revnetTaxDefaulted) return;
+  state._revnetTaxDefaulted = true;
+  state.stages.forEach(function (stage) { if (!Number(stage.cashOutTaxRate)) stage.cashOutTaxRate = 10; });
+}
 function tickerLabel(state) { return state.details.ticker || 'TOKEN'; }
 
 function renderRevnetStages(state, render) {
@@ -1587,7 +1602,7 @@ function revStageSummary(stage, idx, state) {
   if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('−' + round2(stage.weightCutPercent) + '%/' + (stage.cutFreqDays || '30') + 'd');
   var splitTotal = revSplitTotalPct(stage);
   if (splitTotal > 0) parts.push(round2(splitTotal) + '% to splits');
-  parts.push(round2(Number(stage.cashOutTaxRate)) + '% cash out tax');
+  parts.push(cashOutTaxValue(Math.round(Number(stage.cashOutTaxRate) * 100)) + ' cash out tax');
   return parts.join(' | ');
 }
 
@@ -1864,7 +1879,7 @@ function stageSummaryRaw(stage, idx, state) {
   } else parts.push('no issuance');
 
   // Cash outs.
-  if (stage.cashOutEnabled && stage.payoutMode !== 'unlimited') parts.push('cash outs on, ' + round2(Number(stage.cashOutTaxRate)) + '% tax');
+  if (stage.cashOutEnabled && stage.payoutMode !== 'unlimited') parts.push('cash outs on, ' + cashOutTaxValue(Math.round(Number(stage.cashOutTaxRate) * 100)) + ' tax');
 
   // Payouts — list each recipient's share.
   if (stage.payoutMode === 'unlimited') {
@@ -4230,6 +4245,7 @@ function beginDeployRun(state, render, owner) {
     state.statusLines.push({ text: 'All done.', ok: true });
     // Discover owns its own onchain/indexer caches. Tell it a project was created so it can switch to the
     // deployed network, drop the old project count, and enumerate the new project immediately.
+    state.launchSalt = null; // the next launch from this form gets its own salt
     if (typeof document !== 'undefined') document.dispatchEvent(new CustomEvent('jb:project-created', { detail: state.deployed || { chainId: state.chainIds && state.chainIds[0] } }));
     render();
   }).catch(function (e) {
@@ -4301,7 +4317,7 @@ async function runDeploy(state, owner) {
     }
   }
 
-  var salt = deploySalt(state, owner);
+  var salt = deploySalt(state);
   var signer = getAccount();
   if (!signer) throw new Error('Connect a wallet to deploy.');
   // One shared start timestamp for ALL chains, ~10 min ahead. Computed ONCE here — and recomputed every

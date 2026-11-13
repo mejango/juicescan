@@ -4,7 +4,8 @@
 // the 721 shop read in v6/nft.ts; test/fixtures/defifa-games/nft-inventory.json pins results and reads. Every read is
 // fail-closed: an RPC failure throws, an unrecognized hook returns null, and nothing is ever read as zero.
 
-import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, isAddress, zeroAddress } from 'viem';
+import { BaseError, ContractFunctionRevertedError, isAddress, zeroAddress } from 'viem';
+import { contractReverted } from './encoding.js';
 import { getABI, getAddress } from './abi-registry.js';
 
 // Each Defifa 721 generation, current first: the registry names of its deployer and hook implementation, and the
@@ -62,10 +63,6 @@ export function defifaDeploymentOf(chainId, implementation) {
   return defifaDeployments(chainId).find((deployment) => sameAddress(deployment.implementation, implementation)) ?? null;
 }
 
-// A proven revert or empty return means the contract lacks the function; transport failures prove nothing.
-function isMissingContractFunctionError(error) {
-  return error instanceof BaseError && error.walk((cause) => cause instanceof ContractFunctionRevertedError || cause instanceof ContractFunctionZeroDataError) !== null;
-}
 
 async function readRuleset(client, functionName, { chainId, projectId }) {
   const [ruleset, metadata] = await client.readContract({
@@ -112,14 +109,14 @@ async function read721Shop(client, { chainId, projectId, isRevnet, ruleset, tier
   const hookAbi = getABI('JB721TiersHook', chainId);
   const readStore = () => client.readContract({ address: hook, abi: hookAbi, functionName: 'STORE' });
   const store = authoritative ? await readStore() : await readStore().catch((error) => {
-    if (isMissingContractFunctionError(error)) return null;
+    if (contractReverted(error)) return null;
     throw error;
   });
   if (!store) return null;
   // Older hooks without METADATA_ID_TARGET key pay metadata off the hook itself; any other failure throws.
   const [metadataIdTarget, pricingRaw] = await Promise.all([
     client.readContract({ address: hook, abi: hookAbi, functionName: 'METADATA_ID_TARGET' }).catch((error) => {
-      if (isMissingContractFunctionError(error)) return hook;
+      if (contractReverted(error)) return hook;
       throw error;
     }),
     client.readContract({ address: hook, abi: hookAbi, functionName: 'pricingContext' }),

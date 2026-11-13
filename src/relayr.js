@@ -422,7 +422,7 @@ async function releaseForwardedReservations(proofs, lock) {
 export async function relayrPostBundle(transactions, journal, lock, keep) {
   (transactions || []).forEach(function (request) { assertShopCallPolicy(request.data, request.target); });
   if (!Array.isArray(transactions) || !relayrNetworkFamily(transactions.map(function (tx) { return tx && tx.chain; }))) {
-    throw new Error('Relayr destinations must use one supported network family: Ethereum, Optimism, Base, and Arbitrum mainnets or their Sepolia testnets.');
+    throw new Error('Relayr destinations must use one supported network family: Ethereum, Base, Arbitrum and Optimism mainnets or their Sepolia testnets.');
   }
   var forwarded = forwardedPublicationProofs(transactions, journal);
   if (!lock && forwarded.length) {
