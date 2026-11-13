@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { cashOutTaxValue, omnichainTokenSalt } from '../src/encoding.js';
 import { keccak256, toHex } from 'viem';
 import { chainList } from '../src/chain.js';
-import { applyRevnetTaxDefault, createStage } from '../src/create-flow.js';
+import { applyRevnetTaxDefault, createStage, ownerFieldInvalid } from '../src/create-flow.js';
 
 describe('cash out tax value', () => {
   it('reads a rate out of 10,000 as the 0 to 1 value', () => {
@@ -73,5 +73,16 @@ describe('shop credit flag', () => {
       3: { price: 400n, discountPercent: 0 },
     };
     expect(creditRestrictedTotal({ 1: 1, 2: 1, 3: 2 }, id => tiers[id])).toBe(1000n);
+  });
+});
+
+describe('launch owner and operator fields', () => {
+  it('accepts an empty field, which means the connected wallet', () => {
+    expect(ownerFieldInvalid('', '')).toBe(false);
+    expect(ownerFieldInvalid('  ', '')).toBe(false);
+  });
+  it('blocks typed text that did not resolve to an address', () => {
+    expect(ownerFieldInvalid('nobody.eth', 'nobody.eth')).toBe(true);
+    expect(ownerFieldInvalid('vitalik.eth', '0x' + '1'.repeat(40))).toBe(false);
   });
 });

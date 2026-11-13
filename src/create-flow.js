@@ -3314,8 +3314,9 @@ function renderDeploy(state, render) {
   var needTicker = isRev && !state.details.ticker;
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  var needOwner = !isRev && !isAddr(ownerRaw);
-  var needOperator = isRev && !isAddr(opRaw);
+  // An empty field means the connected wallet; only a typed value that is not an address blocks.
+  var needOwner = !isRev && ownerFieldInvalid(state.details.owner, ownerRaw);
+  var needOperator = isRev && ownerFieldInvalid(state.revOperator, opRaw);
   var needCustomToken = customAccounting(state) && !customReady(state); // custom accounting token not resolved yet
   var recipBad = recipientIssue(state); // a split/payout/auto-issuance with a value but no valid recipient
   var totalBad = splitTotalIssue(state); // a stage whose reserved/payout percentages sum over 100%
@@ -3344,8 +3345,8 @@ function renderDeploy(state, render) {
   // Spell out every reason the launch button is disabled, so the user knows exactly what to fix.
   if (!state.details.name) wrap.appendChild(infoNote('Add a project name on the Details step to ' + (isRev ? 'deploy.' : 'launch.')));
   if (needTicker) wrap.appendChild(infoNote('Add a token symbol on the Details step to deploy your revnet.'));
-  if (needOwner) wrap.appendChild(infoNote('Set a project owner on the Flavor step to launch.'));
-  if (needOperator) wrap.appendChild(infoNote('Set a revnet operator on the Flavor step to deploy your revnet.'));
+  if (needOwner) wrap.appendChild(infoNote('The project owner on the Flavor step is not a valid address.'));
+  if (needOperator) wrap.appendChild(infoNote('The revnet operator on the Flavor step is not a valid address.'));
   if (needCustomToken) wrap.appendChild(warnNote('Your custom accounting token isn’t verified on every selected chain yet, fix it on the Flavor step (same address, symbol, and decimals on each chain).'));
   if (recipBad) wrap.appendChild(warnNote(capitalize(recipBad) + ' Fix or remove it before deploying, otherwise those funds/tokens go to the zero address.'));
   if (totalBad) wrap.appendChild(warnNote(capitalize(totalBad) + ' Reduce a share on the ' + (isRev ? 'Stages' : 'Rulesets') + ' step (anything not allocated already goes to the project owner).'));
@@ -3706,7 +3707,7 @@ function reviewSummary(state) {
       'Revnet operator',
       String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
         ? 'No retained authority'
-        : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || '—')),
+        : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || 'Your connected wallet')),
     ));
     c.appendChild(row('Stages', String(state.stages.length)));
     state.stages.forEach(function (s, i) { c.appendChild(row('Stage #' + (i + 1), revStageSummary(s, i, state))); });
@@ -4226,11 +4227,16 @@ function deploy(state, render) {
   // The project owner / revnet operator is an explicit, required launch argument (ENS-resolved).
   var ownerRaw = pickResolved(state.details.owner, { resolvedAddress: state.details.ownerResolved, resolvedFor: state.details.ownerResolvedFor });
   var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
-  if (state.projectType === 'revnet' ? !isAddr(operatorRaw) : !isAddr(ownerRaw)) {
+  if (state.projectType === 'revnet' ? ownerFieldInvalid(state.revOperator, operatorRaw) : ownerFieldInvalid(state.details.owner, ownerRaw)) {
     state.statusLines.push({ text: state.projectType === 'revnet' ? 'Set a valid revnet operator before deploying.' : 'Set a valid project owner before launching.', err: true }); render(); return;
   }
   var owner = isAddr(ownerRaw) ? ownerRaw : signer;
   beginDeployRun(state, render, owner);
+}
+
+/** True when an owner or operator field holds text that did not resolve to an address. Empty is fine. */
+export function ownerFieldInvalid(typed, resolved) {
+  return !!String(typed || '').trim() && !isAddr(resolved);
 }
 
 function beginDeployRun(state, render, owner) {
