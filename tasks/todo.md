@@ -6,7 +6,7 @@
 - [x] 4. Payout confirmation shows a formatted minimum with its symbol; the raw value stays in the raw data view. Currency hint is one short line.
 - [x] 5. Completed confirmation steps keep their number and the existing filled style instead of a check mark. Trailing arrows removed from text labels. Launch card chains in display order.
 - [x] 6. Prompts, vocabulary only: Croptop's 5% goes to CPN, chain order, "cash out", "terminal route".
-- [ ] 7. `npm run check`.
+- [x] 7. `npm run check`: 2,365 unit tests and 148 browser tests pass.
 
 Not changed: `hook-metadata.js` and `defifa.js` strings, which must match the SDK's recorded vectors.
 
