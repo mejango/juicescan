@@ -63,3 +63,15 @@ describe('.jb drafts from juicebox.money', () => {
     expect(() => parseCreateDraftJson('{"a":1}')).toThrow('No Juicebox V6 .jb draft was found');
   });
 });
+
+describe('shop credit flag', () => {
+  it('counts a tier with unread flags as not buyable with credits', async () => {
+    const { creditRestrictedTotal } = await import('../src/discover.js');
+    const tiers = {
+      1: { price: 100n, discountPercent: 0, flags: { cantBuyWithCredits: false } },
+      2: { price: 200n, discountPercent: 0, flags: { cantBuyWithCredits: true } },
+      3: { price: 400n, discountPercent: 0 },
+    };
+    expect(creditRestrictedTotal({ 1: 1, 2: 1, 3: 2 }, id => tiers[id])).toBe(1000n);
+  });
+});

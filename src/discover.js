@@ -2965,6 +2965,7 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   var cats = local.metadata.storeCategories;
   var actionResult = await runAuthorityActionAcrossChains(project, chains, operatorAddr, plan.buildCall, {
     gas: 400000n,
+    permissionId: JB_PERMISSION_SET_PROJECT_URI,
     label: 'Add store categories', title: 'Confirm categories', pendingScope: relayrActionScope(project, 'add-store-categories'),
     reverify: plan.reverify,
     summary: { rows: [['Adds', names.join(', ')], ['Metadata', 'Existing properties and category labels stay local to each chain']] },
@@ -6349,6 +6350,16 @@ function cashOutTaxLabel(value) {
   var rate = Number(value);
   return rate >= 10000 ? 'Disabled' : rate > 0 ? cashOutTaxValue(rate) : 'None';
 }
+// The part of a cart that credits cannot pay for. A tier whose flags were not read counts as restricted, as on
+// juicebox.money: charging fresh funds is safer than underfunding a credit-restricted mint.
+export function creditRestrictedTotal(selection, tierById) {
+  var total = 0n;
+  Object.keys(selection).forEach(function (id) {
+    var tier = tierById(Number(id));
+    if (tier && (!tier.flags || tier.flags.cantBuyWithCredits)) total += tierEffectivePrice(tier.price, tier.discountPercent) * BigInt(selection[id]);
+  });
+  return total;
+}
 // reservedPercent is out of 10_000 (= 100%).
 function percentFromRuleset(value) {
   if (value === null || value === undefined) return '—';
@@ -9288,14 +9299,7 @@ export function renderPayCard(project, cart) {
     (candidates || state.tokens || []).forEach(function (t) { var score = nftPayTokenScore(t); if (score > bestScore) { best = t; bestScore = score; } });
     return best || ((candidates || [])[0]) || null;
   }
-  function nftRestrictedWei() {
-    var s = 0n, sel = cart.entries();
-    Object.keys(sel).forEach(function (id) {
-      var t = nftTierById(Number(id));
-      if (t && t.flags && t.flags.cantBuyWithCredits) s += tierEffectivePrice(t.price, t.discountPercent) * BigInt(sel[id]);
-    });
-    return s;
-  }
+  function nftRestrictedWei() { return creditRestrictedTotal(cart.entries(), nftTierById); }
   function nftCheckoutBreakdown() { return nftCreditBreakdown(nftTotalWei(), nftRestrictedWei(), state.nftCredits); }
   function nftFloorForToken(token) {
     if (nftCheckoutBlock()) return null;
@@ -10724,28 +10728,38 @@ export function tokenUiCapabilities(project) {
   };
 }
 
+var JB_PERMISSION_QUEUE_RULESETS = 2;
+var JB_PERMISSION_SET_PROJECT_URI = 7;
+var JB_PERMISSION_SET_SPLIT_GROUPS = 19;
 var JB_PERMISSION_DEPLOY_ERC20 = 8;
 var JB_PERMISSION_SET_TOKEN_METADATA = 22;
+
+// Whether `account` is the live owner, or holds `permissionId` from the live owner (ROOT and wildcard grants
+// included), on EVERY chain in `chains`. An unread chain counts as not allowed.
+export async function accountHoldsPermissionOn(project, chains, account, permissionId, readFn) {
+  if (!account || !chains || !chains.length) return false;
+  var reader = readFn || read;
+  var allowed = await Promise.all(chains.map(function (chain) {
+    var pid;
+    try { pid = pidOn(project, chain.id); } catch (_) { return false; }
+    return reader(chain.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).then(function (owner) {
+      if (!owner) return false;
+      if (owner.toLowerCase() === account.toLowerCase()) return true;
+      return reader(chain.id, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
+        account, owner, pid, BigInt(permissionId), true, true,
+      ]).then(Boolean).catch(function () { return false; });
+    }).catch(function () { return false; });
+  }));
+  return allowed.every(Boolean);
+}
 
 async function accountCanManageProjectToken(project, account, permissionId) {
   if (!project || !account || !isAddr(account)) return false;
   var accountKey = account.toLowerCase();
   var authority = projectAuthorityAddress(project);
 
-  // Delegated operators call the controller directly. Verify the relevant permission against the live owner on
-  // every project chain because the token edit/deploy flow deliberately fans the same change across all chains.
-  var chains = projectChains(project);
-  var allowed = await Promise.all(chains.map(function (chain) {
-    var pid = pidOn(project, chain.id);
-    return read(chain.id, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]).then(function (owner) {
-      if (owner && owner.toLowerCase() === accountKey) return true;
-      if (!owner) return false;
-      return read(chain.id, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [
-        account, owner, pid, BigInt(permissionId), true, true,
-      ]).then(Boolean).catch(function () { return false; });
-    }).catch(function () { return false; });
-  }));
-  if (allowed.length > 0 && allowed.every(Boolean)) return true;
+  // Delegated operators call the controller directly. The token edit/deploy flow fans the same change across all chains.
+  if (await accountHoldsPermissionOn(project, projectChains(project), account, permissionId)) return true;
 
   // A Safe signer can propose the owner/operator call even though the signer itself is not the project owner.
   if (authority) {
@@ -11272,9 +11286,14 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     if (!signer) { setStatus('Connecting wallet…', 'pending'); signer = await connect().then(getAccount).catch(function () { return null; }); }
     if (!signer) { setStatus('Connect a wallet to continue', 'error'); return null; }
     var accessMode = safeAuthorityAccessMode(signer, authorityAddr, safeInfo, isSafeConnected());
-    if (!accessMode) {
+    // A wallet the Safe granted this permission to acts for itself, with no proposal.
+    var delegated = !accessMode && opts.permissionId && await accountHoldsPermissionOn(project, chains, signer, opts.permissionId);
+    if (!accessMode && !delegated) {
       setStatus('Connected wallet isn’t a signer of the Safe (' + truncAddr(authorityAddr) + ').', 'error'); return null;
     }
+    if (delegated) safeInfo = null;
+  }
+  if (safeInfo) {
     // If the same-address Safe exists on the execution chain, Safe Apps can submit through their native proposal
     // provider. If it only exists on the project chain, fall through to the standard proposal modal: it offers
     // the reviewed same-address deployment flow for Ethereum before an EOA owner signs there.
@@ -11284,7 +11303,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
     }
     return proposeSafeAcrossChains(project, authorityAddr, signer, buildCall, { title: opts.title, replaces: opts.replaces, chains: chains, queueTab: opts.queueTab, reverify: opts.reverify, onSafeRequest: opts.onSafeRequest, onSafeProposal: opts.onSafeProposal, onSafeExecuted: opts.onSafeExecuted, onSafeNotSubmitted: opts.onSafeNotSubmitted, verifyReceipt: opts.verifyReceipt, authorityChainId: authorityChainId, summary: opts.summary ? Object.assign({ action: opts.label }, opts.summary) : undefined, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro, locks: opts.locks });
   }
-  var account = await ensureOperatorAccount(project, authorityAddr, setStatus);
+  var account = await ensureOperatorAccount(project, authorityAddr, setStatus, opts.permissionId ? { id: opts.permissionId, chains: chains } : null);
   if (!account) return null;
   var relaySession = await runRelayrAcrossChains(chains, account, buildCall, opts.gas || 500000n, setStatus, {
     label: opts.label, title: opts.title, summary: opts.summary, steps: opts.steps, stepIndex: opts.stepIndex, stepsIntro: opts.stepsIntro,
@@ -11686,7 +11705,9 @@ async function ensureShopManagerAccount(project, chains, hookMap, operatorHint, 
 }
 
 // Shared: require a connected wallet equal to the project's operator/owner. Returns the account or null.
-export async function ensureOperatorAccount(project, operatorAddr, setStatus) {
+// `permission` ({ id, chains }) admits a wallet that is not the owner or operator but holds that permission from the
+// live owner on every chain of the action, as the contracts and juicebox.money do.
+export async function ensureOperatorAccount(project, operatorAddr, setStatus, permission) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   // An unread operator is not an absent one. Without this, the `operatorAddr &&` check below is skipped
   // entirely and any wallet is waved through to sign a transaction the chain will reject.
@@ -11698,6 +11719,10 @@ export async function ensureOperatorAccount(project, operatorAddr, setStatus) {
   if (!account) { setStatus('Connecting wallet…', 'pending'); account = await connect().then(getAccount).catch(function () { return null; }); }
   if (!account) { setStatus('Connect a wallet to continue', 'error'); return null; }
   if (operatorAddr && account.toLowerCase() !== operatorAddr.toLowerCase()) {
+    if (permission && permission.id) {
+      setStatus('Checking permissions…', 'pending');
+      if (await accountHoldsPermissionOn(project, permission.chains || projectChains(project), account, permission.id)) return account;
+    }
     setStatus('Connected wallet is not the ' + (projectAuthorityLabel(project) || 'operator').toLowerCase() + '. Switch to ' + truncAddr(operatorAddr) + '.', 'error');
     return null;
   }
@@ -12437,10 +12462,12 @@ export async function prepareProjectMetadataUpdates(project, chains, transform, 
 async function ensureMetadataEditorAccount(project, chains, operatorAddr, setStatus) {
   if (getViewAs()) { setStatus(VIEW_AS_TX_ERROR, 'error'); return null; }
   var safe = await safeInfoForAuthority(operatorAddr, (chains[0] || {}).id || project.chainId, project.chainId);
-  if (!safe) return ensureOperatorAccount(project, operatorAddr, setStatus);
+  var permission = { id: JB_PERMISSION_SET_PROJECT_URI, chains: chains };
+  if (!safe) return ensureOperatorAccount(project, operatorAddr, setStatus, permission);
   var account = getAccount();
   if (!account) account = await connect().then(getAccount).catch(function () { return null; });
-  if (!safeAuthorityAccessMode(account, operatorAddr, safe, isSafeConnected())) {
+  if (!safeAuthorityAccessMode(account, operatorAddr, safe, isSafeConnected())
+    && !await accountHoldsPermissionOn(project, chains, account, permission.id)) {
     setStatus('Connect the project Safe or one of its signers to propose these metadata changes.', 'error'); return null;
   }
   return account;
@@ -12465,6 +12492,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
   var meta = local.metadata;
   var actionResult = await runAuthorityActionAcrossChains(project, chains, operatorAddr, plan.buildCall, {
     gas: 400000n,
+    permissionId: JB_PERMISSION_SET_PROJECT_URI,
     label: 'Edit project details', title: 'Confirm edit', pendingScope: relayrActionScope(project, 'edit-project-details'),
     reverify: plan.reverify,
     summary: { rows: [['Updates', 'the edited project details; untouched metadata stays local to each chain']] },
@@ -25057,8 +25085,12 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     if (!signer) { setStatus('Connecting wallet…', 'pending'); signer = await connect().then(getAccount).catch(function () { return null; }); }
     if (!signer) { setStatus('Connect a wallet to continue', 'error'); return; }
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
-      setStatus('Connected wallet isn’t a signer of the owner Safe (' + truncAddr(operatorAddr) + ').', 'error'); return;
+      // A wallet the Safe granted QUEUE_RULESETS to queues for itself, with no proposal.
+      if (await accountHoldsPermissionOn(project, selected, signer, JB_PERMISSION_QUEUE_RULESETS)) safeInfo = null;
+      else { setStatus('Connected wallet isn’t a signer of the owner Safe (' + truncAddr(operatorAddr) + ').', 'error'); return; }
     }
+  }
+  if (safeInfo) {
     try { buildCall(selected[0].id); } catch (e) { setStatus('Invalid ruleset: ' + (e.message || e), 'error'); return; }
     var shim = Object.assign({}, project, { chains: selected });
     var tabName = project.isRevnet ? 'Operator' : 'Owner';
@@ -25079,8 +25111,8 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
     return { safe: true, queued: res.queued, readyExecs: res.readyExecs || [], executed: !!res.executedReady };
   }
 
-  // EOA owner — the connected wallet must be the owner.
-  var account = await ensureOperatorAccount(project, operatorAddr, setStatus);
+  // The connected wallet must be the owner, or hold QUEUE_RULESETS from the owner on every selected chain.
+  var account = await ensureOperatorAccount(project, operatorAddr, setStatus, { id: JB_PERMISSION_QUEUE_RULESETS, chains: selected });
   if (!account) return;
 
   if (!multi) {
@@ -25522,7 +25554,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     var args = [pidOn(project, cid), BigInt(ridMap[cid]), groups];
     return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args }),
       contract: 'JBController', abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args };
-  }, { label: 'Edit splits', title: 'Confirm edit splits', gas: 600000n, pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
+  }, { label: 'Edit splits', title: 'Confirm edit splits', gas: 600000n, permissionId: JB_PERMISSION_SET_SPLIT_GROUPS, pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
     summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts'], ['Recipients', splits.length ? splits.length + ' split' + (splits.length === 1 ? '' : 's') + ' (replaces the current set)' : 'none: clears the group']] } }, setStatus);
 
   if (!result) return;
