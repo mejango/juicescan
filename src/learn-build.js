@@ -3,6 +3,7 @@
 
 import { BENDYSTRAW_GRAPHQL_ENDPOINTS } from './bendystraw-endpoints.js';
 import { LEARN_SECTIONS } from './learn-sections.js';
+import { PERMISSION_IDS } from './permission-ids.js';
 
 export function renderLearnTab() {
   var container = document.getElementById('tab-learn');
@@ -430,47 +431,7 @@ export function renderBuildTab() {
       ['JBPermissions.hasPermissions(operator, account, projectId, permissionIds[], includeRoot, includeWildcard)', 'Check multiple permissions at once'],
       ['JBPermissions.WILDCARD_PROJECT_ID()', 'Returns 0, the wildcard project ID'],
     ]),
-    propertyTable('PERMISSION IDS', [
-      ['1 - ROOT', 'Grants all permissions. Use with extreme care.'],
-      ['2 - QUEUE_RULESETS', 'Queue new rulesets for the project.'],
-      ['3 - LAUNCH_RULESETS', 'Launch the project’s first rulesets.'],
-      ['4 - CASH_OUT_TOKENS', 'Cash out (redeem) project tokens on a holder’s behalf.'],
-      ['5 - SEND_PAYOUTS', 'Trigger payout distributions.'],
-      ['6 - MIGRATE_TERMINAL', 'Migrate funds to a new terminal.'],
-      ['7 - SET_PROJECT_URI', 'Update project metadata.'],
-      ['8 - DEPLOY_ERC20', 'Deploy the project’s ERC-20 token.'],
-      ['9 - SET_TOKEN', 'Set a custom token for the project.'],
-      ['10 - MINT_TOKENS', 'Mint tokens on demand.'],
-      ['11 - BURN_TOKENS', 'Burn tokens from another holder.'],
-      ['12 - CLAIM_TOKENS', 'Claim credits into ERC-20 tokens for a holder.'],
-      ['13 - TRANSFER_CREDITS', 'Transfer a holder’s unclaimed credits.'],
-      ['14 - SET_CONTROLLER', 'Change the project controller.'],
-      ['15 - SET_TERMINALS', 'Set the project’s terminals.'],
-      ['16 - ADD_TERMINALS', 'Add terminals to the project.'],
-      ['17 - SET_PRIMARY_TERMINAL', 'Set the primary terminal for a token.'],
-      ['18 - USE_ALLOWANCE', 'Withdraw surplus via the surplus allowance.'],
-      ['19 - SET_SPLIT_GROUPS', 'Modify payout and reserved token splits.'],
-      ['20 - ADD_PRICE_FEED', 'Add a price feed for a currency pair.'],
-      ['21 - ADD_ACCOUNTING_CONTEXTS', 'Add accounting contexts (accepted tokens) to a terminal.'],
-      ['22 - SET_TOKEN_METADATA', 'Set the project token’s name and symbol.'],
-      ['23 - SIGN_FOR_ERC20', 'Sign ERC-20 permit approvals on the project’s behalf.'],
-      ['24 - ADJUST_721_TIERS', 'Add or remove tiers on a 721 hook.'],
-      ['25 - SET_721_METADATA', 'Update a 721 hook’s metadata (base URI, resolver, contract URI).'],
-      ['26 - MINT_721', 'Mint NFTs directly, without a payment.'],
-      ['27 - SET_721_DISCOUNT_PERCENT', 'Set the 721 hook’s discount percent.'],
-      ['28 - SET_BUYBACK_TWAP', 'Set the buyback hook’s TWAP window.'],
-      ['29 - SET_BUYBACK_POOL', 'Set the buyback hook’s Uniswap pool.'],
-      ['30 - SET_BUYBACK_HOOK', 'Set which buyback hook the registry routes the project to.'],
-      ['31 - SET_ROUTER_TERMINAL', 'Configure the project’s router terminal.'],
-      ['32 - MAP_SUCKER_TOKEN', 'Map a token across a sucker pair.'],
-      ['33 - DEPLOY_SUCKERS', 'Deploy cross-chain suckers for the project.'],
-      ['34 - SET_SUCKER_PEER', 'Set a sucker’s cross-chain peer.'],
-      ['35 - SUCKER_SAFETY', 'Emergency token recovery on a sucker.'],
-      ['36 - SET_SUCKER_DEPRECATION', 'Deprecate a sucker.'],
-      ['37 - OPEN_LOAN', 'Open a REVLoans loan against project tokens.'],
-      ['38 - REALLOCATE_LOAN', 'Move collateral between loans. Also borrows the full current capacity.'],
-      ['39 - REPAY_LOAN', 'Repay a loan on a holder’s behalf.'],
-    ]),
+    propertyTable('PERMISSION IDS', PERMISSION_IDS.map(function (p) { return [p.id + ' - ' + p.name, p.desc]; })),
     infoBox('A grant covers one operator and one project. QUEUE_RULESETS for project 5 gives no access to project 6.')
   ]));
 

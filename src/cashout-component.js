@@ -280,15 +280,15 @@ export function renderCashOutComponent() {
       state.error = 'Select a project and chain'; updateUI(); return;
     }
     if (!state.contextsVerified) { state.error = state.contextsLoading ? 'Tokens you can receive are still loading.' : 'Could not check which tokens this project can return.'; updateUI(); return; }
-    if (!state.amount) { state.error = 'Enter a token count'; updateUI(); return; }
+    if (!state.amount) { state.error = 'Enter a token count above zero'; updateUI(); return; }
     if (!state.selectedToken) { state.error = 'Select a token to receive'; updateUI(); return; }
 
     var cashOutCount;
     try { cashOutCount = parseAmount(state.amount, 18); } catch (_) {
       state.error = 'Invalid token count'; updateUI(); return;
     }
-    if (cashOutCount <= 0n) { state.error = 'Enter a token count'; updateUI(); return; }
-    if (state.balance != null && cashOutCount > BigInt(state.balance)) { state.error = 'Amount exceeds your project token balance'; updateUI(); return; }
+    if (cashOutCount <= 0n) { state.error = 'Enter a token count above zero'; updateUI(); return; }
+    if (state.balance != null && cashOutCount > BigInt(state.balance)) { state.error = 'That’s more than your balance of ' + formatAmount(state.balance, 18) + ' tokens.'; updateUI(); return; }
 
     var holder = getAccount();
     if (!holder) { state.error = 'Connect a wallet to continue'; updateUI(); return; }
@@ -300,7 +300,7 @@ export function renderCashOutComponent() {
     }
 
     var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
-    if (!terminalAddr) { state.error = 'No payment contract is available on this chain'; updateUI(); return; }
+    if (!terminalAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
     var chainId = state.selectedChain;
     var reclaimToken = state.selectedToken.address;
     var amountText = state.amount;

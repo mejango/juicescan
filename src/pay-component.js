@@ -497,7 +497,7 @@ export function renderPayComponent() {
       if (!route || route.unavailable) {
         state.phase = 'ready';
         state.preview = null;
-        state.error = route ? route.reason : 'No payment contract is available on this chain';
+        state.error = route ? route.reason : 'Juicebox contracts are unavailable on this chain';
         updateUI();
         return;
       }
@@ -578,7 +578,7 @@ export function renderPayComponent() {
       if (!unchanged()) { state.phase = 'ready'; state.error = CHANGED; updateUI(); return; }
       if (!route || route.unavailable) {
         state.phase = 'ready';
-        state.error = route ? route.reason : 'No payment contract is available on this chain';
+        state.error = route ? route.reason : 'Juicebox contracts are unavailable on this chain';
         updateUI();
         return;
       }

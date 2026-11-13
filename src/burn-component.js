@@ -187,7 +187,7 @@ export function renderBurnComponent() {
     if (!state.selectedChain || !state.projectId) {
       state.error = 'Select a project and chain'; updateUI(); return;
     }
-    if (!state.amount) { state.error = 'Enter a token count'; updateUI(); return; }
+    if (!state.amount) { state.error = 'Enter a token count above zero'; updateUI(); return; }
 
     var tokenCount;
     try { tokenCount = parseAmount(state.amount, 18); } catch (_) {

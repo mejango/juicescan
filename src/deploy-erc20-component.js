@@ -128,7 +128,7 @@ export function renderDeployERC20Component() {
     if (!state.tokenSymbol.trim()) { state.error = 'Enter a token symbol'; updateUI(); return; }
 
     var controllerAddr = getAddress('JBController', state.selectedChain);
-    if (!controllerAddr) { state.error = 'No project controller contract is available on this chain'; updateUI(); return; }
+    if (!controllerAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
     var salt = '0x0000000000000000000000000000000000000000000000000000000000000000';
 

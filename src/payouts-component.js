@@ -170,7 +170,7 @@ export function renderPayoutsComponent() {
     state.contextsVerified = false; state.contextsLoading = true;
     state.tokens = []; state.selectedToken = null;
     if (!term || !client || !state.projectId) {
-      state.contextsLoading = false; state.error = 'Could not verify this project’s accepted payout tokens.'; updateUI(); return;
+      state.contextsLoading = false; state.error = 'Could not check which tokens this project can pay out.'; updateUI(); return;
     }
     var gen = ++tokenGeneration;
     updateUI();
@@ -189,7 +189,7 @@ export function renderPayoutsComponent() {
       if (gen !== tokenGeneration || state.selectedChain !== chainId) return;
       state.tokens = []; state.selectedToken = null;
       state.contextsVerified = false; state.contextsLoading = false;
-      state.error = 'Could not verify this project’s accepted payout tokens.'; updateUI();
+      state.error = 'Could not check which tokens this project can pay out.'; updateUI();
     });
   }
 
@@ -325,7 +325,7 @@ export function renderPayoutsComponent() {
     if (!state.selectedChain || !state.projectId) {
       state.error = 'Select a project and chain'; updateUI(); return;
     }
-    if (!state.contextsVerified) { state.error = state.contextsLoading ? 'Payout tokens are still loading.' : 'Could not verify this project’s accepted payout tokens.'; updateUI(); return; }
+    if (!state.contextsVerified) { state.error = state.contextsLoading ? 'Payout tokens are still loading.' : 'Could not check which tokens this project can pay out.'; updateUI(); return; }
     if (!state.selectedToken) { state.error = 'Select a token'; updateUI(); return; }
     if (!state.amount) { state.error = 'Enter an amount'; updateUI(); return; }
 
@@ -336,7 +336,7 @@ export function renderPayoutsComponent() {
     }
 
     var terminalAddr = getAddress('JBMultiTerminal', state.selectedChain);
-    if (!terminalAddr) { state.error = 'No payment contract is available on this chain'; updateUI(); return; }
+    if (!terminalAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
     var tokenAddr = state.selectedToken.address;
     var accountingCurrency = state.selectedToken.currency;

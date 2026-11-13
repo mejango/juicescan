@@ -4,6 +4,7 @@ import { assertScheduleFresh, assertOrderedRulesetReceipt } from './ruleset-sche
 // Discover tab: live project cards + detail page. Transaction-critical state is read from V6 contracts;
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
+import { PERMISSION_IDS } from './permission-ids.js';
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
 import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from './defifa.js';
 import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './pay-failure.js';
@@ -4258,60 +4259,10 @@ var jbSetPermissionsAbi = [{
       { name: 'operator', type: 'address' }, { name: 'projectId', type: 'uint64' }, { name: 'permissionIds', type: 'uint8[]' }] },
   ], outputs: [],
 }];
-// JBPermissionIds (nana-permission-ids-v6) → human labels. id == bit position in the packed bitmap.
-var JB_PERMISSION_LABELS = {
-  1: 'Full control (root)', 2: 'Queue rulesets', 3: 'Launch rulesets', 4: 'Cash out tokens', 5: 'Send payouts',
-  6: 'Migrate terminal', 7: 'Set project metadata', 8: 'Deploy ERC-20', 9: 'Set custom token', 10: 'Mint tokens',
-  11: 'Burn tokens', 12: 'Claim tokens', 13: 'Transfer credits', 14: 'Set controller', 15: 'Set terminals',
-  16: 'Add terminals', 17: 'Set primary terminal', 18: 'Use surplus allowance', 19: 'Set splits', 20: 'Add price feed',
-  21: 'Add accounting tokens', 22: 'Set token metadata', 23: 'Sign for ERC-20 (permit)', 24: 'Adjust shop items',
-  25: 'Set shop metadata', 26: 'Mint shop items', 27: 'Set shop discount', 28: 'Set buyback TWAP', 29: 'Set buyback pool',
-  30: 'Set buyback hook', 31: 'Set router terminal', 32: 'Map sucker token', 33: 'Deploy suckers', 34: 'Set sucker peer',
-  35: 'Sucker safety controls', 36: 'Set sucker deprecation', 37: 'Open loans', 38: 'Reallocate loans', 39: 'Repay loans',
-};
-var JB_PERMISSION_MAX_ID = 39;
-// One-line plain-English explanation of what each permission lets the operator do.
-var JB_PERMISSION_DESCS = {
-  1: 'Grants every permission below: full control of the project.',
-  2: 'Schedule new rules for timing, token creation, and payouts.',
-  3: 'Start the project with its first set of rules.',
-  4: 'Cash out (redeem) project tokens for a share of the project’s funds on a holder’s behalf.',
-  5: 'Send the project’s scheduled payouts to their recipients.',
-  6: 'Move funds to another terminal.',
-  7: 'Update the project’s name, logo, and description.',
-  8: 'Create a standard token contract (ERC-20) for the project.',
-  9: 'Replace the project token with a custom ERC-20.',
-  10: 'Create project tokens for any address without payment.',
-  11: 'Permanently remove tokens from a holder’s balance.',
-  12: 'Convert a holder’s recorded token credits into transferable tokens.',
-  13: 'Move a holder’s recorded token credits to another address.',
-  14: 'Swap the controller contract that manages rulesets and tokens.',
-  15: 'Choose all contracts that may handle the project’s payments (terminals).',
-  16: 'Add contracts that may handle the project’s payments (terminals).',
-  17: 'Choose the main payment contract for a token.',
-  18: 'Withdraw funds left after planned payouts, within the allowed amount.',
-  19: 'Change who receives payouts and tokens set aside for the project.',
-  20: 'Add a price feed used to convert between currencies.',
-  21: 'Register new tokens the terminal accepts directly (e.g. an ERC-20 or USDC).',
-  22: 'Set the project token’s name and symbol.',
-  23: 'Sign permit (ERC-20 approval) messages on the project’s behalf.',
-  24: 'Add, remove, or change the project’s shop items (NFT tiers).',
-  25: 'Update the shop collection’s name and details.',
-  26: 'Create shop items for a recipient without payment.',
-  27: 'Set the discount applied to shop item prices.',
-  28: 'Choose how long the buyback contract averages prices (its TWAP window).',
-  29: 'Set the buyback hook’s Uniswap pool.',
-  30: 'Set the project’s buyback hook.',
-  31: 'Set the router terminal used for swaps.',
-  32: 'Choose matching tokens for a bridge between networks.',
-  33: 'Create contracts that move project tokens and backing between networks (suckers).',
-  34: 'Link a bridge contract to its partner on another network.',
-  35: 'Set bridge limits and emergency withdrawal controls.',
-  36: 'Wind down a bridge.',
-  37: 'Open loans against the project’s tokens.',
-  38: 'Move the tokens backing one loan to another loan.',
-  39: 'Repay the project’s loans.',
-};
+// Labels and descriptions come from the one permission list (permission-ids.js). id == bit position in the packed bitmap.
+var JB_PERMISSION_LABELS = {}, JB_PERMISSION_DESCS = {};
+PERMISSION_IDS.forEach(function (p) { JB_PERMISSION_LABELS[p.id] = p.label; JB_PERMISSION_DESCS[p.id] = p.desc; });
+var JB_PERMISSION_MAX_ID = PERMISSION_IDS.length;
 // setPermissionsFor REPLACES an operator's whole set, so any id this build has no checkbox for — a permission a
 // newer extension defines — would be revoked by saving the form. Carry those through untouched.
 export function mergePermissionIds(checkedIds, existingIds) {
