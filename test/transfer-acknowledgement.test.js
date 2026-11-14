@@ -25,6 +25,18 @@ describe('transfer acknowledgement', () => {
     m.submit.click();
     expect(m.status.textContent).toBe('Tick the confirmation box to proceed.');
   });
+  it('says it is checking who can send as soon as the click lands, before the Safe read answers', () => {
+    const fetchBefore = globalThis.fetch;
+    globalThis.fetch = () => new Promise(() => {}); // the authority read never answers in this test
+    try {
+      const m = open(false);
+      m.address.value = NEXT; m.address.dispatchEvent(new Event('input'));
+      m.ack.checked = true; m.ack.dispatchEvent(new Event('change'));
+      m.submit.click();
+      expect(m.status.textContent).toBe('Checking who can send this…');
+      expect(m.status.className).toContain('pending');
+    } finally { globalThis.fetch = fetchBefore; }
+  });
   it('clears the acknowledgement when the address changes', () => {
     const m = open(true);
     m.address.value = NEXT; m.address.dispatchEvent(new Event('input'));
