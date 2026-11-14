@@ -5441,6 +5441,12 @@ function deadlineLabelOf(addr, chainId) {
   return 'Custom';
 }
 
+// The ruleset detail's deadline: a known deadline contract by its length, any other contract by its address.
+export function ruleChangeDeadlineText(addr, chainId) {
+  var label = deadlineLabelOf(addr, chainId || 1);
+  return label === 'Custom' ? truncAddr(addr) : label;
+}
+
 // Revnet stages are just the project's queued rulesets. allOf walks the ruleset list.
 var allOfAbi = [{
   type: 'function', name: 'allOf', stateMutability: 'view',
@@ -14916,7 +14922,7 @@ export function rulesetRows(r, m, project) {
   return [
     ['CYCLE', 'Duration', Number(r.duration) ? formatDuration(r.duration) : 'Not set'],
     ['CYCLE', 'Start time', formatStartTime(r.start)],
-    ['CYCLE', 'Rule change deadline', (r.approvalHook && r.approvalHook !== ZERO_ADDRESS) ? truncAddr(r.approvalHook) : 'No deadline'],
+    ['CYCLE', 'Rule change deadline', ruleChangeDeadlineText(r.approvalHook, project && project.chainId)],
     ['TOKEN', 'Total issuance rate', (Number(r.weight) === 0 ? '0' : formatAmount(r.weight, 18)) + ' / ' + baseUnit],
     ['TOKEN', 'Reserved rate', percentFromRuleset(m.reservedPercent)],
     ['TOKEN', 'Issuance cut percent', formatCutPercent(r.weightCutPercent)],
