@@ -1,15 +1,15 @@
 // Add-liquidity and move-between-chains modals. Loaded on demand from a project's actions menu.
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, openPendingReview, onEffectiveAccountChange, resolveContractName, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isSafeConnected } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, openPendingReview, onEffectiveAccountChange, ZERO_ADDRESS, NATIVE_TOKEN, errMessage } from './component-base.js';
 import { quotedOutputFloor } from './slippage.js';
 import { txHashForSafeTx } from './safe-app.js';
 import { lpMarketRoom } from './lp-market.js';
 import {
-  PERMIT2_ADDRESS, POOL_MANAGER_BY_CHAIN, POSITION_MANAGER_BY_CHAIN, acctKindsForFunds,
+  POOL_MANAGER_BY_CHAIN, POSITION_MANAGER_BY_CHAIN, acctKindsForFunds,
   borrowCurrencyForAccountContext, buildSuckerPrepareArgs, buildSuckerToRemoteArgs, cashOutProtocolFee,
   classifySuckerInfra, clientFor, currentSurplusOfAbi, erc20BalanceOfAbi, feeFreeSurplusOfAbi, findToRemoteValue,
   formatBalance, formatEth, formatPrice, formatTokens, isFeelessAddress, issuancePairUnitMismatch,
-  lpAddLiquidityCalls, lpAmountsModeNote, lpDeadlineSecs, lpDefaultRange, lpDepthMarkerLabelLayout,
-  lpFullRangeBounds, lpIsSmartWallet, lpPairFor, lpSolveRangeFromAmounts, lpTrimNum, moveChainName, noteLocalLpWrite,
+  lpAmountsModeNote, lpApprovalRows, lpDeadlineSecs, lpDefaultRange, lpDepthMarkerLabelLayout,
+  lpFullRangeBounds, lpIsSmartWallet, lpPairFor, lpSafeBatchPreview, lpSolveRangeFromAmounts, lpTrimNum, moveChainName, noteLocalLpWrite,
   openTxConfirm, opsChainSelect, opsPercentButtons, pidOn, prepareAddLiquidity, previewCashOutAbi, read,
   readAmmPrice, readCashoutPrice, readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance,
   renderBalanceTables, renderExplorerTxLink, resolveAcctToken, resolveFundsKindAcct, runAddLiquidityTxs,
@@ -545,12 +545,7 @@ function buildAddLiquidityPayload(chainId, chainName, sym, prep) {
   var deposit = [];
   if (tokenMax > 1n) deposit.push(formatTokens(tokenMax) + ' ' + sym);
   if (pairMax > 1n) deposit.push(formatBalance(pairMax, pair.decimals, pair.symbol));
-  var approvalRows = (prep.erc20 || []).map(function (s) {
-    var label = (s.currency || '').toLowerCase() === (pair.addr || '').toLowerCase() ? pair.symbol : sym;
-    return [label + ' approval', s.approved && s.permitReady ? 'already set: no approval step will run'
-      : s.approved ? 'token allowance reused: only the Permit2 step remains'
-      : 'runs before the mint'];
-  });
+  var approvalRows = lpApprovalRows(prep.erc20, function (currency) { return (currency || '').toLowerCase() === (pair.addr || '').toLowerCase() ? pair.symbol : sym; }, 'mint');
   return {
     summary: {
       action: (prep.market ? 'Make a market in the ' : 'Add liquidity to the ') + sym + '/' + pair.symbol + ' pool',
@@ -1074,18 +1069,8 @@ export function buildAddLiquidityModal(project) {
       // Inside the Safe App a multi-call sequence is proposed as ONE batch: preview every call with the exact
       // now/deadline the submit reuses, and replace the per-step wallet list with the single proposal.
       var payload = buildAddLiquidityPayload(cid, chainName, sym, prep);
-      var plan = null;
-      if (prep.smartWallet && isSafeConnected()) {
-        var planNow = Math.floor(Date.now() / 1000), planDl = lpDeadlineSecs(prep);
-        var planned = lpAddLiquidityCalls(prep, (prep.erc20 || []).map(function (s) { return { approve: !s.approved, permit2: !s.permitReady }; }), planNow, planDl, BigInt(planNow + planDl));
-        if (planned.length > 1) {
-          plan = { now: planNow, deadline: BigInt(planNow + planDl), calls: planned };
-          payload.transactions = planned.map(function (c) {
-            return { step: c.label, chain: chainName, chainId: cid, contract: resolveContractName(c.to, cid) || (c.to === PERMIT2_ADDRESS ? 'Permit2' : c.to === prep.posm ? 'Uniswap V4 PositionManager' : c.to),
-              address: c.to, calldata: c.data, abi: c.abi, functionName: c.functionName, rawArgs: c.args, value: String(c.value) };
-          });
-        }
-      }
+      var plan = lpSafeBatchPreview(cid, chainName, prep);
+      if (plan) payload.transactions = plan.transactions;
       openTxConfirm(payload, function (ctx) {
         ctx.confirm.disabled = true; ctx.cancel.disabled = true;
         runAddLiquidityTxs(cid, prep, function (m, kind, meta) { ctx.showStatus(m, kind, meta); }, plan).then(function (result) {

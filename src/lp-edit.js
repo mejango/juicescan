@@ -15,9 +15,9 @@
 import { encodeAbiParameters, encodeFunctionData, formatUnits, parseUnits } from 'viem';
 import { el, errMessage, openPendingReview } from './component-base.js';
 import {
-  POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpBandPricesOf, lpConfirmAndSend,
+  POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpApprovalRows, lpBandPricesOf, lpConfirmAndSend,
   lpGetAmountsForLiquidity, lpGetLiquidityForAmounts, lpMintPlan, lpPositionManagerAbi, lpSqrtAtTick,
-  noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
+  lpSafeBatchPreview, lpWithAllowanceFlags, noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
 } from './discover.js';
 import { quotedOutputFloor } from './slippage.js';
 
@@ -307,16 +307,26 @@ export function openLpEditor(project, chainId, stalePos, acct, onDone) {
       var words = describeLpEdit(plan, fmt, !!pair.isNative, pair.symbol, plan.kind === 'move' ? formatPrice(snapped.min) + ' to ' + formatPrice(snapped.max) + ' ' + pair.symbol + '/' + sym : '');
       var funded = plan.erc20.length > 0 || plan.value > 0n;
       var window = pos.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes';
-      var reviewedAt = Math.floor(Date.now() / 1000);
-      var deadline = BigInt(reviewedAt + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
-      lpConfirmAndSend(review, {
-        summary: { action: TITLE[plan.kind] + ' in the ' + sym + '/' + pair.symbol + ' pool', rows: [['Position', '#' + pos.tokenId.toString()], ['Change', words.lead], ['Details', words.detail], ['To', acct], ['Deadline', window]] },
+      // What the wallet is asked for before the change itself: the review lists every approval and, inside the
+      // Safe App, every call of the batch.
+      return lpWithAllowanceFlags(chainId, acct, posm, !!pos.smartWallet, plan.erc20).then(function (erc20) {
+      if (review.closed) return;
+      var prep = { posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: erc20, acct: acct, smartWallet: !!pos.smartWallet,
+        stepLabel: 'liquidity change', finalLabel: TITLE[plan.kind], sendingLine: 'Confirm in your wallet…' };
+      var batch = lpSafeBatchPreview(chainId, chainNameOf(chainId), prep);
+      var reviewedAt = batch ? batch.now : Math.floor(Date.now() / 1000);
+      var deadline = batch ? batch.deadline : BigInt(reviewedAt + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
+      var approvals = lpApprovalRows(erc20, function (currency) { return String(currency).toLowerCase() === String(pair.addr || '').toLowerCase() ? pair.symbol : sym; }, 'change');
+      var payload = {
+        summary: { action: TITLE[plan.kind] + ' in the ' + sym + '/' + pair.symbol + ' pool', rows: [['Position', '#' + pos.tokenId.toString()], ['Change', words.lead], ['Details', words.detail], ['To', acct], ['Deadline', window]].concat(approvals) },
         chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: posm,
         'function': 'modifyLiquidities', value: plan.value.toString(),
         calldata: funded ? 'built at signing: it may carry a Permit2 signature bound to this wallet' : encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [plan.unlockData, deadline] }),
         position: { kind: plan.kind, tokenId: pos.tokenId.toString(), ticks: plan.tickLower + ' to ' + plan.tickUpper, liquidity: plan.liquidity.toString() },
         args: { unlockData: plan.unlockData, deadline: 'set at signing (' + window + ')' },
-      }, opts, 'Checking the position…', 'Liquidity change failed', function (dialog) {
+      };
+      if (batch) payload.transactions = batch.transactions;
+      lpConfirmAndSend(review, payload, opts, 'Checking the position…', 'Liquidity change failed', function (dialog) {
         // The position and the price again, right before sending: the reviewed maxima and sizes came from them.
         var recheck = function () {
           return refreshLpPositionForRemoval(chainId, pos, acct).then(function (live) {
@@ -327,16 +337,15 @@ export function openLpEditor(project, chainId, stalePos, acct, onDone) {
         // One runner for every edit: it refuses a change already waiting in a Safe's queue, settles approvals,
         // and checks the position once more after them. The deadline is the reviewed one.
         return recheck().then(function () {
-          return runAddLiquidityTxs(chainId, {
-            posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: plan.erc20, acct: acct, smartWallet: !!pos.smartWallet,
-            stepLabel: 'liquidity change', sendingLine: 'Confirm in your wallet…', recheck: recheck,
-          }, function (message, kind, meta) { dialog.showStatus(message, kind, meta); }, { now: reviewedAt, deadline: deadline });
+          return runAddLiquidityTxs(chainId, Object.assign({ recheck: recheck }, prep),
+            function (message, kind, meta) { dialog.showStatus(message, kind, meta); }, { now: reviewedAt, deadline: deadline });
         });
       }, function (result) {
         handle.close();
         noteLocalLpWrite(chainId, pos.poolId);
         // A Safe batch returns its proposal, which is not an execution.
         if (onDone) onDone(result && result.safeTxHash ? null : result);
+      });
       });
     }).catch(function (error) {
       go.disabled = false;

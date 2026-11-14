@@ -30939,6 +30939,43 @@ export function lpMintPlan(pool, pairAmount, tokenAmount, pa, pb) {
   return { tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max };
 }
 
+// One ERC-20 side's standing allowances (token to Permit2, Permit2 to the position manager) against what a
+// liquidity change may pull: { currency, max, approved, permitReady }. `need` below `max` lets an earlier
+// allowance that covers the exact need stand in for the padded maximum.
+async function lpSideAllowances(chainId, acct, posm, smartWallet, currency, max, need) {
+  var client = clientFor(chainId);
+  // An allowance must outlive the queue: a Safe's call can execute a day or more after it is proposed.
+  var p2Fresh = Math.floor(Date.now() / 1000) + (smartWallet ? 86400 : 0);
+  var erc20Allow = BigInt(await client.readContract({ address: currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] }));
+  var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, currency, posm] });
+  var p2Amount = Number(p2[1]) > p2Fresh ? BigInt(p2[0]) : null;
+  return Object.assign({ currency: currency }, lpClampToAllowances(max, need, erc20Allow, p2Amount));
+}
+// The sides of a change whose maxima are fixed inside its calls: each needs its allowances whole.
+function lpWithAllowanceFlags(chainId, acct, posm, smartWallet, erc20) {
+  return Promise.all((erc20 || []).map(function (side) { return lpSideAllowances(chainId, acct, posm, smartWallet, side.currency, side.max, side.max); }));
+}
+// The review's row per funded ERC-20 side: whether an approval runs before the call named by `before`.
+function lpApprovalRows(erc20, labelOf, before) {
+  return (erc20 || []).map(function (side) {
+    return [labelOf(side.currency) + ' approval', side.approved && side.permitReady ? 'already set: no approval step will run'
+      : side.approved ? 'token allowance reused: only the Permit2 step remains'
+      : 'runs before the ' + before];
+  });
+}
+// Inside the Safe App a funded change is proposed as one batch. Its calls as the review lists them, with the
+// now/deadline the submit reuses; null when one call remains and it is sent on its own.
+function lpSafeBatchPreview(chainId, chainName, prep) {
+  if (!prep.smartWallet || !isSafeConnected()) return null;
+  var now = Math.floor(Date.now() / 1000), dlSecs = lpDeadlineSecs(prep), deadline = BigInt(now + dlSecs);
+  var calls = lpAddLiquidityCalls(prep, (prep.erc20 || []).map(function (side) { return { approve: !side.approved, permit2: !side.permitReady }; }), now, dlSecs, deadline);
+  if (calls.length < 2) return null;
+  return { now: now, deadline: deadline, calls: calls, transactions: calls.map(function (call) {
+    return { step: call.label, chain: chainName, chainId: chainId, contract: resolveContractName(call.to, chainId) || (call.to === PERMIT2_ADDRESS ? 'Permit2' : call.to === prep.posm ? 'Uniswap V4 PositionManager' : call.to),
+      address: call.to, calldata: call.data, abi: call.abi, functionName: call.functionName, rawArgs: call.args, value: String(call.value) };
+  }) };
+}
+
 // The floor (cash out price) and ceiling (issuance price) a market is made between, in pair per token; 0 where
 // one cannot be read in the pair's unit.
 async function lpCorridor(project, chainId) {
@@ -30981,21 +31018,13 @@ async function prepareAddLiquidity(opts) {
 
   // Contract wallets (Safes) can take a day+ per signing round, so allowances set on an earlier visit must
   // survive a return trip.
-  var client = clientFor(chainId);
   var smartWallet = await lpIsSmartWallet(chainId, acct);
-  // An allowance must outlive the queue: a Safe's mint tx can execute a day+ after it's proposed.
-  var p2Fresh = Math.floor(Date.now() / 1000) + (smartWallet ? 86400 : 0);
 
-  async function sideWithAllowances(currency, max, need) {
-    var erc20Allow = BigInt(await client.readContract({ address: currency, abi: lpErc20Abi, functionName: 'allowance', args: [acct, PERMIT2_ADDRESS] }));
-    var p2 = await client.readContract({ address: PERMIT2_ADDRESS, abi: lpPermit2Abi, functionName: 'allowance', args: [acct, currency, posm] });
-    var p2Amount = Number(p2[1]) > p2Fresh ? BigInt(p2[0]) : null;
-    return Object.assign({ currency: currency }, lpClampToAllowances(max, need, erc20Allow, p2Amount));
-  }
+  function sideWithAllowances(currency, max, need) { return lpSideAllowances(chainId, acct, posm, smartWallet, currency, max, need); }
   var erc20 = [];
   if (market) {
     // The maxima sit inside each side's own mint, so an earlier allowance is reused only when it covers them whole.
-    for (var m = 0; m < market.erc20.length; m++) erc20.push(await sideWithAllowances(market.erc20[m].currency, market.erc20[m].max, market.erc20[m].max));
+    erc20 = await lpWithAllowanceFlags(chainId, acct, posm, smartWallet, market.erc20);
     return {
       posm: posm, key: key, acct: acct, market: market, need: need, amount0Max: amount0Max, amount1Max: amount1Max, value: market.value,
       unlockData: market.unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20, smartWallet: smartWallet,
@@ -31084,7 +31113,7 @@ export function lpAddLiquidityCalls(prep, needs, now, dlSecs, deadline) {
     if (need.approve) calls.push(Object.assign({ label: 'Approve token for Permit2', guard: [side.currency, lpErc20ApprovePrefix(PERMIT2_ADDRESS), 'The token approval'] }, lpApproveTokenCall(side)));
     if (need.permit2) calls.push(Object.assign({ label: 'Approve on Permit2', guard: [PERMIT2_ADDRESS, LP_SEL_PERMIT2_APPROVE, 'The Permit2 approval'] }, lpPermit2ApproveCall(side, prep.posm, now, dlSecs)));
   });
-  calls.push(Object.assign({ label: 'Mint the position', guard: [prep.posm, LP_SEL_MODIFY_LIQUIDITIES, 'The liquidity mint'], dependsOnPrior: calls.length > 0 }, lpMintCall(prep, deadline)));
+  calls.push(Object.assign({ label: prep.finalLabel || 'Mint the position', guard: [prep.posm, LP_SEL_MODIFY_LIQUIDITIES, 'The ' + (prep.stepLabel || 'liquidity mint')], dependsOnPrior: calls.length > 0 }, lpMintCall(prep, deadline)));
   return calls.map(function (c) {
     return Object.assign({}, c, { to: c.address, value: c.value || 0n, data: encodeFunctionData({ abi: c.abi, functionName: c.functionName, args: c.args }) });
   });
@@ -32100,7 +32129,7 @@ export {
   classifySuckerInfra, clientFor, controllerAddressFor, currentSurplusOfAbi, draftRecipientFromSplit,
   erc20BalanceOfAbi, feeFreeSurplusOfAbi, fetchProjectTiers, findToRemoteValue, formatBalance, formatEth,
   formatTokens, isFeelessAddress, isKnown721HookClone, isZeroishAddress, lpDeadlineSecs, lpIsSmartWallet, lpPairFor,
-  lpConfirmAndSend, lpCorridor, lpPositionManagerAbi, lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
+  lpApprovalRows, lpConfirmAndSend, lpCorridor, lpPositionManagerAbi, lpSafeBatchPreview, lpTrimNum, lpWithAllowanceFlags, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
   payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
   readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, refreshLpPositionForRemoval, renderBalanceTables,
   renderBridgeTransactions, renderBridgeTransactionsTable, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,

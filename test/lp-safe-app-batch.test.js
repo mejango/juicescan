@@ -16,7 +16,7 @@ vi.mock('../src/safe-app.js', async importOriginal => ({ ...await importOriginal
 vi.mock('../src/safe.js', async importOriginal => ({ ...await importOriginal(), listPendingSafeTxs: vi.fn(async () => { if (runtime.pending instanceof Error) throw runtime.pending; return runtime.pending; }) }));
 
 import { proposeSafeTransactions } from '../src/safe-app.js';
-import { lpAddLiquidityCalls, runAddLiquidityTxs } from '../src/discover.js';
+import { lpAddLiquidityCalls, lpApprovalRows, lpSafeBatchPreview, runAddLiquidityTxs } from '../src/discover.js';
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '../src/safe-batch.js';
 
 const TOKEN = '0x3333333333333333333333333333333333333333', POSM = '0x4444444444444444444444444444444444444444';
@@ -106,6 +106,22 @@ describe('runAddLiquidityTxs inside the Safe App', () => {
     expect(proposeSafeTransactions).not.toHaveBeenCalled();
     expect(runtime.wallet.writeContract.mock.calls.map(c => [c[0].address, c[0].functionName])).toEqual([[TOKEN, 'approve'], [PERMIT2, 'approve'], [POSM, 'modifyLiquidities']]);
     expect(runtime.client.simulateContract.mock.calls[1][0].args).toEqual([TOKEN, POSM, 1000n, BigInt(NOW + 30 * 24 * 3600)]);
+  });
+});
+
+describe('what a funded change shows before it is confirmed', () => {
+  it('names each approval that will run, and the whole Safe batch with the change as its last call', () => {
+    const funded = { ...prep(), stepLabel: 'liquidity change', finalLabel: 'Increase the position' };
+    expect(lpApprovalRows(funded.erc20, () => 'TKN', 'change')).toEqual([['TKN approval', 'runs before the change']]);
+    expect(lpApprovalRows([{ currency: TOKEN, max: 1n, approved: true, permitReady: false }], () => 'TKN', 'change')[0][1]).toMatch(/only the Permit2 step remains/);
+    const batch = lpSafeBatchPreview(8453, 'Base', funded);
+    expect(batch.transactions.map(t => t.step)).toEqual(['Approve token for Permit2', 'Approve on Permit2', 'Increase the position']);
+    expect(batch.transactions.map(t => t.address)).toEqual([TOKEN, PERMIT2, POSM]);
+    expect(batch.deadline).toBe(BigInt(batch.now + DL));
+    // Nothing left to approve: the change goes alone, and so does a wallet outside the Safe App.
+    expect(lpSafeBatchPreview(8453, 'Base', { ...funded, erc20: [{ currency: TOKEN, max: 1000n, approved: true, permitReady: true }] })).toBeNull();
+    runtime.safeApp = false;
+    expect(lpSafeBatchPreview(8453, 'Base', funded)).toBeNull();
   });
 });
 

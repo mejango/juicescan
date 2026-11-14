@@ -8,8 +8,8 @@
 import { formatUnits, parseUnits } from 'viem';
 import { el, errMessage, openPendingReview } from './component-base.js';
 import {
-  POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpBandPricesOf, lpConfirmAndSend, lpCorridor,
-  lpGetAmountsForLiquidity, lpMintPlan, lpSqrtAtTick, noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
+  POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpApprovalRows, lpBandPricesOf, lpConfirmAndSend, lpCorridor,
+  lpGetAmountsForLiquidity, lpMintPlan, lpSafeBatchPreview, lpSqrtAtTick, lpWithAllowanceFlags, noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
 } from './discover.js';
 import { lpCloseActions, lpEditOperations, lpEncodeUnlock, lpMintParams, lpMoveStillCovered } from './lp-edit.js';
 
@@ -319,15 +319,23 @@ export function openLpMarketEditor(project, chainId, group, acct, onDone) {
       var plan = lpMarketEditFromForm(sides, shown, values, corridor, refit, acct);
       var posm = POSITION_MANAGER_BY_CHAIN[chainId], smartWallet = !!sides.tokenSide.smartWallet;
       var window = smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes';
-      var reviewedAt = Math.floor(Date.now() / 1000);
-      var deadline = BigInt(reviewedAt + (smartWallet ? 30 * 24 * 3600 : 1200));
-      lpConfirmAndSend(review, {
-        summary: { action: action, rows: [['Market', ids]].concat(describeMarketEdit(plan, fmt, corridorText())).concat([['To', acct], ['Deadline', window]]) },
+      return lpWithAllowanceFlags(chainId, acct, posm, smartWallet, plan.erc20).then(function (erc20) {
+      if (review.closed) return;
+      var prep = { posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: erc20, acct: acct, smartWallet: smartWallet,
+        stepLabel: 'market edit', finalLabel: 'Edit the market', sendingLine: 'Confirm in your wallet…' };
+      var batch = lpSafeBatchPreview(chainId, chainNameOf(chainId), prep);
+      var reviewedAt = batch ? batch.now : Math.floor(Date.now() / 1000);
+      var deadline = batch ? batch.deadline : BigInt(reviewedAt + (smartWallet ? 30 * 24 * 3600 : 1200));
+      var approvals = lpApprovalRows(erc20, function (currency) { return String(currency).toLowerCase() === String(pair.addr || '').toLowerCase() ? pair.symbol : sym; }, 'change');
+      var payload = {
+        summary: { action: action, rows: [['Market', ids]].concat(describeMarketEdit(plan, fmt, corridorText())).concat([['To', acct], ['Deadline', window]]).concat(approvals) },
         chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: posm,
         'function': 'modifyLiquidities', value: plan.value.toString(),
         calldata: 'built at signing: it may carry a Permit2 signature bound to this wallet',
         args: { unlockData: plan.unlockData, deadline: 'set at signing (' + window + ')' },
-      }, opts, 'Checking the market…', 'Market edit failed', function (dialog) {
+      };
+      if (batch) payload.transactions = batch.transactions;
+      lpConfirmAndSend(review, payload, opts, 'Checking the market…', 'Market edit failed', function (dialog) {
         // Both positions and the price again, right before sending and once more after any approvals.
         var recheck = function () {
           return readSides().then(function (live) {
@@ -339,15 +347,14 @@ export function openLpMarketEditor(project, chainId, group, acct, onDone) {
           });
         };
         return recheck().then(function () {
-          return runAddLiquidityTxs(chainId, {
-            posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: plan.erc20, acct: acct, smartWallet: smartWallet,
-            stepLabel: 'market edit', sendingLine: 'Confirm in your wallet…', recheck: recheck,
-          }, function (message, kind, meta) { dialog.showStatus(message, kind, meta); }, { now: reviewedAt, deadline: deadline });
+          return runAddLiquidityTxs(chainId, Object.assign({ recheck: recheck }, prep),
+            function (message, kind, meta) { dialog.showStatus(message, kind, meta); }, { now: reviewedAt, deadline: deadline });
         });
       }, function (result) {
         handle.close();
         noteLocalLpWrite(chainId, sides.tokenSide.poolId);
         if (onDone) onDone(result && result.safeTxHash ? null : result);
+      });
       });
     }).catch(function (error) {
       go.disabled = false;
