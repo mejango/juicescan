@@ -9,7 +9,9 @@ import { gzipSync } from 'node:zlib';
 // measures startup 3,833,909 B raw and total 2,082,544 B gzip; only those two ceilings rose.
 // Parity with juicebox.money (2026-11) adds pay card and review logic that must load with the project page:
 // startup measures 722,045 B gzip, and the ceiling rose to about 2% above it.
-const startupBudget = { raw: 3_930_000, gzip: 736_000 };
+// The old-pool position move, the raised-by-chain hover and the exact pay route choice load with the project page:
+// startup measures 736,158 B gzip.
+const startupBudget = { raw: 3_930_000, gzip: 738_000 };
 
 const budgets = {
   // Open-first states (pending review rows, busy buttons, stale-while-refreshing marks) measure 248,424 B raw, 50,173 B gzip.

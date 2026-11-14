@@ -1,7 +1,7 @@
 // The old-pool position move must build the call juicebox.money builds (buyback-pool-migration.ts
 // liquidityMovePlan). The vector below is that function's output for these inputs.
 import { describe, expect, it } from 'vitest';
-import { lpPricesAgree, prepareMoveToCurrentPool } from '../src/discover.js';
+import { lpMoveStillFits, lpPricesAgree, prepareMoveToCurrentPool } from '../src/discover.js';
 
 var OWNER = '0x3333333333333333333333333333333333333333';
 var C1 = '0x1111111111111111111111111111111111111111';
@@ -21,6 +21,16 @@ describe('moving an old-pool position into the current pool', () => {
     expect(prep.value).toBe(0n);
     // The pair is currency0 here, so its floor is amount0's.
     expect([prep.pairMin, prep.tokenMin]).toEqual([prep.amount0Min, prep.amount1Min]);
+  });
+
+  it('is sent only while the position is the one reviewed', () => {
+    var reviewed = { liquidity: 5n, info: 9n };
+    expect(lpMoveStillFits(reviewed, { owner: OWNER.toUpperCase().replace('0X', '0x'), liquidity: 5n, info: 9n }, OWNER)).toBe(true);
+    // Topped up from another tab: the burn would take more than the review sized the mint for.
+    expect(lpMoveStillFits(reviewed, { owner: OWNER, liquidity: 50n, info: 9n }, OWNER)).toBe(false);
+    expect(lpMoveStillFits(reviewed, { owner: C1, liquidity: 5n, info: 9n }, OWNER)).toBe(false);
+    expect(lpMoveStillFits(reviewed, { owner: OWNER, liquidity: 5n, info: 8n }, OWNER)).toBe(false);
+    expect(lpMoveStillFits(reviewed, undefined, OWNER)).toBe(false);
   });
 
   it('never asks the wallet to pay in: each mint ceiling stays within its burn floor', () => {

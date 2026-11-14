@@ -4428,7 +4428,8 @@ var _dataHookCache = {};
 function projectDataHook(project, chainId, opts) {
   var pid = pidOn(project, chainId);
   var k = chainId + ':' + pid.toString();
-  if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
+  // `fresh` re-reads: a call built for the CURRENT pool must not use a ruleset read when the page opened.
+  if (!(opts && opts.fresh) && _dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
   return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
     if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n, useDataHookForPay: false, useDataHookForCashOut: false }; return _dataHookCache[k]; }
     return clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] })
@@ -4447,7 +4448,7 @@ function projectDataHook(project, chainId, opts) {
 export function projectBuybackHook(project, chainId, opts) {
   var client = clientFor(chainId);
   return resolveBuybackHook({
-    ruleset: function () { return projectDataHook(project, chainId, { strict: true }); },
+    ruleset: function () { return projectDataHook(project, chainId, { strict: true, fresh: !!(opts && opts.fresh) }); },
     read: function (address, abi, functionName, args) { return client.readContract({ address: address, abi: abi, functionName: functionName, args: args }); },
     is: function (address, name) { return generationAddresses(name, chainId).some(function (deployed) { return sameAddr(deployed, address); }); },
   }, pidOn(project, chainId), opts && opts.direction).catch(function (e) { if (opts && opts.strict) throw e; return null; });
@@ -31561,6 +31562,12 @@ export function prepareMoveToCurrentPool(chainId, pos, toKey, toSqrtP, acct) {
   };
 }
 
+// Is the position, read again right before sending, the one that was reviewed?
+export function lpMoveStillFits(reviewed, now, acct) {
+  return !!now && String(now.owner || '').toLowerCase() === String(acct).toLowerCase()
+    && now.liquidity === reviewed.liquidity && now.info === reviewed.info;
+}
+
 // Review and send the move of an old-pool position into the current pool. Everything the call is built from is
 // read at the click: the position from the PositionManager, both pools' prices, and the current pool's key.
 function openLpPoolMove(project, chainId, stalePos, acct, onDone) {
@@ -31582,7 +31589,7 @@ function openLpPoolMove(project, chainId, stalePos, acct, onDone) {
   var client = clientFor(chainId), pm = POOL_MANAGER_BY_CHAIN[chainId];
   Promise.all([
     refreshLpPositionForRemoval(chainId, stalePos, acct),
-    projectBuybackHook(project, chainId, { strict: true }).then(function (hook) {
+    projectBuybackHook(project, chainId, { strict: true, fresh: true }).then(function (hook) {
       if (!hook || hook === ZERO_ADDRESS) throw new Error('This project has no current pool to move into.');
       return client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), stalePos.pair.addr] });
     }).then(function (toKey) {
@@ -31603,7 +31610,12 @@ function openLpPoolMove(project, chainId, stalePos, acct, onDone) {
       position: { actions: 'BURN_POSITION, MINT_POSITION, TAKE_PAIR (0x030211)', tokenId: pos.tokenId.toString(), minimumReturns: minH, recipient: acct },
       args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
     }, opts, 'Moving liquidity…', 'Move failed', function () {
-      return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
+      // The burn takes whatever the position holds when it runs, while the mint is sized from the review: a
+      // position that changed since must be reviewed again, as juicebox.money requires.
+      return lpReadPositionDetails(client, prep.posm, [BigInt(pos.tokenId)], pos.poolId).then(function (now) {
+        if (!lpMoveStillFits(pos, now[0], acct)) throw new Error('This position changed. Review it again before moving it.');
+        return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
+      });
     }, function (hash) {
       noteLocalLpWrite(chainId, pos.poolId);
       noteLocalLpWrite(chainId, uniswapV4PoolId(to.key));
