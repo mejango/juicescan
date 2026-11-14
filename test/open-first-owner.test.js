@@ -25,7 +25,7 @@ describe('owner, shop and Safe queue clicks answer before their reads', () => {
   });
 
   it('holds the free mint and redeem buttons while their permission and inventory reads run', () => {
-    expect(before("submit.disabled = true; status.textContent = 'Checking permissions…';", 'var canMint = await accountCanMintShopOn(project, chainId, live.hook, account);')).toBe(true);
+    expect(before("submit.disabled = true; status.textContent = 'Checking permissions…';", 'try { canMint = await accountCanMintShopOn(project, chainId, live.hook, account); } finally { submit.disabled = false; }')).toBe(true);
     expect(before("btn.disabled = true; status.textContent = 'Checking…';\n    try { await requireGenericInventory(", "catch (error) { status.textContent = errMessage(error); btn.disabled = false; return; }")).toBe(true);
   });
 

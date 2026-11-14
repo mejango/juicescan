@@ -34,7 +34,7 @@ describe('smallestPassing', () => {
   it('returns the smallest value whose probe passes, as trying them in order would', async () => {
     const tried = [];
     expect(await smallestPassing([1n, 5n, 20n, 50n], (value) => { tried.push(value); if (value < 20n) throw new Error('too low'); })).toBe(20n);
-    expect(tried).toEqual([1n, 5n, 20n, 50n]); // every budget is probed at once
+    expect(tried).toEqual([1n, 5n, 20n]); // in order, stopping at the first that passes
     expect(await smallestPassing([1n, 5n], async () => { throw new Error('no'); })).toBeNull();
   });
 });

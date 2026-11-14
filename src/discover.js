@@ -14,7 +14,6 @@ import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, d
 import { busyWhile, openPendingReview, confirmStatusSettles, offerRelease, payHoldScope, onDocumentWhileConnected, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
-import { openPendingReview as openPendingBridgeReview } from './component-base.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
@@ -26892,7 +26891,7 @@ function renderBridgeTransactionsTable(rows, project) {
         ['From', moveChainName(s.chainId)],
         ['To', moveChainName(s.peerChainId)],
       ]; };
-      var review = openPendingBridgeReview({ action: execAction, chain: moveChainName(s.chainId), rows: execRows(null) }, { title: 'Transfer all queued movements' });
+      var review = openPendingReview({ action: execAction, chain: moveChainName(s.chainId), rows: execRows(null) }, { title: 'Transfer all queued movements' });
       if (review.closed) { execBtn.disabled = false; return; }
       findToRemoteValue(s.chainId, s.sourceSucker, s.token, acct).catch(function () { return null; }).then(function (fee) {
         execBtn.disabled = false;
@@ -29236,13 +29235,13 @@ var _gossipSyncAt = loadGossipSyncAt();
 // we MUST send a positive native budget covering CCIP getFee; excess is refunded. Discover it by simulating
 // syncAccountingData ITSELF (not toRemote — that reverts when the outbox is empty, the bug a tx-auditor
 // caught). Native bridges may accept 0. Returns bigint, or null if no tier simulates cleanly.
-// Probe every budget at once and keep the smallest that simulates cleanly: the answer trying them in order gives.
+// Try each budget in order and keep the first that simulates cleanly. The smallest usually passes, so one probe
+// answers; probing all at once would always cost the slowest and lets a throttled RPC push the budget up.
 export async function smallestPassing(values, probe) {
-  var passed = await Promise.all(values.map(function (value) {
-    return Promise.resolve().then(function () { return probe(value); }).then(function () { return true; }, function () { return false; });
-  }));
-  var first = passed.indexOf(true);
-  return first < 0 ? null : values[first];
+  for (var i = 0; i < values.length; i++) {
+    try { await probe(values[i]); return values[i]; } catch (_) { /* too small, or a sim limitation: try the next */ }
+  }
+  return null;
 }
 async function findSyncValue(chainId, sucker, account) {
   if (!account) return null;
@@ -29270,7 +29269,7 @@ function syncAccountingFromPeer(peerChainId, peerSucker, btn, key, project) {
     ['Bridge fee', fee == null ? null : formatEth(fee) + ', excess refunded'],
     ['On chain', moveChainName(peerChainId)],
   ]; };
-  var review = openPendingBridgeReview({ action: 'Sync accounting snapshot', chain: moveChainName(peerChainId), rows: syncRows(null) }, { title: 'Sync accounting snapshot' });
+  var review = openPendingReview({ action: 'Sync accounting snapshot', chain: moveChainName(peerChainId), rows: syncRows(null) }, { title: 'Sync accounting snapshot' });
   if (review.closed) { btn.disabled = false; return; }
   findSyncValue(peerChainId, peerSucker, acct).catch(function () { return null; }).then(function (fee) {
     if (review.closed) { btn.disabled = false; return; }
@@ -31158,7 +31157,7 @@ function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
     go.disabled = true; go.textContent = 'Refreshing…';
     // The review opens at the click; the band, amounts and deadline come from the fresh position read.
     var moveAction = 'Move your liquidity to a new band in the ' + sym + '/' + pos.pair.symbol + ' pool';
-    var review = openPendingBridgeReview({ action: moveAction, chain: chainNameOf(chainId), rows: [
+    var review = openPendingReview({ action: moveAction, chain: chainNameOf(chainId), rows: [
       ['Position', '#' + pos.tokenId.toString() + ' → a new position in the same pool'],
       ['New band', null], ['Into the new band', null], ['You get back at least', null],
       ['Leftovers', 'unclaimed fees + whatever the new band doesn’t use, to ' + acct],
@@ -31305,7 +31304,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
 // The review opens at the click: the wallet-type read decides only the deadline (a row and a call argument), so that
 // row loads and nothing can be agreed to until the exact call is shown.
 function openLpClaimConfirm(project, chainId, pos, acct, claimable, onClaimed) {
-  var review = openPendingBridgeReview({ action: lpClaimAction(project, pos), chain: chainNameOf(chainId), rows: lpClaimRows(project, pos, acct, claimable, null) });
+  var review = openPendingReview({ action: lpClaimAction(project, pos), chain: chainNameOf(chainId), rows: lpClaimRows(project, pos, acct, claimable, null) });
   if (review.closed) return Promise.resolve();
   return lpIsSmartWallet(chainId, acct).then(function (smartWallet) {
     if (review.closed) return;
@@ -31416,7 +31415,7 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
         rm.disabled = true; rm.textContent = 'Refreshing…'; rmStatus.textContent = ''; rmStatus.className = 'modal-status'; rmStatus.style.display = 'none';
         // The review opens at the click; the amounts, minimum and deadline come from the fresh position read.
         var removeAction = 'Remove liquidity from the ' + sym + '/' + pos.pair.symbol + ' pool';
-        var review = openPendingBridgeReview({ action: removeAction, chain: chainNameOf(chainId), rows: [
+        var review = openPendingReview({ action: removeAction, chain: chainNameOf(chainId), rows: [
           ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
           ['You receive', null], ['Minimum', null], ['To', acct], ['Deadline', null],
         ] }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove' });
