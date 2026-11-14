@@ -66,8 +66,20 @@ function afterDefifaActions(inventory) {
   if (!isNativeInventory(inventory)) return inventory;
   return import('./defifa-nft-actions.js').then(function (mod) { defifaActions = mod; return inventory; }, function () { throw chunkFailure(); });
 }
-function withCreateFlow(action) {
-  return loadCreateFlow().then(action, function () { alert(CHUNK_FAILED_TEXT); });
+// The first use downloads the module: the click opens a loading dialog at once, and a failed download says so there.
+function withCreateFlow(action, title) {
+  if (createFlow) return Promise.resolve(createFlow).then(action);
+  var dismissed = false;
+  var body = el('div', 'modal-body'); body.textContent = 'Loading…';
+  var modal = openModal(title || 'Loading', body, { noPrompt: true, onClose: function () { dismissed = true; } });
+  return loadCreateFlow().then(function (mod) {
+    if (dismissed) return;
+    modal.close();
+    return action(mod);
+  }, function () {
+    body.textContent = CHUNK_FAILED_TEXT + ' ';
+    body.appendChild(chunkReloadButton());
+  });
 }
 export { buildProjectPayerDeployArgs, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 
@@ -7771,7 +7783,7 @@ function scheduleActiveProjectRefresh(project) {
       fresh._urlChainId = urlChainId;
       if (urlHandle) fresh._urlHandle = urlHandle;
       _cache[urlChainId + '-' + urlProjectId] = fresh;
-      showProjectDetail(fresh, tab, true, subtab);
+      showProjectDetail(fresh, tab, true, subtab, true);
     }).catch(function () {});
   }, 700);
 }
@@ -7924,12 +7936,48 @@ export function canReuseProjectDetail(active, key) {
   return !!(active && active.key === key && active.element && active.element.isConnected);
 }
 
+// A handle verified again may reuse the page open under it only when that page is still the connected one, on the
+// same network, for the same chain and project, and its loaded owner or operator is the authority just verified.
+export function handleRouteMatchesOpenDetail(open, active, resolved, network, revOwner) {
+  if (!open || open !== active || resolved.network !== network) return false;
+  if (!canReuseProjectDetail(open, String(resolved.route).split('/')[0])) return false;
+  try { applyVerifiedProjectAuthority(open.project, resolved.authority, revOwner); } catch (_) { return false; }
+  return true;
+}
+
+// Swap a rebuilt project page in for the one on screen without a flash of ghosts: the old page stays visible but
+// inert while the new one loads, laid out and hidden above it, and gives way once the new page has no ghost left
+// or after `wait` ms. The new page is first in the container, so every lookup of the open page finds it.
+var _detailHandoff = null;
+function endDetailHandoff() {
+  var handoff = _detailHandoff; _detailHandoff = null;
+  if (!handoff) return;
+  clearTimeout(handoff.timer); handoff.observer.disconnect();
+  handoff.old.remove();
+  ['position', 'left', 'right', 'top', 'visibility'].forEach(function (key) { handoff.next.style[key] = ''; });
+}
+export function handOffProjectDetail(container, old, next, wait) {
+  endDetailHandoff();
+  old.inert = true; old.setAttribute('aria-busy', 'true');
+  // Inside the container's padding, so the hidden page lays out at the width it will have in flow.
+  var box = getComputedStyle(container);
+  Object.assign(next.style, { position: 'absolute', left: box.paddingLeft || '0', right: box.paddingRight || '0', top: box.paddingTop || '0', visibility: 'hidden' });
+  if (box.position === 'static') container.style.position = 'relative';
+  container.insertBefore(next, old);
+  var observer = new MutationObserver(function () { if (!next.querySelector('.skel')) endDetailHandoff(); });
+  _detailHandoff = { old: old, next: next, observer: observer, timer: setTimeout(endDetailHandoff, wait == null ? 4000 : wait) };
+  observer.observe(next, { childList: true, subtree: true });
+  if (!next.querySelector('.skel')) endDetailHandoff();
+}
+function removeProjectDetails() {
+  endDetailHandoff();
+  if (!_container) return;
+  Array.prototype.forEach.call(_container.querySelectorAll('.project-detail'), function (node) { node.remove(); });
+}
+
 function mountProjectRouteSkeleton() {
   if (_gridWrapper) _gridWrapper.style.display = 'none';
-  if (_container) {
-    var stale = _container.querySelector('.project-detail');
-    if (stale) stale.remove();
-  }
+  removeProjectDetails();
   // Once the old detail is detached its controller must not service a same-project route while only the skeleton
   // is mounted. The numeric load below will install a fresh connected controller.
   _activeDetail = null;
@@ -7940,8 +7988,7 @@ function mountProjectRouteSkeleton() {
 function renderHandleRouteError(handle, message) {
   if (!_container) return;
   if (_gridWrapper) _gridWrapper.style.display = 'none';
-  var stale = _container.querySelector('.project-detail');
-  if (stale) stale.remove();
+  removeProjectDetails();
   _activeDetail = null;
   var wrap = el('div', 'project-detail detail-spacious');
   var back = el('button', 'detail-back'); back.textContent = '←'; back.title = 'Back to projects';
@@ -8100,8 +8147,13 @@ export function applyDiscoverRoute(route, routeContext) {
     try { parsed = parseProjectHandleRoute(route); }
     catch (error) { renderHandleRouteError('', error.message || String(error)); return; }
     if (!parsed) { renderHandleRouteError('', 'This project handle URL is malformed.'); return; }
-    mountProjectRouteSkeleton();
+    // The page already open under this handle stays up while the handle is verified again; the requested section
+    // shows only after ENS, the live authority and the reverse claim still name this same project.
+    var open = _activeDetail && _activeDetail.project && _activeDetail.project._urlHandle === parsed.handle
+      && _activeDetail.element && _activeDetail.element.isConnected ? _activeDetail : null;
+    if (open) open.element.setAttribute('aria-busy', 'true'); else mountProjectRouteSkeleton();
     resolveProjectHandleRoute(parsed, function () { return seq === _discoverRouteSeq; }).then(function (resolved) {
+      if (open) open.element.removeAttribute('aria-busy');
       if (seq !== _discoverRouteSeq) return;
       if (resolved.network !== DISCOVER_NETWORK) setDiscoverNetwork(resolved.network);
       if (resolved.authority && resolved.authority.kind === 'operator') {
@@ -8112,10 +8164,16 @@ export function applyDiscoverRoute(route, routeContext) {
       // same project the page will show.
       _verifiedHandleRoute = { handle: parsed.handle, route: String(resolved.route).split('/')[0] };
       try { document.dispatchEvent(new CustomEvent('jbscan:handle-resolved')); } catch (_) {}
+      if (handleRouteMatchesOpenDetail(open, _activeDetail, resolved, DISCOVER_NETWORK, getAddress('REVOwner', resolved.target.chainId))) {
+        if (parsed.tab) open.showTab(String(parsed.tab).toLowerCase());
+        if (parsed.subtab && open.showSubTab) open.showSubTab(String(parsed.subtab).toLowerCase());
+        return;
+      }
       // Load through the exact numeric identity while leaving the verified alias in the address bar. The loaded
       // project carries the alias so changing tabs keeps producing #@handle[/tab] URLs.
       applyDiscoverRoute(resolved.route, { handle: parsed.handle, authority: resolved.authority });
     }).catch(function (error) {
+      if (open) open.element.removeAttribute('aria-busy');
       if (seq !== _discoverRouteSeq) return;
       renderHandleRouteError(parsed.handle, errMessage(error, 'Could not resolve this project handle.'));
     });
@@ -8280,7 +8338,7 @@ function renderGrid() {
   var rightCtrls = el('div', 'discover-top-ctrls');
   var createBtn = el('button', 'tab-create'); createBtn.textContent = 'New project';
   createBtn.title = 'Create a project';
-  createBtn.addEventListener('click', function () { withCreateFlow(function (mod) { mod.openCreateFlow(); }); });
+  createBtn.addEventListener('click', function () { withCreateFlow(function (mod) { mod.openCreateFlow(); }, 'Create'); });
   rightCtrls.appendChild(createBtn);
   topRow.appendChild(rightCtrls);
   _gridWrapper.appendChild(topRow);
@@ -8617,7 +8675,15 @@ function renderProjectCard(project) {
   card.dataset.metadataSource = project.projectMetadataSource || 'none';
   card.style.cursor = 'pointer';
   card.addEventListener('click', function () {
-    prepareProjectTransactionScope(project).then(function () { showProjectDetail(project); });
+    // The page's ghost shows at the click; the project replaces it once its chain scope is read.
+    var seq = ++_discoverRouteSeq;
+    mountProjectRouteSkeleton();
+    var ghost = _container && _container.querySelector('.project-detail');
+    prepareProjectTransactionScope(project).then(function () {
+      if (seq === _discoverRouteSeq && ghost && ghost.isConnected) showProjectDetail(project);
+    }, function () {
+      if (seq === _discoverRouteSeq && ghost && ghost.isConnected) showProjectGrid(true);
+    });
   });
 
   var cardLbl = function (text) { var s = el('span', 'discover-card-lbl'); s.textContent = text; return s; };
@@ -8751,20 +8817,26 @@ export function navigateProjectSection(project, tabName, subTab, applyNumeric) {
   return true;
 }
 
-function showProjectDetail(project, initialTab, fromRoute, initialSubTab) {
+// `keepUntilLoaded`: the page on screen is this same project a moment ago (the refresh after a confirmed
+// transaction), so it stays up, inert, until the rebuilt page has loaded (handOffProjectDetail).
+function showProjectDetail(project, initialTab, fromRoute, initialSubTab, keepUntilLoaded) {
   if (project._urlChainId == null) {
     project._urlChainId = defaultChainId(project.chains || [{ id: project.chainId }]);
   }
   _gridWrapper.style.display = 'none';
+  endDetailHandoff();
   var existing = _container.querySelector('.project-detail');
-  if (existing) existing.remove();
+  if (existing && keepUntilLoaded) {
+    handOffProjectDetail(_container, existing, renderProjectDetail(project, initialTab, initialSubTab));
+    return;
+  }
+  removeProjectDetails();
   _container.appendChild(renderProjectDetail(project, initialTab, initialSubTab));
   if (!fromRoute) routerSetHash(projectHash(project, _activeDetail && _activeDetail.current, _activeDetail && _activeDetail.subtab));
 }
 
 function showProjectGrid(fromRoute) {
-  var detail = _container.querySelector('.project-detail');
-  if (detail) detail.remove();
+  removeProjectDetails();
   _activeDetail = null;
   if (!_groups) {
     renderDiscoverTab();
@@ -24211,7 +24283,7 @@ function ensureNewShopState(state, allChains) {
 }
 
 function openQueueRulesetModal(project, preferredQueueAction) {
-  withCreateFlow(function () { renderQueueRulesetModal(project, preferredQueueAction); });
+  withCreateFlow(function () { renderQueueRulesetModal(project, preferredQueueAction); }, 'Queue ruleset');
 }
 
 function renderQueueRulesetModal(project, preferredQueueAction) {
@@ -26135,11 +26207,16 @@ function renderOpsSection(project) {
 
 // The move and add-liquidity modals load their module on first use; a failed load says so in the modal.
 function openOpsModal(project, title, builder) {
-  import('./project-ops-modals.js').then(function (mod) { openModal(title, mod[builder](project)); }, function () {
-    var message = el('div', 'modal-body');
+  var message = el('div', 'modal-body'); message.textContent = 'Loading…';
+  var modal = openModal(title, message);
+  import('./project-ops-modals.js').then(function (mod) {
+    if (!message.isConnected) return;
+    var content = mod[builder](project);
+    content.addEventListener('jb:close-modal', modal.close);
+    message.replaceWith(content);
+  }, function () {
     message.textContent = CHUNK_FAILED_TEXT + ' ';
     message.appendChild(chunkReloadButton());
-    openModal(title, message);
   });
 }
 

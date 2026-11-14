@@ -310,15 +310,22 @@ function executeRead(fn, inputs, contractAddress, abi, outputArea, chainId) {
 
   var args = inputs.map(function(inp) { return inp.getValue(); });
 
+  // The output says a read is running, and only the latest read of this form may fill it: an earlier read that
+  // lands late never replaces the newer one's result.
+  var reading = document.createElement('div');
+  reading.className = 'error-box muted'; reading.textContent = 'Reading…';
+  outputArea.appendChild(reading);
   client.readContract({
     address: contractAddress,
     abi: [fn],
     functionName: fn.name,
     args: args,
   }).then(function(result) {
+    if (!reading.isConnected) return;
     outputArea.innerHTML = '';
     outputArea.appendChild(renderResult(fn.outputs, result));
   }).catch(function(err) {
+    if (!reading.isConnected) return;
     outputArea.innerHTML = '';
     outputArea.appendChild(renderError(formatError(err, abi)));
   });

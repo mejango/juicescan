@@ -6519,3 +6519,6 @@ select.create-input-auto { width: auto; max-width: 100%; }
 /* A confirm dialog opened before its reads landed: the rows still loading read quieter than the known ones. */
 .tx-decoded-argval.pending { color: var(--muted-2); font-style: italic; }
 button[aria-busy="true"] { cursor: progress; }
+/* Content kept on screen while its replacement loads reads as stale, not as the new result. */
+.data-card-result[aria-busy="true"] { opacity: 0.45; }
+.project-detail[aria-busy="true"] { cursor: progress; }
