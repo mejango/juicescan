@@ -4746,7 +4746,6 @@ async function finishCreateRelayr(state, session) {
     if (outcome === 'wait') throw new Error('The launch on ' + name + ' can still arrive. Check its status again later. Nothing was signed.');
     retry.push({ call: call, nonce: call.nonce });
   }
-  if (!saveLaunchCalls(signer, Object.assign({}, saved, { done: done }))) throw new Error('Could not save the launch progress. Restore browser storage. Nothing was signed.');
   if (!retry.length) {
     push('Every chain launched. Reading the projects…');
     await captureDeployedLegs(state, done);

@@ -505,14 +505,30 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
     }
     // The archived receipt gives way to the new marker only now, with the reservations written and the locks held.
     var replacing = !!(replaced && journal.replaces);
-    if (replacing) clearRelayrPendingSession(journal.scope, replaced);
-    publication = saveRelayrPendingSession(journal.scope, {
-      bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
-      paymentState: 'publication', expectedCount: ordered.length,
-      scheduleValidUntil: journal.scheduleValidUntil, rulesetCountByChain: journal.rulesetCountByChain, rulesetParentByChain: journal.rulesetParentByChain,
-      chains: journal.chains || ordered.map(function (request) { return { id: Number(request.chain), name: chainNameFor(request.chain) }; }),
-      publicationRequestHashes: ordered.map(relayrRequestFingerprint), records: [],
-    });
+    var savePublication = function () {
+      publication = saveRelayrPendingSession(journal.scope, {
+        bundleUuid: 'publication-pending:' + crypto.randomUUID(), account: journal.account || getAccount(),
+        paymentState: 'publication', expectedCount: ordered.length,
+        scheduleValidUntil: journal.scheduleValidUntil, rulesetCountByChain: journal.rulesetCountByChain, rulesetParentByChain: journal.rulesetParentByChain,
+        chains: journal.chains || ordered.map(function (request) { return { id: Number(request.chain), name: chainNameFor(request.chain) }; }),
+        publicationRequestHashes: ordered.map(relayrRequestFingerprint), records: [],
+      });
+    };
+    if (replacing) {
+      // Under the payment lock, and only if the bundle is still exactly as it was read: a window that started
+      // paying it in the meantime keeps it.
+      await browserLocks().request('jb-relayr-payment:' + String(replaced.account).toLowerCase(), async function () {
+        var current = loadRelayrPendingSession(journal.scope);
+        if (!current || current.bundleUuid !== replaced.bundleUuid || (current.paymentHash || null) !== (replaced.paymentHash || null)
+            || (current.paymentState || null) !== (replaced.paymentState || null)) {
+          var moved = new Error('This saved bundle changed in another window. Check its status first. Nothing was published.');
+          moved.code = 'RELAYR_PUBLICATION_PENDING'; moved.retryable = true;
+          throw moved;
+        }
+        clearRelayrPendingSession(journal.scope, replaced);
+        savePublication();
+      });
+    } else savePublication();
     if (!publication || publication.persisted === false) {
       if (publication) clearRelayrPendingSession(journal.scope, publication);
       // A replacement's reservation took the old request's place at the same nonce: it stays, as that nonce's proof.
@@ -528,6 +544,15 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
       body: JSON.stringify({ transactions: ordered, virtual_nonce_mode: 'ChainIndependent' }),
     }, RELAYR_QUOTE_TIMEOUT_MS);
   } catch (error) {
+    if (publication && replaced && journal.replaces) {
+      // No quote came back, so nothing can be paid for these requests. The replaced bundle returns; a later
+      // attempt signs at the same nonce again.
+      clearRelayrPendingSession(journal.scope, publication);
+      saveRelayrPendingSession(journal.scope, replaced);
+      var lost = new Error('Relayr did not confirm a quote. Nothing was paid; the earlier bundle is back, so this can be tried again.');
+      lost.code = 'RELAYR_QUOTE_TIMEOUT'; lost.retryable = true; lost.cause = error;
+      throw lost;
+    }
     if (publication) {
       var unknown = new Error('Relayr may have received the signed requests, but no quote was confirmed. The saved request blocks new signatures and payments for this action. Keep it and verify the destination activity before retrying.');
       unknown.code = 'RELAYR_PUBLICATION_PENDING'; unknown.retryable = true; unknown.cause = error; unknown.relayrSession = publication;

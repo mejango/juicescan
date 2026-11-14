@@ -51,10 +51,15 @@ beforeEach(() => {
     }),
     estimateGas: vi.fn(async () => 200000n), request: vi.fn(async () => '0x'),
   };
-  let previous = Promise.resolve();
+  // One queue per lock name, as Web Locks behave: a different name taken inside a held lock does not wait on it.
+  const queues = new Map();
   locks = vi.fn((name, options, callback) => {
-    const next = previous.then(async () => { state.inLock = true; try { return await callback(state.lock || { name }); } finally { state.inLock = false; } });
-    previous = next.catch(() => {});
+    const publication = name === 'jb-relayr-forwarder-publication-v1';
+    const next = (queues.get(name) || Promise.resolve()).then(async () => {
+      if (publication) state.inLock = true;
+      try { return await callback(state.lock || { name }); } finally { if (publication) state.inLock = false; }
+    });
+    queues.set(name, next.catch(() => {}));
     return next;
   });
   vi.stubGlobal('navigator', { locks: { request: locks } });
@@ -397,5 +402,9 @@ describe('replacing a paid bundle’s unfinished request at the same nonce', () 
     await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: paid.bundleUuid } })).rejects.toThrow('Relayr HTTP 422');
     expect(loadRelayrPendingSession('create')).toMatchObject({ bundleUuid: paid.bundleUuid, paymentHash: PAY });
     expect(reservations()).toHaveLength(1);
+    // No answer at all: nothing can be paid for the replacement, so the paid receipt comes back too.
+    fetchQuote.mockImplementation(async () => { throw new Error('offline'); });
+    await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: paid.bundleUuid } })).rejects.toThrow('did not confirm a quote');
+    expect(loadRelayrPendingSession('create')).toMatchObject({ bundleUuid: paid.bundleUuid, paymentHash: PAY });
   });
 });
