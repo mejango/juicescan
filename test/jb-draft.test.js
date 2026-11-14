@@ -251,7 +251,6 @@ describe('the shared .jb file on Juicescan', () => {
       return () => parseCreateDraftJson(file);
     };
     const row = (extra) => Object.assign({ to: 'address', share: '10', address: ALICE }, extra);
-    expect(project({ safe: { signers: [ALICE], threshold: 1 }, owner: '', ownerPerChain: {} })).toThrow(cant('a new Safe as the owner'));
     expect(project({ chains: [] })).toThrow(cant('no chain chosen'));
     expect(project({ chains: [137], ownerPerChain: {} })).toThrow(cant('a chain this site does not launch on'));
     expect(project({ chains: [1, 84532] })).toThrow(cant('mainnets and testnets together'));
@@ -304,7 +303,6 @@ describe('the shared .jb file on Juicescan', () => {
     expect(() => parseCreateDraftJson(byToken)).toThrow(cant('a limited owner allowance beside payouts by token'));
 
     const revnet = (edit) => { const file = createDraftObject(revnetState()); edit(file); return () => parseCreateDraftJson(file); };
-    expect(revnet((file) => { file.safe = { signers: [ALICE], threshold: 1 }; file.owner = ''; file.ownerPerChain = {}; })).toThrow(cant('a new Safe as the operator'));
     expect(revnet((file) => { file.stages[0].reserved[0].lockedUntil = 2200000000; })).toThrow(cant('a locked split'));
     expect(revnet((file) => { file.stages[1].startAfterDays = '0.5'; })).toThrow(cant('a later stage that starts less than a day after the one before'));
   });
@@ -339,5 +337,46 @@ describe('the shared .jb file on Juicescan', () => {
     expect(shiftDecimal('0.1234', 2)).toBe('12.34');
     expect(shiftDecimal('100', -2)).toBe('1');
     expect(shiftDecimal('0', 2)).toBe('0');
+  });
+});
+
+describe('a new Safe as the owner or operator', () => {
+  const withSafe = (state) => {
+    state.authoritySafe = { on: true, signers: [ALICE, BOB, CAROL], threshold: 2 };
+    if (state.projectType === 'revnet') state.revOperator = ''; else state.details.owner = '';
+    return state;
+  };
+
+  it('is written in place of an address, and read back as the same signers and approvals', () => {
+    for (const make of [projectState, revnetState]) {
+      const file = createDraftObject(withSafe(make()));
+      expect(file.safe).toEqual({ signers: [ALICE, BOB, CAROL], threshold: 2 });
+      expect(file.owner).toBe('');
+      expect(file.ownerPerChain).toEqual({});
+      const back = parseCreateDraftJson(JSON.stringify(file));
+      expect(back.authoritySafe).toEqual({ on: true, signers: [ALICE, BOB, CAROL], threshold: 2 });
+      expect(createDraftObject(back).safe).toEqual(file.safe);
+    }
+  });
+
+  it('is not written when the owner is switched off, and a file without one turns it off', () => {
+    const off = withSafe(projectState());
+    off.details.owner = '0xdead000000000000000000000000000000000000';
+    expect(createDraftObject(off).safe).toBe(null);
+    expect(roundTrip(projectState()).authoritySafe.on).toBe(false);
+  });
+
+  it('launches with the Safe as owner on every chain, over a per-chain owner', () => {
+    const SAFE = '0x5555555555555555555555555555555555555555';
+    const project = withSafe(projectState());
+    pcAddrSet(project, project.chainIds[1], 'owner', BOB);
+    project.chainIds.forEach((chainId) => {
+      expect(buildLaunchArgs(project, chainId, SAFE, 'ipfs://x', SALT, 2000000000).args[0]).toBe(SAFE);
+    });
+    const revnet = withSafe(revnetState());
+    pcAddrSet(revnet, revnet.chainIds[0], 'op', BOB);
+    revnet.chainIds.forEach((chainId) => {
+      expect(buildRevnetArgs(revnet, chainId, SAFE, 'ipfs://x', SALT, 2000000000).args[1].operator).toBe(SAFE);
+    });
   });
 });

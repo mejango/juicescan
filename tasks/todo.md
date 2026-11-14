@@ -162,7 +162,7 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 ## 2026-11-14: Round 10, the builds still owed (J10)
 
 - [x] J10a Relayr launch: finish unfinished chains. A paid bundle that left chains unfinished signs the SAME launch call again for those chains at the SAME forwarder nonce and funds one new bundle (`src/launch-retry.js`, `finishCreateRelayr`, `relayrPostBundle` `replaces`). jango approved keeping the launch calldata in browser storage and letting the nonce guard accept a same-nonce replacement of the same action.
-- [ ] J10b Multisig owner creation in create.
+- [x] J10b Multisig owner creation in create. The owner (or a revnet's operator) can be a new Safe: 2 to 20 signers and an approval count. Its address is fixed by them and the launch's salt, the same on every chain, and each chain's launch goes out as one Multicall3 batch that creates the Safe and then launches (`src/safe-create.js`, `withSafeCreation`, `checkSafeCreation`). The shared `.jb` file's `safe` is read and written instead of refused.
 - [ ] J10c Old-pool position move and market editing.
 - [ ] J10d Other: issuance price preview in create, Sticky split recipient in create, deployment check, per-chain raised hover, paying by card.
 
@@ -175,3 +175,6 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - **Resource budget:** One pull request per item.
 - **Authority and recovery:** Pull requests; jango said "merge all" for round 9 only. The paid receipt is archived under `jb-relayr-retired-v1:` before it gives way. One commit per item.
 - **Agent-system impact:** None.
+- J10b evidence: the predicted address equals the SDK's own test vector. Read-only checks on Ethereum, Base, Arbitrum, Optimism and their Sepolia testnets show the pinned Safe 1.4.1 code hashes hold and a simulated creation returns the predicted address, the same on all eight. On a local Base fork, a project (one chain, and one leg of two) and a revnet (same two shapes) launched through the batch with the gas a wallet estimates; the Safe verified afterwards and `JBProjects.ownerOf` is the Safe. A second run of the same batch is accepted as "already there"; another policy at that address is refused.
+- J10b not done: not run through Relayr, not sent on a live chain, not rendered with a wallet. A relayed launch does not confirm the Safe after it lands (the direct path does); the check before signing covers it.
+- J10b new copy for jango: "Create a multisig so its signers approve decisions together." / "Use your wallet or an existing multisig." / "Create a multisig" / "Already have an owner in mind?" / "+ Add signer" / "Approval policy" / "The multisig is created in the launch, at the same address on every chain." The first six mirror juicebox.money; the last is new.
