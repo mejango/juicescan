@@ -12,6 +12,8 @@ Juicescan PRs, in order. Each is re-checked against the cited lines before a cha
 - [ ] J6 Wording: every shared string reads as juicebox.money's (after its own rule breaches are fixed there).
 - [x] J7 Build guide mirrors juicebox.money's (`src/build-sections.js`, the resolved `BUILD_SECTIONS`), as Learn does; the two guides link to each other inside the bundle.
 
+- [ ] J8 Round two, after jango's rulings of 2026-11-13. Done: price feeds checked live on the review step, every chain, before pinning, with Retry; a receipt line for every launched chain, and an unreadable project ID says not to resubmit; tickers without a dollar sign; testnet indexer at testnet.bendystraw.xyz; metadata pins through Juicebox Center with no key (needs Center #110 deployed), and a launch never goes out without metadata; the token editor deploys an existing token on the chains missing it, at the same address when this sender can reproduce it. Open: the Pinata key fields are now dead UI and come out; Safe launch on several chains as one proposal per chain through the owner wallet path; one `.jb` format shared with juicebox.money and revnet.money; the buyback hook and router terminal resolved through the ruleset data hook, and the revnet fee netted, inline; Relayr first with ordered sends as the fallback; re-signing only unfinished chains.
+
 juicebox.money and revnet.money items are tracked in those repos' `tasks/todo.md`.
 
 ## Plan refinement
