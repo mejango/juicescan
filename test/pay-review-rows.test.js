@@ -1,6 +1,6 @@
 // The pay review reads in plain rows, and shows the project's payment notice before the payer agrees.
 import { describe, it, expect } from 'vitest';
-import { payReviewRows, PAYMENTS_PAUSED_MESSAGE } from '../src/discover.js';
+import { payReviewRows, payNoticeView, renderPayNoticeNote, PAYMENTS_PAUSED_MESSAGE } from '../src/discover.js';
 
 const base = { amount: '1 ETH', chain: 'Base', minimum: '990 TKN', beneficiary: '0x' + '11'.repeat(20), memo: '' };
 describe('pay review rows', () => {
@@ -21,5 +21,36 @@ describe('pay review rows', () => {
   });
   it('words a pause the same as juicebox.money', () => {
     expect(PAYMENTS_PAUSED_MESSAGE).toBe('Payments are paused under the current rules.');
+  });
+});
+
+describe('the payment notice a payer is shown', () => {
+  it('is the paid chain’s own, with the chains that read differently listed in display order', () => {
+    const notices = { 10: 'Optimism terms', 1: 'Terms', 8453: 'Terms', 42161: '' };
+    expect(payNoticeView(8453, notices)).toEqual({
+      notice: 'Terms', failed: false,
+      others: [{ chainId: 42161, notice: '' }, { chainId: 10, notice: 'Optimism terms' }],
+    });
+    expect(payNoticeView(10, notices).notice).toBe('Optimism terms');
+  });
+
+  it('says a failed read failed, and never lists an unread chain as different', () => {
+    expect(payNoticeView(1, { 1: null, 10: 'Terms' })).toEqual({ notice: '', failed: true, others: [] });
+    expect(payNoticeView(1, { 10: 'Terms' }).failed).toBe(true);
+    expect(payNoticeView(10, { 1: null, 10: 'Terms' })).toEqual({ notice: 'Terms', failed: false, others: [] });
+  });
+
+  it('draws a toggle for other versions, and a retry that shows the notice once it loads', async () => {
+    const differs = renderPayNoticeNote(payNoticeView(1, { 1: 'Terms', 10: 'Other terms' }), () => Promise.reject());
+    expect(differs.querySelector('summary').textContent).toMatch(/^The notice differs on /);
+    expect(differs.querySelector('.pay-notice-text').textContent).toBe('Other terms');
+
+    const failed = renderPayNoticeNote(payNoticeView(1, { 1: null }), () => Promise.resolve({ ...payNoticeView(1, { 1: 'Terms' }), retried: true }));
+    expect(failed.textContent).toContain('could not be loaded');
+    failed.querySelector('button').click();
+    await Promise.resolve(); await Promise.resolve();
+    expect(failed.textContent).toBe('Project notice: Terms');
+
+    expect(renderPayNoticeNote(payNoticeView(1, { 1: 'Terms', 10: 'Terms' }), () => Promise.reject()).textContent).toBe('');
   });
 });

@@ -4628,6 +4628,69 @@ export function payReviewRows(r) {
   return rows;
 }
 
+// What a payer is shown for the chain they pay on. Each chain keeps its own project file, so the notice can
+// differ between them: the payer sees the one for their chain, and the others when they differ. `notices` maps
+// chainId to a string ('' for none) or null when that chain's read failed. The same rule as juicebox.money's
+// payNoticeView.
+export function payNoticeView(chainId, notices) {
+  var own = notices[chainId];
+  var others = Object.keys(notices).map(function (id) { return { chainId: Number(id), notice: notices[id] }; })
+    .filter(function (row) { return row.chainId !== Number(chainId) && row.notice != null && own != null && row.notice !== own; })
+    .sort(function (a, b) { return chainSortIndex(a.chainId) - chainSortIndex(b.chainId); });
+  return { notice: own == null ? '' : own, failed: own == null, others: others };
+}
+
+// Under a payment's review: a notice that could not be read gets one quiet line with a retry, and a notice that
+// reads differently on the project's other chains can be opened to compare. Neither blocks the payment.
+// `retry()` resolves to the view read again.
+export function renderPayNoticeNote(view, retry) {
+  var wrap = el('div', 'pay-notice-note');
+  function draw(v) {
+    wrap.replaceChildren();
+    if (v.failed) {
+      wrap.appendChild(document.createTextNode('The project’s notice could not be loaded. '));
+      var again = el('button', 'pay-notice-retry'); again.type = 'button'; again.textContent = 'Retry';
+      again.addEventListener('click', function () {
+        again.disabled = true; again.textContent = 'Loading…';
+        retry().then(draw, function () { draw(v); });
+      });
+      wrap.appendChild(again);
+      return;
+    }
+    if (v.notice && v.retried) {
+      var loaded = el('div', 'pay-notice-loaded'); loaded.textContent = 'Project notice: ' + v.notice; wrap.appendChild(loaded);
+    }
+    if (!v.others.length) return;
+    var details = document.createElement('details');
+    var summary = document.createElement('summary');
+    summary.textContent = 'The notice differs on ' + v.others.map(function (row) { return chainNameOf(row.chainId); }).join(', ') + '.';
+    details.appendChild(summary);
+    v.others.forEach(function (row) {
+      var name = el('div', 'pay-notice-chain'); name.textContent = chainNameOf(row.chainId);
+      var text = el('div', 'pay-notice-text'); text.textContent = row.notice || 'No notice.';
+      details.appendChild(name); details.appendChild(text);
+    });
+    wrap.appendChild(details);
+  }
+  draw(view);
+  return wrap;
+}
+
+// Each deployment's indexed payment notice; the page's own chain uses the project file already read. A chain whose
+// read fails maps to null.
+function readPayNotices(project) {
+  var notices = {};
+  return Promise.all(projectDeployments(project).map(function (deployment) {
+    if (deployment.chainId === Number(project.chainId) && project.payDisclosure !== undefined) {
+      notices[deployment.chainId] = String(project.payDisclosure || '').trim();
+      return null;
+    }
+    return loadBendystrawProjectRow(deployment.chainId + ':' + deployment.projectId, deployment).then(function (row) {
+      notices[deployment.chainId] = row ? String(row.payDisclosure || '').trim() : null;
+    }, function () { notices[deployment.chainId] = null; });
+  })).then(function () { return notices; });
+}
+
 // One toRemote ships the entire outbox of one (source sucker, token), so queued movements group by chain pair,
 // source sucker and token: an Execute under a group must never send a different sucker's or token's outbox.
 export function groupQueuedMovements(rows) {
@@ -9372,6 +9435,11 @@ export function renderPayCard(project, cart) {
       }).catch(function () { if (state.chainId === chainId) { state.contextsError = true; renderTerminalNotice(); } });
   }
 
+  // Read once with the card; a review opened before it lands treats the notice as still loading, not failed.
+  var payNotices = null;
+  function loadNotices() { return readPayNotices(project).then(function (notices) { payNotices = notices; return notices; }); }
+  loadNotices();
+
   var state = {
     chainId: chains[0].id,
     tokens: tokensForChain(chains[0].id),
@@ -10542,6 +10610,8 @@ export function renderPayCard(project, cart) {
 
     // Confirm the exact data before signing.
     var chainName = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
+    var noticeView = payNoticeView(reviewedChainId, payNotices || {});
+    if (!payNotices) noticeView.failed = false; // still reading
     var symClean = (reviewedToken.symbol || '').replace(/\s*\(native\)/i, '');
     var human = formatAmount(amt, reviewedToken.decimals == null ? 18 : reviewedToken.decimals) + ' ' + symClean;
     // Human-readable summary of the NFTs this pay will mint (the raw `metadata` hex below is unreadable),
@@ -10593,8 +10663,14 @@ export function renderPayCard(project, cart) {
         items: tierIds.length ? confirmArgs.mints : null,
         lands: confirmArgs.landsOnChain || null,
         beneficiary: beneficiary, memo: reviewedMemo, quoteFailed: !!(reviewedPreview && reviewedPreview.quoteFailed),
-        notice: project.payDisclosure,
-      }) },
+        notice: noticeView.notice,
+      }), notes: addBalance ? [] : [renderPayNoticeNote(noticeView, function () {
+        return loadNotices().then(function () {
+          var again = payNoticeView(reviewedChainId, payNotices || {});
+          again.retried = true;
+          return again;
+        });
+      })] },
     }, function send(confirmCtx) {
       if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
         var accountError = 'Connected account changed. Review the payment again.';

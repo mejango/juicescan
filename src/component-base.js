@@ -1131,6 +1131,8 @@ export function renderFriendlySummary(summary, tx) {
     call.appendChild(r);
   });
   wrap.appendChild(call);
+  // Quiet lines under the rows that are more than text: a toggle, a retry.
+  (summary.notes || []).forEach(function (note) { if (note) wrap.appendChild(note); });
   return wrap;
 }
 
