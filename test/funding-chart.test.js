@@ -54,6 +54,15 @@ describe('funding chart card', () => {
     expect(card.style.display).toBe('');
     expect(card.querySelectorAll('rect')).toHaveLength(45);
     expect(card.querySelector('.market-chart-price').textContent).toBe('$12.00');
+    // The newest bar is read out; the arrow keys move the readout without a pointer.
+    const svg = card.querySelector('svg'), readout = () => card.querySelector('.funding-chart-readout').textContent;
+    expect(svg.getAttribute('tabindex')).toBe('0');
+    expect(readout()).toContain('$12.00');
+    svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home' }));
+    const first = readout();
+    svg.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    expect(readout()).not.toBe(first);
+    expect(card.querySelectorAll('rect.is-inspected')).toHaveLength(1);
     const metric = card.querySelector('select');
     metric.value = 'balance'; metric.dispatchEvent(new Event('change'));
     expect(card.querySelector('.market-chart-price').textContent).toBe('$7.00');

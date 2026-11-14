@@ -74,29 +74,56 @@ function select(options, value, label) {
   return node;
 }
 
-function barsSvg(points, label) {
+function pointLabel(point) {
+  return usd(point.valueUsd) + ', ' + new Date(point.timestamp * 1000).toLocaleString();
+}
+
+// Bars plus a text readout of the inspected bar. Pointer hover, or focus and the arrow keys, pick the bar, so the
+// amounts and dates are reachable without a mouse and are announced.
+function barsChart(points, label) {
   var NS = 'http://www.w3.org/2000/svg';
   var W = 450, H = 120, gap = 2, width = W / points.length - gap;
   var max = points.reduce(function (m, p) { return Math.max(m, p.valueUsd); }, 0) || 1;
+  var wrap = document.createElement('div');
   var svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
   svg.setAttribute('preserveAspectRatio', 'none');
   svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', label);
+  svg.setAttribute('aria-label', label + ' Focus and use arrow keys to inspect values.');
+  svg.setAttribute('tabindex', '0');
   svg.setAttribute('class', 'funding-chart-svg');
-  points.forEach(function (point, i) {
+  var readout = document.createElement('div');
+  readout.className = 'funding-chart-readout';
+  readout.setAttribute('aria-live', 'polite');
+  var rects = points.map(function (point, i) {
     var height = Math.max(1, (point.valueUsd / max) * (H - 4));
     var rect = document.createElementNS(NS, 'rect');
     rect.setAttribute('x', String(i * (width + gap)));
     rect.setAttribute('y', String(H - height));
     rect.setAttribute('width', String(width));
     rect.setAttribute('height', String(height));
-    var title = document.createElementNS(NS, 'title');
-    title.textContent = usd(point.valueUsd) + ', ' + new Date(point.timestamp * 1000).toLocaleString();
-    rect.appendChild(title);
+    rect.addEventListener('pointerenter', function () { inspect(i); });
     svg.appendChild(rect);
+    return rect;
   });
-  return svg;
+  var current = points.length - 1;
+  function inspect(i) {
+    rects[current].removeAttribute('class');
+    current = Math.max(0, Math.min(points.length - 1, i));
+    rects[current].setAttribute('class', 'is-inspected');
+    readout.textContent = pointLabel(points[current]);
+  }
+  svg.addEventListener('keydown', function (event) {
+    var step = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+    if (event.key === 'Home') inspect(0);
+    else if (event.key === 'End') inspect(points.length - 1);
+    else if (step) inspect(current + step);
+    else return;
+    event.preventDefault();
+  });
+  inspect(current);
+  wrap.appendChild(svg); wrap.appendChild(readout);
+  return wrap;
 }
 
 // `load()` resolves to { moments, adds }. The card stays out of the page until there is history to draw, and
@@ -123,7 +150,7 @@ export function renderFundingChart(load) {
     if (!points.length) return;
     total.textContent = usd(points[points.length - 1].valueUsd);
     body.innerHTML = '';
-    body.appendChild(barsSvg(points, METRICS.filter(function (m) { return m[0] === metric; })[0][2]));
+    body.appendChild(barsChart(points, METRICS.filter(function (m) { return m[0] === metric; })[0][2]));
   }
   metricSelect.addEventListener('change', function () { metric = metricSelect.value; draw(); });
   rangeSelect.addEventListener('change', function () { range = Number(rangeSelect.value); draw(); });
