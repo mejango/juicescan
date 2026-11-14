@@ -6,7 +6,7 @@ const rpc = vi.hoisted(() => ({ twap: null }));
 vi.mock('../src/component-base.js', async original => ({ ...await original(),
   createPublicClientForChain: () => ({ readContract: async ({ functionName }) => {
     if (functionName === 'controllerOf') return '0x' + '75'.repeat(20);
-    if (functionName === 'currentRulesetOf') return [{ id: 1n }, { dataHook: rpc.registry }];
+    if (functionName === 'currentRulesetOf') return [{ id: 1n }, { dataHook: rpc.registry, useDataHookForPay: true, useDataHookForCashOut: true }];
     if (functionName === 'hookOf') return '0x' + '72'.repeat(20);
     if (functionName === 'twapWindowOf') { if (rpc.twap instanceof Error) throw rpc.twap; return rpc.twap; }
     if (functionName === 'poolKeyOf') { if (rpc.twap === 0n) throw new Error('unused pool key read failed'); return { fee: 3000, tickSpacing: 60 }; }

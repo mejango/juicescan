@@ -72,6 +72,14 @@ describe('pay card payment preparation', () => {
     const both = addToHookMetadata(base, id, permit);
     expect(addToHookMetadata(createHookMetadata(ids, ['0x01', '0x02']), id, permit)).toBe(createHookMetadata(ids.concat(id), ['0x01', '0x02', permit]));
     expect(addToHookMetadata('0x', id, permit)).toBe(createHookMetadata([id], [permit]));
+    // The reserved word is kept, alone or ahead of entries, as JBMetadataResolver.addToMetadata keeps it.
+    const reserved = 'ab'.repeat(32);
+    expect(addToHookMetadata('0x' + reserved, id, permit)).toBe('0x' + reserved + createHookMetadata([id], [permit]).slice(66));
+    // A payload cut mid-word, an offset past the end and one into the table are refused, never padded into shape.
+    const good = createHookMetadata([ids[0]], ['0x' + '00'.repeat(31) + '01']);
+    for (const bad of [good.slice(0, -2), good.slice(0, 2 + 64 + 20), '0x' + '0'.repeat(64) + (ids[0].slice(2) + '09').padEnd(64, '0') + '0'.repeat(64), '0x' + '0'.repeat(64) + (ids[0].slice(2) + '01').padEnd(64, '0') + '0'.repeat(64)]) {
+      expect(() => addToHookMetadata(bad, id, permit)).toThrow('not well-formed');
+    }
     // The original entries survive byte for byte.
     expect(both.includes(base.slice(2 + 64 * 2))).toBe(true);
   });

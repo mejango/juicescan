@@ -7,7 +7,7 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(),
   getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account, getViewAs: () => null, isSafeConnected: () => false,
   executeTransaction: runtime.execute, invokeWallet: (...args) => walletInvocationFor(runtime)(...args),
   getWalletClient: () => runtime.wallet,
-  createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => '0x', getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
+  createPublicClientForChain: chainId => ({ readContract: call => runtime.contractRead({ ...call, fixtureChainId: Number(chainId) }), getBalance: async () => 10n ** 21n, getCode: async () => runtime.code, getBlock: async () => ({ timestamp: 1_800_000_000n }) }) }));
 import { getAddress } from '../src/abi-registry.js';
 import { buildUserPayMetadata, PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE } from '../src/pay-prepare.js';
 import { hookMetadataId } from '../src/hook-metadata.js';
@@ -30,12 +30,13 @@ beforeEach(() => {
   document.body.innerHTML = ''; vi.unstubAllGlobals();
   runtime.wallet = { getChainId: async () => 8453, signTypedData: runtime.sign };
   contexts = [{ token: NATIVE, decimals: 18, currency: 61166 }]; terminals = [terminal];
+  runtime.code = '0x'; runtime.entryAllowance = 0n; // a plain wallet that has approved Permit2, and no pay entry
   runtime.prepare.mockReset(); runtime.execute.mockReset(); runtime.sign.mockReset(); runtime.inventory.mockReset().mockResolvedValue(null);
   runtime.contractRead.mockReset().mockImplementation(async call => {
     if (call.functionName === 'accountingContextsOf') return contexts;
     if (call.functionName === 'terminalsOf') return terminals;
     if (call.functionName === 'previewPayFor') return [{ id: 1n }, 1n, 0n, []]; // the router can route this token
-    if (call.functionName === 'allowance') return call.address === PERMIT2 ? [0n, 0n, 0n] : 2n ** 255n;
+    if (call.functionName === 'allowance') return call.address === PERMIT2 ? [0n, 0n, 0n] : call.args[1].toLowerCase() === PERMIT2.toLowerCase() ? 2n ** 255n : runtime.entryAllowance;
     if (call.functionName === 'balanceOf') return 10n ** 12n;
     throw new Error('Unexpected read ' + call.functionName);
   });
@@ -72,19 +73,44 @@ it('sends prepareUserPay metadata and minimum to the terminal for exactly the re
   expect(tx.holdLegacyTargets).toEqual([terminal, registry]);
 });
 
-it('approves the terminal for exactly the amount of a directly accepted ERC-20', async () => {
+async function directUsdc(id) {
   contexts = [{ token: USDC, decimals: 6, currency: 2 }];
   runtime.prepare.mockResolvedValue(prepared('0xbb', 5n));
-  await card(602); type('25');
+  await card(id); type('25');
   await vi.waitFor(() => expect(runtime.prepare).toHaveBeenCalledTimes(1));
   expect(runtime.prepare.mock.lastCall[1]).toMatchObject({ token: USDC, amount: 25_000_000n, terminal });
   await vi.waitFor(() => expect(document.querySelector('.paybox-yg-val').textContent).not.toBe('…'));
   await review(); confirmButton().click();
   await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
   const tx = runtime.execute.mock.lastCall[0];
-  expect(tx.args).toEqual([602n, USDC, 25_000_000n, runtime.account, 5n, '', '0xbb']);
+  expect(tx.args.slice(0, 6)).toEqual([602n, USDC, 25_000_000n, runtime.account, 5n, '']);
   expect(tx.value).toBe(0n);
+  return tx;
+}
+
+it('has a plain wallet sign a Permit2 allowance of exactly the amount for a directly accepted ERC-20', async () => {
+  runtime.sign.mockResolvedValue('0x' + '11'.repeat(65));
+  const tx = await directUsdc(602);
+  expect(runtime.sign).toHaveBeenCalledTimes(1);
+  expect(runtime.sign.mock.lastCall[0].message).toMatchObject({ details: { token: USDC, amount: 25_000_000n }, spender: terminal });
+  expect(tx.args[6]).not.toBe('0xbb');
+  expect([tx.tokenAddr, tx.spenderAddr, tx.approvalAmount]).toEqual([null, null, null]);
+});
+
+it('has an account with code approve the terminal for exactly the amount, and never sign', async () => {
+  runtime.code = '0x60';
+  const tx = await directUsdc(602);
+  expect(tx.args[6]).toBe('0xbb');
   expect([tx.tokenAddr, tx.spenderAddr, tx.approvalAmount]).toEqual([USDC, terminal, 25_000_000n]);
+  expect(runtime.sign).not.toHaveBeenCalled();
+});
+
+it('asks for no signature or approval when the terminal is already approved for the amount', async () => {
+  runtime.entryAllowance = 25_000_000n;
+  const tx = await directUsdc(602);
+  expect(tx.args[6]).toBe('0xbb');
+  expect([tx.tokenAddr, tx.spenderAddr, tx.approvalAmount]).toEqual([null, null, null]);
+  expect(runtime.sign).not.toHaveBeenCalled();
 });
 
 const settle = ms => new Promise(resolve => setTimeout(resolve, ms));

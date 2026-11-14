@@ -24,6 +24,7 @@ import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-
 import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt, legacyTokenSalt, matchingTokenSalt, TOKEN_SAME_ADDRESS_NOTE, contractReverted } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { generationAddresses, generationNames, getABI } from './abi-registry.js';
+import { resolveBuybackHook, cashOutCountAfterRevnetFee } from './project-hooks.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
@@ -597,12 +598,19 @@ export function encodedIpfsCandidates(b32) {
     'ipfs://b' + base32Encode([0x01, 0x55].concat(multihash)),
   ];
 }
-// Permit2 swap-pay metadata: replaces the scary ERC20 "approve the router" tx with a one-time ERC20→Permit2
-// approval + a GASLESS Permit2 signature. The router's `_acceptFundsFor` reads a JBSingleAllowance from the
-// pay metadata (keyed to the router via getId("permit2", router)), calls PERMIT2.permit with it, then pulls
-// via PERMIT2.transferFrom. Returns `metadata` with the allowance added; signs along the way (one approve tx if Permit2 is short).
+// Permit2 pay metadata: replaces an ERC20 "approve the terminal" tx per payment with a one-time ERC20→Permit2
+// approval + a GASLESS Permit2 signature. Every pay entry (JBMultiTerminal, the router terminal, its registry and
+// gateway) reads a JBSingleAllowance from the pay metadata (keyed to itself via getId("permit2", entry)), calls
+// PERMIT2.permit with it, then pulls via PERMIT2.transferFrom. Returns `metadata` with the allowance added; signs
+// along the way (one approve tx if Permit2 is short). Returns null when the entry needs no signature: it is already
+// approved for the amount, or the payer is a contract wallet, which approves the entry for the exact amount.
+// The same rule as the SDK's planErc20PayAuthorization, which juicebox.money and revnet.money use.
 function permit2MetadataId(target) {
   return hookMetadataId(target, 'permit2').slice(2);
+}
+function accountHasCode(chainId, account) {
+  return clientFor(chainId).getCode({ address: account }).then(function (code) { return !!(code && code !== '0x'); },
+    function () { throw new Error('Could not check whether this wallet can sign a payment authorization. Try again.'); });
 }
 async function latestChainTimestamp(client) {
   var block = await client.getBlock({ blockTag: 'latest' });
@@ -610,7 +618,7 @@ async function latestChainTimestamp(client) {
   if (!Number.isSafeInteger(timestamp) || timestamp <= 0) throw new Error('Could not read the chain timestamp for authorization.');
   return timestamp;
 }
-async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount, onStatus, metadata) {
+async function buildPayPermit2Metadata(chainId, token, owner, spender, amount, onStatus, metadata) {
   if (getViewAs()) throw new Error(VIEW_AS_TX_ERROR);
   amount = BigInt(amount);
   if (amount <= 0n || amount > (1n << 160n) - 1n) throw new Error('Payment amount is outside Permit2’s uint160 range.');
@@ -622,17 +630,17 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
   var wc0 = await wallet.getChainId().catch(function () { return null; });
   if (wc0 !== chainId) { if (onStatus) onStatus('Switching to ' + chainNameOf(chainId) + '…', 'pending'); await switchChain(chainId); wallet = getWalletClient(); }
   if (!wallet || !getAccount() || getAccount().toLowerCase() !== owner.toLowerCase()) throw new Error('Connected account changed. Review the payment again.');
-  // 0. A contract wallet can't produce the EOA signature this metadata carries, and its co-signers
-  //    routinely outlive the 30-minute sigDeadline stamped below. Both the router terminal and the
-  //    registry check a plain ERC20 allowance to THEMSELVES before falling back to Permit2
-  //    (JBRouterTerminal.sol:817-825, JBRouterTerminalRegistry.sol:817-825), so a contract wallet
-  //    authorizes the router directly and pays with NO permit metadata. Returning null says so.
-  if (isSafeConnected() || await lpIsSmartWallet(chainId, owner)) {
-    var routerAllow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [owner, spender] });
-    if (BigInt(routerAllow) < amount) {
-      if (onStatus) onStatus('Proposing the token approval to your multisig, sign & execute it in your Safe, then confirm the payment again.', 'pending');
-      await lpSendTx(chainId, { account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [spender, amount], smartWallet: true });
-    }
+  // 0. Every pay entry checks a plain ERC20 allowance to ITSELF before falling back to Permit2, so an entry
+  //    that is already approved for the amount needs nothing signed. Returning null says so.
+  var entryAllow = await client.readContract({ address: token, abi: lpErc20Abi, functionName: 'allowance', args: [owner, spender] });
+  if (BigInt(entryAllow) >= amount) return null;
+  //    A contract wallet can't produce the EOA signature this metadata carries (Permit2 asks any account with
+  //    code, a delegated EOA included, for an ERC-1271 answer), and a multisig's co-signers routinely outlive
+  //    the 30-minute sigDeadline stamped below. It approves the entry directly and pays with NO permit metadata.
+  var multisig = isSafeConnected() || await lpIsSmartWallet(chainId, owner);
+  if (multisig || await accountHasCode(chainId, owner)) {
+    if (onStatus) onStatus(multisig ? 'Proposing the token approval to your multisig, sign & execute it in your Safe, then confirm the payment again.' : 'Approve token access in your wallet…', 'pending');
+    await lpSendTx(chainId, { account: owner, address: token, abi: lpErc20Abi, functionName: 'approve', args: [spender, amount], smartWallet: multisig });
     return null;
   }
   // 1. One-time ERC20→Permit2 approval (to the canonical, audited Permit2 — recognized by wallets), only when short.
@@ -679,15 +687,24 @@ async function buildRouterPermit2Metadata(chainId, token, owner, spender, amount
 // JBMetadataResolver.addToMetadata: unpack the (id, word offset) table, then repack with one more entry.
 export function addToHookMetadata(metadata, id, data) {
   var body = (metadata || '0x').slice(2), ids = [], offsets = [];
-  var tableEnd = body.length ? parseInt(body.slice(72, 74), 16) * 64 : 0;
+  // Up to one word is the reserved word alone, which is kept, as the contract keeps it.
+  var reserved = body.slice(0, 64).padEnd(64, '0');
+  var hasTable = body.length > 64;
+  var tableEnd = hasTable ? parseInt(body.slice(72, 74), 16) * 64 : 0;
+  // Repacking pads whatever it is given, which would turn a cut-off payload into a valid one with different
+  // values: malformed metadata is refused (the SDK's addToHookMetadata does the same).
+  var malformed = function () { return new Error('metadata is not well-formed packed hook metadata.'); };
+  if (hasTable && (body.length % 64 !== 0 || !(tableEnd >= 128 && tableEnd < body.length))) throw malformed();
   for (var i = 64; i + 10 <= tableEnd; i += 10) {
-    var offset = parseInt(body.slice(i + 8, i + 10), 16);
+    var offset = parseInt(body.slice(i + 8, i + 10), 16) * 64;
     if (!offset) break;
+    // Each payload starts after the one before it and inside the metadata.
+    if (offset <= (offsets.length ? offsets[offsets.length - 1] : tableEnd - 1) || offset >= body.length) throw malformed();
     ids.push('0x' + body.slice(i, i + 8));
-    offsets.push(offset * 64);
+    offsets.push(offset);
   }
   var datas = offsets.map(function (start, k) { return '0x' + body.slice(start, offsets[k + 1] || body.length); });
-  return createHookMetadata(ids.concat(id), datas.concat(data));
+  return '0x' + reserved + createHookMetadata(ids.concat(id), datas.concat(data)).slice(66);
 }
 
 // JBMetadataResolver envelope for a 721 REDEMPTION: id = getId("cashOut", idTarget); data = abi.encode(uint256[] tokenIds).
@@ -4381,49 +4398,27 @@ function projectDataHook(project, chainId, opts) {
   var k = chainId + ':' + pid.toString();
   if (_dataHookCache[k] !== undefined) return Promise.resolve(_dataHookCache[k]);
   return read(chainId, 'JBDirectory', controllerOfAbi, 'controllerOf', [pid]).then(function (controller) {
-    if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n }; return _dataHookCache[k]; }
+    if (!controller || controller === ZERO_ADDRESS) { _dataHookCache[k] = { hook: ZERO_ADDRESS, rulesetId: 0n, useDataHookForPay: false, useDataHookForCashOut: false }; return _dataHookCache[k]; }
     return clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] })
-      .then(function (r) { var info = { hook: (r && r[1] && r[1].dataHook) || ZERO_ADDRESS, rulesetId: (r && r[0] && r[0].id) || 0n }; _dataHookCache[k] = info; return info; });
-  }).catch(function (e) { if (opts && opts.strict) throw e; return { hook: ZERO_ADDRESS, rulesetId: 0n }; });
+      .then(function (r) {
+        var meta = (r && r[1]) || {};
+        var info = { hook: meta.dataHook || ZERO_ADDRESS, rulesetId: (r && r[0] && r[0].id) || 0n, useDataHookForPay: !!meta.useDataHookForPay, useDataHookForCashOut: !!meta.useDataHookForCashOut };
+        _dataHookCache[k] = info; return info;
+      });
+  }).catch(function (e) { if (opts && opts.strict) throw e; return { hook: ZERO_ADDRESS, rulesetId: 0n, useDataHookForPay: false, useDataHookForCashOut: false }; });
 }
 
-// The project's ACTUAL buyback hook on `chainId`, or null if it has no buyback pool. Recognize the project's ruleset
-// data hook (resolved via the Directory, never hardcoded) against the known singleton wrappers — hookOf / the default
-// hook must NOT be trusted for a project that doesn't route through the registry (it returns a default → wrong pool):
-//   JBBuybackHookRegistry, or REVOwner (revnets forward pay to the registry) → hook = registry.hookOf(projectId).
-//   JBOmnichainDeployer → it inserts ITSELF as the dataHook and stores the project's real hook as an "extra hook";
-//                         unwrap extraDataHookOf(projectId, rulesetId) and recognize THAT.
-//   the concrete JBBuybackHook wired directly → use it.
-//   anything else (croptop CTDeployer, 721 tiers, Defifa, unknown) → no buyback pool → null.
+// The buyback hook the project's current ruleset calls on `chainId`, or null if it calls none. The rule lives in
+// project-hooks.js (resolveBuybackHook): through the ruleset's data hook, by its use flag for `opts.direction`
+// ('pay' unless 'cashOut'), never the registry's default. A failed read gives null unless `opts.strict`.
 // readPoolState additionally null-gates on an uninitialized pool, so a mis-recognized hook can't render a phantom pool.
 export function projectBuybackHook(project, chainId, opts) {
-  var registry = getAddress('JBBuybackHookRegistry', chainId);
-  var revOwner = getAddress('REVOwner', chainId);
-  var omni = getAddress('JBOmnichainDeployer', chainId);
-  var concrete = getAddress('JBBuybackHook', chainId);
-  var pid = pidOn(project, chainId);
-  var lc = function (a) { return (a || '').toLowerCase(); };
-  var fallbackNull = function (e) { if (opts && opts.strict) throw e; return null; };
-  // Recognize an already-unwrapped data hook → the buyback hook it implies, or null.
-  function recognize(dh) {
-    if (!dh || dh === ZERO_ADDRESS) return Promise.resolve(null);
-    var d = lc(dh);
-    if (d === lc(registry) || d === lc(revOwner)) {
-      return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid])
-        .then(function (h) { return (h && h !== ZERO_ADDRESS) ? h : null; }).catch(fallbackNull);
-    }
-    if ((concrete && d === lc(concrete)) || /^JBBuybackHook_deprecated\d*$/.test(resolveContractName(dh, chainId) || '')) return Promise.resolve(dh);
-    return Promise.resolve(null);
-  }
-  return projectDataHook(project, chainId, opts).then(function (info) {
-    var dh = info && info.hook;
-    if (!dh || dh === ZERO_ADDRESS) return null;
-    if (omni && lc(dh) === lc(omni)) {
-      return read(chainId, 'JBOmnichainDeployer', extraDataHookOfAbi, 'extraDataHookOf', [pid, info.rulesetId])
-        .then(function (cfg) { return recognize(cfg && cfg.dataHook); }).catch(fallbackNull);
-    }
-    return recognize(dh);
-  }).catch(fallbackNull);
+  var client = clientFor(chainId);
+  return resolveBuybackHook({
+    ruleset: function () { return projectDataHook(project, chainId, { strict: true }); },
+    read: function (address, abi, functionName, args) { return client.readContract({ address: address, abi: abi, functionName: functionName, args: args }); },
+    is: function (address, name) { return generationAddresses(name, chainId).some(function (deployed) { return sameAddr(deployed, address); }); },
+  }, pidOn(project, chainId), opts && opts.direction).catch(function (e) { if (opts && opts.strict) throw e; return null; });
 }
 
 // The project's router terminal on `chainId`, or null if it doesn't route through the router terminal. Symmetric to
@@ -10327,6 +10322,8 @@ export function renderPayCard(project, cart) {
     var fnAbi = txParams.abi;
     var args = txParams.args;
     var metaIdx = addBalance ? 5 : 6;
+    // The payment's metadata gains a Permit2 signature once the wallet signs, unless a Safe pays the terminal directly.
+    var signsPermit2 = !isNative && (viaRouter || !isSafeConnected());
 
     // Confirm the exact data before signing.
     var chainName = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
@@ -10354,7 +10351,7 @@ export function renderPayCard(project, cart) {
         : '');
     }
     confirmArgs.memo = reviewedMemo;
-    confirmArgs.metadata = (viaRouter && !isNative) ? metadata + ' (plus a Permit2 signature added when you sign)' : metadata;
+    confirmArgs.metadata = signsPermit2 ? metadata + ' (plus a Permit2 signature added when you sign)' : metadata;
     openPayConfirm({
       chain: chainName,
       chainId: reviewedChainId,
@@ -10362,19 +10359,18 @@ export function renderPayCard(project, cart) {
       address: terminal,
       'function': fnName,
       abi: abiSignature(fnAbi, fnName),
-      calldata: (viaRouter && !isNative) ? undefined : encodeFunctionData({ abi: fnAbi, functionName: fnName, args: args }),
-      txlinkUnavailableReason: (viaRouter && !isNative) ? 'This routed payment needs a Permit2 signature bound to the connected wallet before its exact calldata exists.' : null,
+      calldata: signsPermit2 ? undefined : encodeFunctionData({ abi: fnAbi, functionName: fnName, args: args }),
+      txlinkUnavailableReason: signsPermit2 ? 'This payment needs a Permit2 signature bound to the connected wallet before its exact calldata exists.' : null,
       value: isNative ? (amt.toString() + ' wei (' + human + ')') : '0',
       erc20Approval: isNative ? null
-        : (viaRouter
-          ? (isSafeConnected()
+        : (isSafeConnected()
+          ? (viaRouter
             ? { token: reviewedToken.address, authorize: 'Direct approval to the router (a multisig cannot sign the gasless authorization)', spender: terminal, amount: amt.toString() }
-            // Say WHICH approval and for how much: this path grants Permit2 an UNLIMITED
-            // ERC-20 allowance once, while the LP flow grants exact+1%. Both are safe (the
-            // router can only pull what the signed PermitSingle allows) but the confirm
-            // modal previously told the user two different stories about the same step.
-            : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless), bounded to this payment. If this token has never been approved to Permit2, a one-time UNLIMITED approval to the audited Permit2 contract is signed first, the router can still only pull the amount the signature authorizes.', spender: terminal })
-          : { token: reviewedToken.address, spender: terminal, amount: amt.toString() }),
+            : { token: reviewedToken.address, spender: terminal, amount: amt.toString() })
+          // Say WHICH approval and for how much: this path grants Permit2 an UNLIMITED ERC-20 allowance once,
+          // while the LP flow grants exact+1%. Both are safe (the terminal can only pull what the signed
+          // PermitSingle allows). A contract wallet that is not a Safe approves the terminal for the exact amount.
+          : { token: reviewedToken.address, authorize: 'Permit2 signature (gasless), bounded to this payment. If this token has never been approved to Permit2, a one-time UNLIMITED approval to the audited Permit2 contract is signed first, the terminal can still only pull the amount the signature authorizes. A contract wallet approves the terminal for the exact amount instead.', spender: terminal }),
       args: confirmArgs,
       summary: { action: addBalance ? 'Add to balance' : 'Pay', rows: payReviewRows({
         amount: human, chain: chainName, addBalance: addBalance,
@@ -10390,30 +10386,37 @@ export function renderPayCard(project, cart) {
         status.className = 'paybox-status error'; status.textContent = accountError; confirmCtx.fail(accountError); return;
       }
       if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return; }
-      // Native ETH (even via the router) is paid with msg.value — no Permit2. Only ERC20 swap currencies
-      // authorize through Permit2; reading allowance on the native pseudo-address returns "0x".
-      if (!viaRouter || isNative) { sendPay(txParams, Object.assign({ confirmCtx: confirmCtx }, sendOpts)); return; }
-      // Swap-via-router: authorize with a Permit2 signature (replaces the scary router-approve tx), then send.
+      // Native ETH (even via the router) is paid with msg.value — no Permit2; reading allowance on the native
+      // pseudo-address returns "0x".
+      if (isNative) { sendPay(txParams, Object.assign({ confirmCtx: confirmCtx }, sendOpts)); return; }
       var statusCb = function (m, kind, meta) {
         status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
         confirmCtx.showStatus(m, kind, meta);
       };
-      buildRouterPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb, metadata)
-        .then(function (meta) {
-          if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return; }
-          var p = Object.assign({}, txParams);
-          // A null meta means the router was approved directly (contract wallet) — the pay
-          // carries its original metadata and the router pulls on the plain ERC20 allowance.
-          if (meta) {
-            p.args = args.slice();
-            p.args[metaIdx] = meta;
-          }
-          sendPay(p, Object.assign({ confirmCtx: confirmCtx }, sendOpts));
+      // A contract wallet paying the terminal directly keeps its inline exact approval: it cannot sign.
+      (viaRouter ? Promise.resolve(false) : (isSafeConnected() ? Promise.resolve(true) : accountHasCode(reviewedChainId, beneficiary)))
+        .then(function (approvesInline) {
+          if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return undefined; }
+          if (approvesInline) { sendPay(txParams, Object.assign({ confirmCtx: confirmCtx }, sendOpts)); return undefined; }
+          // Every other ERC20 payment authorizes with a Permit2 signature (replaces an approval per payment), then sends.
+          return buildPayPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb, metadata).then(payAuthorized);
         })
         .catch(function (e) {
           var message = errMessage(e, 'Could not authorize the payment.');
           status.className = 'paybox-status error'; status.textContent = message; confirmCtx.fail(message);
         });
+      function payAuthorized(meta) {
+          if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return; }
+          // No inline approval follows: the entry is approved already, or pulls through the signed allowance.
+          var p = Object.assign({}, txParams, { tokenAddr: null, spenderAddr: null, approvalAmount: null });
+          // A null meta means the entry is approved directly (already, or just now by a contract wallet) — the
+          // pay carries its original metadata and the entry pulls on the plain ERC20 allowance.
+          if (meta) {
+            p.args = args.slice();
+            p.args[metaIdx] = meta;
+          }
+          sendPay(p, Object.assign({ confirmCtx: confirmCtx }, sendOpts));
+      }
     }, Object.assign({ onDismiss: dropLoosenedSlippage }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : {}));
     } // proceed()
   }
@@ -18287,7 +18290,7 @@ function livePoolField(name) {
 // A failed read rejects, which the caller shows as unknown.
 function buybackPoolStateRead(project, chainId) {
   var pid = pidOn(project, chainId);
-  return read(chainId, 'JBBuybackHookRegistry', hookOfAbi, 'hookOf', [pid]).then(function (hook) {
+  return projectBuybackHook(project, chainId, { strict: true }).then(function (hook) {
     if (!hook || hook === ZERO_ADDRESS) return 'no hook set';
     var probes = [{ label: 'native', token: ZERO_ADDRESS }];
     var usdc = USDC_BY_CHAIN[chainId]; if (usdc) probes.push({ label: 'USDC', token: usdc });
@@ -26168,7 +26171,8 @@ function fetchYouPosition(project) {
       return surplusJob.then(function (surplus) {
         // Cash out value: what `bal` tokens reclaim now, in the accounting token.
         var cashJob = (hasBal && supply && supply >= bal && surplus != null)
-          ? read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, bal, supply, surplus]).catch(function () { return null; })
+          // A revnet with a cash out tax first cashes out a fortieth of the tokens for the fee revnet.
+          ? read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, cashOutCountAfterRevnetFee(bal, !!project.isRevnet && !!taxRate), supply, surplus]).catch(function () { return null; })
           : Promise.resolve(hasBal ? null : 0n);
         // Max loan in the selected source accounting token's exact decimals/currency. Returns 0 while
         // the cash out delay is active.
@@ -27626,7 +27630,7 @@ function buildCashOutModal(project, requestClose) {
   // The buyback spec (hook == projectBuybackHook) from the treasury-path preview carries the fee-net sell count.
   function maybeOfferCashOutRoutes(seq, previewResult, revFee, protocolFee, count) {
     var acct = state.contextAccount;
-    Promise.all([directSellPoolFor(project, state.chainId, state.acct && state.acct.address), projectBuybackHook(project, state.chainId)]).then(function (r) {
+    Promise.all([directSellPoolFor(project, state.chainId, state.acct && state.acct.address), projectBuybackHook(project, state.chainId, { direction: 'cashOut' })]).then(function (r) {
       if (seq !== previewSeq) return;
       var pool = r[0], hookAddr = r[1];
       var terminalRoute = resolveCashOutPreviewRoute(previewResult, hookAddr, state.slippageBps || 100, state.feeless, state.feeFreeSurplus);
@@ -31386,7 +31390,8 @@ function fetchOps(project) {
             ? read(cid, 'JBMultiTerminal', feeFreeSurplusOfAbi, 'feeFreeSurplusOf', [pid, acct.address]).then(toBigInt).catch(function () { return null; })
             : Promise.resolve(0n);
           return Promise.all([
-            read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, ONE_TOKEN, supply, balance]),
+            // A revnet with a cash out tax first cashes out a fortieth of the token for the fee revnet.
+            read(cid, 'JBTerminalStore', reclaimableAbi, 'currentReclaimableSurplusOf', [pid, cashOutCountAfterRevnetFee(ONE_TOKEN, !!project.isRevnet && !!taxRate), supply, balance]),
             feeFreeP,
           ]).then(function (uv) {
             var disp = ambientCashOutDisplay(uv[0], taxRate, uv[1]);

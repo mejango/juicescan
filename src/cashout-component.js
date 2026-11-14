@@ -315,7 +315,7 @@ export function renderCashOutComponent() {
       var feelessAddr = getAddress('JBFeelessAddresses', chainId);
       if (!feelessAddr) throw new Error('Could not verify the fee configuration on this chain.');
       var context = await Promise.all([
-        projectBuybackHook({ chainId: chainId, id: state.projectId }, chainId, { strict: true }),
+        projectBuybackHook({ chainId: chainId, id: state.projectId }, chainId, { strict: true, direction: 'cashOut' }),
         executeRead({ chainId: chainId, address: terminalAddr, abi: feeFreeSurplusOfAbi, functionName: 'feeFreeSurplusOf', args: [projectId, reclaimToken] }),
         executeRead({ chainId: chainId, address: feelessAddr, abi: isFeelessForAbi, functionName: 'isFeelessFor', args: [beneficiary, projectId, holder] }),
         executeRead({ chainId: chainId, address: terminalAddr, abi: previewCashOutAbi, functionName: 'previewCashOutFrom', args: [holder, projectId, cashOutCount, reclaimToken, beneficiary, '0x'] }),
