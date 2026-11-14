@@ -11,7 +11,7 @@ const line = (project) => {
 describe('project header stats', () => {
   it('leads with what was raised when the index prices it, and counts payments and holders', () => {
     const text = line({ indexedStats: { volumeUsd: '12345000000000000000000', paymentsCount: 3 } });
-    expect(text).toMatch(/^\$12[.,]?3\d*k? raised\|/i);
+    expect(text.startsWith('$12,345.00 raised|')).toBe(true);
     expect(text).toMatch(/raised\|.* balance\|3 payments\|.* holders$/);
   });
   it('leaves raised out when the index has no priced volume', () => {
