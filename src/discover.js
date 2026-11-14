@@ -11,7 +11,7 @@ import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './p
 import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
-import { confirmStatusSettles, offerRelease, payHoldScope, onDocumentWhileConnected, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { busyWhile, confirmStatusSettles, offerRelease, payHoldScope, onDocumentWhileConnected, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
@@ -3301,8 +3301,10 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     var dBtn = el('button', 'create-btn small'); dBtn.textContent = 'Set';
     if (fl.cantIncreaseDiscountPercent) dBtn.title = 'This item is discount-capped: you can only lower it.';
     dBtn.addEventListener('click', function () {
-      submitSetTierDiscount(project, tier, Number(dInput.value), opStatus, selectedEditChains())
-        .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely update the discount.'), 'error'); });
+      busyWhile(dBtn, null, function () {
+        return submitSetTierDiscount(project, tier, Number(dInput.value), opStatus, selectedEditChains())
+          .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely update the discount.'), 'error'); });
+      });
     });
     dRow.appendChild(dBtn); dField.appendChild(dRow); opBox.appendChild(dField);
     var rmBtn = el('button', 'create-btn ghost tier-detail-remove'); rmBtn.textContent = fl.cantBeRemoved ? 'Cannot be removed' : 'Remove item';
@@ -3310,8 +3312,10 @@ function openTierDetail(project, shop, tier, cart, refreshers) {
     if (!fl.cantBeRemoved) rmBtn.addEventListener('click', function () {
       var selected = selectedEditChains();
       if (window.confirm('Remove item #' + tier.id + ' from the shop on ' + selected.map(function (chain) { return chain.name || chainNameOf(chain.id); }).join(', ') + '? Buyers can no longer mint it, and re-adding creates a NEW id (supply resets). Continue?')) {
-        submitRemoveTier(project, tier, opStatus, selected)
-          .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely remove the item.'), 'error'); });
+        busyWhile(rmBtn, null, function () {
+          return submitRemoveTier(project, tier, opStatus, selected)
+            .catch(function (error) { shopOpSetStatus(opStatus)(errMessage(error, 'Could not safely remove the item.'), 'error'); });
+        });
       }
     });
     opBox.appendChild(rmBtn);
@@ -3464,7 +3468,9 @@ export function openShopMediaEditor(project, tier) {
       var result = await runSelectedProjectCalls(project, selected, async function (sender) {
         var current = await Promise.all(selected.map(function (chain) { return readShopMediaState(project, chain, tier.id); }));
         assertShopMediaSelection(current, tier);
-        for (var row of current) if (!await accountCanShopPermissionOn(project, row.chainId, row.hook, sender, 25n)) throw new Error('SET_721_METADATA permission is missing on ' + row.chainName + '.');
+        var allowed = await Promise.all(current.map(function (row) { return accountCanShopPermissionOn(project, row.chainId, row.hook, sender, 25n); }));
+        var denied = current.find(function (_, i) { return !allowed[i]; });
+        if (denied) throw new Error('SET_721_METADATA permission is missing on ' + denied.chainName + '.');
         var edits = { file: file.files && file.files[0], mediaUri: imageUri.value.trim() };
         if (edits.file) edits.mediaType = mediaTypeForFile(edits.file) || 'application/octet-stream';
         else if (edits.mediaUri) edits.mediaType = 'image';
@@ -3579,7 +3585,10 @@ function openMintTierModal(project, tier, itemName) {
       account = await connect().then(getAccount).catch(function () { return null; });
     }
     if (!account) { status.textContent = 'Connect a wallet to continue.'; status.className = 'operator-edit-status error'; return; }
-    if (!await accountCanMintShopOn(project, chainId, live.hook, account)) {
+    submit.disabled = true; status.textContent = 'Checking permissions…'; status.className = 'operator-edit-status pending';
+    var canMint = await accountCanMintShopOn(project, chainId, live.hook, account);
+    submit.disabled = false;
+    if (!canMint) {
       status.textContent = 'This wallet is not the hook owner and does not have MINT_721 permission on this chain.';
       status.className = 'operator-edit-status error'; return;
     }
@@ -3712,13 +3721,18 @@ async function resolveHookMap(project, chains, tierId, verifyIdentity) {
     hookMap[chain.id] = info.hook;
     storeMap[chain.id] = store;
     if (tierId != null) {
+      // The item and the hook's pricing context are independent reads: both start at once.
+      var pricingRead = verifyIdentity
+        ? clientFor(chain.id).readContract({ address: info.hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] })
+        : null;
+      if (pricingRead) pricingRead.catch(function () {});
       var tier = verifyIdentity
         ? await readBoundedShopTier(clientFor(chain.id), store, info.hook, tierId, includeResolvedUri)
         : await readActiveTier(clientFor(chain.id), store, info.hook, tierId);
       if (!tier) throw new Error('Item #' + tierId + ' is not live on ' + (chain.name || chain.id) + '.');
       tierMap[chain.id] = tier;
       if (verifyIdentity) {
-        var pricing = await clientFor(chain.id).readContract({ address: info.hook, abi: TIER721_PRICING_CONTEXT_ABI, functionName: 'pricingContext', args: [] });
+        var pricing = await pricingRead;
         pricingMap[chain.id] = { currency: Number(pricing.currency == null ? pricing[0] : pricing.currency), decimals: Number(pricing.decimals == null ? pricing[1] : pricing.decimals) };
       }
     }
@@ -3757,6 +3771,7 @@ async function reverifyShopTierMutation(project, chains, tier, reviewed, account
 async function submitSetTierDiscount(project, tier, pctOff, statusEl, selectedChains) {
   var setStatus = shopOpSetStatus(statusEl);
   if (!Number.isFinite(Number(pctOff)) || Number(pctOff) < 0 || Number(pctOff) > 100) { setStatus('Discount must be between 0 and 100%.', 'error'); return; }
+  setStatus('Reading the live item…', 'pending');
   var avail = selectedChains || shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id, true), hookMap = resolved.hooks;
   assertShopTierIdentity(tier, Number(project.chainId), avail, resolved);
   var account = await ensureShopManagerAccount(project, avail, hookMap, projectAuthorityAddress(project), setStatus, 27n);
@@ -3787,6 +3802,7 @@ async function submitSetTierDiscount(project, tier, pctOff, statusEl, selectedCh
 // Operator: remove a tier from the shop on every chain (JB721TiersHook.adjustTiers with tierIdsToRemove).
 async function submitRemoveTier(project, tier, statusEl, selectedChains) {
   var setStatus = shopOpSetStatus(statusEl);
+  setStatus('Reading the live item…', 'pending');
   var avail = selectedChains || shopChainsOf(project), resolved = await resolveHookMap(project, avail, tier.id, true), hookMap = resolved.hooks;
   assertShopTierIdentity(tier, Number(project.chainId), avail, resolved);
   var account = await ensureShopManagerAccount(project, avail, hookMap, projectAuthorityAddress(project), setStatus);
@@ -11272,6 +11288,7 @@ async function runAuthorityActionAcrossChains(project, chains, authorityAddr, bu
   opts = opts || {};
   var homeChainId = (chains && chains[0] && chains[0].id) || project.chainId;
   var authorityChainId = Number(opts.authorityChainId || project._urlChainId || project.chainId);
+  setStatus('Checking who can send this…', 'pending');
   var safeInfo = await safeInfoForAuthority(authorityAddr, homeChainId, authorityChainId);
   if (safeInfo) {
     var signer = getAccount();
@@ -16114,11 +16131,12 @@ async function readProjectHandleState(project) {
   var target = projectHandleTarget(project);
   var authority = await liveProjectHandleAuthorityOf(target.chainId, target.projectId);
   var identity = null, identityError = null;
-  try { identity = await verifyProjectHandleAuthorityIdentity(target.chainId, authority.address); }
-  catch (error) { identityError = error; }
+  var identityRead = verifyProjectHandleAuthorityIdentity(target.chainId, authority.address)
+    .then(function (value) { identity = value; }, function (error) { identityError = error; });
   var values = await Promise.all([
     readProjectHandlePartsBounded(clientFor(1), target.chainId, target.projectId, authority.address),
     readProjectHandleBounded(clientFor(1), target.chainId, target.projectId, authority.address),
+    identityRead,
   ]);
   var stored = canonicalProjectHandle(storedProjectHandle(values[0]));
   // A canonical contract return is not enough for an L2 contract authority: the address must represent the
@@ -16897,6 +16915,8 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
     body.innerHTML = '';
     var acc = getEffectiveAccount();
     var batchBar = el('div', 'backoffice-batch'); body.appendChild(batchBar);
+    // Whether anything can execute together is known only once every chain's queue is read: hold the bar's place.
+    var batchChecking = el('span', 'backoffice-batch-note'); batchChecking.textContent = 'Checking what can execute together…'; batchBar.appendChild(batchChecking);
     var pendingSafeSession = loadRelayrPendingSession(safeRelayrScope);
     if (pendingSafeSession) {
       var recoveryStatus = el('div', 'modal-status pending'); body.appendChild(recoveryStatus);
@@ -17045,10 +17065,11 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
                 var signerAccount = (getAccount && getAccount()) || null;
                 if (!signerAccount) { await connect(); signerAccount = (getAccount && getAccount()) || null; }
                 if (!signerAccount) throw new Error('Connect a Safe owner to sign.');
+                signBtn.disabled = true; signBtn.textContent = 'Checking…';
                 var before = await freshQueuedSafeTx(safe, c.id, tx, { signer: signerAccount, verifyAuthority: verifyAuthority });
                 var ok = await reviewQueuedSafeTx(c.id, c.name, before.tx, 'Sign');
-                if (!ok) return;
-                signBtn.disabled = true; signBtn.textContent = 'Signing…';
+                if (!ok) { signBtn.disabled = false; signBtn.textContent = 'Sign'; return; }
+                signBtn.textContent = 'Signing…';
                 await confirmSafeTx(c.id, safe, before.tx, signerAccount, function () {
                   return freshQueuedSafeTx(safe, c.id, before.tx, { signer: signerAccount, expectedGovernance: before.info, verifyAuthority: verifyAuthority });
                 });
@@ -17072,10 +17093,11 @@ function renderPendingSafeTxsCard(safe, chains, homeChainId, contextLabel) {
               execBtn.addEventListener('click', function () {
                 if (!(getAccount && getAccount())) { connect(); return; }
                 (async function () {
+                  execBtn.disabled = true; execBtn.textContent = 'Checking…';
                   var before = await freshQueuedSafeTx(safe, c.id, tx, { requireThreshold: true, requireCurrent: true, verifyAuthority: verifyAuthority });
                   var ok = await reviewQueuedSafeTx(c.id, c.name, before.tx, 'Execute');
-                  if (!ok) return;
-                  execBtn.disabled = true; execBtn.textContent = 'Executing…';
+                  if (!ok) { execBtn.disabled = false; execBtn.textContent = 'Execute'; return; }
+                  execBtn.textContent = 'Executing…';
                   await executeSafeTx(c.id, safe, before.tx, function () {
                     return freshQueuedSafeTx(safe, c.id, before.tx, {
                       requireThreshold: true, requireCurrent: true, expectedGovernance: before.info, verifyAuthority: verifyAuthority,
@@ -25807,10 +25829,13 @@ export function openDistributionAcrossChains(project, mode, acctKind) {
   content.appendChild(authorityChoice);
   var authority = projectAuthorityAddress(project);
   if (authority && !isSafeConnected()) {
+    // An authority that is not the connected wallet may be a Safe: the choice holds its place while that is read.
+    var choiceText = authorityChoice.lastChild, connected = getAccount();
+    if (connected && !sameAddr(authority, connected)) { authorityChoice.hidden = false; fromSafe.disabled = true; choiceText.textContent = 'Checking for a project Safe…'; }
     fetchSafeInfoFresh(authority, project.chainId).then(function (info) {
       var account = getAccount();
       authorityChoice.hidden = !(info && account && info.owners.some(function (owner) { return sameAddr(owner, account); }));
-    }).catch(function () {});
+    }).catch(function () { authorityChoice.hidden = true; }).then(function () { fromSafe.disabled = false; choiceText.textContent = 'Propose from the project Safe'; });
   }
   content.appendChild(status);
   var actions = el('div', 'operator-edit-actions'); actions.appendChild(refresh); actions.appendChild(submit); content.appendChild(actions);
@@ -27289,7 +27314,10 @@ function buildRedeemItemsModal(project, requestClose) {
   }
 
   btn.addEventListener('click', async function () {
-    try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericCashOut'); } catch (error) { status.textContent = errMessage(error); return; }
+    btn.disabled = true; status.textContent = 'Checking…';
+    try { await requireGenericInventory(clientFor(state.chainId), { chainId: Number(state.chainId), projectId: pidOn(project, state.chainId), isRevnet: !!project.isRevnet }, 'genericCashOut'); } catch (error) { status.textContent = errMessage(error); btn.disabled = false; return; }
+    // The preview owns the button between sends: restore what it last decided.
+    btn.disabled = !(state.net != null && state.net > 0n); status.textContent = '';
     if (getViewAs()) { status.textContent = VIEW_AS_TX_ERROR; return; }
     var acct = getAccount && getAccount();
     var ids = selectedTokenIds();
