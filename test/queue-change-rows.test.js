@@ -21,6 +21,17 @@ describe('queueChangeRows', () => {
     expect(rows).toContainEqual(['Ruleset #2', 'Same as Ruleset #1']);
   });
 
+  it('never calls a ruleset unchanged when a setting the summary does not list differs', () => {
+    const edited = createStage();
+    edited.payoutByKind = { usdc: { mode: 'limited', recipients: [{ type: 'wallet', address: '0x1', amountEth: '5' }] } };
+    expect(queueChangeRows(state(createStage(), [edited]))).toEqual([
+      ['Ruleset #1', 'Settings changed that this summary does not list. Check the call below.'],
+    ]);
+    // Open panels and when a later ruleset starts are not settings.
+    const later = Object.assign(createStage(), { expanded: true, tokenOpen: false, startMode: 'date', startDate: '99' });
+    expect(queueChangeRows(state(createStage(), [createStage(), later]))[1]).toEqual(['Ruleset #2', 'Same as Ruleset #1']);
+  });
+
   it('adds nothing when the source was never read', () => {
     expect(queueChangeRows(state(null, [createStage()]))).toEqual([]);
   });

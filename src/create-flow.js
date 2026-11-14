@@ -1920,6 +1920,15 @@ function stageSummaryParts(stage, idx, state) {
 // For the queue review: what changes, as rows. Ruleset #1 is compared with the rules it was copied from
 // (`state.queueBaseline`), each later ruleset with the one before it. A summary line that is gone is a "was" row
 // and a new one a "now" row. The first line (when it starts) is left out: the review has its own schedule rows.
+// A stage's settings without the editor's open and closed panels and without when it starts (the review's
+// schedule rows say that), for comparing two stages.
+var QUEUE_START_KEYS = ['schedule', 'scheduleOn', 'startMode', 'startCycles', 'startDate', 'startDaysAfter'];
+function queueStageSettings(stage) {
+  return JSON.stringify(stage, function (key, value) {
+    return key.charAt(0) === '_' || key === 'expanded' || /Open$/.test(key) || QUEUE_START_KEYS.indexOf(key) !== -1 ? undefined : value;
+  });
+}
+
 export function queueChangeRows(state) {
   var rows = [], prev = state.queueBaseline;
   if (!prev) return rows;
@@ -1928,7 +1937,13 @@ export function queueChangeRows(state) {
     var before = stageSummaryParts(prev, i, state).slice(1), after = stageSummaryParts(stage, i, state).slice(1);
     var gone = before.filter(function (line) { return after.indexOf(line) === -1; });
     var added = after.filter(function (line) { return before.indexOf(line) === -1; });
-    if (!gone.length && !added.length) rows.push([label, i ? 'Same as Ruleset #' + i : 'Unchanged']);
+    // The summary does not list every setting (per-token payouts, some owner powers), so only identical
+    // settings are called unchanged.
+    if (!gone.length && !added.length) {
+      rows.push([label, queueStageSettings(prev) === queueStageSettings(stage)
+        ? (i ? 'Same as Ruleset #' + i : 'Unchanged')
+        : 'Settings changed that this summary does not list. Check the call below.']);
+    }
     gone.forEach(function (line) { rows.push([label + ' was', line]); });
     added.forEach(function (line) { rows.push([label + ' now', line]); });
     prev = stage;

@@ -24890,22 +24890,6 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
       state.currentDataHook = extraHook && !/^0x0+$/.test(extraHook) ? extraHook : '';
       state.currentUseDataHookForPay = !!(extra && (extra.useDataHookForPay != null ? extra.useDataHookForPay : extra[1]));
       state.currentUseDataHookForCashOut = !!(extra && (extra.useDataHookForCashOut != null ? extra.useDataHookForCashOut : extra[2]));
-      // The wrapper picks the shop it carries forward itself; refuse a source whose shop it would not carry.
-      var shopHook = function (c) { return String((c && (c.hook || c[0])) || '').toLowerCase(); };
-      var shopFlag = function (c) { return !!(c && (c.useDataHookForCashOut != null ? c.useDataHookForCashOut : c[1])); };
-      var shopOf = function (id) { return clientFor(project.chainId).readContract({ address: omniDeployer, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [pid, id] }); };
-      var situation = state.queueSituation, latestEntry = situation.latest && situation.latest[0];
-      var latestId = latestEntry ? toBigInt(latestEntry.id) : 0n;
-      var latestShop = latestId ? await shopOf(latestId) : null;
-      var carriedId = omnichainCarriedRulesetId({
-        currentId: toBigInt(situation.current[0].id), latestId: latestId, latestStatus: situation.latestApprovalStatus,
-        latestHasShop: !!latestShop && !/^(0x0*)?$/.test(shopHook(latestShop)),
-      });
-      var carried = carriedId === toBigInt(ruleset.id) ? cfg : await shopOf(carriedId);
-      if (shopHook(carried) !== shopHook(cfg) || shopFlag(carried) !== shopFlag(cfg)) {
-        state.unsupportedMultiCurrencyAccess = true;
-        if (!state.unsupportedQueueReason) state.unsupportedQueueReason = 'New rules would start with a different shop than the rules you copied. Copy the latest approved rules, or wait for approval.';
-      }
       state.shopChoice = 'continue';
       state.canAddShop = true; // the wrapper composes/carries its extra hook
       return;
@@ -24967,6 +24951,23 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     }
   }
 
+  // The wrapper picks the shop it carries into a queue itself (omnichainCarriedRulesetId). True when that is the
+  // copied ruleset's own shop and cash out flag on this chain.
+  async function wrapperCarriesShopOf(chainId, localPid, wrapper, situation, rulesetId) {
+    var shopHook = function (c) { return String((c && (c.hook || c[0])) || '').toLowerCase(); };
+    var shopFlag = function (c) { return !!(c && (c.useDataHookForCashOut != null ? c.useDataHookForCashOut : c[1])); };
+    var shopOf = function (id) { return clientFor(chainId).readContract({ address: wrapper, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [localPid, id] }); };
+    var latestEntry = situation.latest && situation.latest[0];
+    var latestId = latestEntry ? toBigInt(latestEntry.id) : 0n;
+    var reads = await Promise.all([shopOf(toBigInt(rulesetId)), latestId ? shopOf(latestId) : null]);
+    var carriedId = omnichainCarriedRulesetId({
+      currentId: toBigInt(situation.current[0].id), latestId: latestId, latestStatus: situation.latestApprovalStatus,
+      latestHasShop: !!reads[1] && !/^(0x0*)?$/.test(shopHook(reads[1])),
+    });
+    var carried = carriedId === toBigInt(rulesetId) ? reads[0] : await shopOf(carriedId);
+    return shopHook(carried) === shopHook(reads[0]) && shopFlag(carried) === shopFlag(reads[0]);
+  }
+
   async function loadQueueDataHooksAcrossChains() {
     var rows = await Promise.all(allChains.map(async function (chain) {
       var localPid = pidOn(project, chain.id);
@@ -24997,6 +24998,10 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
           preservedHook = extraHook && !/^0x0+$/.test(extraHook) ? extraHook : '';
           preservedUsePay = !!(extra && (extra.useDataHookForPay != null ? extra.useDataHookForPay : extra[1]));
           preservedUseCashOut = !!(extra && (extra.useDataHookForCashOut != null ? extra.useDataHookForCashOut : extra[2]));
+          if (!(await wrapperCarriesShopOf(chain.id, localPid, wrapper, situation, ruleset.id))) {
+            state.unsupportedMultiCurrencyAccess = true;
+            if (!state.unsupportedQueueReason) state.unsupportedQueueReason = 'On ' + (chain.name || chain.id) + ', new rules would start with a different shop than the rules you copied. Copy the latest approved rules, or wait for approval.';
+          }
         }
       }
       return { chainId: chain.id, controller: controller, ruleset: ruleset, metadata: metadata, hook: hook, preservedHook: preservedHook, preservedUsePay: preservedUsePay, preservedUseCashOut: preservedUseCashOut, situation: situation, option: option };

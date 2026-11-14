@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // The held-writes list reads every hold this browser keeps for an account, whichever form opened it.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { writeHold, heldWritesOf } from '../src/write-hold.js';
+import { chainSettlesHold, writeHold, heldWritesOf } from '../src/write-hold.js';
 
 const ALICE = '0x1111111111111111111111111111111111111111';
 const BOB = '0x2222222222222222222222222222222222222222';
@@ -26,5 +26,13 @@ describe('heldWritesOf', () => {
 
   it('is empty when nothing is held', () => {
     expect(heldWritesOf(ALICE)).toEqual([]);
+  });
+});
+
+describe('the held-writes list and Safe proposals', () => {
+  it('leaves a Safe proposal to its own form: its saved hash is a Safe hash no chain lookup can settle', () => {
+    expect(chainSettlesHold({ id: 'a', hash: '0x1', safe: true })).toBe(false);
+    expect(chainSettlesHold({ id: 'a', hash: '0x1' })).toBe(true);
+    expect(chainSettlesHold(null)).toBe(false);
   });
 });

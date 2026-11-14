@@ -3,7 +3,7 @@
 // juicebox.money shows the same list (HeldWritesList). Each row is the line its own form would show
 // (component-base heldWriteView); nothing here sends, and a hold ends only on the user's click.
 
-import { heldWritesOf, writeHold } from './write-hold.js';
+import { chainSettlesHold, heldWritesOf, writeHold } from './write-hold.js';
 import { heldWriteView, offerHeldRelease, errMessage } from './component-base.js';
 import { getAccount, onWalletChange } from './wallet.js';
 
@@ -22,6 +22,7 @@ export function mountHeldWrites() {
   async function viewOf(hold, label) {
     var record = hold.read();
     if (!record) return null;
+    if (!chainSettlesHold(record)) return null;
     var id = record.id + ':' + (record.hash || '');
     if (settled.has(id)) return settled.get(id);
     // No hash yet and the action's lock is taken: its wallet prompt is still open, so nothing is held.

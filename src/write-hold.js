@@ -108,3 +108,7 @@ export function heldWritesOf(account) {
   } catch (_) {}
   return out;
 }
+
+// Whether the held-writes list can judge a hold from the chain. A Safe proposal's saved hash is a Safe hash,
+// which no transaction lookup finds: it would read as dropped while it can still execute, so its own form settles it.
+export function chainSettlesHold(record) { return !!record && !record.safe; }
