@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData } from 'viem';
+import { legacyTokenSalt, omnichainTokenSalt, predictTokenAddress } from '../src/encoding.js';
+import { getAddress as contractAddress } from '../src/abi-registry.js';
 
 const mocks = vi.hoisted(() => ({ client: vi.fn(), send: vi.fn() }));
 vi.mock('../src/component-base.js', async (original) => ({ ...await original(),
@@ -7,7 +9,7 @@ vi.mock('../src/component-base.js', async (original) => ({ ...await original(),
   getWalletClient: () => ({ sendTransaction: mocks.send, signTypedData: mocks.send }),
 }));
 
-import { verifyTokenEditDeployment, submitTokenEdit, prepareAccountingContextCalls, openAddAccountingContextModal } from '../src/discover.js';
+import { verifyTokenEditDeployment, tokenExtension, extensionTokenSalt, submitTokenEdit, prepareAccountingContextCalls, openAddAccountingContextModal } from '../src/discover.js';
 
 const ALICE = '0x1111111111111111111111111111111111111111';
 const TOKEN_A = '0x2222222222222222222222222222222222222222';
@@ -129,5 +131,38 @@ describe('accounting token decimals and destination encoding', () => {
     await vi.waitFor(() => expect(document.body.textContent).toContain('Token decimals: 6'));
     expect(document.body.textContent).toContain('Token decimals: 18');
     expect(decimals.value).toBe('18');
+  });
+});
+
+describe('a token that exists on some chains keeps its address on the rest', () => {
+  const IMPLEMENTATION = '0x6DB9Cf17222D8DE2012Fe13B9FA5bB7981fa0b17';
+
+  it('predicts the address the contracts give a live token (GLORY on Base, project 25)', () => {
+    expect(predictTokenAddress({
+      sender: '0x19ce092bc3f9662e40c4670c68ff03c8322d0e76',
+      salt: '0x5d47b2cdb7e79169820a6610386dbb301fad7dc98980fac0c7286d08d984a111',
+      controller: '0x3fcec3572e84b624477bcff4e2cf1f7deab648f1',
+      tokens: '0x1f80d8f057eE36b4C2656D107E4e4558B71bA7D9',
+      implementation: IMPLEMENTATION,
+    }).toLowerCase()).toBe('0xe940dd603fa8cf3f67d4e465d785fb261c41f1db');
+  });
+
+  it('names the chains still missing the token, and nothing when the chains agree', () => {
+    const rows = [{ chainId: 1, name: 'Ethereum', token: TOKEN_A, deployed: true }, { chainId: 10, name: 'Optimism', token: ZERO, deployed: false }];
+    expect(tokenExtension(rows)).toEqual({ existing: rows[0], missing: [rows[1]] });
+    expect(tokenExtension([rows[0]])).toBeNull();
+    expect(tokenExtension([rows[1]])).toBeNull();
+  });
+
+  it('finds the salt an older Juicescan deploy used, or the shared one, and none for another sender', async () => {
+    const controllers = { 10: '0x3fcec3572e84b624477bcff4e2cf1f7deab648f1' };
+    const at = (salt) => predictTokenAddress({ sender: ALICE, salt, controller: controllers[10], tokens: contractAddress('JBTokens', 10), implementation: IMPLEMENTATION });
+    const target = [{ id: 10, name: 'Optimism' }];
+    const impl = async () => IMPLEMENTATION;
+    const legacy = legacyTokenSalt(7n, 'TKN');
+    await expect(extensionTokenSalt(project, { token: at(legacy) }, target, controllers, ALICE, 'Token', 'TKN', impl)).resolves.toBe(legacy);
+    const shared = omnichainTokenSalt('Token', 'TKN');
+    await expect(extensionTokenSalt(project, { token: at(shared) }, target, controllers, ALICE, 'Token', 'TKN', impl)).resolves.toBe(shared);
+    await expect(extensionTokenSalt(project, { token: at(shared) }, target, controllers, TOKEN_B, 'Token', 'TKN', impl)).resolves.toBeNull();
   });
 });

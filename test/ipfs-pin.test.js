@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { encodeIpfsUriToBytes32, pinJson, unixFsFileBlock } from '../src/ipfs-pin.js';
+import { encodeIpfsUriToBytes32, hasPinata, pinFile, pinJson, unixFsFileBlock } from '../src/ipfs-pin.js';
 
 const DIGEST = '0x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
 const CIDV0 = 'QmNLfbof5rLekrACjeuLk9JmGZD2HDBHCU4z16iYKmx5SE';
@@ -51,5 +51,45 @@ describe('Pinata v3 JSON compatibility', () => {
     expect(Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')).toBe(
       '0a0d080212077b2261223a317d1807',
     );
+  });
+});
+
+describe('pinning through Juicebox Center with no key', () => {
+  afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
+  const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+
+  it('needs no setup and posts the JSON itself to Center', async () => {
+    expect(hasPinata()).toBe(true);
+    const fetchMock = vi.fn(async () => reply(201, { cid: CIDV0, status: 'queued', uri: 'ipfs://' + CIDV0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(pinJson({ a: 1 }, 'project')).resolves.toBe('ipfs://' + CIDV0);
+    expect(fetchMock).toHaveBeenCalledWith('https://juicebox.center/v1/pins/json', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"a":1}',
+    });
+  });
+
+  it('posts an image as the file field', async () => {
+    const fetchMock = vi.fn(async () => reply(201, { cid: CIDV0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(pinFile(new File([new Uint8Array([1])], 'logo.png', { type: 'image/png' }))).resolves.toBe('ipfs://' + CIDV0);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://juicebox.center/v1/pins/file');
+    expect(fetchMock.mock.calls[0][1].body.get('file').name).toBe('logo.png');
+  });
+
+  it('stops on an empty file, a spent budget, a refusal and a reply with no CID', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(pinFile(new File([], 'logo.png'))).rejects.toThrow(/is empty \(0 bytes\)/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce(reply(429, { error: { code: 'rate_limit' } }));
+    await expect(pinJson({})).rejects.toThrow(/pin limit is reached/);
+    fetchMock.mockResolvedValueOnce(reply(403, { error: { message: 'Origin is not allowed' } }));
+    await expect(pinJson({})).rejects.toThrow(/could not pin this \(403: Origin is not allowed\)/);
+    fetchMock.mockResolvedValueOnce(reply(201, {}));
+    await expect(pinJson({})).rejects.toThrow(/returned no CID/);
+    fetchMock.mockResolvedValueOnce(reply(201, { cid: 'QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH' }));
+    await expect(pinFile(new File([new Uint8Array([1])], 'a.png'))).rejects.toThrow(/uploaded as empty/);
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await expect(pinJson({})).rejects.toThrow(/Could not reach Juicebox Center/);
   });
 });

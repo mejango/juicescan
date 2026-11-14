@@ -945,7 +945,7 @@ function accountingBlock(state, render) {
     if (isCustom) { w.appendChild(customTokenBlock(state, render)); return w; }
     var note = el('div', 'create-hint');
     note.textContent = isRev
-      ? ('The funds holders of $' + tickerLabel(state) + ' can cash out or borrow against under the revnet’s rules.')
+      ? ('The funds holders of ' + tickerLabel(state) + ' can cash out or borrow against under the revnet’s rules.')
       : 'The token(s) that make up your project’s balance.';
     w.appendChild(note);
     // Multi-asset revnet: the backing is fixed by the proportion of payments received and can't be rebalanced.
@@ -1615,7 +1615,7 @@ function revStageSummary(stage, idx, state) {
   var tk = tickerLabel(state);
   var unit = state.revBaseCurrency === 2 ? 'USD' : 'ETH';
   var parts = [];
-  if (idx === 0 || stage.weight) parts.push((stage.weight || '0') + ' $' + tk + '/' + unit);
+  if (idx === 0 || stage.weight) parts.push((stage.weight || '0') + ' ' + tk + '/' + unit);
   else parts.push('keeps previous rate');
   if (stage.issuanceCutOn && Number(stage.weightCutPercent) > 0) parts.push('−' + round2(stage.weightCutPercent) + '%/' + (stage.cutFreqDays || '30') + 'd');
   var splitTotal = revSplitTotalPct(stage);
@@ -1634,15 +1634,15 @@ function revStageEditor(stage, idx, state, render) {
 
   // 1. Issuance
   var s1 = el('div', 'create-rev-sec');
-  var h1 = el('div', 'create-rev-h'); h1.textContent = 'New $' + tk + ' per payment'; s1.appendChild(h1);
-  var d1 = el('div', 'create-hint'); d1.textContent = 'How many $' + tk + ' to create per unit paid, before the project’s share.'; s1.appendChild(d1);
+  var h1 = el('div', 'create-rev-h'); h1.textContent = 'New ' + tk + ' per payment'; s1.appendChild(h1);
+  var d1 = el('div', 'create-hint'); d1.textContent = 'How many ' + tk + ' to create per unit paid, before the project’s share.'; s1.appendChild(d1);
   // Issuance row: "[10000] $TOKEN / ETH"
   var issRow = el('div', 'create-inline-row');
   var issIn = el('input', 'field create-inline-num'); issIn.type = 'number'; issIn.min = '0'; issIn.step = 'any';
   issIn.placeholder = idx === 0 ? '10000' : 'inherit'; issIn.value = stage.weight || '';
   issIn.addEventListener('input', function () { stage.weight = issIn.value.trim(); });
   issRow.appendChild(issIn);
-  issRow.appendChild(document.createTextNode(' $' + tk + ' per '));
+  issRow.appendChild(document.createTextNode(' ' + tk + ' per '));
   // Base currency (revnet-wide): issue per ETH or per USD. Small inline dropdown (no full-width `field`).
   issRow.appendChild(currencySelect(state.revBaseCurrency, function (v) { state.revBaseCurrency = v; render(); }, null, lockedCurrencySym(state)));
   // "add auto cuts?" prompt + checkbox sit to the right of the currency selector (kept even when checked).
@@ -1700,7 +1700,7 @@ function revStageEditor(stage, idx, state, render) {
   var aiTotal = (stage.autoIssuances || []).reduce(function (s, a) { return s + (Number(a.count) || 0); }, 0);
   if (aiTotal > 0) {
     var aiSum = el('div', 'create-hint');
-    var aiText = 'Tokens available from stage start: ' + round2(aiTotal) + ' $' + tk;
+    var aiText = 'Tokens available from stage start: ' + round2(aiTotal) + ' ' + tk;
     if ((state.chainIds || []).length > 1) {
       // Break the total down by mint chain — each row only mints on its chosen chain.
       var byChain = {};
@@ -1720,7 +1720,7 @@ function revStageEditor(stage, idx, state, render) {
   var acctSym = surplusTokenLabel(state);
   var s2 = el('div', 'create-rev-sec');
   var h2 = el('div', 'create-rev-h'); h2.textContent = tk + ' cash outs'; s2.appendChild(h2);
-  var d2 = el('div', 'create-hint'); d2.textContent = 'Holders can access the ' + acctSym + ' in the revnet by cashing out or taking a loan. The cash out tax leaves more funds behind for remaining $' + tk + ' holders and lowers the amount available to borrow.'; s2.appendChild(d2);
+  var d2 = el('div', 'create-hint'); d2.textContent = 'Holders can access the ' + acctSym + ' in the revnet by cashing out or taking a loan. The cash out tax leaves more funds behind for remaining ' + tk + ' holders and lowers the amount available to borrow.'; s2.appendChild(d2);
   stage.cashOutEnabled = true; // revnets always allow cash outs
   s2.appendChild(cashOutTaxCard(stage, render, acctSym, tk, true));
   w.appendChild(s2);
@@ -2601,7 +2601,7 @@ function cashOutTaxCard(t, render, acctSym, reclaimVerb, bare) {
     var r = Math.max(0, Math.min(100, Number(t.cashOutTaxRate) || 0)) / 100;
     var pct10 = 0.1 * ((1 - r) + r * 0.1) * 100; // % of funds for cashing out 10% of supply
     sub.textContent = reclaimVerb
-      ? ('Cashing out 10% of $' + reclaimVerb + ' gets ' + (Math.round(pct10 * 10) / 10) + '% of the revnet’s ' + acctSym + '.')
+      ? ('Cashing out 10% of ' + reclaimVerb + ' gets ' + (Math.round(pct10 * 10) / 10) + '% of the revnet’s ' + acctSym + '.')
       : ('Cashing out 10% of your tokens returns ' + (Math.round(pct10 * 10) / 10) + '% of the project’s surplus ' + acctSym + '.');
     svgHolder.innerHTML = cashOutCurveSvg(r);
   };
@@ -3188,7 +3188,6 @@ function renderDeploy(state, render) {
   tos.appendChild(tosContent);
   wrap.appendChild(tos);
 
-  if (!hasPinata()) wrap.appendChild(infoNote('IPFS pinning isn’t configured, so your logo & metadata will be skipped at launch, you can add them later by editing the project.'));
 
   // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
   if (state.done) {
@@ -3198,10 +3197,18 @@ function renderDeploy(state, render) {
     var sub = el('div', 'create-success-sub');
     sub.textContent = outcome.sub;
     panel.appendChild(sub);
-    if (state.deployed && state.deployed.txHash) {
-      var txp = el('div', 'create-success-sub'); txp.textContent = 'Transaction: ' + truncAddr(state.deployed.txHash);
-      panel.appendChild(txp);
-    }
+    (state.deployedLegs || (state.deployed ? [state.deployed] : [])).forEach(function (leg) {
+      var line = deployedLegLine(leg);
+      if (!line) return;
+      var row = el('div', 'create-success-sub');
+      if (leg.route) {
+        var legLink = el('a'); legLink.href = leg.route; legLink.textContent = line;
+        legLink.addEventListener('click', function () { if (state._close) state._close(); });
+        row.appendChild(legLink);
+      } else row.textContent = line;
+      if (leg.txHash) row.appendChild(document.createTextNode(' | Transaction ' + truncAddr(leg.txHash)));
+      panel.appendChild(row);
+    });
     if (state.deployed && state.deployed.route) {
       var go = el('button', 'create-btn primary big'); go.style.marginTop = '14px'; go.textContent = 'Go to project →';
       go.addEventListener('click', function () { window.location.hash = state.deployed.route; if (state._close) state._close(); });
@@ -3346,6 +3353,7 @@ function renderDeploy(state, render) {
   var leadBad = startLeadIssue(state, Math.floor(Date.now() / 1000));
   var linkBad = state.chainIds.length > 1 && uncoveredPairs(state).length ? 'Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.' : '';
   var noticeBad = noticeClashIssue(state); // a launch-queued stage the JBDeadline hook would reject
+  var feeds = state.chainIds.length && !state.deploying ? launchFeedGate(state, render) : { status: 'ok', issues: [] };
   var startBad = isRev ? -1 : state.stages.findIndex(function (s, i) { return i > 0 && !stageStartOk(s); });
   var exportRow = el('div', 'create-predeploy-export-row');
   var exportBeforeDeploy = el('button', 'create-io-btn create-predeploy-export');
@@ -3357,7 +3365,7 @@ function renderDeploy(state, render) {
   wrap.appendChild(exportRow);
   var launch = el('button', 'create-btn primary big');
   function updateLaunch() {
-    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!leadBad || !!noticeBad || !!durationBad || startBad !== -1 || bad !== -1;
+    launch.disabled = state.deploying || !state.tos || !state.chainIds.length || !state.details.name || needTicker || needOwner || needOperator || needCustomToken || !!recipBad || !!totalBad || !!approvalBad || !!deadlineBad || !!lpBad || !!mediaBad || !!linkBad || !!leadBad || !!noticeBad || feeds.status !== 'ok' || !!durationBad || startBad !== -1 || bad !== -1;
   }
   launch.textContent = state.deploying ? (isRev ? 'Deploying…' : 'Launching…') : (isRev ? 'Deploy revnet' : 'Launch project');
   launch.addEventListener('click', function () { deploy(state, render); });
@@ -3378,6 +3386,14 @@ function renderDeploy(state, render) {
   if (linkBad) wrap.appendChild(warnNote(linkBad));
   if (leadBad) wrap.appendChild(warnNote(leadBad));
   if (noticeBad) wrap.appendChild(warnNote(noticeBad));
+  if (feeds.status === 'checking') wrap.appendChild(infoNote('Checking price feeds on each chain…'));
+  if (feeds.status === 'bad') {
+    feeds.issues.forEach(function (issue) { wrap.appendChild(warnNote(issue)); });
+    var feedRetry = el('button', 'create-io-btn');
+    feedRetry.type = 'button'; feedRetry.textContent = 'Retry';
+    feedRetry.addEventListener('click', function () { resetLaunchFeedGate(); render(); });
+    wrap.appendChild(feedRetry);
+  }
   if (durationBad) wrap.appendChild(warnNote(durationBad));
   if (startBad !== -1) wrap.appendChild(warnNote('Ruleset #' + (startBad + 1) + ' needs a valid start: a whole number of cycles or a date, on the Rulesets step.'));
   if (!state.chainIds.length) wrap.appendChild(warnNote('Select at least one chain on the Flavor step before deploying.'));
@@ -4113,7 +4129,7 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
       }
     }
   }
-  await captureDeployed(state, session.plans[0].chainId, session.plans[0].hash, session.plans[0].rulesetCount);
+  await captureDeployedLegs(state, session.plans.map(function (plan) { return { chainId: plan.chainId, hash: plan.hash, rulesetCount: plan.rulesetCount }; }));
   state._deployedChains = session.plans.map(function (plan) { return plan.chainId; });
   await lock.assertHeld();
   clearCreateDirectSession(state);
@@ -4323,7 +4339,7 @@ async function runDeploy(state, owner) {
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
-    await captureDeployed(state, restoredChain, relayrDestinationHash(restoredTxs[0]), restoredRelayr.rulesetCountByChain && restoredRelayr.rulesetCountByChain[restoredChain]);
+    await captureDeployedLegs(state, relayrLegs(restoredRelayr.chains && restoredRelayr.chains.length ? restoredRelayr.chains : [{ id: restoredChain }], restoredTxs, restoredRelayr.rulesetCountByChain));
     state._deployedChains = restoredRelayr.chains.map(function (chain) { return Number(chain.id); });
     clearRelayrPendingSession(CREATE_RELAYR_SCOPE, restoredRelayr);
     state._relayrPending = null;
@@ -4334,19 +4350,20 @@ async function runDeploy(state, owner) {
     state._directPending = restoredDirect;
     return runCreateDirectSession(state, restoredDirect, true);
   }
-  // 1) Pin metadata (best-effort).
+  // Fail closed on JBPrices reachability before anything is pinned: accounting contexts are immutable,
+  // and a missing feed pair means payments or cash outs revert onchain after launch. Probed live, so a
+  // later default-feed registration unblocks the same configuration with no client change.
+  var feedIssues = await launchFeedIssues(state);
+  if (feedIssues.length) throw new Error(feedIssues.join(' '));
+  // 1) Pin metadata. A launch never goes out without it.
   var projectUri = '';
-  if (hasPinata()) {
-    push('Pinning project metadata…');
-    try {
-      projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
-      push('Metadata pinned: ' + projectUri, 'ok');
-    } catch (e) {
-      push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
-      throw e;
-    }
-  } else {
-    push('No Pinata JWT: launching without metadata; you can edit the project later.');
+  push('Pinning project metadata…');
+  try {
+    projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
+    push('Metadata pinned: ' + projectUri, 'ok');
+  } catch (e) {
+    push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
+    throw e;
   }
 
   // Pin each store item's metadata JSON (name + media) so its tier resolves to {name, image/animation_url}.
@@ -4392,10 +4409,6 @@ async function runDeploy(state, owner) {
       ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
       : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
     if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
-    // Fail closed on JBPrices reachability: accounting contexts are immutable, and a missing feed
-    // pair means payments or cash outs revert onchain after launch. Probed live, so a later
-    // default-feed registration unblocks the same configuration with no client change.
-    await verifyLaunchFeedCoverage(state, cid);
     if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
     plan.chainId = cid;
     plan.value = await creationFeeOf(cid); // the deploy charges msg.value == JBProjects.creationFee()
@@ -4567,7 +4580,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   state.deployChains = chains.map(function (chain) { return Number(chain.id); });
   var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
-  await captureDeployed(state, Number(chains[0].id), relayrDestinationHash(finalRelayrTxs[0]), paidSession.rulesetCountByChain && paidSession.rulesetCountByChain[chains[0].id]);
+  await captureDeployedLegs(state, relayrLegs(chains, finalRelayrTxs, paidSession.rulesetCountByChain));
   state._deployedChains = state.deployChains.slice();
   clearRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession);
   state._relayrPending = null;
@@ -4640,6 +4653,30 @@ function captureDeployed(state, chainId, txHash, expectedCount) {
     if (error.code === 'RULESET_ORDER_UNVERIFIED') { state.deployed = null; throw error; }
     state.deployed = { chainId: chainId, txHash: txHash };
   });
+}
+
+// One receipt per launched chain, in launch order. `state.deployed` stays the first chain's.
+async function captureDeployedLegs(state, legs) {
+  var out = [];
+  for (var i = 0; i < legs.length; i++) {
+    await captureDeployed(state, legs[i].chainId, legs[i].hash, legs[i].rulesetCount);
+    out.push(state.deployed);
+  }
+  state.deployedLegs = out;
+  state.deployed = out[0];
+}
+// Relayr returns its transactions in submission order, one per chain.
+function relayrLegs(chains, txs, rulesetCountByChain) {
+  return chains.map(function (chain, i) {
+    return { chainId: Number(chain.id), hash: relayrDestinationHash(txs[i]), rulesetCount: rulesetCountByChain && rulesetCountByChain[chain.id] };
+  });
+}
+/** The success panel's line for one launched chain. An unreadable id is sent, so never resubmitted. */
+export function deployedLegLine(leg) {
+  if (!leg || leg.proposed) return '';
+  return chainName(leg.chainId) + ': ' + (leg.projectId != null
+    ? 'project #' + leg.projectId
+    : 'sent, but its project ID could not be read. Do not submit it again.');
 }
 
 // Chain-id → discover route slug (must match discover.js CHAIN_SLUGS exactly) for the "Go to project" link.
@@ -5416,6 +5453,36 @@ function verifyLaunchFeedCoverage(state, chainId, probe) {
   var pairs = requiredFeedPairs(contexts, launchBaseCurrencies(state));
   return verifyFeedCoverage(chainId, pairs, function (cur) { return feedCurrencyLabel(cur, contexts); }, { probe: probe });
 }
+
+// Every selected chain's coverage in one pass, so one answer names every failing chain.
+export function launchFeedIssues(state, probe) {
+  return Promise.all(state.chainIds.map(function (cid) {
+    return Promise.resolve().then(function () { return verifyLaunchFeedCoverage(state, cid, probe); })
+      .then(function () { return ''; }, function (err) { return (err && err.message) || String(err); });
+  })).then(function (messages) { return messages.filter(Boolean); });
+}
+
+// The review step's live gate: probed once per configuration, the launch button waits on it.
+var feedGate = { key: '', status: 'ok', issues: [] };
+export function launchFeedGate(state, onSettled, probe) {
+  var key;
+  try {
+    key = JSON.stringify(state.chainIds.map(function (cid) {
+      return [cid, requiredFeedPairs(launchProbeContexts(state, cid), launchBaseCurrencies(state))];
+    }));
+  } catch (e) {
+    return { key: '', status: 'ok', issues: [] }; // an unfinished form is stopped by its own gates
+  }
+  if (feedGate.key === key) return feedGate;
+  var mine = feedGate = { key: key, status: 'checking', issues: [] };
+  launchFeedIssues(state, probe).then(function (issues) {
+    mine.issues = issues;
+    mine.status = issues.length ? 'bad' : 'ok';
+    if (feedGate === mine && onSettled) onSettled();
+  });
+  return mine;
+}
+export function resetLaunchFeedGate() { feedGate = { key: '', status: 'ok', issues: [] }; }
 
 function storeCategoryName(state, category) {
   var id = Number(category) || 0;

@@ -175,7 +175,7 @@ describe('revnet stage editor — auto-issuance chain selector UI', () => {
     s.stages[0].autoIssuances = [{ count: '600', address: ALICE, chainId: null }];
     const hints = Array.from(editorFor(s).querySelectorAll('.create-hint')).map((h) => h.textContent);
     const total = hints.find((t) => t.indexOf('Tokens available from stage start:') !== -1);
-    expect(total).toBe('Tokens available from stage start: 600 $TST.');
+    expect(total).toBe('Tokens available from stage start: 600 TST.');
   });
 });
 

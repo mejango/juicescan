@@ -21,7 +21,7 @@ import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive 
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
-import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt, contractReverted } from './encoding.js';
+import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt, legacyTokenSalt, matchingTokenSalt, contractReverted } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { generationAddresses, generationNames, getABI } from './abi-registry.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
@@ -12533,9 +12533,39 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
 // Operator-only: set the project token's name & symbol on every chain, via relayr. If the ERC-20 is
 // already deployed it's renamed (setTokenMetadataOf → JBERC20.setMetadata — name/symbol ARE mutable);
 // if the project still uses credits, the ERC-20 is deployed (deployERC20For) with the chosen name/symbol.
-export async function verifyTokenEditDeployment(project, chains, deployed, readToken) {
+// A project whose token exists on some chains and not on others: the chains to deploy it on next.
+export function tokenExtension(rows) {
+  var existing = rows.filter(function (row) { return row.deployed; });
+  var missing = rows.filter(function (row) { return !row.deployed; });
+  return existing.length && missing.length ? { existing: existing[0], missing: missing } : null;
+}
+
+var tokenImplementationAbi = [{ type: 'function', name: 'TOKEN', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'address' }] }];
+var tokenLabelAbi = [
+  { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'string' }] },
+  { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ name: '', type: 'string' }] },
+];
+
+// The one salt that lands the token at its existing address on every target chain for this sender. Null when
+// the sender cannot reproduce it (another account deployed the token, or it was deployed with no salt).
+export async function extensionTokenSalt(project, extend, chains, controllers, sender, name, symbol, readImplementation) {
+  var salts = [omnichainTokenSalt(name, symbol)];
+  Object.keys(project.idByChain || {}).concat([project.chainId]).forEach(function (cid) {
+    var legacy;
+    try { legacy = legacyTokenSalt(pidOn(project, cid), symbol); } catch (_) { return; }
+    if (salts.indexOf(legacy) === -1) salts.push(legacy);
+  });
+  var matches = await Promise.all(chains.map(async function (chain) {
+    var tokens = getAddress('JBTokens', chain.id);
+    var implementation = await (readImplementation ? readImplementation(chain.id) : read(chain.id, 'JBTokens', tokenImplementationAbi, 'TOKEN', []));
+    return matchingTokenSalt(extend.token, salts, { sender: sender, controller: controllers[chain.id], tokens: tokens, implementation: implementation });
+  }));
+  return matches[0] && matches.every(function (salt) { return salt === matches[0]; }) ? matches[0] : null;
+}
+
+export async function readTokenRows(project, chains, readToken) {
   if (!chains || !chains.length) throw new Error('Select at least one project chain.');
-  var rows = await Promise.all(chains.map(async function (chain) {
+  return Promise.all(chains.map(async function (chain) {
     var pid = pidOn(project, chain.id);
     var token;
     try { token = await (readToken ? readToken(chain.id, pid) : read(chain.id, 'JBTokens', tokenOfAbi, 'tokenOf', [pid])); }
@@ -12543,6 +12573,10 @@ export async function verifyTokenEditDeployment(project, chains, deployed, readT
     if (!isAddr(token)) throw new Error('Invalid project token response on ' + (chain.name || chainNameOf(chain.id)) + '.');
     return { chainId: chain.id, name: chain.name || chainNameOf(chain.id), token: token, deployed: token.toLowerCase() !== ZERO_ADDRESS.toLowerCase() };
   }));
+}
+
+export async function verifyTokenEditDeployment(project, chains, deployed, readToken) {
+  var rows = await readTokenRows(project, chains, readToken);
   if (rows.some(function (row) { return row.deployed !== rows[0].deployed; })) {
     throw new Error('Token deployment differs across the selected chains (' + rows.map(function (row) { return row.name + ': ' + (row.deployed ? 'ERC-20 deployed' : 'credits only'); }).join(', ') + '). Deploy and rename cannot be submitted together. Finish the remaining token deployments separately before using this multichain editor.');
   }
@@ -12618,7 +12652,22 @@ function openEditTokenModal(project) {
   var busy = false;
   submit.disabled = true;
   setStatus('Verifying token deployment on every project chain…', 'pending');
-  (pendingTokenEditScope(project, deployed) ? Promise.resolve() : verifyTokenEditDeployment(project, chains, deployed)).then(function () {
+  var extend = null;
+  (pendingTokenEditScope(project, deployed) ? Promise.resolve() : readTokenRows(project, chains).then(async function (rows) {
+    var extension = tokenExtension(rows);
+    if (!extension) return verifyTokenEditDeployment(project, chains, deployed, function (cid) { return rows.filter(function (row) { return row.chainId === cid; })[0].token; });
+    // The token exists on some chains: the only thing left to do is deploy it on the rest, unchanged.
+    var client = createPublicClientForChain(extension.existing.chainId);
+    var label = await Promise.all(['name', 'symbol'].map(function (fn) { return client.readContract({ address: extension.existing.token, abi: tokenLabelAbi, functionName: fn }); }));
+    extend = { token: extension.existing.token, chainId: extension.existing.chainId, name: extension.existing.name };
+    chains = extension.missing.map(function (row) { return { id: row.chainId, name: row.name }; });
+    deployed = false;
+    nameInput.value = label[0]; symInput.value = label[1];
+    nameInput.disabled = true; symInput.disabled = true;
+    var where = chains.map(function (c) { return c.name; }).join(', ');
+    across.textContent = 'This token exists on ' + extend.name + '. Deploys it on ' + where + ' with the same name and symbol.';
+    submit.textContent = 'Deploy token on ' + where;
+  })).then(function () {
     if (!submit.isConnected) return;
     submit.disabled = false; setStatus('', '');
   }).catch(function (error) { setStatus(errMessage(error, 'Could not verify token deployment.'), 'error'); });
@@ -12626,13 +12675,13 @@ function openEditTokenModal(project) {
     e.preventDefault();
     if (busy || submit.disabled) return;
     busy = true; submit.disabled = true;
-    submitTokenEdit(project, chains, operatorAddr, deployed, nameInput.value, symInput.value, setStatus, modal).catch(function (err) {
+    submitTokenEdit(project, chains, operatorAddr, deployed, nameInput.value, symInput.value, setStatus, modal, extend).catch(function (err) {
       setStatus((err && (err.shortMessage || err.message)) || (deployed ? 'Could not save the changes.' : 'Deploy failed'), 'error');
     }).finally(function () { busy = false; submit.disabled = false; });
   });
 }
 
-export async function submitTokenEdit(project, chains, operatorAddr, deployed, name, symbol, setStatus, modal) {
+export async function submitTokenEdit(project, chains, operatorAddr, deployed, name, symbol, setStatus, modal, extend) {
   var existingScope = pendingTokenEditScope(project, deployed);
   if (existingScope) {
     var savedTokenSession = loadRelayrPendingSession(existingScope);
@@ -12655,8 +12704,18 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
   setStatus('Verifying project controllers…', 'pending');
   var controllers = await controllerMapFor(chains, project);
 
-  // The deterministic salt makes the ERC-20 deploy to the same address on every chain.
+  // The deterministic salt makes the ERC-20 deploy to the same address on every chain. A token that already
+  // exists elsewhere keeps the salt it was deployed with, when this sender can reproduce it.
   var salt = omnichainTokenSalt(name, symbol);
+  var tokenRow = [deployed ? 'Renames to' : 'Token', name + ' (' + symbol + ')'];
+  var summaryRows = [tokenRow];
+  var matchExistingAddress = async function (sender) {
+    if (!extend) return;
+    var matched = await extensionTokenSalt(project, extend, chains, controllers, sender, name, symbol);
+    if (matched) salt = matched;
+    summaryRows.push(['Address', matched ? truncAddr(extend.token) + ', the same as on ' + extend.name
+      : 'Differs from ' + extend.name + '. This account did not deploy the token there with a salt.']);
+  };
   var buildCall = function (cid) {
     var abi = deployed ? setTokenMetadataAbi : deployErc20Abi;
     var functionName = deployed ? 'setTokenMetadataOf' : 'deployERC20For';
@@ -12673,8 +12732,9 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
     if (!safeInfo.owners.some(function (o) { return o.toLowerCase() === signer.toLowerCase(); })) {
       setStatus('Connected wallet isn’t a signer of the owner Safe (' + truncAddr(operatorAddr) + ').', 'error'); return;
     }
+    await matchExistingAddress(operatorAddr);
     var res = await proposeSafeAcrossChains(project, operatorAddr, signer, buildCall, { title: deployed ? 'Queue token rename on Safe' : 'Queue token deploy on Safe', queueTab: project.isRevnet ? 'Operator' : 'Owner', reverify: reverifyRename,
-      summary: { action: deployed ? 'Rename token' : 'Deploy ERC-20 token', rows: [[deployed ? 'Renames to' : 'Token', name + ' (' + symbol + ')']] } });
+      summary: { action: deployed ? 'Rename token' : 'Deploy ERC-20 token', rows: summaryRows } });
     if (!res || res.cancelled) { setStatus('Cancelled', ''); return; }
     var readyCount = (res.readyExecs && res.readyExecs.length) || 0;
     var tabName = project.isRevnet ? 'Operator' : 'Owner';
@@ -12689,9 +12749,10 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
   // EOA owner → the existing Relayr cross-chain path (the wallet itself is the owner).
   var account = await ensureProjectTokenManager(project, deployed ? JB_PERMISSION_SET_TOKEN_METADATA : JB_PERMISSION_DEPLOY_ERC20, setStatus);
   if (!account) return;
+  await matchExistingAddress(account);
   var relaySession = await runRelayrAcrossChains(chains, account, buildCall, deployed ? 300000n : 1500000n, setStatus,
     { label: deployed ? 'Rename token' : 'Deploy ERC-20 token', title: deployed ? 'Confirm token rename' : 'Confirm token deploy', pendingScope: relayrActionScope(project, deployed ? 'rename-token' : 'deploy-token'), reverify: reverifyRename,
-      summary: { rows: [[deployed ? 'Renames to' : 'Token', name + ' (' + symbol + ')']] } });
+      summary: { rows: summaryRows } });
 
   if (relaySession && relaySession.resumed) {
     setStatus(relayrRecoveredMessage(relaySession), 'success');
