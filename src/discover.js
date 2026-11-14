@@ -176,6 +176,8 @@ var AUTO_ISSUE_PAGE_SIZE = 250;
 var PRICE_HISTORY_PAGE_SIZE = 1000;
 var PRICE_HISTORY_MAX_POINTS = 3000;
 var ACTIVITY_PAGE_SIZE = 10;
+// Project feed rows loaded per indexer query before the "more" control asks for the next page.
+var ACTIVITY_FETCH_PAGE = 250;
 // Default .activity-feed scroll height (mirrors style.css). sizeActivity() grows the feed to 2x this (or the body
 // height) so loaded activity isn't hidden behind a short scrollbox.
 var ACTIVITY_FEED_BASE_PX = 390;
@@ -14303,6 +14305,21 @@ export function renderActivityCard(project, opts) {
   card.appendChild(body);
 
   var allRows = [];
+  var cap = ACTIVITY_FETCH_PAGE, hasMore = false;
+  var moreWrap = el('div', 'activity-more'); moreWrap.style.display = 'none';
+  var moreBtn = el('button', 'activity-more-btn'); moreBtn.type = 'button'; moreBtn.textContent = 'more';
+  var moreErr = el('div', 'activity-more-error');
+  moreWrap.appendChild(moreBtn); moreWrap.appendChild(moreErr);
+  card.appendChild(moreWrap);
+  moreBtn.addEventListener('click', function () {
+    var previous = cap;
+    cap += ACTIVITY_FETCH_PAGE;
+    moreBtn.disabled = true; moreBtn.textContent = 'Loading…'; moreErr.textContent = '';
+    load(true).then(function (rows) {
+      if (!rows) { cap = previous; moreErr.textContent = 'Could not load more activity. Try again.'; }
+      moreBtn.disabled = false; moreBtn.textContent = 'more';
+    });
+  });
 
   function rebuildFilterOptions() {
     var types = [];
@@ -14338,12 +14355,20 @@ export function renderActivityCard(project, opts) {
   // Load the sucker map first so the feed can relabel under-the-hood sucker cash outs as bridges.
   // `keepOnEmpty` (used by refreshes) leaves existing rows in place when a refetch returns nothing
   // yet — the indexer lags the chain by a few seconds after a tx confirms.
+  // Resolves to the rows, or null when the read failed.
+  var loadSeq = 0;
   function load(keepOnEmpty) {
+    var seq = ++loadSeq;
     return fetchProjectSuckerMap(project).then(function (map) {
       project._suckerMap = map;
-      return fetchProjectActivity(project);
+      return fetchProjectActivity(project, cap);
     }).then(function (rows) {
-      if (!body.isConnected) return rows;
+      // A newer load owns the feed; this one's window may be smaller.
+      if (!body.isConnected || seq !== loadSeq) return rows;
+      // New rows slide the window; rows already shown below its edge are history and stay.
+      if (rows.more) rows = keepShownActivityRows(rows, allRows);
+      hasMore = !!rows.more;
+      moreWrap.style.display = hasMore ? '' : 'none';
       if (!rows.length) {
         if (keepOnEmpty) return rows;
         allRows = [];
@@ -14358,10 +14383,10 @@ export function renderActivityCard(project, opts) {
       applyFilters();
       return rows;
     }).catch(function () {
-      if (!body.isConnected || keepOnEmpty) return [];
+      if (!body.isConnected || keepOnEmpty) return null;
       body.className = 'detail-card-body activity-empty';
       body.textContent = 'Could not load activity from Bendystraw.';
-      return [];
+      return null;
     });
   }
 
@@ -22669,7 +22694,37 @@ export function projectFeedRowsFromEvents(events, project) {
   }).filter(isProjectFeedActivityRow);
 }
 
-async function fetchProjectActivity(project) {
+// A refreshed window plus the rows already shown at or below its edge, so a new event never pushes an old one out.
+export function keepShownActivityRows(rows, shown) {
+  var kept = shown.filter(function (row) { return Number(row.timestamp || 0) <= rows.edge; });
+  var out = rows.concat(kept);
+  out.more = true; out.edge = rows.edge;
+  return out;
+}
+
+// Merges the per-query activity pages into one newest-first list. A capped query knows nothing older than its
+// last row, so the merged feed stops above the newest such edge: below it another query's rows would show with
+// gaps, and at it a transaction's events may be cut in half. `edge` is 0 when every query returned its whole history.
+export function mergeActivityPages(results) {
+  var edge = 0;
+  results.forEach(function (res) {
+    if (res.capped && res.items.length) edge = Math.max(edge, Number(res.items[res.items.length - 1].timestamp || 0));
+  });
+  var seen = {}, events = [];
+  results.forEach(function (res) {
+    (res.items || []).forEach(function (ev) {
+      var key = ev.id || ((ev.txHash || '') + ':' + (ev.type || '') + ':' + ev.chainId);
+      if (seen[key]) return;
+      seen[key] = true;
+      if (Number(ev.timestamp || 0) > edge) events.push(ev);
+    });
+  });
+  events.sort(function (a, b) { return Number(b.timestamp || 0) - Number(a.timestamp || 0); });
+  return { events: events, edge: edge };
+}
+
+// `maxItems` bounds each indexer query to its newest rows. The result carries `more` when older rows remain.
+async function fetchProjectActivity(project, maxItems) {
   var deployments = projectDeployments(project);
   var chainIds = deployments.map(function (deployment) { return deployment.chainId; });
   if (!deployments.length) return [];
@@ -22684,27 +22739,24 @@ async function fetchProjectActivity(project) {
   if (groupId) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_QUERY, 'activityEvents', {
       suckerGroupId: groupId, version: BENDYSTRAW_VERSION, chainIds: chainIds,
-    }, 250));
+    }, 250, maxItems));
   }
   deployments.forEach(function (deployment) {
     queries.push(fetchBendystrawCollectionPages(BENDYSTRAW_ACTIVITY_EVENTS_BY_PROJECT_QUERY, 'activityEvents', {
       projectId: deployment.projectId, chainId: deployment.chainId, version: BENDYSTRAW_VERSION,
-    }, 250));
+    }, 250, maxItems));
   });
 
   var results = await Promise.all(queries);
-  var seen = {}, merged = [];
-  results.forEach(function (res) {
-    (res.items || []).forEach(function (ev) {
-      var key = ev.id || ((ev.txHash || '') + ':' + (ev.type || '') + ':' + ev.chainId);
-      if (seen[key]) return;
-      seen[key] = true;
-      merged.push(ev);
-    });
-  });
-  merged.sort(function (a, b) { return Number(b.timestamp || 0) - Number(a.timestamp || 0); });
+  var page = mergeActivityPages(results), merged = page.events, edge = page.edge;
 
   var bendyRows = projectFeedRowsFromEvents(merged, project);
+  if (edge) {
+    // Ruleset rows come from chain state and cover all history; they join once the indexed rows reach back to them.
+    var loaded = bendyRows.concat((await fetchRulesetQueueRows(project)).filter(function (row) { return Number(row.timestamp || 0) > edge; }));
+    loaded.more = true; loaded.edge = edge;
+    return loaded;
+  }
 
   // Ruleset queueing isn't indexed by bendystraw (no queueRulesets ActivityEvent type), so synthesize it
   // from chain state: JBRulesets.allOf returns each configured ruleset, whose `id` IS the queue timestamp.

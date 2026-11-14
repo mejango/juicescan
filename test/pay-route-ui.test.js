@@ -10,6 +10,7 @@ const payState = vi.hoisted(() => ({
   prepare: vi.fn(),
   review: { closed: false, fail: vi.fn(), setRows() {}, close() {} },
   openReview: vi.fn(),
+  readContract: vi.fn(),
 }));
 
 vi.mock('../src/component-base.js', () => ({
@@ -37,7 +38,7 @@ vi.mock('../src/component-base.js', () => ({
   payHoldScope: projectId => 'project-' + BigInt(projectId),
   getBeneficiaryAddress: () => payState.BENEFICIARY,
   firstChainForNetwork: () => 1,
-  createPublicClientForChain: () => ({ readContract: vi.fn().mockRejectedValue(new Error('no contexts')) }),
+  createPublicClientForChain: () => ({ readContract: payState.readContract }),
   getChainTokens: () => [
     { address: payState.NATIVE, symbol: 'ETH', decimals: 18 },
     { address: '0x4444444444444444444444444444444444444444', symbol: 'USDC', decimals: 6 },
@@ -78,6 +79,7 @@ describe('pay route trust boundary', () => {
     payState.execute.mockReset();
     payState.review.fail.mockReset(); payState.openReview.mockReset();
     payState.prepare.mockReset();
+    payState.readContract.mockReset().mockRejectedValue(new Error('no contexts'));
     payState.preview.mockReset().mockResolvedValue({ routing: 'amm', amm: null });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
       font: '',
@@ -105,6 +107,19 @@ describe('pay route trust boundary', () => {
       amount: 1n,
       beneficiary: BENEFICIARY,
     })).resolves.toMatchObject({ address: TERMINAL, viaRouter: false });
+  });
+
+  it('quotes only the candidates the project lists, and none when it lists neither', async () => {
+    const request = { chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY };
+    payState.prepare.mockImplementation(({ terminal }) => Promise.resolve(terminal === ROUTER ? quote(500n) : quote(100n)));
+    payState.readContract.mockResolvedValue([TERMINAL]);
+    await expect(resolveBestPayRoute(request)).resolves.toMatchObject({ address: TERMINAL, viaRouter: false });
+    expect(payState.prepare).toHaveBeenCalledTimes(1);
+
+    payState.prepare.mockClear();
+    payState.readContract.mockResolvedValue(['0x5555555555555555555555555555555555555555']);
+    await expect(resolveBestPayRoute(request)).resolves.toBeNull();
+    expect(payState.prepare).not.toHaveBeenCalled();
   });
 
   it('breaks an equal preview by the larger guaranteed minimum', async () => {
