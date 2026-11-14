@@ -4697,8 +4697,12 @@ function launchCallsOf(session) {
   var bound = launchCallsFor(record, session && session.expectedTransactions);
   return bound ? { record: record, bound: bound } : null;
 }
-// Deletes the saved calls only when they belong to this bundle: another window may have moved on to another launch.
-function clearLaunchCallsOf(session) { if (launchCallsOf(session)) clearLaunchCalls(session.account); }
+// Deletes the saved calls only with their own bundle's receipt. The record matches a bundle and its replacement
+// alike, so a window still showing the old bundle must not delete what the saved replacement needs.
+function clearLaunchCallsOf(session) {
+  var current = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  if ((!current || current.bundleUuid === session.bundleUuid) && launchCallsOf(session)) clearLaunchCalls(session.account);
+}
 // A bundle whose unfinished chains can be signed again: paid with chains left over, or the unpaid replacement of one.
 function canFinishRelayr(session, saved, failed) {
   if (!saved) return false;
