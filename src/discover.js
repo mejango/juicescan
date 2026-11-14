@@ -6398,14 +6398,42 @@ function appendIndexedStats(statLine, stats) {
   statLine.appendChild(document.createTextNode(stats.paymentsCount === 1 ? ' payment' : ' payments'));
 }
 
+// What each chain raised, for the hover on the header's raised figure: chains in the project's own order, the
+// token volume beside its dollar value when the index carries it. Empty unless at least one chain raised.
+export function raisedByChainRows(byChain, order) {
+  var rank = function (cid) { var i = (order || []).indexOf(Number(cid)); return i < 0 ? 1e9 : i; };
+  return (byChain || []).filter(function (row) { return toBigInt(row.volumeUsd) > 0n || toBigInt(row.volume) > 0n; })
+    .sort(function (a, b) { return rank(a.chainId) - rank(b.chainId); })
+    .map(function (row) {
+      var usd = formatUsd(usdFromScaled(row.volumeUsd));
+      var token = row.tokenSymbol && row.decimals != null && row.volume != null
+        ? formatBalance(toBigInt(row.volume), Number(row.decimals), row.tokenSymbol) : '';
+      return { name: chainNameOf(row.chainId), text: token ? token + ' (' + usd + ')' : usd };
+    });
+}
+
 // The header's stat line, the same four juicebox.money shows: raised | balance | payments | owners or holders.
 // "raised" appears only when the indexed USD volume is priced; revnet holders are owners.
 export function appendHeaderStats(statLine, project) {
   var stats = project.indexedStats;
   var raised = stats ? usdFromScaled(stats.volumeUsd) : 0;
   if (raised > 0) {
-    var rStrong = el('strong'); rStrong.textContent = formatUsd(raised); statLine.appendChild(rStrong);
-    statLine.appendChild(document.createTextNode(' raised'));
+    var rWrap = el('span', 'usd-balance');
+    var rStrong = el('strong', 'usd-balance-fig'); rStrong.textContent = formatUsd(raised); rWrap.appendChild(rStrong);
+    rWrap.appendChild(document.createTextNode(' raised'));
+    var rows = raisedByChainRows(stats.byChain, (project.chains || []).map(function (c) { return Number(c.id); }));
+    if (rows.length) {
+      // The same hover the balance has: what each chain raised, then the total.
+      var pop = el('div', 'usd-balance-pop');
+      rows.concat([{ name: 'All chains', text: formatUsd(raised), total: true }]).forEach(function (r) {
+        var row = el('div', 'usd-balance-pop-row' + (r.total ? ' usd-balance-pop-total' : ''));
+        var name = el('span', 'usd-balance-pop-chain'); name.textContent = r.name;
+        var val = el('span', 'usd-balance-pop-amt'); val.textContent = r.text;
+        row.appendChild(name); row.appendChild(val); pop.appendChild(row);
+      });
+      rWrap.classList.add('usd-balance--has-pop'); rWrap.appendChild(pop);
+    }
+    statLine.appendChild(rWrap);
     statLine.appendChild(headSep());
   }
   statLine.appendChild(mountUsdBalance(project, { suffix: ' balance' }));
@@ -21912,6 +21940,8 @@ export var BENDYSTRAW_PROJECT_QUERY = 'query($where: projectFilter, $limit: Int!
   + 'suckerGroupId tokenSupply volumeUsd paymentsCount contributorsCount createdAt accountingTokenCount token tokenSymbol decimals '
   + 'metadataUri metadata handle name description projectTagline logoUri coverImageUri infoUri payDisclosure '
   + 'tags twitter farcaster discord telegram domain tokens } } }';
+var BENDYSTRAW_RAISED_BY_CHAIN_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!) { '
+  + 'projects(where: { suckerGroupId: $suckerGroupId, version: $version }, limit: $limit) { items { chainId volume volumeUsd tokenSymbol decimals } } }';
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($ids: [String], $limit: Int!) { '
   + 'suckerGroups(where: { id_in: $ids }, limit: $limit) { items { id volumeUsd paymentsCount contributorsCount } } }';
@@ -22685,6 +22715,10 @@ async function fetchProjectIndexedStats(id, chainId) {
     if (p.suckerGroupId) {
       var agg = await optionalWithin(loadBendystrawSuckerGroupStats(p.suckerGroupId, p.suckerGroupId)
         .catch(function () { return null; }), INDEXED_STATS_TIMEOUT_MS, null);
+      // Each chain's share, for the raised hover. Its absence only removes the hover.
+      stats.byChain = await optionalWithin(bendystrawQuery(BENDYSTRAW_RAISED_BY_CHAIN_QUERY, { suckerGroupId: p.suckerGroupId, version: BENDYSTRAW_VERSION, limit: 20 })
+        .then(function (data) { return (data && data.projects && data.projects.items) || []; })
+        .catch(function () { return []; }), INDEXED_STATS_TIMEOUT_MS, []);
       if (agg) {
         stats.volumeUsd = agg.volumeUsd;
         stats.paymentsCount = Number(agg.paymentsCount) || 0;
