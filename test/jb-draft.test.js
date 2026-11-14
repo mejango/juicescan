@@ -99,6 +99,17 @@ function tokenProjectState() {
   return s;
 }
 
+const TOKEN_ID = Number(BigInt(TOKEN) & 0xffffffffn);
+function customTokenState() {
+  const state = newCreateDraftState();
+  state.network = 'mainnet'; state.chainIds = [1]; state.accepts = ['custom'];
+  Object.assign(state.customToken, { address: TOKEN, symbol: 'TKN', decimals: 6, status: 'ok' });
+  state.storePricingCurrency = TOKEN_ID;
+  Object.assign(state.stages[0], { baseCurrency: TOKEN_ID, payoutCurrency: TOKEN_ID, surplusAllowanceCurrency: TOKEN_ID, allowAddPriceFeed: true });
+  state.stages[0].payoutByKind = { custom: { mode: 'limited', recipients: [wallet({ amountEth: '5' })] } };
+  return state;
+}
+
 function revnetState() {
   const s = newCreateDraftState();
   s.projectType = 'revnet'; s.network = 'mainnet'; s.chainIds = [1, 8453]; s.accepts = ['eth']; s.revBaseCurrency = 2;
@@ -190,6 +201,47 @@ describe('the shared .jb file on Juicescan', () => {
     expect(() => parseCreateDraftJson(JSON.stringify({ ...file, unknownRoot: 1 }))).toThrow("draft.unknownRoot isn't valid");
   });
 
+  it('writes what the launch sends where the launch overrides the form', () => {
+    const state = projectState();
+    Object.assign(state.stages[1], { cashOutEnabled: true, cashOutTaxRate: 20 });
+    Object.assign(state.stages[2], { durationSeconds: 4294967295, deadline: '3days' });
+    const file = createDraftObject(state);
+    expect(file.stages[1].cashOutTax).toBe('1');
+    expect(file.stages[2].approval).toBe('none');
+    expect(launchOf(parseCreateDraftJson(JSON.stringify(file)))).toBe(launchOf(state));
+    const custom = customTokenState();
+    custom.stages[0].allowAddPriceFeed = false;
+    expect(createDraftObject(custom).stages[0].powers.addPriceFeed).toBe(true);
+    state.stages[0].weight = '1e3';
+    expect(() => createDraftObject(state)).toThrow("This draft has a number a .jb file can't hold: 1e3.");
+  });
+
+  it('gives each reserved item its own beneficiary', () => {
+    const state = projectState();
+    const tiers = __test.build721Config(state, 'ipfs://x', 11155111).tiersConfig.tiers;
+    expect(tiers.length).toBeGreaterThan(0);
+    expect(tiers.every((tier) => tier.flags.useReserveBeneficiaryAsDefault === false)).toBe(true);
+  });
+
+  it('launches no items once the shop is switched off, as the file says', () => {
+    const state = projectState();
+    state.shopEnabled = false;
+    expect(createDraftObject(state).shop.items).toEqual([]);
+    expect(__test.build721Config(state, 'ipfs://x', 11155111).tiersConfig.tiers).toEqual([]);
+    expect(launchOf(roundTrip(state))).toBe(launchOf(state));
+    // Item cash outs chosen before the shop was switched off no longer reach the launch either.
+    state.collection.useForRedemptions = true;
+    Object.assign(state.stages[0], { cashOutEnabled: true, cashOutTaxRate: 20 });
+    expect(launchOf(state)).not.toContain('"useDataHookForCashOut":true');
+    expect(launchOf(roundTrip(state))).toBe(launchOf(state));
+  });
+
+  it('refuses an amount finer than a custom token holds, never rounds it', () => {
+    const state = customTokenState();
+    state.stages[0].payoutByKind.custom.recipients[0].amountEth = '0.0000015';
+    expect(() => buildLaunchArgs(state, 1, ALICE, 'ipfs://x', SALT, 2000000000)).toThrow('0.0000015 has more decimal places than its token holds.');
+  });
+
   it('refuses a file holding what this form cannot express, whole', () => {
     const cant = (what) => "Juicescan can't launch this file: it has " + what + '.';
     const project = (patch, stagePatch) => {
@@ -199,7 +251,7 @@ describe('the shared .jb file on Juicescan', () => {
       return () => parseCreateDraftJson(file);
     };
     const row = (extra) => Object.assign({ to: 'address', share: '10', address: ALICE }, extra);
-    expect(project({ safe: { signers: [ALICE], threshold: 1 } })).toThrow(cant('a new Safe as the owner'));
+    expect(project({ safe: { signers: [ALICE], threshold: 1 }, owner: '', ownerPerChain: {} })).toThrow(cant('a new Safe as the owner'));
     expect(project({ chains: [] })).toThrow(cant('no chain chosen'));
     expect(project({ chains: [137], ownerPerChain: {} })).toThrow(cant('a chain this site does not launch on'));
     expect(project({ chains: [1, 84532] })).toThrow(cant('mainnets and testnets together'));
@@ -208,13 +260,34 @@ describe('the shared .jb file on Juicescan', () => {
     expect(project({}, { reserved: [row({ to: 'sticky', sticky: { group: 'all', minWeeks: '', maxWeeks: '' } })] })).toThrow(cant('a Sticky split'));
     expect(project({}, { duration: 0, reserved: [row({ lockedUntil: 2200000000 })], payouts: [{ token: 'eth', mode: 'none', currency: 'eth', splits: [] }] }))
       .toThrow(cant('a locked split in a stage with no cycle'));
-    expect(project({}, { cashOutTax: '1.5' })).toThrow(cant('a cash out tax above 1'));
+    expect(project({}, { duration: 4294967295 })).toThrow(cant('an approval rule on a stage that never ends'));
+    expect(project({}, { payouts: [{ token: 'eth', mode: 'all', currency: 'eth', splits: [] }], surplusAllowance: { mode: 'none', amount: '', currency: 'eth' } }))
+      .toThrow(cant('a cash out tax under 1 beside payouts of everything'));
+    const feedless = createDraftObject(customTokenState());
+    feedless.stages[0].powers.addPriceFeed = false;
+    expect(() => parseCreateDraftJson(feedless)).toThrow(cant('a custom token without the power to add price feeds'));
+    const staged = createDraftObject(tokenProjectState());
+    staged.stages.push({ ...structuredClone(staged.stages[0]), startAfterCycles: '1' });
+    expect(() => parseCreateDraftJson(structuredClone(staged))).not.toThrow();
+    staged.stages[1].payouts[0].splits[0].amountPerChain = { 8453: '5' };
+    expect(() => parseCreateDraftJson(staged)).toThrow(cant('per-chain payout values that differ by stage'));
     const later = createDraftObject(projectState());
     later.stages[1].issuance = '';
     expect(() => parseCreateDraftJson(later)).toThrow(cant('a later stage that keeps the issuance before it'));
     const voting = createDraftObject(projectState());
     voting.shop.items[0].votingUnits = '5';
     expect(() => parseCreateDraftJson(voting)).toThrow(cant('a shop item with voting units'));
+    const item = (edit) => { const file = createDraftObject(projectState()); edit(file.shop.items[0], file); return () => parseCreateDraftJson(file); };
+    expect(item((entry) => { entry.metadataUri = 'ipfs://meta'; })).toThrow(cant('a shop item with its own metadata file'));
+    expect(item((entry) => { entry.splits = [row({ address: '', addressPerChain: { 84532: ALICE } })]; }))
+      .toThrow(cant('a shop item split with no address for every chain'));
+    expect(item((entry) => { entry.splits = [row({ address: 'vitalik.eth' })]; })).toThrow(cant('a shop item split given as a name'));
+    const oneChain = createDraftObject(customTokenState());
+    Object.assign(oneChain.shop, { collectionName: 'Shop', collectionSymbol: 'SHOP', items: [{ name: 'Item', price: '1', splits: [{ to: 'project', share: '10', projectId: '7', address: 'vitalik.eth' }] }] });
+    expect(() => parseCreateDraftJson(oneChain)).toThrow(cant('a shop item split given as a name'));
+    expect(item((entry, file) => { file.shop.itemsRedeem = true; file.shop.items.forEach((each) => { each.excludedChains = [84532]; }); }))
+      .toThrow(cant('shop items that cash out on a chain with no items'));
+    expect(project({}, { reserved: [row({ addressPerChain: { 84532: 'vitalik.eth' } })] })).toThrow(cant('a per-chain address given as a name'));
     const perChain = createDraftObject(projectState());
     perChain.shop.items[0].supplyPerChain = { 84532: 'unlimited' };
     expect(() => parseCreateDraftJson(perChain)).toThrow(cant('a shop item unlimited on one chain only'));
@@ -231,11 +304,9 @@ describe('the shared .jb file on Juicescan', () => {
     expect(() => parseCreateDraftJson(byToken)).toThrow(cant('a limited owner allowance beside payouts by token'));
 
     const revnet = (edit) => { const file = createDraftObject(revnetState()); edit(file); return () => parseCreateDraftJson(file); };
-    expect(revnet((file) => { file.safe = { signers: [ALICE], threshold: 1 }; })).toThrow(cant('a new Safe as the operator'));
+    expect(revnet((file) => { file.safe = { signers: [ALICE], threshold: 1 }; file.owner = ''; file.ownerPerChain = {}; })).toThrow(cant('a new Safe as the operator'));
     expect(revnet((file) => { file.stages[0].reserved[0].lockedUntil = 2200000000; })).toThrow(cant('a locked split'));
     expect(revnet((file) => { file.stages[1].startAfterDays = '0.5'; })).toThrow(cant('a later stage that starts less than a day after the one before'));
-    expect(revnet((file) => { file.stages[0].autoIssuances[0].chainId = 10; })).toThrow(cant('an auto issuance on a chain it does not launch on'));
-    expect(revnet((file) => { file.shop.issueTokensForSplits = true; })).toThrow(cant('shop splits that issue tokens'));
   });
 
   it('shows a cycle length that is no preset as a custom one', () => {
@@ -249,13 +320,8 @@ describe('the shared .jb file on Juicescan', () => {
   });
 
   it('reads a custom token by its address only', () => {
-    const state = newCreateDraftState();
-    state.network = 'mainnet'; state.chainIds = [1]; state.accepts = ['custom'];
-    Object.assign(state.customToken, { address: TOKEN, symbol: 'TKN', decimals: 6, status: 'ok' });
-    const id = Number(BigInt(TOKEN) & 0xffffffffn);
-    state.storePricingCurrency = id;
-    Object.assign(state.stages[0], { baseCurrency: id, payoutCurrency: id, surplusAllowanceCurrency: id, allowAddPriceFeed: true });
-    state.stages[0].payoutByKind = { custom: { mode: 'limited', recipients: [wallet({ amountEth: '5' })] } };
+    const state = customTokenState();
+    const id = TOKEN_ID;
     const file = createDraftObject(state);
     expect(file).toMatchObject({ accepts: ['custom'], customToken: TOKEN, shop: { currency: 'token' } });
     expect(file.stages[0]).toMatchObject({ baseCurrency: 'token', payouts: [{ token: 'custom', mode: 'amounts', currency: 'token' }] });

@@ -541,7 +541,7 @@ function mergeDraft(obj) {
 function jbDraftDeps() {
   return {
     state: initState, stage: createStage, item: itemDraft, pairs: CHAIN_PAIRS, canon: canonChainId,
-    durationPresets: DURATION_PRESETS,
+    durationPresets: DURATION_PRESETS, collectionName: collectionNameOf, collectionSymbol: collectionSymbolOf,
     customCurrency: function (address) { return isAddr(address) ? Number(BigInt(address) % (1n << 32n)) : 0; },
   };
 }
@@ -2571,6 +2571,10 @@ function surplusTokenLabel(state) {
 // hook as the cash out data hook, JB721Hook.beforeCashOutRecordedWith reverts on any project-token cash out
 // (JB721Hook.sol:107). So enabling one idles the other in the UI.
 function itemCashOutOn(state) { return !!(state.shopEnabled && state.collection && state.collection.useForRedemptions); }
+// Items take cash outs on a chain only where the launch carries an item there: the hook and the ruleset agree.
+function itemCashOutOnChain(state, chainId) {
+  return itemCashOutOn(state) && (state.nfts || []).some(function (_, i) { return chainItemIncluded(state, chainId, i); });
+}
 function anyTokenCashOut(state) { return (state.stages || []).some(function (s) { return s.cashOutEnabled; }); }
 
 // Cash out access for token holders — they reclaim a share of the project's surplus by burning tokens.
@@ -4439,7 +4443,7 @@ async function runDeploy(state, owner) {
     // 1) Pin metadata. A launch never goes out without it. The project's and each store item's metadata JSON
     // (name + media, so its tier resolves to {name, image/animation_url}) pin together.
     push('Pinning project metadata…');
-    var launchItems = state.nfts.slice();
+    var launchItems = launchedItems(state);
     // The pins only resolve or reject; the status list is written once, after they are joined, so a pin that lands
     // after the batch failed says nothing.
     var pins = [pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project')].concat(launchItems.map(function (it, n) {
@@ -4807,7 +4811,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var addr = getAddress('JBOmnichainDeployer', chainId);
   var missing = sucker.missing.length > 0;
   if (hasNfts) {
-    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions), salt: salt };
+    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: itemCashOutOnChain(state, chainId), salt: salt };
     return { scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts, contract: 'JBOmnichainDeployer', address: addr, abi: omnichain721Abi, missingSuckers: missing,
       args: [owner, projectUri, deploy721, rulesetsFull, terminalConfigs, '', sucker] };
   }
@@ -5039,8 +5043,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter
   // can't overflow MAX_CASH_OUT_TAX_RATE and revert at deploy.
   // Item redemptions route cash out through the 721 hook (item holders redeem for surplus). Only when a store
   // is actually on this chain AND the project opted in. Mutually exclusive with token cash out by contract.
-  var storeRedeem = state.shopEnabled && !!(state.collection && state.collection.useForRedemptions)
-    && (state.nfts || []).some(function (_, i) { return chainItemIncluded(state, chainId, i); });
+  var storeRedeem = itemCashOutOnChain(state, chainId);
   // The cash out tax governs whoever can cash out — token holders OR (mutually exclusively) item holders — so
   // it applies when either is on. 100% = cash outs off (also forced when payouts leave no surplus).
   rs.cashOutTaxRate = ((stage.cashOutEnabled || storeRedeem) && !noSurplus)
@@ -5278,12 +5281,15 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   };
 }
 
+// The items a launch carries: none while "Launch with items in stock" is off, whatever the list still holds.
+function launchedItems(state) { return state.shopEnabled === false ? [] : (state.nfts || []).slice(); }
+
 export function build721Config(state, projectUri, chainId) {
   var name = collectionNameOf(state);
   var symbol = collectionSymbolOf(state);
   var col = state.collection || {};
   var priceDecimals = storeDecimals(state);
-  var tierEntries = state.nfts
+  var tierEntries = launchedItems(state)
     .map(function (nft, idx) { return { nft: nft, idx: idx }; })
     .filter(function (e) { return chainId == null || chainItemIncluded(state, chainId, e.idx); })
     .map(function (e) {
@@ -5309,7 +5315,8 @@ export function build721Config(state, projectUri, chainId) {
       discountPercent: discountPercent,
       flags: {
         allowOwnerMint: !!flags.allowOwnerMint,
-        useReserveBeneficiaryAsDefault: freq > 0 && reserveBenef !== ZERO,
+        // Each item keeps its own beneficiary: as a default, the last item's would take every item's reserves.
+        useReserveBeneficiaryAsDefault: false,
         transfersPausable: !!flags.transfersPausable,
         useVotingUnits: false,
         cantBeRemoved: !!flags.cantBeRemoved,
@@ -5727,6 +5734,8 @@ function recipBoxWith(recip, hint) {
 function safeParseEther(v) { try { return v ? parseEther(String(v)) : 0n; } catch (_) { return 0n; } }
 function priceUnits(v, decimals) {
   if (v == null || String(v).trim() === '') return 0n;
+  // parseUnits rounds what the token cannot hold, which would send another amount than the one typed.
+  if ((String(v).trim().split('.')[1] || '').length > decimals) throw new Error(String(v).trim() + ' has more decimal places than its token holds.');
   var parsed = parseUnits(String(v).trim(), decimals);
   if (parsed < 0n) throw new Error('Amounts cannot be negative.');
   return parsed;

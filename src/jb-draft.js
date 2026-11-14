@@ -3,7 +3,7 @@
 // something this form cannot express is refused whole, never half opened.
 
 import {
-  emptyJbDraft, emptyJbDraftItem, emptyJbDraftSplit, emptyJbDraftStage, jbDraftTokenCurrency, jbDraftUnsupported,
+  emptyJbDraft, emptyJbDraftItem, emptyJbDraftSplit, emptyJbDraftStage, JbDraftError, jbDraftDecimal, jbDraftTokenCurrency, jbDraftUnsupported,
 } from './jb-draft-format.js';
 
 var SITE = 'Juicescan';
@@ -17,8 +17,8 @@ var SPLIT_TO = { wallet: 'address', project: 'project', lphook: 'fundMarket', cu
 var SPLIT_TYPE = { address: 'wallet', project: 'project', fundMarket: 'lphook', hook: 'customhook' };
 
 function text(value) { return String(value == null ? '' : value).trim(); }
-// A typed number as the format's plain decimal, or '' when it isn't one.
-function num(value) { var typed = text(value); return /^\d*(?:\.\d*)?$/.test(typed) ? typed : ''; }
+// A typed number as the format's plain decimal. Throws on one the file can't hold.
+var num = jbDraftDecimal;
 // A stored number as a plain decimal. Zero, and anything that is not a positive number, is ''.
 function positive(value) {
   var n = Number(value);
@@ -135,7 +135,6 @@ export function toJbDraft(state, deps) {
     out.cutPercent = issues ? positive(stage.weightCutPercent) : '';
     out.reserved = issues ? reservedOut(stage, index, lockOk) : [];
     var redeems = !!(state.shopEnabled && collection.useForRedemptions);
-    out.cashOutTax = stage.cashOutEnabled || redeems ? shiftDecimal(positive(stage.cashOutTaxRate) || '0', -2) : '1';
     out.payouts = accepts.map(function (token) {
       var held = byToken ? (stage.payoutByKind || {})[token] || { mode: 'none', recipients: [] }
         : { mode: stage.payoutMode, recipients: stage.payoutRecipients || [] };
@@ -157,13 +156,16 @@ export function toJbDraft(state, deps) {
     });
     // An allowance needs surplus: none is left when every token pays out everything.
     var surplus = out.payouts.some(function (payout) { return payout.mode !== 'all'; });
+    // Payouts of everything leave nothing to cash out: the launch sends 1.
+    out.cashOutTax = (stage.cashOutEnabled || redeems) && surplus ? shiftDecimal(positive(stage.cashOutTaxRate) || '0', -2) : '1';
     if (stage.surplusAllowanceOn && surplus) {
       var limited = !byToken && !stage.surplusAllowanceUnlimited;
       out.surplusAllowance = limited
         ? { mode: 'limited', amount: num(stage.surplusAllowanceAmount), currency: currency(stage.surplusAllowanceCurrency) }
         : { mode: 'unlimited', amount: '', currency: jbDraftTokenCurrency(accepts[0]) };
     }
-    out.approval = stage.deadline || 'none';
+    // A stage that never ends has no next stage to approve.
+    out.approval = out.duration === FOREVER_SECONDS ? 'none' : stage.deadline || 'none';
     out.holdFees = !!stage.holdFees;
     out.ownerMinting = !!stage.allowOwnerMinting;
     out.pausePay = !!stage.pausePay;
@@ -178,7 +180,8 @@ export function toJbDraft(state, deps) {
       terminalMigration: !!stage.allowTerminalMigration,
       setCustomToken: !!stage.allowSetCustomToken,
       addAccountingContext: !!stage.allowAddAccountingContext,
-      addPriceFeed: !!stage.allowAddPriceFeed,
+      // A custom token is priced by feeds its owner adds: the launch grants that.
+      addPriceFeed: !!stage.allowAddPriceFeed || custom,
     };
     return out;
   }
@@ -190,7 +193,6 @@ export function toJbDraft(state, deps) {
     out.description = item.description || '';
     out.mediaUri = text(item.imageUri);
     out.mediaType = item.mediaType || '';
-    out.metadataUri = text(item.metaUri);
     out.price = num(item.price);
     out.supply = item.limited ? num(item.supply) : '';
     out.supplyPerChain = item.limited ? chainMap('isup:' + index, num) : {};
@@ -210,7 +212,11 @@ export function toJbDraft(state, deps) {
       var to = /^[0-9]+$/.test(text(row.recip)) && Number(row.recip) > 0 ? 'project' : 'address';
       var split = emptyJbDraftSplit(to);
       split.share = num(row.pct);
-      if (to === 'project') { split.projectId = text(row.recip); split.address = text(row.benef); }
+      if (to === 'project') {
+        // The launch looks this project up on each other chain, so one id cannot say where the split goes there.
+        if ((state.chainIds || []).length > 1) throw new JbDraftError("This draft has a shop item split to a project on more than one chain, which a .jb file can't hold.");
+        split.projectId = text(row.recip); split.address = text(row.benef);
+      }
       else { split.address = text(row.recip); split.addressPerChain = chainMap('is:' + index + ':' + n); }
       return split;
     }) : [];
@@ -249,8 +255,9 @@ export function toJbDraft(state, deps) {
   out.stages = (state.stages || []).map(revnet ? revnetStageOut : projectStageOut);
   out.shop = {
     currency: currency(state.storePricingCurrency),
-    collectionName: collection.nameTouched ? collection.name || '' : '',
-    collectionSymbol: collection.symbolTouched ? collection.symbol || '' : '',
+    // As launched: what was typed, else the project's own name and ticker.
+    collectionName: deps.collectionName(state),
+    collectionSymbol: deps.collectionSymbol(state),
     preventOverspending: !!collection.preventOverspending,
     noNewTiersWithReserves: !!collection.noNewTiersWithReserves,
     noNewTiersWithVotes: !!collection.noNewTiersWithVotes,
@@ -309,6 +316,13 @@ export function fromJbDraft(file, deps) {
     state.perChain[canon].addr[key] = value;
   }
   function chainMapIn(map, key) { Object.keys(map).forEach(function (chainId) { setOnChain(chainId, key, map[chainId]); }); }
+  // A per-chain name is looked up only where its field shows, so one that never shows would launch as no address.
+  function chainAddressesIn(map, key) {
+    Object.keys(map).forEach(function (chainId) {
+      if (!/^0x[0-9a-fA-F]{40}$/.test(map[chainId])) refuse('a per-chain address given as a name');
+    });
+    chainMapIn(map, key);
+  }
 
   function splitIn(row, keys, lockOk, amounts) {
     if (row.to === 'sticky') refuse('a Sticky split');
@@ -324,7 +338,7 @@ export function fromJbDraft(file, deps) {
       return out;
     }
     out.address = row.address;
-    chainMapIn(row.addressPerChain, keys.address);
+    chainAddressesIn(row.addressPerChain, keys.address);
     if (row.to === 'project' || row.to === 'hook') {
       if (row.projectId && !Number.isSafeInteger(Number(row.projectId))) refuse('a project id that is not a whole number');
       out.projectId = Number(row.projectId) || 0;
@@ -350,13 +364,11 @@ export function fromJbDraft(file, deps) {
     out.issuanceCutOn = stage.cutDays !== '';
     if (out.issuanceCutOn) out.cutFreqDays = stage.cutDays;
     out.weightCutPercent = percentIn(stage.cutPercent);
-    if (Number(stage.cashOutTax) > 1) refuse('a cash out tax above 1');
     out.cashOutEnabled = true;
     out.cashOutTaxRate = Number(shiftDecimal(stage.cashOutTax || '0', 2));
     out.pause721Transfers = true;
     out.reservedRecipients = reservedIn(stage, index, false);
     out.autoIssuances = stage.autoIssuances.map(function (row) {
-      if (file.chains.indexOf(row.chainId) === -1) refuse('an auto issuance on a chain it does not launch on');
       return { count: row.count, address: row.address, chainId: row.chainId };
     });
     out.metadataExtra = stage.metadataExtra;
@@ -377,6 +389,7 @@ export function fromJbDraft(file, deps) {
     }
   }
 
+  var perChainPayouts = {};
   function projectStageIn(stage, index) {
     var out = deps.stage();
     var lockOk = stage.duration > 0;
@@ -397,7 +410,6 @@ export function fromJbDraft(file, deps) {
     out.reservedRecipients = reservedIn(stage, index, lockOk);
     out.reservedPercent = out.reservedRecipients.reduce(function (sum, row) { return sum + row.percent; }, 0);
     var tax = Number(stage.cashOutTax || '0');
-    if (tax > 1) refuse('a cash out tax above 1');
     // Items that redeem take cash outs in place of the token, at this same tax.
     out.cashOutEnabled = tax < 1 && !file.shop.itemsRedeem;
     out.cashOutTaxRate = tax < 1 || file.shop.itemsRedeem ? Number(shiftDecimal(stage.cashOutTax || '0', 2)) : 0;
@@ -412,6 +424,15 @@ export function fromJbDraft(file, deps) {
         refuse('payouts counted in another currency than their token');
       }
       if (!byToken) forcedUsd(payout.currency, 'payouts');
+      // By token, a row's per-chain values are held once for every stage.
+      if (byToken) payout.splits.forEach(function (row, n) {
+        var held = JSON.stringify([row.addressPerChain, row.projectIdPerChain, row.amountPerChain].map(function (map) {
+          return Object.keys(map).sort().map(function (chainId) { return [chainId, map[chainId]]; });
+        }));
+        var at = payout.token + ':' + n;
+        if (at in perChainPayouts && perChainPayouts[at] !== held) refuse('per-chain payout values that differ by stage');
+        perChainPayouts[at] = held;
+      });
       var recipients = payout.splits.map(function (row, n) {
         return splitIn(row, {
           address: prefix + ':' + scope + ':' + n,
@@ -424,6 +445,7 @@ export function fromJbDraft(file, deps) {
     });
     var allowance = stage.surplusAllowance;
     var surplus = stage.payouts.some(function (payout) { return payout.mode !== 'all'; });
+    if (!surplus && tax < 1) refuse('a cash out tax under 1 beside payouts of everything');
     if (allowance.mode !== 'none') {
       if (!surplus) refuse('an owner allowance beside payouts of everything');
       if (byToken && allowance.mode === 'limited') refuse('a limited owner allowance beside payouts by token');
@@ -436,6 +458,7 @@ export function fromJbDraft(file, deps) {
       }
     }
     if (!out.surplusAllowanceOn || out.surplusAllowanceUnlimited) out.surplusAllowanceCurrency = out.payoutCurrency;
+    if (stage.duration === FOREVER_SECONDS && stage.approval !== 'none') refuse('an approval rule on a stage that never ends');
     out.deadline = stage.approval;
     out.holdFees = stage.holdFees;
     out.allowOwnerMinting = stage.ownerMinting;
@@ -450,6 +473,7 @@ export function fromJbDraft(file, deps) {
     out.allowTerminalMigration = stage.powers.terminalMigration;
     out.allowSetCustomToken = stage.powers.setCustomToken;
     out.allowAddAccountingContext = stage.powers.addAccountingContext;
+    if (custom && !stage.powers.addPriceFeed) refuse('a custom token without the power to add price feeds');
     out.allowAddPriceFeed = stage.powers.addPriceFeed;
     return out;
   }
@@ -461,7 +485,8 @@ export function fromJbDraft(file, deps) {
     out.description = item.description;
     out.imageUri = item.mediaUri;
     out.mediaType = item.mediaType;
-    out.metaUri = item.metadataUri;
+    // The launch pins each item's metadata from the fields here, so a file's own document would be replaced.
+    if (item.metadataUri) refuse('a shop item with its own metadata file');
     out.price = item.price;
     out.limited = item.supply !== '';
     out.supply = item.supply;
@@ -482,7 +507,7 @@ export function fromJbDraft(file, deps) {
     if (out.reserveOn) {
       out.reserveFrequency = item.reserveEvery;
       out.reserveBeneficiary = item.reserveBeneficiary;
-      chainMapIn(item.reserveBeneficiaryPerChain, 'rb:' + index);
+      chainAddressesIn(item.reserveBeneficiaryPerChain, 'rb:' + index);
     } else if (item.reserveBeneficiary || hasEntries(item.reserveBeneficiaryPerChain)) {
       refuse('a reserved item beneficiary with nothing reserved');
     }
@@ -495,9 +520,14 @@ export function fromJbDraft(file, deps) {
       if (row.to === 'project') {
         if (hasEntries(row.projectIdPerChain) || hasEntries(row.addressPerChain)) refuse('a shop item project split that differs by chain');
         if (!/^[1-9]\d*$/.test(row.projectId)) refuse('a shop item project split with no project');
+        if (file.chains.length > 1) refuse('a shop item split to a project on more than one chain');
+        if (row.address && !/^0x[0-9a-fA-F]{40}$/.test(row.address)) refuse('a shop item split given as a name');
         return { pct: row.share, recip: row.projectId, benef: row.address };
       }
-      chainMapIn(row.addressPerChain, 'is:' + index + ':' + n);
+      if (!row.address && hasEntries(row.addressPerChain)) refuse('a shop item split with no address for every chain');
+      // An item's fields open only on demand, so a name here might never be looked up before launch.
+      if (row.address && !/^0x[0-9a-fA-F]{40}$/.test(row.address)) refuse('a shop item split given as a name');
+      chainAddressesIn(row.addressPerChain, 'is:' + index + ':' + n);
       return { pct: row.share, recip: row.address, benef: '' };
     });
     out.flags = {
@@ -522,7 +552,7 @@ export function fromJbDraft(file, deps) {
   details.website = file.links.website; details.twitter = file.links.twitter; details.discord = file.links.discord;
   details.telegram = file.links.telegram; details.instagram = file.links.instagram; details.whatsapp = file.links.whatsapp;
   if (revnet) state.revOperator = file.owner; else details.owner = file.owner;
-  chainMapIn(file.ownerPerChain, revnet ? 'op' : 'owner');
+  chainAddressesIn(file.ownerPerChain, revnet ? 'op' : 'owner');
 
   if (revnet) {
     var base = file.stages[0].baseCurrency;
@@ -533,7 +563,7 @@ export function fromJbDraft(file, deps) {
     state.stages = file.stages.map(revnetStageIn);
   } else {
     state.approvalAddress = file.approvalHook;
-    chainMapIn(file.approvalHookPerChain, 'approval');
+    chainAddressesIn(file.approvalHookPerChain, 'approval');
     if (!file.approvalHook && file.stages.some(function (stage) { return stage.approval === 'custom'; })) {
       refuse('a custom approval rule without its contract');
     }
@@ -559,8 +589,10 @@ export function fromJbDraft(file, deps) {
   collection.opCanMint = shop.operatorCanMint;
   collection.opCanIncreaseDiscount = shop.operatorCanIncreaseDiscount;
   if (shop.itemsRedeem && !shop.items.length) refuse('shop items that cash out with no items');
-  if (revnet && shop.issueTokensForSplits) refuse('shop splits that issue tokens');
-  if (revnet && shop.itemsRedeem) refuse('shop items that cash out');
+  // Items cash out only where there are items: a chain with none would launch with cash outs off.
+  if (shop.itemsRedeem && file.chains.some(function (chainId) {
+    return shop.items.every(function (item) { return item.excludedChains.indexOf(chainId) !== -1; });
+  })) refuse('shop items that cash out on a chain with no items');
   state.storeCategories = shop.categories.map(function (entry) { return { id: entry.id, name: entry.name }; });
   state.nfts = shop.items.map(itemIn);
   state.shopEnabled = shop.items.length > 0;
