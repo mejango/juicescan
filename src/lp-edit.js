@@ -16,7 +16,7 @@ import { encodeAbiParameters, encodeFunctionData, formatUnits, parseUnits } from
 import { el, errMessage, openPendingReview } from './component-base.js';
 import {
   POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpBandPricesOf, lpConfirmAndSend,
-  lpGetAmountsForLiquidity, lpGetLiquidityForAmounts, lpMintPlan, lpPositionManagerAbi, lpSendTx, lpSqrtAtTick,
+  lpGetAmountsForLiquidity, lpGetLiquidityForAmounts, lpMintPlan, lpPositionManagerAbi, lpSqrtAtTick,
   noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
 } from './discover.js';
 import { quotedOutputFloor } from './slippage.js';
@@ -126,7 +126,18 @@ export function lpEditOperations(pool, position, target, range, account) {
     pairFlow: minted.pair - position.pairAmount, tokenFlow: minted.token - position.tokenAmount,
     pairFunding: pairFunding, tokenFunding: tokenFunding, value: nativeIsC0 ? funding0 : nativeIsC1 ? funding1 : 0n,
     erc20: moveErc20, pairMinimum: pairMinimum, tokenMinimum: tokenMinimum, amount0Max: mint.amount0Max, amount1Max: mint.amount1Max,
+    // The band this burns, and the most each currency may pull from the wallet net of the burn's return.
+    burned: { tickLower: position.tickLower, tickUpper: position.tickUpper, funding0: funding0, funding1: funding1 },
   });
+}
+
+// Whether a move's mint, at the live price, still costs the wallet no more than reviewed once the burn's return
+// is counted. The mint's own maxima bound what it takes in, not the difference the wallet pays.
+export function lpMoveStillCovered(move, sqrtP) {
+  if (!move.burned) return true;
+  var minted = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(move.tickLower), lpSqrtAtTick(move.tickUpper), move.liquidity);
+  var returned = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(move.burned.tickLower), lpSqrtAtTick(move.burned.tickUpper), move.liquidityBefore);
+  return minted.amount0 - returned.amount0 <= move.burned.funding0 && minted.amount1 - returned.amount1 <= move.burned.funding1;
 }
 
 // The whole unlock: a plan that returns funds ends in TAKE_PAIR; one the wallet may fund closes both currencies
@@ -155,7 +166,7 @@ export function lpEditStillFits(plan, live) {
   if (plan.kind !== 'move' && plan.kind !== 'increase') return null;
   var required = lpGetAmountsForLiquidity(live.sqrtP, lpSqrtAtTick(plan.tickLower), lpSqrtAtTick(plan.tickUpper),
     plan.kind === 'move' ? plan.liquidity : plan.liquidityDelta);
-  return required.amount0 > plan.amount0Max || required.amount1 > plan.amount1Max
+  return required.amount0 > plan.amount0Max || required.amount1 > plan.amount1Max || !lpMoveStillCovered(plan, live.sqrtP)
     ? 'The pool price moved beyond the reviewed range. Review fresh amounts.' : null;
 }
 
@@ -282,7 +293,8 @@ export function openLpEditor(project, chainId, stalePos, acct, onDone) {
       var words = describeLpEdit(plan, fmt, !!pair.isNative, pair.symbol, plan.kind === 'move' ? formatPrice(snapped.min) + ' to ' + formatPrice(snapped.max) + ' ' + pair.symbol + '/' + sym : '');
       var funded = plan.erc20.length > 0 || plan.value > 0n;
       var window = pos.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes';
-      var deadline = BigInt(Math.floor(Date.now() / 1000) + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
+      var reviewedAt = Math.floor(Date.now() / 1000);
+      var deadline = BigInt(reviewedAt + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
       lpConfirmAndSend(review, {
         summary: { action: TITLE[plan.kind] + ' in the ' + sym + '/' + pair.symbol + ' pool', rows: [['Position', '#' + pos.tokenId.toString()], ['Change', words.lead], ['Details', words.detail], ['To', acct], ['Deadline', window]] },
         chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: posm,
@@ -292,15 +304,19 @@ export function openLpEditor(project, chainId, stalePos, acct, onDone) {
         args: { unlockData: plan.unlockData, deadline: 'set at signing (' + window + ')' },
       }, opts, 'Checking the position…', 'Liquidity change failed', function (dialog) {
         // The position and the price again, right before sending: the reviewed maxima and sizes came from them.
-        return refreshLpPositionForRemoval(chainId, pos, acct).then(function (live) {
-          var stale = lpEditStillFits(plan, { sqrtP: live.sqrtP, liquidity: live.liquidity });
-          if (stale) throw new Error(stale);
-          if (!funded) {
-            dialog.showStatus('Confirm in your wallet…', 'pending');
-            return lpSendTx(chainId, { account: acct, address: posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [plan.unlockData, deadline], value: 0n, smartWallet: !!pos.smartWallet });
-          }
-          return runAddLiquidityTxs(chainId, { posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: plan.erc20, acct: acct, smartWallet: !!pos.smartWallet },
-            function (message, kind, meta) { dialog.showStatus(message, kind, meta); });
+        var recheck = function () {
+          return refreshLpPositionForRemoval(chainId, pos, acct).then(function (live) {
+            var stale = lpEditStillFits(plan, { sqrtP: live.sqrtP, liquidity: live.liquidity });
+            if (stale) throw new Error(stale);
+          });
+        };
+        // One runner for every edit: it refuses a change already waiting in a Safe's queue, settles approvals,
+        // and checks the position once more after them. The deadline is the reviewed one.
+        return recheck().then(function () {
+          return runAddLiquidityTxs(chainId, {
+            posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: plan.erc20, acct: acct, smartWallet: !!pos.smartWallet,
+            stepLabel: 'liquidity change', sendingLine: 'Confirm in your wallet…', recheck: recheck,
+          }, function (message, kind, meta) { dialog.showStatus(message, kind, meta); }, { now: reviewedAt, deadline: deadline });
         });
       }, function (result) {
         handle.close();

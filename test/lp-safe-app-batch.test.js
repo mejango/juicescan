@@ -109,6 +109,30 @@ describe('runAddLiquidityTxs inside the Safe App', () => {
   });
 });
 
+describe('runAddLiquidityTxs carrying a position edit', () => {
+  const edit = more => ({ ...prep(), erc20: [], value: 0n, stepLabel: 'liquidity change', ...more });
+
+  it('refuses an unfunded Safe edit while a position change waits in the queue', async () => {
+    const queued = lpAddLiquidityCalls(edit(), [], NOW, DL, BigInt(NOW + DL))[0];
+    runtime.pending = [{ nonce: 9, to: queued.to, data: queued.data }];
+    await expect(runAddLiquidityTxs(8453, edit(), vi.fn(), plan())).rejects.toThrow(/The liquidity change is already queued in your Safe \(nonce 9\)/);
+    expect(runtime.wallet.writeContract).not.toHaveBeenCalled();
+  });
+
+  it('reads the position again after the approvals, and sends nothing when it no longer fits', async () => {
+    runtime.safeApp = false;
+    const order = [];
+    runtime.wallet.writeContract = vi.fn(async request => { order.push(request.functionName); return '0x' + 'cd'.repeat(32); });
+    const funded = more => ({ ...prep(), stepLabel: 'liquidity change', ...more });
+    await runAddLiquidityTxs(8453, funded({ recheck: async () => { order.push('recheck'); } }), vi.fn(), plan());
+    expect(order).toEqual(['approve', 'approve', 'recheck', 'modifyLiquidities']);
+    order.length = 0;
+    await expect(runAddLiquidityTxs(8453, funded({ recheck: async () => { throw new Error('This position changed. Review it again before sending.'); } }), vi.fn(), plan()))
+      .rejects.toThrow(/position changed/);
+    expect(order).toEqual(['approve', 'approve']);
+  });
+});
+
 describe('runAddLiquidityTxs from an ordinary wallet', () => {
   it('holds an ambiguous mint across both mint entry points, before any permit signature', async () => {
     runtime.safeApp = false; runtime.erc20Allowance = 10n ** 30n; runtime.permit2 = [10n ** 30n, NOW * 2, 0n];

@@ -39,6 +39,27 @@ Object.keys(vectors).forEach(function (name) {
 });
 
 import { describeLpEdit, lpEditFromForm } from '../src/lp-edit.js';
+import { lpGetAmountsForLiquidity, lpSqrtAtTick } from '../src/discover.js';
+
+describe('a reviewed move whose burn no longer covers its mint', () => {
+  it('is refused although the mint still fits its own maxima', () => {
+    var set = vectors.native;
+    var pool = { key: set.key, sqrtP: set.sqrtP, pairIsC0: true, pair: { decimals: 18, isNative: true, symbol: 'ETH' } };
+    // A narrow band around the price, moved to a much wider one with the same holdings.
+    var held = lpGetAmountsForLiquidity(set.sqrtP, lpSqrtAtTick(68400), lpSqrtAtTick(69600), set.liquidity);
+    var position = { tokenId: 77n, liquidity: set.liquidity, tickLower: 68400, tickUpper: 69600, pairAmount: held.amount0, tokenAmount: held.amount1 };
+    var move = lpEditPlan(pool, position, { pairAmount: held.amount0, tokenAmount: held.amount1 }, { pa: Math.pow(1.0001, -76000), pb: Math.pow(1.0001, -62000) }, ACCOUNT);
+    expect(move.pairFunding + move.tokenFunding).toBe(0n);
+    expect(lpEditStillFits(move, { sqrtP: set.sqrtP, liquidity: set.liquidity })).toBeNull();
+    // A 0.2% price move: the wider new band still fits its maxima, but the old band returns less of one
+    // currency than the mint takes, which the wallet would pay unreviewed.
+    var moved = set.sqrtP * 1001n / 1000n;
+    var minted = lpGetAmountsForLiquidity(moved, lpSqrtAtTick(move.tickLower), lpSqrtAtTick(move.tickUpper), move.liquidity);
+    expect(minted.amount0 <= move.amount0Max && minted.amount1 <= move.amount1Max).toBe(true);
+    expect(lpEditStillFits(move, { sqrtP: moved, liquidity: set.liquidity })).toMatch(/price moved/);
+  });
+});
+
 
 describe('the words of a reviewed edit', () => {
   var fmt = { token: function (amount) { return amount + ' TKN'; }, pair: function (amount) { return amount + ' ETH'; } };

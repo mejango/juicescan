@@ -31197,8 +31197,11 @@ export async function runAddLiquidityTxs(chainId, prep, onStatus, plan) {
     }
   }
 
-  await guardQueued(posm, LP_SEL_MODIFY_LIQUIDITIES, 'The liquidity mint');
-  onStatus(prep.smartWallet ? proposeMsg('the liquidity mint') : 'Adding liquidity…', 'pending', { step: -1 });
+  // An edit names its own step, and reads its position again here: approvals above can take a while.
+  var stepLabel = prep.stepLabel || 'liquidity mint';
+  await guardQueued(posm, LP_SEL_MODIFY_LIQUIDITIES, 'The ' + stepLabel);
+  if (prep.recheck) await prep.recheck();
+  onStatus(prep.smartWallet ? proposeMsg('the ' + stepLabel) : (prep.sendingLine || 'Adding liquidity…'), 'pending', { step: -1 });
   if (!getAccount() || getAccount().toLowerCase() !== prep.acct.toLowerCase()) throw new Error('Connected account changed. Review the liquidity transaction again.');
   if (permitDatas.length) {
     var mintData = encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, deadline] });
@@ -32050,7 +32053,7 @@ export {
   classifySuckerInfra, clientFor, controllerAddressFor, currentSurplusOfAbi, draftRecipientFromSplit,
   erc20BalanceOfAbi, feeFreeSurplusOfAbi, fetchProjectTiers, findToRemoteValue, formatBalance, formatEth,
   formatTokens, isFeelessAddress, isKnown721HookClone, isZeroishAddress, lpDeadlineSecs, lpIsSmartWallet, lpPairFor,
-  lpConfirmAndSend, lpPositionManagerAbi, lpSendTx, lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
+  lpConfirmAndSend, lpPositionManagerAbi, lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
   payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
   readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, refreshLpPositionForRemoval, renderBalanceTables,
   renderBridgeTransactions, renderBridgeTransactionsTable, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,
