@@ -398,7 +398,7 @@ async function writeNonceReservations(rows, locks) {
 // Both requests share the nonce, so at most one of them can ever execute.
 async function reserveForwardedPublication(proofs, locks, replacing) {
   if (!proofs.length) return [];
-  var rows = readNonceReservations(), seen = new Set();
+  var rows = readNonceReservations(), seen = new Set(), displaced = [];
   for (var proof of proofs) {
     var key = nonceReservationKey(proof);
     if (seen.has(key)) throw new Error('This Relayr bundle repeats a signed forwarder nonce. Use separate confirmed rounds for same-chain calls.');
@@ -420,7 +420,9 @@ async function reserveForwardedPublication(proofs, locks, replacing) {
         || !(state.nonce > BigInt(row.nonce) || state.timestamp > BigInt(row.deadline));
     });
     rows = rows.filter(function (row) {
-      return !(replacing && nonceReservationKey(row) === key && row.scope === proof.scope);
+      var gone = replacing && nonceReservationKey(row) === key && row.scope === proof.scope;
+      if (gone) displaced.push(row);
+      return !gone;
     });
     var conflict = rows.find(function (row) { return nonceReservationKey(row) === key; });
     if (conflict) {
@@ -431,6 +433,8 @@ async function reserveForwardedPublication(proofs, locks, replacing) {
     rows.push(proof);
   }
   await writeNonceReservations(rows, locks);
+  // What this call displaced, so a definite abort before the POST can put it back.
+  proofs.displaced = displaced;
   return proofs;
 }
 // Removes the reservations of an attempt that definitely never reached the POST, under the publication lock.
@@ -439,7 +443,7 @@ async function releaseForwardedReservations(proofs, lock) {
   var keys = new Set(proofs.map(nonceReservationKey));
   await writeNonceReservations(readNonceReservations().filter(function (row) {
     return !keys.has(nonceReservationKey(row)) || !proofs.some(function (proof) { return proof.requestHash === row.requestHash && proof.scope === row.scope; });
-  }), [lock]);
+  }).concat(proofs.displaced || []), [lock]);
 }
 
 // POST the bundle and return { bundle_uuid, payment_info:[{chain,amount,calldata,target,token,payment_deadline}], ... }.
@@ -500,7 +504,7 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
     var fence = [lock].concat(journal.locks || []);
     var reserved = await reserveForwardedPublication(forwarded, fence, !!(replaced && journal.replaces));
     try { await assertLocksHeld(fence); } catch (error) {
-      if (!(replaced && journal.replaces)) await releaseForwardedReservations(reserved, lock).catch(function () {});
+      await releaseForwardedReservations(reserved, lock).catch(function () {});
       throw error;
     }
     // The archived receipt gives way to the new marker only now, with the reservations written and the locks held.
@@ -521,6 +525,7 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
         var current = loadRelayrPendingSession(journal.scope);
         if (!current || current.bundleUuid !== replaced.bundleUuid || (current.paymentHash || null) !== (replaced.paymentHash || null)
             || (current.paymentState || null) !== (replaced.paymentState || null)) {
+          await releaseForwardedReservations(reserved, lock).catch(function () {});
           var moved = new Error('This saved bundle changed in another window. Check its status first. Nothing was published.');
           moved.code = 'RELAYR_PUBLICATION_PENDING'; moved.retryable = true;
           throw moved;
@@ -531,9 +536,8 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
     } else savePublication();
     if (!publication || publication.persisted === false) {
       if (publication) clearRelayrPendingSession(journal.scope, publication);
-      // A replacement's reservation took the old request's place at the same nonce: it stays, as that nonce's proof.
       if (replacing) saveRelayrPendingSession(journal.scope, replaced);
-      else await releaseForwardedReservations(reserved, lock).catch(function () {});
+      await releaseForwardedReservations(reserved, lock).catch(function () {});
       throw new Error('The request could not be saved before publication. Enable browser storage before requesting a Relayr quote. Nothing was published or paid.');
     }
   }

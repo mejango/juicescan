@@ -383,6 +383,19 @@ describe('replacing a paid bundle’s unfinished request at the same nonce', () 
       .rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
   });
 
+  it('puts the earlier reservation back when the bundle changes hands before anything is published', async () => {
+    const paid = await paidBundle();
+    const before = reservations();
+    state.timestamp = BigInt(NOW + 60); vi.spyOn(Date, 'now').mockReturnValue((NOW + 60) * 1000);
+    const tx = await again();
+    // Another window clears the receipt while this one reads the chain for its reservation.
+    state.client.getBlock.mockImplementationOnce(async () => { clearRelayrPendingSession('create', paid); return { number: 99n, timestamp: state.timestamp }; });
+    await expect(relayrPostBundle([tx], { ...journal('create'), replaces: { bundleUuid: paid.bundleUuid } }))
+      .rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+    expect(fetchQuote).toHaveBeenCalledTimes(1);
+    expect(reservations()).toEqual(before);
+  });
+
   it('never replaces another action’s reservation at that nonce', async () => {
     await relayrPostBundle([await entry(8453, '0xdeadbeef')], journal('claims'));
     saveRelayrPendingSession('create', { bundleUuid: '99999999-89ab-cdef-0123-456789abcdef', account: ACCOUNT, paymentHash: PAY, expectedCount: 1,
