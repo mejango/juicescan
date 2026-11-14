@@ -111,7 +111,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // Splits and details review lines, and finishing a paid relayed launch's unfinished chains: measured 2,144,877 B gzip.
 // A new Safe as owner or operator at launch (address prediction, the creation batch, on-chain verification, the signer editor): measured 2,149,531 B gzip.
 // The old-pool move, raised by chain, the issuance preview and the lazy position editor: measured 2,153,861 B gzip.
-const totalGzipBudget = 2_156_000;
+// The two-sided market: its builders, the market mode of the add form and the market editor: measured 2,160,828 B gzip.
+const totalGzipBudget = 2_163_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

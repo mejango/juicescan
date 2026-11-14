@@ -1,10 +1,10 @@
 // The two-sided market must build the calls juicebox.money builds (src/lib/market-liquidity.ts).
 // test/fixtures/lp-market-vectors.json is that module's output for these inputs: a native pair sorted first and a
-// 6-decimal ERC-20 pair sorted second, each through four mints, eight edits, a grouping and a fee claim.
+// 6-decimal ERC-20 pair sorted second, each through four mints, eight edits and a grouping.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { lpCollectMarketFees, lpCorridorMoved, lpGroupMarketPositions, lpMarketEdit, lpMarketEditStillFits, lpMarketMint, lpMarketRoom } from '../src/lp-market.js';
+import { describeMarketEdit, lpCorridorMoved, lpDisplayPrice, lpGroupMarketPositions, lpMarketEdit, lpMarketEditFromForm, lpMarketEditStillFits, lpMarketMint, lpMarketRoom } from '../src/lp-market.js';
 
 var ACCOUNT = '0x3333333333333333333333333333333333333333';
 var vectors = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/lp-market-vectors.json'), 'utf8'),
@@ -54,9 +54,8 @@ Object.keys(vectors).forEach(function (name) {
       expect(groups).toEqual(set.groups);
     });
 
-    it('claims both sides in one unlock', () => {
-      expect(lpCollectMarketFees(pool, [11n, 12n], ACCOUNT)).toBe(set.collect);
-      expect(() => lpCollectMarketFees(pool, [], ACCOUNT)).toThrow(/No positions/);
+    it('reads the display price from the pool price', () => {
+      expect(lpDisplayPrice(set.sqrtP, pool.pair, pool.pairIsC0)).toBeCloseTo(set.price, 12);
     });
 
     it('refuses nothing to do, no corridor, and a side the price has left', () => {
@@ -70,6 +69,18 @@ Object.keys(vectors).forEach(function (name) {
       expect(lpMarketRoom(set.price, set.corridor)).toEqual({ token: true, pair: true });
     });
 
+    it('the form asks for what each side holds when untouched, and maps a typed amount to that side alone', () => {
+      var listed = function (side) { return Object.assign({}, side, { pairAmt: side.pairAmount, tokAmt: side.tokenAmount, key: set.key, pair: pool.pair, pairIsC0: native, sqrtP: set.sqrtP }); };
+      var sides = { tokenSide: listed(set.tokenSide), pairSide: listed(set.pairSide) };
+      var shown = { token: '5', pair: '3' };
+      expect(() => lpMarketEditFromForm(sides, shown, { token: '5', pair: '3' }, set.corridor, false, ACCOUNT)).toThrow(/leaves the market as it is/);
+      var expected = set.edits.removeToken;
+      var plan = lpMarketEditFromForm(sides, shown, { token: '0', pair: '3' }, set.corridor, false, ACCOUNT);
+      expect(plan.unlockData).toBe(expected.plan.unlockData);
+      expect(plan.pair.kind).toBe('keep');
+      expect(() => lpMarketEditFromForm(sides, shown, { token: 'x', pair: '3' }, set.corridor, false, ACCOUNT)).toThrow(/valid amount/);
+    });
+
     it('notices a corridor that moved away from the bands', () => {
       var sides = { tokenSide: set.tokenSide, pairSide: set.pairSide };
       // Bands snap to tick spacing, so the minted corridor itself reads as in place within a few percent only.
@@ -77,5 +88,39 @@ Object.keys(vectors).forEach(function (name) {
       expect(lpCorridorMoved(pool, sides, { floor: made.floor / 3, ceiling: made.ceiling })).toBe(true);
       expect(lpCorridorMoved(pool, sides, { floor: made.floor, ceiling: made.ceiling * 3 })).toBe(true);
     });
+  });
+});
+
+describe('the words of a reviewed market edit', () => {
+  var fmt = { token: function (amount) { return amount + ' TKN'; }, pair: function (amount) { return amount + ' ETH'; } };
+  var side = function (more) { return Object.assign({ kind: 'increase', tokenId: 11n, holding: 20n }, more); };
+  it('names each side, the wallet flows, the authorization and the floors', () => {
+    var rows = describeMarketEdit({
+      refit: true, token: side({ kind: 'move' }), pair: side({ kind: 'mint', tokenId: null, holding: 3n }),
+      tokenFlow: -5n, pairFlow: 3n, tokenFunding: 0n, pairFunding: 4n, tokenMinimum: 19n, pairMinimum: 0n,
+    }, fmt, '1 to 2 ETH/TKN');
+    expect(rows).toEqual([
+      ['Floor to ceiling', '1 to 2 ETH/TKN (re-fit)'],
+      ['Selling side', 're-fits #11, holds about 20 TKN'],
+      ['Buying side', 'mints, holds about 3 ETH'],
+      ['From your wallet', 'about 3 ETH'],
+      ['Back to your wallet', 'about 5 TKN + unclaimed fees'],
+      ['Authorizes up to', '4 ETH (1% price headroom)'],
+      ['Enforced onchain', 'At least 19 TKN back (95% floors)'],
+    ]);
+  });
+  it('a pure top-up returns only fees and states no floors', () => {
+    var rows = describeMarketEdit({
+      refit: false, token: side({}), pair: side({ kind: 'keep', tokenId: 12n, holding: 2n }),
+      tokenFlow: 10n, pairFlow: 0n, tokenFunding: 11n, pairFunding: 0n, tokenMinimum: 0n, pairMinimum: 0n,
+    }, fmt, '1 to 2 ETH/TKN');
+    expect(rows).toEqual([
+      ['Floor to ceiling', '1 to 2 ETH/TKN (kept)'],
+      ['Selling side', 'tops up #11, holds about 20 TKN'],
+      ['Buying side', 'keeps #12, holds about 2 ETH'],
+      ['From your wallet', 'about 10 TKN'],
+      ['Back to your wallet', 'Unclaimed fees'],
+      ['Authorizes up to', '11 TKN (1% price headroom)'],
+    ]);
   });
 });

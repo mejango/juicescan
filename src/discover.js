@@ -30939,6 +30939,19 @@ export function lpMintPlan(pool, pairAmount, tokenAmount, pa, pb) {
   return { tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max };
 }
 
+// The floor (cash out price) and ceiling (issuance price) a market is made between, in pair per token; 0 where
+// one cannot be read in the pair's unit.
+async function lpCorridor(project, chainId) {
+  var weight = project.ruleset ? Number(project.ruleset.weight) : 0;
+  var ceiling = weight > 0 ? 1e18 / weight : 0;
+  if (ceiling > 0 && issuancePairUnitMismatch(project)) {
+    var rate = await readIssuancePairRate(project, chainId).catch(function () { return null; });
+    ceiling = rate ? ceiling * rate : 0;
+  }
+  var floor = await readCashoutPrice(project, chainId);
+  return { floor: floor > 0 ? floor : 0, ceiling: ceiling };
+}
+
 async function prepareAddLiquidity(opts) {
   var project = opts.project, chainId = opts.chainId;
   var acct = getAccount();
@@ -30951,7 +30964,14 @@ async function prepareAddLiquidity(opts) {
   var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
   var c0 = (key.currency0 || '').toLowerCase();
   var pairIsC0 = (c0 === pair.addr); // else the project token (always ERC-20) is currency0
-  var sized = lpMintPlan({ key: key, sqrtP: sqrtP, pair: pair, pairIsC0: pairIsC0 }, opts.pairAmount, opts.tokenAmount, opts.pa, opts.pb);
+  // A market (opts.market = { floor, ceiling }) is two single-sided mints in one call, each with its own maxima.
+  var market = null;
+  if (opts.market) {
+    var marketModule = await import('./lp-market.js').catch(function () { throw chunkFailure(); });
+    market = marketModule.lpMarketMint({ key: key, sqrtP: sqrtP, pair: pair, pairIsC0: pairIsC0, price: marketModule.lpDisplayPrice(sqrtP, pair, pairIsC0) },
+      opts.tokenAmount, opts.pairAmount, opts.market, acct);
+  }
+  var sized = market || lpMintPlan({ key: key, sqrtP: sqrtP, pair: pair, pairIsC0: pairIsC0 }, opts.pairAmount, opts.tokenAmount, opts.pa, opts.pb);
   var tickLower = sized.tickLower, tickUpper = sized.tickUpper, liquidity = sized.liquidity, need = sized.need;
   var amount0Max = sized.amount0Max, amount1Max = sized.amount1Max;
 
@@ -30973,6 +30993,15 @@ async function prepareAddLiquidity(opts) {
     return Object.assign({ currency: currency }, lpClampToAllowances(max, need, erc20Allow, p2Amount));
   }
   var erc20 = [];
+  if (market) {
+    // The maxima sit inside each side's own mint, so an earlier allowance is reused only when it covers them whole.
+    for (var m = 0; m < market.erc20.length; m++) erc20.push(await sideWithAllowances(market.erc20[m].currency, market.erc20[m].max, market.erc20[m].max));
+    return {
+      posm: posm, key: key, acct: acct, market: market, need: need, amount0Max: amount0Max, amount1Max: amount1Max, value: market.value,
+      unlockData: market.unlockData, pairIsC0: pairIsC0, pair: pair, erc20: erc20, smartWallet: smartWallet,
+      pa: opts.market.floor, pb: opts.market.ceiling, deadlineSecs: opts.deadlineSecs || null, poolId: uniswapV4PoolId(key),
+    };
+  }
   if (!c0Native && amount0Max > 1n) { var s0 = await sideWithAllowances(key.currency0, amount0Max, need.amount0); amount0Max = s0.max; erc20.push(s0); }
   if (!c1Native && amount1Max > 1n) { var s1 = await sideWithAllowances(key.currency1, amount1Max, need.amount1); amount1Max = s1.max; erc20.push(s1); }
   var value = c0Native ? amount0Max : (c1Native ? amount1Max : 0n);
@@ -31617,6 +31646,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
     var head = el('div', 'owners-row owners-head');
     ['Position', 'Chain', 'Holdings', 'Unclaimed fees', 'Lifetime fees', ''].forEach(function (h) { var c = el('span'); c.textContent = h; head.appendChild(c); });
     table.appendChild(head);
+    var actionCells = [];
     found.forEach(function (entry) {
       var pos = entry.pos, cid = entry.cid;
       var tr = el('div', 'owners-row');
@@ -31639,6 +31669,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       var manage = el('button', 'detail-check-btn'); manage.textContent = 'Remove';
       manage.addEventListener('click', function () { openRemoveLiquidityModal(project, cid, onDone); });
       actC.appendChild(manage);
+      actionCells.push({ cid: cid, pos: pos, cell: actC });
       tr.appendChild(actC);
       table.appendChild(tr);
       readLpPositionFees(cid, pos).then(function (fees) {
@@ -31669,6 +31700,22 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
     });
     wrap.appendChild(table);
     host.appendChild(wrap);
+    // Two positions in the current pool whose bands meet at the price are one market, edited together.
+    chainIds.forEach(function (cid) {
+      var current = actionCells.filter(function (entry) { return entry.cid === cid && entry.pos.hookIsCurrent; });
+      if (current.length < 2) return;
+      import('./lp-market.js').then(function (mod) {
+        var first = current[0].pos;
+        mod.lpGroupMarketPositions({ key: first.key, pair: first.pair, pairIsC0: first.pairIsC0 }, current.map(function (entry) { return entry.pos; })).forEach(function (group) {
+          if (group.kind !== 'market') return;
+          current.filter(function (entry) { return entry.pos === group.tokenSide || entry.pos === group.pairSide; }).forEach(function (entry) {
+            var edit = el('button', 'detail-check-btn'); edit.textContent = 'Edit market';
+            edit.addEventListener('click', function () { mod.openLpMarketEditor(project, cid, group, acct, onDone); });
+            entry.cell.insertBefore(edit, entry.cell.firstChild);
+          });
+        });
+      }).catch(function () {});
+    });
   }).catch(function () { loading.remove(); });
 }
 
@@ -32053,7 +32100,7 @@ export {
   classifySuckerInfra, clientFor, controllerAddressFor, currentSurplusOfAbi, draftRecipientFromSplit,
   erc20BalanceOfAbi, feeFreeSurplusOfAbi, fetchProjectTiers, findToRemoteValue, formatBalance, formatEth,
   formatTokens, isFeelessAddress, isKnown721HookClone, isZeroishAddress, lpDeadlineSecs, lpIsSmartWallet, lpPairFor,
-  lpConfirmAndSend, lpPositionManagerAbi, lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
+  lpConfirmAndSend, lpCorridor, lpPositionManagerAbi, lpTrimNum, moveChainName, noteLocalLpWrite, openTxConfirm, opsChainSelect, opsPercentButtons, ownerOfAbi,
   payoutLimitsAbi, prepareAddLiquidity, previewCashOutAbi, projectChains, read, readAmmPrice, readCashoutPrice,
   readIssuancePairRate, readSuckerPairsOf, readUserBalance, readWalletTokenBalance, refreshLpPositionForRemoval, renderBalanceTables,
   renderBridgeTransactions, renderBridgeTransactionsTable, renderExplorerTxLink, resolveAcctToken, resolveAcctTokens, resolveFundsKindAcct, resolveTierMedia,

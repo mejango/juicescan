@@ -5,8 +5,12 @@
 //
 // pool: { key, sqrtP, price, pair: { decimals, isNative, symbol }, pairIsC0 }, price in pair per token.
 // A position: { tokenId, liquidity, tickLower, tickUpper, pairAmount, tokenAmount } as read at the pool's sqrtP.
-import { encodeAbiParameters } from 'viem';
-import { lpBandPricesOf, lpGetAmountsForLiquidity, lpMintPlan, lpSqrtAtTick } from './discover.js';
+import { formatUnits, parseUnits } from 'viem';
+import { el, errMessage, openPendingReview } from './component-base.js';
+import {
+  POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpBandPricesOf, lpConfirmAndSend, lpCorridor,
+  lpGetAmountsForLiquidity, lpMintPlan, lpSqrtAtTick, noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
+} from './discover.js';
 import { lpCloseActions, lpEditOperations, lpEncodeUnlock, lpMintParams, lpMoveStillCovered } from './lp-edit.js';
 
 var UINT160_MAX = (1n << 160n) - 1n;
@@ -189,12 +193,166 @@ export function lpMarketEditStillFits(plan, live) {
   return null;
 }
 
-// Claim the fees of several positions (a market's two sides) in one unlock: a zero-liquidity decrease per
-// position, then one take of both currencies.
-export function lpCollectMarketFees(pool, tokenIds, recipient) {
-  if (!tokenIds.length) throw new Error('No positions to claim from.');
-  var key = pool.key;
-  var modify = [{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }];
-  return lpEncodeUnlock('01'.repeat(tokenIds.length) + '11', tokenIds.map(function (tokenId) { return encodeAbiParameters(modify, [BigInt(tokenId), 0n, 0n, 0n, '0x']); })
-    .concat([encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [key.currency0, key.currency1, recipient])]));
+// The display price (pair per token) a sqrtPriceX96 stands for.
+export function lpDisplayPrice(sqrtP, pair, pairIsC0) {
+  var raw = Math.pow(Number(sqrtP) / Math.pow(2, 96), 2), scale = Math.pow(10, 18 - pair.decimals);
+  return pairIsC0 ? scale / raw : raw * scale;
+}
+
+var SIDE_VERB = { increase: 'tops up', decrease: 'frees part of', remove: 'removes', move: 're-fits', mint: 'mints', keep: 'keeps' };
+
+// The review rows of a market edit. fmt: { token(amount), pair(amount) }.
+export function describeMarketEdit(plan, fmt, corridorText) {
+  var both = function (tokenAmount, pairAmount) {
+    return [tokenAmount > 0n ? fmt.token(tokenAmount) : null, pairAmount > 0n ? fmt.pair(pairAmount) : null].filter(Boolean).join(' + ');
+  };
+  var positive = function (amount) { return amount > 0n ? amount : 0n; };
+  var side = function (edit, format) {
+    return SIDE_VERB[edit.kind] + (edit.tokenId !== null ? ' #' + edit.tokenId.toString() : '') + ', holds about ' + format(edit.holding);
+  };
+  var rows = [['Floor to ceiling', corridorText + (plan.refit ? ' (re-fit)' : ' (kept)')]];
+  if (plan.token) rows.push(['Selling side', side(plan.token, fmt.token)]);
+  if (plan.pair) rows.push(['Buying side', side(plan.pair, fmt.pair)]);
+  if (plan.tokenFlow > 0n || plan.pairFlow > 0n) rows.push(['From your wallet', 'about ' + both(positive(plan.tokenFlow), positive(plan.pairFlow))]);
+  rows.push(['Back to your wallet', plan.tokenFlow < 0n || plan.pairFlow < 0n
+    ? 'about ' + both(positive(-plan.tokenFlow), positive(-plan.pairFlow)) + ' + unclaimed fees' : 'Unclaimed fees']);
+  if (plan.tokenFunding > 0n || plan.pairFunding > 0n) rows.push(['Authorizes up to', both(plan.tokenFunding, plan.pairFunding) + ' (1% price headroom)']);
+  if (plan.tokenMinimum > 0n || plan.pairMinimum > 0n) rows.push(['Enforced onchain', 'At least ' + both(plan.tokenMinimum, plan.pairMinimum) + ' back (95% floors)']);
+  return rows;
+}
+
+// The plan a filled market form asks for, on freshly read sides. An untouched amount asks for exactly what that
+// side holds now. sides: { tokenSide, pairSide } as refreshed positions; shown: the texts the form opened with.
+export function lpMarketEditFromForm(sides, shown, values, corridor, refit, account) {
+  var amount = function (text, decimals, held, was) {
+    text = String(text).trim();
+    if (text === was) return held;
+    if (!/^\d*\.?\d*$/.test(text) || text === '' || text === '.') throw new Error('Enter a valid amount.');
+    return parseUnits(text, decimals);
+  };
+  var any = sides.tokenSide || sides.pairSide;
+  var asPosition = function (pos) {
+    return pos && { tokenId: pos.tokenId, liquidity: pos.liquidity, tickLower: pos.tickLower, tickUpper: pos.tickUpper, pairAmount: pos.pairAmt, tokenAmount: pos.tokAmt };
+  };
+  // Both sides sit in one pool; the later read carries the fresher price.
+  var sqrtP = (sides.pairSide || sides.tokenSide).sqrtP;
+  var pool = { key: any.key, sqrtP: sqrtP, pair: any.pair, pairIsC0: any.pairIsC0, price: lpDisplayPrice(sqrtP, any.pair, any.pairIsC0) };
+  // Each side is valued at the one price the plan is built on.
+  var held = function (pos) {
+    if (!pos) return null;
+    var amounts = lpGetAmountsForLiquidity(sqrtP, lpSqrtAtTick(pos.tickLower), lpSqrtAtTick(pos.tickUpper), pos.liquidity);
+    return Object.assign(asPosition(pos), { pairAmount: any.pairIsC0 ? amounts.amount0 : amounts.amount1, tokenAmount: any.pairIsC0 ? amounts.amount1 : amounts.amount0 });
+  };
+  var tokenSide = held(sides.tokenSide), pairSide = held(sides.pairSide);
+  return lpMarketEdit(pool, { tokenSide: tokenSide, pairSide: pairSide }, {
+    tokenAmount: amount(values.token, 18, tokenSide ? tokenSide.tokenAmount : 0n, shown.token),
+    pairAmount: amount(values.pair, any.pair.decimals, pairSide ? pairSide.pairAmount : 0n, shown.pair),
+  }, corridor, refit, account);
+}
+
+// The market editor: what each side should hold, and whether both sides move to the floor and ceiling as they
+// stand now. Everything a call is built from is read again at Review and once more right before sending.
+// group: { tokenSide, pairSide } as listed positions.
+export function openLpMarketEditor(project, chainId, group, acct, onDone) {
+  var sym = project.tokenSymbol || 'tokens', pair = group.tokenSide.pair;
+  var ids = '#' + group.tokenSide.tokenId.toString() + ' + #' + group.pairSide.tokenId.toString();
+  var fmt = { token: function (amount) { return formatTokens(amount) + ' ' + sym; }, pair: function (amount) { return formatBalance(amount, pair.decimals, pair.symbol); } };
+  var wrap = el('div', 'modal-body');
+  var intro = el('div', 'modal-balance'); intro.textContent = 'Refreshing the market…'; wrap.appendChild(intro);
+  var field = function (label) {
+    var title = el('div', 'modal-label'); title.textContent = label; title.style.marginTop = '10px'; wrap.appendChild(title);
+    var input = el('input', 'ops-amount'); input.type = 'text'; input.inputMode = 'decimal'; input.autocomplete = 'off'; input.disabled = true;
+    input.setAttribute('aria-label', label);
+    var box = el('div', 'ops-field ops-field--grow'); box.appendChild(input); wrap.appendChild(box);
+    return input;
+  };
+  var tokenInput = field(sym + ' to sell above the price');
+  var pairInput = field(pair.symbol + ' to buy with below the price');
+  var refitRow = el('label', 'modal-balance'); refitRow.style.display = 'block'; refitRow.style.marginTop = '10px';
+  var refitBox = el('input'); refitBox.type = 'checkbox'; refitBox.disabled = true; refitRow.appendChild(refitBox);
+  var refitText = el('span'); refitRow.appendChild(refitText); wrap.appendChild(refitRow);
+  var note = el('div', 'modal-balance');
+  note.textContent = 'One transaction. Each amount is used in full. Added amounts come from your wallet; freed amounts and unclaimed fees return to it. Set a side to 0 to remove it.';
+  wrap.appendChild(note);
+  var status = el('div', 'modal-status error'); status.style.display = 'none'; wrap.appendChild(status);
+  var go = el('button', 'detail-check-btn'); go.textContent = 'Review'; go.disabled = true; go.style.marginTop = '10px'; wrap.appendChild(go);
+  var handle = openModal('Edit market ' + ids, wrap);
+  var shown = null, corridor = null;
+
+  function fail(error, fallback) {
+    var message = errMessage(error, fallback);
+    status.textContent = message.length > 200 ? message.slice(0, 200) + '…' : message; status.style.display = '';
+  }
+  function readSides() {
+    return Promise.all([refreshLpPositionForRemoval(chainId, group.tokenSide, acct), refreshLpPositionForRemoval(chainId, group.pairSide, acct)])
+      .then(function (fresh) { return { tokenSide: fresh[0], pairSide: fresh[1] }; });
+  }
+  var corridorText = function () { return formatPrice(corridor.floor) + ' to ' + formatPrice(corridor.ceiling) + ' ' + pair.symbol + '/' + sym; };
+
+  Promise.all([readSides(), lpCorridor(project, chainId)]).then(function (read) {
+    var sides = read[0];
+    if (!(read[1].floor > 0) || !(read[1].ceiling > read[1].floor)) throw new Error('This project has no usable floor and ceiling to make a market between.');
+    corridor = read[1];
+    shown = { token: formatUnits(sides.tokenSide.tokAmt, 18), pair: formatUnits(sides.pairSide.pairAmt, pair.decimals) };
+    intro.textContent = 'Market ' + ids + ' on ' + chainNameOf(chainId) + ' holds ' + fmt.token(sides.tokenSide.tokAmt) + ' selling above the price and ' + fmt.pair(sides.pairSide.pairAmt) + ' buying below it.';
+    tokenInput.value = shown.token; pairInput.value = shown.pair;
+    var moved = lpCorridorMoved({ pair: pair, pairIsC0: sides.tokenSide.pairIsC0 }, sides, corridor);
+    refitBox.checked = moved;
+    refitText.textContent = ' Match both sides to the current floor and ceiling (' + corridorText() + ').'
+      + (moved ? ' They have moved since you made this market.' : ' Not needed right now, they already match.');
+    [tokenInput, pairInput, refitBox].forEach(function (input) { input.disabled = false; });
+    go.disabled = false;
+  }).catch(function (error) { intro.textContent = 'Could not refresh this market.'; fail(error, 'Could not refresh this market'); });
+
+  go.addEventListener('click', function () {
+    if (go.disabled || !shown) return;
+    status.style.display = 'none';
+    var opts = { title: 'Confirm market edit', confirmText: 'Confirm' };
+    var action = 'Edit your market in the ' + sym + '/' + pair.symbol + ' pool';
+    var review = openPendingReview({ action: action, chain: chainNameOf(chainId), rows: [['Market', ids], ['Floor to ceiling', null], ['To', acct], ['Deadline', null]] }, opts);
+    if (review.closed) return;
+    go.disabled = true;
+    var refit = refitBox.checked, values = { token: tokenInput.value, pair: pairInput.value };
+    readSides().then(function (sides) {
+      go.disabled = false;
+      if (review.closed) return;
+      var plan = lpMarketEditFromForm(sides, shown, values, corridor, refit, acct);
+      var posm = POSITION_MANAGER_BY_CHAIN[chainId], smartWallet = !!sides.tokenSide.smartWallet;
+      var window = smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes';
+      var reviewedAt = Math.floor(Date.now() / 1000);
+      var deadline = BigInt(reviewedAt + (smartWallet ? 30 * 24 * 3600 : 1200));
+      lpConfirmAndSend(review, {
+        summary: { action: action, rows: [['Market', ids]].concat(describeMarketEdit(plan, fmt, corridorText())).concat([['To', acct], ['Deadline', window]]) },
+        chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: posm,
+        'function': 'modifyLiquidities', value: plan.value.toString(),
+        calldata: 'built at signing: it may carry a Permit2 signature bound to this wallet',
+        args: { unlockData: plan.unlockData, deadline: 'set at signing (' + window + ')' },
+      }, opts, 'Checking the market…', 'Market edit failed', function (dialog) {
+        // Both positions and the price again, right before sending and once more after any approvals.
+        var recheck = function () {
+          return readSides().then(function (live) {
+            var liquidityOf = function (tokenId) {
+              return BigInt(tokenId) === BigInt(live.tokenSide.tokenId) ? live.tokenSide.liquidity : BigInt(tokenId) === BigInt(live.pairSide.tokenId) ? live.pairSide.liquidity : undefined;
+            };
+            var stale = lpMarketEditStillFits(plan, { sqrtP: live.pairSide.sqrtP, liquidityOf: liquidityOf });
+            if (stale) throw new Error(stale);
+          });
+        };
+        return recheck().then(function () {
+          return runAddLiquidityTxs(chainId, {
+            posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: plan.erc20, acct: acct, smartWallet: smartWallet,
+            stepLabel: 'market edit', sendingLine: 'Confirm in your wallet…', recheck: recheck,
+          }, function (message, kind, meta) { dialog.showStatus(message, kind, meta); }, { now: reviewedAt, deadline: deadline });
+        });
+      }, function (result) {
+        handle.close();
+        noteLocalLpWrite(chainId, sides.tokenSide.poolId);
+        if (onDone) onDone(result && result.safeTxHash ? null : result);
+      });
+    }).catch(function (error) {
+      go.disabled = false;
+      fail(error, 'Could not prepare this change');
+      review.fail(status.textContent);
+    });
+  });
 }
