@@ -51,6 +51,7 @@ import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-rulese
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
 import { approvalStatusLabel, omnichainCarriedRulesetId, planRulesetQueue } from './ruleset-queue-lifecycle.js';
 import { contractGasWithHeadroom, gasWithinCap, TRANSACTION_GAS_CAP } from './gas.js';
+import { metadataChangeRows, splitChangeRows } from './edit-review-rows.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 
@@ -12725,7 +12726,8 @@ export async function prepareProjectMetadataUpdates(project, chains, transform, 
     var loaded = await loadMetadata(chain.id, controller, projectId);
     if (loaded.error) throw new Error((chain.name || chainNameOf(chain.id)) + ': ' + loaded.error);
     if (!loaded.meta || typeof loaded.meta !== 'object' || Array.isArray(loaded.meta)) throw new Error('Invalid metadata on ' + chainNameOf(chain.id) + '. Nothing was saved.');
-    return { chainId: chain.id, projectId: projectId, controller: controller, sourceUri: loaded.uri || '', metadata: loaded.meta };
+    return { chainId: chain.id, projectId: projectId, controller: controller, sourceUri: loaded.uri || '', metadata: loaded.meta,
+      previous: JSON.parse(JSON.stringify(loaded.meta)) }; // as read, for the review's before and after
   }));
   var updated = transform(entries.map(function (entry) { return entry.metadata; }));
   var pinned = new Map();
@@ -12790,7 +12792,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
     permissionId: JB_PERMISSION_SET_PROJECT_URI,
     label: 'Edit project details', title: 'Confirm edit', pendingScope: relayrActionScope(project, 'edit-project-details'),
     reverify: plan.reverify,
-    summary: { rows: [['Updates', 'the edited project details; untouched metadata stays local to each chain']] },
+    summary: { rows: metadataChangeRows(plan.entries, chainNameOf) },
   }, setStatus);
   if (!actionResult) return;
   if (!actionResult.relayr) {
@@ -26090,7 +26092,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     }));
   }
   var expectedFingerprint = splitFingerprint(expectedPrefill || []);
-  var ridMap = {}, groupMap = {}, controllerMap = {};
+  var ridMap = {}, groupMap = {}, controllerMap = {}, previousMap = {};
   // Each chain's checks depend only on that chain, so the chains are verified together; any failure still stops the save.
   await Promise.all(selectedChains.map(async function (chain) {
     var cid = chain.id;
@@ -26112,6 +26114,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
       if (block) throw new Error(block);
     }
     ridMap[cid] = rs[0].id;
+    previousMap[cid] = liveSplits || [];
     groupMap[cid] = toBigInt(localGroup);
     controllerMap[cid] = liveController;
   }));
@@ -26122,7 +26125,10 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args }),
       contract: 'JBController', abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args };
   }, { label: 'Edit splits', title: 'Confirm edit splits', gas: 600000n, permissionId: JB_PERMISSION_SET_SPLIT_GROUPS, pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
-    summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts'], ['Recipients', splits.length ? splits.length + ' split' + (splits.length === 1 ? '' : 's') + ' (replaces the current set)' : 'none: clears the group']] } }, setStatus);
+    summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts']].concat(selectedChains.flatMap(function (chain) {
+        return splitChangeRows({ chainName: chain.name || chainNameOf(chain.id), projectId: pidOn(project, chain.id), rulesetId: ridMap[chain.id],
+          previous: previousMap[chain.id], next: splitsByChain[chain.id] });
+      })) } }, setStatus);
 
   if (!result) return;
   if (result.cancelled) { setStatus('Cancelled', ''); return; }
