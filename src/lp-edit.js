@@ -30,6 +30,26 @@ var MINT = [
 
 function floor95(amount) { return quotedOutputFloor(amount, 9500); }
 
+// A MINT_POSITION's parameters for a sized mint ({ tickLower, tickUpper, liquidity, amount0Max, amount1Max }).
+export function lpMintParams(key, mint, account) {
+  return encodeAbiParameters(MINT, [
+    [key.currency0, key.currency1, Number(key.fee), Number(key.tickSpacing), key.hooks],
+    mint.tickLower, mint.tickUpper, mint.liquidity, mint.amount0Max, mint.amount1Max, account, '0x',
+  ]);
+}
+
+// Settlement the wallet may fund: close both currencies, and sweep unused native value back.
+export function lpCloseActions(pool, account, value) {
+  var key = pool.key;
+  var parameters = [encodeAbiParameters([{ type: 'address' }], [key.currency0]), encodeAbiParameters([{ type: 'address' }], [key.currency1])];
+  if (value > 0n) parameters.push(encodeAbiParameters([{ type: 'address' }, { type: 'address' }], [pool.pairIsC0 ? key.currency0 : key.currency1, account]));
+  return { actions: value > 0n ? '121214' : '1212', parameters: parameters };
+}
+
+export function lpEncodeUnlock(actions, parameters) {
+  return encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x' + actions, parameters]);
+}
+
 // One position's edit as bare V4 actions, before settlement.
 // pool: { key, sqrtP, pair: { decimals, isNative }, pairIsC0 }
 // position: { tokenId, liquidity, tickLower, tickUpper, pairAmount, tokenAmount } as read at the pool's sqrtP
@@ -115,10 +135,7 @@ export function lpEditOperations(pool, position, target, range, account) {
   if (!nativeIsC0 && funding0 > 0n) moveErc20.push({ currency: key.currency0, max: funding0 });
   if (!nativeIsC1 && funding1 > 0n) moveErc20.push({ currency: key.currency1, max: funding1 });
   var pairMinimum = floor95(position.pairAmount), tokenMinimum = floor95(position.tokenAmount);
-  var mintParams = encodeAbiParameters(MINT, [
-    [key.currency0, key.currency1, Number(key.fee), Number(key.tickSpacing), key.hooks],
-    mint.tickLower, mint.tickUpper, mint.liquidity, mint.amount0Max, mint.amount1Max, account, '0x',
-  ]);
+  var mintParams = lpMintParams(key, mint, account);
   return base({
     kind: 'move', actions: '0302', parameters: [burnParams(pairMinimum, tokenMinimum), mintParams],
     tickLower: mint.tickLower, tickUpper: mint.tickUpper, liquidity: mint.liquidity,
@@ -149,14 +166,11 @@ export function lpEditPlan(pool, position, target, range, account) {
     actions += '11';
     parts.push(encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [key.currency0, key.currency1, account]));
   } else {
-    actions += '1212';
-    parts.push(encodeAbiParameters([{ type: 'address' }], [key.currency0]), encodeAbiParameters([{ type: 'address' }], [key.currency1]));
-    if (ops.value > 0n) {
-      actions += '14';
-      parts.push(encodeAbiParameters([{ type: 'address' }, { type: 'address' }], [pool.pairIsC0 ? key.currency0 : key.currency1, account]));
-    }
+    var close = lpCloseActions(pool, account, ops.value);
+    actions += close.actions;
+    parts = parts.concat(close.parameters);
   }
-  return Object.assign(ops, { unlockData: encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x' + actions, parts]) });
+  return Object.assign(ops, { unlockData: lpEncodeUnlock(actions, parts) });
 }
 
 // Why a reviewed plan no longer fits the pool, or null: the position is unchanged and, for an increase or a move,
