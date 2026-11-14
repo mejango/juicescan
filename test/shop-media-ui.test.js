@@ -34,7 +34,7 @@ vi.mock('../src/component-base.js', async importOriginal => {
   };
 });
 vi.mock('../src/ipfs-pin.js', async importOriginal => ({
-  ...await importOriginal(), hasPinata: () => true,
+  ...await importOriginal(),
   pinFile: async file => { runtime.files.push(file); return 'ipfs://uploaded-file'; },
   pinJson: async json => { runtime.pinned.push(json); return encodedIpfsCandidates(`0x${String(runtime.pinned.length + 40).repeat(32)}`)[0]; },
 }));

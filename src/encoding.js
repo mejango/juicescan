@@ -39,6 +39,9 @@ export function omnichainTokenSalt(name, symbol) {
   return keccak256(stringToHex('jb-erc20:' + String(name).trim() + ':' + String(symbol).trim()));
 }
 
+// Shown before a first token deploy: the address depends on the sender and the salt, which is the name and symbol.
+export var TOKEN_SAME_ADDRESS_NOTE = 'To add this token on another chain later at the same address, deploy it there from this same account with the same name and symbol.';
+
 // The salt Juicescan used before it shared juicebox.money's: the viewed chain's project ID and the symbol.
 export function legacyTokenSalt(projectId, symbol) {
   return keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [BigInt(projectId), symbol]));

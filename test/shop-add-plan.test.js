@@ -14,7 +14,7 @@ vi.mock('../src/component-base.js', async original => ({ ...await original(), ge
     throw new Error('Unexpected read ' + r.functionName);
   } }),
 }));
-vi.mock('../src/ipfs-pin.js', async original => ({ ...await original(), hasPinata: () => true,
+vi.mock('../src/ipfs-pin.js', async original => ({ ...await original(),
   pinJson: vi.fn(async () => 'ipfs://QmYwAPJzv5CZsnAzt8auVZRnGiULpZfw3xrYbWyR3kzLQx'), pinFile: vi.fn() }));
 vi.mock('../src/action-plan.js', () => ({ hasSavedActionPlan: () => state.saved, acknowledgeSavedActionPlan: vi.fn(),
   runSavedActionPlan: async options => {

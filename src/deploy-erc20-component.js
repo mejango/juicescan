@@ -9,7 +9,7 @@ import {
   getChainTokens, parseHashDefaults,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
-import { omnichainTokenSalt } from './encoding.js';
+import { omnichainTokenSalt, TOKEN_SAME_ADDRESS_NOTE } from './encoding.js';
 
 export var deployERC20Abi = [{
   type: 'function', name: 'deployERC20For', stateMutability: 'nonpayable',
@@ -140,6 +140,7 @@ export function renderDeployERC20Component() {
         ['Symbol', state.tokenSymbol.trim()],
         ['Project', '#' + String(state.projectId)],
         ['One-time', 'a project can create its token only once'],
+        ['Other chains later', TOKEN_SAME_ADDRESS_NOTE],
       ] },
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },

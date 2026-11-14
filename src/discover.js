@@ -21,7 +21,7 @@ import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive 
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
-import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt, legacyTokenSalt, matchingTokenSalt, contractReverted } from './encoding.js';
+import { encodeCalldata, cashOutTaxValue, omnichainTokenSalt, legacyTokenSalt, matchingTokenSalt, TOKEN_SAME_ADDRESS_NOTE, contractReverted } from './encoding.js';
 import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupportsForwarding, relayrPostBundle, relayrRequestFingerprint, relayrResumeQuotedBundle, relayrPendingRecordExists, restoreUnsentRelayrPayment, requireUnpaidRelayrSession, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, relayrErrorIsUncertain, relayrDestinationHash, verifyRelayrDestinationRecords, bindRelayrSafeExecutions, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession } from './relayr.js';
 import { generationAddresses, generationNames, getABI } from './abi-registry.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
@@ -35,7 +35,7 @@ import { isPendingPaymentTransaction, pendingPaymentTransactionGasCap } from './
 import { proposeSafeTx, getSafeNextNonce, listPendingSafeTxs, confirmSafeTx, executeSafeTx, safeExecRelayrTx, decodeSafeExecRelayrTx, safeQueueLink, safeHomeLink, safeTxLink, hasSafeService, safeOnChainContext, safeTxHashForCall, safeTxHashForQueuedTx, safeApprovalsOf, approveSafeHashOnChain, safeUsableConfirmationCount, fetchSafeCreation, deploySafeSameAddress, SAFE_MAX_OWNERS, readSafeOwnersBounded, readSafeUintBounded, readSafeMasterCopyBounded, readSafeVersionBounded, readSafeModulesBounded, findSavedSafeExecution } from './safe.js';
 import { buildStep, loadTray, saveTray, upsertStep, registerPowerKinds, multiSendBatchCalls, simulateBatchCalls } from './safe-batch.js';
 import { proposeSafeTransactions, txHashForSafeTx } from './safe-app.js';
-import { pinJson, pinFile, hasPinata, setPinataJwt, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
+import { pinJson, pinFile, encodeIpfsUriToBytes32, base58Decode } from './ipfs-pin.js';
 import { toggleRow, deploySalt, DEPLOY_721_COMPONENTS, PAY_DATA_HOOK_RULESET_COMPONENTS, fillSplits, SPLIT_SALES_TOKEN_CREDIT_TITLE } from './create-shared.js';
 import { isEnsName } from './ens.js';
 import { CHUNK_FAILED_TEXT, chunkFailure, chunkReloadButton } from './chunk-failure.js';
@@ -2401,7 +2401,6 @@ function openAddTierModal(project, shop) {
     var names = catInputs.map(function (i) { return (i.value || '').trim(); }).filter(Boolean);
     var setS = makeStatusSetter(addCatStatus, 'operator-edit-status');
     if (!names.length) { setS('Enter at least one category name', 'error'); return; }
-    if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     addStoreCategories(project, allChains, operatorAddr, names, setS).then(function (newIds) {
       if (!newIds || !newIds.length) return;
       rebuildCatOptions(); categorySelect.value = String(newIds[0]); lastCatValue = categorySelect.value;
@@ -2492,15 +2491,6 @@ function openAddTierModal(project, shop) {
   });
   content.appendChild(chainBox);
 
-  var jwtInput = null;
-  if (!hasPinata()) {
-    var jlbl = el('div', 'operator-edit-label'); jlbl.style.marginTop = '12px';
-    jlbl.innerHTML = 'Pinata JWT <span class="operator-edit-hint">— to pin the item image + metadata to IPFS. '
-      + '<a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.</span>';
-    content.appendChild(jlbl);
-    jwtInput = el('input', 'operator-edit-jwt'); jwtInput.type = 'password'; jwtInput.placeholder = 'pinata JWT'; jwtInput.autocomplete = 'off'; jwtInput.spellcheck = false;
-    content.appendChild(jwtInput);
-  }
 
   // Snapshot the current form (and its split rows, read into plain data) so it can be staged + reset.
   function snapshotSplits() {
@@ -2699,7 +2689,6 @@ function openAddTierModal(project, shop) {
   submit.addEventListener('click', function (e) {
     e.preventDefault();
     if (busy) return;
-    if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     var selected = chainChecks.filter(function (c) { return c.cb.checked; }).map(function (c) { return c.chain; });
     var forms = staged.slice();
     if (!hasSelectedProjectAction(relayScope)) {
@@ -2759,7 +2748,6 @@ export function tierSplitShares(splitDefs, splitTotalPct) {
 async function prepareAddTiers(project, selectedChains, operatorAddr, forms, setStatus, sender) {
   if (!forms.length) { throw new Error('Add at least one item'); }
   if (!selectedChains.length) { throw new Error('Select at least one chain'); }
-  if (!hasPinata()) { throw new Error('Enter a Pinata JWT above to pin item media + metadata.'); }
   // Authorize against the live hook permission table. The indexed revnet operator is useful as a
   // display hint, but may lag behind REVOwner/JBPermissions or be unavailable with the indexer.
   setStatus('Reading 721 hooks and permissions…', 'pending');
@@ -2952,7 +2940,6 @@ async function addStoreCategories(project, chains, operatorAddr, names, setStatu
   if (!names.length) { setStatus('Enter at least one category name', 'error'); return null; }
   var account = await ensureMetadataEditorAccount(project, chains, operatorAddr, setStatus);
   if (!account) return null;
-  if (!hasPinata()) { setStatus('Add a Pinata JWT below to name categories.', 'error'); return null; }
 
   setStatus('Reading metadata on every selected chain…', 'pending');
   var newIds;
@@ -3435,14 +3422,12 @@ export function openShopMediaEditor(project, tier) {
   var changeDescription = field('Change item description', 'checkbox');
   var description = field('New item description', 'textarea'); description.disabled = true;
   changeDescription.addEventListener('change', function () { description.disabled = !changeDescription.checked; });
-  var jwt;
-  if (!hasPinata()) { jwt = field('Pinata JWT for metadata upload', 'password'); jwt.autocomplete = 'off'; }
   content.appendChild(status);
   var submit = el('button', 'operator-cta'); content.appendChild(submit);
   var busy = false;
   function sync() {
     submit.disabled = busy; submit.textContent = hasSelectedProjectAction(scope) ? 'Resume saved media update' : 'Review media update';
-    [file, imageUri, changeName, changeDescription, jwt].filter(Boolean).forEach(function (input) { input.disabled = busy; });
+    [file, imageUri, changeName, changeDescription].filter(Boolean).forEach(function (input) { input.disabled = busy; });
     rows.forEach(function (row) { row.check.disabled = busy; });
     name.disabled = busy || !changeName.checked; description.disabled = busy || !changeDescription.checked;
   }
@@ -3458,7 +3443,6 @@ export function openShopMediaEditor(project, tier) {
   submit.addEventListener('click', async function () {
     if (busy) return; busy = true; sync();
     try {
-      if (jwt && jwt.value.trim()) setPinataJwt(jwt.value.trim());
       var selected = rows.filter(function (row) { return row.check.checked; }).map(function (row) { return row.chain; });
       var result = await runSelectedProjectCalls(project, selected, async function (sender) {
         var current = await Promise.all(selected.map(function (chain) { return readShopMediaState(project, chain, tier.id); }));
@@ -11528,16 +11512,6 @@ function openEditProjectModal(project) {
     + ': ' + chains.map(function (c) { return c.name || ('Chain ' + c.id); }).join(', ') + '.';
   content.appendChild(across);
 
-  var jwtInput = null;
-  if (!hasPinata()) {
-    var jlbl = el('div', 'operator-edit-label'); jlbl.style.marginTop = '12px';
-    jlbl.innerHTML = 'Pinata JWT <span class="operator-edit-hint">— to pin the updated metadata to IPFS. '
-      + '<a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.</span>';
-    content.appendChild(jlbl);
-    jwtInput = el('input', 'operator-edit-jwt');
-    jwtInput.type = 'password'; jwtInput.placeholder = 'pinata JWT'; jwtInput.autocomplete = 'off'; jwtInput.spellcheck = false;
-    content.appendChild(jwtInput);
-  }
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
   var actions = el('div', 'operator-edit-actions');
@@ -11567,7 +11541,6 @@ function openEditProjectModal(project) {
     customErr.textContent = parsedCustom.stripped.length
       ? ('Ignored ' + parsedCustom.stripped.join(', ') + ', managed by the fields above.')
       : '';
-    if (jwtInput && jwtInput.value.trim()) setPinataJwt(jwtInput.value.trim());
     var form = {
       name: nameInput.value, tagline: taglineInput.value, description: ta.value, website: websiteInput.value,
       twitter: twitterInput.value, discord: discordInput.value, telegram: telegramInput.value,
@@ -12476,7 +12449,6 @@ async function ensureMetadataEditorAccount(project, chains, operatorAddr, setSta
 async function submitProjectEdit(project, chains, operatorAddr, form, setStatus, modal) {
   var account = await ensureMetadataEditorAccount(project, chains, operatorAddr, setStatus);
   if (!account) return;
-  if (!hasPinata()) { setStatus('Enter a Pinata JWT above to pin the updated metadata.', 'error'); return; }
 
   // Pin a replacement logo once; every destination merges edits over its own freshly read JSON.
   var newLogoUri = null;
@@ -12638,7 +12610,7 @@ function openEditTokenModal(project) {
       + ': ' + chains.map(function (c) { return c.name || ('Chain ' + c.id); }).join(', ')
       + '. Only the name & symbol change, the contract address stays the same on every chain.'
     : 'Deploys one ERC-20 (same address) across ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '')
-      + ': ' + chains.map(function (c) { return c.name || ('Chain ' + c.id); }).join(', ') + '.';
+      + ': ' + chains.map(function (c) { return c.name || ('Chain ' + c.id); }).join(', ') + '. ' + TOKEN_SAME_ADDRESS_NOTE;
   content.appendChild(across);
 
   var status = el('div', 'operator-edit-status'); content.appendChild(status);
@@ -12709,6 +12681,7 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
   var salt = omnichainTokenSalt(name, symbol);
   var tokenRow = [deployed ? 'Renames to' : 'Token', name + ' (' + symbol + ')'];
   var summaryRows = [tokenRow];
+  if (!deployed && !extend) summaryRows.push(['Other chains later', TOKEN_SAME_ADDRESS_NOTE]);
   var matchExistingAddress = async function (sender) {
     if (!extend) return;
     var matched = await extensionTokenSalt(project, extend, chains, controllers, sender, name, symbol);

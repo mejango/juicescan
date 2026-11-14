@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { encodeIpfsUriToBytes32, hasPinata, pinFile, pinJson, unixFsFileBlock } from '../src/ipfs-pin.js';
+import { encodeIpfsUriToBytes32, pinFile, pinJson, unixFsFileBlock } from '../src/ipfs-pin.js';
 
 const DIGEST = '0x000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
 const CIDV0 = 'QmNLfbof5rLekrACjeuLk9JmGZD2HDBHCU4z16iYKmx5SE';
@@ -59,7 +59,6 @@ describe('pinning through Juicebox Center with no key', () => {
   const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 
   it('needs no setup and posts the JSON itself to Center', async () => {
-    expect(hasPinata()).toBe(true);
     const fetchMock = vi.fn(async () => reply(201, { cid: CIDV0, status: 'queued', uri: 'ipfs://' + CIDV0 }));
     vi.stubGlobal('fetch', fetchMock);
     await expect(pinJson({ a: 1 }, 'project')).resolves.toBe('ipfs://' + CIDV0);

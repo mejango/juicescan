@@ -8,7 +8,7 @@
 //   >1 chain, no NFTs -> JBOmnichainDeployer.launchProjectFor (one tx per chain, shared salt + suckers)
 //   >1 chain, NFTs    -> JBOmnichainDeployer.launchProjectFor (721 overload, one tx per chain)
 //
-// Project metadata (name/logo/description/links) is pinned to IPFS via Pinata (src/ipfs-pin.js); the
+// Project metadata (name/logo/description/links) is pinned to IPFS through Juicebox Center (src/ipfs-pin.js); the
 // JWT lives in localStorage only.
 
 import { keccak256, stringToHex, parseEther, parseUnits, encodeFunctionData, formatEther, decodeEventLog } from 'viem';
@@ -26,7 +26,7 @@ import {
 import {
   launchProjectAbi, buildRulesetConfigs, createDefaultRuleset,
 } from './launch-component.js';
-import { pinFile, pinJson, hasPinata, setPinataJwt, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
+import { pinFile, pinJson, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
@@ -1383,7 +1383,6 @@ function renderImagePicker(uri, busy, onChange) {
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
     if (!f) { onChange('', false); return; } // picker dismissed → clear
-    if (!hasPinata()) { alert('IPFS pinning isn’t available right now, you can add a logo later by editing the project.'); return; }
     onChange(uri, true);
     pinFile(f, f.name).then(function (ipfs) { onChange(ipfs, false); })
       .catch(function (e) { alert('Could not upload: ' + (e && e.message || e)); onChange(uri, false); });
@@ -2704,8 +2703,8 @@ function collectionSymbolOf(state) {
   return state.details.ticker || '';
 }
 
-// Everything that applies to the whole collection (not a single item) — collection name/symbol, the Pinata
-// JWT, and the top-level JB721TiersHookFlags. Lives in the "Extras" dropdown under "add item +".
+// Everything that applies to the whole collection (not a single item) — collection name/symbol and
+// the top-level JB721TiersHookFlags. Lives in the "Extras" dropdown under "add item +".
 function collectionExtrasSection(state, render) {
   var c = state.collection;
   var f = el('div', '');
@@ -2718,15 +2717,6 @@ function collectionExtrasSection(state, render) {
     return s;
   })()));
 
-  // Pinata JWT — needed to pin item media + metadata to IPFS. Only shown when one isn't set yet.
-  if (!hasPinata()) {
-    var jwtField = el('div', 'create-field');
-    var jl = el('label', 'create-label'); jl.textContent = 'Pinata JWT'; jwtField.appendChild(jl);
-    var jh = el('div', 'create-hint'); jh.innerHTML = 'To store item files and details on IPFS, a shared file network. <a href="https://app.pinata.cloud/developers/api-keys" target="_blank" rel="noopener">Get one</a>; stored only in this browser.'; jwtField.appendChild(jh);
-    var jwt = el('input', 'field create-input'); jwt.type = 'password'; jwt.placeholder = 'pinata JWT'; jwt.autocomplete = 'off'; jwt.spellcheck = false;
-    jwt.addEventListener('change', function () { if (jwt.value.trim()) { setPinataJwt(jwt.value.trim()); render(); } });
-    jwtField.appendChild(jwt); f.appendChild(jwtField);
-  }
 
   f.appendChild(toggleRow('Require exact payment', dz('Payers must pay an item’s exact price, anything extra is turned away.', 'Payers can overpay; the extra is kept as spendable credit.'), c.preventOverspending, function (v) { c.preventOverspending = v; }));
   f.appendChild(toggleRow('Lock reserved items after launch', dz('New items added after launch can’t set aside reserved inventory.', 'New items added after launch can set aside reserved inventory.'), c.noNewTiersWithReserves, function (v) { c.noNewTiersWithReserves = v; }));
@@ -2796,7 +2786,7 @@ export function renderNfts(state, render) {
     wrap.appendChild(add);
   }
 
-  // Store Config (collection name/symbol, Pinata JWT, store-wide flags) is always available — the owner
+  // Store Config (collection name/symbol, store-wide flags) is always available — the owner
   // can configure the store even when launching with no items in stock.
   var extras = collapse(state.collection, 'extrasOpen', 'Store config', false, render, function () { return collectionExtrasSection(state, render); });
   extras.style.marginTop = '16px';
@@ -2851,7 +2841,6 @@ function itemMediaPicker(state, nft, render) {
     var f = file.files && file.files[0];
     if (!f) return;
     function fail(msg) { nft._mediaBusy = false; nft._mediaError = msg; render(); alert(msg); }
-    if (!hasPinata()) { fail('Add a Pinata JWT in the Store config section to upload media.'); return; }
     if (f.size > ITEM_MAX_MEDIA_BYTES) { fail('That file is ' + itemFileSize(f.size) + ', over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
     nft._mediaBusy = true; nft._mediaError = ''; render();
     pinFile(f, nft.name || f.name).then(function (uri) {
@@ -4302,8 +4291,7 @@ export function ownerFieldInvalid(typed, resolved) {
 
 function beginDeployRun(state, render, owner) {
   state.deploying = true; render();
-  // Set the status pusher BEFORE runDeploy — with no Pinata JWT, runDeploy calls push() synchronously
-  // (the "launching without metadata" line) before its first await, so the assignment must precede the call.
+  // Set the status pusher BEFORE runDeploy, which can call push() before its first await.
   state._push = function pushStatus(text, kind) { state.statusLines.push({ text: text, ok: kind === 'ok', err: kind === 'err' }); render(); };
   runDeploy(state, owner).then(function (res) {
     state.deploying = false;
@@ -4367,7 +4355,7 @@ async function runDeploy(state, owner) {
   }
 
   // Pin each store item's metadata JSON (name + media) so its tier resolves to {name, image/animation_url}.
-  if (state.nfts.length && hasPinata()) {
+  if (state.nfts.length) {
     for (var n = 0; n < state.nfts.length; n++) {
       var it = state.nfts[n];
       push('Pinning item “' + (it.name || ('#' + (n + 1))) + '” metadata…');
@@ -5270,7 +5258,7 @@ export function build721Config(state, projectUri, chainId) {
 // Sets it.metaUri + it.encodedIpfsUri in place. Standalone (mirrors the launch deploy flow) so the queue
 // "start a new shop" path can pin before build721Config without touching the launch sequence.
 export async function pinShopItemsMetadata(state) {
-  if (!(state.nfts && state.nfts.length && hasPinata())) return;
+  if (!(state.nfts && state.nfts.length)) return;
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) throw new Error(mediaIssue);
   for (var n = 0; n < state.nfts.length; n++) {
