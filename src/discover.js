@@ -6044,6 +6044,21 @@ function currencyUnitLabel(currency, project) {
 }
 
 // USD value of a chosen amount of dollars (USDC is $1; ETH needs the live feed).
+// What sits under the pay amount: its dollar value, the connected wallet's balance of the pay token
+// on the pay chain, and a shortfall. Anything unknown is left out, never guessed.
+export function payAmountHint(o) {
+  var out = { about: null, balance: null, short: null };
+  var decimals = o.decimals == null ? 18 : o.decimals;
+  if (o.usdPerToken != null && o.amountRaw != null && o.amountRaw > 0n) {
+    out.about = 'About ' + formatUsd(Number(formatAmount(o.amountRaw, decimals)) * o.usdPerToken);
+  }
+  if (o.balance != null) {
+    out.balance = 'Balance: ' + formatBalance(o.balance, decimals);
+    if (o.amountRaw != null && o.amountRaw > o.balance) out.short = 'You don’t have enough ' + o.symbol + ' on ' + o.chainName + '.';
+  }
+  return out;
+}
+
 function formatUsd(n) {
   if (n === null || n === undefined || !isFinite(n)) return '—';
   if (n === 0) return '$0';
@@ -9857,6 +9872,40 @@ export function renderPayCard(project, cart) {
   amountRow.appendChild(payBtn);
   card.appendChild(amountRow);
 
+  // Under the amount: about what it is worth, what the wallet holds, and a shortfall.
+  var amountHint = el('div', 'paybox-amount-hint');
+  card.appendChild(amountHint);
+  var amountHintGen = 0;
+  function renderAmountHint() {
+    if (!amountHint) return; // a read can land before the card is built
+    var gen = ++amountHintGen;
+    amountHint.replaceChildren();
+    var token = state.token, chainId = state.chainId, account = getAccount();
+    if (amountRow.hidden || !token) return;
+    var decimals = token.decimals == null ? 18 : token.decimals;
+    var amountRaw = null;
+    try { if (state.amount) amountRaw = parseAmount(state.amount, decimals); } catch (_) { amountRaw = null; }
+    var isNative = String(token.address).toLowerCase() === NATIVE_TOKEN.toLowerCase();
+    var isUsdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase() === String(token.address).toLowerCase();
+    Promise.all([
+      isNative ? fetchEthUsd(chainId) : Promise.resolve(isUsdc ? 1 : null),
+      readWalletTokenBalance(chainId, token.address, account),
+    ]).then(function (r) {
+      if (gen !== amountHintGen || !card.isConnected) return;
+      var hint = payAmountHint({
+        amountRaw: amountRaw, decimals: decimals, usdPerToken: r[0], balance: r[1],
+        symbol: (token.symbol || '').replace(/\s*\(native\)/i, ''), chainName: payChainName(chainId, chainNameOf(chainId)),
+      });
+      [['about', ''], ['short', 'short'], ['balance', 'balance']].forEach(function (part) {
+        if (!hint[part[0]]) return;
+        var line = el('span', 'paybox-amount-hint-line' + (part[1] ? ' ' + part[1] : ''));
+        line.textContent = hint[part[0]];
+        amountHint.appendChild(line);
+      });
+    });
+  }
+  onEffectiveAccountChange(function () { if (card.isConnected) renderAmountHint(); });
+
   // Reflect the selected action across the button label (Pay → Add) and feedback. NFTs only mint on a Pay.
   function updateModeUi() {
     sizeSelectToText(modeSel);
@@ -9867,6 +9916,7 @@ export function renderPayCard(project, cart) {
     if (chainStatic) chainStatic.hidden = !!nativePay;
     if (nativeCheckout && nativeCheckout.setActive) nativeCheckout.setActive(!!nativePay);
     amountRow.hidden = !!nativePay; memo.hidden = !!nativePay; feedback.hidden = !!nativePay;
+    renderAmountHint();
     if (terminalNotice) renderTerminalNotice();
     if (!nativePay && state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { payBtn.textContent = 'Not started'; renderFeedback(); return; }
     if (state.mode === 'addbalance') { payBtn.disabled = false; payBtn.classList.remove('paybox-btn-idle'); }
@@ -10156,6 +10206,7 @@ export function renderPayCard(project, cart) {
   }
 
   function schedulePreview() {
+    renderAmountHint();
     previewGen++; // an in-flight preview for the old inputs can no longer land
     state.payerSlippage = null; // any input change ends a loosened tolerance; a retry sets it again after this
     if (state.mode === 'pay' && (!state.inventoryKnown || isNativeInventory(state.shop))) return;
