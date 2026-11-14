@@ -93,3 +93,18 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - Verification: `npm run check` green (2576 unit tests, 148 browser tests). Codex `gpt-6.1-sol` two passes: one finding fixed (a metadata refresh dropped the Instagram link), pass 2 CLEAN.
 - Total distribution budget raised 2,135,000 to 2,140,000 B gzip, measured 2,135,380.
 - Not done here: the rest of the round 8 list (pay card balance and dollar line, funding chart for custom projects, activity paging and bridge rows, held-writes list, Simple preset, multisig owner, old and new values in reviews, Relayr re-sign of unfinished chains). New copy for jango: "This juicebox is empty" and its line, the "raised" and "holders" stats.
+
+## 2026-11-14: Pay the better of the listed routes (J6)
+
+- [x] Project pay card: a token the project takes directly is also quoted through the router the project lists; the payment goes to the route that gives the payer more.
+- [x] One ranking for both pay surfaces (`payRouteIsBetter` in `pay-preview.js`): most tokens to the payer, then the larger minimum, then total issuance, then the direct terminal. The same order as the SDK's `prepareBestUserPay`.
+
+## Plan refinement
+- **Objective:** Ruling 1 of 2026-11-14: a payment is quoted on every terminal the project lists and takes the best, the same on all three clients. Success is the project card paying the router when it quotes more and the direct terminal otherwise.
+- **System fit:** The card's preview already carries the prepared metadata and minimum; it now also carries the terminal it was quoted on, and the send reads the terminal from the reviewed preview. The listed-terminal check at send (`paySurfaceAllows`) still runs on the chosen terminal.
+- **Reuse and simplicity:** `prepareCardPay` per route, the existing ranking moved to the module both surfaces import. Item checkout and add to balance are unchanged. No SDK.
+- **Evidence and unknowns:** The card's terminal surface (`readProjectPaymentSurface`) says whether the directory lists the registry and the multi terminal; without it the card quotes the token's own entry only.
+- **Verification:** Unit tests for the tie-break and for the card paying each route; `npm run check`; Codex until clean.
+- **Resource budget:** One branch from main, one full gate, review passes as needed.
+- **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
+- **Agent-system impact:** None.
