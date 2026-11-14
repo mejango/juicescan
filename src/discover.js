@@ -30897,22 +30897,15 @@ export function lpClampToAllowances(max, need, erc20Allow, p2Amount) {
 // PositionManager.modifyLiquidities (MINT_POSITION, CLOSE c0, CLOSE c1, SWEEP native refund).
 // Read-only: derive ticks, liquidity, required amounts, and the encoded modifyLiquidities calldata.
 // No wallet/txs — used to build the preview before the user signs.
-async function prepareAddLiquidity(opts) {
-  var project = opts.project, chainId = opts.chainId;
-  var acct = getAccount();
-  if (!acct) throw new Error('Connect a wallet to continue');
-  var posm = POSITION_MANAGER_BY_CHAIN[chainId];
-  if (!posm) throw new Error('No position manager on this chain');
-
-  var st = await readPoolState(project, chainId, { strict: true });
-  if (!st || !st.key) throw new Error('Pool not initialized on this chain');
-  var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
-  var c0 = (key.currency0 || '').toLowerCase();
-  var pairIsC0 = (c0 === pair.addr); // else the project token (always ERC-20) is currency0
-  var pairDec = pair.decimals;
+// Size a Uniswap V4 mint from a price range and deposit amounts at the pool's live price: the ticks, the
+// liquidity, what it needs, and the maxima with 1% headroom. Pure: no wallet, no reads. `pool` is
+// { key, sqrtP, pair: { decimals }, pairIsC0 }; the range is pair per token.
+export function lpMintPlan(pool, pairAmount, tokenAmount, pa, pb) {
+  var key = pool.key, sqrtP = pool.sqrtP, pairIsC0 = pool.pairIsC0;
+  var pairDec = pool.pair.decimals;
   // Map the pair/token deposit amounts (raw, in their own decimals) onto currency0/currency1 by ordering.
-  var amount0 = pairIsC0 ? opts.pairAmount : opts.tokenAmount;
-  var amount1 = pairIsC0 ? opts.tokenAmount : opts.pairAmount;
+  var amount0 = pairIsC0 ? pairAmount : tokenAmount;
+  var amount1 = pairIsC0 ? tokenAmount : pairAmount;
 
   var s = Number(key.tickSpacing);
   var maxUsable = Math.trunc(887272 / s) * s, minUsable = Math.trunc(-887272 / s) * s;
@@ -30920,8 +30913,8 @@ async function prepareAddLiquidity(opts) {
   //   pair=c0 → P_raw = 10^(18−pairDec)/q ;  token=c0 → P_raw = q·10^(pairDec−18).
   // ticks are monotonic in P_raw, so derive both ends and sort (order-agnostic across the two cases).
   var pRawFromQ = function (q) { return pairIsC0 ? (Math.pow(10, 18 - pairDec) / q) : (q * Math.pow(10, pairDec - 18)); };
-  var tA = Math.log(pRawFromQ(opts.pa)) / Math.log(1.0001);
-  var tB = Math.log(pRawFromQ(opts.pb)) / Math.log(1.0001);
+  var tA = Math.log(pRawFromQ(pa)) / Math.log(1.0001);
+  var tB = Math.log(pRawFromQ(pb)) / Math.log(1.0001);
   var tickLower = Math.max(minUsable, lpAlignDown(Math.floor(Math.min(tA, tB)), s));
   var tickUpper = Math.min(maxUsable, lpAlignUp(Math.ceil(Math.max(tA, tB)), s));
   if (tickUpper <= tickLower) tickUpper = Math.min(maxUsable, tickLower + s);
@@ -30942,6 +30935,25 @@ async function prepareAddLiquidity(opts) {
   // 1% headroom over the exact requirement (SWEEP refunds unused native; Permit2/CLOSE pull the exact ERC-20).
   var amount0Max = need.amount0 + need.amount0 / 100n + 1n;
   var amount1Max = need.amount1 + need.amount1 / 100n + 1n;
+
+  return { tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity, need: need, amount0Max: amount0Max, amount1Max: amount1Max };
+}
+
+async function prepareAddLiquidity(opts) {
+  var project = opts.project, chainId = opts.chainId;
+  var acct = getAccount();
+  if (!acct) throw new Error('Connect a wallet to continue');
+  var posm = POSITION_MANAGER_BY_CHAIN[chainId];
+  if (!posm) throw new Error('No position manager on this chain');
+
+  var st = await readPoolState(project, chainId, { strict: true });
+  if (!st || !st.key) throw new Error('Pool not initialized on this chain');
+  var key = st.key, sqrtP = st.sqrtP, pair = st.pair;
+  var c0 = (key.currency0 || '').toLowerCase();
+  var pairIsC0 = (c0 === pair.addr); // else the project token (always ERC-20) is currency0
+  var sized = lpMintPlan({ key: key, sqrtP: sqrtP, pair: pair, pairIsC0: pairIsC0 }, opts.pairAmount, opts.tokenAmount, opts.pa, opts.pb);
+  var tickLower = sized.tickLower, tickUpper = sized.tickUpper, liquidity = sized.liquidity, need = sized.need;
+  var amount0Max = sized.amount0Max, amount1Max = sized.amount1Max;
 
   // The native side (only ever the pair, when it's ETH) is sent as msg.value; ERC-20 sides go via Permit2.
   var c0Native = pairIsC0 && pair.isNative;
