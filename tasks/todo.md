@@ -85,7 +85,11 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - [x] Ruleset detail names a known rule-change deadline by its length
 - [x] Header: cover image, WhatsApp and Instagram links, raised and holders stats
 - [x] A route that names no project says so
-- [ ] Full check, Codex pass, PR
+- [x] Full check, Codex pass, PR
 
 ### Review
-REVIEW_J5A
+- Owner powers (mint, set controller, set terminals, migrate, add price feed, set token, buyback hook, pool and TWAP, router terminal, add accounting token) each name the `JBPermissionIds` value that delegates them, and the one runner checks it onchain, so an operator holding it passes the gate as on juicebox.money.
+- Ruleset detail names a known rule-change deadline by its length. The header shows the cover image, WhatsApp (https only) and Instagram (handle pattern) links, and raised and holders stats. A malformed route or a missing project says so instead of showing the grid.
+- Verification: `npm run check` green (2576 unit tests, 148 browser tests). Codex `gpt-6.1-sol` two passes: one finding fixed (a metadata refresh dropped the Instagram link), pass 2 CLEAN.
+- Total distribution budget raised 2,135,000 to 2,140,000 B gzip, measured 2,135,380.
+- Not done here: the rest of the round 8 list (pay card balance and dollar line, funding chart for custom projects, activity paging and bridge rows, held-writes list, Simple preset, multisig owner, old and new values in reviews, Relayr re-sign of unfinished chains). New copy for jango: "This juicebox is empty" and its line, the "raised" and "holders" stats.
