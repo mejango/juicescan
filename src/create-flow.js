@@ -4439,27 +4439,28 @@ async function runDeploy(state, owner) {
     // 1) Pin metadata. A launch never goes out without it. The project's and each store item's metadata JSON
     // (name + media, so its tier resolves to {name, image/animation_url}) pin together.
     push('Pinning project metadata…');
+    var launchItems = state.nfts.slice();
     var pins = [pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project').then(function (uri) {
       push('Metadata pinned: ' + uri, 'ok');
       return uri;
     }, function (e) {
       push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
       throw e;
-    })].concat(state.nfts.map(function (it, n) {
+    })].concat(launchItems.map(function (it, n) {
       push('Pinning item “' + (it.name || ('#' + (n + 1))) + '” metadata…');
       var meta = build721TierMetadata({
         name: it.name || ('Item #' + (n + 1)), description: it.description,
         categoryName: storeCategoryName(state, it.category), mediaUri: it.imageUri, mediaType: it.mediaType,
       });
-      return pinJson(meta, (it.name || 'item') + '-item').then(function (uri) {
-        it.metaUri = uri;
-        it.encodedIpfsUri = encodeIpfsUriToBytes32(uri);
-      }).catch(function (e) {
+      return pinJson(meta, (it.name || 'item') + '-item').catch(function (e) {
         push('Could not pin item metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
         throw e;
       });
     }));
-    var projectUri = (await Promise.all(pins))[0];
+    // The items take their URIs only once every pin has landed: a batch that failed never writes to the draft.
+    var pinned = await Promise.all(pins);
+    var projectUri = pinned[0];
+    launchItems.forEach(function (it, n) { it.metaUri = pinned[n + 1]; it.encodedIpfsUri = encodeIpfsUriToBytes32(pinned[n + 1]); });
 
     var salt = deploySalt(state);
     signer = getAccount();
@@ -5345,16 +5346,18 @@ export async function pinShopItemsMetadata(state) {
   if (!(state.nfts && state.nfts.length)) return;
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) throw new Error(mediaIssue);
-  // Each item's pin is its own request: all go out together.
-  await Promise.all(state.nfts.map(function (it, n) {
+  // Each item's pin is its own request: all go out together. The items take their URIs only once every pin has
+  // landed, so a batch that failed never writes to the draft.
+  var items = state.nfts.slice();
+  var pinned = await Promise.all(items.map(function (it, n) {
     if (it.encodedIpfsUri) return null; // already pinned this submit
     var meta = build721TierMetadata({
       name: it.name || ('Item #' + (n + 1)), description: it.description,
       categoryName: storeCategoryName(state, it.category), mediaUri: it.imageUri, mediaType: it.mediaType,
     });
-    return pinJson(meta, (it.name || 'item') + '-item').then(function (uri) { it.metaUri = uri; it.encodedIpfsUri = encodeIpfsUriToBytes32(uri); },
-      function (e) { throw new Error('Could not pin metadata for “' + (it.name || ('Item #' + (n + 1))) + '”: ' + (e && e.message || e)); });
+    return pinJson(meta, (it.name || 'item') + '-item').catch(function (e) { throw new Error('Could not pin metadata for “' + (it.name || ('Item #' + (n + 1))) + '”: ' + (e && e.message || e)); });
   }));
+  items.forEach(function (it, n) { if (pinned[n]) { it.metaUri = pinned[n]; it.encodedIpfsUri = encodeIpfsUriToBytes32(pinned[n]); } });
 }
 
 // Terminal configs: the project's accounting terminal (which token[s] it HOLDS, currency =

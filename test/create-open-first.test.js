@@ -243,3 +243,20 @@ describe('picked images preview from the local file', () => {
     expect(src()).toContain('imported');
   });
 });
+
+describe('item pins that go out together', () => {
+  it('write no URI to the draft when one pin of the batch fails, however late its siblings land', async () => {
+    const { pinShopItemsMetadata } = await import('../src/create-flow.js');
+    const pins = [];
+    mocks.pinJson.mockImplementation(() => { const pin = deferred(); pins.push(pin); return pin.promise; });
+    const state = { nfts: [{ name: 'A' }, { name: 'B' }] };
+    const run = pinShopItemsMetadata(state);
+    await vi.waitFor(() => expect(pins.length).toBe(2));
+    pins[0].reject(new Error('pin limit'));
+    await expect(run).rejects.toThrow('Could not pin metadata for “A”');
+    pins[1].resolve(URI); // the abandoned sibling lands after the failure
+    await Promise.resolve(); await Promise.resolve();
+    expect(state.nfts[1].metaUri).toBeUndefined();
+    expect(state.nfts[1].encodedIpfsUri).toBeUndefined();
+  });
+});
