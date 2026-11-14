@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   execute: vi.fn(), simulate: vi.fn(), review: vi.fn(), client: vi.fn(), safe: vi.fn(),
   resumeQuote: vi.fn(), paymentOptions: vi.fn(), postBundle: vi.fn(),
-  forward: vi.fn(), pay: vi.fn(), retireExpired: vi.fn(),
+  forward: vi.fn(), pay: vi.fn(), retireExpired: vi.fn(), pending: vi.fn(), pin: vi.fn(),
 }));
 vi.mock('../src/component-base.js', async (original) => ({
   ...await original(),
@@ -14,10 +14,11 @@ vi.mock('../src/component-base.js', async (original) => ({
   executeTransaction: mocks.execute,
   simulateTransaction: mocks.simulate,
   confirmTransactionModal: mocks.review,
+  openPendingReview: mocks.pending,
   createPublicClientForChain: mocks.client,
 }));
 vi.mock('../src/wallet.js', async (original) => ({ ...await original(), isSafeConnected: mocks.safe }));
-vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), pinJson: async () => 'ipfs://QmNLfbof5rLekrACjeuLk9JmGZD2HDBHCU4z16iYKmx5SE' }));
+vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), pinJson: mocks.pin }));
 vi.mock('../src/relayr.js', async (original) => ({ ...await original(),
   relayrResumeQuotedBundle: mocks.resumeQuote, relayrPaymentOptions: mocks.paymentOptions, relayrPostBundle: mocks.postBundle,
   buildForwardedTx: mocks.forward, relayrPay: mocks.pay, retireExpiredUnpaidRelayrSession: mocks.retireExpired,
@@ -70,6 +71,13 @@ beforeEach(() => {
   mocks.safe.mockReturnValue(false);
   Object.defineProperty(navigator, 'locks', { configurable: true, value: { request: vi.fn(async (_, options, callback) => callback({ name: KEY })) } });
   mocks.review.mockResolvedValue(true);
+  mocks.pin.mockResolvedValue('ipfs://QmNLfbof5rLekrACjeuLk9JmGZD2HDBHCU4z16iYKmx5SE');
+  // The dialog that opens before its reads land: its review step is the same `mocks.review` the tests script.
+  mocks.pending.mockImplementation(() => ({
+    closed: false, setRows: vi.fn(), fail: vi.fn(), close: vi.fn(),
+    showNext: async (payload, options) => (await mocks.review(payload, options)) ? { ok: true, showStatus: vi.fn(), close: vi.fn() } : { ok: false },
+    confirm: async (payload, options) => !!(await mocks.review(payload, options)),
+  }));
   mocks.simulate.mockResolvedValue({});
   mocks.resumeQuote.mockReturnValue(null);
   mocks.paymentOptions.mockImplementation((quote) => quote.payment_info);

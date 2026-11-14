@@ -19,7 +19,7 @@ import { cashOutTaxValue } from './encoding.js';
 import { idMapFromGroup, resolveSuckerGroup } from './sucker-group.js';
 import { ipfsHttpUrl, usdcByChain } from './chain.js';
 import {
-  el, executeTransaction, simulateTransaction, confirmTransactionModal, getAddress, getAccount, connect, NATIVE_TOKEN,
+  el, executeTransaction, simulateTransaction, confirmTransactionModal, openPendingReview, getAddress, getAccount, connect, NATIVE_TOKEN,
   createPublicClientForChain, getWalletClient, switchChain, truncAddr, ZERO_ADDRESS as ZERO, errMessage, isAddr, addrOrZero, promptFoot,
   resolveContractName, getChainTokens, txExplorerUrl,
 } from './component-base.js';
@@ -1322,7 +1322,7 @@ function renderDetails(state, render) {
   wrap.appendChild(fieldBlock('Description', true, textArea(d.description, 'What is your project about?', function (v) { d.description = v; })));
 
   // Logo
-  wrap.appendChild(fieldBlock('Logo', true, renderImagePicker(d.logoUri, d.logoUploading, function (uri, busy) {
+  wrap.appendChild(fieldBlock('Logo', true, renderImagePicker(d.logoUri, d.logoUploading, d, 'logo', function (uri, busy) {
     d.logoUri = uri; d.logoUploading = busy; render();
   })));
 
@@ -1363,7 +1363,7 @@ function renderDetails(state, render) {
   // Page customizations
   wrap.appendChild(collapse(d, 'customOpen', 'Project page customizations', true, render, function () {
     var c = el('div', '');
-    c.appendChild(fieldBlock('Cover image', true, renderImagePicker(d.coverImageUri, false, function (uri) { d.coverImageUri = uri; render(); })));
+    c.appendChild(fieldBlock('Cover image', true, renderImagePicker(d.coverImageUri, false, d, 'cover', function (uri) { d.coverImageUri = uri; render(); })));
     c.appendChild(fieldBlock('Payment notice', true, textArea(d.payDisclosure, 'Shown to payers before they pay.', function (v) { d.payDisclosure = v; })));
     return c;
   }));
@@ -1371,21 +1371,49 @@ function renderDetails(state, render) {
   return wrap;
 }
 
+// A picked file shows from the browser's own copy at once, while its pin is still in flight and after it lands.
+// The preview is display only: it lives outside the draft, keyed by the object that owns the field, and the pinned
+// ipfs:// URI stays the only value a launch or a saved draft ever carries.
+var localPreviews = new WeakMap();
+function startLocalPreview(owner, slot, file) {
+  dropLocalPreview(owner, slot);
+  if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return null;
+  var slots = localPreviews.get(owner) || {};
+  localPreviews.set(owner, slots);
+  return (slots[slot] = { url: URL.createObjectURL(file), type: file.type || '', uri: null });
+}
+function dropLocalPreview(owner, slot, only) {
+  var slots = localPreviews.get(owner), entry = slots && slots[slot];
+  if (!entry || (only && entry !== only)) return;
+  URL.revokeObjectURL(entry.url);
+  delete slots[slot];
+}
+// The preview for the field's current value: the file being pinned, or the file `uri` was pinned from.
+function localPreviewFor(owner, slot, uri) {
+  var slots = localPreviews.get(owner), entry = slots && slots[slot];
+  if (!entry) return null;
+  if (entry.uri == null || entry.uri === uri) return entry;
+  dropLocalPreview(owner, slot); // the field moved on (cleared, imported, replaced)
+  return null;
+}
+
 // Standard image uploader, matching the project page: a square preview thumb + native "Choose File",
 // pinned to IPFS on pick. `busy` shows an inline "Uploading…" hint.
-function renderImagePicker(uri, busy, onChange) {
+function renderImagePicker(uri, busy, owner, slot, onChange) {
   var w = el('div', 'operator-edit-logo');
   var prev = el('img', 'operator-edit-logo-prev');
-  if (uri) { prev.src = ipfsHttp(uri); } else { prev.style.display = 'none'; }
+  var local = localPreviewFor(owner, slot, uri);
+  if (local) { prev.src = local.url; } else if (uri) { prev.src = ipfsHttp(uri); } else { prev.style.display = 'none'; }
   w.appendChild(prev);
   var file = el('input', 'operator-edit-logo-file');
   file.type = 'file'; file.accept = 'image/*';
   file.addEventListener('change', function () {
     var f = file.files && file.files[0];
-    if (!f) { onChange('', false); return; } // picker dismissed → clear
+    if (!f) { dropLocalPreview(owner, slot); onChange('', false); return; } // picker dismissed → clear
+    var picked = startLocalPreview(owner, slot, f);
     onChange(uri, true);
-    pinFile(f, f.name).then(function (ipfs) { onChange(ipfs, false); })
-      .catch(function (e) { alert('Could not upload: ' + (e && e.message || e)); onChange(uri, false); });
+    pinFile(f, f.name).then(function (ipfs) { if (picked) picked.uri = ipfs; onChange(ipfs, false); })
+      .catch(function (e) { dropLocalPreview(owner, slot, picked); alert('Could not upload: ' + (e && e.message || e)); onChange(uri, false); });
   });
   w.appendChild(file);
   if (busy) { var hint = el('span', 'operator-edit-hint'); hint.textContent = 'Uploading…'; w.appendChild(hint); }
@@ -2830,7 +2858,9 @@ function itemSummary(state, nft) {
 // Inline media picker — pins the chosen file immediately (any type) and stores imageUri + mediaType.
 function itemMediaPicker(state, nft, render) {
   var w = el('div', 'operator-edit-logo');
-  if (nft.imageUri && (nft.mediaType || '').indexOf('image') === 0) { var prev = el('img', 'operator-edit-logo-prev'); prev.src = ipfsHttp(nft.imageUri); w.appendChild(prev); }
+  var local = localPreviewFor(nft, 'media', nft.imageUri);
+  if (local && local.type.indexOf('image') === 0) { var localPrev = el('img', 'operator-edit-logo-prev'); localPrev.src = local.url; w.appendChild(localPrev); }
+  else if (nft.imageUri && (nft.mediaType || '').indexOf('image') === 0) { var prev = el('img', 'operator-edit-logo-prev'); prev.src = ipfsHttp(nft.imageUri); w.appendChild(prev); }
   else if (nft.imageUri && (nft.mediaType || '').indexOf('audio') === 0) {
     var audioPrev = el('span', 'operator-edit-logo-prev operator-edit-audio-prev'); audioPrev.setAttribute('role', 'img'); audioPrev.setAttribute('aria-label', 'Audio preview'); audioPrev.textContent = '♪'; w.appendChild(audioPrev);
   }
@@ -2842,10 +2872,13 @@ function itemMediaPicker(state, nft, render) {
     if (!f) return;
     function fail(msg) { nft._mediaBusy = false; nft._mediaError = msg; render(); alert(msg); }
     if (f.size > ITEM_MAX_MEDIA_BYTES) { fail('That file is ' + itemFileSize(f.size) + ', over the ' + ITEM_MAX_MEDIA_MB + ' MB max.'); return; }
+    var picked = startLocalPreview(nft, 'media', f);
     nft._mediaBusy = true; nft._mediaError = ''; render();
     pinFile(f, nft.name || f.name).then(function (uri) {
+      if (picked) picked.uri = uri;
       nft.imageUri = uri; nft.mediaType = mediaTypeForFile(f); nft._mediaBusy = false; nft._mediaError = ''; render();
     }).catch(function (e) {
+      dropLocalPreview(nft, 'media', picked);
       fail('Could not upload: ' + (e && e.message || e));
     });
   });
@@ -4027,26 +4060,47 @@ function runCreateDirectSession(state, session, resumed) {
 
 async function executeCreateDirectSession(state, session, resumed, lock, keepSaved) {
   var push = state._push;
-  for (var i = 0; i < session.plans.length; i++) {
-    var checked = session.plans[i];
-    if (checked.hash) {
-      push('Checking the saved launch on ' + chainName(checked.chainId) + '…');
-      await verifyCreateDirectLeg(session, checked);
-      await saveCreateDirectSession(state, session, lock);
-    } else if (checked.status === 'awaiting-wallet') {
-      throw new Error('A wallet request on ' + chainName(checked.chainId) + ' was interrupted before its transaction hash was saved. Check that wallet’s transactions before continuing; this launch will not be resubmitted.');
-    } else if (checked.status !== 'ready') {
+  // A resumed launch opens its review at the click: one row per chain, filled as each chain's saved transaction is
+  // read. Every saved leg is checked together; nothing is sent until each has answered.
+  var saved = session.plans.filter(function (plan) { return plan.hash; });
+  var legRows = session.plans.map(function (plan) { return [chainName(plan.chainId), plan.hash ? null : 'Not sent yet']; });
+  var review = resumed && saved.length ? openPendingReview({ action: 'Resume saved project launch', rows: legRows },
+    { title: 'Review remaining launch transactions', confirmText: 'Confirm & continue' }) : null;
+  if (review && review.closed) return false;
+  var remaining;
+  try {
+    var checks = await Promise.all(session.plans.map(function (plan, index) {
+      if (!plan.hash) return null;
+      push('Checking the saved launch on ' + chainName(plan.chainId) + '…');
+      return verifyCreateDirectLeg(session, plan).then(function () {
+        legRows[index][1] = plan.status === 'confirmed' ? 'Confirmed' : 'Reverted, to send again';
+        if (review) review.setRows(legRows);
+        return null;
+      }, function (error) { return error; });
+    }));
+    if (saved.length) await saveCreateDirectSession(state, session, lock);
+    // The first chain, in launch order, that cannot continue stops the launch, as it did one chain at a time.
+    session.plans.forEach(function (checked, index) {
+      if (checks[index]) throw checks[index];
+      if (checked.hash || checked.status === 'ready') return;
+      if (checked.status === 'awaiting-wallet') throw new Error('A wallet request on ' + chainName(checked.chainId) + ' was interrupted before its transaction hash was saved. Check that wallet’s transactions before continuing; this launch will not be resubmitted.');
       throw new Error('A saved launch is missing its transaction hash. Recover that transaction before continuing.');
+    });
+    remaining = session.plans.filter(function (plan) { return plan.status !== 'confirmed'; });
+    if (remaining.length) {
+      if (!session.recipientIds) await verifyLegacyItemSplitIds(session, remaining);
+      var signer = getAccount();
+      if (!signer || signer.toLowerCase() !== session.account.toLowerCase()) throw new Error('Connect ' + session.account + ' to resume the saved launch.');
+      if (isSafeConnected()) throw new Error('Multichain direct launches require a wallet that can confirm each chain’s transaction.');
     }
+  } catch (error) {
+    if (review) review.fail(friendlyDeployError(error));
+    throw error;
   }
-  var remaining = session.plans.filter(function (plan) { return plan.status !== 'confirmed'; });
+  if (review && !remaining.length) review.close();
   if (remaining.length) {
-    if (!session.recipientIds) await verifyLegacyItemSplitIds(session, remaining);
-    var signer = getAccount();
-    if (!signer || signer.toLowerCase() !== session.account.toLowerCase()) throw new Error('Connect ' + session.account + ' to resume the saved launch.');
-    if (isSafeConnected()) throw new Error('Multichain direct launches require a wallet that can confirm each chain’s transaction.');
     if (resumed) {
-      var reviewed = await confirmTransactionModal({
+      var reviewed = await (review ? review.confirm : confirmTransactionModal)({
         action: 'Resume saved project launch',
         transactions: remaining.map(function (plan) { return {
           chainId: plan.chainId, chain: chainName(plan.chainId), address: plan.address,
@@ -4338,70 +4392,109 @@ async function runDeploy(state, owner) {
     state._directPending = restoredDirect;
     return runCreateDirectSession(state, restoredDirect, true);
   }
-  // Fail closed on JBPrices reachability before anything is pinned: accounting contexts are immutable,
-  // and a missing feed pair means payments or cash outs revert onchain after launch. Probed live, so a
-  // later default-feed registration unblocks the same configuration with no client change.
-  var feedIssues = await launchFeedIssues(state);
-  if (feedIssues.length) throw new Error(feedIssues.join(' '));
-  // 1) Pin metadata. A launch never goes out without it.
-  var projectUri = '';
-  push('Pinning project metadata…');
-  try {
-    projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
-    push('Metadata pinned: ' + projectUri, 'ok');
-  } catch (e) {
-    push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
-    throw e;
+  // The review opens at the click with what the form already says. The creation fee and the exact calls fill in
+  // once the feeds are checked and the metadata is pinned; until then nothing can be agreed to or sent.
+  var isRev = state.projectType === 'revnet';
+  var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
+  var chainNames = state.chainIds.map(function (cid) { return chainName(cid); }).join(', ');
+  var knownRows = [
+    ['Name', state.details.name || 'project'],
+    [isRev ? 'Operator' : 'Owner', isRev ? (operatorRaw || owner) : owner],
+    ['Chains', chainNames],
+    isRev ? ['Token', state.details.ticker || 'TOKEN'] : null,
+    ['Accepts', (state.accepts || []).map(function (t) { return t === 'eth' ? 'ETH' : t === 'usdc' ? 'USDC' : 'custom token'; }).join(', ') || 'ETH'],
+    [isRev ? 'Stages' : 'Rulesets', String((state.stages || []).length || 1)],
+  ].filter(Boolean);
+  function reviewOptions() {
+    var multi = state.chainIds.length > 1;
+    var relayr = multi && !isSafeConnected() && relayrSupportsChains(state.chainIds);
+    return {
+      title: relayr ? 'Review the raw data sent to Relayr' : 'Review the transaction' + (multi ? 's' : ''),
+      confirmText: multi ? 'Confirm & simulate' : (isRev ? 'Confirm & deploy' : 'Confirm & launch'),
+      steps: relayr
+        ? state.chainIds.map(function (cid) { return 'Sign for ' + chainName(cid); }).concat(['Pay the relay fee once'])
+        : state.chainIds.map(function (cid) { return (isRev ? 'Deploy the revnet' : 'Launch the project') + ' on ' + chainName(cid); }),
+      note: relayr
+        ? 'This is the exact per-chain calldata that will be wrapped into ERC-2771 forward requests and sent to Relayr for a quote. Nothing is signed or sent until you confirm, simulation runs next, then you pay once.'
+        : multi ? 'These exact transactions will be sent in sequence. Each chain requires its own wallet confirmation and gas. The shared launch configuration is saved so interrupted launches can resume without redeploying confirmed chains.'
+        : 'This is the exact transaction. Nothing is sent until you confirm, it’s simulated next, then sent to your wallet to sign.',
+    };
   }
-
-  // Pin each store item's metadata JSON (name + media) so its tier resolves to {name, image/animation_url}.
-  if (state.nfts.length) {
-    for (var n = 0; n < state.nfts.length; n++) {
-      var it = state.nfts[n];
+  var opening = reviewOptions();
+  var review = openPendingReview({ action: (isRev ? 'Deploy revnet' : 'Launch project') + ' on ' + chainNames, rows: knownRows.concat([['Creation fee', null]]) },
+    { title: opening.title, confirmText: opening.confirmText, steps: opening.steps });
+  function cancelled() { push('Launch cancelled: nothing was simulated or sent.'); return false; }
+  if (review.closed) return cancelled();
+  // The deploy charges msg.value == JBProjects.creationFee() on each chain. Read alongside the feed check and the pins.
+  var fees = Promise.all(state.chainIds.map(creationFeeOf));
+  fees.then(function (values) { review.setRows(knownRows.concat([['Creation fee', formatEther(values[0]) + ' ETH per chain']])); }, function () {});
+  var plans, signer;
+  try {
+    // Fail closed on JBPrices reachability before anything is pinned: accounting contexts are immutable,
+    // and a missing feed pair means payments or cash outs revert onchain after launch. Probed live, so a
+    // later default-feed registration unblocks the same configuration with no client change.
+    var feedIssues = await launchFeedIssues(state);
+    if (feedIssues.length) throw new Error(feedIssues.join(' '));
+    if (review.closed) return cancelled();
+    // 1) Pin metadata. A launch never goes out without it. The project's and each store item's metadata JSON
+    // (name + media, so its tier resolves to {name, image/animation_url}) pin together.
+    push('Pinning project metadata…');
+    var pins = [pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project').then(function (uri) {
+      push('Metadata pinned: ' + uri, 'ok');
+      return uri;
+    }, function (e) {
+      push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
+      throw e;
+    })].concat(state.nfts.map(function (it, n) {
       push('Pinning item “' + (it.name || ('#' + (n + 1))) + '” metadata…');
-      var categoryName = storeCategoryName(state, it.category);
       var meta = build721TierMetadata({
         name: it.name || ('Item #' + (n + 1)), description: it.description,
-        categoryName: categoryName, mediaUri: it.imageUri, mediaType: it.mediaType,
+        categoryName: storeCategoryName(state, it.category), mediaUri: it.imageUri, mediaType: it.mediaType,
       });
-      try {
-        it.metaUri = await pinJson(meta, (it.name || 'item') + '-item');
-        it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri);
-      } catch (e) {
+      return pinJson(meta, (it.name || 'item') + '-item').then(function (uri) {
+        it.metaUri = uri;
+        it.encodedIpfsUri = encodeIpfsUriToBytes32(uri);
+      }).catch(function (e) {
         push('Could not pin item metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
         throw e;
-      }
+      });
+    }));
+    var projectUri = (await Promise.all(pins))[0];
+
+    var salt = deploySalt(state);
+    signer = getAccount();
+    if (!signer) throw new Error('Connect a wallet to deploy.');
+    // One shared start timestamp for ALL chains, ~10 min ahead. Computed ONCE here — and recomputed every
+    // attempt because runDeploy re-runs on each Launch click (a rejected tx → a fresh, later start). Revnets
+    // bake it into stage starts (matching the cross-chain config hash → deterministic sucker/project
+    // addresses); custom multichain uses it for the first ruleset's mustStartAtOrAfter so every chain's
+    // project begins at the SAME moment rather than at each chain's own block-confirmation time.
+    // Keep the reviewed pin across every chain and saved retry. Known notice hooks
+    // give the plan a concrete execution window; expired unsent plans need fresh review.
+    state._schedulePreparedAt = Math.floor(Date.now() / 1000);
+    var deployStart = state._schedulePreparedAt + launchStartLead(state, state.chainIds[0]);
+
+    // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
+    // BEFORE the user signs or pays anything.
+    await resolveItemSplitProjects(state);
+    var feeByChain = await fees;
+    plans = [];
+    for (var i = 0; i < state.chainIds.length; i++) {
+      var cid = state.chainIds[i];
+      var plan = state.projectType === 'revnet'
+        ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
+        : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
+      if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
+      if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
+      plan.chainId = cid;
+      plan.value = feeByChain[i];
+      plans.push(plan);
     }
+  } catch (e) {
+    review.fail(friendlyDeployError(e));
+    throw e;
   }
-
-  var salt = deploySalt(state);
-  var signer = getAccount();
-  if (!signer) throw new Error('Connect a wallet to deploy.');
-  // One shared start timestamp for ALL chains, ~10 min ahead. Computed ONCE here — and recomputed every
-  // attempt because runDeploy re-runs on each Launch click (a rejected tx → a fresh, later start). Revnets
-  // bake it into stage starts (matching the cross-chain config hash → deterministic sucker/project
-  // addresses); custom multichain uses it for the first ruleset's mustStartAtOrAfter so every chain's
-  // project begins at the SAME moment rather than at each chain's own block-confirmation time.
-  // Keep the reviewed pin across every chain and saved retry. Known notice hooks
-  // give the plan a concrete execution window; expired unsent plans need fresh review.
-  state._schedulePreparedAt = Math.floor(Date.now() / 1000);
-  var deployStart = state._schedulePreparedAt + launchStartLead(state, state.chainIds[0]);
-
-  // Build every chain's launch call, then simulate each (eth_call) so any encoding/logic revert surfaces
-  // BEFORE the user signs or pays anything.
-  await resolveItemSplitProjects(state);
-  var plans = [];
-  for (var i = 0; i < state.chainIds.length; i++) {
-    var cid = state.chainIds[i];
-    var plan = state.projectType === 'revnet'
-      ? buildRevnetArgs(state, cid, owner, projectUri, salt, deployStart)
-      : buildLaunchArgs(state, cid, owner, projectUri, salt, deployStart);
-    if (!plan.address) throw new Error('No deployer address on ' + chainName(cid));
-    if (plan.missingSuckers) push('Note: some chain pairs have no sucker deployer on ' + chainName(cid) + '; those links will be skipped.', 'err');
-    plan.chainId = cid;
-    plan.value = await creationFeeOf(cid); // the deploy charges msg.value == JBProjects.creationFee()
-    plans.push(plan);
-  }
+  if (review.closed) return cancelled();
   // Review the EXACT raw data FIRST — before anything is simulated, signed, or sent. For multichain this
   // is the per-chain calldata that gets wrapped into ERC-2771 forward requests and posted to Relayr for a
   // quote; for single chain it's the wallet transaction. Simulation runs only AFTER the user confirms.
@@ -4422,41 +4515,29 @@ async function runDeploy(state, owner) {
       };
     }),
   };
-  var isRev = state.projectType === 'revnet';
-  var operatorRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
   reviewPayload.summary = {
     action: isRev ? 'Deploy revnet' : 'Launch project',
-    rows: [
-      ['Name', state.details.name || 'project'],
-      [isRev ? 'Operator' : 'Owner', isRev ? (operatorRaw || owner) : owner],
-      ['Chains', plans.map(function (p) { return chainName(p.chainId); }).join(', ')],
-      isRev ? ['Token', state.details.ticker || 'TOKEN'] : null,
-      ['Accepts', (state.accepts || []).map(function (t) { return t === 'eth' ? 'ETH' : t === 'usdc' ? 'USDC' : 'custom token'; }).join(', ') || 'ETH'],
-      [isRev ? 'Stages' : 'Rulesets', String((state.stages || []).length || 1)],
+    rows: knownRows.concat([
       plans[0].rulesetStarts && plans[0].rulesetStarts[0] ? ['First ruleset starts', new Date(plans[0].rulesetStarts[0] * 1000).toLocaleString()] : null,
       ['Creation fee', formatEther(plans[0].value) + ' ETH per chain'],
       launchScheduleLimit(plans) != null ? ['Execute before', new Date(launchScheduleLimit(plans) * 1000).toLocaleString() + ' to preserve this schedule; rebuild if it expires. Pending wallet or Safe transactions cannot be expired by this page.'] : null,
-    ].filter(Boolean),
+    ].filter(Boolean)),
   };
-  var reviewOk = await confirmTransactionModal(reviewPayload, {
-    title: useRelayr ? 'Review the raw data sent to Relayr' : 'Review the transaction' + (multichain ? 's' : ''),
-    confirmText: multichain ? 'Confirm & simulate' : (isRev ? 'Confirm & deploy' : 'Confirm & launch'),
-    keepOpenForProgress: !multichain,
-    steps: useRelayr
-      ? plans.map(function (p) { return 'Sign for ' + chainName(p.chainId); }).concat(['Pay the relay fee once'])
-      : plans.map(function (p) { return (isRev ? 'Deploy the revnet' : 'Launch the project') + ' on ' + chainName(p.chainId); }),
-    note: useRelayr
-      ? 'This is the exact per-chain calldata that will be wrapped into ERC-2771 forward requests and sent to Relayr for a quote. Nothing is signed or sent until you confirm, simulation runs next, then you pay once.'
-      : multichain ? 'These exact transactions will be sent in sequence. Each chain requires its own wallet confirmation and gas. The shared launch configuration is saved so interrupted launches can resume without redeploying confirmed chains.'
-      : 'This is the exact transaction. Nothing is sent until you confirm, it’s simulated next, then sent to your wallet to sign.',
-  });
+  // The wallet route is read again here: the title, steps and note are the ones for the calls on screen.
+  var reviewOk = await review.showNext(reviewPayload, reviewOptions());
   if (!reviewOk || (typeof reviewOk === 'object' && !reviewOk.ok)) { push('Launch cancelled: nothing was simulated or sent.'); return false; }
-  var confirmCtx = typeof reviewOk === 'object' ? reviewOk : null;
+  // Several chains go on in the wizard's own status list; one chain keeps its progress in the dialog.
+  if (multichain) reviewOk.close();
+  var confirmCtx = multichain ? null : reviewOk;
   function pushLive(text, kind) { push(text, kind); if (confirmCtx) confirmCtx.showStatus(text, kind === 'err' ? 'error' : 'pending'); }
 
   // A saved exact call survives semantic receipt failures without creating a new pinned launch on retry.
   if (plans.length === 1 && !isSafeConnected()) {
-    return runCreateDirectSession(state, { account: signer, recipientIds: 'onchain', plans: plans.map(function (plan) { return Object.assign({}, plan, { hash: null, status: 'ready' }); }) }, false);
+    // The review dialog stayed open for this one chain: it carries the progress and ends with the launch.
+    state._push = pushLive;
+    return runCreateDirectSession(state, { account: signer, recipientIds: 'onchain', plans: plans.map(function (plan) { return Object.assign({}, plan, { hash: null, status: 'ready' }); }) }, false)
+      .then(function (result) { confirmCtx.close(); return result; }, function (e) { confirmCtx.showStatus(friendlyDeployError(e), 'error'); throw e; })
+      .finally(function () { state._push = push; });
   }
 
   // Single chain → simulate locally (eth_call), then one direct wallet transaction (creation fee as
@@ -4497,10 +4578,11 @@ async function runDeploy(state, owner) {
   // post the bundle for a quote, let the user CHOOSE which chain to pay gas on, then pay once.
   push('Sign one request per chain, gas is paid once at the end.');
   var txs = [];
+  var gases = await Promise.all(plans.map(function (plan) { return estimateLaunchGas(plan, signer); }));
   for (var k = 0; k < plans.length; k++) {
     var pk = plans[k];
-    push('Estimating + signing for ' + chainName(pk.chainId) + '…');
-    var gas = await estimateLaunchGas(pk, signer);
+    push('Signing for ' + chainName(pk.chainId) + '…');
+    var gas = gases[k];
     var data = encodeFunctionData({ abi: pk.abi, functionName: pk.functionName || 'launchProjectFor', args: pk.args });
     assertScheduleFresh(pk.scheduleValidUntil);
     txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, data, gas, pk.value, pk.scheduleValidUntil));
@@ -4618,8 +4700,12 @@ function execTx(opts) {
 // After a successful deploy, decode this transaction's JBProjects.Create event for the exact project id.
 // Reading the global count here is race-prone: another project could be created before the receipt is processed.
 function captureDeployed(state, chainId, txHash, expectedCount) {
+  return readDeployed(chainId, txHash, expectedCount).then(function (deployed) { state.deployed = deployed; }, function (error) { state.deployed = null; throw error; });
+}
+// Resolves one chain's launch record. Rejects only when the receipt contradicts the ordered rulesets.
+function readDeployed(chainId, txHash, expectedCount) {
   // No hash means a Safe proposal: nothing exists onchain until the Safe executes it.
-  if (!txHash) { state.deployed = { chainId: chainId, txHash: null, proposed: true }; return Promise.resolve(); }
+  if (!txHash) return Promise.resolve({ chainId: chainId, txHash: null, proposed: true });
   var projects = getAddress('JBProjects', chainId);
   var createEvent = [{ type: 'event', name: 'Create', inputs: [
     { name: 'projectId', type: 'uint256', indexed: true }, { name: 'owner', type: 'address', indexed: true }, { name: 'caller', type: 'address', indexed: false },
@@ -4636,20 +4722,18 @@ function captureDeployed(state, chainId, txHash, expectedCount) {
     });
     assertOrderedRulesetReceipt(receipt, getAddress('JBRulesets', chainId), pid, expectedCount);
     if (pid == null) throw new Error('Create event not found');
-    state.deployed = { chainId: chainId, projectId: pid, txHash: txHash, route: projectRouteFor(chainId, pid) };
+    return { chainId: chainId, projectId: pid, txHash: txHash, route: projectRouteFor(chainId, pid) };
   }).catch(function (error) {
-    if (error.code === 'RULESET_ORDER_UNVERIFIED') { state.deployed = null; throw error; }
-    state.deployed = { chainId: chainId, txHash: txHash };
+    if (error.code === 'RULESET_ORDER_UNVERIFIED') throw error;
+    return { chainId: chainId, txHash: txHash };
   });
 }
 
 // One receipt per launched chain, in launch order. `state.deployed` stays the first chain's.
 async function captureDeployedLegs(state, legs) {
-  var out = [];
-  for (var i = 0; i < legs.length; i++) {
-    await captureDeployed(state, legs[i].chainId, legs[i].hash, legs[i].rulesetCount);
-    out.push(state.deployed);
-  }
+  var out;
+  try { out = await Promise.all(legs.map(function (leg) { return readDeployed(leg.chainId, leg.hash, leg.rulesetCount); })); }
+  catch (error) { state.deployed = null; throw error; }
   state.deployedLegs = out;
   state.deployed = out[0];
 }
@@ -5261,17 +5345,16 @@ export async function pinShopItemsMetadata(state) {
   if (!(state.nfts && state.nfts.length)) return;
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) throw new Error(mediaIssue);
-  for (var n = 0; n < state.nfts.length; n++) {
-    var it = state.nfts[n];
-    if (it.encodedIpfsUri) continue; // already pinned this submit
-    var categoryName = storeCategoryName(state, it.category);
+  // Each item's pin is its own request: all go out together.
+  await Promise.all(state.nfts.map(function (it, n) {
+    if (it.encodedIpfsUri) return null; // already pinned this submit
     var meta = build721TierMetadata({
       name: it.name || ('Item #' + (n + 1)), description: it.description,
-      categoryName: categoryName, mediaUri: it.imageUri, mediaType: it.mediaType,
+      categoryName: storeCategoryName(state, it.category), mediaUri: it.imageUri, mediaType: it.mediaType,
     });
-    try { it.metaUri = await pinJson(meta, (it.name || 'item') + '-item'); it.encodedIpfsUri = encodeIpfsUriToBytes32(it.metaUri); }
-    catch (e) { throw new Error('Could not pin metadata for “' + (it.name || ('Item #' + (n + 1))) + '”: ' + (e && e.message || e)); }
-  }
+    return pinJson(meta, (it.name || 'item') + '-item').then(function (uri) { it.metaUri = uri; it.encodedIpfsUri = encodeIpfsUriToBytes32(uri); },
+      function (e) { throw new Error('Could not pin metadata for “' + (it.name || ('Item #' + (n + 1))) + '”: ' + (e && e.message || e)); });
+  }));
 }
 
 // Terminal configs: the project's accounting terminal (which token[s] it HOLDS, currency =
@@ -5657,7 +5740,7 @@ function ipfsHttp(uri) {
 // ---- Test-only exports (consumed by the vitest suite; unused by app.js → tree-shaken from the bundle). ----
 export const __test = {
   resolveEns, attachEns,
-  renderDeploy, runDeploy, captureDeployed, createRelayrReceiptNode, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
+  renderDeploy, runDeploy, captureDeployed, renderImagePicker, itemMediaPicker,createRelayrReceiptNode, runCreateDirectSession, verifyCreateDirectLeg, loadCreateDirectSession, saveCreateDirectSession, clearCreateDirectSession,
   suckerConfigFor, tokenMappingsFor, verifyLegacyItemSplitIds,
   initState, buildLaunchArgs, buildRevnetArgs, buildTerminalConfigs, revnetAccept, acctTokenFor,
   assembleRuleset, splitState, fillSplits, splitSharesFromAmounts, build721Config, customCurrencyId, customAcctDecimals,
