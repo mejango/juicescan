@@ -3188,7 +3188,6 @@ function renderDeploy(state, render) {
   tos.appendChild(tosContent);
   wrap.appendChild(tos);
 
-  if (!hasPinata()) wrap.appendChild(infoNote('IPFS pinning isn’t configured, so your logo & metadata will be skipped at launch, you can add them later by editing the project.'));
 
   // Success panel — replaces the form once deployed: a clear confirmation + a "Go to project" CTA.
   if (state.done) {
@@ -4356,19 +4355,15 @@ async function runDeploy(state, owner) {
   // later default-feed registration unblocks the same configuration with no client change.
   var feedIssues = await launchFeedIssues(state);
   if (feedIssues.length) throw new Error(feedIssues.join(' '));
-  // 1) Pin metadata (best-effort).
+  // 1) Pin metadata. A launch never goes out without it.
   var projectUri = '';
-  if (hasPinata()) {
-    push('Pinning project metadata…');
-    try {
-      projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
-      push('Metadata pinned: ' + projectUri, 'ok');
-    } catch (e) {
-      push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
-      throw e;
-    }
-  } else {
-    push('No Pinata JWT: launching without metadata; you can edit the project later.');
+  push('Pinning project metadata…');
+  try {
+    projectUri = await pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project');
+    push('Metadata pinned: ' + projectUri, 'ok');
+  } catch (e) {
+    push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
+    throw e;
   }
 
   // Pin each store item's metadata JSON (name + media) so its tier resolves to {name, image/animation_url}.

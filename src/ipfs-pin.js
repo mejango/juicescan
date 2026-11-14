@@ -1,5 +1,6 @@
 // src/ipfs-pin.js
-// IPFS pinning for the project-create flow, via Pinata.
+// IPFS pinning for project and item metadata. Juicebox Center pins with no setup, under a budget per IP.
+// A Pinata key stored in this browser (or built in) is used instead when present.
 //
 // A SCOPED, PUBLIC Pinata key is baked in at build time (from `PINATA_PUBLIC_JWT` via esbuild's
 // `__PINATA_JWT__` define) so the Create flow pins on users' behalf without per-user setup. It is public/
@@ -34,15 +35,38 @@ export function setPinataJwt(value) {
   } catch (_) { /* private mode / sandboxed — ignore */ }
 }
 
-export function hasPinata() { return !!getPinataJwt(); }
+// Pinning needs no setup: Center pins when no Pinata key is stored.
+export function hasPinata() { return true; }
+
+var CENTER_PINS = 'https://juicebox.center/v1/pins/';
+// The CID of zero bytes: a file that uploaded as empty.
+var EMPTY_FILE_CID = 'QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH';
+
+async function pinThroughCenter(path, init) {
+  var res;
+  try { res = await fetch(CENTER_PINS + path, init); }
+  catch (_) { throw new Error('Could not reach Juicebox Center to pin. Nothing was sent. Try again.'); }
+  if (res.status === 429) throw new Error('The pin limit is reached for now. Wait a few minutes and try again.');
+  var body = null;
+  try { body = await res.json(); } catch (_) { body = null; }
+  if (!res.ok) throw new Error('Juicebox Center could not pin this (' + res.status + ((body && body.error && body.error.message) ? ': ' + body.error.message : '') + ').');
+  if (!body || typeof body.cid !== 'string' || !/^(Qm|b)/.test(body.cid)) throw new Error('Juicebox Center returned no CID');
+  if (body.cid === EMPTY_FILE_CID) throw new Error('The file uploaded as empty. Choose it again and retry.');
+  return 'ipfs://' + body.cid;
+}
 
 // Settings strip for the DATA tab — mirrors renderBendystrawSettings. Lets the user paste a Pinata
 // JWT used by the Create flow to pin logos/metadata. Stored in this browser only.
 // Pin a File/Blob. Returns "ipfs://<cid>". Throws on misconfig or HTTP error (caller shows the message).
 export async function pinFile(file, name) {
   var jwt = getPinataJwt();
-  if (!jwt) throw new Error('No Pinata JWT set: add one in settings, or paste an ipfs:// hash.');
   var fname = (file && file.name) || name || 'upload';
+  if (file && file.size === 0) throw new Error('"' + fname + '" is empty (0 bytes). Choose the file again.');
+  if (!jwt) {
+    var centerForm = new FormData();
+    centerForm.append('file', file, fname);
+    return pinThroughCenter('file', { method: 'POST', body: centerForm });
+  }
   var form = new FormData();
   form.append('file', file, fname);
   form.append('network', 'public');
@@ -59,7 +83,9 @@ export async function pinFile(file, name) {
 // the same multihash, while the CIDv0 codec correctly unwraps the node back to the original JSON.
 export async function pinJson(obj, name) {
   var jwt = getPinataJwt();
-  if (!jwt) throw new Error('No Pinata JWT set: add one in settings, or paste an ipfs:// hash.');
+  if (!jwt) {
+    return pinThroughCenter('json', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+  }
   var base = name || obj.name || 'metadata';
   var block = unixFsFileBlock(new TextEncoder().encode(JSON.stringify(obj)));
   var blob = new Blob([block], { type: 'application/octet-stream' });

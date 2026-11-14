@@ -17,7 +17,7 @@ vi.mock('../src/component-base.js', async (original) => ({
   createPublicClientForChain: mocks.client,
 }));
 vi.mock('../src/wallet.js', async (original) => ({ ...await original(), isSafeConnected: mocks.safe }));
-vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), hasPinata: () => false }));
+vi.mock('../src/ipfs-pin.js', async (original) => ({ ...await original(), pinJson: async () => 'ipfs://QmNLfbof5rLekrACjeuLk9JmGZD2HDBHCU4z16iYKmx5SE' }));
 vi.mock('../src/relayr.js', async (original) => ({ ...await original(),
   relayrResumeQuotedBundle: mocks.resumeQuote, relayrPaymentOptions: mocks.paymentOptions, relayrPostBundle: mocks.postBundle,
   buildForwardedTx: mocks.forward, relayrPay: mocks.pay, retireExpiredUnpaidRelayrSession: mocks.retireExpired,
