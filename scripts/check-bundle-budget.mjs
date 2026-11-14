@@ -106,7 +106,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // Open-first (2026-11): the pending review, handoff and placeholder code measures 2,125,335 B gzip in total.
 // Shared .jb draft plus operator gates, header links and stats, and the not-found state: measured 2,135,380 B gzip.
 // Simple flavor, held-writes list, per-chain pay notice, holdings chart and queue review lines: measured 2,141,685 B gzip.
-const totalGzipBudget = 2_143_000;
+// Splits and details review lines, and finishing a paid relayed launch's unfinished chains: measured 2,144,877 B gzip.
+const totalGzipBudget = 2_146_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
