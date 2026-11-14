@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { fundingChartPoints, renderFundingChart } from '../src/funding-chart.js';
+import { fundingChartNote, fundingChartPoints, renderFundingChart } from '../src/funding-chart.js';
 
 const usd = n => String(BigInt(n) * 10n ** 18n);
 const NOW = 1_000_000;
@@ -38,6 +38,20 @@ describe('funding chart series', () => {
     expect(points[44].valueUsd).toBe(3500);
     // With no live price at all, the newest indexed rate prices the whole history.
     expect(fundingChartPoints({ held }, 'balance', 0, NOW)[0].valueUsd).toBe(8000);
+  });
+
+  it('says when Balance is not every holding at a live price, and withholds it when a chain failed to load', () => {
+    const live = { ['8453:' + ETH.toLowerCase()]: 3000, '8453:0xusdc': 1 };
+    expect(fundingChartNote({ held, rates: live }, 'balance')).toBeNull();
+    expect(fundingChartNote(data, 'balance')).toBe('Some prices are recent, not live.');
+    const unpriced = held.concat([{ chainId: 1, projectId: 7, token: '0xdai', decimals: 18, balance: eth(100), timestamp: NOW - 50, tokenUsdRate: null }]);
+    expect(fundingChartNote({ held: unpriced, rates: live }, 'balance')).toBe('Leaves out tokens with no dollar price.');
+    expect(fundingChartNote(data, 'volume')).toBeNull();
+    // 100 on one chain and a failed read of the other must not read as a balance of 100.
+    const failed = Object.assign({}, data, { heldFailed: true });
+    expect(fundingChartPoints(failed, 'balance', 0, NOW)).toEqual([]);
+    expect(fundingChartNote(failed, 'balance')).toBe('Balance could not be loaded.');
+    expect(fundingChartPoints(failed, 'volume', 0, NOW)).toHaveLength(45);
   });
 
   it('a short window opens on the state standing before it', () => {

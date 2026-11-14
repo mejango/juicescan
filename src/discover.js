@@ -22422,14 +22422,15 @@ async function fetchFundingHistory(project) {
   var adds = await fetchBendystrawCollectionPages(BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY, 'addToBalanceEvents', variables, PRICE_HISTORY_PAGE_SIZE)
     .catch(function () { return { items: [] }; });
   // One exact query per deployment.
-  var held = [];
-  for (var i = 0; i < deployments.length; i++) {
+  // A chain whose history fails to load would silently lower the total, so one failure withholds Balance.
+  var held = [], heldFailed = false;
+  for (var i = 0; i < deployments.length && !heldFailed; i++) {
     var page = await fetchBendystrawCollectionPages(BENDYSTRAW_TOKEN_BALANCE_MOMENTS_QUERY, 'projectTokenBalanceMoments',
       { chainId: deployments[i].chainId, projectId: deployments[i].projectId, version: BENDYSTRAW_VERSION }, PRICE_HISTORY_PAGE_SIZE)
-      .catch(function () { return { items: [] }; });
+      .catch(function () { heldFailed = true; return { items: [] }; });
     held = held.concat(page.items || []);
   }
-  return { moments: moments.items || [], adds: adds.items || [], held: held, rates: await fundingTodayRates(held) };
+  return { moments: moments.items || [], adds: adds.items || [], held: held, heldFailed: heldFailed, rates: await fundingTodayRates(held) };
 }
 
 // Today's dollars per whole token for each held token: the chain's ETH feed for the native token, 1 for USDC.

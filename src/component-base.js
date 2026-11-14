@@ -1507,31 +1507,46 @@ export function holdForWrite(chainId, account, request) {
 // a release, after the user checks their wallet, of exactly the attempt shown. The normal path never waits:
 // with nothing held this resolves at once without a read.
 export async function heldWriteGate(hold, label, verifyReceipt) {
-  var record;
-  try { record = hold.read(); } catch (err) { return { line: errMessage(err, 'Browser storage is unavailable.') }; }
+  var view;
+  try { view = await heldWriteView(hold, label); } catch (err) { return { line: errMessage(err, 'Browser storage is unavailable.') }; }
+  if (!view) return null;
+  var record = view.record;
+  if (view.receipt) {
+    if (view.state === 'success' && verifyReceipt) {
+      try { await verifyReceipt(view.receipt); }
+      catch (error) { return { line: view.what + ' is confirmed, but its effects are not verified. ' + errMessage(error, 'Inspect its receipt before continuing.'), verificationError: error, submittedHash: record.hash }; }
+    }
+    try { await hold.release(record); } catch (_) {}
+    if (view.state === 'reverted' && !hold.read()) return null;
+    if (view.state === 'success') return { line: view.line + ' It was not sent again.', hash: record.hash, blockNumber: view.receipt.blockNumber };
+    return { line: view.what + ' (' + truncAddr(record.hash) + ') is mined but its result could not be read yet. Try again shortly.' };
+  }
+  if (view.state === 'unsettled') offerHeldRelease(hold, record, view.line);
+  return { line: view.line };
+}
+
+// Where one held write stands, read without changing it: null when nothing is held, else { record, what, state,
+// line }, plus `receipt` once it is mined and read. States: success, reverted, unread (mined, receipt not read
+// yet), pending, unsettled (the chain cannot settle it: not found, or the wallet never gave a hash). Unreadable
+// storage throws.
+export async function heldWriteView(hold, label) {
+  var record = hold.read();
   if (!record) return null;
   var what = 'Your earlier ' + (label ? label + ' ' : '') + 'on ' + chainNameFor(hold.chainId);
+  var view = function (state, line, receipt) { return { record: record, what: what, state: state, line: line, receipt: receipt }; };
   var client = createPublicClientForChain(hold.chainId);
   var found = record.hash ? await heldHashState(client, record).catch(function () { return 'unknown'; }) : 'none';
+  var tagged = what + ' (' + truncAddr(record.hash || '') + ')';
   if (found === 'mined') {
     var receipt = await pollTransactionReceipt(client, null, record.hash, hold.chainId, 3, 2000).catch(function () { return null; });
-    if (receipt && (receipt.status === 'success' || receipt.status === 'reverted')) {
-      if (receipt.status === 'success' && verifyReceipt) {
-        try { await verifyReceipt(receipt); }
-        catch (error) { return { line: what + ' is confirmed, but its effects are not verified. ' + errMessage(error, 'Inspect its receipt before continuing.'), verificationError: error, submittedHash: record.hash }; }
-      }
-      try { await hold.release(record); } catch (_) {}
-      if (receipt.status === 'reverted' && !hold.read()) return null;
-      if (receipt.status === 'success') return { line: what + ' went through in block ' + receipt.blockNumber + ' (' + truncAddr(record.hash) + '). It was not sent again.', hash: record.hash, blockNumber: receipt.blockNumber };
-    }
-    return { line: what + ' (' + truncAddr(record.hash) + ') is mined but its result could not be read yet. Try again shortly.' };
+    if (receipt && receipt.status === 'success') return view('success', what + ' went through in block ' + receipt.blockNumber + ' (' + truncAddr(record.hash) + ').', receipt);
+    if (receipt && receipt.status === 'reverted') return view('reverted', tagged + ' failed onchain.', receipt);
+    return view('unread', tagged + ' is mined but its result could not be read yet. Try again shortly.');
   }
-  if (found === 'pending') return { line: what + ' (' + truncAddr(record.hash) + ') is still pending. Speed it up or cancel it in your wallet.' };
-  var line = record.hash
-    ? what + ' (' + truncAddr(record.hash) + ') is not found onchain. Check your wallet; if it was dropped, release it.'
-    : what + ' may have been sent: your wallet did not say. Check your wallet; if it was not sent, release it.';
-  offerHeldRelease(hold, record, line);
-  return { line: line };
+  if (found === 'pending') return view('pending', tagged + ' is still pending. Speed it up or cancel it in your wallet.');
+  return view('unsettled', record.hash
+    ? tagged + ' is not found onchain. Check your wallet; if it was dropped, release it.'
+    : what + ' may have been sent: your wallet did not say. Check your wallet; if it was not sent, release it.');
 }
 
 // Reserve, then open the wallet. `check` runs right before the wallet opens: its throw sent nothing.
@@ -1571,6 +1586,8 @@ function offerHeldRelease(hold, record, line) {
     return Promise.resolve(current && hold.release(record)).then(function () { return true; });
   });
 }
+
+export { offerHeldRelease };
 
 // The held-no-hash exit: after the user checks their wallet, `release()` frees exactly the attempt `line` shows.
 // It resolves false when that attempt changed since, and the dialog says so.

@@ -29,6 +29,7 @@ function usd(value) {
 // price uses the newest rate the indexer recorded for it.
 export function fundingChartPoints(data, metric, rangeSeconds, now) {
   var events = [];
+  if (metric === 'balance' && data.heldFailed) return []; // a chain's history is missing: no figure beats a low one
   if (metric === 'volume') {
     (data.moments || []).forEach(function (moment) {
       var base = scaledUsd(moment.volumeUsd);
@@ -73,6 +74,21 @@ export function fundingChartPoints(data, metric, rangeSeconds, now) {
     points.push({ timestamp: Math.floor(end), valueUsd: Math.max(0, total) });
   }
   return points;
+}
+
+// What to say beside the figure when it is not every holding at a live price, or null.
+export function fundingChartNote(data, metric) {
+  if (metric !== 'balance') return null;
+  if (data.heldFailed) return 'Balance could not be loaded.';
+  var rates = data.rates || {}, indexed = {}, keys = {};
+  (data.held || []).forEach(function (row) {
+    var key = row.chainId + ':' + String(row.token).toLowerCase();
+    keys[key] = true;
+    if (row.tokenUsdRate) indexed[key] = true;
+  });
+  var missing = Object.keys(keys).filter(function (key) { return rates[key] == null; });
+  if (missing.some(function (key) { return !indexed[key]; })) return 'Leaves out tokens with no dollar price.';
+  return missing.length ? 'Some prices are recent, not live.' : null;
 }
 
 function select(options, value, label) {
@@ -140,7 +156,7 @@ function barsChart(points, label) {
   return wrap;
 }
 
-// `load()` resolves to { moments, adds, held, rates }. The card stays out of the page until there is history to draw, and
+// `load()` resolves to { moments, adds, held, rates, heldFailed }. The card stays out of the page until there is history to draw, and
 // when the read fails: the chart is extra, the page's numbers do not depend on it.
 export function renderFundingChart(load) {
   var card = document.createElement('div');
@@ -155,13 +171,15 @@ export function renderFundingChart(load) {
   left.appendChild(total); left.appendChild(metricSelect);
   head.appendChild(left); head.appendChild(rangeSelect);
   var body = document.createElement('div'); body.className = 'funding-chart-body';
-  card.appendChild(head); card.appendChild(body);
+  var note = document.createElement('div'); note.className = 'funding-chart-note';
+  card.appendChild(head); card.appendChild(body); card.appendChild(note);
 
   function draw() {
     if (!data) return;
     var points = fundingChartPoints(data, metric, range, Math.floor(Date.now() / 1000));
     card.style.display = (data.moments || []).length || (data.held || []).length ? '' : 'none';
     body.innerHTML = '';
+    note.textContent = fundingChartNote(data, metric) || '';
     total.textContent = points.length ? usd(points[points.length - 1].valueUsd) : '';
     if (!points.length) return;
     body.appendChild(barsChart(points, METRICS.filter(function (m) { return m[0] === metric; })[0][2]));

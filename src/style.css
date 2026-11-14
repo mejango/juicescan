@@ -6558,3 +6558,17 @@ button[aria-busy="true"] { cursor: progress; }
 .pay-notice-retry { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; }
 .pay-notice-chain { margin-top: 6px; font-weight: 600; }
 .pay-notice-text, .pay-notice-loaded { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Held writes: the wallet's unsettled transactions, bottom right, above page content and below dialogs. */
+.held-writes {
+  position: fixed; right: 12px; bottom: 12px; z-index: 50; width: min(360px, calc(100vw - 24px));
+  display: grid; gap: 6px;
+}
+.held-writes-row {
+  display: flex; gap: 10px; align-items: flex-start; justify-content: space-between;
+  padding: 8px 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  font-size: 12px; line-height: 1.5; overflow-wrap: anywhere;
+}
+.held-writes-action { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline; cursor: pointer; flex: none; }
+.funding-chart-note { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.funding-chart-note:empty { display: none; }
