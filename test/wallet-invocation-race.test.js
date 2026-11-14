@@ -11,7 +11,7 @@ const invoke = section(source('wallet.js'), 'export async function invokeWallet(
 const base = source('component-base.js');
 const execute = section(base, 'export function executeTransaction(opts)', '\nfunction normalizeWalletReceipt');
 const sendHeld = section(base, 'export function sendHeldWrite(', '\nfunction offerHeldRelease');
-const permit = section(source('discover.js'), 'async function buildRouterPermit2Metadata(', '\n// JBMetadataResolver.addToMetadata:');
+const permit = section(source('discover.js'), 'async function buildPayPermit2Metadata(', '\n// JBMetadataResolver.addToMetadata:');
 const ACCOUNT = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
 const HASH = '0x' + 'ab'.repeat(32);
@@ -31,7 +31,7 @@ function harness() {
     waitForTrackedTransactionReceipt: async () => ({ status: 'success', blockNumber: 1n, transactionHash: HASH }),
     truncAddr: x => x, chainNameFor: () => 'Ethereum', shouldKeepSubmittedTransactionPending: () => false,
     isWalletUserRejection: () => false, isExplicitWalletRejection: () => false, friendlyTransactionError: () => null,
-    errMessage: (e, fallback) => e.message || fallback, lpIsSmartWallet: async () => false, lpErc20Abi: [],
+    errMessage: (e, fallback) => e.message || fallback, lpIsSmartWallet: async () => false, accountHasCode: async () => false, lpErc20Abi: [],
     PERMIT2_ADDRESS: OTHER, waitForErc20Approval: async () => { throw new Error('approval observed'); },
   });
   vm.runInContext(invoke + '\n' + sendHeld + '\n' + execute + '\n' + permit, context);
@@ -56,7 +56,7 @@ describe('actual-source wallet invocation after awaited preparation', () => {
     h.gas.resolve(100000n); expect(await h.result.promise).toBeInstanceOf(Error); expect(h.writes).toEqual([]); expect(h.releases).toEqual([1]);
   });
   it.each(['connector', 'account', 'chain', 'safe'])('checks current %s after Permit2 approval gas estimation', async change => {
-    const h = harness(); const pending = h.context.buildRouterPermit2Metadata(1, OTHER, ACCOUNT, OTHER, 10n, null, '0x');
+    const h = harness(); const pending = h.context.buildPayPermit2Metadata(1, OTHER, ACCOUNT, OTHER, 10n, null, '0x');
     const failure = pending.catch(e => e); await h.started.promise;
     if (change === 'connector') h.state.wallet = h.wallet('B');
     if (change === 'account') h.state.account = OTHER;

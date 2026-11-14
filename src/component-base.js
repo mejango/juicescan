@@ -2045,7 +2045,7 @@ COMPONENT_SPECS['add-liquidity'].desc = "Adds or removes a Uniswap V4 concentrat
 // The project-page Pay and Cash out surfaces are route orchestrators, not single-call forms. Keep their prompt
 // contracts branch-shaped: an implementation which only copies pay()/cashOutTokensOf() is incomplete even if
 // that one calldata tuple is correct.
-COMPONENT_SPECS.pay.file = 'discover.js (renderPayCard, prepareCardPay, buildAddToBalanceArgs, buildRouterPermit2Metadata, addToHookMetadata) + pay-component.js (buildPayArgs, resolveBestPayRoute) + pay-preview.js';
+COMPONENT_SPECS.pay.file = 'discover.js (renderPayCard, prepareCardPay, buildAddToBalanceArgs, buildPayPermit2Metadata, addToHookMetadata) + pay-component.js (buildPayArgs, resolveBestPayRoute) + pay-preview.js';
 COMPONENT_SPECS.pay.fn = 'JBMultiTerminal/JBRouterTerminalRegistry.pay(uint256,address,uint256,address,uint256,string,bytes) or addToBalanceOf(uint256,address,uint256,bool,string,bytes)';
 COMPONENT_SPECS.pay.desc = "Rebuild the complete payment decision surface. Resolve the selected chain’s local projectId, active ruleset, verified terminal accounting contexts, and the project’s actually-listed recognized terminals before offering a token. Payment is permissionless, but a not-yet-started or pausePay ruleset and an unreadable/unknown terminal surface must block. Payment amounts use the input token’s decimals; project-token output and minReturnedTokens use 18 decimals and protect the beneficiary’s output (reserved tokens are separate). Never reuse an amount parsed for one token after the chain/token changes. A verified zero-token preview is a legitimate zero-issuance payment; a missing, failed, stale, or malformed preview is not.";
 COMPONENT_SPECS.pay.cases = [
