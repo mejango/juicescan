@@ -18300,9 +18300,10 @@ function openSetPermissionsModal(project, grant, presetIds) {
 // kind: address | amount(18-dec→wei) | uint | bool | text. `infra` blank-default = that chain's contract.
 // buildArgs(v, cid, pid) → the function args. chainsDefault: 'all' (JB infra, same address everywhere) or
 // 'primary' (per-chain values like feeds/mints — only the current chain checked by default).
+// permissionId: the JBPermissionIds grant that lets an operator send the call for the owner.
 var POWER_MINT = {
   flagKey: 'allowOwnerMinting',
-  title: 'Mint tokens', actionVerb: 'Minted', contract: 'JBController', abi: mintTokensAbi, fn: 'mintTokensOf', gas: 300000n, chainsDefault: 'primary',
+  title: 'Mint tokens', actionVerb: 'Minted', contract: 'JBController', abi: mintTokensAbi, fn: 'mintTokensOf', permissionId: 10, gas: 300000n, chainsDefault: 'primary',
   note: 'Mints new project tokens to an address without a payment.',
   danger: 'Irreversible: minting dilutes every existing token holder and cannot be undone.',
   fields: [
@@ -18314,7 +18315,7 @@ var POWER_MINT = {
 };
 var POWER_SET_CONTROLLER = {
   flagKey: 'allowSetController',
-  title: 'Set controller', actionVerb: 'Set', contract: 'JBDirectory', abi: setControllerAbi, fn: 'setControllerOf', gas: 200000n, chainsDefault: 'all',
+  title: 'Set controller', actionVerb: 'Set', contract: 'JBDirectory', abi: setControllerAbi, fn: 'setControllerOf', permissionId: 14, gas: 200000n, chainsDefault: 'all',
   note: 'Points the project at a new controller contract. Defaults to the current JBController on each chain.',
   danger: 'Dangerous: this hands control of the project’s rules and tokens to a new contract. A wrong address can permanently brick or compromise the project.',
   fields: [{ name: 'controller', label: 'Controller', kind: 'address', placeholder: '0x… controller', infra: 'JBController' }],
@@ -18322,7 +18323,7 @@ var POWER_SET_CONTROLLER = {
 };
 export var POWER_SET_TERMINALS = {
   flagKey: 'allowSetTerminals',
-  title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', gas: 250000n, chainsDefault: 'all',
+  title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', permissionId: 15, gas: 250000n, chainsDefault: 'all',
   note: 'Sets the complete list of terminals funds can be paid in through (comma-separated). Prefilled with what is set onchain now.',
   danger: 'Dangerous: this replaces the entire terminal list. Every terminal left out stops accepting payments and stops routing fees. Most projects launch with two (the standard terminal and the any-token router), so keep the ones you still want.',
   // The call replaces the whole list, so the field starts from the live list and a blank field is refused: a
@@ -18338,7 +18339,7 @@ export var POWER_SET_TERMINALS = {
 };
 var POWER_MIGRATE = {
   flagKey: 'allowTerminalMigration',
-  title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', gas: 400000n, chainsDefault: 'primary',
+  title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', permissionId: 6, gas: 400000n, chainsDefault: 'primary',
   note: 'Moves the project’s balance for a token from the current terminal to another terminal.',
   danger: 'Dangerous: this moves the project’s funds to another terminal. A wrong destination can lose the funds.',
   fields: [
@@ -18349,7 +18350,7 @@ var POWER_MIGRATE = {
 };
 var POWER_ADD_PRICE_FEED = {
   flagKey: 'allowAddPriceFeed',
-  title: 'Add price feed', actionVerb: 'Added', contract: 'JBController', abi: addPriceFeedAbi, fn: 'addPriceFeedFor', gas: 200000n, chainsDefault: 'primary',
+  title: 'Add price feed', actionVerb: 'Added', contract: 'JBController', abi: addPriceFeedAbi, fn: 'addPriceFeedFor', permissionId: 20, gas: 200000n, chainsDefault: 'primary',
   note: 'Registers a price feed converting one currency to another. Currencies are JB currency ids (1 = ETH, 2 = USD, or uint32(uint160(token)) for a token).',
   danger: 'Irreversible: a price feed cannot be removed once added, and a wrong feed misprices the project.',
   fields: [
@@ -18361,7 +18362,7 @@ var POWER_ADD_PRICE_FEED = {
 };
 var POWER_SET_TOKEN = {
   flagKey: 'allowSetCustomToken',
-  title: 'Set custom token', actionVerb: 'Set', contract: 'JBController', abi: setTokenAbi, fn: 'setTokenFor', gas: 250000n, chainsDefault: 'all',
+  title: 'Set custom token', actionVerb: 'Set', contract: 'JBController', abi: setTokenAbi, fn: 'setTokenFor', permissionId: 9, gas: 250000n, chainsDefault: 'all',
   note: 'Replaces the project’s token with a custom ERC-20 (it must conform to IJBToken). Set the token address per selected chain when it differs.',
   danger: 'Irreversible: replacing the project token is permanent and affects every holder.',
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
@@ -18434,7 +18435,7 @@ function buybackPoolStateRead(project, chainId) {
 }
 
 export var POWER_SET_BUYBACK_HOOK = {
-  title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
+  title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', permissionId: 30, gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
@@ -18444,7 +18445,7 @@ export var POWER_SET_BUYBACK_HOOK = {
   buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
 };
 export var POWER_SET_ROUTER_TERMINAL = {
-  title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
+  title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', permissionId: 31, gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Sets the project’s entry in the router registry: the terminal router-swapped funds are deposited to. Pre-filled with the project’s current selection.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
@@ -18454,7 +18455,7 @@ export var POWER_SET_ROUTER_TERMINAL = {
   buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
-  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
+  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', permissionId: 29, gas: 500000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   poolStateRead: buybackPoolStateRead,
   note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Routed through the buyback hook registry, which forwards to the project’s configured hook (your new hook once Set buyback hook executes, set the hook first). Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
@@ -18473,7 +18474,7 @@ export var POWER_INIT_BUYBACK_POOL = {
   },
 };
 export var POWER_SET_BUYBACK_POOL = {
-  title: 'Set buyback pool', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, fn: 'setPoolFor', gas: 200000n, chainsDefault: 'all',
+  title: 'Set buyback pool', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, fn: 'setPoolFor', permissionId: 29, gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   poolStateRead: buybackPoolStateRead,
   note: 'Points the project’s hook at an existing Uniswap v4 pool for the pair (terminal) token, without creating or pricing one. Routed through the buyback hook registry, which forwards to the project’s configured hook (set the hook first).',
@@ -18514,7 +18515,7 @@ export function assertPoolParams(v, withPrice) {
   }
 }
 export var POWER_SET_BUYBACK_TWAP = {
-  title: 'Set TWAP window', actionVerb: 'Set', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, fn: 'setTwapWindowOf', gas: 150000n, chainsDefault: 'all',
+  title: 'Set TWAP window', actionVerb: 'Set', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, fn: 'setTwapWindowOf', permissionId: 28, gas: 150000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   // setTwapWindowOf is on the hook, not the registry — target the project's own resolved hook per chain.
   resolveTargets: function (project, chainIds) {
@@ -18853,7 +18854,7 @@ function openPowerModal(project, action) {
   submit.addEventListener('click', onAction(async function (prepared) {
     var selected = prepared.selected, values = prepared.values;
     var shim = Object.assign({}, project, { chains: selected });
-    var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, prepared.buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal,
+    var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, prepared.buildCall, { label: action.title, title: action.title, gas: action.gas, permissionId: action.permissionId, replaces: modal,
       summary: { rows: action.fields.map(function (f) { return [f.label || f.name, rowValueText(values[f.name])]; }) } }, setStatus);
     if (!res) return;
     if (res.cancelled) { setStatus('Cancelled', ''); return; }
@@ -19078,7 +19079,7 @@ export function openAddAccountingContextModal(project) {
       } catch (error) { setStatus(errMessage(error, 'Could not verify accounting tokens.'), 'error'); busy = false; return; }
       var buildCall = function (cid) { return calls[cid]; };
       var shim = Object.assign({}, project, { chains: usable });
-      var res = await runAuthorityActionAcrossChains(shim, usable, operatorAddr, buildCall, { label: 'Add accounting token', title: 'Add accounting token', gas: 300000n,
+      var res = await runAuthorityActionAcrossChains(shim, usable, operatorAddr, buildCall, { label: 'Add accounting token', title: 'Add accounting token', gas: 300000n, permissionId: 21,
         reverify: function () { return prepareAccountingContextCalls(project, usable, tokensByChain, dec); },
         summary: { rows: [['Token', selectedMode === 'custom' ? 'custom (set per chain)' : selectedMode === 'usdc' ? 'USDC' : 'ETH'], ['Decimals', String(dec)], ['Reversible', 'no: accounting tokens cannot be removed']] } }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Could not add the accounting token.'), 'error'); return null; });
