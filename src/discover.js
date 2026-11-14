@@ -7450,9 +7450,18 @@ export function bendystrawBatcher(loadRows) {
   };
 }
 
+// The indexer reads a clause with several fields inside OR as "any of these fields", so `{ chainId, projectId }`
+// would match every project on that chain and every project with that id. Each ref is its own AND.
+export function exactProjectRefsWhere(projects) {
+  return {
+    version: BENDYSTRAW_VERSION,
+    OR: projects.map(function (ref) { return { AND: [{ chainId: Number(ref.chainId) }, { projectId: Number(ref.projectId) }] }; }),
+  };
+}
+
 var loadBendystrawProjectRow = bendystrawBatcher(function (projects) {
   return bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
-    where: { version: BENDYSTRAW_VERSION, OR: projects },
+    where: exactProjectRefsWhere(projects),
     limit: projects.length,
   }).then(function (data) {
     var rows = {};
@@ -22321,7 +22330,7 @@ async function fetchFundingHistory(project) {
   // Without the additions the volume series still shows indexed payments; it only understates direct funding.
   var adds = await fetchBendystrawCollectionPages(BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY, 'addToBalanceEvents', variables, PRICE_HISTORY_PAGE_SIZE)
     .catch(function () { return { items: [] }; });
-  // One exact query per deployment: the indexer does not hold both fields of a nested OR clause.
+  // One exact query per deployment.
   var held = [];
   for (var i = 0; i < deployments.length; i++) {
     var page = await fetchBendystrawCollectionPages(BENDYSTRAW_TOKEN_BALANCE_MOMENTS_QUERY, 'projectTokenBalanceMoments',
