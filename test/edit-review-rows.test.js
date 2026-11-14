@@ -64,6 +64,8 @@ describe('the splits review', () => {
   it('says None for an empty set', () => {
     var rows = splitChangeRows({ chainName: 'Base', projectId: 9, rulesetId: 1n, previous: [split(A, 1000000000n)], next: [] });
     expect(rows[2][1]).toBe('None');
+    var caller = splitChangeRows({ chainName: 'Base', projectId: 9, rulesetId: 1n, previous: [], next: [split(ZERO, 1000000000n)] });
+    expect(caller[2][1]).toBe('Whoever sends the distribution 100%');
     expect(rows[3][1]).toBe('0% → 100%');
   });
 });
