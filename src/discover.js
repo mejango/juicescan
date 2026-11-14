@@ -3586,8 +3586,8 @@ function openMintTierModal(project, tier, itemName) {
     }
     if (!account) { status.textContent = 'Connect a wallet to continue.'; status.className = 'operator-edit-status error'; return; }
     submit.disabled = true; status.textContent = 'Checking permissions…'; status.className = 'operator-edit-status pending';
-    var canMint = await accountCanMintShopOn(project, chainId, live.hook, account);
-    submit.disabled = false;
+    var canMint;
+    try { canMint = await accountCanMintShopOn(project, chainId, live.hook, account); } finally { submit.disabled = false; }
     if (!canMint) {
       status.textContent = 'This wallet is not the hook owner and does not have MINT_721 permission on this chain.';
       status.className = 'operator-edit-status error'; return;
