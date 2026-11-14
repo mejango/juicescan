@@ -5,11 +5,12 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, selectChain, firstChainForNetwork,
-  executeTransaction, renderError, getAddress,
+  executeTransaction, openPendingReview, renderError, getAddress,
   getChainTokens, parseAmount, parseHashDefaults, createPublicClientForChain, getAccount, truncAddr,
   tokenByAddress,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
+import { chainNameFor } from './chain.js';
 import { formatAmount } from './encoding.js';
 import { quotedOutputFloor } from './slippage.js';
 
@@ -354,20 +355,29 @@ export function renderPayoutsComponent() {
     var account = getAccount();
     if (!controller || !limitsAddr || !store || !prices || !client || !account) { state.error = 'Could not find the payout contracts or connected wallet.'; updateUI(); return; }
 
+    var tokenLabelText = state.selectedToken.symbol || tokenAddr;
+    // The review opens at the click; the minimum fills in once the limit check and the preview land.
+    var review = openPendingReview({ action: 'Send payouts', chain: chainNameFor(chainId), rows: [
+      ['Sending', amountText + ' (currency ' + String(currency) + ') to the chosen recipients'], ['Token', tokenLabelText], ['Minimum paid out', null], ['Project', '#' + String(state.projectId)],
+    ] });
+    if (review.closed) return;
     state.phase = 'confirming'; state.txStatus = { message: 'Checking the payout limit and previewing the amount sent…', success: false }; updateUI();
+    // The balance and the price depend on nothing the ruleset read returns, so they start with it.
+    var balanceRead = client.readContract({ address: store, abi: storeBalanceAbi, functionName: 'balanceOf', args: [terminalAddr, BigInt(state.projectId), tokenAddr] });
+    var priceRead = isExactPayoutCurrency(currency, accountingCurrency)
+      ? Promise.resolve(1000000000000000000n)
+      : client.readContract({ address: prices, abi: pricePerUnitAbi, functionName: 'pricePerUnitOf', args: [BigInt(state.projectId), currency, BigInt(accountingCurrency), 18n] });
+    balanceRead.catch(function () {}); priceRead.catch(function () {});
     client.readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [BigInt(state.projectId)] }).then(function (current) {
       var ruleset = current && current.id != null ? current : (current && current[0]);
       if (!ruleset || BigInt(ruleset.id || 0) === 0n) throw new Error('This project has no active ruleset.');
       return client.readContract({ address: limitsAddr, abi: payoutLimitsAbi, functionName: 'payoutLimitsOf', args: [BigInt(state.projectId), BigInt(ruleset.id), terminalAddr, tokenAddr] }).then(function (limits) {
         var configured = (limits || []).filter(function (limit) { return BigInt(limit.currency) === currency; })[0];
         if (!configured) throw new Error('This token has no payout limit set in the selected currency.');
-        var price = isExactPayoutCurrency(currency, accountingCurrency)
-          ? Promise.resolve(1000000000000000000n)
-          : client.readContract({ address: prices, abi: pricePerUnitAbi, functionName: 'pricePerUnitOf', args: [BigInt(state.projectId), currency, BigInt(accountingCurrency), 18n] });
         return Promise.all([
           client.readContract({ address: store, abi: usedPayoutLimitAbi, functionName: 'usedPayoutLimitOf', args: [terminalAddr, BigInt(state.projectId), tokenAddr, BigInt(ruleset.cycleNumber), currency] }),
-          client.readContract({ address: store, abi: storeBalanceAbi, functionName: 'balanceOf', args: [terminalAddr, BigInt(state.projectId), tokenAddr] }),
-          price,
+          balanceRead,
+          priceRead,
         ]).then(function (values) {
           var cap = BigInt(configured.amount), consumed = BigInt(values[0]);
           var remaining = cap > consumed ? cap - consumed : 0n;
@@ -389,7 +399,9 @@ export function renderPayoutsComponent() {
       var minPaidOut = payoutOutputFloor(quoted, exactCurrency);
       if (minPaidOut === 0n) throw new Error('This payout would send 0 tokens. Nothing was sent.');
       state.phase = 'ready'; state.txStatus = null; updateUI();
+      if (review.closed) return;
       executeTransaction({
+        confirmSession: review,
         ...buildSendPayoutsArgs({ chainId: chainId, terminalAddr: terminalAddr, projectId: state.projectId, token: tokenAddr, amount: amountParsed, currency: currency, minPaidOut: minPaidOut }),
         confirmSummary: { action: 'Send payouts', rows: [
           ['Sending', amountText + ' (currency ' + String(currency) + ') to the chosen recipients'],
@@ -407,6 +419,7 @@ export function renderPayoutsComponent() {
       if (state.error.indexOf('0x9fa59b9a') !== -1 || state.error.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
         state.error = 'The project’s available balance no longer covers this amount. Review it and try again.';
       }
+      review.fail(state.error);
       updateUI();
     });
   }

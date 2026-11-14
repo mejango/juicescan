@@ -283,7 +283,9 @@ export function buildEmbedUrl(prefix, params) {
 
 // --- Chain discovery ---
 
-export function discoverChains(projectId, callback) {
+// `onAnswer(answers)` (optional) runs as each chain answers, with { chainId: true | false } for the chains heard
+// from so far, so a caller can go ahead once its choice no longer depends on the chains still out.
+export function discoverChains(projectId, callback, onAnswer) {
   var chains = getManifestChains();
   var chainIds = Object.keys(chains).map(Number);
 
@@ -297,12 +299,18 @@ export function discoverChains(projectId, callback) {
     return;
   }
 
+  var answers = {};
+  function answered(result) {
+    answers[result.chainId] = !!result.exists;
+    if (onAnswer) onAnswer(answers);
+    return result;
+  }
   var promises = chainIds.map(function(chainId) {
     var directoryAddr = getAddress('JBDirectory', chainId);
-    if (!directoryAddr) return Promise.resolve({ chainId: chainId, exists: false });
+    if (!directoryAddr) return Promise.resolve({ chainId: chainId, exists: false }).then(answered);
 
     var client = createPublicClientForChain(chainId);
-    if (!client) return Promise.resolve({ chainId: chainId, exists: false });
+    if (!client) return Promise.resolve({ chainId: chainId, exists: false }).then(answered);
 
     return client.readContract({
       address: directoryAddr,
@@ -313,7 +321,7 @@ export function discoverChains(projectId, callback) {
       return { chainId: chainId, exists: result && result !== ZERO_ADDRESS };
     }).catch(function() {
       return { chainId: chainId, exists: false };
-    });
+    }).then(answered);
   });
 
   Promise.all(promises).then(function(results) {

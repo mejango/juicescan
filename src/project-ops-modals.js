@@ -1,5 +1,5 @@
 // Add-liquidity and move-between-chains modals. Loaded on demand from a project's actions menu.
-import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, onEffectiveAccountChange, resolveContractName, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isSafeConnected } from './component-base.js';
+import { el, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, openPendingReview, onEffectiveAccountChange, resolveContractName, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isSafeConnected } from './component-base.js';
 import { quotedOutputFloor } from './slippage.js';
 import { txHashForSafeTx } from './safe-app.js';
 import {
@@ -142,7 +142,7 @@ export function buildMoveModal(project) {
     var from = state.from;
     var backingKey = state.backingKey;
     var seq = ++moveBackingSeq;
-    state.fromSupply = null; state.fromBacking = null; state.backing = null; updateBacking(); updateMoveBtn();
+    state.fromSupply = null; state.fromBacking = null; state.backing = null; state.backingLoading = true; updateBacking(); updateMoveBtn();
     var pid = pidOn(project, from); // the project's id on the SOURCE chain
     // The chosen backing token (multi-token picker), else the project's primary accounting token.
     var selectedKind = null;
@@ -165,18 +165,27 @@ export function buildMoveModal(project) {
       if (!res || seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return;
       state.fromSupply = res[0] != null ? BigInt(res[0]) : null;
       state.fromBacking = res[1] != null ? BigInt(res[1]) : null;
+      state.backingLoading = false;
       updateBacking();
     }).catch(function () {
       if (seq !== moveBackingSeq || state.from !== from || state.backingKey !== backingKey) return;
-      state.backing = null; state.fromSupply = null; state.fromBacking = null; updateBacking(); updateMoveBtn();
+      state.backing = null; state.fromSupply = null; state.fromBacking = null; state.backingLoading = false; updateBacking(); updateMoveBtn();
     });
   }
   function updateBacking() {
     updateMoveNote(); // reflect the chosen backing token in the "proportional share" note
     backing.style.display = 'none';
-    if (!state.backing || state.fromSupply == null || state.fromBacking == null || state.fromSupply === 0n) return;
     var amount; try { amount = parseAmount(amt.value, 18); } catch (_) { return; }
     if (amount === 0n) return;
+    // The row holds its place while the surplus is read, so it never appears unannounced under a typed amount.
+    if (state.backingLoading) {
+      backing.innerHTML = '';
+      var pendingLabel = el('strong'); pendingLabel.textContent = 'Surplus that will move: ';
+      backing.appendChild(pendingLabel); backing.appendChild(document.createTextNode('Loading…'));
+      backing.style.display = '';
+      return;
+    }
+    if (!state.backing || state.fromSupply == null || state.fromBacking == null || state.fromSupply === 0n) return;
     var moved = state.fromBacking * amount / state.fromSupply;
     backing.innerHTML = '';
     var b = el('strong'); b.textContent = 'Surplus that will move: ';
@@ -241,11 +250,15 @@ export function buildMoveModal(project) {
     // Two suckers connect this pair (a native bridge and a CCIP bridge) — classify each and let the user pick.
     route.textContent = 'Two bridges connect these chains, pick one:';
     var from = state.from, to = state.to; // guard against chain switches mid-classification
+    // The picker holds its place, disabled, while each bridge's type is read.
+    bridgeSel.innerHTML = '';
+    var checkingOption = document.createElement('option'); checkingOption.textContent = 'Checking bridge types…'; bridgeSel.appendChild(checkingOption);
+    bridgeSel.disabled = true; bridgeRow.style.display = '';
     Promise.all(matches.map(function (m) {
       return m._infra ? Promise.resolve(m._infra) : classifySuckerInfra(state.from, m.local).then(function (i) { m._infra = i; return i; });
     })).then(function (infras) {
       if (state.from !== from || state.to !== to) return;
-      bridgeSel.innerHTML = '';
+      bridgeSel.innerHTML = ''; bridgeSel.disabled = false;
       matches.forEach(function (m, i) {
         var o = document.createElement('option'); o.value = String(i);
         var infraLabel = infras[i] === 'CCIP' ? 'CCIP' : (infras[i] === 'native' ? 'Native' : 'Unverified');
@@ -307,12 +320,20 @@ export function buildMoveModal(project) {
     // keys its token mapping/outbox tree by this address, so passing the wrong token reverts or bridges the
     // wrong tree. Use the resolved backing token (loadBacking), re-resolving if it hasn't populated yet.
     if (!state.backing || !state.backing.address) { fail('The backing token is still loading or could not be verified.'); return; }
+    var moveSteps = ['Approve token access if needed', 'Prepare the movement', 'Send the queued movements to ' + moveChainName(to)];
+    // The review opens at the click; the backing and the bridge fill in once the bridge checks and the preview land.
+    var review = openPendingReview({ action: 'Prepare the movement', chain: moveChainName(from), rows: [
+      ['Moving', formatTokens(amount) + ' ' + sym], ['From', moveChainName(from)], ['To', moveChainName(to)], ['Backing that moves', null], ['Bridge', null],
+    ] }, { title: 'Move ' + sym, confirmText: 'Prepare', steps: moveSteps });
+    if (review.closed) { btn.disabled = false; return; }
+    // A failure before the review is shown ends the dialog with the same line the form shows.
+    var failEarly = function (m) { review.fail(m); fail(m); };
     var termP = Promise.resolve(state.backing.address);
     termP.then(function (termToken) {
-      if (!termToken) { fail('Could not resolve the backing token to bridge.'); return; }
+      if (!termToken) { failEarly('Could not resolve the backing token to bridge.'); return; }
       onStatus('Verifying the bridge token and previewing backing…', 'pending');
       var terminal = getAddress('JBMultiTerminal', from);
-      if (!terminal) { fail('No terminal on the source chain.'); return; }
+      if (!terminal) { failEarly('No terminal on the source chain.'); return; }
       var remoteBackingP;
       var selectedKind = state.kinds && state.backingKey
         ? state.kinds.filter(function (kind) { return kind.key === state.backingKey; })[0]
@@ -366,14 +387,14 @@ export function buildMoveModal(project) {
         var backingText = net > 0n
           ? '≈ ' + formatBalance(net, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + ' (at least ' + formatBalance(minReclaimed, state.backing ? state.backing.decimals : 18, state.backing ? state.backing.symbol : 'backing tokens') + ')'
           : 'none: this chain currently contributes zero backing';
-        var moveSteps = ['Approve token access if needed', 'Prepare the movement', 'Send the queued movements to ' + moveChainName(to)];
+        if (review.closed) { status.classList.remove('pending'); status.textContent = ''; btn.disabled = false; return; }
         executeTransaction(Object.assign(buildSuckerPrepareArgs({
           chainId: from, sucker: sucker, projectTokenCount: amount, beneficiary32: beneficiary32, minReclaimed: minReclaimed,
           termToken: termToken, metadata: metadata, approvalToken: token, approvalAmount: amount,
         }), {
           confirmTitle: 'Move ' + sym,
           confirmText: 'Prepare',
-          confirmSteps: moveSteps, confirmStepIndex: 0, keepConfirmOpen: true,
+          confirmSession: review, confirmSteps: moveSteps, confirmStepIndex: 0, keepConfirmOpen: true,
           confirmSummary: { action: 'Prepare the movement', rows: [
             ['Moving', formatTokens(amount) + ' ' + sym],
             ['From', moveChainName(from)],
@@ -427,7 +448,7 @@ export function buildMoveModal(project) {
           },
         }));
       });
-    }).catch(function (error) { fail(errMessage(error, 'Could not safely preview this movement.')); });
+    }).catch(function (error) { failEarly(errMessage(error, 'Could not safely preview this movement.')); });
   });
   return wrap;
 }

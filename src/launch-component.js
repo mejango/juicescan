@@ -3,9 +3,10 @@
 // Flow: project URI -> ruleset config(s) -> terminal config -> execute
 
 import {
-  el, createComponentWrapper, createWalletButton, executeTransaction, executeRead,
+  el, createComponentWrapper, createWalletButton, executeTransaction, executeRead, openPendingReview,
   renderError, getAddress, getAccount, NATIVE_TOKEN, formatAmount,
 } from './component-base.js';
+import { chainNameFor } from './chain.js';
 import { createDefaultRuleset, buildRulesetConfigs } from './ruleset-config.js';
 import { renderRulesetFieldset } from './ruleset-ui.js';
 export {
@@ -186,26 +187,41 @@ export function renderLaunchComponent() {
     var owner = getAccount();
     if (!owner) { state.error = 'Connect a wallet to continue'; updateUI(); return; }
 
-    var controllerAddr = getAddress('JBController', state.chainIds[0]);
-    if (!controllerAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
+    var chainId = state.chainIds[0];
+    var controllerAddr = getAddress('JBController', chainId);
+    var projectsAddr = getAddress('JBProjects', chainId);
+    if (!controllerAddr || !projectsAddr) { state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return; }
 
-    // launchProjectFor charges msg.value == JBProjects.creationFee() — omitting it reverts on fee chains.
-    var creationFee = 0n;
-    try {
-      var projectsAddr = getAddress('JBProjects', state.chainIds[0]);
-      if (projectsAddr) creationFee = await executeRead({
-        chainId: state.chainIds[0], address: projectsAddr, functionName: 'creationFee', args: [],
-        abi: [{ type: 'function', name: 'creationFee', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }],
-      });
-    } catch (_) {}
-
-    var terminalAddr = getAddress('JBMultiTerminal', state.chainIds[0]);
+    var terminalAddr = getAddress('JBMultiTerminal', chainId);
 
     var rulesetConfigs;
     try {
       rulesetConfigs = buildRulesetConfigs(state.rulesets, { weightMode: 'launch' });
     } catch (err) {
       state.error = (err && err.message) || String(err); updateUI(); return;
+    }
+
+    var accepts = terminalAddr ? 'ETH through JBMultiTerminal' : 'no payment contract yet';
+    // The review opens at the click; the creation fee is the transaction's value, so it must be read before a send.
+    var review = openPendingReview({ action: 'Launch project', chain: chainNameFor(chainId), rows: [
+      ['Owner', owner], ['Rulesets', String(rulesetConfigs.length)], ['Accepts', accepts], ['Creation fee', null],
+    ] });
+    if (review.closed) return;
+    // launchProjectFor charges msg.value == JBProjects.creationFee() — omitting it reverts on fee chains.
+    var creationFee;
+    try {
+      creationFee = BigInt(await executeRead({
+        chainId: chainId, address: projectsAddr, functionName: 'creationFee', args: [],
+        abi: [{ type: 'function', name: 'creationFee', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }],
+      }));
+    } catch (_) {
+      state.error = 'Could not read the creation fee. Nothing was sent.';
+      review.fail(state.error); updateUI(); return;
+    }
+    if (review.closed) return;
+    if (state.chainIds[0] !== chainId || String(getAccount() || '').toLowerCase() !== owner.toLowerCase()) {
+      state.error = 'The chain or the connected account changed while the fee loaded. Review the form and try again.';
+      review.fail(state.error); updateUI(); return;
     }
 
     // Default terminal config: accept native ETH
@@ -223,7 +239,7 @@ export function renderLaunchComponent() {
     }
 
     executeTransaction({
-      chainId: state.chainIds[0],
+      chainId: chainId,
       address: controllerAddr,
       abi: launchProjectAbi,
       functionName: 'launchProjectFor',
@@ -232,9 +248,10 @@ export function renderLaunchComponent() {
       confirmSummary: { action: 'Launch project', rows: [
         ['Owner', owner],
         ['Rulesets', String(rulesetConfigs.length)],
-        ['Accepts', terminalAddr ? 'ETH through JBMultiTerminal' : 'no payment contract yet'],
-        ['Creation fee', formatAmount(creationFee || 0n, 18) + ' ETH'],
+        ['Accepts', accepts],
+        ['Creation fee', formatAmount(creationFee, 18) + ' ETH'],
       ] },
+      confirmSession: review,
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },

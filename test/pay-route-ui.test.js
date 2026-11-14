@@ -8,6 +8,8 @@ const payState = vi.hoisted(() => ({
   execute: vi.fn(),
   preview: vi.fn(),
   prepare: vi.fn(),
+  review: { closed: false, fail: vi.fn(), setRows() {}, close() {} },
+  openReview: vi.fn(),
 }));
 
 vi.mock('../src/component-base.js', () => ({
@@ -31,6 +33,7 @@ vi.mock('../src/component-base.js', () => ({
     return { wrapper, body };
   },
   executeTransaction: payState.execute,
+  openPendingReview: (pending) => { payState.openReview(pending); return payState.review; },
   payHoldScope: projectId => 'project-' + BigInt(projectId),
   getBeneficiaryAddress: () => payState.BENEFICIARY,
   firstChainForNetwork: () => 1,
@@ -72,6 +75,7 @@ describe('pay route trust boundary', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
     payState.execute.mockReset();
+    payState.review.fail.mockReset(); payState.openReview.mockReset();
     payState.prepare.mockReset();
     payState.preview.mockReset().mockResolvedValue({ routing: 'amm', amm: null });
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
@@ -180,9 +184,14 @@ describe('pay route trust boundary', () => {
     await vi.waitFor(() => expect(payState.preview).toHaveBeenCalled());
     const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
     component.querySelector('.pay-btn').click();
+    // The review opens at the click, before the route is prepared, with the rows the form knows and the rest pending.
+    expect(payState.openReview).toHaveBeenCalledOnce();
+    expect(payState.openReview.mock.calls[0][0].rows).toEqual([['Paying', '2 ETH'], ['You get', null], ['Minimum', null], ['To', payState.BENEFICIARY]]);
+    expect(payState.execute).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(payState.execute).toHaveBeenCalledOnce());
     expect(alert).not.toHaveBeenCalled();
     expect(payState.execute.mock.calls[0][0].args[2]).toBe(2n * 10n ** 18n);
+    expect(payState.execute.mock.calls[0][0].confirmSession).toBe(payState.review);
   });
 
   it('leaves the confirming phase when receipt tracking gives up', async () => {
@@ -212,6 +221,7 @@ describe('pay route trust boundary', () => {
     await new Promise(resolve => setTimeout(resolve, 20));
     expect(payState.execute).not.toHaveBeenCalled();
     expect(component.textContent).toContain('The payment details changed. Review and try again.');
+    expect(payState.review.fail).toHaveBeenCalledWith('The payment details changed. Review and try again.');
     // Let the new amount's scheduled preview run inside this test.
     await new Promise(resolve => setTimeout(resolve, 450));
   });
