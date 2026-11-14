@@ -125,16 +125,18 @@ async function draftLiveProjectChain(project, chain) {
   if (!canonicalController || !sameAddr(controller, canonicalController)) {
     throw new Error('This project uses a non-standard controller on ' + (chain.name || chainNameOf(chainId)) + ', which the create wizard cannot reproduce.');
   }
-  var current = await clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] });
-  if (!current || !current[0] || toBigInt(current[0].id || 0) === 0n) {
-    current = await clientFor(chainId).readContract({ address: controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [pid] });
-  }
+  // The ruleset, accepted tokens, terminals and owner do not depend on each other: read together.
+  var loaded = await Promise.all([
+    clientFor(chainId).readContract({ address: controller, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [pid] }).then(function (live) {
+      if (live && live[0] && toBigInt(live[0].id || 0) !== 0n) return live;
+      return clientFor(chainId).readContract({ address: controller, abi: upcomingRulesetAbi, functionName: 'upcomingRulesetOf', args: [pid] });
+    }),
+    resolveAcctTokens(chainId, pid),
+    read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]),
+    project.isRevnet ? revnetOperatorOf(Number(pid), chainId) : read(chainId, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]),
+  ]);
+  var current = loaded[0], contexts = loaded[1], terminals = loaded[2], owner = loaded[3];
   if (!current || !current[0] || toBigInt(current[0].id || 0) === 0n || !current[1]) throw new Error('No live ruleset could be verified on ' + (chain.name || chainNameOf(chainId)) + '.');
-  var contexts = await resolveAcctTokens(chainId, pid);
-  var terminals = await read(chainId, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pid]);
-  var owner = project.isRevnet
-    ? await revnetOperatorOf(Number(pid), chainId)
-    : await read(chainId, 'JBProjects', ownerOfAbi, 'ownerOf', [pid]);
   return { chain: chain, chainId: chainId, projectId: pid, controller: controller, ruleset: current[0], metadata: current[1], contexts: contexts, terminals: terminals || [], owner: owner };
 }
 
