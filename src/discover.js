@@ -21281,6 +21281,8 @@ function issuanceChartSvg(sorted, now, years, sym, ammPrice, cashoutPrice, past,
 }
 
 // Render the chart into a wrap + attach a hover tooltip/guide showing each series' value at that time.
+// The create wizard previews a draft's schedule on the same ladder.
+export { mountChart as mountIssuancePriceChart };
 function mountChart(wrap, sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade, pool) {
   var c = issuanceChartSvg(sorted, now, years, sym, amm, cashout, past, cashoutHistory, ammHistory, showEveryTrade, pool && pool.reserves);
   var holder = wrap.querySelector('.chart-holder');

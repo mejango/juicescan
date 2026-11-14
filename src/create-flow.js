@@ -28,6 +28,7 @@ import {
 } from './launch-component.js';
 import { pinFile, pinJson, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
+import { mountIssuancePriceChart } from './discover.js';
 import { CREATE_BATCH_ABI, MAX_SAFE_SIGNERS, MIN_SAFE_SIGNERS, bundleSafeLaunch, resolveSafePlan, safePolicyIssue, safeSignerAddress, verifySafe, verifySafeSimulation } from './safe-create.js';
 import { clearLaunchCalls, launchCallsFor, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from './launch-retry.js';
 import { relayrForwarderState, relayrSignedProofOf, decodeForwardedRequest, buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
@@ -1673,6 +1674,7 @@ export function renderStages(state, render, opts) {
     }
     wrap.appendChild(dField);
   }
+  if (!state.queueEditor) wrap.appendChild(issuancePreview(state, wrap));
   return wrap;
 }
 
@@ -1739,6 +1741,7 @@ function renderRevnetStages(state, render) {
     render();
   });
   wrap.appendChild(add);
+  wrap.appendChild(issuancePreview(state, wrap));
   return wrap;
 }
 
@@ -6097,3 +6100,59 @@ export const __test = {
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
   revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,
 };
+
+// The issuance schedule the draft would launch, in the shape the project page's price ladder reads: each
+// stage's start, issuance rate (18 decimals), cut per cycle (out of 1e9) and cycle length. A launch starts about
+// ten minutes after it is sent. Empty when nothing issues tokens or the schedule cannot be resolved yet.
+export function issuancePreviewStages(state, now) {
+  var launch = now + 600, out = [];
+  var rateAt = function (t) {
+    var active = out[out.length - 1], cycles = active.duration > 0 ? Math.max(0, Math.floor((t - active.start) / active.duration)) : 0;
+    return active.weight * Math.pow((1e9 - active.weightCutPercent) / 1e9, cycles);
+  };
+  var cutOf = function (stage) { return Math.round(Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) / 100 * 1e9); };
+  try {
+    if (state.projectType === 'revnet') {
+      var prevStart = launch;
+      state.stages.forEach(function (stage, i) {
+        var start = i === 0 ? ((stage.scheduleOn && stage.schedule) ? Number(stage.schedule) : launch)
+          : prevStart + Math.round(revStageDaysAfter(state, i) * 86400);
+        prevStart = start;
+        // A later stage left blank keeps the previous stage's issuance as it stands at the boundary.
+        var weight = (i === 0 || stage.weight) ? Number(tokenAmount18(stage.weight, UINT112_MAX)) : rateAt(start);
+        var frequency = stage.issuanceCutOn ? Math.max(0, Math.round((Number(stage.cutFreqDays) || 0) * 86400)) : 0;
+        out.push({ start: start, weight: weight, weightCutPercent: stage.issuanceCutOn && frequency ? cutOf(stage) : 0, duration: frequency });
+      });
+    } else {
+      if (durationIssue(state)) return [];
+      var effective = resolveStages(state);
+      var first = effective[0].schedule ? Number(effective[0].schedule) : launch;
+      var starts = stageStarts(state, effective, first, now, state.chainIds[0]).starts;
+      effective.forEach(function (stage, i) {
+        var custom = stage.tokenMode === 'custom';
+        out.push({ start: Number(starts[i]), weight: custom ? Number(tokenAmount18(stage.weight || '0', UINT112_MAX)) : 0,
+          weightCutPercent: custom ? cutOf(stage) : 0, duration: Number(stage.durationSeconds) || 0 });
+      });
+    }
+  } catch (_) { return []; }
+  return out.some(function (stage) { return stage.weight > 0; }) && out.every(function (stage) { return isFinite(stage.start) && stage.start > 0; }) ? out : [];
+}
+
+// The preview under the rules: the token's issuance price over time, redrawn as the rules are edited.
+function issuancePreview(state, host) {
+  var box = el('div', 'create-field');
+  var draw = function () {
+    var now = Math.floor(Date.now() / 1000), stages = issuancePreviewStages(state, now);
+    box.innerHTML = '';
+    if (!stages.length) return;
+    var ticker = String((state.details && state.details.ticker) || '').trim();
+    var note = el('div', 'create-hint'); note.textContent = 'Preview ' + (ticker || 'token') + ' issuance price over time with the above rules:';
+    box.appendChild(note);
+    var chart = el('div', 'issuance-chart'); box.appendChild(chart);
+    mountIssuancePriceChart(chart, stages, now, 1, ticker || 'tokens');
+  };
+  draw();
+  host.addEventListener('input', draw);
+  host.addEventListener('change', draw);
+  return box;
+}
