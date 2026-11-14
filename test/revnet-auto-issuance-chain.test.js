@@ -101,14 +101,14 @@ describe('buildRevnetArgs — auto-issuance per-row mint chain', () => {
 });
 
 describe('.jb draft import — auto-issuance chainId sanitization', () => {
-  it('rows with a missing or unselected chainId import as null (first selected chain at encode time)', () => {
+  it('a row with a missing or unselected chain is written on the first selected chain, where it mints', () => {
     const s = revState([10, 8453]);
     s.stages[0].autoIssuances = [
       { count: '5', address: ALICE },            // no chainId (older draft)
       { count: '7', address: BOB, chainId: 999 }, // not a selectable chain
     ];
     const imported = parseCreateDraftJson(JSON.stringify(createDraftObject(s)));
-    expect(imported.stages[0].autoIssuances.map((a) => a.chainId)).toEqual([null, null]);
+    expect(imported.stages[0].autoIssuances.map((a) => a.chainId)).toEqual([10, 10]);
     const autos = configFor(imported, 8453).stageConfigurations[0].autoIssuances;
     expect(autos.map((a) => a.chainId)).toEqual([10, 10]); // first selected chain
   });
