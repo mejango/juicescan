@@ -107,6 +107,26 @@ describe('generic ABI function form', () => {
     expect(state.client.readContract).not.toHaveBeenCalled();
   });
 
+  it('says a read is running, and never lets an earlier read that lands late replace the newer result', async () => {
+    const fn = { type: 'function', name: 'count', stateMutability: 'view', inputs: [], outputs: [{ name: 'count', type: 'uint256' }] };
+    const pending = [];
+    state.client = { readContract: vi.fn(() => new Promise(resolve => { pending.push(resolve); })) };
+    const form = formFor(fn);
+    document.body.appendChild(form);
+    const query = Array.from(form.querySelectorAll('button')).find(button => button.textContent === 'QUERY');
+    const output = form.querySelector('.fn-output');
+    click(query);
+    expect(output.textContent).toBe('Reading…');
+    click(query);
+    expect(pending).toHaveLength(2);
+    pending[1](222n);
+    await vi.waitFor(() => expect(output.textContent).toContain('222'));
+    pending[0](111n);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(output.textContent).toContain('222');
+    expect(output.textContent).not.toContain('111');
+  });
+
   it('renders NatSpec, validates reads, selects networks, and displays a successful tuple result', async () => {
     const parameter = { name: '_projectId', type: 'uint256', testValue: 7n };
     const fn = {

@@ -44,8 +44,14 @@ describe('click-time modules', () => {
     await vi.waitFor(() => expect(document.body.textContent).toMatch(/Reload the page to try again/));
     expect(ops.buildMoveModal).not.toHaveBeenCalled();
 
+    document.querySelectorAll('dialog').forEach(dialog => dialog.remove());
     move.click();
+    // The modal answers the click before its module arrives.
+    expect(document.querySelector('dialog .modal-title').textContent).toBe('Move between chains');
+    expect(document.querySelector('dialog .modal-body').textContent).toBe('Loading…');
     await vi.waitFor(() => expect(document.querySelector('.move-body')).not.toBeNull());
+    expect(document.querySelectorAll('dialog').length).toBe(1);
+    expect(document.body.textContent).not.toContain('Loading…');
     expect(ops.buildMoveModal).toHaveBeenCalledWith(project);
   });
 });

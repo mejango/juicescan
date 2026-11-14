@@ -347,6 +347,8 @@ function buildContent(q) {
     runBtn.disabled = true;
     status.textContent = loadMore ? 'loading more…' : 'querying…';
     status.classList.remove('error');
+    // A new query's inputs may differ from the rows on screen: mark them stale until its own result replaces them.
+    if (!loadMore) resultPanel.setAttribute('aria-busy', 'true');
     try {
       const offsetForRun = loadMore ? state.offset : 0;
       const vars = collectVars(offsetForRun);
@@ -406,9 +408,12 @@ function buildContent(q) {
         }
       }
     } catch (err) {
+      // A failed new query leaves no earlier result beside its error; a failed "Load more" keeps the rows it has.
+      if (!loadMore) { resultPanel.innerHTML = ''; state.items = []; state.offset = 0; state.totalCount = null; }
       status.textContent = 'error: ' + (err && err.message ? err.message : String(err));
       status.classList.add('error');
     } finally {
+      resultPanel.removeAttribute('aria-busy');
       runBtn.disabled = false;
     }
   };

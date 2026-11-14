@@ -469,10 +469,13 @@ function initTabs() {
 }
 
 // The account view loads with its own chunk. Only the latest account route renders once it arrives.
-var accountRouteSeq = 0;
+var accountRouteSeq = 0, accountViewLoaded = false;
 function renderAccountRoute(route) {
   var seq = ++accountRouteSeq;
+  // The first visit downloads the chunk: say so in the panel instead of leaving it blank.
+  if (!accountViewLoaded) document.getElementById('tab-account').innerHTML = '<div class="error-box muted">Loading…</div>';
   import('./account-view.js').then(function (mod) {
+    accountViewLoaded = true;
     if (seq === accountRouteSeq && document.getElementById('tab-account').classList.contains('active')) mod.renderAccountView(route);
   }, function (error) {
     var panel = document.getElementById('tab-account');
