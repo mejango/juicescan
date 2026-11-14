@@ -540,6 +540,8 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
       await releaseForwardedReservations(reserved, lock).catch(function () {});
       throw new Error('The request could not be saved before publication. Enable browser storage before requesting a Relayr quote. Nothing was published or paid.');
     }
+    // The caller's own record of what it just published, written once this bundle's marker holds the action.
+    if (journal.onPublication) { try { journal.onPublication(); } catch (_) {} }
   }
   var res;
   try {

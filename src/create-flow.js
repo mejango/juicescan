@@ -4673,16 +4673,16 @@ async function runDeploy(state, owner) {
     assertScheduleFresh(pk.scheduleValidUntil);
     txs.push(await buildForwardedTx(pk.chainId, signer, pk.address, launchCalls[k].data, gases[k], pk.value, pk.scheduleValidUntil));
   }
-  // Saved before the requests leave this window, bound to the requests themselves. A launch another window
-  // already holds keeps its own record: that bundle will refuse this one.
+  // Saved as the requests leave this window, bound to the requests themselves, once this launch's marker holds
+  // the action: a launch another window holds keeps its own record.
   var proofs = txs.map(relayrSignedProofOf);
-  if (proofs.every(Boolean) && !loadRelayrPendingSession(CREATE_RELAYR_SCOPE)) {
-    saveLaunchCalls(signer, { calls: launchCalls.map(function (call, index) { return Object.assign({}, call, { proofs: [proofs[index]] }); }), done: [] });
-  }
+  var keepLaunchCalls = function () {
+    if (proofs.every(Boolean)) saveLaunchCalls(signer, { calls: launchCalls.map(function (call, index) { return Object.assign({}, call, { proofs: [proofs[index]] }); }), done: [] });
+  };
   push('Sending to Relayr to simulate + quote…');
   var quote;
   try {
-    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, scheduleValidUntil: launchScheduleLimit(plans), rulesetCountByChain: Object.fromEntries(plans.map(function (p) { return [p.chainId, p.rulesetCount || state.stages.length]; })), chains: plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }) });
+    quote = await relayrPostBundle(txs, { scope: CREATE_RELAYR_SCOPE, account: signer, onPublication: keepLaunchCalls, scheduleValidUntil: launchScheduleLimit(plans), rulesetCountByChain: Object.fromEntries(plans.map(function (p) { return [p.chainId, p.rulesetCount || state.stages.length]; })), chains: plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }) });
   } catch (error) {
     state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
     throw error;
@@ -4700,7 +4700,7 @@ function launchCallsOf(session) {
 // Deletes the saved calls only with their own bundle's receipt. The record matches a bundle and its replacement
 // alike, so a window still showing the old bundle must not delete what the saved replacement needs.
 function clearLaunchCallsOf(session) {
-  var current = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  var current = loadRelayrPendingSession(CREATE_RELAYR_SCOPE, session);
   if ((!current || current.bundleUuid === session.bundleUuid) && launchCallsOf(session)) clearLaunchCalls(session.account);
 }
 // A bundle whose unfinished chains can be signed again: paid with chains left over, or the unpaid replacement of one.

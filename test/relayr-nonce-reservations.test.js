@@ -335,6 +335,17 @@ describe('expired unpaid schedule retirement', () => {
   });
 });
 
+describe('the caller’s own publication record', () => {
+  it('is written under the publication lock once the marker holds the action, and never for a refused second bundle', async () => {
+    const seen = [];
+    const onPublication = () => seen.push([state.inLock, loadRelayrPendingSession('create').paymentState]);
+    await relayrPostBundle([await entry()], { ...journal('create'), onPublication });
+    expect(seen).toEqual([[true, 'publication']]);
+    await expect(relayrPostBundle([await entry(8453, '0xdeadbeef')], { ...journal('create'), onPublication })).rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+    expect(seen).toHaveLength(1);
+  });
+});
+
 describe('replacing a paid bundle’s unfinished request at the same nonce', () => {
   const PAY = '0x' + 'ab'.repeat(32);
   const secondQuote = () => {
