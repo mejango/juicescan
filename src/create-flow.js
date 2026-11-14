@@ -4331,9 +4331,6 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
         await verifyCreateDirectLeg(session, plan);
         await saveCreateDirectSession(state, session, lock);
         if (plan.status !== 'confirmed') throw new Error('The launch on ' + chainName(plan.chainId) + ' reverted. Resume to review the remaining calls.');
-        if (plan.safe) await verifySafe(createPublicClientForChain(plan.chainId), plan.safe).catch(function () {
-          push('The multisig ' + plan.safe.address + ' could not be confirmed on ' + chainName(plan.chainId) + ' after the launch. Check it before sending it anything.', 'err');
-        });
       } catch (error) {
         // Only an explicit wallet rejection establishes that an un-hashed request was not submitted.
         if (!plan.hash && error.userRejected === true && plan.status === 'awaiting-wallet') await keep(null).catch(function () {});
@@ -4341,6 +4338,12 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
       }
     }
   }
+  // Every launched leg's Safe is confirmed here, so a launch resumed after its transaction mined is checked too.
+  await Promise.all(session.plans.filter(function (plan) { return plan.safe && plan.hash; }).map(function (plan) {
+    return verifySafe(createPublicClientForChain(plan.chainId), plan.safe).catch(function () {
+      push('The multisig ' + plan.safe.address + ' could not be confirmed on ' + chainName(plan.chainId) + ' after the launch. Check it before sending it anything.', 'err');
+    });
+  }));
   await captureDeployedLegs(state, session.plans.map(function (plan) { return { chainId: plan.chainId, hash: plan.hash, rulesetCount: plan.rulesetCount }; }));
   state._deployedChains = session.plans.map(function (plan) { return plan.chainId; });
   await lock.assertHeld();

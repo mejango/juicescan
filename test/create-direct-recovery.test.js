@@ -274,6 +274,23 @@ describe('direct multichain creation recovery', () => {
     expect(mocks.execute.mock.calls.map(([opts]) => opts.chainId)).toEqual([11155111, 84532]);
   });
 
+  it('confirms the new Safe of a launch that mined while the window was closed', async () => {
+    // The SDK's address vector: the plan's address must be its policy's.
+    const safe = { owners: ['0x0000000000000000000000000000000000000002', '0x0000000000000000000000000000000000000003', '0x0000000000000000000000000000000000000004'],
+      threshold: 2, saltNonce: '0x' + '00'.repeat(31) + '2a', proxyCreationCode: '0x6001600055', address: '0xF0CBF9d51dEe3F870E12f3b4dC36cB5f9a3e4132' };
+    const draft = state();
+    const session = { account: ALICE, plans: plans().map((plan, index) => Object.assign(plan, { safe, hash: index ? HASH2 : HASH1, status: 'submitted' })) };
+    await __test.saveCreateDirectSession(draft, session);
+    // Nothing runs at the Safe's address on either chain.
+    const getCode = vi.fn(async () => '0x');
+    mocks.client.mockImplementation(clientFor(session, { getCode }));
+    await __test.runCreateDirectSession(draft, session, true);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(getCode).toHaveBeenCalledWith(expect.objectContaining({ address: safe.address }));
+    const warnings = draft._push.mock.calls.filter(([text, kind]) => kind === 'err' && /multisig .* could not be confirmed/.test(text));
+    expect(warnings).toHaveLength(2);
+  });
+
   it.each(['wrong sender', 'wrong calldata', 'RPC unavailable'])('blocks further sends when a saved transaction has %s', async (failure) => {
     const draft = state();
     const session = { account: ALICE, plans: plans() };
