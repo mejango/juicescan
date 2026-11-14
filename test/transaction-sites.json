@@ -205,7 +205,7 @@
     },
     "src/relayr.js": {
       "counts": {
-        "providerRequest": 4,
+        "providerRequest": 5,
         "relayrPay": 2,
         "relayrPostBundle": 4,
         "sendTransaction": 1,

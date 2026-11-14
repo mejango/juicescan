@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { clearLaunchCalls, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from '../src/launch-retry.js';
+import { clearLaunchCalls, launchCallsFor, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from '../src/launch-retry.js';
 
 var A = '0x00000000000000000000000000000000000000aa';
 var F = '0x00000000000000000000000000000000000000ff';
@@ -30,23 +30,37 @@ describe('what can be done about an unfinished relayed launch chain', () => {
 
 describe('the saved launch calls', () => {
   beforeEach(() => { localStorage.clear(); });
-  var call = { chainId: 8453, to: D, data: '0xabcd', value: 5n, gas: 900000n, scheduleValidUntil: 1700, rulesetCount: 2, requestHash: H, nonce: 4n, deadline: 200 };
+  var H2 = '0x' + '22'.repeat(32);
+  var call = { chainId: 8453, to: D, data: '0xabcd', value: 5n, gas: 900000n, scheduleValidUntil: 1700, rulesetCount: 2,
+    proofs: [{ requestHash: H, nonce: 4n, deadline: 200 }, { requestHash: H2, nonce: 4n, deadline: 900 }] };
 
-  it('keeps the bundle, the exact calls with their own nonce proof, and the launched chains per account', () => {
-    expect(saveLaunchCalls(A.toUpperCase().replace('0X', '0x'), { bundleUuid: 'b-1', replacing: true, calls: [call], done: [{ chainId: 1, hash: H, rulesetCount: 2 }] })).toBe(true);
-    expect(loadLaunchCalls(A)).toEqual({ account: A, bundleUuid: 'b-1', replacing: true,
-      calls: [{ chainId: 8453, to: D, data: '0xabcd', value: '5', gas: '900000', scheduleValidUntil: 1700, rulesetCount: 2, requestHash: H, nonce: '4', deadline: '200' }],
+  it('keeps the exact calls with every signed request’s proof, and the launched chains per account', () => {
+    expect(saveLaunchCalls(A.toUpperCase().replace('0X', '0x'), { replacing: true, calls: [call], done: [{ chainId: 1, hash: H, rulesetCount: 2 }] })).toBe(true);
+    expect(loadLaunchCalls(A)).toEqual({ account: A, replacing: true,
+      calls: [{ chainId: 8453, to: D, data: '0xabcd', value: '5', gas: '900000', scheduleValidUntil: 1700, rulesetCount: 2,
+        proofs: [{ requestHash: H, nonce: '4', deadline: '200' }, { requestHash: H2, nonce: '4', deadline: '900' }] }],
       done: [{ chainId: 1, hash: H, rulesetCount: 2 }] });
     expect(loadLaunchCalls(D)).toBe(null);
     clearLaunchCalls(A);
     expect(loadLaunchCalls(A)).toBe(null);
   });
 
-  it('reads nothing from a damaged record, or one with no bundle or nonce proof', () => {
-    localStorage.setItem('jb-create-relayr-calls-v1:' + A, JSON.stringify({ account: A, bundleUuid: 'b', calls: [{ chainId: 1, to: 'x', data: '0x', value: '0' }], done: [] }));
+  it('reads nothing from a damaged record, one with no proof, or proofs at different nonces', () => {
+    localStorage.setItem('jb-create-relayr-calls-v1:' + A, JSON.stringify({ account: A, calls: [{ chainId: 1, to: 'x', data: '0x', value: '0' }], done: [] }));
     expect(loadLaunchCalls(A)).toBe(null);
-    saveLaunchCalls(A, { bundleUuid: '', calls: [call], done: [] });
+    saveLaunchCalls(A, { calls: [Object.assign({}, call, { proofs: [] })], done: [] });
     expect(loadLaunchCalls(A)).toBe(null);
+    saveLaunchCalls(A, { calls: [Object.assign({}, call, { proofs: [call.proofs[0], { requestHash: H2, nonce: 5n, deadline: 900 }] })], done: [] });
+    expect(loadLaunchCalls(A)).toBe(null);
+  });
+
+  it('belongs to a bundle only when every request of that bundle is one it signed', () => {
+    saveLaunchCalls(A, { calls: [call], done: [] });
+    var record = loadLaunchCalls(A);
+    expect(launchCallsFor(record, [{ chain: 8453, requestHash: H2 }])[0].proof.deadline).toBe('900');
+    expect(launchCallsFor(record, [{ chain: 8453, requestHash: '0x' + '33'.repeat(32) }])).toBe(null);
+    expect(launchCallsFor(record, [{ chain: 1, requestHash: H }])).toBe(null);
+    expect(launchCallsFor(record, [])).toBe(null);
   });
 });
 
