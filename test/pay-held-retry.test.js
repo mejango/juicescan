@@ -25,7 +25,8 @@ vi.mock('../src/component-base.js', async (original) => ({ ...await original(),
 vi.mock('../src/fee-buyback-review.js', () => ({
   mountFeeBuybackReview: (_host, _call, changed) => { changed({ busy: false, label: null }); return { stop() {}, confirm: async () => true }; },
 }));
-vi.mock('../src/pay-preview.js', () => ({
+vi.mock('../src/pay-preview.js', async (original) => ({
+  payRouteIsBetter: (await original()).payRouteIsBetter,
   computePayPreview: () => new Promise(() => {}),
   prepareCardPay: (...args) => h.prepare(...args),
   formatTokenCount: (value) => String(value),
