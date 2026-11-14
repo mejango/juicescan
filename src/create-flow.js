@@ -55,6 +55,7 @@ import {
 // Revnet is a reduced flow (no Shop/Settlement — ETH-only, single canonical terminal, suckers on Deploy).
 function stepsFor(state) {
   if (state.projectType === 'revnet') return ['Flavor', 'Basics', 'Stages', 'Shop', 'Deploy'];
+  if (state.projectType === 'simple') return ['Flavor', 'Basics', 'Shop', 'Deploy'];
   return ['Flavor', 'Basics', 'Rulesets', 'Shop', 'Deploy'];
 }
 
@@ -361,7 +362,7 @@ function initState() {
   var allChains = CHAIN_PAIRS.map(function (p) { return network === 'mainnet' ? p.canon : p.testnet; });
   return {
     step: 0,
-    projectType: 'custom',           // 'custom' | 'revnet' — chosen on the Type step; defaults to Custom
+    projectType: 'custom',           // 'simple' | 'custom' | 'revnet', chosen on the Flavor step; a new wizard opens on Simple
     details: {
       name: '', ticker: '', tagline: '', description: '', logoUri: '', logoUploading: false,
       website: '', twitter: '', discord: '', telegram: '', instagram: '', whatsapp: '', tags: [],
@@ -478,7 +479,7 @@ function mergeDraft(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
   var defaults = initState();
   var s = mergeKnownDraftFields(defaults, obj);
-  s.projectType = obj.projectType === 'revnet' ? 'revnet' : 'custom';
+  s.projectType = ['revnet', 'simple'].indexOf(obj.projectType) !== -1 ? obj.projectType : 'custom';
   s._revnetTaxDefaulted = s.projectType === 'revnet'; // a saved revnet draft keeps the tax it was saved with
   s.network = obj.network === 'testnet' ? 'testnet' : 'mainnet';
   s.details = mergeKnownDraftFields(defaults.details, obj.details);
@@ -498,6 +499,13 @@ function mergeDraft(obj) {
   s.stages = (Array.isArray(obj.stages) && obj.stages.length ? obj.stages : defaults.stages)
     .slice(0, 20)
     .map(function (st) { return normalizeImportedStage(st, s.chainIds); });
+  if (s.projectType === 'simple') {
+    // The preset is the code's, never the file's: a saved Simple draft launches today's preset rules.
+    if (Array.isArray(obj.savedStages) && obj.savedStages.length) {
+      s.savedStages = obj.savedStages.slice(0, 20).map(function (st) { return normalizeImportedStage(st, s.chainIds); });
+    }
+    s.stages = [createSimpleStage()];
+  }
   s.nfts = (Array.isArray(obj.nfts) ? obj.nfts : []).slice(0, 100).map(normalizeImportedItem);
   s.storeCategories = (Array.isArray(obj.storeCategories) ? obj.storeCategories : []).slice(0, 255).map(function (entry) {
     return { id: Number(entry && entry.id), name: String(entry && entry.name || '').trim() };
@@ -608,7 +616,7 @@ export function exportDraftFile(state) {
 
 export function openCreateFlow() {
   // Restore a saved draft if one exists (survives refresh); otherwise start fresh.
-  var state = loadDraft() || initState();
+  var state = loadDraft() || setProjectFlavor(initState(), 'simple');
   // The Discover toggle is the source of truth when the wizard opens. A draft saved in the other mode
   // silently pins its old chain ids behind identical-looking pills ("Base" reads the same in both modes),
   // so a testnet token kept failing lookup after the user toggled to Testnets and refreshed.
@@ -770,11 +778,11 @@ function renderType(state, render) {
   wrap.appendChild(stepHead('Project flavor', 'Follow a preset, or design your project from scratch.'));
 
   var sel = el('select', 'field create-input'); sel.style.width = 'auto'; sel.style.minWidth = '0';
-  [['custom', 'Custom project'], ['revnet', 'Revnet']].forEach(function (o) {
+  [['simple', 'Simple project'], ['custom', 'Custom project'], ['revnet', 'Revnet']].forEach(function (o) {
     var op = el('option'); op.value = o[0]; op.textContent = o[1]; if (state.projectType === o[0]) op.selected = true; sel.appendChild(op);
   });
   sel.addEventListener('change', function () {
-    state.projectType = sel.value;
+    setProjectFlavor(state, sel.value);
     // Revnets hold a single reserve asset — collapse a custom ETH+USDC selection to one.
     if (sel.value === 'revnet' && state.accepts.length > 1) state.accepts = [state.accepts[0] || 'eth'];
     applyRevnetTaxDefault(state);
@@ -787,7 +795,9 @@ function renderType(state, render) {
   var desc = el('div', 'create-hint'); // 8px subtext gap via the standardized base .create-hint
   desc.textContent = isRev
     ? 'Commit to a schedule for creating tokens and returning funds to holders. Holders can cash out or borrow against funds in the revnet under those rules. Market prices and future income can change.'
-    : 'Choose your project’s rules and which powers its owner keeps.';
+    : state.projectType === 'simple'
+      ? 'Use flexible preset rules. Your Custom rules stay saved.'
+      : 'Choose your project’s rules and which powers its owner keeps.';
   flavorContent.appendChild(desc);
   wrap.appendChild(fieldBlock('Flavor', false, flavorContent));
 
@@ -1456,6 +1466,29 @@ export function createStage() {
     // editor section collapses
     tokenOpen: true, payoutsOpen: false, deadlineOpen: false,
   };
+}
+
+// The Simple project flavor's one ruleset, the same preset juicebox.money launches (createSimpleProjectStage):
+// open-ended, no approval wait, and every owner power left on, so the owner can launch now and commit to
+// rules in a later ruleset.
+export function createSimpleStage() {
+  var s = createStage();
+  s.deadline = 'none';
+  s.surplusAllowanceOn = true; s.surplusAllowanceUnlimited = true;
+  s.allowOwnerMinting = true;
+  s.allowSetTerminals = s.allowSetController = s.allowTerminalMigration = true;
+  s.allowSetCustomToken = s.allowAddAccountingContext = s.allowAddPriceFeed = true;
+  return s;
+}
+
+// Switch flavors. Simple swaps the preset ruleset in and keeps the Custom rules aside, so going back restores them.
+export function setProjectFlavor(state, flavor) {
+  if (flavor === state.projectType) return state;
+  if (flavor === 'simple') { state.savedStages = state.stages; state.stages = [createSimpleStage()]; }
+  else if (state.projectType === 'simple') { state.stages = state.savedStages || [createStage()]; delete state.savedStages; }
+  state.projectType = flavor;
+  applyAccountingDefaults(state);
+  return state;
 }
 
 export function renderStages(state, render, opts) {
@@ -3783,8 +3816,10 @@ function reviewSummary(state) {
   c.appendChild(row('Accounting token', surplusTokenLabel(state) + (state.swapRouter ? ' (+ any via router)' : '')));
   c.appendChild(row('Launch', state.stages[0] && state.stages[0].schedule
     ? new Date(Number(state.stages[0].schedule) * 1000).toLocaleString() : (resolveStages(state).length > 1 || state.chainIds.length > 1 ? 'About 10 minutes after preparation' : 'Immediately')));
-  c.appendChild(row('Rulesets', String(state.stages.length)));
-  state.stages.forEach(function (s, i) { c.appendChild(rowBullets('Ruleset #' + (i + 1), stageSummaryParts(s, i, state))); });
+  var simple = state.projectType === 'simple';
+  if (simple) c.appendChild(row('Launching', 'Simple project'));
+  else c.appendChild(row('Rulesets', String(state.stages.length)));
+  state.stages.forEach(function (s, i) { c.appendChild(rowBullets(simple ? 'Rules' : 'Ruleset #' + (i + 1), stageSummaryParts(s, i, state))); });
   if (afterApplies(state)) {
     c.appendChild(row('Afterwards', { wait: 'idle (standby)', terminal: 'continue on the same terms forever', cycle: 'repeat the cycle forever' }[state.afterMode] || state.afterMode));
   }
@@ -5746,7 +5781,7 @@ export const __test = {
   deploySalt, storeUnit, splitLockAllowed, tsToDateInput, FOREVER_SECONDS, pcAddrSet, approvalIssue,
   recomputeCustomDuration, durationIssue,
   verifyLaunchFeedCoverage, launchBaseCurrencies, revnetBaseCurrencyId,
-  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft, noticeClashIssue, stageStarts,
+  lpHookIssue, deadlinePresetIssue, itemSplits, mergeDraft, noticeClashIssue, stageStarts, stepsFor,
   surplusTokenLabel, itemCashOutOn, anyTokenCashOut, buildMetadata, storeCategoryName, itemDraft, renderRevnetStages,
   // Hand-written ABI fragments, exposed so the ABI-parity suite can diff them against data/abis/*.json.
   revDeployAbi, revDeploy721Abi, deployer721Abi, omnichainAbi, omnichain721Abi,
