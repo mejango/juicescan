@@ -14,6 +14,7 @@ import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, d
 import { confirmStatusSettles, offerRelease, payHoldScope, onDocumentWhileConnected, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
+import { openPendingReview as openPendingBridgeReview } from './component-base.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
@@ -12676,13 +12677,17 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
   name = (name || '').trim(); symbol = (symbol || '').trim();
   if (!name || !symbol) { setStatus('Enter a token name and symbol', 'error'); return; }
   setStatus('Verifying token deployment on every project chain…', 'pending');
+  // The token state gates everything after it. Each chain's controller and whether the owner is a Safe do not depend
+  // on each other, so those two are read together.
   var tokenRows = await verifyTokenEditDeployment(project, chains, deployed);
+  setStatus('Verifying project controllers…', 'pending');
+  var tokenChecks = [tokenRows].concat(await Promise.all([controllerMapFor(chains, project),
+    fetchSafeInfo(operatorAddr, project.chainId).catch(function () { return null; })]));
   var reverifyRename = deployed ? async function () {
     var current = await verifyTokenEditDeployment(project, chains, true);
     if (current.some(function (row, index) { return row.token.toLowerCase() !== tokenRows[index].token.toLowerCase(); })) throw new Error('A project token address changed. Refresh and review the token rename again.');
   } : undefined;
-  setStatus('Verifying project controllers…', 'pending');
-  var controllers = await controllerMapFor(chains, project);
+  var controllers = tokenChecks[1];
 
   // The deterministic salt makes the ERC-20 deploy to the same address on every chain. A token that already
   // exists elsewhere keeps the salt it was deployed with, when this sender can reproduce it.
@@ -12705,7 +12710,7 @@ export async function submitTokenEdit(project, chains, operatorAddr, deployed, n
   };
 
   // If the owner is a Safe, Relayr can't sign for it — propose the call to each chain's Safe queue instead.
-  var safeInfo = await fetchSafeInfo(operatorAddr, project.chainId).catch(function () { return null; });
+  var safeInfo = tokenChecks[2];
   if (safeInfo) {
     var signer = getAccount();
     if (!signer) { setStatus('Connecting wallet…', 'pending'); signer = await connect().then(getAccount).catch(function () { return null; }); }
@@ -18686,6 +18691,10 @@ function openPowerModal(project, action) {
   async function prepareCalls() {
     var selected = allChains.filter(function (c) { return chainSelected[c.id] !== false; });
     if (!selected.length) { setStatus('Select at least one chain', 'error'); return null; }
+    // The target contracts are read alongside the rules check; each is still awaited and checked in its place below.
+    var targetsRead = action.contract === 'JBController' ? controllerMapFor(selected, project)
+      : action.resolveTargets ? Promise.resolve().then(function () { return action.resolveTargets(project, selected.map(function (c) { return c.id; })); }) : null;
+    if (targetsRead) targetsRead.catch(function () {});
     if (action.flagKey) {
       setStatus('Checking the current rules on each chain…', 'pending');
       var refusal = await powerChainRefusal(action, selected, function (cid) {
@@ -18700,11 +18709,11 @@ function openPowerModal(project, action) {
     catch (err) { setStatus(err.message || String(err), 'error'); return null; }
     var liveTargets = null;
     if (action.contract === 'JBController') {
-      try { liveTargets = await controllerMapFor(selected, project); }
+      try { liveTargets = await targetsRead; }
       catch (controllerError) { setStatus(errMessage(controllerError, 'Could not verify the project controller.'), 'error'); return null; }
     } else if (action.resolveTargets) {
       // Per-project targets (e.g. the project's own buyback hook) instead of an infra address.
-      try { liveTargets = await action.resolveTargets(project, selected.map(function (c) { return c.id; })); }
+      try { liveTargets = await targetsRead; }
       catch (targetError) { setStatus(errMessage(targetError, 'Could not resolve the target contract.'), 'error'); return null; }
     }
     var buildCall = function (cid) {
@@ -25339,9 +25348,11 @@ function openEditSplitsModal(project, opts) {
         read(editChain, 'JBSplits', splitsOfAbi, 'splitsOf', [homePid, FALLBACK_RULESET_ID, toBigInt(homeGroup)])
           .then(function (f) { return { splits: f || [] }; }, function () { return { failed: true }; }),
       ]).then(function (r) {
-        loadingModal.close();
+        if (!loadingBody.isConnected) return; // closed while verifying
         openEditSplitsModal(project, Object.assign({}, opts, {
           _verifiedPrefill: true,
+          // The editor fills the dialog that is already open.
+          _loading: { modal: loadingModal, body: loadingBody },
           chainId: editChain,
           prefill: r[0] || [],
           fallback: r[1],
@@ -25494,7 +25505,8 @@ function openEditSplitsModal(project, opts) {
   actions.appendChild(submit);
   content.appendChild(actions);
 
-  var modal = openModal(modalTitle, content);
+  var modal = opts._loading ? opts._loading.modal : openModal(modalTitle, content);
+  if (opts._loading) { opts._loading.body.replaceWith(content); content.addEventListener('jb:close-modal', modal.close); }
   var setStatus = makeStatusSetter(status, 'operator-edit-status');
   var busy = false;
   function setBusy(on) {
@@ -25618,29 +25630,30 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
   }
   var expectedFingerprint = splitFingerprint(expectedPrefill || []);
   var ridMap = {}, groupMap = {}, controllerMap = {};
-  for (var j = 0; j < selectedChains.length; j++) {
-    var cid = selectedChains[j].id;
+  // Each chain's checks depend only on that chain, so the chains are verified together; any failure still stops the save.
+  await Promise.all(selectedChains.map(async function (chain) {
+    var cid = chain.id;
     var localGroup = groupIdForChain(cid);
-    if (localGroup == null) throw new Error('Could not resolve the split group on ' + (selectedChains[j].name || cid) + '.');
+    if (localGroup == null) throw new Error('Could not resolve the split group on ' + (chain.name || cid) + '.');
     var localPid = pidOn(project, cid);
     var liveController = await controllerAddressFor(cid, Number(localPid));
     var rs = await clientFor(cid).readContract({ address: liveController, abi: currentRulesetAbi, functionName: 'currentRulesetOf', args: [localPid] });
-    if (!rs || !rs[0] || !rs[0].id || !rs[1]) throw new Error('No current ruleset on ' + (selectedChains[j].name || cid) + '.');
+    if (!rs || !rs[0] || !rs[0].id || !rs[1]) throw new Error('No current ruleset on ' + (chain.name || cid) + '.');
     var liveSplits = await read(cid, 'JBSplits', splitsOfAbi, 'splitsOf', [localPid, toBigInt(rs[0].id), toBigInt(localGroup)]);
-    if (splitFingerprint(liveSplits) !== expectedFingerprint) throw new Error('The current splits on ' + (selectedChains[j].name || cid) + ' differ from the verified prefill. Nothing was sent; reopen the editor before replacing them.');
+    if (splitFingerprint(liveSplits) !== expectedFingerprint) throw new Error('The current splits on ' + (chain.name || cid) + ' differ from the verified prefill. Nothing was sent; reopen the editor before replacing them.');
     // Emptying a group only routes value to the owner when JBSplits has no fallback group to fall back
     // to. Read that group per chain (it is per-chain state) and fail closed if it can't be read.
     if (!splits.length && liveSplits && liveSplits.length) {
       var fallbackSplits = null, fallbackFailed = false;
       try { fallbackSplits = await read(cid, 'JBSplits', splitsOfAbi, 'splitsOf', [localPid, FALLBACK_RULESET_ID, toBigInt(localGroup)]); }
       catch (e) { fallbackFailed = true; }
-      var block = splitsClearGuard({ clearing: true, fallbackSplits: fallbackSplits, fallbackReadFailed: fallbackFailed, chainName: selectedChains[j].name || String(cid) });
+      var block = splitsClearGuard({ clearing: true, fallbackSplits: fallbackSplits, fallbackReadFailed: fallbackFailed, chainName: chain.name || String(cid) });
       if (block) throw new Error(block);
     }
     ridMap[cid] = rs[0].id;
     groupMap[cid] = toBigInt(localGroup);
     controllerMap[cid] = liveController;
-  }
+  }));
   var shim = Object.assign({}, project, { chains: selectedChains });
   var result = await runAuthorityActionAcrossChains(shim, selectedChains, operatorAddr, function (cid) {
     var groups = [{ groupId: groupMap[cid], splits: splitsByChain[cid] }];
@@ -26351,6 +26364,9 @@ function renderYouCard(project, opts) {
     }
     actions.style.display = ''; // connected: reveal the action buttons
     claimBtn.style.display = hasSelectedProjectAction(claimScope) ? '' : 'none';
+    // Where credits can exist the button holds its place from the first paint, locked until the balances are read.
+    claimBtn.disabled = false;
+    if (claimBtn.style.display === 'none' && project.tokenAddress) { claimBtn.style.display = ''; claimBtn.disabled = true; }
     var headers = noLoans ? ['Chain', 'Balance', 'Cash out'] : ['Chain', 'Balance', 'Cash out', 'Max loan'];
     if (showLp) headers.push('LP');
     var status = skelOpsTable(headers, 2); body.appendChild(status);
@@ -26408,7 +26424,7 @@ function renderYouCard(project, opts) {
       var balanceComplete = rows.every(function (r) { return r.balance != null; });
       var held = rows.filter(function (r) { return r.balance && r.balance > 0n; });
       if (!held.length) {
-        claimRows = []; claimBtn.style.display = hasSelectedProjectAction(claimScope) ? '' : 'none';
+        claimRows = []; claimBtn.disabled = false; claimBtn.style.display = hasSelectedProjectAction(claimScope) ? '' : 'none';
         var none = el('div', 'detail-card-body you-empty');
         none.textContent = balanceComplete
           ? ('You don’t hold any ' + sym + ' yet.')
@@ -26446,6 +26462,7 @@ function renderYouCard(project, opts) {
       });
       // Reveal "Claim credits" when an ERC-20 exists and the wallet holds unclaimed credits somewhere.
       claimRows = held.filter(function (r) { return r.credit != null && r.credit > 0n; });
+      claimBtn.disabled = false;
       claimBtn.style.display = (hasSelectedProjectAction(claimScope) || (project.tokenAddress && claimRows.length)) ? '' : 'none';
       var totBalSub = subFor(anyCredit, anyErc20);
       var totBalCell = !balanceComplete ? '—'
@@ -26512,6 +26529,7 @@ function renderYouCard(project, opts) {
       }
     }).catch(function () {
       if (seq !== loadSeq || !body.isConnected) return;
+      if (claimBtn.disabled) { claimBtn.disabled = false; claimBtn.style.display = 'none'; }
       status.textContent = 'Could not read your position.';
     });
   }
@@ -26664,21 +26682,22 @@ function renderBridgeTransactionsTable(rows, project) {
       };
       // Claiming runs on the DESTINATION chain — gas paid in that chain's native ETH. Warn early if the
       // wallet has none there (the most common reason a valid claim "doesn't work").
-      cstat.classList.add('pending'); cstat.textContent = 'Checking…';
-      readEthBalance(tx.peerChainId, acct).then(function (bal) {
-        cstat.classList.remove('pending'); cstat.textContent = '';
-        var lowGas = bal != null && bal < 200000000000000n;
-        openTxConfirm(payload, function (ctx) {
-          executeTransaction({
-            skipConfirm: true,
-            chainId: tx.peerChainId, address: tx.peerSucker, abi: suckerClaimAbi, functionName: 'claim', contractName: 'JBSucker',
-            args: [{ token: tx.remoteToken || tx.token, leaf: leaf, proof: tx.proof }],
-            onStatus: function (m, kind, meta) { ctx.showStatus(m, kind, meta); },
-            onError: function (m) { ctx.showStatus(m, 'error'); },
-            onSuccess: function () { ctx.showStatus('Claimed', 'success'); ctx.modal.close(); cstat.textContent = 'Claimed'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
-          });
-        }, { title: 'Confirm claim', confirmText: 'Confirm & Claim', closeOnConfirm: false,
-          note: lowGas ? 'Heads up: claiming is a transaction on ' + moveChainName(tx.peerChainId) + ', and your wallet looks low on ' + moveChainName(tx.peerChainId) + ' ETH for gas. Fund it there first if the wallet can’t submit.' : undefined });
+      // The call is fully known here, so the review opens at the click; the gas note joins it when the balance lands.
+      var gasRead = readEthBalance(tx.peerChainId, acct);
+      openTxConfirm(payload, function (ctx) {
+        executeTransaction({
+          skipConfirm: true,
+          chainId: tx.peerChainId, address: tx.peerSucker, abi: suckerClaimAbi, functionName: 'claim', contractName: 'JBSucker',
+          args: [{ token: tx.remoteToken || tx.token, leaf: leaf, proof: tx.proof }],
+          onStatus: function (m, kind, meta) { ctx.showStatus(m, kind, meta); },
+          onError: function (m) { ctx.showStatus(m, 'error'); },
+          onSuccess: function () { ctx.showStatus('Claimed', 'success'); ctx.modal.close(); cstat.textContent = 'Claimed'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
+        });
+      }, { title: 'Confirm claim', confirmText: 'Confirm & Claim', closeOnConfirm: false });
+      var note = document.querySelector('dialog[open]:not([data-covered]) .pay-confirm .tx-confirm-note');
+      gasRead.then(function (bal) {
+        if (!note || !note.isConnected || bal == null || bal >= 200000000000000n) return;
+        note.textContent = 'Heads up: claiming is a transaction on ' + moveChainName(tx.peerChainId) + ', and your wallet looks low on ' + moveChainName(tx.peerChainId) + ' ETH for gas. Fund it there first if the wallet can’t submit.';
       });
     });
     action.appendChild(claimBtn); action.appendChild(cstat);
@@ -26746,23 +26765,28 @@ function renderBridgeTransactionsTable(rows, project) {
     execBtn.title = 'Ship the queued outbox to ' + moveChainName(g.to) + ' (anyone can call this)';
     execBtn.addEventListener('click', function () {
       var acct = getAccount && getAccount(); if (!acct) { connect(); return; }
-      execBtn.disabled = true;
-      var onS = function (m, kind) { estat.classList.toggle('pending', kind === 'pending'); estat.textContent = m; };
-      onS('Reading bridge fee…', 'pending');
-      findToRemoteValue(s.chainId, s.sourceSucker, s.token, acct).then(function (fee) {
-        if (fee == null) { estat.classList.remove('pending'); execBtn.disabled = false; estat.textContent = 'Could not determine the bridge fee, try again shortly.'; return; }
-        estat.classList.remove('pending'); estat.textContent = ''; execBtn.disabled = false;
+      execBtn.disabled = true; estat.classList.remove('pending'); estat.textContent = '';
+      // The review opens at the click with the fee row loading. The fee is the transaction's value, so nothing can
+      // be agreed to until it is read.
+      var execAction = 'Send the queued movements to ' + moveChainName(s.peerChainId);
+      var execRows = function (fee) { return [
+        ['Sends', sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + ' in one bridge message'],
+        ['Bridge fee', fee == null ? null : formatEth(fee) + ', paid to relay the message, not the bridged tokens'],
+        ['From', moveChainName(s.chainId)],
+        ['To', moveChainName(s.peerChainId)],
+      ]; };
+      var review = openPendingBridgeReview({ action: execAction, chain: moveChainName(s.chainId), rows: execRows(null) }, { title: 'Transfer all queued movements' });
+      if (review.closed) { execBtn.disabled = false; return; }
+      findToRemoteValue(s.chainId, s.sourceSucker, s.token, acct).catch(function () { return null; }).then(function (fee) {
+        execBtn.disabled = false;
+        if (review.closed) return;
+        if (fee == null) { estat.textContent = 'Could not determine the bridge fee, try again shortly.'; review.fail(estat.textContent); return; }
         // Same decoded confirm as the auto-pop after prepare (executeTransaction → confirmTransactionModal).
         executeTransaction({
           chainId: s.chainId, address: s.sourceSucker, abi: suckerBridgeAbi, functionName: 'toRemote', contractName: 'JBSucker',
           args: [s.token], value: fee, label: 'Transfer all queued movements',
-          confirmTitle: 'Transfer all queued movements',
-          confirmSummary: { action: 'Send the queued movements to ' + moveChainName(s.peerChainId), rows: [
-            ['Sends', sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + ' in one bridge message'],
-            ['Bridge fee', formatEth(fee) + ', paid to relay the message, not the bridged tokens'],
-            ['From', moveChainName(s.chainId)],
-            ['To', moveChainName(s.peerChainId)],
-          ] },
+          confirmTitle: 'Transfer all queued movements', confirmSession: review,
+          confirmSummary: { action: execAction, rows: execRows(fee) },
           confirmDescription: 'This ships the bridge’s queued outbox to ' + moveChainName(s.peerChainId) + ', it delivers all '
             + sendable.length + ' queued move' + (sendable.length > 1 ? 's' : '') + ' to ' + moveChainName(s.peerChainId) + ' in a single bridge '
             + 'message, so anyone can trigger it. The value shown is the bridge’s messaging fee, you pay it to relay the message; it’s not the bridged tokens (those move from the project’s funds).',
@@ -29056,6 +29080,14 @@ var _gossipSyncAt = loadGossipSyncAt();
 // we MUST send a positive native budget covering CCIP getFee; excess is refunded. Discover it by simulating
 // syncAccountingData ITSELF (not toRemote — that reverts when the outbox is empty, the bug a tx-auditor
 // caught). Native bridges may accept 0. Returns bigint, or null if no tier simulates cleanly.
+// Probe every budget at once and keep the smallest that simulates cleanly: the answer trying them in order gives.
+export async function smallestPassing(values, probe) {
+  var passed = await Promise.all(values.map(function (value) {
+    return Promise.resolve().then(function () { return probe(value); }).then(function () { return true; }, function () { return false; });
+  }));
+  var first = passed.indexOf(true);
+  return first < 0 ? null : values[first];
+}
 async function findSyncValue(chainId, sucker, account) {
   if (!account) return null;
   var data;
@@ -29066,30 +29098,32 @@ async function findSyncValue(chainId, sucker, account) {
     ? [1000000000000000n, 5000000000000000n, 20000000000000000n, 50000000000000000n, 200000000000000000n, 500000000000000000n]
     : [0n, 1000000000000000n, 10000000000000000n, 50000000000000000n];
   var fundedBalance = 10n ** 21n;
-  for (var i = 0; i < ladder.length; i++) {
-    try {
-      await clientFor(chainId).call({ account: account, to: sucker, data: data, value: ladder[i], stateOverride: [{ address: account, balance: fundedBalance }] });
-      return ladder[i];
-    } catch (_) { /* insufficient / sim limitation — try a larger budget */ }
-  }
-  return null;
+  // A budget that is too small reverts (insufficient / sim limitation); the smallest that simulates is used.
+  return smallestPassing(ladder, function (value) {
+    return clientFor(chainId).call({ account: account, to: sucker, data: data, value: value, stateOverride: [{ address: account, balance: fundedBalance }] });
+  });
 }
 function syncAccountingFromPeer(peerChainId, peerSucker, btn, key, project) {
   var acct = getAccount && getAccount();
   if (!acct) { connect(); return; }
   var orig = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Syncing…';
-  findSyncValue(peerChainId, peerSucker, acct).then(function (fee) {
+  btn.disabled = true;
+  // The review opens at the click with the fee row loading; the fee is the transaction's value and still gates it.
+  var syncRows = function (fee) { return [
+    ['Pushes', moveChainName(peerChainId) + '’s accounting snapshot over the bridge'],
+    ['Bridge fee', fee == null ? null : formatEth(fee) + ', excess refunded'],
+    ['On chain', moveChainName(peerChainId)],
+  ]; };
+  var review = openPendingBridgeReview({ action: 'Sync accounting snapshot', chain: moveChainName(peerChainId), rows: syncRows(null) }, { title: 'Sync accounting snapshot' });
+  if (review.closed) { btn.disabled = false; return; }
+  findSyncValue(peerChainId, peerSucker, acct).catch(function () { return null; }).then(function (fee) {
+    if (review.closed) { btn.disabled = false; return; }
     // Never send 0 native on a CCIP sucker — that triggers LINK-fee mode (pulls unapproved LINK). Bail instead.
-    if (fee == null) { btn.disabled = false; btn.textContent = 'Fee?'; btn.title = 'Could not determine the bridge fee, try again shortly.'; return; }
+    if (fee == null) { btn.disabled = false; btn.textContent = 'Fee?'; btn.title = 'Could not determine the bridge fee, try again shortly.'; review.fail(btn.title); return; }
     executeTransaction({
       chainId: peerChainId, address: peerSucker, abi: suckerSyncAbi, functionName: 'syncAccountingData', contractName: 'JBSucker', value: fee,
-      confirmTitle: 'Sync accounting snapshot',
-      confirmSummary: { action: 'Sync accounting snapshot', rows: [
-        ['Pushes', moveChainName(peerChainId) + '’s accounting snapshot over the bridge'],
-        ['Bridge fee', formatEth(fee) + ', excess refunded'],
-        ['On chain', moveChainName(peerChainId)],
-      ] },
+      confirmTitle: 'Sync accounting snapshot', confirmSession: review,
+      confirmSummary: { action: 'Sync accounting snapshot', rows: syncRows(fee) },
       confirmDescription: 'Pushes ' + moveChainName(peerChainId) + '’s accounting snapshot (and everything it knows about other chains) over the bridge. The value shown is the bridge messaging fee, you pay it to relay the snapshot; excess is refunded.',
       onStatus: function (m, kind, meta) {
         btn.textContent = m === 'Awaiting wallet confirmation…' ? 'Confirm…' : 'Syncing…';
@@ -29456,9 +29490,12 @@ function suckerBranchRoot(leaf, proof, index) {
 async function findToRemoteValue(chainId, sucker, token, account) {
   var registry = getAddress('JBSuckerRegistry', chainId);
   if (!registry) return null;
-  var fee;
-  try { fee = BigInt(await clientFor(chainId).readContract({ address: registry, abi: suckerRegistryBridgeAbi, functionName: 'toRemoteFee', args: [] })); } catch (_) { return null; }
-  var infra = await classifySuckerInfra(chainId, sucker);
+  // The registry fee and the bridge type do not depend on each other: read together.
+  var fee, infra;
+  try {
+    var feeAndInfra = await Promise.all([clientFor(chainId).readContract({ address: registry, abi: suckerRegistryBridgeAbi, functionName: 'toRemoteFee', args: [] }), classifySuckerInfra(chainId, sucker)]);
+    fee = BigInt(feeAndInfra[0]); infra = feeAndInfra[1];
+  } catch (_) { return null; }
   if (infra === 'unknown') return null;
   if (infra === 'native') return fee; // native bridge: fee only
   if (!account) return null; // need a caller to simulate against
@@ -29468,17 +29505,13 @@ async function findToRemoteValue(chainId, sucker, token, account) {
   // generously. A tier that's too low reverts (insufficient CCIP fee); the first that succeeds is returned.
   var ladder = [1000000000000000n, 5000000000000000n, 20000000000000000n, 50000000000000000n, 200000000000000000n, 500000000000000000n];
   var fundedBalance = 10n ** 21n; // 1000 ETH override so the sim never fails on the caller's balance
-  for (var i = 0; i < ladder.length; i++) {
-    var value = fee + ladder[i];
-    try {
-      await clientFor(chainId).call({
-        account: account, to: sucker, data: data, value: value,
-        stateOverride: [{ address: account, balance: fundedBalance }],
-      });
-      return value; // succeeded — this budget covers getFee; excess refunds onchain
-    } catch (_) { /* insufficient (or sim limitation) — try a larger budget */ }
-  }
-  return null;
+  // The smallest budget that simulates covers getFee; excess refunds onchain.
+  return smallestPassing(ladder.map(function (budget) { return fee + budget; }), function (value) {
+    return clientFor(chainId).call({
+      account: account, to: sucker, data: data, value: value,
+      stateOverride: [{ address: account, balance: fundedBalance }],
+    });
+  });
 }
 
 // Native ETH balance (wei) for an address on a chain. Null on failure.
@@ -30963,7 +30996,19 @@ function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
   go.addEventListener('click', function () {
     if (go.disabled || !pos) return;
     status.style.display = 'none';
+    // A band the form can already refuse is refused inline, before any dialog.
+    try { prepareMoveLiquidity(chainId, pos, acct, Number(minInput.value), Number(maxInput.value)); }
+    catch (e) { showError(e, 'Could not prepare the move'); return; }
     go.disabled = true; go.textContent = 'Refreshing…';
+    // The review opens at the click; the band, amounts and deadline come from the fresh position read.
+    var moveAction = 'Move your liquidity to a new band in the ' + sym + '/' + pos.pair.symbol + ' pool';
+    var review = openPendingBridgeReview({ action: moveAction, chain: chainNameOf(chainId), rows: [
+      ['Position', '#' + pos.tokenId.toString() + ' → a new position in the same pool'],
+      ['New band', null], ['Into the new band', null], ['You get back at least', null],
+      ['Leftovers', 'unclaimed fees + whatever the new band doesn’t use, to ' + acct],
+      ['Deadline', null],
+    ] }, { title: 'Confirm move liquidity', confirmText: 'Confirm & move' });
+    if (review.closed) { go.disabled = false; go.textContent = 'Review & move'; return; }
     // Re-read immediately before building: the editor can sit open while the market moves.
     refreshLpPositionForRemoval(chainId, pos, acct).then(function (fresh) {
       pos = fresh;
@@ -30971,14 +31016,15 @@ function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
       var prep;
       try {
         prep = prepareMoveLiquidity(chainId, pos, acct, Number(minInput.value), Number(maxInput.value));
-      } catch (e) { showError(e, 'Could not prepare the move'); return; }
+      } catch (e) { showError(e, 'Could not prepare the move'); review.fail(status.textContent); return; }
+      if (review.closed) return;
       // Show the post-tick-snap band, not the typed one — that is what mints.
       var snapped = lpBandPricesOf({ pair: pos.pair, pairIsC0: pos.pairIsC0, tickLower: prep.tickLower, tickUpper: prep.tickUpper });
       var mintMaxH = formatTokens(prep.tokenMax) + ' ' + sym + ' + ' + formatBalance(prep.pairMax, pos.pair.decimals, pos.pair.symbol);
       var minH = formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol);
-      openTxConfirm({
+      lpConfirmAndSend(review, {
         summary: {
-          action: 'Move your liquidity to a new band in the ' + sym + '/' + pos.pair.symbol + ' pool',
+          action: moveAction,
           rows: [
             ['Position', '#' + pos.tokenId.toString() + ' → a new position in the same pool'],
             ['New band', formatPrice(snapped.min) + ' to ' + formatPrice(snapped.max) + ' ' + pos.pair.symbol + '/' + sym],
@@ -30993,22 +31039,17 @@ function openLpMoveEditor(project, chainId, stalePos, acct, onDone) {
         calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
         position: { actions: 'BURN_POSITION, MINT_POSITION, CLOSE, CLOSE (0x03021212)', tokenId: pos.tokenId.toString(), minimumReturns: minH, recipient: acct },
         args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
-      }, function (ctx) {
-        ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Moving liquidity…', 'pending');
-        lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet }).then(function (hash) {
-          ctx.modal.close();
-          handle.close();
-          noteLocalLpWrite(chainId, pos.poolId);
-          if (onDone) onDone(hash);
-        }).catch(function (e) {
-          ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-          if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
-          var msg = errMessage(e, 'Move failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
-        });
-      }, { title: 'Confirm move liquidity', confirmText: 'Confirm & move', closeOnConfirm: false });
+      }, { title: 'Confirm move liquidity', confirmText: 'Confirm & move' }, 'Moving liquidity…', 'Move failed', function () {
+        return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
+      }, function (hash) {
+        handle.close();
+        noteLocalLpWrite(chainId, pos.poolId);
+        if (onDone) onDone(hash);
+      });
     }).catch(function (e) {
       go.disabled = false; go.textContent = 'Review & move';
       showError(e, 'Could not refresh this position');
+      review.fail(status.textContent);
     });
   });
 }
@@ -31021,6 +31062,8 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
   var sym = project.tokenSymbol || 'tokens';
   var chainIds = (rows || []).map(function (r) { return r.id; }).filter(function (cid) { return !!POSITION_MANAGER_BY_CHAIN[cid]; });
   if (!chainIds.length) return;
+  // One quiet line holds the section's place while the position scan runs.
+  var loading = skel('160px', '11px'); host.appendChild(loading);
   Promise.all(chainIds.map(function (cid) {
     return readUserLpPositions(project, cid, acct)
       .then(function (ps) { return { cid: cid, positions: ps || [] }; })
@@ -31033,7 +31076,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       if (entry.failed) { failed.push(entry.cid); return; }
       entry.positions.forEach(function (pos) { found.push({ cid: entry.cid, pos: pos }); });
     });
-    if (!found.length && !failed.length) return;
+    if (!found.length && !failed.length) { loading.remove(); return; }
     host.innerHTML = '';
     var title = el('div', 'you-loans-title'); title.textContent = 'Your LP positions'; host.appendChild(title);
     if (failed.length) {
@@ -31095,7 +31138,7 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
     });
     wrap.appendChild(table);
     host.appendChild(wrap);
-  }).catch(function () {});
+  }).catch(function () { loading.remove(); });
 }
 
 // Confirm + send an LP fee claim. Shared by the remove-liquidity modal and the "Your LP positions" table so both
@@ -31103,43 +31146,59 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
 // `prepareCollectLpFees` picks its deadline off `pos.smartWallet`, but the positions list never resolves
 // that flag — only the removal refresh does. Without this a multisig silently gets the 20-minute EOA
 // window (and a modal promising "~20 minutes") on a claim its co-signers cannot finish in time.
+// The review opens at the click: the wallet-type read decides only the deadline (a row and a call argument), so that
+// row loads and nothing can be agreed to until the exact call is shown.
 function openLpClaimConfirm(project, chainId, pos, acct, claimable, onClaimed) {
+  var review = openPendingBridgeReview({ action: lpClaimAction(project, pos), chain: chainNameOf(chainId), rows: lpClaimRows(project, pos, acct, claimable, null) });
+  if (review.closed) return Promise.resolve();
   return lpIsSmartWallet(chainId, acct).then(function (smartWallet) {
-    openLpClaimConfirmFor(project, chainId, Object.assign({}, pos, { smartWallet: smartWallet }), acct, claimable, onClaimed);
+    if (review.closed) return;
+    openLpClaimConfirmFor(project, chainId, Object.assign({}, pos, { smartWallet: smartWallet }), acct, claimable, onClaimed, review);
+  }).catch(function (e) { review.fail(errMessage(e, 'Could not prepare the claim.')); throw e; });
+}
+export { openLpClaimConfirm, openEditSplitsModal };
+function lpClaimAction(project, pos) { return 'Claim your LP fees from the ' + (project.tokenSymbol || 'tokens') + '/' + pos.pair.symbol + ' pool'; }
+function lpClaimRows(project, pos, acct, claimable, deadline) {
+  var feesH = formatTokens(claimable.tokFees) + ' ' + (project.tokenSymbol || 'tokens') + ' + ' + formatBalance(claimable.pairFees, pos.pair.decimals, pos.pair.symbol);
+  return [
+    ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
+    ['You receive', '≈ ' + feesH + ' (whatever the pool has accrued at execution)'],
+    ['Liquidity', 'untouched: this claims fees only'],
+    ['To', acct],
+    ['Deadline', deadline],
+  ];
+}
+
+// Show an LP call's exact review in the dialog opened at the click, then send it there. A failed send ends the
+// dialog; trying again starts from fresh reads.
+function lpConfirmAndSend(review, payload, opts, sendingLine, failLine, send, onSent) {
+  review.showNext(payload, opts).then(function (r) {
+    if (!r || !r.ok) return;
+    r.showStatus(sendingLine, 'pending');
+    send().then(function (hash) { r.close(); onSent(hash); }).catch(function (e) {
+      if (e && e.txStatusKind === 'pending') { r.showStatus(e.message, 'pending', { trackingError: true }); return; }
+      var msg = errMessage(e, failLine); r.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
+    });
   });
 }
 
-function openLpClaimConfirmFor(project, chainId, pos, acct, claimable, onClaimed) {
+function openLpClaimConfirmFor(project, chainId, pos, acct, claimable, onClaimed, review) {
   var sym = project.tokenSymbol || 'tokens';
   var prep = prepareCollectLpFees(chainId, pos, acct);
   var feesH = formatTokens(claimable.tokFees) + ' ' + sym + ' + ' + formatBalance(claimable.pairFees, pos.pair.decimals, pos.pair.symbol);
-  openTxConfirm({
+  lpConfirmAndSend(review, {
     summary: {
-      action: 'Claim your LP fees from the ' + sym + '/' + pos.pair.symbol + ' pool',
-      rows: [
-        ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
-        ['You receive', '≈ ' + feesH + ' (whatever the pool has accrued at execution)'],
-        ['Liquidity', 'untouched: this claims fees only'],
-        ['To', acct],
-        ['Deadline', prep.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes'],
-      ],
+      action: lpClaimAction(project, pos),
+      rows: lpClaimRows(project, pos, acct, claimable, prep.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes'),
     },
     chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
     'function': 'modifyLiquidities', value: '0',
     calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
     position: { actions: 'DECREASE_LIQUIDITY 0, TAKE_PAIR (0x0111)', tokenId: pos.tokenId.toString(), expectedReturns: feesH, recipient: acct },
     args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
-  }, function (ctx) {
-    ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Claiming fees…', 'pending');
-    lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet }).then(function (hash) {
-      ctx.modal.close();
-      if (onClaimed) onClaimed(hash);
-    }).catch(function (e) {
-      ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-      if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
-      var msg = errMessage(e, 'Claim failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
-    });
-  });
+  }, { title: 'Confirm transaction', confirmText: 'Confirm' }, 'Claiming fees…', 'Claim failed', function () {
+    return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
+  }, function (hash) { if (onClaimed) onClaimed(hash); });
 }
 
 function openRemoveLiquidityModal(project, chainId, onDone) {
@@ -31199,6 +31258,13 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
       rm.addEventListener('click', function () {
         if (rm.disabled) return;
         rm.disabled = true; rm.textContent = 'Refreshing…'; rmStatus.textContent = ''; rmStatus.className = 'modal-status'; rmStatus.style.display = 'none';
+        // The review opens at the click; the amounts, minimum and deadline come from the fresh position read.
+        var removeAction = 'Remove liquidity from the ' + sym + '/' + pos.pair.symbol + ' pool';
+        var review = openPendingBridgeReview({ action: removeAction, chain: chainNameOf(chainId), rows: [
+          ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
+          ['You receive', null], ['Minimum', null], ['To', acct], ['Deadline', null],
+        ] }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove' });
+        if (review.closed) { rm.disabled = false; rm.textContent = 'Remove'; return; }
         refreshLpPositionForRemoval(chainId, pos, acct).then(function (fresh) {
           pos = fresh;
           pairH = formatBalance(pos.pairAmt, pos.pair.decimals, pos.pair.symbol);
@@ -31206,9 +31272,10 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
           amts.textContent = tokH + ' + ' + pairH + ' | oracle ' + truncAddr(pos.oracleHook);
           var prep = prepareRemoveLiquidity(chainId, pos, acct);
           rm.disabled = false; rm.textContent = 'Remove';
-          openTxConfirm({
+          if (review.closed) return;
+          lpConfirmAndSend(review, {
             summary: {
-              action: 'Remove liquidity from the ' + sym + '/' + pos.pair.symbol + ' pool',
+              action: removeAction,
               rows: [
                 ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
                 ['You receive', '≈ ' + tokH + ' + ' + pairH + ' (set by the pool at execution)'],
@@ -31223,24 +31290,19 @@ function openRemoveLiquidityModal(project, chainId, onDone) {
             position: { actions: 'BURN_POSITION, TAKE_PAIR (0x0311)', tokenId: pos.tokenId.toString(), expectedReturns: tokH + ' + ' + pairH,
               minimumReturns: formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol), recipient: acct },
             args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
-          }, function (ctx) {
-            ctx.confirm.disabled = true; ctx.cancel.disabled = true; ctx.showStatus('Removing liquidity…', 'pending');
-            lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet }).then(function (hash) {
-              ctx.modal.close();
-              var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Removed | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
-              row.innerHTML = ''; row.appendChild(ok);
-              noteLocalLpWrite(chainId, pos.poolId);
-              if (onDone) onDone();
-            }).catch(function (e) {
-              ctx.confirm.disabled = false; ctx.cancel.disabled = false;
-              if (e && e.txStatusKind === 'pending') { ctx.showStatus(e.message, 'pending'); return; }
-              var msg = errMessage(e, 'Remove failed'); ctx.showStatus(msg.length > 160 ? msg.slice(0, 160) + '…' : msg, 'error');
-            });
-          }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove', closeOnConfirm: false });
+          }, { title: 'Confirm remove liquidity', confirmText: 'Confirm & remove' }, 'Removing liquidity…', 'Remove failed', function () {
+            return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
+          }, function (hash) {
+            var ok = el('div', 'modal-status success'); ok.appendChild(document.createTextNode('Removed | TX: ')); ok.appendChild(renderExplorerTxLink(chainId, hash, truncAddr(hash)));
+            row.innerHTML = ''; row.appendChild(ok);
+            noteLocalLpWrite(chainId, pos.poolId);
+            if (onDone) onDone();
+          });
         }).catch(function (e) {
           rm.disabled = false; rm.textContent = 'Remove'; rmStatus.className = 'modal-status error'; rmStatus.style.display = '';
           var msg = errMessage(e, 'Could not refresh this position');
           rmStatus.textContent = msg.length > 160 ? msg.slice(0, 160) + '…' : msg;
+          review.fail(rmStatus.textContent);
         });
       });
       row.appendChild(rm);
