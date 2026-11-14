@@ -135,3 +135,14 @@ describe('the rebuilt page after a confirmed transaction replaces the old one on
     ghost.remove();
   });
 });
+
+describe('a route switches a subtab on the page already open', () => {
+  // A reused page (numeric or verified handle route) shows the routed tab, then the routed subtab. The section may
+  // come from cache, and the route carries a slug, not the button's label.
+  it('gives a cached section its subtab switch back and accepts route slugs', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync('src/discover.js', 'utf8');
+    expect(source).toContain('else if (_activeDetail) _activeDetail.showSubTab = subTabSwitch[tabName] || null;');
+    expect(source.split('_activeDetail.showSubTab = function (name) { show(order.filter(function (o) { return tabSlug(o) === tabSlug(name); })[0] || name); };').length).toBe(3);
+  });
+});

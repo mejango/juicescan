@@ -1860,7 +1860,7 @@ function renderShopTab(project, shopState, cart, initialSubTab) {
     subRow.appendChild(btn);
   });
   section.appendChild(subRow); section.appendChild(content);
-  if (_activeDetail) _activeDetail.showSubTab = show;
+  if (_activeDetail) _activeDetail.showSubTab = function (name) { show(order.filter(function (o) { return tabSlug(o) === tabSlug(name); })[0] || name); };
   var initial = 'Inventory';
   if (initialSubTab) { for (var i = 0; i < order.length; i++) if (tabSlug(order[i]) === tabSlug(initialSubTab)) { initial = order[i]; break; } }
   show(initial);
@@ -9003,6 +9003,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     for (var k = 0; k < tabs.length; k++) if (tabSlug(tabs[k]) === tabSlug(initialTab)) { startTab = tabs[k]; break; }
   }
   var detailKey = slugForChain(project._urlChainId) + ':' + pidOn(project, project._urlChainId).toString();
+  var subTabSwitch = {};
   function showTab(tabName) {
     // Accept slugified route names too (e.g. "rulesetsfunds").
     for (var t = 0; t < tabs.length; t++) if (tabSlug(tabs[t]) === tabSlug(tabName)) { tabName = tabs[t]; break; }
@@ -9010,7 +9011,9 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     // Set `current` BEFORE building so a subtabbed section's show() (which fires during build) reads the
     // right top tab. Reset subtab state on every tab switch; the section re-registers it if it has subtabs.
     if (_activeDetail) { _activeDetail.current = tabName; _activeDetail.subtab = null; _activeDetail.showSubTab = null; }
-    if (!built[tabName]) built[tabName] = builders[tabName]();
+    // A section registers its subtab switch while it builds; a section shown again from cache gets its own back.
+    if (!built[tabName]) { built[tabName] = builders[tabName](); subTabSwitch[tabName] = _activeDetail && _activeDetail.showSubTab; }
+    else if (_activeDetail) _activeDetail.showSubTab = subTabSwitch[tabName] || null;
     contentArea.innerHTML = '';
     contentArea.appendChild(built[tabName]);
     var btns = tabRow.querySelectorAll('.detail-tab-btn');
@@ -21648,7 +21651,7 @@ function renderOwnersSection(project, opts) {
     if (e.detail) navigateProjectSection(project, opts.tabName || (_activeDetail && _activeDetail.current), e.detail, function () { show(e.detail); });
   });
   // Expose subtab switching so a route change (#…/tab/subtab) can drive it; pick the routed subtab if given.
-  if (_activeDetail) _activeDetail.showSubTab = show;
+  if (_activeDetail) _activeDetail.showSubTab = function (name) { show(order.filter(function (o) { return tabSlug(o) === tabSlug(name); })[0] || name); };
   var initial = 'Accounts';
   if (opts.initialSubTab) {
     for (var oi = 0; oi < order.length; oi++) if (tabSlug(order[oi]) === tabSlug(opts.initialSubTab)) { initial = order[oi]; break; }
