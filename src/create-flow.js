@@ -4333,7 +4333,7 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear, onFinish) 
     action.addEventListener('click', function () {
       if (!window.confirm('Clear this saved Relayr receipt? This does not undo chains that already deployed. Review every chain before launching any missing work.')) return;
       clearRelayrPendingSession(CREATE_RELAYR_SCOPE, session);
-      clearLaunchCalls(session.account);
+      clearLaunchCallsOf(session);
       if (onClear) onClear();
     });
   } else {
@@ -4467,7 +4467,7 @@ async function runDeploy(state, owner) {
     var restoredBefore = launchedBefore(restoredRelayr.account, restoredRelayr.chains, restoredRelayr.bundleUuid);
     await captureDeployedLegs(state, restoredBefore.concat(relayrLegs(restoredRelayr.chains && restoredRelayr.chains.length ? restoredRelayr.chains : [{ id: restoredChain }], restoredTxs, restoredRelayr.rulesetCountByChain)));
     state._deployedChains = restoredBefore.map(function (leg) { return leg.chainId; }).concat(restoredRelayr.chains.map(function (chain) { return Number(chain.id); }));
-    clearLaunchCalls(restoredRelayr.account);
+    clearLaunchCallsOf(restoredRelayr);
     clearRelayrPendingSession(CREATE_RELAYR_SCOPE, restoredRelayr);
     state._relayrPending = null;
     return;
@@ -4693,6 +4693,8 @@ function launchCallsOf(session) {
   var saved = session && loadLaunchCalls(session.account);
   return saved && saved.bundleUuid === session.bundleUuid ? saved : null;
 }
+// Deletes the saved calls only when they belong to this bundle: another window may have moved on to its replacement.
+function clearLaunchCallsOf(session) { if (launchCallsOf(session)) clearLaunchCalls(session.account); }
 // A bundle whose unfinished chains can be signed again: paid with chains left over, or the unpaid replacement of one.
 function canFinishRelayr(session, saved, failed) {
   if (!saved) return false;
@@ -4751,7 +4753,7 @@ async function finishCreateRelayr(state, session) {
     await captureDeployedLegs(state, done);
     state._deployedChains = done.map(function (leg) { return leg.chainId; });
     clearRelayrPendingSession(CREATE_RELAYR_SCOPE, session); state._relayrPending = null;
-    clearLaunchCalls(signer);
+    clearLaunchCallsOf(session);
     return;
   }
   var names = retry.map(function (item) { return chainName(item.call.chainId); }).join(', ');
@@ -4836,7 +4838,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   var before = launchedBefore(signer, chains, quote.bundle_uuid);
   await captureDeployedLegs(state, before.concat(relayrLegs(chains, finalRelayrTxs, paidSession.rulesetCountByChain)));
   state._deployedChains = before.map(function (leg) { return leg.chainId; }).concat(state.deployChains);
-  clearLaunchCalls(signer);
+  clearLaunchCallsOf(paidSession);
   clearRelayrPendingSession(CREATE_RELAYR_SCOPE, paidSession);
   state._relayrPending = null;
 }
