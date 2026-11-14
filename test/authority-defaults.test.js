@@ -65,6 +65,17 @@ describe('a launch that creates its Safe', () => {
     expect(createsSafe(state)).toBe(true);
   });
 
+  it('is named in the Deploy summary in place of the wallet or a typed operator', () => {
+    const state = initState();
+    state.projectType = 'revnet'; state.chainIds = [1]; state.details.name = 'Safe revnet'; state.details.ticker = 'REV';
+    state.revOperator = '0x1111111111111111111111111111111111111111';
+    expect(__test.renderDeploy(state, () => {}).textContent).not.toContain('A new multisig');
+    state.authoritySafe = { on: true, signers: SAFE.owners.slice(), threshold: 2 };
+    const text = __test.renderDeploy(state, () => {}).textContent;
+    expect(text).toContain('A new multisig, 2 of 3 approvals');
+    expect(text).not.toContain('0x1111');
+  });
+
   it('sends one batch per chain: the Safe, then exactly the launch call, with its fee', () => {
     const state = initState();
     state.projectType = 'custom'; state.chainIds = [1]; state.details.name = 'Safe project'; state.details.owner = '';

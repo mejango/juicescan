@@ -494,6 +494,11 @@ export function createsSafe(state) {
   return !!(state.authoritySafe && state.authoritySafe.on) && String(authority || '').toLowerCase() !== PERMANENTLY_DISABLED_AUTHORITY;
 }
 
+// How every summary names the Safe before its address is known.
+export function newSafeSummary(state) {
+  return 'A new multisig, ' + state.authoritySafe.threshold + ' of ' + state.authoritySafe.signers.length + ' approvals';
+}
+
 function mergeDraft(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
   var defaults = initState();
@@ -3923,7 +3928,8 @@ function reviewSummary(state) {
     var opRaw = pickResolved(state.revOperator, { resolvedAddress: state.revOperatorResolved, resolvedFor: state.revOperatorResolvedFor });
     c.appendChild(row(
       'Revnet operator',
-      String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
+      createsSafe(state) ? newSafeSummary(state)
+        : String(opRaw || '').toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY
         ? 'No retained authority'
         : (/^0x/.test(opRaw) ? shortAddr(opRaw) : (opRaw || 'Your connected wallet')),
     ));
@@ -4577,7 +4583,7 @@ async function runDeploy(state, owner) {
   var chainNames = state.chainIds.map(function (cid) { return chainName(cid); }).join(', ');
   var knownRows = [
     ['Name', state.details.name || 'project'],
-    [isRev ? 'Operator' : 'Owner', createsSafe(state) ? 'A new multisig, ' + state.authoritySafe.threshold + ' of ' + state.authoritySafe.signers.length + ' approvals' : isRev ? (operatorRaw || owner) : owner],
+    [isRev ? 'Operator' : 'Owner', createsSafe(state) ? newSafeSummary(state) : isRev ? (operatorRaw || owner) : owner],
     ['Chains', chainNames],
     isRev ? ['Token', state.details.ticker || 'TOKEN'] : null,
     ['Accepts', (state.accepts || []).map(function (t) { return t === 'eth' ? 'ETH' : t === 'usdc' ? 'USDC' : 'custom token'; }).join(', ') || 'ETH'],
