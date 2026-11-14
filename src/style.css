@@ -6516,3 +6516,6 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .native-nft-inventory caption { text-align: left; margin-bottom: 8px; color: var(--text-muted); }
 .native-nft-inventory th, .native-nft-inventory td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .native-nft-inventory th:last-child, .native-nft-inventory td:last-child { text-align: right; }
+/* A confirm dialog opened before its reads landed: the rows still loading read quieter than the known ones. */
+.tx-decoded-argval.pending { color: var(--muted-2); font-style: italic; }
+button[aria-busy="true"] { cursor: progress; }
