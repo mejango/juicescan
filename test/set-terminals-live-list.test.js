@@ -19,6 +19,11 @@ describe('Set payment terminals', () => {
     expect(() => POWER_SET_TERMINALS.buildArgs({ terminals: [] }, 1, 5n)).toThrow(/full terminal list/);
     expect(() => POWER_SET_TERMINALS.buildArgs({}, 1, 5n)).toThrow(/full terminal list/);
   });
+  it('sends an empty list only behind the acknowledgement', () => {
+    expect(POWER_SET_TERMINALS.fields[1]).toMatchObject({ name: 'allowEmpty', kind: 'bool', help: 'An empty list stops payments and cash outs.' });
+    expect(() => POWER_SET_TERMINALS.buildArgs({ terminals: [], allowEmpty: false }, 1, 5n)).toThrow(/full terminal list/);
+    expect(POWER_SET_TERMINALS.buildArgs({ terminals: [], allowEmpty: true }, 1, 5n)).toEqual([5n, []]);
+  });
   it('sends exactly the reviewed list', () => {
     const list = ['0x' + '11'.repeat(20), '0x' + '22'.repeat(20)];
     expect(POWER_SET_TERMINALS.buildArgs({ terminals: list }, 1, 5n)).toEqual([5n, list]);
