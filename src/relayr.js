@@ -339,19 +339,19 @@ function forwardedPublicationProofs(transactions, journal) {
   }).filter(Boolean);
 }
 
-// The forwarder state behind this action's latest signed request on one chain, read at one block. A replacement
-// shares its nonce and carries the later deadline. null when no proof is saved here.
-export async function relayrSignedRequestState(scope, account, chainId) {
-  var signer = String(account || '').toLowerCase();
-  var proof = readNonceReservations().filter(function (row) {
-    return row.scope === scope && row.signer === signer && row.chain === Number(chainId);
-  }).sort(function (a, b) { return BigInt(a.nonce) < BigInt(b.nonce) ? 1 : -1; })[0];
-  if (!proof) return null;
-  var client = createPublicClientForChain(proof.chain);
+// The signer's forwarder nonce and the chain time, read at one block.
+export async function relayrForwarderState(chainId, account) {
+  var forwarder = getAddress('ERC2771Forwarder', chainId), client = createPublicClientForChain(chainId);
   var block = await client.getBlock({ blockTag: 'latest' });
-  if (!block || block.number == null || block.timestamp == null) throw new Error('Could not read ' + chainNameFor(proof.chain) + '. Nothing was signed.');
-  var nonce = BigInt(await client.readContract({ address: proof.forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [proof.signer], blockNumber: block.number }));
-  return { chain: proof.chain, forwarder: proof.forwarder, signedNonce: proof.nonce, deadline: proof.deadline, chainNonce: nonce, timestamp: BigInt(block.timestamp) };
+  if (!forwarder || !block || block.number == null || block.timestamp == null) throw new Error('Could not read ' + chainNameFor(chainId) + '. Nothing was signed.');
+  var nonce = BigInt(await client.readContract({ address: forwarder, abi: FORWARDER_ABI, functionName: 'nonces', args: [account], blockNumber: block.number }));
+  return { chainNonce: nonce, timestamp: BigInt(block.timestamp) };
+}
+// The nonce and deadline this window signed into a forwarded entry, with the hash Relayr binds it by.
+export function relayrSignedProofOf(entry) {
+  var requestHash = relayrRequestFingerprint(Object.assign({}, entry, { virtual_nonce: 0 }));
+  var proof = RELAYR_SIGNED_FORWARD_REQUESTS.get(requestHash);
+  return proof ? { requestHash: requestHash, nonce: proof.nonce, deadline: proof.deadline } : null;
 }
 export function decodeForwardedRequest(data) {
   try { var decoded = decodeFunctionData({ abi: FORWARDER_ABI, data: data }); return decoded.functionName === 'execute' ? decoded.args[0] : null; }
@@ -476,15 +476,21 @@ export async function relayrPostBundle(transactions, journal, lock, keep) {
     if (journal.account && (!getAccount() || String(getAccount()).toLowerCase() !== String(journal.account).toLowerCase())) {
       throw new Error('Connected account changed. Review the Relayr request again.');
     }
-    // journal.replaces = { bundleUuid }: a paid bundle that finished on some chains only is replaced
-    // by same-nonce requests for the unfinished ones. Its receipt is archived before the new marker is saved.
+    // journal.replaces = { bundleUuid }: a paid bundle that finished on some chains only, or its own unpaid
+    // replacement, is replaced by same-nonce requests for the unfinished chains. A paid receipt is archived before
+    // the new marker is saved. A bundle whose publication or payment outcome is unknown is never replaced.
     var replaced = loadRelayrPendingSession(journal.scope);
-    if (replaced && journal.replaces && replaced.bundleUuid === journal.replaces.bundleUuid && replaced.paymentHash) {
+    var replaceable = replaced && journal.replaces && replaced.bundleUuid === journal.replaces.bundleUuid
+      && (replaced.paymentHash ? !replaced.paymentState : (replaced.paymentState === 'quoted' || replaced.paymentState === 'expired'));
+    if (replaceable && !replaced.paymentHash) {
+      // Nothing was paid for it: no receipt to keep.
+    } else if (replaceable) {
       var archiveKey = 'jb-relayr-retired-v1:' + relayrAccountPart(replaced) + journal.scope + ':' + replaced.bundleUuid;
       var archiveRaw = JSON.stringify({ receipt: replaced, replacedBy: 'same-nonce requests for its unfinished chains' });
       try { localStorage.setItem(archiveKey, archiveRaw); if (localStorage.getItem(archiveKey) !== archiveRaw) throw new Error(); }
       catch (_) { throw new Error('The original receipt could not be archived. Restore browser storage before signing again.'); }
     } else if (replaced) {
+      replaced = null;
       var existing = new Error('A previous Relayr request for this action is still saved. Check that request before publishing another bundle.');
       existing.code = 'RELAYR_PUBLICATION_PENDING'; existing.retryable = true; throw existing;
     }

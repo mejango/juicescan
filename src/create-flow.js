@@ -29,7 +29,7 @@ import {
 import { pinFile, pinJson, encodeIpfsUriToBytes32 } from './ipfs-pin.js';
 import { getAuditPrompt } from './prompts.js';
 import { clearLaunchCalls, loadLaunchCalls, provesLaunch, saveLaunchCalls, unfinishedLaunchOutcome } from './launch-retry.js';
-import { relayrSignedRequestState, decodeForwardedRequest, buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
+import { relayrForwarderState, relayrSignedProofOf, decodeForwardedRequest, buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
 import { checkJbDraft, jbDraftFileName, jbDraftUnsupported, serializeJbDraft } from './jb-draft-format.js';
@@ -4341,7 +4341,7 @@ function createRelayrReceiptNode(session, checking, onCheck, onClear, onFinish) 
     action.addEventListener('click', onCheck);
   }
   // A paid bundle that left chains unfinished can sign the same launch again for those chains.
-  if (onFinish && session.paymentHash && !paymentExpired && progress.failed && loadLaunchCalls(session.account)) {
+  if (onFinish && canFinishRelayr(session, launchCallsOf(session), progress.failed)) {
     var finish = el('button', 'create-btn primary'); finish.type = 'button'; finish.style.marginTop = '10px';
     finish.textContent = checking ? 'Checking…' : 'Finish unfinished chains'; finish.disabled = !!checking;
     finish.addEventListener('click', onFinish);
@@ -4464,7 +4464,7 @@ async function runDeploy(state, owner) {
     var restoredTxs = await monitorCreateRelayr(state, restoredRelayr, true);
     var restoredChain = Number(restoredRelayr.chains && restoredRelayr.chains[0] && restoredRelayr.chains[0].id) || state.chainIds[0];
     push('Reading the deployed project…');
-    var restoredBefore = launchedBefore(restoredRelayr.account, restoredRelayr.chains);
+    var restoredBefore = launchedBefore(restoredRelayr.account, restoredRelayr.chains, restoredRelayr.bundleUuid);
     await captureDeployedLegs(state, restoredBefore.concat(relayrLegs(restoredRelayr.chains && restoredRelayr.chains.length ? restoredRelayr.chains : [{ id: restoredChain }], restoredTxs, restoredRelayr.rulesetCountByChain)));
     state._deployedChains = restoredBefore.map(function (leg) { return leg.chainId; }).concat(restoredRelayr.chains.map(function (chain) { return Number(chain.id); }));
     clearLaunchCalls(restoredRelayr.account);
@@ -4667,7 +4667,6 @@ async function runDeploy(state, owner) {
       rulesetCount: plan.rulesetCount || state.stages.length,
       data: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args }) };
   });
-  saveLaunchCalls(signer, { calls: launchCalls, done: [] });
   for (var k = 0; k < plans.length; k++) {
     var pk = plans[k];
     push('Signing for ' + chainName(pk.chainId) + '…');
@@ -4683,12 +4682,27 @@ async function runDeploy(state, owner) {
     throw error;
   }
   state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE);
+  // Saved once this bundle exists, bound to it, with each request's own nonce and deadline.
+  var proofs = txs.map(relayrSignedProofOf);
+  if (proofs.every(Boolean)) saveLaunchCalls(signer, { bundleUuid: quote.bundle_uuid, calls: launchCalls.map(function (call, index) { return Object.assign({}, call, proofs[index]); }), done: [] });
   return fundCreateRelayrQuote(state, signer, quote, plans.map(function (plan) { return { id: plan.chainId, name: chainName(plan.chainId) }; }));
 }
 
+// The saved calls of exactly this bundle, or null.
+function launchCallsOf(session) {
+  var saved = session && loadLaunchCalls(session.account);
+  return saved && saved.bundleUuid === session.bundleUuid ? saved : null;
+}
+// A bundle whose unfinished chains can be signed again: paid with chains left over, or the unpaid replacement of one.
+function canFinishRelayr(session, saved, failed) {
+  if (!saved) return false;
+  if (session.paymentHash) return !session.paymentState && !!failed;
+  return saved.replacing && (session.paymentState === 'quoted' || session.paymentState === 'expired');
+}
+
 // Chains an earlier bundle of this launch already finished, so the success panel and the reads cover them too.
-function launchedBefore(account, chains) {
-  var saved = loadLaunchCalls(account);
+function launchedBefore(account, chains, bundleUuid) {
+  var saved = launchCallsOf({ account: account, bundleUuid: bundleUuid });
   var now = (chains || []).map(function (chain) { return Number(chain.id); });
   return saved ? saved.done.filter(function (leg) { return now.indexOf(leg.chainId) === -1; }) : [];
 }
@@ -4700,15 +4714,17 @@ async function finishCreateRelayr(state, session) {
   var push = state._push, signer = session.account;
   var same = function (a, b) { return String(a || '').toLowerCase() === String(b || '').toLowerCase(); };
   if (!getAccount() || !same(getAccount(), signer)) throw new Error('Connect ' + signer + ' to finish this launch.');
-  var saved = loadLaunchCalls(signer);
-  if (!session.paymentHash || !saved) throw new Error('The launch calls of this bundle are not saved in this browser. Nothing was signed.');
-  push('Checking every chain of the paid bundle…');
-  var done = launchedBefore(signer, session.chains), retry = [];
+  var saved = launchCallsOf(session);
+  if (!saved) throw new Error('The launch calls of this bundle are not saved in this browser. Nothing was signed.');
+  if (!canFinishRelayr(session, saved, true)) throw new Error('This bundle’s payment is not settled. Check its status first. Nothing was signed.');
+  var unpaid = !session.paymentHash;
+  push('Checking every chain of the bundle…');
+  var done = launchedBefore(signer, session.chains, session.bundleUuid), retry = [];
   for (var i = 0; i < session.chains.length; i++) {
     var chainId = Number(session.chains[i].id), name = chainName(chainId);
     var call = saved.calls.find(function (candidate) { return candidate.chainId === chainId; });
     var expected = (session.expectedTransactions || [])[i];
-    if (!call || !expected || Number(expected.chain) !== chainId) throw new Error('The saved launch call for ' + name + ' does not match this bundle. Nothing was signed.');
+    if (!call || !expected || Number(expected.chain) !== chainId || expected.requestHash !== call.requestHash) throw new Error('The saved launch call for ' + name + ' does not match this bundle. Nothing was signed.');
     var hash = relayrDestinationHash((session.records || [])[i]);
     var forwarder = getAddress('ERC2771Forwarder', chainId), client = createPublicClientForChain(chainId);
     var transaction = null, receipt = null;
@@ -4722,16 +4738,15 @@ async function finishCreateRelayr(state, session) {
       done.push({ chainId: chainId, hash: hash, rulesetCount: call.rulesetCount });
       continue;
     }
-    var proof = await relayrSignedRequestState(CREATE_RELAYR_SCOPE, signer, chainId);
-    if (!proof || proof.chain !== chainId) throw new Error('The signed request for ' + name + ' is not saved in this browser. Nothing was signed.');
+    var onChain = await relayrForwarderState(chainId, signer);
     var reverted = !!(receipt && receipt.status === 'reverted' && transaction && same(transaction.to, forwarder)
       && request && same(request.from, signer) && same(request.to, call.to) && same(request.data, call.data));
-    var outcome = unfinishedLaunchOutcome(Object.assign({ reverted: reverted }, proof));
+    var outcome = unfinishedLaunchOutcome({ signedNonce: call.nonce, deadline: call.deadline, chainNonce: onChain.chainNonce, timestamp: onChain.timestamp, reverted: reverted, unpaid: unpaid });
     if (outcome === 'ran') throw new Error('The launch on ' + name + ' may have run. Check that chain before doing anything else. Nothing was signed.');
     if (outcome === 'wait') throw new Error('The launch on ' + name + ' can still arrive. Check its status again later. Nothing was signed.');
-    retry.push({ call: call, nonce: proof.signedNonce });
+    retry.push({ call: call, nonce: call.nonce });
   }
-  if (!saveLaunchCalls(signer, { calls: saved.calls, done: done })) throw new Error('Could not save the launch progress. Restore browser storage. Nothing was signed.');
+  if (!saveLaunchCalls(signer, Object.assign({}, saved, { done: done }))) throw new Error('Could not save the launch progress. Restore browser storage. Nothing was signed.');
   if (!retry.length) {
     push('Every chain launched. Reading the projects…');
     await captureDeployedLegs(state, done);
@@ -4759,6 +4774,12 @@ async function finishCreateRelayr(state, session) {
       rulesetCountByChain: Object.fromEntries(retry.map(function (entry) { return [entry.call.chainId, entry.call.rulesetCount]; }).filter(function (pair) { return pair[1]; })),
       replaces: { bundleUuid: session.bundleUuid } });
   } finally { state._relayrPending = loadRelayrPendingSession(CREATE_RELAYR_SCOPE); }
+  // The record moves to the replacement bundle only once that bundle exists; a refusal leaves it on the old one.
+  var again = txs.map(relayrSignedProofOf);
+  if (again.every(Boolean)) saveLaunchCalls(signer, { bundleUuid: quote.bundle_uuid, replacing: true, done: done, calls: saved.calls.map(function (call) {
+    var at = retry.findIndex(function (entry) { return entry.call === call; });
+    return at === -1 ? call : Object.assign({}, call, again[at]);
+  }) });
   return fundCreateRelayrQuote(state, signer, quote, chains);
 }
 
@@ -4813,7 +4834,7 @@ async function fundCreateRelayrQuote(state, signer, quote, chains) {
   state.deployChains = chains.map(function (chain) { return Number(chain.id); });
   var finalRelayrTxs = await monitorCreateRelayr(state, paidSession, false);
   push('Reading the new project…');
-  var before = launchedBefore(signer, chains);
+  var before = launchedBefore(signer, chains, quote.bundle_uuid);
   await captureDeployedLegs(state, before.concat(relayrLegs(chains, finalRelayrTxs, paidSession.rulesetCountByChain)));
   state._deployedChains = before.map(function (leg) { return leg.chainId; }).concat(state.deployChains);
   clearLaunchCalls(signer);

@@ -365,6 +365,19 @@ describe('replacing a paid bundle’s unfinished request at the same nonce', () 
     expect(fetchQuote).toHaveBeenCalledTimes(1);
   });
 
+  it('replaces its own unpaid quote, and never a bundle whose payment outcome is unknown', async () => {
+    await relayrPostBundle([await entry()], journal('create'));
+    const quoted = loadRelayrPendingSession('create');
+    expect(quoted.paymentState).toBe('quoted');
+    fetchQuote.mockImplementation(async () => ({ ok: true, json: async () => secondQuote() }));
+    const result = await relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: quoted.bundleUuid } });
+    expect(loadRelayrPendingSession('create').bundleUuid).toBe(result.bundle_uuid);
+    expect(reservations()).toHaveLength(1);
+    saveRelayrPendingSession('create', { ...loadRelayrPendingSession('create'), paymentState: 'sending', paymentAttempt: 'a' });
+    await expect(relayrPostBundle([await again()], { ...journal('create'), replaces: { bundleUuid: result.bundle_uuid } }))
+      .rejects.toMatchObject({ code: 'RELAYR_PUBLICATION_PENDING' });
+  });
+
   it('never replaces another action’s reservation at that nonce', async () => {
     await relayrPostBundle([await entry(8453, '0xdeadbeef')], journal('claims'));
     saveRelayrPendingSession('create', { bundleUuid: '99999999-89ab-cdef-0123-456789abcdef', account: ACCOUNT, paymentHash: PAY, expectedCount: 1,

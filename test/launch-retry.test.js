@@ -17,6 +17,8 @@ describe('what can be done about an unfinished relayed launch chain', () => {
   it('signs again when the old request expired unused, or its transaction reverted', () => {
     expect(at({ timestamp: 201n })).toBe('retry');
     expect(at({ reverted: true })).toBe('retry');
+    expect(at({ unpaid: true })).toBe('retry');
+    expect(at({ unpaid: true, chainNonce: 5n })).toBe('ran');
   });
 
   it('waits while the old request can still run and nothing proves it failed', () => {
@@ -28,22 +30,22 @@ describe('what can be done about an unfinished relayed launch chain', () => {
 
 describe('the saved launch calls', () => {
   beforeEach(() => { localStorage.clear(); });
+  var call = { chainId: 8453, to: D, data: '0xabcd', value: 5n, gas: 900000n, scheduleValidUntil: 1700, rulesetCount: 2, requestHash: H, nonce: 4n, deadline: 200 };
 
-  it('keeps the exact calls, and the launched chains per account', () => {
-    expect(saveLaunchCalls(A.toUpperCase().replace('0X', '0x'), {
-      calls: [{ chainId: 8453, to: D, data: '0xabcd', value: 5n, gas: 900000n, scheduleValidUntil: 1700, rulesetCount: 2 }],
-      done: [{ chainId: 1, hash: H, rulesetCount: 2 }],
-    })).toBe(true);
-    expect(loadLaunchCalls(A)).toEqual({ account: A,
-      calls: [{ chainId: 8453, to: D, data: '0xabcd', value: '5', gas: '900000', scheduleValidUntil: 1700, rulesetCount: 2 }],
+  it('keeps the bundle, the exact calls with their own nonce proof, and the launched chains per account', () => {
+    expect(saveLaunchCalls(A.toUpperCase().replace('0X', '0x'), { bundleUuid: 'b-1', replacing: true, calls: [call], done: [{ chainId: 1, hash: H, rulesetCount: 2 }] })).toBe(true);
+    expect(loadLaunchCalls(A)).toEqual({ account: A, bundleUuid: 'b-1', replacing: true,
+      calls: [{ chainId: 8453, to: D, data: '0xabcd', value: '5', gas: '900000', scheduleValidUntil: 1700, rulesetCount: 2, requestHash: H, nonce: '4', deadline: '200' }],
       done: [{ chainId: 1, hash: H, rulesetCount: 2 }] });
     expect(loadLaunchCalls(D)).toBe(null);
     clearLaunchCalls(A);
     expect(loadLaunchCalls(A)).toBe(null);
   });
 
-  it('reads nothing from a damaged record', () => {
-    localStorage.setItem('jb-create-relayr-calls-v1:' + A, JSON.stringify({ account: A, calls: [{ chainId: 1, to: 'x', data: '0x', value: '0' }], done: [] }));
+  it('reads nothing from a damaged record, or one with no bundle or nonce proof', () => {
+    localStorage.setItem('jb-create-relayr-calls-v1:' + A, JSON.stringify({ account: A, bundleUuid: 'b', calls: [{ chainId: 1, to: 'x', data: '0x', value: '0' }], done: [] }));
+    expect(loadLaunchCalls(A)).toBe(null);
+    saveLaunchCalls(A, { bundleUuid: '', calls: [call], done: [] });
     expect(loadLaunchCalls(A)).toBe(null);
   });
 });
