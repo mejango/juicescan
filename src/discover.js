@@ -26,6 +26,7 @@ import { buildForwardedTx, relayrSupportsChain, relayrSupportsChains, relayrSupp
 import { generationAddresses, generationNames, getABI } from './abi-registry.js';
 import { resolveBuybackHook, cashOutCountAfterRevnetFee } from './project-hooks.js';
 import { chooseRelayrPayment, renderRelayrReceiptInto } from './relayr-ui.js';
+import { renderFundingChart } from './funding-chart.js';
 import { runDirectBatch, hasDirectBatch, directBatchStatus, clearUnsubmittedDirectBatch } from './direct-batch.js';
 import { runSavedActionPlan, hasSavedActionPlan, acknowledgeSavedActionPlan, discardUnsubmittedActionPlan } from './action-plan.js';
 import { MAX_AUTO_ISSUANCE_CALLS, prepareAutoIssuanceCalls, verifyAutoIssuanceCall } from './auto-issuance-aggregate.js';
@@ -8985,6 +8986,7 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     Overview: function () {
       var wrap = el('div');
       if (project.isRevnet && project.stages && project.stages.length) wrap.appendChild(renderPriceChart(project, project.stages));
+      else if (!project.isRevnet) wrap.appendChild(renderFundingChart(function () { return fetchFundingHistory(project); }));
       wrap.appendChild(renderAboutSection(project));
       return wrap;
     },
@@ -21876,6 +21878,14 @@ var BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $ver
   + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
   + 'items { timestamp balance tokenSupply accountingTokenUsdRate } totalCount } }';
+var BENDYSTRAW_FUNDING_MOMENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { timestamp volumeUsd balanceUsd } totalCount } }';
+var BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'addToBalanceEvents(where: { suckerGroupId: $suckerGroupId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { timestamp amountUsd } totalCount } }';
 var BENDYSTRAW_CASH_OUT_TAX_SNAPSHOTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $chainIds: [Int!], $limit: Int!, $offset: Int!) { '
   + 'cashOutTaxSnapshots(where: { suckerGroupId: $suckerGroupId, version: $version, chainId_in: $chainIds }, '
   + 'orderBy: "start", orderDirection: "asc", limit: $limit, offset: $offset) { '
@@ -22293,6 +22303,19 @@ async function resolveBendystrawSuckerGroupId(project, chainIds) {
     if (row && row.suckerGroupId && groups.indexOf(row.suckerGroupId) === -1) groups.push(row.suckerGroupId);
   });
   return groups.length === 1 ? groups[0] : null;
+}
+
+// Dollar-valued volume and balance moments plus direct additions, oldest first, for the funding chart.
+async function fetchFundingHistory(project) {
+  var chainIds = projectBendystrawChainIds(project);
+  var groupId = chainIds.length ? await resolveBendystrawSuckerGroupId(project, chainIds) : null;
+  if (!groupId) return { moments: [], adds: [] };
+  var variables = { suckerGroupId: groupId, version: BENDYSTRAW_VERSION };
+  var moments = await fetchBendystrawCollectionPages(BENDYSTRAW_FUNDING_MOMENTS_QUERY, 'suckerGroupMoments', variables, PRICE_HISTORY_PAGE_SIZE);
+  // Without the additions the volume series still shows indexed payments; it only understates direct funding.
+  var adds = await fetchBendystrawCollectionPages(BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY, 'addToBalanceEvents', variables, PRICE_HISTORY_PAGE_SIZE)
+    .catch(function () { return { items: [] }; });
+  return { moments: moments.items || [], adds: adds.items || [] };
 }
 
 async function fetchPriceFloorHistory(project, stages) {

@@ -124,3 +124,17 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - **Resource budget:** One branch from main, one full gate, review passes as needed.
 - **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-14: Funding chart for custom projects (J8a)
+
+- [x] Overview of a custom project shows a Volume / Balance bar chart with a range choice, the same series juicebox.money draws. Revnets keep the price chart.
+
+## Plan refinement
+- **Objective:** Close the J5 funding chart gap. Success is a custom project's Overview showing cumulative dollar volume (payments plus direct additions) or dollar balance over a chosen window.
+- **System fit:** `src/funding-chart.js` holds the series rule (`fundingChartPoints`, a hand port of juicebox.money's `bucketize`) and the card. `discover.js` only fetches the two indexed collections and mounts it.
+- **Reuse and simplicity:** Native selects for metric and range, an inline SVG with a title per bar. Existing paged indexer fetch. No chart library, no SDK.
+- **Evidence and unknowns:** The card stays hidden when there is no history or the read fails; the page's numbers do not depend on it. Not rendered against the live indexer in a browser.
+- **Verification:** Unit tests for the series and the card; `npm run check`; Codex until clean.
+- **Resource budget:** One branch on top of J7, one full gate, review passes as needed.
+- **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
+- **Agent-system impact:** None.
