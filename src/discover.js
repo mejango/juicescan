@@ -12040,6 +12040,23 @@ export function shouldUseRelayrForChains(chains) {
 // buildCall(chainId) -> { to, data }. Once payment confirms, `onSession` receives the durable receipt callers
 // can use to resume polling the SAME bundle. A post-payment error carries that receipt as `.relayrSession` so
 // callers never have to guess whether it is safe to create a second bundle.
+// A relayed call runs as the signer (ERC-2771), so it is simulated from the signer before any signature is asked
+// for: a change that would revert is refused with its chain, not relayed and paid for.
+// ponytail: only each chain's first call is simulated; a later call in the same chain's batch may depend on an
+// earlier one. Simulate the batch in order with eth_simulateV1 if a later-step revert ever costs a relay fee.
+export async function simulateRelayedCalls(calls, account, gasLimit, clientOf) {
+  var seen = {};
+  var firsts = calls.filter(function (call) { if (seen[call.cid]) return false; seen[call.cid] = true; return true; });
+  await Promise.all(firsts.map(function (call) {
+    return (clientOf || clientFor)(call.cid).request({
+      method: 'eth_call',
+      params: [{ from: account, to: call.to, data: call.data, value: '0x0', gas: '0x' + BigInt(gasLimit).toString(16) }, 'latest'],
+    }).catch(function (cause) {
+      throw new Error('This change would fail on ' + call.name + ': ' + String(errMessage(cause, 'the simulation reverted')).replace(/\.$/, '') + '. Nothing was signed.');
+    });
+  }));
+}
+
 export async function runRelayrAcrossChains(chains, account, buildCall, gas, setStatus, confirmOpts) {
   confirmOpts = confirmOpts || {};
   if (confirmOpts.pendingScope) {
@@ -12199,6 +12216,8 @@ export async function runRelayrAcrossChains(chains, account, buildCall, gas, set
   if (!ok || (typeof ok === 'object' && !ok.ok)) { setStatus('Cancelled', ''); throw new Error('Cancelled'); }
 
   if (confirmOpts.reverify) await confirmOpts.reverify();
+  setStatus('Simulating the change on each chain…', 'pending');
+  await simulateRelayedCalls(calls, account, gas || 400000n);
   setStatus('Sign the change for ' + chains.length + ' chain' + (chains.length > 1 ? 's' : '') + '…', 'pending');
   var txs = [];
   for (var j = 0; j < calls.length; j++) {
