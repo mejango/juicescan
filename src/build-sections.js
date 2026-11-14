@@ -314,7 +314,7 @@ export const BUILD_SECTIONS = [
         "items": [
           {
             "key": "Launch contract",
-            "text": "the app uses REVDeployer.deployFor for revnets, JBOmnichainDeployer.launchProjectFor for linked chains, and JB721TiersHookProjectDeployer.launchProjectFor for other projects. These launchers set up the required extensions."
+            "text": "the app uses REVDeployer.deployFor for revnets and JBOmnichainDeployer.launchProjectFor for every other project, on one chain or several. These launchers set up the required extensions."
           },
           {
             "key": "Creation fee",
@@ -588,7 +588,7 @@ export const BUILD_SECTIONS = [
           ],
           [
             "Schedule new terms",
-            "JBController.queueRulesetsOf (buildQueueRulesetsTx)"
+            "JBController.queueRulesetsOf (buildQueueRulesetsTx). When the current data hook is JBOmnichainDeployer: JBOmnichainDeployer.queueRulesetsOf (buildOmnichainQueueRulesetsTx)"
           ],
           [
             "Edit recipients and shares",
@@ -1584,7 +1584,7 @@ export const BUILD_SECTIONS = [
           ],
           [
             "JBOmnichainDeployer.launchProjectFor",
-            "(owner, projectUri, JBOmnichain721Config, rulesetConfigurations, terminalConfigurations, memo, JBSuckerDeploymentConfig) payable → (projectId, hook, suckers[]). Also deploys this chain’s suckers; the sucker salt is keccak256(sender, salt), so the same sender must launch on every chain"
+            "(owner, projectUri, JBOmnichain721Config, rulesetConfigurations, terminalConfigurations, memo, JBSuckerDeploymentConfig) payable → (projectId, hook, suckers[]). Also deploys this chain’s suckers when the sucker salt is not zero; that salt is keccak256(sender, salt), so the same sender must launch on every chain. With a zero salt and no sucker configurations it launches on one chain, and the project can add chains later"
           ],
           [
             "JB721TiersHookProjectDeployer.launchProjectFor",
@@ -1594,7 +1594,7 @@ export const BUILD_SECTIONS = [
       },
       {
         "type": "text",
-        "text": "Read JBProjects.creationFee() right before each launch (getProjectCreationFee in the SDK) and pass that exact amount as value. Show it in the review before signing. buildLaunchProjectTx calls JBController.launchProjectFor directly and creates no shop; use JB721TiersHookProjectDeployer.launchProjectFor when the project needs one."
+        "text": "Read JBProjects.creationFee() right before each launch (getProjectCreationFee in the SDK) and pass that exact amount as value. Show it in the review before signing. buildLaunchProjectTx calls JBController.launchProjectFor directly and creates no shop; a project launched that way cannot add chains later. Use JBOmnichainDeployer.launchProjectFor for a shop or for chains now or later. Queue later rulesets through JBOmnichainDeployer.queueRulesetsOf, passing the project’s own data hook (extraDataHookOf) in the metadata: a ruleset queued straight on the controller starts without the shop."
       },
       {
         "type": "info",

@@ -21881,7 +21881,11 @@ var BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $ver
 var BENDYSTRAW_FUNDING_MOMENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
-  + 'items { timestamp volumeUsd balanceUsd } totalCount } }';
+  + 'items { timestamp volumeUsd } totalCount } }';
+var BENDYSTRAW_TOKEN_BALANCE_MOMENTS_QUERY = 'query($chainId: Int!, $projectId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'projectTokenBalanceMoments(where: { chainId: $chainId, projectId: $projectId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { chainId projectId token decimals balance timestamp tokenUsdRate } totalCount } }';
 var BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'addToBalanceEvents(where: { suckerGroupId: $suckerGroupId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
@@ -22305,17 +22309,42 @@ async function resolveBendystrawSuckerGroupId(project, chainIds) {
   return groups.length === 1 ? groups[0] : null;
 }
 
-// Dollar-valued volume and balance moments plus direct additions, oldest first, for the funding chart.
+// Dollar-valued volume moments, direct additions, each deployment's per-token balance history and today's
+// token prices, for the funding chart.
 async function fetchFundingHistory(project) {
-  var chainIds = projectBendystrawChainIds(project);
+  var deployments = projectDeployments(project);
+  var chainIds = deployments.map(function (deployment) { return deployment.chainId; });
   var groupId = chainIds.length ? await resolveBendystrawSuckerGroupId(project, chainIds) : null;
-  if (!groupId) return { moments: [], adds: [] };
+  if (!groupId) return { moments: [], adds: [], held: [], rates: {} };
   var variables = { suckerGroupId: groupId, version: BENDYSTRAW_VERSION };
   var moments = await fetchBendystrawCollectionPages(BENDYSTRAW_FUNDING_MOMENTS_QUERY, 'suckerGroupMoments', variables, PRICE_HISTORY_PAGE_SIZE);
   // Without the additions the volume series still shows indexed payments; it only understates direct funding.
   var adds = await fetchBendystrawCollectionPages(BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY, 'addToBalanceEvents', variables, PRICE_HISTORY_PAGE_SIZE)
     .catch(function () { return { items: [] }; });
-  return { moments: moments.items || [], adds: adds.items || [] };
+  // One exact query per deployment: the indexer does not hold both fields of a nested OR clause.
+  var held = [];
+  for (var i = 0; i < deployments.length; i++) {
+    var page = await fetchBendystrawCollectionPages(BENDYSTRAW_TOKEN_BALANCE_MOMENTS_QUERY, 'projectTokenBalanceMoments',
+      { chainId: deployments[i].chainId, projectId: deployments[i].projectId, version: BENDYSTRAW_VERSION }, PRICE_HISTORY_PAGE_SIZE)
+      .catch(function () { return { items: [] }; });
+    held = held.concat(page.items || []);
+  }
+  return { moments: moments.items || [], adds: adds.items || [], held: held, rates: await fundingTodayRates(held) };
+}
+
+// Today's dollars per whole token for each held token: the chain's ETH feed for the native token, 1 for USDC.
+// Any other token is left out, so the chart uses the newest rate the indexer recorded for it.
+async function fundingTodayRates(held) {
+  var rates = {}, keys = {};
+  held.forEach(function (row) { keys[row.chainId + ':' + String(row.token).toLowerCase()] = row; });
+  await Promise.all(Object.keys(keys).map(async function (key) {
+    var row = keys[key], token = String(row.token).toLowerCase();
+    if (token === NATIVE_TOKEN.toLowerCase()) {
+      var price = await fetchEthUsd(row.chainId);
+      if (price != null) rates[key] = price;
+    } else if (token === String(USDC_BY_CHAIN[row.chainId] || '').toLowerCase()) rates[key] = 1;
+  }));
+  return rates;
 }
 
 async function fetchPriceFloorHistory(project, stages) {

@@ -138,3 +138,21 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - **Resource budget:** One branch on top of J7, one full gate, review passes as needed.
 - **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-14: Round 9, jango's answers to the end list (J9)
+
+- [x] J9a Funding chart Balance is holdings at today's price: each token's indexed balance history times today's price (chain ETH feed, 1 for USDC, newest indexed rate otherwise).
+- [x] J9b Every launch goes through JBOmnichainDeployer, also on one chain (no sucker configurations, zero sucker salt), so the project can connect a chain later. Queueing for such a project already goes through the deployer.
+- [ ] J9c Payment notice differences across chains, and a failed notice read.
+- [ ] J9d Pay route: say when a route's quote is an estimate.
+- [ ] J9e Builds still owed: held-writes list, Simple preset, multisig owner creation, old and new values in reviews, Relayr re-sign of unfinished chains, old-pool position move.
+
+## Plan refinement
+- **Objective:** Close the items jango answered on 2026-11-14 so Juicescan does what juicebox.money does and states only what is true.
+- **System fit:** The chart series stays in `funding-chart.js`, launch routing in `create-flow.js` `buildLaunchArgs`, each a hand port of the juicebox.money rule. No SDK.
+- **Reuse and simplicity:** J9a reuses the page's ETH feed read and the paged indexer reader. J9b deletes two launch branches.
+- **Evidence and unknowns:** `JBOmnichainDeployer._launchProjectFor` deploys suckers only for a nonzero sucker salt, and its no-shop overload still deploys an empty 721 hook, so every such project can queue through it. Bendystraw `origin/main` values a V6 balance per token at the rate when it last moved (the J8a note about flow accrual came from a stale checkout). The indexer drops one field of a two-field nested OR, so history is read per deployment. Not launched on a live chain from this branch.
+- **Verification:** Unit tests per rule; the full `npm run check`; CI green before merge.
+- **Resource budget:** One branch, one pull request.
+- **Authority and recovery:** A pull request, merged on jango's word; a new build is published only when asked. One commit per item.
+- **Agent-system impact:** None.

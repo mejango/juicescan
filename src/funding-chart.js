@@ -10,7 +10,7 @@ var RANGES = [
 ];
 var METRICS = [
   ['volume', 'Volume', 'Cumulative payment volume over time, shown as bars.'],
-  ['balance', 'Balance', 'Project balance over time, shown as bars.'],
+  ['balance', 'Balance', 'What the project held over time at today’s prices, shown as bars.'],
 ];
 
 function scaledUsd(value) {
@@ -23,20 +23,33 @@ function usd(value) {
 
 // Even time buckets from the first event (or the window's start) to now, forward-filling quiet stretches.
 // Volume is cumulative intake: indexed payment volume plus funds added straight to the terminal, each at its own
-// time's dollar value, so it only rises. Balance is the indexer's flow-accrued dollar balance: every inflow and
-// outflow at its own time's rate, so payouts and cash outs pull it down. It is not holdings at today's price, and
-// price moves between an inflow and its outflow can push the sum below zero; a balance is never negative, so it
-// floors at 0.
-export function fundingChartPoints(moments, adds, metric, rangeSeconds, now) {
+// time's dollar value, so it only rises. Balance is what the project held over time with every amount at today's
+// price, so it moves only when funds move and ends on what the project holds now. `data.held` is the per-token
+// balance history; `data.rates` is today's dollars per whole token by `chainId:token`, and a token with no live
+// price uses the newest rate the indexer recorded for it.
+export function fundingChartPoints(data, metric, rangeSeconds, now) {
   var events = [];
-  moments.forEach(function (moment) {
-    var base = scaledUsd(metric === 'volume' ? moment.volumeUsd : moment.balanceUsd);
-    if (base != null) events.push({ timestamp: Number(moment.timestamp), base: base });
-  });
   if (metric === 'volume') {
-    adds.forEach(function (add) {
+    (data.moments || []).forEach(function (moment) {
+      var base = scaledUsd(moment.volumeUsd);
+      if (base != null) events.push({ timestamp: Number(moment.timestamp), key: '', base: base });
+    });
+    (data.adds || []).forEach(function (add) {
       var amount = scaledUsd(add.amountUsd);
       if (amount != null) events.push({ timestamp: Number(add.timestamp), add: amount });
+    });
+  } else {
+    var indexed = {}, rates = data.rates || {};
+    var rateKey = function (row) { return row.chainId + ':' + String(row.token).toLowerCase(); };
+    (data.held || []).forEach(function (row) {
+      var rate = row.tokenUsdRate ? scaledUsd(row.tokenUsdRate) : null;
+      if (rate != null) indexed[rateKey(row)] = rate;
+    });
+    (data.held || []).forEach(function (row) {
+      var key = rateKey(row), rate = rates[key] != null ? rates[key] : (indexed[key] || 0);
+      var amount;
+      try { amount = Number(BigInt(row.balance)) / Math.pow(10, Number(row.decimals)); } catch (e) { return; }
+      events.push({ timestamp: Number(row.timestamp), key: row.projectId + ':' + key, base: amount * rate });
     });
   }
   events.sort(function (a, b) { return a.timestamp - b.timestamp; });
@@ -44,11 +57,12 @@ export function fundingChartPoints(moments, adds, metric, rangeSeconds, now) {
 
   var t0 = Math.max(events[0].timestamp, rangeSeconds > 0 ? now - rangeSeconds : events[0].timestamp);
   var span = Math.max(now - t0, 1);
-  var points = [], index = 0, lastBase = 0, added = 0;
+  var points = [], index = 0, standing = {}, total = 0;
   function consume(limit) {
     while (index < events.length && events[index].timestamp <= limit) {
-      if (events[index].base !== undefined) lastBase = events[index].base;
-      if (events[index].add !== undefined) added += events[index].add;
+      var event = events[index];
+      if (event.base !== undefined) { total += event.base - (standing[event.key] || 0); standing[event.key] = event.base; }
+      if (event.add !== undefined) total += event.add;
       index++;
     }
   }
@@ -56,7 +70,7 @@ export function fundingChartPoints(moments, adds, metric, rangeSeconds, now) {
   for (var bar = 0; bar < BARS; bar++) {
     var end = t0 + (span * (bar + 1)) / BARS;
     consume(end);
-    points.push({ timestamp: Math.floor(end), valueUsd: Math.max(0, lastBase + added) });
+    points.push({ timestamp: Math.floor(end), valueUsd: Math.max(0, total) });
   }
   return points;
 }
@@ -126,7 +140,7 @@ function barsChart(points, label) {
   return wrap;
 }
 
-// `load()` resolves to { moments, adds }. The card stays out of the page until there is history to draw, and
+// `load()` resolves to { moments, adds, held, rates }. The card stays out of the page until there is history to draw, and
 // when the read fails: the chart is extra, the page's numbers do not depend on it.
 export function renderFundingChart(load) {
   var card = document.createElement('div');
@@ -145,11 +159,11 @@ export function renderFundingChart(load) {
 
   function draw() {
     if (!data) return;
-    var points = fundingChartPoints(data.moments, data.adds, metric, range, Math.floor(Date.now() / 1000));
-    card.style.display = points.length ? '' : 'none';
-    if (!points.length) return;
-    total.textContent = usd(points[points.length - 1].valueUsd);
+    var points = fundingChartPoints(data, metric, range, Math.floor(Date.now() / 1000));
+    card.style.display = (data.moments || []).length || (data.held || []).length ? '' : 'none';
     body.innerHTML = '';
+    total.textContent = points.length ? usd(points[points.length - 1].valueUsd) : '';
+    if (!points.length) return;
     body.appendChild(barsChart(points, METRICS.filter(function (m) { return m[0] === metric; })[0][2]));
   }
   metricSelect.addEventListener('change', function () { metric = metricSelect.value; draw(); });

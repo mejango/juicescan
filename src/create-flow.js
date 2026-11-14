@@ -3,10 +3,10 @@
 // project, feature-complete with what the contracts allow. It reuses the calldata encoder exported by
 // launch-component.js (single source of truth) and routes the deploy by (chain count, NFTs):
 //
-//   1 chain,  no NFTs -> JBController.launchProjectFor
-//   1 chain,  NFTs    -> JB721TiersHookProjectDeployer.launchProjectFor
-//   >1 chain, no NFTs -> JBOmnichainDeployer.launchProjectFor (one tx per chain, shared salt + suckers)
-//   >1 chain, NFTs    -> JBOmnichainDeployer.launchProjectFor (721 overload, one tx per chain)
+//   1 chain  -> JBOmnichainDeployer.launchProjectFor (721 overload, no suckers, zero sucker salt)
+//   >1 chain -> JBOmnichainDeployer.launchProjectFor (721 overload, one tx per chain, shared salt + suckers)
+//
+// Every project launches through JBOmnichainDeployer so it can connect a chain later.
 //
 // Project metadata (name/logo/description/links) is pinned to IPFS through Juicebox Center (src/ipfs-pin.js); the
 // JWT lives in localStorage only.
@@ -4789,24 +4789,13 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
       payHook ? { payDataHookVariant: true } : undefined);
   };
 
-  if (!multi && !hasNfts) {
-    return {
-      scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts,
-      contract: 'JBController', address: getAddress('JBController', chainId), abi: launchProjectAbi,
-      args: [owner, projectUri, stageRulesets(false), terminalConfigs, ''],
-    };
-  }
-  if (!multi && hasNfts) {
-    return {
-      scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts,
-      contract: 'JB721TiersHookProjectDeployer', address: getAddress('JB721TiersHookProjectDeployer', chainId), abi: deployer721Abi,
-      args: [owner, build721Config(state, projectUri, chainId),
-        { projectUri: projectUri, rulesetConfigurations: stageRulesets(true), terminalConfigurations: terminalConfigs, memo: '' },
-        getAddress('JBController', chainId), salt],
-    };
-  }
+  // Every launch goes through JBOmnichainDeployer. A sucker can mint bridged tokens only through that deployer's
+  // data hook, so a single-chain project launched any other way could never connect a chain later. With one chain
+  // there are no sucker configurations and a zero sucker salt, which the deployer reads as "deploy none".
   var others = state.chainIds.filter(function (x) { return x !== chainId; });
-  var sucker = suckerConfigFor(chainId, others, salt, state.suckerType, state.accepts);
+  var sucker = multi
+    ? suckerConfigFor(chainId, others, salt, state.suckerType, state.accepts)
+    : { deployerConfigurations: [], salt: '0x' + '00'.repeat(32), missing: [] };
   var rulesetsFull = stageRulesets(false);
   var addr = getAddress('JBOmnichainDeployer', chainId);
   var missing = sucker.missing.length > 0;
