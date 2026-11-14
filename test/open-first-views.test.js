@@ -146,3 +146,16 @@ describe('a route switches a subtab on the page already open', () => {
     expect(source.split('_activeDetail.showSubTab = function (name) { show(order.filter(function (o) { return tabSlug(o) === tabSlug(name); })[0] || name); };').length).toBe(3);
   });
 });
+
+describe('state shared across attempts and pages', () => {
+  it('a page being handed off cannot switch tabs, and only the latest pay attempt writes to the pay card', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync('src/discover.js', 'utf8');
+    const showTab = source.slice(source.indexOf('  function showTab(tabName) {'));
+    expect(showTab.indexOf('if (_activeDetail && _activeDetail.element !== wrap) return;')).toBeGreaterThan(-1);
+    expect(showTab.indexOf('if (_activeDetail && _activeDetail.element !== wrap) return;')).toBeLessThan(showTab.indexOf('_activeDetail.current = tabName'));
+    const gate = source.slice(source.indexOf('var payGate = readProjectPaymentSurface('), source.indexOf('payGate.catch('));
+    expect(gate.split('requireLatest();').length).toBe(3);
+    expect(gate.indexOf('requireLatest();')).toBeLessThan(gate.indexOf('state.terminalSurface = surface;'));
+  });
+});

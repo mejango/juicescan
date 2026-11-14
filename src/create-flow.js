@@ -4440,26 +4440,22 @@ async function runDeploy(state, owner) {
     // (name + media, so its tier resolves to {name, image/animation_url}) pin together.
     push('Pinning project metadata…');
     var launchItems = state.nfts.slice();
-    var pins = [pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project').then(function (uri) {
-      push('Metadata pinned: ' + uri, 'ok');
-      return uri;
-    }, function (e) {
-      push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
-      throw e;
-    })].concat(launchItems.map(function (it, n) {
+    // The pins only resolve or reject; the status list is written once, after they are joined, so a pin that lands
+    // after the batch failed says nothing.
+    var pins = [pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project')].concat(launchItems.map(function (it, n) {
       push('Pinning item “' + (it.name || ('#' + (n + 1))) + '” metadata…');
       var meta = build721TierMetadata({
         name: it.name || ('Item #' + (n + 1)), description: it.description,
         categoryName: storeCategoryName(state, it.category), mediaUri: it.imageUri, mediaType: it.mediaType,
       });
-      return pinJson(meta, (it.name || 'item') + '-item').catch(function (e) {
-        push('Could not pin item metadata (' + (e && e.message || e) + '), nothing was sent.', 'err');
-        throw e;
-      });
+      return pinJson(meta, (it.name || 'item') + '-item');
     }));
     // The items take their URIs only once every pin has landed: a batch that failed never writes to the draft.
-    var pinned = await Promise.all(pins);
+    var pinned;
+    try { pinned = await Promise.all(pins); }
+    catch (e) { push('Could not pin metadata (' + (e && e.message || e) + '), nothing was sent.', 'err'); throw e; }
     var projectUri = pinned[0];
+    push('Metadata pinned: ' + projectUri, 'ok');
     launchItems.forEach(function (it, n) { it.metaUri = pinned[n + 1]; it.encodedIpfsUri = encodeIpfsUriToBytes32(pinned[n + 1]); });
 
     var salt = deploySalt(state);

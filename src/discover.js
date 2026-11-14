@@ -9008,6 +9008,8 @@ function renderProjectDetail(project, initialTab, initialSubTab) {
     // Accept slugified route names too (e.g. "rulesetsfunds").
     for (var t = 0; t < tabs.length; t++) if (tabSlug(tabs[t]) === tabSlug(tabName)) { tabName = tabs[t]; break; }
     if (!builders[tabName]) return;
+    // A page being handed off (still on screen, inert, while its replacement loads) no longer owns the navigation.
+    if (_activeDetail && _activeDetail.element !== wrap) return;
     // Set `current` BEFORE building so a subtabbed section's show() (which fires during build) reads the
     // right top tab. Reset subtab state on every tab switch; the section re-registers it if it has subtabs.
     if (_activeDetail) { _activeDetail.current = tabName; _activeDetail.subtab = null; _activeDetail.showSubTab = null; }
@@ -10332,8 +10334,11 @@ export function renderPayCard(project, cart) {
 
     // The review opens at the click. Its Confirm stays locked until the project's terminal and the wallet's balance
     // are verified: both reads start together, the terminal's verdict is read first, and a failure ends the review.
+    // Only the latest attempt writes to the pay card: a dismissed review's late reads never replace a newer one's.
+    var attempt = state.payAttempt = (state.payAttempt || 0) + 1;
+    function requireLatest() { if (attempt !== state.payAttempt) throw new Error('A newer review replaced this one.'); }
     function blockPay(message) {
-      status.className = 'paybox-status error'; status.textContent = message;
+      if (attempt === state.payAttempt) { status.className = 'paybox-status error'; status.textContent = message; }
       throw new Error(message);
     }
     var preSym = (reviewedToken.symbol || '').replace(/\s*\(native\)/i, '');
@@ -10342,6 +10347,7 @@ export function renderPayCard(project, cart) {
     var balanceRead = readWalletTokenBalance(reviewedChainId, reviewedToken.address, beneficiary);
     balanceRead.catch(function () {});
     var payGate = readProjectPaymentSurface(project, reviewedChainId).then(function (surface) {
+      requireLatest();
       if (!requirePayInputs()) throw new Error(status.textContent);
       state.terminalSurface = surface;
       state.terminalSurfaceChain = reviewedChainId;
@@ -10350,13 +10356,14 @@ export function renderPayCard(project, cart) {
       if (!paySurfaceAllows(surface, terminal)) blockPay(paySurfaceBlockedMessage(surface, terminal, reviewedChainId));
       // Pre-flight: block amounts the wallet can't cover before the wallet is asked.
       return balanceRead.then(function (walletBal) {
+        requireLatest();
         if (!requirePayInputs()) throw new Error(status.textContent);
         if (walletBal == null) blockPay('Could not verify your wallet balance on this chain.');
         if (amt > walletBal) blockPay('Not enough ' + preSym + ', you have ' + formatBalance(walletBal, reviewedToken.decimals == null ? 18 : reviewedToken.decimals, preSym) + ' on ' + preChain + '.');
         status.className = 'paybox-status'; status.textContent = '';
       }, function (error) { blockPay(errMessage(error, 'Could not verify your wallet balance. Try again.')); });
     }, function () {
-      loadPaymentSurface(reviewedChainId);
+      if (attempt === state.payAttempt) loadPaymentSurface(reviewedChainId);
       blockPay('Could not verify this project’s payment terminal. Review the project contracts before paying.');
     });
     payGate.catch(function () {});
