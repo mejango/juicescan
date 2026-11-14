@@ -108,3 +108,19 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - **Resource budget:** One branch from main, one full gate, review passes as needed.
 - **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-14: Paged activity and listed terminals in the Pay tool (J7)
+
+- [x] Project feed loads the newest 250 rows per indexer query, then a "more" control loads the next page. The 15 second refresh reads the loaded window only, not the whole history.
+- [x] Standalone Pay tool quotes only the candidates the project's directory lists. An unread directory keeps both candidates, since the preview still gates the send.
+- [x] Launch defaults checked against the 2026-11-14 ruling: new revnet stages already start with no cut and a cash out tax of 0.1. No change.
+
+## Plan refinement
+- **Objective:** Close two J5 gaps against juicebox.money: its feed pages at 250 with a "more" control, and its pay route candidates come from the project's listed terminals. Success is a bounded refresh and no quote on an unlisted terminal.
+- **System fit:** `fetchBendystrawCollectionPages` already takes a row cap and reports `capped`. `mergeActivityPages` stops the merged feed at the newest edge of a capped query so rows never show with gaps; ruleset rows from chain state join once the window reaches back to them.
+- **Reuse and simplicity:** juicebox.money's strings ("more", "Loading…", "Could not load more activity. Try again."). No new module. No SDK.
+- **Evidence and unknowns:** Bendystraw limits a caller to 100 requests a minute; an open project with a long history spent several per refresh. Rows sharing the edge's exact timestamp may wait for the next page.
+- **Verification:** Unit tests for the merge and for the Pay tool's listed filter; `npm run check` (2587 unit, 148 browser, green); Codex until clean.
+- **Resource budget:** One branch from main, one full gate, review passes as needed.
+- **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
+- **Agent-system impact:** None.

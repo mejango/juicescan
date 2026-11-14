@@ -6536,3 +6536,8 @@ button[aria-busy="true"] { cursor: progress; }
 /* Content kept on screen while its replacement loads reads as stale, not as the new result. */
 .data-card-result[aria-busy="true"] { opacity: 0.45; }
 .project-detail[aria-busy="true"] { cursor: progress; }
+
+.activity-more { padding: 8px 12px 12px; }
+.activity-more-btn { background: none; border: 0; padding: 0; min-height: 32px; font: inherit; font-size: 12px; color: var(--muted); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.activity-more-btn:disabled { opacity: 0.6; cursor: default; }
+.activity-more-error { font-size: 12px; color: var(--error); }

@@ -78,10 +78,26 @@ function payRouteCandidates(chainId) {
 
 // Exported for regression tests: this resolver is the fail-closed boundary
 // between an RPC quote and the calldata's minReturnedTokens floor.
-export function resolveBestPayRoute(opts) {
-  var routes = payRouteCandidates(opts.chainId);
-  if (!routes.length) return Promise.resolve(null);
+var terminalsOfAbi = [{ type: 'function', name: 'terminalsOf', stateMutability: 'view', inputs: [{ name: 'projectId', type: 'uint256' }], outputs: [{ name: '', type: 'address[]' }] }];
 
+// The candidates the project's directory lists. An unread directory keeps every candidate: the preview still
+// gates the send, and a payment into an unlisted terminal reverts.
+function listedPayRoutes(opts) {
+  var routes = payRouteCandidates(opts.chainId);
+  var directory = getAddress('JBDirectory', opts.chainId);
+  if (!routes.length || !directory) return Promise.resolve(routes);
+  return Promise.resolve().then(function () {
+    return createPublicClientForChain(opts.chainId).readContract({ address: directory, abi: terminalsOfAbi, functionName: 'terminalsOf', args: [BigInt(opts.projectId)] });
+  }).then(function (listed) {
+    return routes.filter(function (route) { return listed.some(function (t) { return sameAddress(t, route.address); }); });
+  }, function () { return routes; });
+}
+
+export function resolveBestPayRoute(opts) {
+  return listedPayRoutes(opts).then(function (routes) { return routes.length ? quoteBestPayRoute(opts, routes) : null; });
+}
+
+function quoteBestPayRoute(opts, routes) {
   return Promise.all(routes.map(function (route) {
     var request = {
       chainId: opts.chainId,
