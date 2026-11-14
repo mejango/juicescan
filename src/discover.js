@@ -14844,7 +14844,8 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
     return {
       type: 'repay', direction: 'in', chainId: chainId,
       txHash: rp.txHash || event.txHash, timestamp: Number(rp.timestamp || event.timestamp),
-      account: rp.from || event.from, from: rp.from || event.from,
+      // The caller of the loans contract: a Safe here, where `from` is the account that executed for it.
+      account: rp.caller || rp.from || event.from, from: rp.from || event.from,
       // RepayLoan does not index the loan's source token. Showing an unlabeled amount is safer than
       // attributing it to the project's first accounting context.
       baseAmount: '',
@@ -14856,7 +14857,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
     return {
       type: 'liquidate', direction: 'out', chainId: chainId,
       txHash: lq.txHash || event.txHash, timestamp: Number(lq.timestamp || event.timestamp),
-      account: lq.from || event.from, from: lq.from || event.from,
+      account: lq.caller || lq.from || event.from, from: lq.from || event.from,
       baseAmount: '',
       tokenAmount: '', action: 'loan liquidated', memo: '',
     };
@@ -14964,7 +14965,8 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
   if (event.bridgeClaimEvent) {
     var bc = event.bridgeClaimEvent;
     return { type: 'bridge_claim', direction: 'in', chainId: chainId, txHash: bc.txHash || event.txHash, timestamp: Number(bc.timestamp || event.timestamp),
-      account: bc.beneficiary || bc.from || event.from, from: bc.from || event.from,
+      // The index can hold the sucker leaf's 32-byte beneficiary: its last 20 bytes are the account.
+      account: bc.beneficiary ? '0x' + String(bc.beneficiary).slice(-40) : (bc.from || event.from), from: bc.from || event.from,
       baseAmount: '', tokenAmount: bc.projectTokenCount ? formatCompactTokenAmount(toBigInt(bc.projectTokenCount)) : '',
       action: 'claimed ' + sym + ' from ' + moveChainName(Number(bc.peerChainId)), memo: '' };
   }
@@ -21859,8 +21861,8 @@ export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId times
   + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from txHash timestamp } '
   + 'autoIssueEvent { beneficiary count stageId from txHash timestamp } '
   + 'borrowLoanEvent { borrowAmount collateral beneficiary token from txHash timestamp } '
-  + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn from txHash timestamp } '
-  + 'liquidateLoanEvent { borrowAmount collateral from txHash timestamp } '
+  + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn caller from txHash timestamp } '
+  + 'liquidateLoanEvent { borrowAmount collateral caller from txHash timestamp } '
   + 'mintNftEvent { tierId tokenId beneficiary totalAmountPaid from txHash timestamp } '
   + 'deployErc20Event { symbol name token from txHash timestamp } '
   + 'projectCreateEvent { from txHash timestamp } '
