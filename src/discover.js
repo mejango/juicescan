@@ -12,6 +12,7 @@ import { createHookMetadata, hookMetadataId } from './hook-metadata.js';
 import { readProjectNftIdentity, clearProjectNftIdentity, projectFlavor, projectTokenType, rememberProjectInventory, readProjectNftInventory, isNativeInventory, nativeActionUnavailable, renderNativeInventory, requireGenericInventory } from './nft-inventory.js';
 import { createPublicClient, http, keccak256, stringToHex, decodeFunctionData, decodeFunctionResult, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, toEventSelector } from 'viem';
 import { confirmStatusSettles, offerRelease, payHoldScope, onDocumentWhileConnected, holdForWrite, heldWriteGate, sendHeldWrite, el, openDialog, getAddress, formatAmount, parseAmount, truncAddr, getAccount, getEffectiveAccount, getViewAs, VIEW_AS_TX_ERROR, connect, executeTransaction, confirmTransactionModal, getWalletClient, invokeWallet, switchChain, onEffectiveAccountChange, abiSignature, resolveContractName, renderTxReview, decodeCallForDisplay, createPublicClientForChain, ZERO_ADDRESS, NATIVE_TOKEN, errMessage, isAddr, renderConfirmBody, renderFriendlySummary, buildTransactionSequence, makeStatusSetter, promptFoot, promptLinkButton, componentReproPrompt, shouldKeepSubmittedTransactionPending, waitForErc20Approval, waitForTrackedTransactionReceipt, txExplorerUrl, isSafeConnected } from './component-base.js';
+import { openPendingReview, busyWhile } from './component-base.js';
 import { CHAINS, chainNameFor, getChainTokens, IPFS_PATH_GATEWAYS, usdcByChain } from './chain.js';
 import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './time-series.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
@@ -9989,7 +9990,7 @@ export function renderPayCard(project, cart) {
     var nb = nftBlock(); if (nb) feedback.appendChild(nb);
 
     var splits = el('div', 'paybox-splits');
-    splits.textContent = 'Splits get ' + (p && p.reserved != null ? formatTokenCount(p.reserved) : '0') + ' ' + sym;
+    splits.textContent = 'Splits get ' + (state.phase === 'previewing' ? '…' : p && p.reserved != null ? formatTokenCount(p.reserved) : '0') + ' ' + sym;
     feedback.appendChild(splits);
 
   }
@@ -10239,42 +10240,37 @@ export function renderPayCard(project, cart) {
       return false;
     }
 
-    function checkBalanceThenProceed() {
-      // Pre-flight: block amounts the wallet can't cover before sending the user to confirm / their wallet.
-      var preSym = (reviewedToken.symbol || '').replace(/\s*\(native\)/i, '');
-      var preChain = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
-      status.className = 'paybox-status pending'; status.textContent = 'Checking your balance…';
-      readWalletTokenBalance(reviewedChainId, reviewedToken.address, beneficiary).then(function (walletBal) {
-        if (!requirePayInputs()) return;
-        if (walletBal == null) throw new Error('Could not verify your wallet balance on this chain.');
-        if (walletBal != null && amt > walletBal) {
-          status.className = 'paybox-status error';
-          status.textContent = 'Not enough ' + preSym + ', you have ' + formatBalance(walletBal, reviewedToken.decimals == null ? 18 : reviewedToken.decimals, preSym) + ' on ' + preChain + '.';
-          return;
-        }
-        status.className = 'paybox-status'; status.textContent = '';
-        proceed();
-      }).catch(function (error) { status.className = 'paybox-status error'; status.textContent = errMessage(error, 'Could not verify your wallet balance. Try again.'); });
+    // The review opens at the click. Its Confirm stays locked until the project's terminal and the wallet's balance
+    // are verified: both reads start together, the terminal's verdict is read first, and a failure ends the review.
+    function blockPay(message) {
+      status.className = 'paybox-status error'; status.textContent = message;
+      throw new Error(message);
     }
-
-    status.className = 'paybox-status pending'; status.textContent = 'Checking project terminal…';
-    readProjectPaymentSurface(project, reviewedChainId).then(function (surface) {
-      if (!requirePayInputs()) return;
+    var preSym = (reviewedToken.symbol || '').replace(/\s*\(native\)/i, '');
+    var preChain = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
+    status.className = 'paybox-status pending'; status.textContent = PAY_GATE_TEXT;
+    var balanceRead = readWalletTokenBalance(reviewedChainId, reviewedToken.address, beneficiary);
+    balanceRead.catch(function () {});
+    var payGate = readProjectPaymentSurface(project, reviewedChainId).then(function (surface) {
+      if (!requirePayInputs()) throw new Error(status.textContent);
       state.terminalSurface = surface;
       state.terminalSurfaceChain = reviewedChainId;
       renderTerminalNotice();
-      if (surface.pausePay && !addBalance) { status.className = 'paybox-status error'; status.textContent = PAYMENTS_PAUSED_MESSAGE; return; }
-      if (!paySurfaceAllows(surface, terminal)) {
-        status.className = 'paybox-status error';
-        status.textContent = paySurfaceBlockedMessage(surface, terminal, reviewedChainId);
-        return;
-      }
-      checkBalanceThenProceed();
-    }).catch(function () {
-      status.className = 'paybox-status error';
-      status.textContent = 'Could not verify this project’s payment terminal. Review the project contracts before paying.';
+      if (surface.pausePay && !addBalance) blockPay(PAYMENTS_PAUSED_MESSAGE);
+      if (!paySurfaceAllows(surface, terminal)) blockPay(paySurfaceBlockedMessage(surface, terminal, reviewedChainId));
+      // Pre-flight: block amounts the wallet can't cover before the wallet is asked.
+      return balanceRead.then(function (walletBal) {
+        if (!requirePayInputs()) throw new Error(status.textContent);
+        if (walletBal == null) blockPay('Could not verify your wallet balance on this chain.');
+        if (amt > walletBal) blockPay('Not enough ' + preSym + ', you have ' + formatBalance(walletBal, reviewedToken.decimals == null ? 18 : reviewedToken.decimals, preSym) + ' on ' + preChain + '.');
+        status.className = 'paybox-status'; status.textContent = '';
+      }, function (error) { blockPay(errMessage(error, 'Could not verify your wallet balance. Try again.')); });
+    }, function () {
       loadPaymentSurface(reviewedChainId);
+      blockPay('Could not verify this project’s payment terminal. Review the project contracts before paying.');
     });
+    payGate.catch(function () {});
+    proceed();
     return;
 
     function proceed() {
@@ -10422,7 +10418,7 @@ export function renderPayCard(project, cart) {
           }
           sendPay(p, Object.assign({ confirmCtx: confirmCtx }, sendOpts));
       }
-    }, Object.assign({ onDismiss: dropLoosenedSlippage }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : {}));
+    }, Object.assign({ onDismiss: dropLoosenedSlippage, gate: payGate, gateText: PAY_GATE_TEXT }, addBalance ? { title: 'Confirm add to balance', confirmText: 'Confirm & Add to balance' } : {}));
     } // proceed()
   }
 
@@ -19253,12 +19249,19 @@ function buildPayoutsModal(project, acctKind) {
         && getAccount() && getAccount().toLowerCase() === account.toLowerCase();
     }
     btn.disabled = true; status.classList.add('pending'); status.textContent = 'Refreshing limit and simulating the payout…';
+    var review = openPendingReview({ action: 'Distribute payouts', chain: chainNameOf(cid), rows: [
+      ['Sending', formatBalance(amount, acct.decimals, acct.symbol) + ' to the payout splits'], ['Quoted', null], ['Minimum', null], ['On chain', chainNameOf(cid)],
+    ] });
+    // The simulation runs alongside the limit read; the limit's verdict is still read first.
+    var simulated = clientFor(cid).simulateContract({ account: account, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', args: [pid, acct.address, amount, BigInt(currency), 0n] });
+    simulated.catch(function () {});
     readPayoutAccess(cid, acct).then(function (access) {
       var live = access.limits.filter(function (limit) { return limit.currency === currency; })[0];
       if (!live || amount > live.remaining) throw new Error('The remaining payout limit changed. Review the new amount and try again.');
       if (amount > live.available) throw new Error('The terminal balance or price changed. Review the updated available amount and try again.');
-      return clientFor(cid).simulateContract({ account: account, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', args: [pid, acct.address, amount, BigInt(currency), 0n] });
+      return simulated;
     }).then(function (sim) {
+      if (review.closed) { status.classList.remove('pending'); status.textContent = ''; btn.disabled = false; return; }
       if (!payoutInputsUnchanged()) throw new Error('Payout inputs, chain, or connected account changed while the live limit was loading. Review and try again.');
       var quoted = toBigInt(sim.result);
       if (quoted <= 0n) throw new Error('This request would pay out 0 tokens.');
@@ -19266,7 +19269,7 @@ function buildPayoutsModal(project, acctKind) {
       status.classList.remove('pending'); status.textContent = '';
       executeTransaction({
         chainId: cid, address: term, abi: sendPayoutsAbi, functionName: 'sendPayoutsOf', contractName: 'JBMultiTerminal',
-        args: [pid, acct.address, amount, BigInt(currency), minOut], label: 'Distribute payouts',
+        args: [pid, acct.address, amount, BigInt(currency), minOut], label: 'Distribute payouts', confirmSession: review,
         // A confirmed payout can still have returned a reverted split to the balance: check each split's effect.
         verifyReceipt: function (receipt) { verifyDistributionReceipt({ to: term, functionName: 'sendPayoutsOf', args: [pid, acct.address, amount, BigInt(currency), minOut], validation: { sender: account } }, receipt); },
         confirmSummary: { action: 'Distribute payouts', rows: [
@@ -19293,6 +19296,7 @@ function buildPayoutsModal(project, acctKind) {
       if (message.indexOf('0x9fa59b9a') !== -1 || message.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
         message = 'The terminal balance no longer covers this amount. Review the updated available amount and try again.';
       }
+      review.fail(message);
       status.className = 'modal-status error'; status.textContent = message; btn.disabled = false; onChainChange();
     });
   });
@@ -19514,12 +19518,18 @@ function buildUseAllowanceModal(project, acctKind) {
         && getAccount() && getAccount().toLowerCase() === account.toLowerCase();
     }
     btn.disabled = true; status.classList.add('pending'); status.textContent = 'Refreshing allowance and simulating the withdrawal…';
+    var review = openPendingReview({ action: 'Use surplus allowance', chain: chainNameOf(cid), rows: [
+      ['Withdrawing', formatBalance(amount, acct.decimals, acct.symbol) + ' of surplus'], ['You receive', null], ['Minimum', null], ['To', acc], ['On chain', chainNameOf(cid)],
+    ] });
+    var simulated = clientFor(cid).simulateContract({ account: acc, address: term, abi: useAllowanceAbi, functionName: 'useAllowanceOf', args: [pid, acct.address, amount, BigInt(currency), 0n, acc, acc, ''] });
+    simulated.catch(function () {});
     readAllowanceAccess(cid, acct).then(function (access) {
       var live = access.allowances.filter(function (allowance) { return allowance.currency === currency; })[0];
       if (!live || amount > live.remaining) throw new Error('The remaining surplus allowance changed. Review the new amount and try again.');
       if (amount > live.available) throw new Error('The current surplus or price changed. Review the updated available amount and try again.');
-      return clientFor(cid).simulateContract({ account: acc, address: term, abi: useAllowanceAbi, functionName: 'useAllowanceOf', args: [pid, acct.address, amount, BigInt(currency), 0n, acc, acc, ''] });
+      return simulated;
     }).then(function (sim) {
+      if (review.closed) { status.classList.remove('pending'); status.textContent = ''; btn.disabled = false; return; }
       if (!allowanceInputsUnchanged()) throw new Error('Allowance inputs, chain, or connected account changed while the live allowance was loading. Review and try again.');
       var quoted = toBigInt(sim.result);
       if (quoted <= 0n) throw new Error('This request would return 0 tokens to the beneficiary.');
@@ -19527,7 +19537,7 @@ function buildUseAllowanceModal(project, acctKind) {
       status.classList.remove('pending'); status.textContent = '';
       executeTransaction({
         chainId: cid, address: term, abi: useAllowanceAbi, functionName: 'useAllowanceOf', contractName: 'JBMultiTerminal',
-        args: [pid, acct.address, amount, BigInt(currency), minOut, acc, acc, ''], label: 'Use surplus allowance',
+        args: [pid, acct.address, amount, BigInt(currency), minOut, acc, acc, ''], label: 'Use surplus allowance', confirmSession: review,
         confirmSummary: { action: 'Use surplus allowance', rows: [
           ['Withdrawing', formatBalance(amount, acct.decimals, acct.symbol) + ' of surplus'],
           ['You receive', '≈ ' + formatBalance(quoted, acct.decimals, acct.symbol) + ' after fees'],
@@ -19549,6 +19559,7 @@ function buildUseAllowanceModal(project, acctKind) {
       if (message.indexOf('0x9fa59b9a') !== -1 || message.indexOf('JBTerminalStore_InadequateTerminalStoreBalance') !== -1) {
         message = 'The current surplus no longer covers this amount. Review the updated available amount and try again.';
       }
+      review.fail(message);
       status.classList.remove('pending'); status.textContent = message; btn.disabled = false; onChainChange();
     });
   });
@@ -25915,28 +25926,32 @@ function makeChainDistribute(project, pc, hasPending, isCurrent) {
         .catch(function (err) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = errMessage(err, 'Could not connect wallet.'); });
       return;
     }
-    btn.disabled = true; btn.textContent = 'Distributing…';
+    btn.disabled = true;
     var localPid = pidOn(project, pc.id);
     var sender = getAccount();
+    // The review opens at the click; the controller and token manager it sends to are read behind it.
+    var summaryRows = [
+      ['Sends', (pc.pending != null ? formatTokens(pc.pending) + ' ' + (project.tokenSymbol || 'tokens') : 'all pending reserved tokens') + ' to the reserved splits'],
+      ['Project', '#' + String(localPid)],
+      ['On chain', pc.name],
+    ];
+    var review = openPendingReview({ action: 'Distribute reserved tokens', chain: pc.name, rows: summaryRows.concat([['Contract', null]]) });
     controllerAddressFor(pc.id, localPid).then(function (ctrl) {
       return readDistributionTokens(clientFor(pc.id), ctrl).then(function (tokens) { return { ctrl: ctrl, tokens: tokens }; });
     }).then(function (live) {
+    if (review.closed) { btn.disabled = false; return; }
     var ctrl = live.ctrl;
     executeTransaction({
       chainId: pc.id, address: ctrl, abi: sendReservedAbi, functionName: 'sendReservedTokensToSplitsOf', args: [localPid],
-      label: 'Distribute reserved tokens',
+      label: 'Distribute reserved tokens', confirmSession: review,
       // A confirmed distribution can still have burned a hook's unconsumed tokens or used a fallback recipient.
       verifyReceipt: function (receipt) { verifyDistributionReceipt({ to: ctrl, functionName: 'sendReservedTokensToSplitsOf', args: [localPid], validation: { sender: sender, tokens: live.tokens } }, receipt); },
-      confirmSummary: { action: 'Distribute reserved tokens', rows: [
-        ['Sends', (pc.pending != null ? formatTokens(pc.pending) + ' ' + (project.tokenSymbol || 'tokens') : 'all pending reserved tokens') + ' to the reserved splits'],
-        ['Project', '#' + String(localPid)],
-        ['On chain', pc.name],
-      ] },
+      confirmSummary: { action: 'Distribute reserved tokens', rows: summaryRows },
       onStatus: function (m, kind) { status.className = 'modal-status splits-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m || ''; },
       onSuccess: function () { btn.textContent = 'Distributed'; status.className = 'modal-status splits-status success'; status.textContent = 'Pending splits distributed on ' + pc.name + '.'; document.dispatchEvent(new CustomEvent('jb:bridge-updated')); },
       onError: function (m) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = m; },
     });
-    }).catch(function (error) { btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = errMessage(error, 'Could not verify the project controller.'); });
+    }).catch(function (error) { var message = errMessage(error, 'Could not verify the project controller.'); review.fail(message); btn.disabled = false; btn.textContent = 'Distribute'; status.className = 'modal-status splits-status error'; status.textContent = message; });
   });
   foot.appendChild(status); foot.appendChild(btn); // status left of button → button stays flush-right
   return foot;
@@ -26111,11 +26126,12 @@ export function opsActionsRow(project, opts) {
   var multiChain = (project.chains || []).length > 1;
   var capabilities = tokenUiCapabilities(project);
   [
-    ['Cash out', async function () {
+    // Which modal opens depends on the NFT inventory read, so the button itself answers the click meanwhile.
+    ['Cash out', function (button) { return busyWhile(button, 'Loading…', async function () {
       var shop; try { shop = await fetchProjectTiers(project).then(afterDefifaActions); } catch (error) { var message = el('div', 'modal-body'); message.textContent = errMessage(error); if (error && error.chunkFailed) { message.appendChild(document.createTextNode(' ')); message.appendChild(chunkReloadButton()); } openModal('Could not verify NFT protocol', message); return; }
       if (isNativeInventory(shop)) { openModal('Defifa NFT actions', renderDefifaActionsForProject(project, shop, { mode: 'holdings' })); return; }
       var h = {}; var content = buildCashOutModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Cash out', content).close;
-    }],
+    }); }],
     // Loans run through REVLoans — a revnet feature; omit for custom projects.
     opts.noLoans ? null : ['Get a loan', function () { var h = {}; var content = buildLoanModal(project, function () { if (h.close) h.close(); }); h.close = openModal('Get a loan', content).close; }],
     // Moving funds only makes sense when the project lives on more than one chain.
@@ -26125,7 +26141,7 @@ export function opsActionsRow(project, opts) {
     var b = document.createElement('button');
     b.className = 'ops-action-btn';
     b.textContent = a[0];
-    b.addEventListener('click', a[1]);
+    b.addEventListener('click', function () { a[1](b); });
     row.appendChild(b);
   });
   return row;
@@ -26980,8 +26996,17 @@ function openTxConfirm(payload, onConfirm, opts) {
       cancel: cancel,
     });
   });
+  // `opts.gate`: checks still running when the review opened. Confirm stays locked until they pass; a failed check
+  // ends the review with its reason.
+  if (opts.gate) {
+    confirm.disabled = true;
+    showStatus(opts.gateText || 'Checking…', 'pending');
+    opts.gate.then(function () { confirm.disabled = false; showStatus('', ''); },
+      function (error) { unlockWithResult(errMessage(error, 'Could not verify this transaction.'), 'error'); });
+  }
 }
 
+var PAY_GATE_TEXT = 'Checking the project terminal and your balance…';
 function openPayConfirm(payload, onConfirm, opts) {
   opts = opts || {};
   var steps = opts.sequenceSteps ? opts.sequenceSteps.slice() : [];
@@ -26998,6 +27023,7 @@ function openPayConfirm(payload, onConfirm, opts) {
     closeOnConfirm: false,
     sequenceSteps: steps,
     onDismiss: opts.onDismiss,
+    gate: opts.gate, gateText: opts.gateText,
   });
 }
 
@@ -27078,8 +27104,10 @@ function renderBalanceTables(balTable, project, sym, opts) {
   if (opts.skipProjectBalances) return;
   var ph = title('Project balances'); ph.style.marginTop = '14px'; balTable.appendChild(ph);
   var tt = makeTable('1.4fr auto'); balTable.appendChild(tt);
+  tt.textContent = 'Loading…';
   acctKindsForFunds(project).then(function (kinds) {
     if (!kinds || !kinds.length) { tt.textContent = 'No verified accounting contexts.'; return; }
+    tt.textContent = '';
     tt._cols = '1.4fr ' + kinds.map(function () { return '1fr'; }).join(' ');
     addRow(tt, [th('Chain')].concat(kinds.map(function (k) { return th(k.symbol, true); })), true);
     var cells = {}; // chainId → [cell per kind]
@@ -27417,7 +27445,7 @@ function buildCashOutModal(project, requestClose) {
     var cid = state.chainId;
     var seq = ++cashBalanceSeq;
     state.balance = null;
-    availLine.textContent = '';
+    availLine.textContent = getEffectiveAccount() ? 'Your ' + sym + ' available on ' + chainNameOf(cid) + ': Loading…' : 'Connect a wallet to cash out.';
     readUserBalance(project, cid).then(function (b) {
       if (seq !== cashBalanceSeq || state.chainId !== cid) return;
       state.balance = b;
@@ -27872,9 +27900,15 @@ function buildCashOutModal(project, requestClose) {
       status.classList.remove('pending');
       status.textContent = 'The cash out details, network, or wallet changed while the quote loaded. Review and try again.';
       btn.disabled = false;
+      if (review) review.fail(status.textContent);
       return false;
     }
     btn.disabled = true; status.textContent = '';
+    // The terminal route's review opens at the click; what it pays, its minimum and its route land with the fresh
+    // preview. A direct pool sale keeps its own stepped dialog, which opens once its authorization plan is known.
+    var review = route.via === 'directsell' ? null : openPendingReview({ action: 'Cash out ' + sym, chain: chainNameOf(cid), rows: [
+      ['Cashing out', formatTokens(count) + ' ' + sym], ['You receive', null], ['Minimum', null], ['Route', null], ['To', acct], ['On chain', chainNameOf(cid)],
+    ] }, { title: 'Confirm cash out', confirmText: 'Confirm & cash out' });
 
     function previewTerminal(metadata) {
       return clientFor(cid).readContract({
@@ -27917,6 +27951,7 @@ function buildCashOutModal(project, requestClose) {
     function routeChangedMessage() {
       status.classList.remove('pending');
       status.textContent = 'The best cash out route changed while it was being prepared. Review the refreshed quote and try again.';
+      if (review) review.fail(status.textContent);
       updatePreview();
     }
 
@@ -27932,7 +27967,7 @@ function buildCashOutModal(project, requestClose) {
       executeTransaction({
         chainId: cid, address: terminal, abi: cashOutTokensAbi, functionName: 'cashOutTokensOf',
         args: [acct, pid, count, reclaimToken, preparedRoute.terminalMinimum, acct, preparedRoute.metadata],
-        confirmTitle: 'Confirm cash out', confirmText: 'Confirm & cash out',
+        confirmTitle: 'Confirm cash out', confirmText: 'Confirm & cash out', confirmSession: review || undefined,
         confirmSummary: { action: 'Cash out ' + sym, rows: [
           ['Cashing out', formatTokens(count) + ' ' + sym],
           ['You receive', (preparedRoute.via === 'amm' ? '≈ ' : '') + formatBalance(preparedRoute.expected, reviewedAcct.decimals, reviewedAcct.symbol)],
@@ -27949,6 +27984,7 @@ function buildCashOutModal(project, requestClose) {
 
     status.classList.add('pending'); status.textContent = 'Refreshing and locking the cash out route…';
     prepareTerminalCashOut().then(function (prepared) {
+      if (review && review.closed) { status.classList.remove('pending'); status.textContent = ''; btn.disabled = false; return; }
       if (!requireCashInputs()) return;
 
       // A direct Universal Router sale is valid only for the exact reclaim-token pool, only when the wallet still
@@ -28028,7 +28064,7 @@ function buildCashOutModal(project, requestClose) {
     }).catch(function (e) {
       status.classList.remove('pending'); btn.disabled = false;
       if (e && e.code === 'CASH_OUT_ROUTE_CHANGED') routeChangedMessage();
-      else status.textContent = cashOutExecutionErrorMessage(errMessage(e, 'Could not prepare this cash out.'));
+      else { status.textContent = cashOutExecutionErrorMessage(errMessage(e, 'Could not prepare this cash out.')); if (review) review.fail(status.textContent); }
     });
   });
 
@@ -28554,7 +28590,9 @@ function buildLoanModal(project, requestClose) {
     if (!loans || !perms) { status.textContent = 'Loans not available on this chain'; return; }
     btn.disabled = true; status.textContent = '';
     var onStatus = function (m, kind) { status.classList.toggle('pending', kind === 'pending'); status.textContent = m; };
-    var fail = function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; };
+    // The review opens at the click; the live amount, fee status and approval are read behind it, all together.
+    var review = null, handed = false;
+    var fail = function (m) { status.classList.remove('pending'); status.textContent = m; btn.disabled = false; if (review && !handed) review.fail(m); };
     var sourceAddress = state.acct.address;
     function loanInputsUnchanged() {
       var current;
@@ -28582,8 +28620,9 @@ function buildLoanModal(project, requestClose) {
         ['On chain', chainNameOf(chainId)],
       ];
     }
-    function doBorrow(session, minBorrow, reviewedOutcome) {
-      if (!requireLoanInputs()) { if (session) session.showStatus(status.textContent, 'error'); return; }
+    function doBorrow(session, minBorrow, reviewedOutcome, approved) {
+      if (!requireLoanInputs()) { if (session && session.showStatus) session.showStatus(status.textContent, 'error'); return; }
+      handed = true;
       executeTransaction(Object.assign(buildBorrowArgs({
         chainId: chainId, loansAddr: loans, revnetId: pid, token: loanToken, minBorrow: minBorrow,
         collateral: collateral, beneficiary: acct, prepaidFeePercent: prepaidFee, holder: acct,
@@ -28591,7 +28630,7 @@ function buildLoanModal(project, requestClose) {
         confirmTitle: 'Open loan',
         confirmText: 'Open loan',
         confirmSession: session,
-        confirmSteps: session ? loanSteps : loanSteps.slice(1),
+        confirmSteps: approved ? loanSteps : loanSteps.slice(1),
         confirmSummary: { action: 'Open the loan', rows: loanRows(reviewedOutcome) },
         confirmNote: 'This opens the loan and burns your ' + sym + ' collateral. The live gross quote is ' + fmtBorrow(state.borrowable) + '; its submitted 1% floor guarantees a protocol payout of at least ' + fmtBorrow(reviewedOutcome.guaranteedNet) + ' after all possible loan fees (before any non-standard token transfer behavior). Failed optional fee payments can only increase it.',
         onStatus: onStatus, onError: fail,
@@ -28604,18 +28643,20 @@ function buildLoanModal(project, requestClose) {
       // Grant it once (if missing) before borrowing — otherwise borrowFrom reverts. Both steps review in the
       // same dialog so the approval tx isn't mistaken for the loan itself.
       onStatus('Checking approval…', 'pending');
-      read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [loans, acct, pid, BigInt(JB_PERMISSION_BURN_TOKENS), true, false])
+      permission
         .then(function (has) {
+          if (review.closed) { status.classList.remove('pending'); status.textContent = ''; btn.disabled = false; return; }
           if (!requireLoanInputs()) return;
-          if (has) { doBorrow(null, minBorrow, reviewedOutcome); return; }
+          if (has) { doBorrow(review, minBorrow, reviewedOutcome, false); return; }
           status.classList.remove('pending');
           status.textContent = 'First-time loan: this needs 2 transactions, a one-off approval, then the loan.';
+          handed = true;
           executeTransaction({
             chainId: chainId, address: perms, abi: jbSetPermissionsAbi, functionName: 'setPermissionsFor',
             args: [acct, { operator: loans, projectId: pid, permissionIds: [JB_PERMISSION_BURN_TOKENS] }],
             confirmTitle: 'Open loan',
             confirmText: 'Approve',
-            confirmSteps: loanSteps, confirmStepIndex: 0, keepConfirmOpen: true,
+            confirmSteps: loanSteps, confirmStepIndex: 0, keepConfirmOpen: true, confirmSession: review,
             confirmSummary: { action: 'Approve the loan contract', rows: [
               ['Allows', 'the loan contract to burn your ' + sym + ' collateral'],
               ['Scope', 'this revnet only (BURN_TOKENS permission)'],
@@ -28624,16 +28665,23 @@ function buildLoanModal(project, requestClose) {
             confirmNote: 'This is NOT the loan yet. First-time loans need a one-off approval letting the loan contract burn your ' + sym + ' collateral. After you sign this, the second step opens the loan and sends you the funds.',
             onStatus: function (m, kind) { onStatus(m === 'Awaiting wallet confirmation…' ? 'Step 1 of 2: approve the loan contract…' : m, kind); },
             onError: fail,
-            onSuccess: function (m, meta) { onStatus('Approved: now confirm step 2 to open the loan…', 'pending'); doBorrow(meta && meta.confirmSession, minBorrow, reviewedOutcome); },
+            onSuccess: function (m, meta) { onStatus('Approved: now confirm step 2 to open the loan…', 'pending'); doBorrow(meta && meta.confirmSession, minBorrow, reviewedOutcome, true); },
           });
         }).catch(function () { fail('Could not verify whether the loan contract is approved. Nothing was sent.'); });
     }
 
     onStatus('Checking current loan amount and fees…', 'pending');
+    review = openPendingReview({ action: 'Open the loan', chain: chainNameOf(chainId), rows: [
+      ['Collateral', formatTokens(collateral) + ' ' + sym + ', burned while the loan is open'], ['You borrow', null], ['Guaranteed at least', null],
+      ['Prepaid fee', (prepaidFee / 10) + '% of the loan'], ['To', acct], ['On chain', chainNameOf(chainId)],
+    ] }, { title: 'Open loan', confirmText: 'Open loan' });
+    var permission = read(chainId, 'JBPermissions', jbHasPermissionAbi, 'hasPermission', [loans, acct, pid, BigInt(JB_PERMISSION_BURN_TOKENS), true, false]);
+    permission.catch(function () {});
     Promise.all([
       read(chainId, 'REVLoans', borrowableAbi, 'borrowableAmountFrom', [pid, collateral, loanDecimals, loanCurrency]),
       isAllowanceFeeless(chainId, pid, loans, loans),
     ]).then(function (live) {
+        if (review.closed) { status.classList.remove('pending'); status.textContent = ''; btn.disabled = false; return; }
         if (!requireLoanInputs()) return;
         var r = live[0];
         var sourceBorrowable = toBigInt(Array.isArray(r) ? r[0] : r);
@@ -28745,6 +28793,9 @@ function buildRepayModal(project, loanRow, requestClose) {
     if (!acct) { connect(); return; }
     if (st.principal == null) return;
     btn.disabled = true; status.textContent = 'Refreshing the current fee…'; status.classList.add('pending');
+    var review = openPendingReview({ action: 'Repay loan #' + String(loanId), chain: chainNameOf(chainId), rows: [
+      ['Repays up to', null], ['Collateral returned', null], ['To', acct], ['On chain', chainNameOf(chainId)],
+    ] }, { title: 'Repay loan #' + String(loanId), confirmText: 'Repay loan' });
     // Reread the loan itself as well as its fee immediately before review. A partial repayment replaces the
     // loan ID, so using the modal's opening snapshot could otherwise quote stale principal/collateral.
     clientFor(chainId).readContract({ address: loans, abi: loanOfAbi, functionName: 'loanOf', args: [loanId] }).then(function (liveLoan) {
@@ -28752,6 +28803,7 @@ function buildRepayModal(project, loanRow, requestClose) {
       return clientFor(chainId).readContract({ address: loans, abi: determineSourceFeeAbi, functionName: 'determineSourceFeeAmount', args: [liveLoan, liveLoan.amount] })
         .then(function (fee) { return { loan: liveLoan, fee: toBigInt(fee) }; });
     }).then(function (fresh) {
+      if (review.closed) { status.classList.remove('pending'); status.textContent = ''; btn.disabled = false; return; }
       if (!getAccount() || getAccount().toLowerCase() !== acct.toLowerCase()) throw new Error('Connected account changed while the repayment was loading. Review and try again.');
       st.loan = fresh.loan;
       st.principal = toBigInt(st.loan.amount);
@@ -28771,7 +28823,7 @@ function buildRepayModal(project, loanRow, requestClose) {
         spenderAddr: nativeSource ? null : loans,
         approvalAmount: nativeSource ? null : maxRepay,
         confirmTitle: 'Repay loan #' + String(loanId),
-        confirmText: 'Repay loan',
+        confirmText: 'Repay loan', confirmSession: review,
         confirmSummary: { action: 'Repay loan #' + String(loanId), rows: [
           ['Repays up to', formatBalance(maxRepay, st.sourceMeta ? st.sourceMeta.decimals : 18, st.sourceMeta ? st.sourceMeta.symbol : 'source tokens') + ', principal + fee, unused guard refunded'],
           ['Collateral returned', formatTokens(st.collateral) + ' ' + sym],
@@ -28793,7 +28845,7 @@ function buildRepayModal(project, loanRow, requestClose) {
         st.done = true; btn.textContent = 'Done'; btn.disabled = false;
         },
       }));
-    }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not refresh the current loan and repayment fee.'); btn.disabled = false; });
+    }).catch(function (error) { status.classList.remove('pending'); status.textContent = errMessage(error, 'Could not refresh the current loan and repayment fee.'); btn.disabled = false; review.fail(status.textContent); });
   });
   return wrap;
 }
