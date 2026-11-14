@@ -13,7 +13,7 @@ import {
 import { projectDiscovery } from './project-discovery.js';
 import { chainNameFor } from './chain.js';
 import { decodePayFailure } from './pay-failure.js';
-import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
+import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub, payRouteIsBetter } from './pay-preview.js';
 
 export var payAbi = [{
   type: 'function', name: 'pay', stateMutability: 'payable',
@@ -63,25 +63,6 @@ export function buildPayArgs(o) {
 
 function sameAddress(a, b) {
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
-}
-
-function payPreviewScore(preview) {
-  if (!preview || preview.unavailable || preview.received == null) return -1n;
-  return BigInt(preview.received);
-}
-
-function payRouteIsBetter(candidate, current) {
-  var candidateScore = payPreviewScore(candidate.preview);
-  var currentScore = payPreviewScore(current && current.preview);
-  if (candidateScore !== currentScore) return candidateScore > currentScore;
-
-  var candidateTotal = candidate.preview && candidate.preview.reserved != null
-    ? candidateScore + BigInt(candidate.preview.reserved) : candidateScore;
-  var currentTotal = current && current.preview && current.preview.reserved != null
-    ? currentScore + BigInt(current.preview.reserved) : currentScore;
-  if (candidateTotal !== currentTotal) return candidateTotal > currentTotal;
-
-  return !candidate.viaRouter && current && current.viaRouter;
 }
 
 function payRouteCandidates(chainId) {
