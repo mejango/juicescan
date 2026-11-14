@@ -145,7 +145,8 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - [x] J9b Every launch goes through JBOmnichainDeployer, also on one chain (no sucker configurations, zero sucker salt), so the project can connect a chain later. Queueing for such a project already goes through the deployer.
 - [x] J9c Payment notice differences across chains, and a failed notice read.
 - [x] J9d Pay card and Pay tool say "You get about" and show the guaranteed floor when a market price sets part of the amount.
-- [ ] J9e Builds still owed: held-writes list, Simple preset, multisig owner creation, old and new values in reviews, Relayr re-sign of unfinished chains, old-pool position move.
+- [x] J9e Held-writes list, Simple preset, old and new values in the queue review, and the queue refuses a copied ruleset whose shop the deployer would not carry on any chain. Full check green (2612 unit, 148 browser); Codex pass 3 CLEAN.
+- [ ] J9f Builds still owed: old and new values in the splits and metadata reviews, multisig owner creation, Relayr re-sign of unfinished chains, old-pool position move.
 
 ## Plan refinement
 - **Objective:** Close the items jango answered on 2026-11-14 so Juicescan does what juicebox.money does and states only what is true.
