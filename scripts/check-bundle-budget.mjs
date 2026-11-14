@@ -12,7 +12,8 @@ import { gzipSync } from 'node:zlib';
 const startupBudget = { raw: 3_930_000, gzip: 736_000 };
 
 const budgets = {
-  'dist/style.css': { raw: 248_000, gzip: 50_000 },
+  // Open-first states (pending review rows, busy buttons, stale-while-refreshing marks) measure 248,424 B raw, 50,173 B gzip.
+  'dist/style.css': { raw: 250_000, gzip: 50_600 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   // The Build guide mirrors juicebox.money's 39 sections (2026-11); the page measures 114,994 B raw, 28,983 B gzip.
   'dist/build.html': { raw: 118_000, gzip: 30_000 },
@@ -101,7 +102,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // Official SDK2.29/native actions measured total2,309,541 B gzip, +28,981 B versus the same-env baseline.
 // Shared checkout measured2,312,787 B gzip, +3,317 B versus222c5f same-env distribution.
 // SDK3.0.0 with the direct buy route removed: 2,313,459 B gzip.
-const totalGzipBudget = 2_125_000;
+// Open-first (2026-11): the pending review, handoff and placeholder code measures 2,125,335 B gzip in total.
+const totalGzipBudget = 2_135_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
