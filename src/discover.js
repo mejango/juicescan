@@ -8020,7 +8020,14 @@ function mountProjectRouteSkeleton() {
   _container.appendChild(renderDetailSkeleton());
 }
 
-function renderHandleRouteError(handle, message) {
+// A route that names no project: say so, as juicebox.money's 404 does, instead of silently showing the grid.
+export var ROUTE_NOT_FOUND_TITLE = 'This juicebox is empty';
+export var ROUTE_NOT_FOUND_MESSAGE = 'We couldn\'t find that page. It may have moved, or the project address might be misspelled.';
+function renderRouteNotFound() { renderRouteMessage(ROUTE_NOT_FOUND_TITLE, ROUTE_NOT_FOUND_MESSAGE); }
+
+function renderHandleRouteError(handle, message) { renderRouteMessage(handle ? ('@' + handle) : 'Project handle', message); }
+
+function renderRouteMessage(heading, message) {
   if (!_container) return;
   if (_gridWrapper) _gridWrapper.style.display = 'none';
   removeProjectDetails();
@@ -8030,7 +8037,7 @@ function renderHandleRouteError(handle, message) {
   back.addEventListener('click', function () { showProjectGrid(false); });
   wrap.appendChild(back);
   var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title'); title.textContent = handle ? ('@' + handle) : 'Project handle'; card.appendChild(title);
+  var title = el('div', 'detail-card-title'); title.textContent = heading; card.appendChild(title);
   var body = el('div', 'detail-card-body backoffice-intro'); body.textContent = message; card.appendChild(body);
   wrap.appendChild(card);
   _container.appendChild(wrap);
@@ -8216,7 +8223,7 @@ export function applyDiscoverRoute(route, routeContext) {
   }
   var seq = ++_discoverRouteSeq;
   var m = /^([a-z0-9]+):(\d+)(?:\/([a-z0-9]+))?(?:\/([a-z0-9]+))?$/i.exec(route);
-  if (!m) { showProjectGrid(true); return; }
+  if (!m) { renderRouteNotFound(); return; }
   // Hide the grid immediately (before the async fetch) so it doesn't flash before the detail loads.
   if (_gridWrapper) _gridWrapper.style.display = 'none';
   var chainId = chainForSlug(m[1].toLowerCase());
@@ -8330,7 +8337,7 @@ export function applyDiscoverRoute(route, routeContext) {
   ensureGroups().then(function (groups) {
     if (seq !== _discoverRouteSeq) return;
     var g = projectGroupForDeployment(groups, chainId, id);
-    if (!g) { showProjectGrid(true); return; }
+    if (!g) { renderRouteNotFound(); return; }
     loadProjectGroup(g);
   }).catch(function () { if (seq === _discoverRouteSeq) showProjectGrid(true); });
 }
