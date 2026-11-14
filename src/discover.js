@@ -4628,6 +4628,14 @@ export function payReviewRows(r) {
   return rows;
 }
 
+// A settled quote whose guaranteed minimum is below the previewed amount: a market price sets part of it, and a
+// pool that cannot fill the whole order at that price mints the rest at the project's own rate, so the payer can
+// receive less than the preview and never less than the minimum. The pay card then says "about" and shows the floor.
+export function payReceiptIsEstimate(phase, preview) {
+  if (phase === 'previewing' || !preview || preview.unavailable || preview.received == null || preview.minReturnedTokens == null) return false;
+  try { return BigInt(preview.minReturnedTokens) < BigInt(preview.received); } catch (_) { return false; }
+}
+
 // What a payer is shown for the chain they pay on. Each chain keeps its own project file, so the notice can
 // differ between them: the payer sees the one for their chain, and the others when they differ. `notices` maps
 // chainId to a string ('' for none) or null when that chain's read failed. The same rule as juicebox.money's
@@ -10233,8 +10241,10 @@ export function renderPayCard(project, cart) {
       return;
     }
 
+    // A market price sets part of this amount, so it can land lower: say "about" and show the guaranteed floor.
+    var estimate = payReceiptIsEstimate(state.phase, p);
     var label = el('div', 'paybox-yg-label');
-    label.textContent = 'You get';
+    label.textContent = estimate ? 'You get about' : 'You get';
     feedback.appendChild(label);
 
     var valRow = el('div', 'paybox-yg-row');
@@ -10252,6 +10262,11 @@ export function renderPayCard(project, cart) {
     else val.textContent = '0.00 ' + sym;
     valRow.appendChild(val);
     feedback.appendChild(valRow);
+    if (estimate) {
+      var floor = el('div', 'paybox-splits');
+      floor.textContent = 'At least ' + formatTokenCount(p.minReturnedTokens) + ' ' + sym;
+      feedback.appendChild(floor);
+    }
 
     var nb = nftBlock(); if (nb) feedback.appendChild(nb);
 

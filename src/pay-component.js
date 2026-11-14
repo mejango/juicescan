@@ -624,7 +624,7 @@ export function renderPayComponent() {
         describeFailure: function (error) { var failure = decodePayFailure(error); return failure && failure.message; },
         confirmSummary: { action: 'Pay project #' + String(reviewed.projectId), rows: [
           ['Paying', reviewed.amountText + ' ' + reviewed.symbol],
-          ['You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
+          [BigInt(route.preview.minReturnedTokens) < BigInt(route.preview.received) ? 'You get about' : 'You get', formatTokenCount(route.preview.received) + ' tokens' + (route.preview.reserved ? ' (' + formatTokenCount(route.preview.reserved) + ' reserved for the project)' : '')],
           ['Minimum', formatTokenCount(route.preview.minReturnedTokens) + ' tokens: fails if you receive less'],
           ['To', beneficiary],
           reviewed.memo ? ['Memo', reviewed.memo] : null,

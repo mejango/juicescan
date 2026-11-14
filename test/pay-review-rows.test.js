@@ -1,6 +1,6 @@
 // The pay review reads in plain rows, and shows the project's payment notice before the payer agrees.
 import { describe, it, expect } from 'vitest';
-import { payReviewRows, payNoticeView, renderPayNoticeNote, PAYMENTS_PAUSED_MESSAGE } from '../src/discover.js';
+import { payReviewRows, payReceiptIsEstimate, payNoticeView, renderPayNoticeNote, PAYMENTS_PAUSED_MESSAGE } from '../src/discover.js';
 
 const base = { amount: '1 ETH', chain: 'Base', minimum: '990 TKN', beneficiary: '0x' + '11'.repeat(20), memo: '' };
 describe('pay review rows', () => {
@@ -52,5 +52,15 @@ describe('the payment notice a payer is shown', () => {
     expect(failed.textContent).toBe('Project notice: Terms');
 
     expect(renderPayNoticeNote(payNoticeView(1, { 1: 'Terms', 10: 'Terms' }), () => Promise.reject()).textContent).toBe('');
+  });
+});
+
+describe('a receipt that a market price can lower', () => {
+  it('is an estimate only when a settled quote guarantees less than it previews', () => {
+    expect(payReceiptIsEstimate('ready', { received: 900n, minReturnedTokens: 600n })).toBe(true);
+    expect(payReceiptIsEstimate('ready', { received: 900n, minReturnedTokens: 900n })).toBe(false);
+    expect(payReceiptIsEstimate('previewing', { received: 900n, minReturnedTokens: 600n })).toBe(false);
+    expect(payReceiptIsEstimate('ready', { unavailable: true })).toBe(false);
+    expect(payReceiptIsEstimate('ready', null)).toBe(false);
   });
 });
