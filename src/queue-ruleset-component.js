@@ -5,10 +5,11 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, selectChain, firstChainForNetwork,
-  executeTransaction, renderError, getAddress, parseHashDefaults,
+  executeTransaction, openPendingReview, renderError, getAddress, parseHashDefaults,
   createPublicClientForChain, getChainTokens,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
+import { chainNameFor } from './chain.js';
 import { createDefaultRuleset, buildRulesetConfigs } from './ruleset-config.js';
 import { renderRulesetFieldset } from './ruleset-ui.js';
 import { requiredFeedPairs, verifyFeedCoverage, feedCurrencyLabel } from './create-flow.js';
@@ -229,16 +230,22 @@ export function renderQueueRulesetComponent() {
       state.error = (err && err.message) || String(err); updateUI(); return;
     }
 
+    var summaryRows = [
+      ['Queues', rulesetConfigs.length + ' ruleset' + (rulesetConfigs.length === 1 ? '' : 's')],
+      ['Project', '#' + String(state.projectId)],
+      state.memo ? ['Memo', state.memo] : null,
+    ].filter(Boolean);
+    // Every row is known at the click, so the review opens with them; the exchange rate check still gates the send.
+    var review = openPendingReview({ action: 'Queue rulesets', chain: chainNameFor(state.selectedChain), rows: summaryRows });
+    if (review.closed) return;
     state.txStatus = { message: 'Checking the required exchange rates…', success: false };
     updateUI();
     verifyQueueFeedCoverage(state.selectedChain, state.projectId, rulesetConfigs).then(function() {
+      if (review.closed) { state.txStatus = null; updateUI(); return; }
       executeTransaction({
         ...buildQueueRulesetsArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, projectId: state.projectId, rulesetConfigs: rulesetConfigs, memo: state.memo || '' }),
-        confirmSummary: { action: 'Queue rulesets', rows: [
-          ['Queues', rulesetConfigs.length + ' ruleset' + (rulesetConfigs.length === 1 ? '' : 's')],
-          ['Project', '#' + String(state.projectId)],
-          state.memo ? ['Memo', state.memo] : null,
-        ].filter(Boolean) },
+        confirmSummary: { action: 'Queue rulesets', rows: summaryRows },
+        confirmSession: review,
         onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
         onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; updateUI(); },
         onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
@@ -246,6 +253,7 @@ export function renderQueueRulesetComponent() {
     }, function(err) {
       state.error = (err && err.message) || String(err);
       state.txStatus = null;
+      review.fail(state.error);
       updateUI();
     });
   }

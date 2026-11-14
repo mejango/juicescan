@@ -5,12 +5,13 @@
 import {
   el, parseHashDefaults,
   createProjectAndChainInput, createComponentWrapper,
-  executeTransaction, getBeneficiaryAddress, firstChainForNetwork, payHoldScope,
+  executeTransaction, openPendingReview, getBeneficiaryAddress, firstChainForNetwork, payHoldScope,
   createPublicClientForChain, getChainTokens,
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
+import { chainNameFor } from './chain.js';
 import { decodePayFailure } from './pay-failure.js';
 import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub } from './pay-preview.js';
 
@@ -567,6 +568,12 @@ export function renderPayComponent() {
         && (state.memo || '') === reviewed.memo && sameAddress(getBeneficiaryAddress(state), reviewed.beneficiary);
     }
     var CHANGED = 'The payment details changed. Review and try again.';
+    // The review opens at the click; what you get and the minimum fill in once the route is prepared for this payment.
+    var review = openPendingReview({ action: 'Pay project #' + String(reviewed.projectId), chain: chainNameFor(reviewed.chainId), rows: [
+      ['Paying', reviewed.amountText + ' ' + reviewed.symbol], ['You get', null], ['Minimum', null], ['To', beneficiary],
+      reviewed.memo ? ['Memo', reviewed.memo] : null,
+    ].filter(Boolean) });
+    if (review.closed) { state.phase = 'ready'; updateUI(); return; }
 
     resolveBestPayRoute({
       chainId: reviewed.chainId,
@@ -575,10 +582,12 @@ export function renderPayComponent() {
       amount: amountParsed,
       beneficiary: beneficiary,
     }).then(function (route) {
-      if (!unchanged()) { state.phase = 'ready'; state.error = CHANGED; updateUI(); return; }
+      if (review.closed) { state.phase = 'ready'; updateUI(); return; }
+      if (!unchanged()) { state.phase = 'ready'; state.error = CHANGED; review.fail(CHANGED); updateUI(); return; }
       if (!route || route.unavailable) {
         state.phase = 'ready';
         state.error = route ? route.reason : 'Juicebox contracts are unavailable on this chain';
+        review.fail(state.error);
         updateUI();
         return;
       }
@@ -610,6 +619,7 @@ export function renderPayComponent() {
         route: route,
       }), {
         // One hold per payment to this project, whichever terminal or router the route picks.
+        confirmSession: review,
         holdScope: payHoldScope(reviewed.projectId),
         holdLegacyTargets: payRouteCandidates(reviewed.chainId).map(function (candidate) { return candidate.address; }),
         assertWriteState: function () { if (!unchanged()) throw new Error(CHANGED); },
@@ -630,6 +640,7 @@ export function renderPayComponent() {
     }).catch(function (err) {
       state.phase = 'ready';
       state.error = (err && (err.shortMessage || err.message)) || 'Could not find a payment route.';
+      review.fail(state.error);
       updateUI();
     });
   }

@@ -5,11 +5,12 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createBeneficiaryInput, createWalletButton, selectChain,
-  firstChainForNetwork, executeTransaction, executeRead, renderError, getAddress,
+  firstChainForNetwork, executeTransaction, executeRead, openPendingReview, renderError, getAddress,
   getAccount, getEffectiveAccount, getChainTokens, parseAmount, formatAmount, parseHashDefaults,
   getBeneficiaryAddress, createPublicClientForChain, truncAddr, tokenByAddress,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
+import { chainNameFor } from './chain.js';
 import { cashOutPreviewRulesetId, projectBuybackHook, resolveCashOutPreviewRoute } from './discover.js';
 import { quotedOutputFloor } from './slippage.js';
 
@@ -143,14 +144,14 @@ export function renderCashOutComponent() {
 
 
     // Balance display
-    if (state.balance !== null) {
+    if (state.balance !== null || (getEffectiveAccount() && state.selectedChain && state.projectId)) {
       var balBox = el('div', 'pay-preview');
       var row = el('div', 'preview-row');
       var lbl = el('span', 'preview-label');
       lbl.textContent = 'Your project token balance';
       row.appendChild(lbl);
       var val = el('span', 'preview-value');
-      val.textContent = formatAmount(state.balance, 18);
+      val.textContent = state.balance !== null ? formatAmount(state.balance, 18) : (state.balanceFailed ? 'Could not load' : 'Loading…');
       row.appendChild(val);
       balBox.appendChild(row);
       body.appendChild(balBox);
@@ -234,6 +235,7 @@ export function renderCashOutComponent() {
     var tokensAddr = getAddress('JBTokens', state.selectedChain);
     if (!tokensAddr) return;
 
+    state.balanceFailed = false;
     executeRead({
       chainId: state.selectedChain,
       address: tokensAddr,
@@ -243,7 +245,7 @@ export function renderCashOutComponent() {
     }).then(function(result) {
       state.balance = result;
       updateUI();
-    }).catch(function() {});
+    }).catch(function() { state.balanceFailed = true; updateUI(); });
   }
 
   // JBMultiTerminal.previewCashOutFrom — hook-aware reclaim (net of any data-hook fee, before the 2.5%
@@ -308,6 +310,13 @@ export function renderCashOutComponent() {
     // Prepare the same hook-aware route as the project cash-out modal. previewCashOutFrom returns a GROSS
     // treasury reclaim, so resolveCashOutPreviewRoute nets the protocol fee before setting the terminal floor.
     // An AMM route instead puts its floor in buyback-hook metadata and MUST keep the terminal minimum at zero.
+    var reclaimDecimals = state.selectedToken.decimals != null ? Number(state.selectedToken.decimals) : 18;
+    var reclaimSymbol = state.selectedToken.symbol || 'tokens';
+    // The review opens at the click with the rows this form already knows; the rest fill in once the route is locked.
+    var review = openPendingReview({ action: 'Cash out', chain: chainNameFor(chainId), rows: [
+      ['Cashing out', formatAmount(cashOutCount, 18) + ' tokens'], ['You receive', null], ['Minimum', null], ['Route', null], ['To', beneficiary],
+    ] });
+    if (review.closed) return;
     var preparedRoute;
     try {
       state.txStatus = { message: 'Refreshing and locking the cash out route…', success: false }; updateUI();
@@ -339,6 +348,7 @@ export function renderCashOutComponent() {
     } catch (error) {
       state.error = (error && (error.shortMessage || error.message)) || 'Could not preview this cash out.';
       state.txStatus = null;
+      review.fail(state.error);
       updateUI(); return;
     }
     if (state.selectedChain !== chainId || state.amount !== amountText || !state.selectedToken
@@ -347,11 +357,11 @@ export function renderCashOutComponent() {
       || String(getAccount() || '').toLowerCase() !== holder.toLowerCase()) {
       state.error = 'Cash out inputs changed while the preview was loading. Review the refreshed form and try again.';
       state.txStatus = null;
+      review.fail(state.error);
       updateUI(); return;
     }
+    if (review.closed) { state.txStatus = null; updateUI(); return; }
 
-    var reclaimDecimals = state.selectedToken.decimals != null ? Number(state.selectedToken.decimals) : 18;
-    var reclaimSymbol = state.selectedToken.symbol || 'tokens';
     executeTransaction(Object.assign(buildCashOutArgs({
       chainId: chainId, terminalAddr: terminalAddr, holder: holder, projectId: state.projectId,
       cashOutCount: cashOutCount, tokenToReclaim: reclaimToken, beneficiary: beneficiary,
@@ -364,6 +374,7 @@ export function renderCashOutComponent() {
         ['Route', preparedRoute.via === 'amm' ? 'sold on Uniswap' : 'destroyed in return for available project funds'],
         ['To', beneficiary],
       ] },
+      confirmSession: review,
       onStatus: function(msg) { state.txStatus = { message: msg, success: false }; updateUI(); },
       onSuccess: function(msg) { state.txStatus = { message: msg, success: true }; loadBalance(); updateUI(); },
       onError: function(msg) { state.error = msg; state.txStatus = null; updateUI(); },
