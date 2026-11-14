@@ -18206,10 +18206,12 @@ export var POWER_SET_TERMINALS = {
   // The call replaces the whole list, so the field starts from the live list and a blank field is refused: a
   // default of one terminal would silently drop the router terminal.
   fields: [{ name: 'terminals', label: 'Terminals', kind: 'addressList', placeholder: '0x…, 0x…',
-    listRead: function (project, cid) { return read(cid, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pidOn(project, cid)]); } }],
+    listRead: function (project, cid) { return read(cid, 'JBDirectory', terminalsOfAbi, 'terminalsOf', [pidOn(project, cid)]); } },
+    { name: 'allowEmpty', label: 'Allow an empty list', kind: 'bool', help: 'An empty list stops payments and cash outs.' }],
   buildArgs: function (v, cid, pid) {
-    if (!v.terminals || !v.terminals.length) throw new Error('Enter the full terminal list for ' + chainNameOf(cid) + '.');
-    return [pid, v.terminals];
+    var list = v.terminals || [];
+    if (!list.length && !v.allowEmpty) throw new Error('Enter the full terminal list for ' + chainNameOf(cid) + ', or turn on Allow an empty list.');
+    return [pid, list];
   },
 };
 var POWER_MIGRATE = {

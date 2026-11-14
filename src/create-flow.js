@@ -4259,7 +4259,7 @@ function deploy(state, render) {
   }
   // A Safe never takes the Relayr path: that path asks the signer for forwarder signatures, which a contract cannot give.
   if (state.chainIds.length > 1 && isSafeConnected()) {
-    state.statusLines.push({ text: 'A Safe can launch one chain at a time here. Choose one chain.', err: true }); render(); return;
+    state.statusLines.push({ text: 'A Safe launches one chain at a time. For several chains, connect a wallet and name the Safe as owner.', err: true }); render(); return;
   }
   var mediaIssue = shopMediaUploadIssue(state);
   if (mediaIssue) { state.statusLines.push({ text: mediaIssue, err: true }); render(); return; }
