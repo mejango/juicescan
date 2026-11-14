@@ -243,6 +243,19 @@ it('adds the router Permit2 allowance to the prepared metadata of a routed payme
   expect(tx.tokenAddr).toBeNull();
 });
 
+it('has an account with code approve the router for exactly the amount with a routed payment, and never sign', async () => {
+  runtime.code = '0x60';
+  const base = buildUserPayMetadata({ chainId: 8453, minimumSwapAmountOut: 7n });
+  await routedUsdc(699, base);
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  const tx = runtime.execute.mock.lastCall[0];
+  expect(tx.address).toBe(registry);
+  expect(tx.args[6]).toBe(base);
+  expect([tx.tokenAddr.toLowerCase(), tx.spenderAddr, tx.approvalAmount]).toEqual([USDC.toLowerCase(), registry, 100_000_000n]);
+  expect(runtime.sign).not.toHaveBeenCalled();
+});
+
 it('does not send a routed payment whose inputs changed while the signature was pending', async () => {
   const signature = deferred();
   runtime.sign.mockReturnValueOnce(signature.promise);

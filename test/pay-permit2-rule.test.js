@@ -69,9 +69,10 @@ describe('buildPayPermit2Metadata', () => {
     }
   });
 
-  it('authorizes every ERC-20 payment this way, direct or routed, except a contract wallet paying the terminal directly', () => {
+  it('authorizes every ERC-20 payment this way, direct or routed: an account with code approves with the payment', () => {
     expect(discover).toContain("if (isNative) { sendPay(txParams");
-    expect(discover).toContain('(viaRouter ? Promise.resolve(false) : (isSafeConnected() ? Promise.resolve(true) : accountHasCode(reviewedChainId, beneficiary)))');
+    expect(discover).toContain('(isSafeConnected() ? Promise.resolve(true) : accountHasCode(reviewedChainId, beneficiary))');
+    expect(discover).toContain('sendPay(Object.assign({}, txParams, { tokenAddr: reviewedToken.address, spenderAddr: terminal, approvalAmount: amt })');
     expect(discover).toContain('buildPayPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb, metadata).then(payAuthorized)');
   });
 });

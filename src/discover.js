@@ -10306,7 +10306,8 @@ export function renderPayCard(project, cart) {
         functionName: 'pay',
         args: [reviewedProjectId, reviewedToken.address, amt, beneficiary, minTokens, reviewedMemo, metadata],
         value: isNative ? amt : 0n,
-        // Direct ERC20 pays approve the terminal inline; swap-via-router pays authorize through Permit2 (below).
+        // The review's default; the send (below) picks the authorization: an inline exact approval of the pay
+        // entry for an account with code, a Permit2 signature for a plain wallet.
         tokenAddr: (isNative || viaRouter) ? null : reviewedToken.address,
         spenderAddr: (isNative || viaRouter) ? null : terminal,
         approvalAmount: (isNative || viaRouter) ? null : amt,
@@ -10323,7 +10324,7 @@ export function renderPayCard(project, cart) {
     var args = txParams.args;
     var metaIdx = addBalance ? 5 : 6;
     // The payment's metadata gains a Permit2 signature once the wallet signs, unless a Safe pays the terminal directly.
-    var signsPermit2 = !isNative && (viaRouter || !isSafeConnected());
+    var signsPermit2 = !isNative && !isSafeConnected();
 
     // Confirm the exact data before signing.
     var chainName = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
@@ -10393,11 +10394,15 @@ export function renderPayCard(project, cart) {
         status.className = 'paybox-status' + (kind === 'pending' ? ' pending' : ''); status.textContent = m;
         confirmCtx.showStatus(m, kind, meta);
       };
-      // A contract wallet paying the terminal directly keeps its inline exact approval: it cannot sign.
-      (viaRouter ? Promise.resolve(false) : (isSafeConnected() ? Promise.resolve(true) : accountHasCode(reviewedChainId, beneficiary)))
+      // An account with code cannot sign: it approves the pay entry for the exact amount with the payment, which
+      // a Safe takes as one proposal.
+      (isSafeConnected() ? Promise.resolve(true) : accountHasCode(reviewedChainId, beneficiary))
         .then(function (approvesInline) {
           if (!requirePayInputs()) { confirmCtx.fail(status.textContent); return undefined; }
-          if (approvesInline) { sendPay(txParams, Object.assign({ confirmCtx: confirmCtx }, sendOpts)); return undefined; }
+          if (approvesInline) {
+            sendPay(Object.assign({}, txParams, { tokenAddr: reviewedToken.address, spenderAddr: terminal, approvalAmount: amt }), Object.assign({ confirmCtx: confirmCtx }, sendOpts));
+            return undefined;
+          }
           // Every other ERC20 payment authorizes with a Permit2 signature (replaces an approval per payment), then sends.
           return buildPayPermit2Metadata(reviewedChainId, reviewedToken.address, beneficiary, terminal, amt, statusCb, metadata).then(payAuthorized);
         })
