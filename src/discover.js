@@ -31464,6 +31464,118 @@ export function prepareMoveLiquidity(chainId, pos, acct, pa, pb) {
   };
 }
 
+// Whether two sqrtPriceX96 values are prices within `bps` of each other.
+export function lpPricesAgree(a, b, bps) {
+  var priceA = a * a, priceB = b * b;
+  var gap = priceA > priceB ? priceA - priceB : priceB - priceA;
+  return gap * 10000n <= priceB * BigInt(bps == null ? 100 : bps);
+}
+
+// One unlock that burns a position in a pool the project's buyback has left and mints the same band in the
+// current pool: BURN_POSITION + MINT_POSITION + TAKE_PAIR (0x030211), funded only by the burn. The rule
+// juicebox.money follows (buyback-pool-migration.ts liquidityMovePlan), so both sites build the same call.
+// Burn floors are 99% of what the position holds at the old pool's reviewed price; the new liquidity is sized
+// from 98% of it at the current pool's price; the mint ceilings bind that price within the burn floors; and
+// TAKE_PAIR pays the remainder and the fees to the owner while reverting on any debt, so the wallet never pays in.
+// `pos` must come from refreshLpPositionForRemoval; toKey and toSqrtP are the current pool's key and live price.
+export function prepareMoveToCurrentPool(chainId, pos, toKey, toSqrtP, acct) {
+  var posm = POSITION_MANAGER_BY_CHAIN[chainId];
+  if (!posm) throw new Error('No position manager on this chain');
+  var lc = function (a) { return String(a || '').toLowerCase(); };
+  var from = pos.key, spacing = Number(toKey.tickSpacing);
+  if (lc(from.currency0) !== lc(toKey.currency0) || lc(from.currency1) !== lc(toKey.currency1)
+    || Number(from.fee) !== Number(toKey.fee) || Number(from.tickSpacing) !== spacing || lc(from.hooks) === lc(toKey.hooks)) {
+    throw new Error('This position cannot be moved into the current pool.');
+  }
+  if (!(pos.liquidity > 0n)) throw new Error('This position holds no liquidity.');
+  if (!pos.sqrtP || pos.sqrtP <= 0n) throw new Error('Could not verify the old pool price');
+  if (!toSqrtP || toSqrtP <= 0n) throw new Error('The new pool is not open yet.');
+  if (!lpPricesAgree(toSqrtP, pos.sqrtP)) throw new Error('The new pool’s price is off; move later.');
+  if (pos.tickLower % spacing !== 0 || pos.tickUpper % spacing !== 0) throw new Error('This band does not fit the new pool’s tick spacing.');
+  var sa = lpSqrtAtTick(pos.tickLower), sb = lpSqrtAtTick(pos.tickUpper);
+  var removed = lpGetAmountsForLiquidity(pos.sqrtP, sa, sb, pos.liquidity);
+  var amount0Min = removed.amount0 - removed.amount0 / 100n;
+  var amount1Min = removed.amount1 - removed.amount1 / 100n;
+  var liquidity = lpGetLiquidityForAmounts(toSqrtP, sa, sb,
+    removed.amount0 - (removed.amount0 * 2n) / 100n, removed.amount1 - (removed.amount1 * 2n) / 100n);
+  if (liquidity <= 0n) throw new Error('This position is too small to move.');
+  var needed = lpGetAmountsForLiquidity(toSqrtP, sa, sb, liquidity);
+  var ceiling = function (amount, floor) { var padded = amount + amount / 100n + 1n; return padded < floor ? padded : floor; };
+  var amount0Max = ceiling(needed.amount0, amount0Min), amount1Max = ceiling(needed.amount1, amount1Min);
+  var burnParams = encodeAbiParameters(
+    [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
+    [BigInt(pos.tokenId), amount0Min, amount1Min, '0x']);
+  var mintParams = encodeAbiParameters(
+    [
+      { type: 'tuple', components: [{ type: 'address' }, { type: 'address' }, { type: 'uint24' }, { type: 'int24' }, { type: 'address' }] },
+      { type: 'int24' }, { type: 'int24' }, { type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'address' }, { type: 'bytes' },
+    ],
+    [
+      [toKey.currency0, toKey.currency1, Number(toKey.fee), spacing, toKey.hooks],
+      pos.tickLower, pos.tickUpper, liquidity, amount0Max, amount1Max, acct, '0x',
+    ]);
+  var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [toKey.currency0, toKey.currency1, acct]);
+  var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x030211', [burnParams, mintParams, takeParams]]);
+  var deadline = BigInt(Math.floor(Date.now() / 1000) + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
+  return {
+    posm: posm, unlockData: unlockData, deadline: deadline, value: 0n, liquidity: liquidity,
+    pairMin: pos.pairIsC0 ? amount0Min : amount1Min, tokenMin: pos.pairIsC0 ? amount1Min : amount0Min,
+    amount0Min: amount0Min, amount1Min: amount1Min, amount0Max: amount0Max, amount1Max: amount1Max,
+    smartWallet: !!pos.smartWallet,
+  };
+}
+
+// Review and send the move of an old-pool position into the current pool. Everything the call is built from is
+// read at the click: the position from the PositionManager, both pools' prices, and the current pool's key.
+function openLpPoolMove(project, chainId, stalePos, acct, onDone) {
+  var sym = project.tokenSymbol || 'tokens';
+  var action = 'Move your liquidity into the current ' + sym + '/' + stalePos.pair.symbol + ' pool';
+  var rows = function (pos, prep) {
+    var both = function (tok, pair) { return formatTokens(tok) + ' ' + sym + ' + ' + formatBalance(pair, stalePos.pair.decimals, stalePos.pair.symbol); };
+    return [
+      ['Position', '#' + stalePos.tokenId.toString() + ' (old pool) → a new position in the current pool, same band'],
+      ['Moves', pos ? both(pos.tokAmt, pos.pairAmt) : null],
+      ['At least', prep ? both(prep.tokenMin, prep.pairMin) + ' out of the old pool, enforced onchain; leftovers and fees come back to you' : null],
+      ['To', acct],
+      ['Deadline', prep ? (prep.smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes') : null],
+    ];
+  };
+  var opts = { title: 'Confirm move liquidity', confirmText: 'Confirm & move' };
+  var review = openPendingReview({ action: action, chain: chainNameOf(chainId), rows: rows(null, null) }, opts);
+  if (review.closed) return;
+  var client = clientFor(chainId), pm = POOL_MANAGER_BY_CHAIN[chainId];
+  Promise.all([
+    refreshLpPositionForRemoval(chainId, stalePos, acct),
+    projectBuybackHook(project, chainId, { strict: true }).then(function (hook) {
+      if (!hook || hook === ZERO_ADDRESS) throw new Error('This project has no current pool to move into.');
+      return client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), stalePos.pair.addr] });
+    }).then(function (toKey) {
+      var slot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [uniswapV4PoolId(toKey), 6n]));
+      return client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [slot] })
+        .then(function (slot0) { return { key: toKey, sqrtP: BigInt(slot0) & ((1n << 160n) - 1n) }; });
+    }),
+  ]).then(function (read) {
+    if (review.closed) return;
+    var pos = read[0], to = read[1];
+    var prep = prepareMoveToCurrentPool(chainId, pos, to.key, to.sqrtP, acct);
+    var minH = formatTokens(prep.tokenMin) + ' ' + sym + ' + ' + formatBalance(prep.pairMin, pos.pair.decimals, pos.pair.symbol);
+    lpConfirmAndSend(review, {
+      summary: { action: action, rows: rows(pos, prep) },
+      chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
+      'function': 'modifyLiquidities', value: '0',
+      calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
+      position: { actions: 'BURN_POSITION, MINT_POSITION, TAKE_PAIR (0x030211)', tokenId: pos.tokenId.toString(), minimumReturns: minH, recipient: acct },
+      args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
+    }, opts, 'Moving liquidity…', 'Move failed', function () {
+      return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
+    }, function (hash) {
+      noteLocalLpWrite(chainId, pos.poolId);
+      noteLocalLpWrite(chainId, uniswapV4PoolId(to.key));
+      if (onDone) onDone(hash);
+    });
+  }).catch(function (e) { review.fail(errMessage(e, 'Could not prepare the move.')); });
+}
+
 // The band editor for a one-transaction move. Opens immediately, refreshes the position for the prefill,
 // and re-refreshes on review so stale amounts never become the reviewed floors or mint sizing (the same
 // discipline as the remove flow).
@@ -31623,8 +31735,12 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
       var lifeC = el('span', 'owners-balance'); lifeC.textContent = pos.claimedPair == null ? '—' : 'reading…'; tr.appendChild(lifeC);
       var actC = el('span', 'lp-mine-actions');
       var claim = el('button', 'detail-check-btn'); claim.textContent = 'Claim fees'; claim.disabled = true; actC.appendChild(claim);
-      var mv = el('button', 'detail-check-btn'); mv.textContent = 'Move';
-      mv.addEventListener('click', function () { openLpMoveEditor(project, cid, pos, acct, onDone); });
+      // A position left in an old pool moves into the current one; one in the current pool moves its band.
+      var mv = el('button', 'detail-check-btn'); mv.textContent = pos.hookIsCurrent ? 'Move' : 'Move to new pool';
+      mv.addEventListener('click', function () {
+        if (pos.hookIsCurrent) openLpMoveEditor(project, cid, pos, acct, onDone);
+        else openLpPoolMove(project, cid, pos, acct, onDone);
+      });
       actC.appendChild(mv);
       var manage = el('button', 'detail-check-btn'); manage.textContent = 'Remove';
       manage.addEventListener('click', function () { openRemoveLiquidityModal(project, cid, onDone); });
