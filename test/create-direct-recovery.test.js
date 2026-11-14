@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { encodeFunctionData } from 'viem';
+import { encodeFunctionData, encodeFunctionResult, pad } from 'viem';
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
@@ -24,7 +24,7 @@ vi.mock('../src/relayr.js', async (original) => ({ ...await original(),
   buildForwardedTx: mocks.forward, relayrPay: mocks.pay, retireExpiredUnpaidRelayrSession: mocks.retireExpired,
 }));
 
-import { __test } from '../src/create-flow.js';
+import { __test, withSafeCreation } from '../src/create-flow.js';
 import { saveRelayrPendingSession, loadRelayrPendingSession } from '../src/relayr.js';
 
 const ALICE = '0x1111111111111111111111111111111111111111';
@@ -272,6 +272,34 @@ describe('direct multichain creation recovery', () => {
     mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH2));
     await __test.runCreateDirectSession(draft, session, true);
     expect(mocks.execute.mock.calls.map(([opts]) => opts.chainId)).toEqual([11155111, 84532]);
+  });
+
+  it('sends a launch that creates its Safe only after the simulated batch creates it and launches', async () => {
+    const safe = { owners: ['0x0000000000000000000000000000000000000002', '0x0000000000000000000000000000000000000003', '0x0000000000000000000000000000000000000004'],
+      threshold: 2, saltNonce: '0x' + '00'.repeat(31) + '2a', proxyCreationCode: '0x6001600055', address: '0xF0CBF9d51dEe3F870E12f3b4dC36cB5f9a3e4132' };
+    const draft = Object.assign(state(), { chainIds: [11155111] });
+    const batch = Object.assign(withSafeCreation(plans()[0], safe), { status: 'ready', hash: null });
+    const session = { account: ALICE, plans: [batch] };
+    const input = encodeFunctionData({ abi: batch.abi, functionName: 'aggregate3Value', args: batch.args });
+    const simulated = (created, launched) => ({ data: encodeFunctionResult({ abi: batch.abi, functionName: 'aggregate3Value',
+      result: [{ success: created, returnData: created ? pad(safe.address) : '0x' }, { success: launched, returnData: '0x' }] }) });
+    const call = vi.fn();
+    mocks.client.mockImplementation(clientFor(session, { call, getCode: vi.fn(async () => '0x'),
+      getTransaction: vi.fn(async () => ({ from: ALICE, to: batch.address, chainId: 11155111, input, value: batch.value })) }));
+
+    // The Safe would not be created and is not there: nothing is sent.
+    call.mockResolvedValueOnce(simulated(false, true));
+    await expect(__test.runCreateDirectSession(draft, session, false)).rejects.toThrow(/does not match/);
+    expect(mocks.execute).not.toHaveBeenCalled();
+
+    call.mockResolvedValueOnce(simulated(true, true));
+    mocks.execute.mockImplementationOnce((opts) => confirmSend(opts, HASH1));
+    await __test.runCreateDirectSession(draft, __test.loadCreateDirectSession(true) || session, true);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.execute.mock.calls[0][0]).toMatchObject({ address: batch.address, functionName: 'aggregate3Value', value: 7n });
+    // The fee is lent to the simulated call, and the resumed review names the Safe.
+    expect(call.mock.calls[0][0]).toMatchObject({ account: ALICE, to: batch.address, value: 7n, stateOverride: [{ address: ALICE }] });
+    expect(mocks.review.mock.calls.at(-1)[0].transactions[0]).toMatchObject({ creates: 'Safe ' + safe.address + ', 2 of 3 approvals', signers: safe.owners });
   });
 
   it('confirms the new Safe of a launch that mined while the window was closed', async () => {

@@ -4267,11 +4267,11 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
     if (resumed) {
       var reviewed = await (review ? review.confirm : confirmTransactionModal)({
         action: 'Resume saved project launch',
-        transactions: remaining.map(function (plan) { return {
+        transactions: remaining.map(function (plan) { return Object.assign({
           chainId: plan.chainId, chain: chainName(plan.chainId), address: plan.address,
           'function': plan.functionName || 'launchProjectFor', args: plan.args, value: plan.value.toString(),
           calldata: encodeFunctionData({ abi: plan.abi, functionName: plan.functionName || 'launchProjectFor', args: plan.args }),
-        }; }),
+        }, safeReviewFields(plan)); }),
       }, { title: 'Review remaining launch transactions', confirmText: 'Confirm & continue',
         note: 'These are the saved launch calls with the original shared start time. Confirmed chains are skipped. Each remaining chain requires its own transaction and gas.' });
       if (!reviewed || (typeof reviewed === 'object' && !reviewed.ok)) return false;
@@ -4279,7 +4279,8 @@ async function executeCreateDirectSession(state, session, resumed, lock, keepSav
     // Catch any configuration/fee failures across all remaining chains before submitting the next leg.
     for (var j = 0; j < remaining.length; j++) {
       var pending = remaining[j];
-      assertNewTierPolicy(pending.args);
+      // A launch that creates its Safe carries its tiers inside the batch: the launch call itself is checked.
+      assertNewTierPolicy(pending.launch ? pending.launch.args : pending.args);
       push('Simulating the saved launch on ' + chainName(pending.chainId) + '…');
       await simulateTransaction({ chainId: pending.chainId, address: pending.address, abi: pending.abi,
         functionName: pending.functionName || 'launchProjectFor', args: pending.args, value: pending.value, account: session.account });
@@ -4697,7 +4698,7 @@ async function runDeploy(state, owner) {
     action: (state.projectType === 'revnet' ? 'Deploy revnet' : 'Launch project') + ' on ' + plans.map(function (p) { return chainName(p.chainId); }).join(', '),
     transactions: plans.map(function (p) {
       var fn = p.functionName || 'launchProjectFor';
-      return {
+      return Object.assign({
         chain: chainName(p.chainId),
         chainId: p.chainId,
         address: p.address,
@@ -4705,10 +4706,7 @@ async function runDeploy(state, owner) {
         value: p.value.toString() + ' wei (' + formatEther(p.value) + ' ETH creation fee)',
         args: p.args,
         calldata: encodeFunctionData({ abi: p.abi, functionName: fn, args: p.args }),
-        // A launch that creates its Safe is a batch: the launch call inside it is shown decoded.
-        launch: p.launch,
-        creates: p.safe ? 'Safe ' + p.safe.address + ', ' + p.safe.threshold + ' of ' + p.safe.owners.length + ' approvals' : undefined,
-      };
+      }, safeReviewFields(p));
     }),
   };
   reviewPayload.summary = {
@@ -4981,6 +4979,14 @@ export function withSafeCreation(plan, safe) {
   var batch = bundleSafeLaunch({ to: plan.address, value: plan.value, data: encodeFunctionData({ abi: plan.abi, functionName: functionName, args: plan.args }) }, safe);
   return Object.assign({}, plan, { address: batch.to, abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', args: batch.args, safe: safe,
     launch: { address: plan.address, 'function': functionName, args: plan.args } });
+}
+
+// What a review adds for a launch that creates its Safe: the Safe, its signers, and the launch call inside the
+// batch, decoded. The saved plan carries all three, so a resumed launch states them too.
+export function safeReviewFields(plan) {
+  if (!plan.safe) return {};
+  return { creates: 'Safe ' + plan.safe.address + ', ' + plan.safe.threshold + ' of ' + plan.safe.owners.length + ' approvals',
+    signers: plan.safe.owners.slice(), launch: plan.launch };
 }
 
 // Before anything is signed or sent: run the batch and require that the launch ran and the Safe was created at

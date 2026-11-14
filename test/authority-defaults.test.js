@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { encodeFunctionData } from 'viem';
-import { __test, createsSafe, withSafeCreation } from '../src/create-flow.js';
+import { __test, createsSafe, safeReviewFields, withSafeCreation } from '../src/create-flow.js';
 import { MULTICALL3, unbundleSafeLaunch } from '../src/safe-create.js';
 
 const { initState, buildLaunchArgs, buildRevnetArgs } = __test;
@@ -91,5 +91,9 @@ describe('a launch that creates its Safe', () => {
     const inner = unbundleSafeLaunch({ to: batch.address, data, value: batch.value }, SAFE);
     expect([inner.to.toLowerCase(), inner.data, inner.value]).toEqual([plan.address.toLowerCase(), launch, 5n]);
     expect(plan.args[0]).toBe(SAFE.address);
+    // A review, fresh or resumed from the saved plan, names the Safe, its signers and the launch inside the batch.
+    const saved = JSON.parse(JSON.stringify(batch, (_, value) => (typeof value === 'bigint' ? value.toString() : value)));
+    expect(safeReviewFields(saved)).toMatchObject({ creates: 'Safe ' + SAFE.address + ', 2 of 3 approvals', signers: SAFE.owners, launch: { address: plan.address, 'function': 'launchProjectFor' } });
+    expect(safeReviewFields(plan)).toEqual({});
   });
 });
