@@ -14312,10 +14312,11 @@ export function renderActivityCard(project, opts) {
   moreWrap.appendChild(moreBtn); moreWrap.appendChild(moreErr);
   card.appendChild(moreWrap);
   moreBtn.addEventListener('click', function () {
-    var next = cap + ACTIVITY_FETCH_PAGE;
+    var previous = cap;
+    cap += ACTIVITY_FETCH_PAGE;
     moreBtn.disabled = true; moreBtn.textContent = 'Loading…'; moreErr.textContent = '';
-    load(true, next).then(function (rows) {
-      if (rows) cap = next; else moreErr.textContent = 'Could not load more activity. Try again.';
+    load(true).then(function (rows) {
+      if (!rows) { cap = previous; moreErr.textContent = 'Could not load more activity. Try again.'; }
       moreBtn.disabled = false; moreBtn.textContent = 'more';
     });
   });
@@ -14355,12 +14356,17 @@ export function renderActivityCard(project, opts) {
   // `keepOnEmpty` (used by refreshes) leaves existing rows in place when a refetch returns nothing
   // yet — the indexer lags the chain by a few seconds after a tx confirms.
   // Resolves to the rows, or null when the read failed.
-  function load(keepOnEmpty, limit) {
+  var loadSeq = 0;
+  function load(keepOnEmpty) {
+    var seq = ++loadSeq;
     return fetchProjectSuckerMap(project).then(function (map) {
       project._suckerMap = map;
-      return fetchProjectActivity(project, limit || cap);
+      return fetchProjectActivity(project, cap);
     }).then(function (rows) {
-      if (!body.isConnected) return rows;
+      // A newer load owns the feed; this one's window may be smaller.
+      if (!body.isConnected || seq !== loadSeq) return rows;
+      // New rows slide the window; rows already shown below its edge are history and stay.
+      if (rows.more) rows = keepShownActivityRows(rows, allRows);
       hasMore = !!rows.more;
       moreWrap.style.display = hasMore ? '' : 'none';
       if (!rows.length) {
@@ -22688,9 +22694,17 @@ export function projectFeedRowsFromEvents(events, project) {
   }).filter(isProjectFeedActivityRow);
 }
 
+// A refreshed window plus the rows already shown at or below its edge, so a new event never pushes an old one out.
+export function keepShownActivityRows(rows, shown) {
+  var kept = shown.filter(function (row) { return Number(row.timestamp || 0) <= rows.edge; });
+  var out = rows.concat(kept);
+  out.more = true; out.edge = rows.edge;
+  return out;
+}
+
 // Merges the per-query activity pages into one newest-first list. A capped query knows nothing older than its
-// last row, so the merged feed stops at the newest such edge: below it another query's rows would show with gaps.
-// `edge` is 0 when every query returned its whole history.
+// last row, so the merged feed stops above the newest such edge: below it another query's rows would show with
+// gaps, and at it a transaction's events may be cut in half. `edge` is 0 when every query returned its whole history.
 export function mergeActivityPages(results) {
   var edge = 0;
   results.forEach(function (res) {
@@ -22702,7 +22716,7 @@ export function mergeActivityPages(results) {
       var key = ev.id || ((ev.txHash || '') + ':' + (ev.type || '') + ':' + ev.chainId);
       if (seen[key]) return;
       seen[key] = true;
-      if (Number(ev.timestamp || 0) >= edge) events.push(ev);
+      if (Number(ev.timestamp || 0) > edge) events.push(ev);
     });
   });
   events.sort(function (a, b) { return Number(b.timestamp || 0) - Number(a.timestamp || 0); });
@@ -22739,8 +22753,8 @@ async function fetchProjectActivity(project, maxItems) {
   var bendyRows = projectFeedRowsFromEvents(merged, project);
   if (edge) {
     // Ruleset rows come from chain state and cover all history; they join once the indexed rows reach back to them.
-    var loaded = bendyRows.concat((await fetchRulesetQueueRows(project)).filter(function (row) { return Number(row.timestamp || 0) >= edge; }));
-    loaded.more = true;
+    var loaded = bendyRows.concat((await fetchRulesetQueueRows(project)).filter(function (row) { return Number(row.timestamp || 0) > edge; }));
+    loaded.more = true; loaded.edge = edge;
     return loaded;
   }
 

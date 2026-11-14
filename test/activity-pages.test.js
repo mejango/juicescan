@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeActivityPages } from '../src/discover.js';
+import { keepShownActivityRows, mergeActivityPages } from '../src/discover.js';
 
 const ev = (id, timestamp) => ({ id, timestamp, chainId: 1, type: 'pay' });
 
@@ -20,6 +20,14 @@ describe('merging paged activity queries', () => {
       { items: [ev('f', 30)], capped: false },
     ]);
     expect(page.edge).toBe(40);
-    expect(page.events.map(e => e.id)).toEqual(['a', 'c', 'b']);
+    // The edge's own timestamp waits for the next page: its transaction may be cut in half.
+    expect(page.events.map(e => e.id)).toEqual(['a', 'c']);
+  });
+
+  it('keeps rows already shown when a new event slides the window', () => {
+    const fresh = Object.assign([ev('new', 60), ev('a', 50)], { more: true, edge: 45 });
+    const kept = keepShownActivityRows(fresh, [ev('a', 50), ev('c', 45), ev('d', 41)]);
+    expect(kept.map(e => e.id)).toEqual(['new', 'a', 'c', 'd']);
+    expect(kept.more).toBe(true);
   });
 });
