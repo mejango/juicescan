@@ -158,3 +158,20 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - **Resource budget:** One branch, one pull request.
 - **Authority and recovery:** A pull request, merged on jango's word; a new build is published only when asked. One commit per item.
 - **Agent-system impact:** None.
+
+## 2026-11-14: Round 10, the builds still owed (J10)
+
+- [x] J10a Relayr launch: finish unfinished chains. A paid bundle that left chains unfinished signs the SAME launch call again for those chains at the SAME forwarder nonce and funds one new bundle (`src/launch-retry.js`, `finishCreateRelayr`, `relayrPostBundle` `replaces`). jango approved keeping the launch calldata in browser storage and letting the nonce guard accept a same-nonce replacement of the same action.
+- [ ] J10b Multisig owner creation in create.
+- [ ] J10c Old-pool position move and market editing.
+- [ ] J10d Other: issuance price preview in create, Sticky split recipient in create, deployment check, per-chain raised hover, paying by card.
+
+## Plan refinement
+- **Objective:** Juicescan can do what juicebox.money does for the remaining owner and creator actions, each as its own pull request.
+- **System fit:** The relay guard stays in `relayr.js` (one new journal option, `replaces`); the launch rule in `launch-retry.js`; the create flow only wires them. No SDK.
+- **Reuse and simplicity:** J10a reuses the existing bundle, payment and receipt code. The proof that a chain launched is the destination transaction itself (forwarder, signer, exact call), so no Relayr record is trusted. The nonce rule is one line: a request of the same action, signer, chain and nonce may replace the saved one.
+- **Evidence and unknowns:** OpenZeppelin's `ERC2771Forwarder.execute` reverts as a whole when the inner call fails, so a used nonce means a request at it ran. Two requests at one nonce cannot both run. Not run against the live Relayr service.
+- **Verification:** Unit tests for the outcome rule, the saved calls, the launch proof and the guard's replacement path (refusal restores the paid receipt; another action's reservation is never replaced); the full `npm run check`; Codex until clean.
+- **Resource budget:** One pull request per item.
+- **Authority and recovery:** Pull requests; jango said "merge all" for round 9 only. The paid receipt is archived under `jb-relayr-retired-v1:` before it gives way. One commit per item.
+- **Agent-system impact:** None.
