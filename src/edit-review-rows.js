@@ -15,7 +15,9 @@ function reviewValue(value) {
   return text.length > 48 ? text.slice(0, 45) + '…' : text;
 }
 
-function sameJson(a, b) { return JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b); }
+var own = function (object, key) { return Object.prototype.hasOwnProperty.call(object, key); };
+// A key that is missing differs from one that is present with null: the pinned file differs.
+function sameKey(before, after, key) { return own(before, key) === own(after, key) && JSON.stringify(before[key]) === JSON.stringify(after[key]); }
 
 // entries: [{ chainId, projectId, previous, metadata }]. One heading row per chain, then one row per changed key.
 export function metadataChangeRows(entries, chainNameOf) {
@@ -24,15 +26,15 @@ export function metadataChangeRows(entries, chainNameOf) {
     var name = chainNameOf(entry.chainId);
     var before = entry.previous || {}, after = entry.metadata || {};
     var keys = Object.keys(before).concat(Object.keys(after)).filter(function (key, index, all) { return all.indexOf(key) === index; });
-    var changed = keys.filter(function (key) { return !sameJson(before[key], after[key]); });
+    var changed = keys.filter(function (key) { return !sameKey(before, after, key); });
     rows.push([name, 'Project #' + entry.projectId]);
     changed.forEach(function (key) {
-      var had = Object.prototype.hasOwnProperty.call(before, key) && before[key] !== '' && before[key] != null;
-      var has = Object.prototype.hasOwnProperty.call(after, key) && after[key] !== '' && after[key] != null;
+      var had = own(before, key) && before[key] !== '' && before[key] != null;
+      var has = own(after, key) && after[key] !== '' && after[key] != null;
       if (METADATA_LABELS[key]) rows.push([name + ', ' + METADATA_LABELS[key], reviewValue(before[key]) + ' → ' + reviewValue(after[key])]);
       else if (key === 'logoUri') rows.push([name + ', Logo', !has ? 'Removed' : had ? 'Replaced' : 'Added']);
       else if (key === 'storeCategories') rows.push([name + ', Shop categories', !has ? 'Removed' : had ? 'Changed' : 'Added']);
-      else rows.push([name + ', Custom property ' + key, has ? 'Set to the reviewed value' : 'Removed']);
+      else rows.push([name + ', Custom property ' + key, own(after, key) ? 'Set to the reviewed value' : 'Removed']);
     });
     if (!changed.length) rows.push([name + ', Fields', 'Unchanged, this chain’s profile is pinned again as is']);
   });

@@ -35,6 +35,11 @@ describe('the details review', () => {
   it('says so when a chain is pinned again unchanged, and never when anything differs', () => {
     var same = metadataChangeRows([{ chainId: 1, projectId: 7, previous: { name: 'N' }, metadata: { name: 'N' } }], chainNameOf);
     expect(same[1]).toEqual(['Ethereum, Fields', 'Unchanged, this chain’s profile is pinned again as is']);
+    var nulled = metadataChangeRows([{ chainId: 1, projectId: 7, previous: { name: 'N', kept: 'abc' }, metadata: { name: 'N', kept: '', added: null } }], chainNameOf);
+    expect(nulled.slice(1)).toEqual([
+      ['Ethereum, Custom property kept', 'Set to the reviewed value'],
+      ['Ethereum, Custom property added', 'Set to the reviewed value'],
+    ]);
     var nested = metadataChangeRows([{ chainId: 1, projectId: 7, previous: { tags: ['a'] }, metadata: { tags: ['a', 'b'] } }], chainNameOf);
     expect(nested.some(function (row) { return /Unchanged/.test(row[1]); })).toBe(false);
   });
