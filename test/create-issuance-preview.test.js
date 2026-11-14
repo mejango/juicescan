@@ -68,4 +68,16 @@ describe('issuance preview schedule', () => {
     state.queueEditor = true;
     expect(renderStages(state, () => {}).textContent).not.toContain('Preview token issuance price');
   });
+
+  it('draws nothing when the rules issue per ETH and per USD', () => {
+    const state = newCreateDraftState();
+    setProjectFlavor(state, 'custom');
+    Object.assign(state.stages[0], { tokenMode: 'custom', weight: '1000', durationSeconds: 7 * DAY, deadline: '1day', baseCurrency: 1 });
+    const next = createStage();
+    Object.assign(next, { tokenMode: 'custom', weight: '500', durationSeconds: 7 * DAY, deadline: '1day', baseCurrency: 2 });
+    state.stages.push(next);
+    expect(issuancePreviewStages(state, NOW)).toEqual([]);
+    state.stages[1].baseCurrency = 1;
+    expect(issuancePreviewStages(state, NOW).length).toBeGreaterThan(0);
+  });
 });

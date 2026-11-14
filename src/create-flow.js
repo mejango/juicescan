@@ -6132,6 +6132,9 @@ export function issuancePreviewStages(state, now) {
       var effective = resolveStages(state);
       var first = effective[0].schedule ? Number(effective[0].schedule) : launch;
       var starts = stageStarts(state, effective, first, now, state.chainIds[0]).starts;
+      // One curve has one unit: rules that issue per ETH and per USD have no single price line.
+      var units = effective.filter(function (stage) { return stage.tokenMode === 'custom'; }).map(function (stage) { return Number(stage.baseCurrency) || 1; });
+      if (units.some(function (unit) { return unit !== units[0]; })) return [];
       effective.forEach(function (stage, i) {
         var custom = stage.tokenMode === 'custom';
         out.push({ start: Number(starts[i]), weight: custom ? Number(tokenAmount18(stage.weight || '0', UINT112_MAX)) : 0,
