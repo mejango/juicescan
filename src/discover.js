@@ -49,8 +49,9 @@ import { TIER_UNLIMITED_SUPPLY, assertNewTierPolicy, build721TierConfig, build72
 import { SHOP_MEDIA_METADATA_ABI, shopMediaMetadataArgs, shopMetadataName, prepareShopMediaMetadata } from './shop-media.js';
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
-import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
+import { approvalStatusLabel, omnichainCarriedRulesetId, planRulesetQueue } from './ruleset-queue-lifecycle.js';
 import { contractGasWithHeadroom, gasWithinCap, TRANSACTION_GAS_CAP } from './gas.js';
+import { metadataChangeRows, splitChangeRows } from './edit-review-rows.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
 
@@ -4628,6 +4629,77 @@ export function payReviewRows(r) {
   return rows;
 }
 
+// A settled quote whose guaranteed minimum is below the previewed amount: a market price sets part of it, and a
+// pool that cannot fill the whole order at that price mints the rest at the project's own rate, so the payer can
+// receive less than the preview and never less than the minimum. The pay card then says "about" and shows the floor.
+export function payReceiptIsEstimate(phase, preview) {
+  if (phase === 'previewing' || !preview || preview.unavailable || preview.received == null || preview.minReturnedTokens == null) return false;
+  try { return BigInt(preview.minReturnedTokens) < BigInt(preview.received); } catch (_) { return false; }
+}
+
+// What a payer is shown for the chain they pay on. Each chain keeps its own project file, so the notice can
+// differ between them: the payer sees the one for their chain, and the others when they differ. `notices` maps
+// chainId to a string ('' for none) or null when that chain's read failed. The same rule as juicebox.money's
+// payNoticeView.
+export function payNoticeView(chainId, notices) {
+  var own = notices[chainId];
+  var others = Object.keys(notices).map(function (id) { return { chainId: Number(id), notice: notices[id] }; })
+    .filter(function (row) { return row.chainId !== Number(chainId) && row.notice != null && own != null && row.notice !== own; })
+    .sort(function (a, b) { return chainSortIndex(a.chainId) - chainSortIndex(b.chainId); });
+  return { notice: own == null ? '' : own, failed: own == null, others: others };
+}
+
+// Under a payment's review: a notice that could not be read gets one quiet line with a retry, and a notice that
+// reads differently on the project's other chains can be opened to compare. Neither blocks the payment.
+// `retry()` resolves to the view read again.
+export function renderPayNoticeNote(view, retry) {
+  var wrap = el('div', 'pay-notice-note');
+  function draw(v) {
+    wrap.replaceChildren();
+    if (v.failed) {
+      wrap.appendChild(document.createTextNode('The project’s notice could not be loaded. '));
+      var again = el('button', 'pay-notice-retry'); again.type = 'button'; again.textContent = 'Retry';
+      again.addEventListener('click', function () {
+        again.disabled = true; again.textContent = 'Loading…';
+        retry().then(draw, function () { draw(v); });
+      });
+      wrap.appendChild(again);
+      return;
+    }
+    if (v.notice && v.retried) {
+      var loaded = el('div', 'pay-notice-loaded'); loaded.textContent = 'Project notice: ' + v.notice; wrap.appendChild(loaded);
+    }
+    if (!v.others.length) return;
+    var details = document.createElement('details');
+    var summary = document.createElement('summary');
+    summary.textContent = 'The notice differs on ' + v.others.map(function (row) { return chainNameOf(row.chainId); }).join(', ') + '.';
+    details.appendChild(summary);
+    v.others.forEach(function (row) {
+      var name = el('div', 'pay-notice-chain'); name.textContent = chainNameOf(row.chainId);
+      var text = el('div', 'pay-notice-text'); text.textContent = row.notice || 'No notice.';
+      details.appendChild(name); details.appendChild(text);
+    });
+    wrap.appendChild(details);
+  }
+  draw(view);
+  return wrap;
+}
+
+// Each deployment's indexed payment notice; the page's own chain uses the project file already read. A chain whose
+// read fails maps to null.
+function readPayNotices(project) {
+  var notices = {};
+  return Promise.all(projectDeployments(project).map(function (deployment) {
+    if (deployment.chainId === Number(project.chainId) && project.payDisclosure !== undefined) {
+      notices[deployment.chainId] = String(project.payDisclosure || '').trim();
+      return null;
+    }
+    return loadBendystrawProjectRow(deployment.chainId + ':' + deployment.projectId, deployment).then(function (row) {
+      notices[deployment.chainId] = row ? String(row.payDisclosure || '').trim() : null;
+    }, function () { notices[deployment.chainId] = null; });
+  })).then(function () { return notices; });
+}
+
 // One toRemote ships the entire outbox of one (source sucker, token), so queued movements group by chain pair,
 // source sucker and token: an Execute under a group must never send a different sucker's or token's outbox.
 export function groupQueuedMovements(rows) {
@@ -7450,9 +7522,18 @@ export function bendystrawBatcher(loadRows) {
   };
 }
 
+// The indexer reads a clause with several fields inside OR as "any of these fields", so `{ chainId, projectId }`
+// would match every project on that chain and every project with that id. Each ref is its own AND.
+export function exactProjectRefsWhere(projects) {
+  return {
+    version: BENDYSTRAW_VERSION,
+    OR: projects.map(function (ref) { return { AND: [{ chainId: Number(ref.chainId) }, { projectId: Number(ref.projectId) }] }; }),
+  };
+}
+
 var loadBendystrawProjectRow = bendystrawBatcher(function (projects) {
   return bendystrawQuery(BENDYSTRAW_PROJECT_QUERY, {
-    where: { version: BENDYSTRAW_VERSION, OR: projects },
+    where: exactProjectRefsWhere(projects),
     limit: projects.length,
   }).then(function (data) {
     var rows = {};
@@ -9363,6 +9444,11 @@ export function renderPayCard(project, cart) {
       }).catch(function () { if (state.chainId === chainId) { state.contextsError = true; renderTerminalNotice(); } });
   }
 
+  // Read once with the card; a review opened before it lands treats the notice as still loading, not failed.
+  var payNotices = null;
+  function loadNotices() { return readPayNotices(project).then(function (notices) { payNotices = notices; return notices; }); }
+  loadNotices();
+
   var state = {
     chainId: chains[0].id,
     tokens: tokensForChain(chains[0].id),
@@ -10156,8 +10242,10 @@ export function renderPayCard(project, cart) {
       return;
     }
 
+    // A market price sets part of this amount, so it can land lower: say "about" and show the guaranteed floor.
+    var estimate = payReceiptIsEstimate(state.phase, p);
     var label = el('div', 'paybox-yg-label');
-    label.textContent = 'You get';
+    label.textContent = estimate ? 'You get about' : 'You get';
     feedback.appendChild(label);
 
     var valRow = el('div', 'paybox-yg-row');
@@ -10175,6 +10263,11 @@ export function renderPayCard(project, cart) {
     else val.textContent = '0.00 ' + sym;
     valRow.appendChild(val);
     feedback.appendChild(valRow);
+    if (estimate) {
+      var floor = el('div', 'paybox-splits');
+      floor.textContent = 'At least ' + formatTokenCount(p.minReturnedTokens) + ' ' + sym;
+      feedback.appendChild(floor);
+    }
 
     var nb = nftBlock(); if (nb) feedback.appendChild(nb);
 
@@ -10533,6 +10626,8 @@ export function renderPayCard(project, cart) {
 
     // Confirm the exact data before signing.
     var chainName = (chains.find(function (c) { return c.id === reviewedChainId; }) || {}).name || ('Chain ' + reviewedChainId);
+    var noticeView = payNoticeView(reviewedChainId, payNotices || {});
+    if (!payNotices) noticeView.failed = false; // still reading
     var symClean = (reviewedToken.symbol || '').replace(/\s*\(native\)/i, '');
     var human = formatAmount(amt, reviewedToken.decimals == null ? 18 : reviewedToken.decimals) + ' ' + symClean;
     // Human-readable summary of the NFTs this pay will mint (the raw `metadata` hex below is unreadable),
@@ -10584,8 +10679,14 @@ export function renderPayCard(project, cart) {
         items: tierIds.length ? confirmArgs.mints : null,
         lands: confirmArgs.landsOnChain || null,
         beneficiary: beneficiary, memo: reviewedMemo, quoteFailed: !!(reviewedPreview && reviewedPreview.quoteFailed),
-        notice: project.payDisclosure,
-      }) },
+        notice: noticeView.notice,
+      }), notes: addBalance ? [] : [renderPayNoticeNote(noticeView, function () {
+        return loadNotices().then(function () {
+          var again = payNoticeView(reviewedChainId, payNotices || {});
+          again.retried = true;
+          return again;
+        });
+      })] },
     }, function send(confirmCtx) {
       if (!getAccount() || getAccount().toLowerCase() !== beneficiary.toLowerCase()) {
         var accountError = 'Connected account changed. Review the payment again.';
@@ -12625,7 +12726,8 @@ export async function prepareProjectMetadataUpdates(project, chains, transform, 
     var loaded = await loadMetadata(chain.id, controller, projectId);
     if (loaded.error) throw new Error((chain.name || chainNameOf(chain.id)) + ': ' + loaded.error);
     if (!loaded.meta || typeof loaded.meta !== 'object' || Array.isArray(loaded.meta)) throw new Error('Invalid metadata on ' + chainNameOf(chain.id) + '. Nothing was saved.');
-    return { chainId: chain.id, projectId: projectId, controller: controller, sourceUri: loaded.uri || '', metadata: loaded.meta };
+    return { chainId: chain.id, projectId: projectId, controller: controller, sourceUri: loaded.uri || '', metadata: loaded.meta,
+      previous: JSON.parse(JSON.stringify(loaded.meta)) }; // as read, for the review's before and after
   }));
   var updated = transform(entries.map(function (entry) { return entry.metadata; }));
   var pinned = new Map();
@@ -12690,7 +12792,7 @@ async function submitProjectEdit(project, chains, operatorAddr, form, setStatus,
     permissionId: JB_PERMISSION_SET_PROJECT_URI,
     label: 'Edit project details', title: 'Confirm edit', pendingScope: relayrActionScope(project, 'edit-project-details'),
     reverify: plan.reverify,
-    summary: { rows: [['Updates', 'the edited project details; untouched metadata stays local to each chain']] },
+    summary: { rows: metadataChangeRows(plan.entries, chainNameOf) },
   }, setStatus);
   if (!actionResult) return;
   if (!actionResult.relayr) {
@@ -21881,7 +21983,11 @@ var BENDYSTRAW_SUCKER_GROUP_MOMENTS_QUERY = 'query($suckerGroupId: String!, $ver
 var BENDYSTRAW_FUNDING_MOMENTS_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'suckerGroupMoments(where: { suckerGroupId: $suckerGroupId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
-  + 'items { timestamp volumeUsd balanceUsd } totalCount } }';
+  + 'items { timestamp volumeUsd } totalCount } }';
+var BENDYSTRAW_TOKEN_BALANCE_MOMENTS_QUERY = 'query($chainId: Int!, $projectId: Int!, $version: Int!, $limit: Int!, $offset: Int!) { '
+  + 'projectTokenBalanceMoments(where: { chainId: $chainId, projectId: $projectId, version: $version }, '
+  + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
+  + 'items { chainId projectId token decimals balance timestamp tokenUsdRate } totalCount } }';
 var BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!, $offset: Int!) { '
   + 'addToBalanceEvents(where: { suckerGroupId: $suckerGroupId, version: $version }, '
   + 'orderBy: "timestamp", orderDirection: "asc", limit: $limit, offset: $offset) { '
@@ -22305,17 +22411,43 @@ async function resolveBendystrawSuckerGroupId(project, chainIds) {
   return groups.length === 1 ? groups[0] : null;
 }
 
-// Dollar-valued volume and balance moments plus direct additions, oldest first, for the funding chart.
+// Dollar-valued volume moments, direct additions, each deployment's per-token balance history and today's
+// token prices, for the funding chart.
 async function fetchFundingHistory(project) {
-  var chainIds = projectBendystrawChainIds(project);
+  var deployments = projectDeployments(project);
+  var chainIds = deployments.map(function (deployment) { return deployment.chainId; });
   var groupId = chainIds.length ? await resolveBendystrawSuckerGroupId(project, chainIds) : null;
-  if (!groupId) return { moments: [], adds: [] };
+  if (!groupId) return { moments: [], adds: [], held: [], rates: {} };
   var variables = { suckerGroupId: groupId, version: BENDYSTRAW_VERSION };
   var moments = await fetchBendystrawCollectionPages(BENDYSTRAW_FUNDING_MOMENTS_QUERY, 'suckerGroupMoments', variables, PRICE_HISTORY_PAGE_SIZE);
   // Without the additions the volume series still shows indexed payments; it only understates direct funding.
   var adds = await fetchBendystrawCollectionPages(BENDYSTRAW_GROUP_ADD_TO_BALANCE_QUERY, 'addToBalanceEvents', variables, PRICE_HISTORY_PAGE_SIZE)
     .catch(function () { return { items: [] }; });
-  return { moments: moments.items || [], adds: adds.items || [] };
+  // One exact query per deployment.
+  // A chain whose history fails to load would silently lower the total, so one failure withholds Balance.
+  var held = [], heldFailed = false;
+  for (var i = 0; i < deployments.length && !heldFailed; i++) {
+    var page = await fetchBendystrawCollectionPages(BENDYSTRAW_TOKEN_BALANCE_MOMENTS_QUERY, 'projectTokenBalanceMoments',
+      { chainId: deployments[i].chainId, projectId: deployments[i].projectId, version: BENDYSTRAW_VERSION }, PRICE_HISTORY_PAGE_SIZE)
+      .catch(function () { heldFailed = true; return { items: [] }; });
+    held = held.concat(page.items || []);
+  }
+  return { moments: moments.items || [], adds: adds.items || [], held: held, heldFailed: heldFailed, rates: await fundingTodayRates(held) };
+}
+
+// Today's dollars per whole token for each held token: the chain's ETH feed for the native token, 1 for USDC.
+// Any other token is left out, so the chart uses the newest rate the indexer recorded for it.
+async function fundingTodayRates(held) {
+  var rates = {}, keys = {};
+  held.forEach(function (row) { keys[row.chainId + ':' + String(row.token).toLowerCase()] = row; });
+  await Promise.all(Object.keys(keys).map(async function (key) {
+    var row = keys[key], token = String(row.token).toLowerCase();
+    if (token === NATIVE_TOKEN.toLowerCase()) {
+      var price = await fetchEthUsd(row.chainId);
+      if (price != null) rates[key] = price;
+    } else if (token === String(USDC_BY_CHAIN[row.chainId] || '').toLowerCase()) rates[key] = 1;
+  }));
+  return rates;
 }
 
 async function fetchPriceFloorHistory(project, stages) {
@@ -24821,6 +24953,23 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
     }
   }
 
+  // The wrapper picks the shop it carries into a queue itself (omnichainCarriedRulesetId). True when that is the
+  // copied ruleset's own shop and cash out flag on this chain.
+  async function wrapperCarriesShopOf(chainId, localPid, wrapper, situation, rulesetId) {
+    var shopHook = function (c) { return String((c && (c.hook || c[0])) || '').toLowerCase(); };
+    var shopFlag = function (c) { return !!(c && (c.useDataHookForCashOut != null ? c.useDataHookForCashOut : c[1])); };
+    var shopOf = function (id) { return clientFor(chainId).readContract({ address: wrapper, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [localPid, id] }); };
+    var latestEntry = situation.latest && situation.latest[0];
+    var latestId = latestEntry ? toBigInt(latestEntry.id) : 0n;
+    var reads = await Promise.all([shopOf(toBigInt(rulesetId)), latestId ? shopOf(latestId) : null]);
+    var carriedId = omnichainCarriedRulesetId({
+      currentId: toBigInt(situation.current[0].id), latestId: latestId, latestStatus: situation.latestApprovalStatus,
+      latestHasShop: !!reads[1] && !/^(0x0*)?$/.test(shopHook(reads[1])),
+    });
+    var carried = carriedId === toBigInt(rulesetId) ? reads[0] : await shopOf(carriedId);
+    return shopHook(carried) === shopHook(reads[0]) && shopFlag(carried) === shopFlag(reads[0]);
+  }
+
   async function loadQueueDataHooksAcrossChains() {
     var rows = await Promise.all(allChains.map(async function (chain) {
       var localPid = pidOn(project, chain.id);
@@ -24851,6 +25000,10 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
           preservedHook = extraHook && !/^0x0+$/.test(extraHook) ? extraHook : '';
           preservedUsePay = !!(extra && (extra.useDataHookForPay != null ? extra.useDataHookForPay : extra[1]));
           preservedUseCashOut = !!(extra && (extra.useDataHookForCashOut != null ? extra.useDataHookForCashOut : extra[2]));
+          if (!(await wrapperCarriesShopOf(chain.id, localPid, wrapper, situation, ruleset.id))) {
+            state.unsupportedMultiCurrencyAccess = true;
+            if (!state.unsupportedQueueReason) state.unsupportedQueueReason = 'On ' + (chain.name || chain.id) + ', new rules would start with a different shop than the rules you copied. Copy the latest approved rules, or wait for approval.';
+          }
         }
       }
       return { chainId: chain.id, controller: controller, ruleset: ruleset, metadata: metadata, hook: hook, preservedHook: preservedHook, preservedUsePay: preservedUsePay, preservedUseCashOut: preservedUseCashOut, situation: situation, option: option };
@@ -25190,6 +25343,7 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
           })).then(function () { state.payoutKinds = kinds; });
         }).then(function () {
           state.queueSourceLoading = false; state.queueSourceVerified = true; state.queueSourceError = null;
+          state.queueBaseline = JSON.parse(JSON.stringify(state.stages[0])); // the rules as read, for the review's old and new lines
           renderEditor();
         });
       });
@@ -25480,6 +25634,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   var limits = selected.map(function (chain) { return state.queueSchedules[chain.id].validUntil; }).filter(function (limit) { return limit != null; });
   var validUntil = limits.length ? Math.min.apply(Math, limits) : null;
   var scheduleRows = validUntil == null ? [] : [['Execute before', new Date(validUntil * 1000).toLocaleString() + ' to preserve this schedule. Rebuild if it expires; pending Safe/wallet transactions cannot be expired by this page.']];
+  scheduleRows = scheduleRows.concat(createFlow.queueChangeRows(state)); // then what changes, old and new
   function checkSchedule() { assertScheduleFresh(validUntil); }
   async function reverifySchedule() {
     checkSchedule(); await state.verifyQueuePosition(selected); checkSchedule();
@@ -25937,7 +26092,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     }));
   }
   var expectedFingerprint = splitFingerprint(expectedPrefill || []);
-  var ridMap = {}, groupMap = {}, controllerMap = {};
+  var ridMap = {}, groupMap = {}, controllerMap = {}, previousMap = {};
   // Each chain's checks depend only on that chain, so the chains are verified together; any failure still stops the save.
   await Promise.all(selectedChains.map(async function (chain) {
     var cid = chain.id;
@@ -25959,6 +26114,7 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
       if (block) throw new Error(block);
     }
     ridMap[cid] = rs[0].id;
+    previousMap[cid] = liveSplits || [];
     groupMap[cid] = toBigInt(localGroup);
     controllerMap[cid] = liveController;
   }));
@@ -25969,7 +26125,10 @@ async function submitSplitsEdit(project, selectedChains, operatorAddr, rows, set
     return { to: controllerMap[cid], data: encodeFunctionData({ abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args }),
       contract: 'JBController', abi: setSplitGroupsAbi, functionName: 'setSplitGroupsOf', args: args };
   }, { label: 'Edit splits', title: 'Confirm edit splits', gas: 600000n, permissionId: JB_PERMISSION_SET_SPLIT_GROUPS, pendingScope: relayrActionScope(project, 'edit-splits', String(splitGroupId)),
-    summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts'], ['Recipients', splits.length ? splits.length + ' split' + (splits.length === 1 ? '' : 's') + ' (replaces the current set)' : 'none: clears the group']] } }, setStatus);
+    summary: { rows: [['Group', splitGroupId === RESERVED_TOKEN_SPLIT_GROUP ? 'reserved tokens' : 'payouts']].concat(selectedChains.flatMap(function (chain) {
+        return splitChangeRows({ chainName: chain.name || chainNameOf(chain.id), projectId: pidOn(project, chain.id), rulesetId: ridMap[chain.id],
+          previous: previousMap[chain.id], next: splitsByChain[chain.id] });
+      })) } }, setStatus);
 
   if (!result) return;
   if (result.cancelled) { setStatus('Cancelled', ''); return; }

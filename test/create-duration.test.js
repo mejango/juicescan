@@ -60,7 +60,7 @@ describe('custom duration conversion and draft/transaction behavior', () => {
     const call = buildLaunchArgs(state, 1, OWNER, '', '0x' + '00'.repeat(32), 0);
     const data = encodeFunctionData({ abi: call.abi, functionName: 'launchProjectFor', args: call.args });
     const decoded = decodeFunctionData({ abi: call.abi, data });
-    expect(decoded.args[2].rulesetConfigurations[0].duration).toBe(16200);
+    expect(decoded.args[3][0].duration).toBe(16200);
   });
 
   it('uses decimal duration for the next ruleset cycle boundary', () => {

@@ -138,3 +138,23 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - **Resource budget:** One branch on top of J7, one full gate, review passes as needed.
 - **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-14: Round 9, jango's answers to the end list (J9)
+
+- [x] J9a Funding chart Balance is holdings at today's price: each token's indexed balance history times today's price (chain ETH feed, 1 for USDC, newest indexed rate otherwise).
+- [x] J9b Every launch goes through JBOmnichainDeployer, also on one chain (no sucker configurations, zero sucker salt), so the project can connect a chain later. Queueing for such a project already goes through the deployer.
+- [x] J9c Payment notice differences across chains, and a failed notice read.
+- [x] J9d Pay card and Pay tool say "You get about" and show the guaranteed floor when a market price sets part of the amount.
+- [x] J9e Held-writes list, Simple preset, old and new values in the queue review, and the queue refuses a copied ruleset whose shop the deployer would not carry on any chain. Full check green (2612 unit, 148 browser); Codex pass 3 CLEAN.
+- [x] J9f Old and new values in the splits and details reviews (`src/edit-review-rows.js`). Full check green (2617 unit, 148 browser). Codex three passes: four wording findings fixed; two set aside (a split's runtime fallbacks when the project has no token or terminal, and 0xdead shown as an address).
+- [ ] J9g Builds still owed, each its own pull request: Relayr re-sign of unfinished launch chains, multisig owner creation, old-pool position move. Asked of jango with a design for each.
+
+## Plan refinement
+- **Objective:** Close the items jango answered on 2026-11-14 so Juicescan does what juicebox.money does and states only what is true.
+- **System fit:** The chart series stays in `funding-chart.js`, launch routing in `create-flow.js` `buildLaunchArgs`, each a hand port of the juicebox.money rule. No SDK.
+- **Reuse and simplicity:** J9a reuses the page's ETH feed read and the paged indexer reader. J9b deletes two launch branches.
+- **Evidence and unknowns:** `JBOmnichainDeployer._launchProjectFor` deploys suckers only for a nonzero sucker salt, and its no-shop overload still deploys an empty 721 hook, so every such project can queue through it. Bendystraw `origin/main` values a V6 balance per token at the rate when it last moved (the J8a note about flow accrual came from a stale checkout). The indexer reads a several-field clause inside OR as any of those fields, so history is read per deployment, and the project record batch now wraps each project in its own AND. Not launched on a live chain from this branch.
+- **Verification:** Unit tests per rule; the full `npm run check`; CI green before merge.
+- **Resource budget:** One branch, one pull request.
+- **Authority and recovery:** A pull request, merged on jango's word; a new build is published only when asked. One commit per item.
+- **Agent-system impact:** None.

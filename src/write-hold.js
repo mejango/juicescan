@@ -94,3 +94,21 @@ export async function heldHashState(client, record) {
   if (!tx || String(tx.from).toLowerCase() !== record.account) return 'unknown';
   return tx.blockNumber != null ? 'mined' : 'pending';
 }
+
+// Every hold this browser keeps for `account`, as { chainId, to, functionName }: what `writeHold` was opened with.
+export function heldWritesOf(account) {
+  var prefix = PREFIX + String(account).toLowerCase() + ':', out = [];
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var key = localStorage.key(i);
+      if (!key || key.indexOf(prefix) !== 0) continue;
+      var parts = key.slice(prefix.length).split(':');
+      if (parts.length >= 3) out.push({ chainId: Number(parts[0]), to: parts[1], functionName: parts.slice(2).join(':') });
+    }
+  } catch (_) {}
+  return out;
+}
+
+// Whether the held-writes list can judge a hold from the chain. A Safe proposal's saved hash is a Safe hash,
+// which no transaction lookup finds: it would read as dropped while it can still execute, so its own form settles it.
+export function chainSettlesHold(record) { return !!record && !record.safe; }

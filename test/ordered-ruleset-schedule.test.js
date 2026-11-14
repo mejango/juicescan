@@ -39,7 +39,7 @@ describe('explicit sequential ruleset schedules', () => {
     vi.spyOn(Date, 'now').mockReturnValue(now * 1000);
     try {
       const call = __test.buildLaunchArgs(s, 1, OWNER, '', '0x' + '00'.repeat(32), now + 600);
-      const configs = call.args[2].rulesetConfigurations;
+      const configs = call.args[3];
       const actual = contractQueue(configs, now + 1, [day, day, 0]);
       expect(configs.map(row => Number(row.mustStartAtOrAfter))).toEqual([now + 600, now + 600 + 3 * day, now + 600 + 6 * day]);
       expect(actual[1].basedOnId).toBe(actual[0].id);

@@ -65,7 +65,7 @@ describe('Terminate notice boundaries', () => {
     s.stages = Array.from({ length: count }, () => ({ ...s.stages[0], deadline: '1day' }));
     const expected = [...Array(count).fill(getAddress('JBDeadline1Day', 1)), ZERO_ADDRESS];
     const launch = __test.buildLaunchArgs(s, 1, ALICE, '', 0);
-    expect(launch.args[2].rulesetConfigurations.map(stage => stage.approvalHook)).toEqual(expected);
+    expect(launch.args[3].map(stage => stage.approvalHook)).toEqual(expected);
     expect(buildQueueRulesetConfigs(s, 1, 0).map(stage => stage.approvalHook)).toEqual(expected);
     expect(renderStages(s, () => {}).textContent).toMatch(/approval|deadline|condition/i);
   });

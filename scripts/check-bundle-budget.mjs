@@ -13,7 +13,8 @@ const startupBudget = { raw: 3_930_000, gzip: 736_000 };
 
 const budgets = {
   // Open-first states (pending review rows, busy buttons, stale-while-refreshing marks) measure 248,424 B raw, 50,173 B gzip.
-  'dist/style.css': { raw: 250_000, gzip: 50_600 },
+  // The pay notice note, the held-writes list and the chart note measure 251,283 B raw, 50,786 B gzip.
+  'dist/style.css': { raw: 252_000, gzip: 50_900 },
   'dist/learn.html': { raw: 42_000, gzip: 12_200 },
   // The Build guide mirrors juicebox.money's 39 sections (2026-11); the page measures 114,994 B raw, 28,983 B gzip.
   'dist/build.html': { raw: 118_000, gzip: 30_000 },
@@ -104,7 +105,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // SDK3.0.0 with the direct buy route removed: 2,313,459 B gzip.
 // Open-first (2026-11): the pending review, handoff and placeholder code measures 2,125,335 B gzip in total.
 // Shared .jb draft plus operator gates, header links and stats, and the not-found state: measured 2,135,380 B gzip.
-const totalGzipBudget = 2_140_000;
+// Simple flavor, held-writes list, per-chain pay notice, holdings chart and queue review lines: measured 2,141,685 B gzip.
+const totalGzipBudget = 2_143_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

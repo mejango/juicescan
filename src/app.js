@@ -14,6 +14,7 @@ import { isMobileDevice, mobileWalletLinks, walletDappUrl } from './wallet-links
 import { reverseEns } from './ens.js';
 import { CHUNK_FAILED_TEXT, chunkReloadButton } from './chunk-failure.js';
 import { CHAINS, getChainTokens } from './chain.js';
+import { mountHeldWrites } from './held-writes.js';
 
 
 function redirectBlockingPathGateway() {
@@ -555,6 +556,7 @@ function init() {
   applySavedFont(); // apply the saved monospace font before first paint to avoid a flash
   updateFooterIpfsCid();
   mountFontSelector();
+  mountHeldWrites();
   initTabs();
   initAuditPrompt();
   renderDiscoverTab();
