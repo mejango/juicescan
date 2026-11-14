@@ -31,7 +31,7 @@ export function renderDataTab() {
   if (!container) return;
   container.innerHTML = '';
 
-  // Compact settings strip at the top. (No Pinata field — the Create flow pins via a baked-in scoped key.)
+  // Compact settings strip at the top. (Pinning needs no setup: it goes through Juicebox Center.)
   container.appendChild(renderBendystrawSettings({ onNetworkChange: function (mode) {
     // Keep Discover's chain list/cache in lock-step when the shared toggle is changed from this tab.
     setDiscoverNetwork(mode);

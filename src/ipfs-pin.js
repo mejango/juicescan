@@ -28,15 +28,6 @@ function getPinataJwt() {
   return BUILTIN_JWT;
 }
 
-export function setPinataJwt(value) {
-  try {
-    if (value) localStorage.setItem(JWT_KEY, value.trim());
-    else localStorage.removeItem(JWT_KEY);
-  } catch (_) { /* private mode / sandboxed — ignore */ }
-}
-
-// Pinning needs no setup: Center pins when no Pinata key is stored.
-export function hasPinata() { return true; }
 
 var CENTER_PINS = 'https://juicebox.center/v1/pins/';
 // The CID of zero bytes: a file that uploaded as empty.
