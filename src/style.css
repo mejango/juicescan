@@ -2754,6 +2754,15 @@ input[type="checkbox"].field {
   }
 }
 
+.detail-cover {
+  display: block;
+  width: 100%;
+  height: 128px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+@media (min-width: 640px) { .detail-cover { height: 176px; } }
 .detail-head-top {
   display: flex;
   align-items: center;
@@ -5533,6 +5542,10 @@ th[data-tip]:hover::after {
 .paybox-memo::placeholder { color: var(--muted); }
 .paybox-memo:focus { outline: none; border-color: var(--c-black-light); }
 .paybox-memo:focus-visible { outline: none !important; border-color: var(--c-teal); }
+.paybox-amount-hint { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 11px; color: var(--muted-2); }
+.paybox-amount-hint:empty { display: none; }
+.paybox-amount-hint-line.short { color: var(--c-pink); }
+.paybox-amount-hint-line.balance { margin-left: auto; }
 .paybox-status { font-size: 11px; margin-top: 6px; color: var(--muted-2); word-break: break-word; }
 .paybox-status:empty { margin-top: 0; } /* keep the pay card's bottom padding equal to the top when idle */
 .paybox-status.success { color: var(--c-teal); }

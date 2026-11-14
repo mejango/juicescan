@@ -70,3 +70,26 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - **Evidence and unknowns:** The inventory came from subagent sweeps at 39f2a09 with four items spot-checked; every item is re-read at current main before it changes. Unknown: which E placeholders shift layout more than they help, and whether the post-transaction rebuild can refresh in place without stale cards; both are decided against the code, and anything that would trade integrity for speed stays and is listed.
 - **Verification:** Unit regression per changed flow (pending dialog locks Confirm, failed read fails closed, busy button), the existing transaction suites unchanged and green, `npm run test:ci` including the browser suite, one independent review of the combined diff, CI green before merge.
 - **Resource budget:** The shared lever first in the main session; then sections split by file region across isolated worktrees from that commit, each brief carrying these rules and resources; I review every diff before merging it into one branch and one PR. Replan if a section needs the dialog API to change or main moves under a region being edited.
+
+## 2026-11-14: Owner gates and read parity with juicebox.money (J5a)
+
+## Plan refinement
+- **Objective:** Close the Juicescan gaps the round 8 comparison found that are plain to verify: operators holding the matching permission can use the owner powers juicebox.money lets them use, and the project header and ruleset detail show what juicebox.money shows. Success is each item changed with a test, and nothing else sent differently.
+- **System fit:** `discover.js` owns the owner power list, the header and the ruleset rows; `runAuthorityActionAcrossChains` already takes a `permissionId` and checks it onchain, so each power only names its id. No SDK, by rule; the ids are the V6 `JBPermissionIds` values juicebox.money uses.
+- **Reuse and simplicity:** One `permissionId` field per power on the existing list, read by the one runner. Header stats reuse the existing formatters. The not-found state is one render function for malformed routes and missing groups. Skipped: a shared permission table module, since the ids are used in one file.
+- **Evidence and unknowns:** Ids checked against `JBPermissionIds.sol` and juicebox.money's authority map. The comparison report is model output; each item was re-read in both clients before changing. Unknown: whether jango wants the "This juicebox is empty" wording and the "raised" and "holders" stats as written; listed for him.
+- **Verification:** A unit test per item (`owner-power-permissions`, `ruleset-deadline-name`, `project-links-and-cover`, `header-stats`, route not found), `npm run test:ci`, one Codex pass over the branch diff, CI green on the PR.
+- **Resource budget:** Main session only, one branch stacked on #116, one PR. Replan if #116 changes the launch surface under these files.
+
+- [x] Owner powers pass for an operator holding the matching permission
+- [x] Ruleset detail names a known rule-change deadline by its length
+- [x] Header: cover image, WhatsApp and Instagram links, raised and holders stats
+- [x] A route that names no project says so
+- [x] Full check, Codex pass, PR
+
+### Review
+- Owner powers (mint, set controller, set terminals, migrate, add price feed, set token, buyback hook, pool and TWAP, router terminal, add accounting token) each name the `JBPermissionIds` value that delegates them, and the one runner checks it onchain, so an operator holding it passes the gate as on juicebox.money.
+- Ruleset detail names a known rule-change deadline by its length. The header shows the cover image, WhatsApp (https only) and Instagram (handle pattern) links, and raised and holders stats. A malformed route or a missing project says so instead of showing the grid.
+- Verification: `npm run check` green (2576 unit tests, 148 browser tests). Codex `gpt-6.1-sol` two passes: one finding fixed (a metadata refresh dropped the Instagram link), pass 2 CLEAN.
+- Total distribution budget raised 2,135,000 to 2,140,000 B gzip, measured 2,135,380.
+- Not done here: the rest of the round 8 list (pay card balance and dollar line, funding chart for custom projects, activity paging and bridge rows, held-writes list, Simple preset, multisig owner, old and new values in reviews, Relayr re-sign of unfinished chains). New copy for jango: "This juicebox is empty" and its line, the "raised" and "holders" stats.
