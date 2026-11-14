@@ -17,7 +17,7 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
-import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, payRouteIsBetter } from './pay-preview.js';
+import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, bestPayRoute } from './pay-preview.js';
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
@@ -10365,8 +10365,10 @@ export function renderPayCard(project, cart) {
           slippageBps: paySlippageBps(amt, getEffectiveAccount()),
         }).then(function (preview) { return { preview: Object.assign({}, preview, { terminal: route.address, viaRouter: route.viaRouter }), viaRouter: route.viaRouter }; });
       })).then(function (quoted) {
-        // The token's own entry is first, so its reason shows when neither route can be quoted.
-        return quoted.reduce(function (best, route) { return payRouteIsBetter(route, best) ? route : best; }).preview;
+        // The token's own entry is first, so its reason shows when neither route can be quoted. With a wallet
+        // connected, each route is run as the payer and the one that delivers the most wins.
+        return bestPayRoute(quoted, { chainId: state.chainId, projectId: pidOn(project, state.chainId), token: state.token.address,
+          amount: amt, beneficiary: getEffectiveAccount(), payer: getEffectiveAccount() }).then(function (route) { return route.preview; });
       });
     request.then(function (p) {
       if (gen !== previewGen) return;
