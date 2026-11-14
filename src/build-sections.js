@@ -142,7 +142,7 @@ export const BUILD_SECTIONS = [
             "label": "Juicebox V6 skills"
           },
           {
-            "href": "https://github.com/mejango/juicebox-money/blob/main/src/lib/draft.ts",
+            "href": "https://github.com/Bananapus/juice-sdk-v4/blob/main/packages/core/src/v6/jbDraft.ts",
             "label": "Source: draft format"
           }
         ]
@@ -205,7 +205,7 @@ export const BUILD_SECTIONS = [
             "label": "Source: how the form becomes a launch call"
           },
           {
-            "href": "https://github.com/mejango/juicebox-money/blob/main/src/lib/draft.ts",
+            "href": "https://github.com/Bananapus/juice-sdk-v4/blob/main/packages/core/src/v6/jbDraft.ts",
             "label": "Source: draft format"
           }
         ]

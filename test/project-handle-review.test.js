@@ -212,6 +212,22 @@ describe('project-handle route lifecycle', () => {
     document.body.innerHTML = '';
   });
 
+  it('says a route that names no project was not found, in place of the grid', () => {
+    document.body.innerHTML = '<section id="tab-discover"></section>';
+    renderDiscoverTab();
+    var grid = document.querySelector('.discover-grid-wrapper');
+
+    applyDiscoverRoute('base:not-a-number');
+
+    expect(grid.style.display).toBe('none');
+    var details = document.querySelectorAll('#tab-discover > .project-detail');
+    expect(details).toHaveLength(1);
+    expect(details[0].textContent).toContain('This juicebox is empty');
+    expect(details[0].textContent).toContain("We couldn't find that page. It may have moved, or the project address might be misspelled.");
+    expect(details[0].querySelector('.detail-back')).not.toBeNull();
+    document.body.innerHTML = '';
+  });
+
   it('routes Enter on an explicit valid @handle instead of leaving it as a text filter', () => {
     document.body.innerHTML = '<section id="tab-discover"></section>';
     history.replaceState(null, '', '/#discover');

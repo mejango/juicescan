@@ -46,12 +46,12 @@ describe('custom duration conversion and draft/transaction behavior', () => {
       expect(deployment.textContent).toContain('Ruleset #1:');
     });
 
-  it('recomputes imported custom seconds from the raw decimal and preserves its text/unit', () => {
+  it('writes a custom duration as its seconds, and reads it back as a custom length that encodes the same', () => {
     const state = customDuration('4.50');
     const draft = createDraftObject(state);
-    draft.stages[0].durationSeconds = 0;
+    expect(draft.stages[0].duration).toBe(16200);
     const imported = parseCreateDraftJson(JSON.stringify(draft));
-    expect(imported.stages[0]).toMatchObject({ customDurVal: '4.50', customDurUnit: 'hours', durationSeconds: 16200 });
+    expect(imported.stages[0]).toMatchObject({ durationCustom: true, customDurVal: '4.5', customDurUnit: 'hours', durationSeconds: 16200 });
     expect(buildQueueRulesetConfigs(imported, 1, 0)[0].duration).toBe(16200);
   });
 

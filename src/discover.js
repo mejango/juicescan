@@ -5441,6 +5441,12 @@ function deadlineLabelOf(addr, chainId) {
   return 'Custom';
 }
 
+// The ruleset detail's deadline: a known deadline contract by its length, any other contract by its address.
+export function ruleChangeDeadlineText(addr, chainId) {
+  var label = deadlineLabelOf(addr, chainId || 1);
+  return label === 'Custom' ? truncAddr(addr) : label;
+}
+
 // Revnet stages are just the project's queued rulesets. allOf walks the ruleset list.
 var allOfAbi = [{
   type: 'function', name: 'allOf', stateMutability: 'view',
@@ -6038,6 +6044,21 @@ function currencyUnitLabel(currency, project) {
 }
 
 // USD value of a chosen amount of dollars (USDC is $1; ETH needs the live feed).
+// What sits under the pay amount: its dollar value, the connected wallet's balance of the pay token
+// on the pay chain, and a shortfall. Anything unknown is left out, never guessed.
+export function payAmountHint(o) {
+  var out = { about: null, balance: null, short: null };
+  var decimals = o.decimals == null ? 18 : o.decimals;
+  if (o.usdPerToken != null && o.amountRaw != null && o.amountRaw > 0n) {
+    out.about = 'About ' + formatUsd(Number(formatAmount(o.amountRaw, decimals)) * o.usdPerToken);
+  }
+  if (o.balance != null) {
+    out.balance = 'Balance: ' + formatBalance(o.balance, decimals);
+    if (o.amountRaw != null && o.amountRaw > o.balance) out.short = 'You don’t have enough ' + o.symbol + ' on ' + o.chainName + '.';
+  }
+  return out;
+}
+
 function formatUsd(n) {
   if (n === null || n === undefined || !isFinite(n)) return '—';
   if (n === 0) return '$0';
@@ -6300,6 +6321,34 @@ function appendIndexedStats(statLine, stats) {
   var pStrong = el('strong'); pStrong.textContent = String(stats.paymentsCount);
   statLine.appendChild(pStrong);
   statLine.appendChild(document.createTextNode(stats.paymentsCount === 1 ? ' payment' : ' payments'));
+}
+
+// The header's stat line, the same four juicebox.money shows: raised | balance | payments | owners or holders.
+// "raised" appears only when the indexed USD volume is priced; revnet holders are owners.
+export function appendHeaderStats(statLine, project) {
+  var stats = project.indexedStats;
+  var raised = stats ? usdFromScaled(stats.volumeUsd) : 0;
+  if (raised > 0) {
+    var rStrong = el('strong'); rStrong.textContent = formatUsd(raised); statLine.appendChild(rStrong);
+    statLine.appendChild(document.createTextNode(' raised'));
+    statLine.appendChild(headSep());
+  }
+  statLine.appendChild(mountUsdBalance(project, { suffix: ' balance' }));
+  appendIndexedStats(statLine, stats);
+  var one = project.isRevnet ? ' owner' : ' holder', many = one + 's';
+  statLine.appendChild(headSep());
+  var oStrong = el('strong'); oStrong.textContent = '…'; statLine.appendChild(oStrong);
+  var oLabel = document.createTextNode(many); statLine.appendChild(oLabel);
+  fetchOwnersCount(project).then(function (result) {
+    oStrong.textContent = ownerCountText(result);
+    oStrong.title = result && !result.exact
+      ? 'At least this many unique' + many + ' were found before the indexer result cap.'
+      : '';
+    oLabel.textContent = result && result.exact && result.count === 1 ? one : many;
+  }).catch(function () {
+    oStrong.textContent = '—';
+    oStrong.title = (project.isRevnet ? 'Owner' : 'Holder') + ' data is unavailable.';
+  });
 }
 
 // Abbreviate for a dense list, keeping THREE SIGNIFICANT FIGURES: 1.23b, 12.3m, 123k. The
@@ -7550,6 +7599,7 @@ export function applyProjectMetadata(project, record) {
   project.discord = meta.discord || null;
   project.telegram = meta.telegram || null;
   project.whatsapp = meta.whatsapp || null;
+  project.instagram = meta.instagram || null;
   project.domain = meta.domain || null;
   project.payDisclosure = meta.payDisclosure || null;
   project.tags = Array.isArray(meta.tags) ? meta.tags : [];
@@ -7802,7 +7852,8 @@ function sameProjectDeployment(a, b) {
 
 var PROJECT_DISPLAY_FIELDS = [
   'name', 'description', 'descriptionHtml', 'tagline', 'logoUri', 'coverImageUri', 'infoUri',
-  'twitter', 'farcaster', 'discord', 'telegram', 'whatsapp', 'domain', 'payDisclosure', 'tags',
+  'twitter', 'farcaster', 'discord', 'telegram', 'whatsapp', 'instagram', 'domain', 'payDisclosure',
+  'tags',
   'tokens', 'metadataUri', 'projectMetadata', 'projectMetadataSource', 'handle', 'metaSymbol',
   'storeCategories', 'indexedStats', 'createdAt', '_bendystrawRevalidating', '_bendystrawConfirmed',
 ];
@@ -7985,7 +8036,14 @@ function mountProjectRouteSkeleton() {
   _container.appendChild(renderDetailSkeleton());
 }
 
-function renderHandleRouteError(handle, message) {
+// A route that names no project: say so, as juicebox.money's 404 does, instead of silently showing the grid.
+export var ROUTE_NOT_FOUND_TITLE = 'This juicebox is empty';
+export var ROUTE_NOT_FOUND_MESSAGE = 'We couldn\'t find that page. It may have moved, or the project address might be misspelled.';
+function renderRouteNotFound() { renderRouteMessage(ROUTE_NOT_FOUND_TITLE, ROUTE_NOT_FOUND_MESSAGE); }
+
+function renderHandleRouteError(handle, message) { renderRouteMessage(handle ? ('@' + handle) : 'Project handle', message); }
+
+function renderRouteMessage(heading, message) {
   if (!_container) return;
   if (_gridWrapper) _gridWrapper.style.display = 'none';
   removeProjectDetails();
@@ -7995,7 +8053,7 @@ function renderHandleRouteError(handle, message) {
   back.addEventListener('click', function () { showProjectGrid(false); });
   wrap.appendChild(back);
   var card = el('div', 'detail-card');
-  var title = el('div', 'detail-card-title'); title.textContent = handle ? ('@' + handle) : 'Project handle'; card.appendChild(title);
+  var title = el('div', 'detail-card-title'); title.textContent = heading; card.appendChild(title);
   var body = el('div', 'detail-card-body backoffice-intro'); body.textContent = message; card.appendChild(body);
   wrap.appendChild(card);
   _container.appendChild(wrap);
@@ -8181,7 +8239,7 @@ export function applyDiscoverRoute(route, routeContext) {
   }
   var seq = ++_discoverRouteSeq;
   var m = /^([a-z0-9]+):(\d+)(?:\/([a-z0-9]+))?(?:\/([a-z0-9]+))?$/i.exec(route);
-  if (!m) { showProjectGrid(true); return; }
+  if (!m) { renderRouteNotFound(); return; }
   // Hide the grid immediately (before the async fetch) so it doesn't flash before the detail loads.
   if (_gridWrapper) _gridWrapper.style.display = 'none';
   var chainId = chainForSlug(m[1].toLowerCase());
@@ -8295,7 +8353,7 @@ export function applyDiscoverRoute(route, routeContext) {
   ensureGroups().then(function (groups) {
     if (seq !== _discoverRouteSeq) return;
     var g = projectGroupForDeployment(groups, chainId, id);
-    if (!g) { showProjectGrid(true); return; }
+    if (!g) { renderRouteNotFound(); return; }
     loadProjectGroup(g);
   }).catch(function () { if (seq === _discoverRouteSeq) showProjectGrid(true); });
 }
@@ -9814,6 +9872,40 @@ export function renderPayCard(project, cart) {
   amountRow.appendChild(payBtn);
   card.appendChild(amountRow);
 
+  // Under the amount: about what it is worth, what the wallet holds, and a shortfall.
+  var amountHint = el('div', 'paybox-amount-hint');
+  card.appendChild(amountHint);
+  var amountHintGen = 0;
+  function renderAmountHint() {
+    if (!amountHint) return; // a read can land before the card is built
+    var gen = ++amountHintGen;
+    amountHint.replaceChildren();
+    var token = state.token, chainId = state.chainId, account = getAccount();
+    if (amountRow.hidden || !token) return;
+    var decimals = token.decimals == null ? 18 : token.decimals;
+    var amountRaw = null;
+    try { if (state.amount) amountRaw = parseAmount(state.amount, decimals); } catch (_) { amountRaw = null; }
+    var isNative = String(token.address).toLowerCase() === NATIVE_TOKEN.toLowerCase();
+    var isUsdc = String(USDC_BY_CHAIN[chainId] || '').toLowerCase() === String(token.address).toLowerCase();
+    Promise.all([
+      isNative ? fetchEthUsd(chainId) : Promise.resolve(isUsdc ? 1 : null),
+      readWalletTokenBalance(chainId, token.address, account),
+    ]).then(function (r) {
+      if (gen !== amountHintGen || !card.isConnected) return;
+      var hint = payAmountHint({
+        amountRaw: amountRaw, decimals: decimals, usdPerToken: r[0], balance: r[1],
+        symbol: (token.symbol || '').replace(/\s*\(native\)/i, ''), chainName: payChainName(chainId, chainNameOf(chainId)),
+      });
+      [['about', ''], ['short', 'short'], ['balance', 'balance']].forEach(function (part) {
+        if (!hint[part[0]]) return;
+        var line = el('span', 'paybox-amount-hint-line' + (part[1] ? ' ' + part[1] : ''));
+        line.textContent = hint[part[0]];
+        amountHint.appendChild(line);
+      });
+    });
+  }
+  onEffectiveAccountChange(function () { if (card.isConnected) renderAmountHint(); });
+
   // Reflect the selected action across the button label (Pay → Add) and feedback. NFTs only mint on a Pay.
   function updateModeUi() {
     sizeSelectToText(modeSel);
@@ -9824,6 +9916,7 @@ export function renderPayCard(project, cart) {
     if (chainStatic) chainStatic.hidden = !!nativePay;
     if (nativeCheckout && nativeCheckout.setActive) nativeCheckout.setActive(!!nativePay);
     amountRow.hidden = !!nativePay; memo.hidden = !!nativePay; feedback.hidden = !!nativePay;
+    renderAmountHint();
     if (terminalNotice) renderTerminalNotice();
     if (!nativePay && state.mode === 'pay' && startsAt > Math.floor(Date.now() / 1000)) { payBtn.textContent = 'Not started'; renderFeedback(); return; }
     if (state.mode === 'addbalance') { payBtn.disabled = false; payBtn.classList.remove('paybox-btn-idle'); }
@@ -10113,6 +10206,7 @@ export function renderPayCard(project, cart) {
   }
 
   function schedulePreview() {
+    renderAmountHint();
     previewGen++; // an in-flight preview for the old inputs can no longer land
     state.payerSlippage = null; // any input change ends a loosened tolerance; a retry sets it again after this
     if (state.mode === 'pay' && (!state.inventoryKnown || isNativeInventory(state.shop))) return;
@@ -10634,6 +10728,14 @@ export function renderPayCard(project, cart) {
 function renderDetailHeader(project) {
   var header = el('div', 'project-detail-header' + (project._bendystrawRevalidating ? ' revalidating' : ''));
 
+  // The project's cover image, when its metadata names one, above everything else.
+  if (project.coverImageUri) {
+    var cover = document.createElement('img');
+    cover.className = 'detail-cover'; cover.alt = ''; cover.src = project.coverImageUri;
+    cover.addEventListener('error', function () { cover.remove(); });
+    header.appendChild(cover);
+  }
+
   // Top: logo + project title, vertically centered to each other.
   var topRow = el('div', 'detail-head-top');
   topRow.appendChild(renderLogo(project, 'detail-logo'));
@@ -10658,28 +10760,7 @@ function renderDetailHeader(project) {
   // Stat line: balance | supply (under the title). Balance is the cross-chain USD total; hover breaks
   // it down into the actual tokens stored on each chain.
   var statLine = el('div', 'detail-head-stats');
-  statLine.appendChild(mountUsdBalance(project, { suffix: ' balance' }));
-  if (project.isRevnet) {
-    // Revnet header: just Balance | Owners (unique holders, matching the Owners tab).
-    var sepSpan = el('span', 'detail-head-sep'); sepSpan.textContent = '|'; statLine.appendChild(sepSpan);
-    var oStrong = el('strong'); oStrong.textContent = '…'; statLine.appendChild(oStrong);
-    var oLabel = document.createTextNode(' owners'); statLine.appendChild(oLabel);
-    fetchOwnersCount(project).then(function (result) {
-      oStrong.textContent = ownerCountText(result);
-      oStrong.title = result && !result.exact
-        ? 'At least this many unique owners were found before the indexer result cap.'
-        : '';
-      oLabel.textContent = result && result.exact && result.count === 1
-        ? ' owner'
-        : ' owners';
-    }).catch(function () {
-      oStrong.textContent = '—';
-      oStrong.title = 'Owner data is unavailable.';
-    });
-  } else {
-    // Indexed activity (Bendystraw): volume raised + payment/contributor counts.
-    appendIndexedStats(statLine, project.indexedStats);
-  }
+  appendHeaderStats(statLine, project);
   titleCol.appendChild(statLine);
   topRow.appendChild(titleCol);
   header.appendChild(topRow);
@@ -10780,12 +10861,15 @@ function renderAboutCard(project) {
 }
 
 // Website + socials as a row of small underlined links. Returns null when none are set.
-function renderProjectLinks(project) {
+export function renderProjectLinks(project) {
   var entries = [];
   if (project.infoUri) entries.push(['Website', project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri)]);
   if (project.twitter) { var h = String(project.twitter).replace(/^@/, ''); entries.push(['X', /^https?:/.test(h) ? h : ('https://x.com/' + h)]); }
   if (project.discord) entries.push(['Discord', /^https?:/.test(project.discord) ? project.discord : ('https://' + String(project.discord).replace(/^\/+/, ''))]);
   if (project.telegram) { var tg = String(project.telegram); entries.push(['Telegram', /^https?:/.test(tg) ? tg : (tg.indexOf('t.me') === 0 ? 'https://' + tg : 'https://t.me/' + tg.replace(/^@/, ''))]); }
+  // As juicebox.money: WhatsApp only as an https link, Instagram only as a plain handle.
+  if (project.whatsapp && /^https:\/\//.test(String(project.whatsapp))) entries.push(['WhatsApp', String(project.whatsapp)]);
+  if (project.instagram) { var ig = String(project.instagram).replace(/^@/, '').trim(); if (/^[\w.]{1,30}$/.test(ig)) entries.push(['Instagram', 'https://instagram.com/' + ig]); }
   if (!entries.length) return null;
   var row = el('div', 'detail-about-links');
   entries.forEach(function (e) {
@@ -14760,7 +14844,8 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
     return {
       type: 'repay', direction: 'in', chainId: chainId,
       txHash: rp.txHash || event.txHash, timestamp: Number(rp.timestamp || event.timestamp),
-      account: rp.from || event.from, from: rp.from || event.from,
+      // The caller of the loans contract: a Safe here, where `from` is the account that executed for it.
+      account: rp.caller || rp.from || event.from, from: rp.from || event.from,
       // RepayLoan does not index the loan's source token. Showing an unlabeled amount is safer than
       // attributing it to the project's first accounting context.
       baseAmount: '',
@@ -14772,7 +14857,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
     return {
       type: 'liquidate', direction: 'out', chainId: chainId,
       txHash: lq.txHash || event.txHash, timestamp: Number(lq.timestamp || event.timestamp),
-      account: lq.from || event.from, from: lq.from || event.from,
+      account: lq.caller || lq.from || event.from, from: lq.from || event.from,
       baseAmount: '',
       tokenAmount: '', action: 'loan liquidated', memo: '',
     };
@@ -14880,7 +14965,8 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
   if (event.bridgeClaimEvent) {
     var bc = event.bridgeClaimEvent;
     return { type: 'bridge_claim', direction: 'in', chainId: chainId, txHash: bc.txHash || event.txHash, timestamp: Number(bc.timestamp || event.timestamp),
-      account: bc.beneficiary || bc.from || event.from, from: bc.from || event.from,
+      // The index can hold the sucker leaf's 32-byte beneficiary: its last 20 bytes are the account.
+      account: bc.beneficiary ? '0x' + String(bc.beneficiary).slice(-40) : (bc.from || event.from), from: bc.from || event.from,
       baseAmount: '', tokenAmount: bc.projectTokenCount ? formatCompactTokenAmount(toBigInt(bc.projectTokenCount)) : '',
       action: 'claimed ' + sym + ' from ' + moveChainName(Number(bc.peerChainId)), memo: '' };
   }
@@ -14916,7 +15002,7 @@ export function rulesetRows(r, m, project) {
   return [
     ['CYCLE', 'Duration', Number(r.duration) ? formatDuration(r.duration) : 'Not set'],
     ['CYCLE', 'Start time', formatStartTime(r.start)],
-    ['CYCLE', 'Rule change deadline', (r.approvalHook && r.approvalHook !== ZERO_ADDRESS) ? truncAddr(r.approvalHook) : 'No deadline'],
+    ['CYCLE', 'Rule change deadline', ruleChangeDeadlineText(r.approvalHook, project && project.chainId)],
     ['TOKEN', 'Total issuance rate', (Number(r.weight) === 0 ? '0' : formatAmount(r.weight, 18)) + ' / ' + baseUnit],
     ['TOKEN', 'Reserved rate', percentFromRuleset(m.reservedPercent)],
     ['TOKEN', 'Issuance cut percent', formatCutPercent(r.weightCutPercent)],
@@ -18300,9 +18386,10 @@ function openSetPermissionsModal(project, grant, presetIds) {
 // kind: address | amount(18-dec→wei) | uint | bool | text. `infra` blank-default = that chain's contract.
 // buildArgs(v, cid, pid) → the function args. chainsDefault: 'all' (JB infra, same address everywhere) or
 // 'primary' (per-chain values like feeds/mints — only the current chain checked by default).
+// permissionId: the JBPermissionIds grant that lets an operator send the call for the owner.
 var POWER_MINT = {
   flagKey: 'allowOwnerMinting',
-  title: 'Mint tokens', actionVerb: 'Minted', contract: 'JBController', abi: mintTokensAbi, fn: 'mintTokensOf', gas: 300000n, chainsDefault: 'primary',
+  title: 'Mint tokens', actionVerb: 'Minted', contract: 'JBController', abi: mintTokensAbi, fn: 'mintTokensOf', permissionId: 10, gas: 300000n, chainsDefault: 'primary',
   note: 'Mints new project tokens to an address without a payment.',
   danger: 'Irreversible: minting dilutes every existing token holder and cannot be undone.',
   fields: [
@@ -18314,7 +18401,7 @@ var POWER_MINT = {
 };
 var POWER_SET_CONTROLLER = {
   flagKey: 'allowSetController',
-  title: 'Set controller', actionVerb: 'Set', contract: 'JBDirectory', abi: setControllerAbi, fn: 'setControllerOf', gas: 200000n, chainsDefault: 'all',
+  title: 'Set controller', actionVerb: 'Set', contract: 'JBDirectory', abi: setControllerAbi, fn: 'setControllerOf', permissionId: 14, gas: 200000n, chainsDefault: 'all',
   note: 'Points the project at a new controller contract. Defaults to the current JBController on each chain.',
   danger: 'Dangerous: this hands control of the project’s rules and tokens to a new contract. A wrong address can permanently brick or compromise the project.',
   fields: [{ name: 'controller', label: 'Controller', kind: 'address', placeholder: '0x… controller', infra: 'JBController' }],
@@ -18322,7 +18409,7 @@ var POWER_SET_CONTROLLER = {
 };
 export var POWER_SET_TERMINALS = {
   flagKey: 'allowSetTerminals',
-  title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', gas: 250000n, chainsDefault: 'all',
+  title: 'Set payment terminals', actionVerb: 'Set', contract: 'JBDirectory', abi: setTerminalsAbi, fn: 'setTerminalsOf', permissionId: 15, gas: 250000n, chainsDefault: 'all',
   note: 'Sets the complete list of terminals funds can be paid in through (comma-separated). Prefilled with what is set onchain now.',
   danger: 'Dangerous: this replaces the entire terminal list. Every terminal left out stops accepting payments and stops routing fees. Most projects launch with two (the standard terminal and the any-token router), so keep the ones you still want.',
   // The call replaces the whole list, so the field starts from the live list and a blank field is refused: a
@@ -18338,7 +18425,7 @@ export var POWER_SET_TERMINALS = {
 };
 var POWER_MIGRATE = {
   flagKey: 'allowTerminalMigration',
-  title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', gas: 400000n, chainsDefault: 'primary',
+  title: 'Migrate terminal balance', actionVerb: 'Migrated', contract: 'JBMultiTerminal', abi: migrateBalanceAbi, fn: 'migrateBalanceOf', permissionId: 6, gas: 400000n, chainsDefault: 'primary',
   note: 'Moves the project’s balance for a token from the current terminal to another terminal.',
   danger: 'Dangerous: this moves the project’s funds to another terminal. A wrong destination can lose the funds.',
   fields: [
@@ -18349,7 +18436,7 @@ var POWER_MIGRATE = {
 };
 var POWER_ADD_PRICE_FEED = {
   flagKey: 'allowAddPriceFeed',
-  title: 'Add price feed', actionVerb: 'Added', contract: 'JBController', abi: addPriceFeedAbi, fn: 'addPriceFeedFor', gas: 200000n, chainsDefault: 'primary',
+  title: 'Add price feed', actionVerb: 'Added', contract: 'JBController', abi: addPriceFeedAbi, fn: 'addPriceFeedFor', permissionId: 20, gas: 200000n, chainsDefault: 'primary',
   note: 'Registers a price feed converting one currency to another. Currencies are JB currency ids (1 = ETH, 2 = USD, or uint32(uint160(token)) for a token).',
   danger: 'Irreversible: a price feed cannot be removed once added, and a wrong feed misprices the project.',
   fields: [
@@ -18361,7 +18448,7 @@ var POWER_ADD_PRICE_FEED = {
 };
 var POWER_SET_TOKEN = {
   flagKey: 'allowSetCustomToken',
-  title: 'Set custom token', actionVerb: 'Set', contract: 'JBController', abi: setTokenAbi, fn: 'setTokenFor', gas: 250000n, chainsDefault: 'all',
+  title: 'Set custom token', actionVerb: 'Set', contract: 'JBController', abi: setTokenAbi, fn: 'setTokenFor', permissionId: 9, gas: 250000n, chainsDefault: 'all',
   note: 'Replaces the project’s token with a custom ERC-20 (it must conform to IJBToken). Set the token address per selected chain when it differs.',
   danger: 'Irreversible: replacing the project token is permanent and affects every holder.',
   fields: [{ name: 'token', label: 'Token', kind: 'address', placeholder: '0x… ERC-20 (IJBToken)' }],
@@ -18434,7 +18521,7 @@ function buybackPoolStateRead(project, chainId) {
 }
 
 export var POWER_SET_BUYBACK_HOOK = {
-  title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', gas: 200000n, chainsDefault: 'all',
+  title: 'Set buyback hook', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setBuybackHookForAbi, fn: 'setHookFor', permissionId: 30, gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Points the project at its buyback hook in the registry. Pre-filled with the project’s current hook.',
   danger: 'Dangerous: the buyback hook intercepts every pay/swap and decides issuance-vs-AMM routing. A wrong hook can misroute or strand funds.',
@@ -18444,7 +18531,7 @@ export var POWER_SET_BUYBACK_HOOK = {
   buildArgs: function (v, cid, pid) { return [pid, v.hook]; },
 };
 export var POWER_SET_ROUTER_TERMINAL = {
-  title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', gas: 200000n, chainsDefault: 'all',
+  title: 'Set router terminal', actionVerb: 'Set', contract: 'JBRouterTerminalRegistry', abi: setRouterTerminalForAbi, fn: 'setTerminalFor', permissionId: 31, gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   note: 'Sets the project’s entry in the router registry: the terminal router-swapped funds are deposited to. Pre-filled with the project’s current selection.',
   danger: 'Dangerous: this reroutes where router-swapped funds are deposited. A wrong terminal can misdirect or strand funds.',
@@ -18454,7 +18541,7 @@ export var POWER_SET_ROUTER_TERMINAL = {
   buildArgs: function (v, cid, pid) { return [pid, v.terminal]; },
 };
 export var POWER_INIT_BUYBACK_POOL = {
-  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', gas: 500000n, chainsDefault: 'all',
+  title: 'Initialize buyback pool', actionVerb: 'Initialized', contract: 'JBBuybackHookRegistry', abi: initializePoolForAbi, fn: 'initializePoolFor', permissionId: 29, gas: 500000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   poolStateRead: buybackPoolStateRead,
   note: 'Creates + price-initializes the project’s Uniswap v4 buyback pool, keyed by the pair (terminal) token. Routed through the buyback hook registry, which forwards to the project’s configured hook (your new hook once Set buyback hook executes, set the hook first). Native ETH pairs use the zero address; otherwise the pair token (e.g. USDC).',
@@ -18473,7 +18560,7 @@ export var POWER_INIT_BUYBACK_POOL = {
   },
 };
 export var POWER_SET_BUYBACK_POOL = {
-  title: 'Set buyback pool', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, fn: 'setPoolFor', gas: 200000n, chainsDefault: 'all',
+  title: 'Set buyback pool', actionVerb: 'Set', contract: 'JBBuybackHookRegistry', abi: setPoolForAbi, fn: 'setPoolFor', permissionId: 29, gas: 200000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   poolStateRead: buybackPoolStateRead,
   note: 'Points the project’s hook at an existing Uniswap v4 pool for the pair (terminal) token, without creating or pricing one. Routed through the buyback hook registry, which forwards to the project’s configured hook (set the hook first).',
@@ -18514,7 +18601,7 @@ export function assertPoolParams(v, withPrice) {
   }
 }
 export var POWER_SET_BUYBACK_TWAP = {
-  title: 'Set TWAP window', actionVerb: 'Set', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, fn: 'setTwapWindowOf', gas: 150000n, chainsDefault: 'all',
+  title: 'Set TWAP window', actionVerb: 'Set', contract: 'JBBuybackHook', abi: setTwapWindowOfAbi, fn: 'setTwapWindowOf', permissionId: 28, gas: 150000n, chainsDefault: 'all',
   chainAvailable: ammChainAvailable, unavailableNote: '(no Uniswap AMM here)',
   // setTwapWindowOf is on the hook, not the registry — target the project's own resolved hook per chain.
   resolveTargets: function (project, chainIds) {
@@ -18853,7 +18940,7 @@ function openPowerModal(project, action) {
   submit.addEventListener('click', onAction(async function (prepared) {
     var selected = prepared.selected, values = prepared.values;
     var shim = Object.assign({}, project, { chains: selected });
-    var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, prepared.buildCall, { label: action.title, title: action.title, gas: action.gas, replaces: modal,
+    var res = await runAuthorityActionAcrossChains(shim, selected, operatorAddr, prepared.buildCall, { label: action.title, title: action.title, gas: action.gas, permissionId: action.permissionId, replaces: modal,
       summary: { rows: action.fields.map(function (f) { return [f.label || f.name, rowValueText(values[f.name])]; }) } }, setStatus);
     if (!res) return;
     if (res.cancelled) { setStatus('Cancelled', ''); return; }
@@ -19078,7 +19165,7 @@ export function openAddAccountingContextModal(project) {
       } catch (error) { setStatus(errMessage(error, 'Could not verify accounting tokens.'), 'error'); busy = false; return; }
       var buildCall = function (cid) { return calls[cid]; };
       var shim = Object.assign({}, project, { chains: usable });
-      var res = await runAuthorityActionAcrossChains(shim, usable, operatorAddr, buildCall, { label: 'Add accounting token', title: 'Add accounting token', gas: 300000n,
+      var res = await runAuthorityActionAcrossChains(shim, usable, operatorAddr, buildCall, { label: 'Add accounting token', title: 'Add accounting token', gas: 300000n, permissionId: 21,
         reverify: function () { return prepareAccountingContextCalls(project, usable, tokensByChain, dec); },
         summary: { rows: [['Token', selectedMode === 'custom' ? 'custom (set per chain)' : selectedMode === 'usdc' ? 'USDC' : 'ETH'], ['Decimals', String(dec)], ['Reversible', 'no: accounting tokens cannot be removed']] } }, setStatus)
         .catch(function (err) { setStatus(errMessage(err, 'Could not add the accounting token.'), 'error'); return null; });
@@ -21774,8 +21861,8 @@ export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId times
   + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from txHash timestamp } '
   + 'autoIssueEvent { beneficiary count stageId from txHash timestamp } '
   + 'borrowLoanEvent { borrowAmount collateral beneficiary token from txHash timestamp } '
-  + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn from txHash timestamp } '
-  + 'liquidateLoanEvent { borrowAmount collateral from txHash timestamp } '
+  + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn caller from txHash timestamp } '
+  + 'liquidateLoanEvent { borrowAmount collateral caller from txHash timestamp } '
   + 'mintNftEvent { tierId tokenId beneficiary totalAmountPaid from txHash timestamp } '
   + 'deployErc20Event { symbol name token from txHash timestamp } '
   + 'projectCreateEvent { from txHash timestamp } '

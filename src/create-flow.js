@@ -31,6 +31,8 @@ import { getAuditPrompt } from './prompts.js';
 import { buildForwardedTx, relayrSupportsChains, relayrDestinationHash, relayrPostBundle, relayrResumeQuotedBundle, relayrPaymentOptions, relayrPay, relayrPoll, relayrProgress, relayrStateIsSuccess, relayrStateIsFailed, verifyRelayrDestinationRecords, saveRelayrPendingSession, loadRelayrPendingSession, clearRelayrPendingSession, requireUnpaidRelayrSession, restoreUnsentRelayrPayment, relayrScheduleCanBeRetired, retireExpiredUnpaidRelayrSession } from './relayr.js';
 import { renderRelayrReceiptInto } from './relayr-ui.js';
 import { DEADLINE_OPTIONS, DEADLINE_SECONDS } from './deadline-options.js';
+import { checkJbDraft, jbDraftFileName, jbDraftUnsupported, serializeJbDraft } from './jb-draft-format.js';
+import { fromJbDraft, toJbDraft } from './jb-draft.js';
 import { assertNewTierPolicy, build721TierConfig, build721TierMetadata, mediaTypeForFile, sortTierEntriesByCategory, tierDiscountPercentFromPct } from './nft721-build.js';
 import { build721RulesetMetadata } from './nft721-ruleset.js';
 import { attachProjectIdResolver } from './project-id-resolver.js';
@@ -362,7 +364,7 @@ function initState() {
     projectType: 'custom',           // 'custom' | 'revnet' — chosen on the Type step; defaults to Custom
     details: {
       name: '', ticker: '', tagline: '', description: '', logoUri: '', logoUploading: false,
-      website: '', twitter: '', discord: '', telegram: '', tags: [],
+      website: '', twitter: '', discord: '', telegram: '', instagram: '', whatsapp: '', tags: [],
       coverImageUri: '', payDisclosure: '', owner: PERMANENTLY_DISABLED_AUTHORITY, immutable: false,
       linksOpen: false, ownerOpen: false, tagsOpen: false, customOpen: false,
     },
@@ -535,25 +537,21 @@ function mergeDraft(obj) {
   return s;
 }
 
-// The existing .jb file is the canonical interchange format: a plain, sanitized create-flow state object.
-// Keep this public so an existing project can be reconstructed from verified reads and exported identically.
-export function createDraftObject(state) { return sanitizeState(state); }
-
-function looksLikeCreateDraft(value) {
-  return !!(value && typeof value === 'object' && !Array.isArray(value)
-    && (value.projectType === 'custom' || value.projectType === 'revnet')
-    && value.details && typeof value.details === 'object'
-    && Array.isArray(value.stages) && Array.isArray(value.chainIds));
+// What the shared file's mapper needs from this form: its blank shapes, its chain pairs and its currency rule.
+function jbDraftDeps() {
+  return {
+    state: initState, stage: createStage, item: itemDraft, pairs: CHAIN_PAIRS, canon: canonChainId,
+    durationPresets: DURATION_PRESETS, collectionName: collectionNameOf, collectionSymbol: collectionSymbolOf,
+    customCurrency: function (address) { return isAddr(address) ? Number(BigInt(address) % (1n << 32n)) : 0; },
+  };
 }
 
-function unwrapCreateDraft(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  if (looksLikeCreateDraft(value)) return value;
-  return null;
-}
+// The contents of the `.jb` file for this form's state: the shared version 2 draft every Juicebox site reads.
+// Public so an existing project can be rebuilt from verified reads and exported the same way.
+export function createDraftObject(state) { return checkJbDraft(toJbDraft(sanitizeState(state), jbDraftDeps())); }
 
-// Accept the JSON contents of a .jb file, either directly or in a fenced JSON block. Returns a safe editable
-// state through the same whitelist used by file import; transaction calldata or unrelated JSON is rejected.
+// Read the JSON contents of a .jb file, given directly or in a fenced JSON block, into editable form state. A
+// file holding something this form cannot express is refused whole; nothing is half read.
 export function parseCreateDraftJson(input) {
   var candidates = [];
   if (input && typeof input === 'object') candidates.push(input);
@@ -565,21 +563,20 @@ export function parseCreateDraftJson(input) {
     var blocks = /```(?:json)?\s*([\s\S]*?)```/gi, match;
     while ((match = blocks.exec(text))) { try { candidates.push(JSON.parse(match[1])); } catch (_) {} }
   }
+  candidates = candidates.filter(function (value) { return value && typeof value === 'object' && !Array.isArray(value); });
+  if (!candidates.length) throw new Error('No Juicebox V6 .jb draft was found. Paste the JSON contents of an exported .jb file.');
+  var firstError = null;
   for (var i = 0; i < candidates.length; i++) {
-    var draft = unwrapCreateDraft(candidates[i]);
-    if (!draft) continue;
-    var merged = mergeDraft(draft);
-    if (!merged) continue;
-    merged.step = 0;
-    merged.tos = false; // every new deployment must re-acknowledge the risk confirmation
-    return merged;
+    try {
+      var merged = mergeDraft(fromJbDraft(checkJbDraft(candidates[i]), jbDraftDeps()));
+      // The form re-prices a draft whose currencies its accepted tokens cannot use. A file is refused instead.
+      if (merged._importNotice) throw jbDraftUnsupported('Juicescan', 'amounts counted in a currency its accepted tokens cannot use here');
+      merged.step = 0;
+      merged.tos = false; // every new deployment must re-acknowledge the risk confirmation
+      return merged;
+    } catch (error) { if (!firstError) firstError = error; }
   }
-  // juicebox.money saves a different draft shape (flat: flavor, name, chains). Its rules do not map one to one onto
-  // this form, so the file is named instead of being half read.
-  if (candidates.some(function (c) { return c && typeof c === 'object' && typeof c.flavor === 'string' && typeof c.name === 'string' && Array.isArray(c.stages); })) {
-    throw new Error('This draft was saved on juicebox.money. Open it there.');
-  }
-  throw new Error('No Juicebox V6 .jb draft was found. Paste the JSON contents of an exported .jb file.');
+  throw firstError;
 }
 
 function saveDraft(state) { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(sanitizeState(state))); } catch (_) {} }
@@ -588,10 +585,10 @@ function clearDraft() { try { localStorage.removeItem(DRAFT_KEY); } catch (_) {}
 
 // Download the current draft as a `.jb` file (plain JSON) to save or share for review.
 export function exportDraftFile(state) {
-  var nm = ((state.details && state.details.name) || 'project').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'project';
-  var blob = new Blob([JSON.stringify(createDraftObject(state), null, 2)], { type: 'application/json' });
+  var file = createDraftObject(state);
+  var blob = new Blob([serializeJbDraft(file)], { type: 'application/json' });
   var url = URL.createObjectURL(blob);
-  var a = document.createElement('a'); a.href = url; a.download = nm + '.jb';
+  var a = document.createElement('a'); a.href = url; a.download = jbDraftFileName(file.name);
   // Safari can discard a synthetic download when its anchor is removed in the
   // same task as click(). Keep the node and object URL alive long enough for
   // the browser to begin the download. This matters on the success screen,
@@ -660,7 +657,10 @@ export function openCreateFlow() {
     reader.onerror = function () { alert('Could not read that file.'); };
     reader.readAsText(file);
   }
-  function onExport() { exportDraftFile(state); }
+  function onExport() {
+    try { exportDraftFile(state); }
+    catch (e) { alert((e && e.message) || 'Could not export this draft.'); }
+  }
 
   function render() {
     sheet.innerHTML = '';
@@ -2571,6 +2571,10 @@ function surplusTokenLabel(state) {
 // hook as the cash out data hook, JB721Hook.beforeCashOutRecordedWith reverts on any project-token cash out
 // (JB721Hook.sol:107). So enabling one idles the other in the UI.
 function itemCashOutOn(state) { return !!(state.shopEnabled && state.collection && state.collection.useForRedemptions); }
+// Items take cash outs on a chain only where the launch carries an item there: the hook and the ruleset agree.
+function itemCashOutOnChain(state, chainId) {
+  return itemCashOutOn(state) && (state.nfts || []).some(function (_, i) { return chainItemIncluded(state, chainId, i); });
+}
 function anyTokenCashOut(state) { return (state.stages || []).some(function (s) { return s.cashOutEnabled; }); }
 
 // Cash out access for token holders — they reclaim a share of the project's surplus by burning tokens.
@@ -4439,7 +4443,7 @@ async function runDeploy(state, owner) {
     // 1) Pin metadata. A launch never goes out without it. The project's and each store item's metadata JSON
     // (name + media, so its tier resolves to {name, image/animation_url}) pin together.
     push('Pinning project metadata…');
-    var launchItems = state.nfts.slice();
+    var launchItems = launchedItems(state);
     // The pins only resolve or reject; the status list is written once, after they are joined, so a pin that lands
     // after the batch failed says nothing.
     var pins = [pinJson(buildMetadata(state.details, state.storeCategories), state.details.name || 'project')].concat(launchItems.map(function (it, n) {
@@ -4807,7 +4811,7 @@ function buildLaunchArgs(state, chainId, owner, projectUri, salt, deployStart) {
   var addr = getAddress('JBOmnichainDeployer', chainId);
   var missing = sucker.missing.length > 0;
   if (hasNfts) {
-    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: !!(state.collection && state.collection.useForRedemptions), salt: salt };
+    var deploy721 = { deployTiersHookConfig: build721Config(state, projectUri, chainId), useDataHookForCashOut: itemCashOutOnChain(state, chainId), salt: salt };
     return { scheduleValidUntil: schedule.validUntil, rulesetCount: effectiveStages.length, rulesetStarts: schedule.starts, contract: 'JBOmnichainDeployer', address: addr, abi: omnichain721Abi, missingSuckers: missing,
       args: [owner, projectUri, deploy721, rulesetsFull, terminalConfigs, '', sucker] };
   }
@@ -5039,8 +5043,7 @@ function assembleRuleset(state, stage, userStageIdx, chainId, mustStartAtOrAfter
   // can't overflow MAX_CASH_OUT_TAX_RATE and revert at deploy.
   // Item redemptions route cash out through the 721 hook (item holders redeem for surplus). Only when a store
   // is actually on this chain AND the project opted in. Mutually exclusive with token cash out by contract.
-  var storeRedeem = state.shopEnabled && !!(state.collection && state.collection.useForRedemptions)
-    && (state.nfts || []).some(function (_, i) { return chainItemIncluded(state, chainId, i); });
+  var storeRedeem = itemCashOutOnChain(state, chainId);
   // The cash out tax governs whoever can cash out — token holders OR (mutually exclusively) item holders — so
   // it applies when either is on. 100% = cash outs off (also forced when payouts leave no surplus).
   rs.cashOutTaxRate = ((stage.cashOutEnabled || storeRedeem) && !noSurplus)
@@ -5278,12 +5281,15 @@ function splitState(rec, rawPercent, beneficiaryOverride, chainId, projectIdOver
   };
 }
 
+// The items a launch carries: none while "Launch with items in stock" is off, whatever the list still holds.
+function launchedItems(state) { return state.shopEnabled === false ? [] : (state.nfts || []).slice(); }
+
 export function build721Config(state, projectUri, chainId) {
   var name = collectionNameOf(state);
   var symbol = collectionSymbolOf(state);
   var col = state.collection || {};
   var priceDecimals = storeDecimals(state);
-  var tierEntries = state.nfts
+  var tierEntries = launchedItems(state)
     .map(function (nft, idx) { return { nft: nft, idx: idx }; })
     .filter(function (e) { return chainId == null || chainItemIncluded(state, chainId, e.idx); })
     .map(function (e) {
@@ -5309,7 +5315,8 @@ export function build721Config(state, projectUri, chainId) {
       discountPercent: discountPercent,
       flags: {
         allowOwnerMint: !!flags.allowOwnerMint,
-        useReserveBeneficiaryAsDefault: freq > 0 && reserveBenef !== ZERO,
+        // Each item keeps its own beneficiary: as a default, the last item's would take every item's reserves.
+        useReserveBeneficiaryAsDefault: false,
         transfersPausable: !!flags.transfersPausable,
         useVotingUnits: false,
         cantBeRemoved: !!flags.cantBeRemoved,
@@ -5727,6 +5734,8 @@ function recipBoxWith(recip, hint) {
 function safeParseEther(v) { try { return v ? parseEther(String(v)) : 0n; } catch (_) { return 0n; } }
 function priceUnits(v, decimals) {
   if (v == null || String(v).trim() === '') return 0n;
+  // parseUnits rounds what the token cannot hold, which would send another amount than the one typed.
+  if ((String(v).trim().split('.')[1] || '').length > decimals) throw new Error(String(v).trim() + ' has more decimal places than its token holds.');
   var parsed = parseUnits(String(v).trim(), decimals);
   if (parsed < 0n) throw new Error('Amounts cannot be negative.');
   return parsed;

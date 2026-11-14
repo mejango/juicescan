@@ -117,7 +117,7 @@ describe('launch review opens at the click', () => {
     const pins = [];
     mocks.pinJson.mockImplementation(() => { const pin = deferred(); pins.push(pin); return pin.promise; });
     const state = draft([11155111]);
-    state.nfts = [Object.assign(__test.itemDraft(), { name: 'One', price: '1' }), Object.assign(__test.itemDraft(), { name: 'Two', price: '1' })];
+    state.shopEnabled = true; state.nfts = [Object.assign(__test.itemDraft(), { name: 'One', price: '1' }), Object.assign(__test.itemDraft(), { name: 'Two', price: '1' })];
     const deploying = __test.runDeploy(state, ALICE);
     await vi.waitFor(() => expect(pins).toHaveLength(3)); // none has answered yet
     pins[0].resolve(URI); pins[1].resolve(URI);

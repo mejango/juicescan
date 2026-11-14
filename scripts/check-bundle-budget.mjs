@@ -103,7 +103,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // Shared checkout measured2,312,787 B gzip, +3,317 B versus222c5f same-env distribution.
 // SDK3.0.0 with the direct buy route removed: 2,313,459 B gzip.
 // Open-first (2026-11): the pending review, handoff and placeholder code measures 2,125,335 B gzip in total.
-const totalGzipBudget = 2_135_000;
+// Shared .jb draft plus operator gates, header links and stats, and the not-found state: measured 2,135,380 B gzip.
+const totalGzipBudget = 2_140_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);
