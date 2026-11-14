@@ -6154,7 +6154,8 @@ function issuancePreview(state, host) {
     var note = el('div', 'create-hint'); note.textContent = 'Preview ' + (ticker || 'token') + ' issuance price over time with the above rules:';
     box.appendChild(note);
     var chart = el('div', 'issuance-chart'); box.appendChild(chart);
-    mountIssuancePriceChart(chart, stages, now, 1, ticker || 'tokens');
+    // Drawn from the first start: nothing is issued before it.
+    mountIssuancePriceChart(chart, stages, Math.max(now, stages[0].start), 1, ticker || 'tokens');
   };
   draw();
   host.addEventListener('input', draw);

@@ -22720,6 +22720,8 @@ async function fetchProjectIndexedStats(id, chainId) {
       stats.byChain = await optionalWithin(bendystrawQuery(BENDYSTRAW_RAISED_BY_CHAIN_QUERY, { suckerGroupId: p.suckerGroupId, version: BENDYSTRAW_VERSION, limit: 20 })
         .then(function (data) { return (data && data.projects && data.projects.items) || []; })
         .catch(function () { return []; }), INDEXED_STATS_TIMEOUT_MS, []);
+      // Without the group total the headline is this chain's own figure: no breakdown beside it.
+      if (!agg) stats.byChain = [];
       if (agg) {
         stats.volumeUsd = agg.volumeUsd;
         stats.paymentsCount = Number(agg.paymentsCount) || 0;
