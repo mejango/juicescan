@@ -7837,7 +7837,8 @@ function sameProjectDeployment(a, b) {
 
 var PROJECT_DISPLAY_FIELDS = [
   'name', 'description', 'descriptionHtml', 'tagline', 'logoUri', 'coverImageUri', 'infoUri',
-  'twitter', 'farcaster', 'discord', 'telegram', 'whatsapp', 'domain', 'payDisclosure', 'tags',
+  'twitter', 'farcaster', 'discord', 'telegram', 'whatsapp', 'instagram', 'domain', 'payDisclosure',
+  'tags',
   'tokens', 'metadataUri', 'projectMetadata', 'projectMetadataSource', 'handle', 'metaSymbol',
   'storeCategories', 'indexedStats', 'createdAt', '_bendystrawRevalidating', '_bendystrawConfirmed',
 ];

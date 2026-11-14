@@ -19,3 +19,14 @@ describe('project links', () => {
     expect(links({ whatsapp: 'http://chat.whatsapp.com/abc' })).toBeNull();
   });
 });
+
+describe('a background metadata refresh', () => {
+  it('carries every link the About row shows, so a changed handle replaces the old one', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync('src/discover.js', 'utf8');
+    const list = source.slice(source.indexOf('var PROJECT_DISPLAY_FIELDS'), source.indexOf('function applyProjectDisplayRefresh'));
+    for (const field of ['infoUri', 'twitter', 'farcaster', 'discord', 'telegram', 'whatsapp', 'instagram', 'coverImageUri']) {
+      expect(list).toContain(`'${field}'`);
+    }
+  });
+});
