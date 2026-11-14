@@ -49,7 +49,7 @@ function recipientText(split, now) {
   var none = /^0x0*$/.test(beneficiary) || !beneficiary;
   // With no project, no hook and no beneficiary, the contracts pay whoever sends the distribution.
   var who = /^0x0*$/.test(hook) || !hook
-    ? (BigInt(split.projectId || 0) > 0n ? 'Project #' + BigInt(split.projectId) + (none ? '' : ' (tokens to ' + beneficiary + ')')
+    ? (BigInt(split.projectId || 0) > 0n ? 'Project #' + BigInt(split.projectId) + (split.preferAddToBalance ? ' (added to its balance)' : none ? '' : ' (tokens to ' + beneficiary + ')')
       : none ? 'Whoever sends the distribution' : beneficiary)
     : 'Hook ' + hook;
   return who + ' ' + pct(split.percent) + '%' + (Number(split.lockedUntil || 0) > now ? ' (locked)' : '');

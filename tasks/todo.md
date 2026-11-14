@@ -146,7 +146,8 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
 - [x] J9c Payment notice differences across chains, and a failed notice read.
 - [x] J9d Pay card and Pay tool say "You get about" and show the guaranteed floor when a market price sets part of the amount.
 - [x] J9e Held-writes list, Simple preset, old and new values in the queue review, and the queue refuses a copied ruleset whose shop the deployer would not carry on any chain. Full check green (2612 unit, 148 browser); Codex pass 3 CLEAN.
-- [ ] J9f Builds still owed: old and new values in the splits and metadata reviews, multisig owner creation, Relayr re-sign of unfinished chains, old-pool position move.
+- [x] J9f Old and new values in the splits and details reviews (`src/edit-review-rows.js`). Full check green (2617 unit, 148 browser). Codex three passes: four wording findings fixed; two set aside (a split's runtime fallbacks when the project has no token or terminal, and 0xdead shown as an address).
+- [ ] J9g Builds still owed, each its own pull request: Relayr re-sign of unfinished launch chains, multisig owner creation, old-pool position move. Asked of jango with a design for each.
 
 ## Plan refinement
 - **Objective:** Close the items jango answered on 2026-11-14 so Juicescan does what juicebox.money does and states only what is true.
