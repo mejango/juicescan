@@ -7,6 +7,14 @@ export var APPROVAL_STATUS = {
   Failed: 5,
 };
 
+// The ruleset whose shop JBOmnichainDeployer.queueRulesetsOf carries into a newly queued one (_queueRulesetsOf):
+// the latest queued ruleset when it is approved (or needs no approval) and has a shop, else the current ruleset.
+// The caller cannot choose it, so a queue copied from any other ruleset would start with another shop.
+export function omnichainCarriedRulesetId(queue) {
+  var settled = queue.latestStatus === APPROVAL_STATUS.Approved || queue.latestStatus === APPROVAL_STATUS.Empty;
+  return BigInt(queue.latestId) !== 0n && settled && queue.latestHasShop ? BigInt(queue.latestId) : BigInt(queue.currentId);
+}
+
 function sameRuleset(a, b) {
   return !!a && !!b && BigInt(a.id) === BigInt(b.id);
 }

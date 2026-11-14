@@ -49,7 +49,7 @@ import { TIER_UNLIMITED_SUPPLY, assertNewTierPolicy, build721TierConfig, build72
 import { SHOP_MEDIA_METADATA_ABI, shopMediaMetadataArgs, shopMetadataName, prepareShopMediaMetadata } from './shop-media.js';
 import { buildOwnerMintTierIds, decode721RulesetMetadata } from './nft721-ruleset.js';
 import { normalizeProjectPayerMetadata, buildProjectPayerDeployCall, projectPayerRelayrEntry } from './project-payer.js';
-import { approvalStatusLabel, planRulesetQueue } from './ruleset-queue-lifecycle.js';
+import { approvalStatusLabel, omnichainCarriedRulesetId, planRulesetQueue } from './ruleset-queue-lifecycle.js';
 import { contractGasWithHeadroom, gasWithinCap, TRANSACTION_GAS_CAP } from './gas.js';
 import { timeZoneControl, timestampToZonedInput, zonedInputToTimestamp } from './time-zone.js';
 import { buildSetEnsProjectRecordCall, buildSetProjectHandleCall, canonicalProjectHandle, decodeSetEnsProjectRecordCall, decodeSetProjectHandleCall, normalizeProjectHandle, parseProjectHandleRoute, parseProjectHandleText, projectHandleEditorStep, projectHandleLocationUrl, readExactEnsController, readExactEnsResolverForNode, readExactEnsText, readExactEnsTextForNode, readProjectHandleBounded, readProjectHandlePartsBounded, verifyEnsProjectRecord, PROJECT_HANDLE_TEXT_KEY } from './project-handles.js';
@@ -24890,6 +24890,22 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
       state.currentDataHook = extraHook && !/^0x0+$/.test(extraHook) ? extraHook : '';
       state.currentUseDataHookForPay = !!(extra && (extra.useDataHookForPay != null ? extra.useDataHookForPay : extra[1]));
       state.currentUseDataHookForCashOut = !!(extra && (extra.useDataHookForCashOut != null ? extra.useDataHookForCashOut : extra[2]));
+      // The wrapper picks the shop it carries forward itself; refuse a source whose shop it would not carry.
+      var shopHook = function (c) { return String((c && (c.hook || c[0])) || '').toLowerCase(); };
+      var shopFlag = function (c) { return !!(c && (c.useDataHookForCashOut != null ? c.useDataHookForCashOut : c[1])); };
+      var shopOf = function (id) { return clientFor(project.chainId).readContract({ address: omniDeployer, abi: OMNI_TIERED_HOOK_ABI, functionName: 'tiered721HookOf', args: [pid, id] }); };
+      var situation = state.queueSituation, latestEntry = situation.latest && situation.latest[0];
+      var latestId = latestEntry ? toBigInt(latestEntry.id) : 0n;
+      var latestShop = latestId ? await shopOf(latestId) : null;
+      var carriedId = omnichainCarriedRulesetId({
+        currentId: toBigInt(situation.current[0].id), latestId: latestId, latestStatus: situation.latestApprovalStatus,
+        latestHasShop: !!latestShop && !/^(0x0*)?$/.test(shopHook(latestShop)),
+      });
+      var carried = carriedId === toBigInt(ruleset.id) ? cfg : await shopOf(carriedId);
+      if (shopHook(carried) !== shopHook(cfg) || shopFlag(carried) !== shopFlag(cfg)) {
+        state.unsupportedMultiCurrencyAccess = true;
+        if (!state.unsupportedQueueReason) state.unsupportedQueueReason = 'New rules would start with a different shop than the rules you copied. Copy the latest approved rules, or wait for approval.';
+      }
       state.shopChoice = 'continue';
       state.canAddShop = true; // the wrapper composes/carries its extra hook
       return;
@@ -25320,6 +25336,7 @@ function renderQueueRulesetModal(project, preferredQueueAction) {
           })).then(function () { state.payoutKinds = kinds; });
         }).then(function () {
           state.queueSourceLoading = false; state.queueSourceVerified = true; state.queueSourceError = null;
+          state.queueBaseline = JSON.parse(JSON.stringify(state.stages[0])); // the rules as read, for the review's old and new lines
           renderEditor();
         });
       });
@@ -25610,6 +25627,7 @@ async function submitQueueRuleset(project, state, selected, operatorAddr, setSta
   var limits = selected.map(function (chain) { return state.queueSchedules[chain.id].validUntil; }).filter(function (limit) { return limit != null; });
   var validUntil = limits.length ? Math.min.apply(Math, limits) : null;
   var scheduleRows = validUntil == null ? [] : [['Execute before', new Date(validUntil * 1000).toLocaleString() + ' to preserve this schedule. Rebuild if it expires; pending Safe/wallet transactions cannot be expired by this page.']];
+  scheduleRows = scheduleRows.concat(createFlow.queueChangeRows(state)); // then what changes, old and new
   function checkSchedule() { assertScheduleFresh(validUntil); }
   async function reverifySchedule() {
     checkSchedule(); await state.verifyQueuePosition(selected); checkSchedule();

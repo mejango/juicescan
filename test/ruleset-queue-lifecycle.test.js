@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { APPROVAL_STATUS, planRulesetQueue } from '../src/ruleset-queue-lifecycle.js';
+import { APPROVAL_STATUS, omnichainCarriedRulesetId, planRulesetQueue } from '../src/ruleset-queue-lifecycle.js';
 
 var current = { id: 10, cycleNumber: 7, start: 100, duration: 30 };
 var queued = { id: 11, cycleNumber: 8, start: 130, duration: 30 };
@@ -94,5 +94,21 @@ describe('custom approval hook reporting Active on a queued ruleset', function (
     var option = plan.options.find(function (o) { return o.action === plan.defaultAction; });
     expect(option.requiresStartDate).toBe(true);
     expect(option.mustStartAtOrAfter).toBeNull();
+  });
+});
+
+describe('the shop the omnichain deployer carries into a queue', function () {
+  var queue = { currentId: 10, latestId: 20, latestHasShop: true };
+
+  it('is the latest queued ruleset’s once approved, or when no approval is needed', function () {
+    expect(omnichainCarriedRulesetId(Object.assign({ latestStatus: APPROVAL_STATUS.Approved }, queue))).toBe(20n);
+    expect(omnichainCarriedRulesetId(Object.assign({ latestStatus: APPROVAL_STATUS.Empty }, queue))).toBe(20n);
+  });
+
+  it('is the current ruleset’s while the queued one waits for approval, was rejected, or has no shop', function () {
+    expect(omnichainCarriedRulesetId(Object.assign({ latestStatus: APPROVAL_STATUS.ApprovalExpected }, queue))).toBe(10n);
+    expect(omnichainCarriedRulesetId(Object.assign({ latestStatus: APPROVAL_STATUS.Failed }, queue))).toBe(10n);
+    expect(omnichainCarriedRulesetId({ currentId: 10, latestId: 20, latestStatus: APPROVAL_STATUS.Approved, latestHasShop: false })).toBe(10n);
+    expect(omnichainCarriedRulesetId({ currentId: 10, latestId: 0, latestStatus: APPROVAL_STATUS.Empty, latestHasShop: false })).toBe(10n);
   });
 });

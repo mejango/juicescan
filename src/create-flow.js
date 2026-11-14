@@ -1917,6 +1917,25 @@ function recipLabel(rec) {
 function stageSummaryParts(stage, idx, state) {
   return stageSummaryRaw(stage, idx, state).map(function (p) { return p ? p.charAt(0).toUpperCase() + p.slice(1) : p; });
 }
+// For the queue review: what changes, as rows. Ruleset #1 is compared with the rules it was copied from
+// (`state.queueBaseline`), each later ruleset with the one before it. A summary line that is gone is a "was" row
+// and a new one a "now" row. The first line (when it starts) is left out: the review has its own schedule rows.
+export function queueChangeRows(state) {
+  var rows = [], prev = state.queueBaseline;
+  if (!prev) return rows;
+  (state.stages || []).forEach(function (stage, i) {
+    var label = 'Ruleset #' + (i + 1);
+    var before = stageSummaryParts(prev, i, state).slice(1), after = stageSummaryParts(stage, i, state).slice(1);
+    var gone = before.filter(function (line) { return after.indexOf(line) === -1; });
+    var added = after.filter(function (line) { return before.indexOf(line) === -1; });
+    if (!gone.length && !added.length) rows.push([label, i ? 'Same as Ruleset #' + i : 'Unchanged']);
+    gone.forEach(function (line) { rows.push([label + ' was', line]); });
+    added.forEach(function (line) { rows.push([label + ' now', line]); });
+    prev = stage;
+  });
+  return rows;
+}
+
 // Render bullets as per-line divs with a hanging indent, so a wrapped line aligns under the text
 // (after the "• "), not under the bullet.
 function setBulletSummary(elx, parts) {
