@@ -6308,6 +6308,34 @@ function appendIndexedStats(statLine, stats) {
   statLine.appendChild(document.createTextNode(stats.paymentsCount === 1 ? ' payment' : ' payments'));
 }
 
+// The header's stat line, the same four juicebox.money shows: raised | balance | payments | owners or holders.
+// "raised" appears only when the indexed USD volume is priced; revnet holders are owners.
+export function appendHeaderStats(statLine, project) {
+  var stats = project.indexedStats;
+  var raised = stats ? usdFromScaled(stats.volumeUsd) : 0;
+  if (raised > 0) {
+    var rStrong = el('strong'); rStrong.textContent = formatUsd(raised); statLine.appendChild(rStrong);
+    statLine.appendChild(document.createTextNode(' raised'));
+    statLine.appendChild(headSep());
+  }
+  statLine.appendChild(mountUsdBalance(project, { suffix: ' balance' }));
+  appendIndexedStats(statLine, stats);
+  var one = project.isRevnet ? ' owner' : ' holder', many = one + 's';
+  statLine.appendChild(headSep());
+  var oStrong = el('strong'); oStrong.textContent = '…'; statLine.appendChild(oStrong);
+  var oLabel = document.createTextNode(many); statLine.appendChild(oLabel);
+  fetchOwnersCount(project).then(function (result) {
+    oStrong.textContent = ownerCountText(result);
+    oStrong.title = result && !result.exact
+      ? 'At least this many unique' + many + ' were found before the indexer result cap.'
+      : '';
+    oLabel.textContent = result && result.exact && result.count === 1 ? one : many;
+  }).catch(function () {
+    oStrong.textContent = '—';
+    oStrong.title = (project.isRevnet ? 'Owner' : 'Holder') + ' data is unavailable.';
+  });
+}
+
 // Abbreviate for a dense list, keeping THREE SIGNIFICANT FIGURES: 1.23b, 12.3m, 123k. The
 // previous ladder dropped to whole units above 10x each threshold, so 12,300 and 12,900 both
 // rendered "12k" — an order of magnitude of precision thrown away for one saved character.
@@ -7556,6 +7584,7 @@ export function applyProjectMetadata(project, record) {
   project.discord = meta.discord || null;
   project.telegram = meta.telegram || null;
   project.whatsapp = meta.whatsapp || null;
+  project.instagram = meta.instagram || null;
   project.domain = meta.domain || null;
   project.payDisclosure = meta.payDisclosure || null;
   project.tags = Array.isArray(meta.tags) ? meta.tags : [];
@@ -10640,6 +10669,14 @@ export function renderPayCard(project, cart) {
 function renderDetailHeader(project) {
   var header = el('div', 'project-detail-header' + (project._bendystrawRevalidating ? ' revalidating' : ''));
 
+  // The project's cover image, when its metadata names one, above everything else.
+  if (project.coverImageUri) {
+    var cover = document.createElement('img');
+    cover.className = 'detail-cover'; cover.alt = ''; cover.src = project.coverImageUri;
+    cover.addEventListener('error', function () { cover.remove(); });
+    header.appendChild(cover);
+  }
+
   // Top: logo + project title, vertically centered to each other.
   var topRow = el('div', 'detail-head-top');
   topRow.appendChild(renderLogo(project, 'detail-logo'));
@@ -10664,28 +10701,7 @@ function renderDetailHeader(project) {
   // Stat line: balance | supply (under the title). Balance is the cross-chain USD total; hover breaks
   // it down into the actual tokens stored on each chain.
   var statLine = el('div', 'detail-head-stats');
-  statLine.appendChild(mountUsdBalance(project, { suffix: ' balance' }));
-  if (project.isRevnet) {
-    // Revnet header: just Balance | Owners (unique holders, matching the Owners tab).
-    var sepSpan = el('span', 'detail-head-sep'); sepSpan.textContent = '|'; statLine.appendChild(sepSpan);
-    var oStrong = el('strong'); oStrong.textContent = '…'; statLine.appendChild(oStrong);
-    var oLabel = document.createTextNode(' owners'); statLine.appendChild(oLabel);
-    fetchOwnersCount(project).then(function (result) {
-      oStrong.textContent = ownerCountText(result);
-      oStrong.title = result && !result.exact
-        ? 'At least this many unique owners were found before the indexer result cap.'
-        : '';
-      oLabel.textContent = result && result.exact && result.count === 1
-        ? ' owner'
-        : ' owners';
-    }).catch(function () {
-      oStrong.textContent = '—';
-      oStrong.title = 'Owner data is unavailable.';
-    });
-  } else {
-    // Indexed activity (Bendystraw): volume raised + payment/contributor counts.
-    appendIndexedStats(statLine, project.indexedStats);
-  }
+  appendHeaderStats(statLine, project);
   titleCol.appendChild(statLine);
   topRow.appendChild(titleCol);
   header.appendChild(topRow);
@@ -10786,12 +10802,15 @@ function renderAboutCard(project) {
 }
 
 // Website + socials as a row of small underlined links. Returns null when none are set.
-function renderProjectLinks(project) {
+export function renderProjectLinks(project) {
   var entries = [];
   if (project.infoUri) entries.push(['Website', project.infoUri.indexOf('http') === 0 ? project.infoUri : ('https://' + project.infoUri)]);
   if (project.twitter) { var h = String(project.twitter).replace(/^@/, ''); entries.push(['X', /^https?:/.test(h) ? h : ('https://x.com/' + h)]); }
   if (project.discord) entries.push(['Discord', /^https?:/.test(project.discord) ? project.discord : ('https://' + String(project.discord).replace(/^\/+/, ''))]);
   if (project.telegram) { var tg = String(project.telegram); entries.push(['Telegram', /^https?:/.test(tg) ? tg : (tg.indexOf('t.me') === 0 ? 'https://' + tg : 'https://t.me/' + tg.replace(/^@/, ''))]); }
+  // As juicebox.money: WhatsApp only as an https link, Instagram only as a plain handle.
+  if (project.whatsapp && /^https:\/\//.test(String(project.whatsapp))) entries.push(['WhatsApp', String(project.whatsapp)]);
+  if (project.instagram) { var ig = String(project.instagram).replace(/^@/, '').trim(); if (/^[\w.]{1,30}$/.test(ig)) entries.push(['Instagram', 'https://instagram.com/' + ig]); }
   if (!entries.length) return null;
   var row = el('div', 'detail-about-links');
   entries.forEach(function (e) {

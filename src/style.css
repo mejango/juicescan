@@ -2754,6 +2754,15 @@ input[type="checkbox"].field {
   }
 }
 
+.detail-cover {
+  display: block;
+  width: 100%;
+  height: 128px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+@media (min-width: 640px) { .detail-cover { height: 176px; } }
 .detail-head-top {
   display: flex;
   align-items: center;
