@@ -32,6 +32,11 @@ describe('funding chart series', () => {
     expect(points[44].valueUsd).toBe(325);
   });
 
+  it('floors a flow-accrued balance that price moves pushed below zero', () => {
+    const points = fundingChartPoints([{ timestamp: NOW - 10, volumeUsd: usd(2000), balanceUsd: '-' + usd(1000) }], [], 'balance', 0, NOW);
+    expect(points[44].valueUsd).toBe(0);
+  });
+
   it('has no points without history', () => {
     expect(fundingChartPoints([], adds, 'balance', 0, NOW)).toEqual([]);
   });

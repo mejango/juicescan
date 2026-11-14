@@ -23,7 +23,10 @@ function usd(value) {
 
 // Even time buckets from the first event (or the window's start) to now, forward-filling quiet stretches.
 // Volume is cumulative intake: indexed payment volume plus funds added straight to the terminal, each at its own
-// time's dollar value, so it only rises. Balance is what the project holds, so payouts and cash outs pull it down.
+// time's dollar value, so it only rises. Balance is the indexer's flow-accrued dollar balance: every inflow and
+// outflow at its own time's rate, so payouts and cash outs pull it down. It is not holdings at today's price, and
+// price moves between an inflow and its outflow can push the sum below zero; a balance is never negative, so it
+// floors at 0.
 export function fundingChartPoints(moments, adds, metric, rangeSeconds, now) {
   var events = [];
   moments.forEach(function (moment) {
@@ -53,7 +56,7 @@ export function fundingChartPoints(moments, adds, metric, rangeSeconds, now) {
   for (var bar = 0; bar < BARS; bar++) {
     var end = t0 + (span * (bar + 1)) / BARS;
     consume(end);
-    points.push({ timestamp: Math.floor(end), valueUsd: lastBase + added });
+    points.push({ timestamp: Math.floor(end), valueUsd: Math.max(0, lastBase + added) });
   }
   return points;
 }
