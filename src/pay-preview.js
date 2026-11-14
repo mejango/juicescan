@@ -276,3 +276,29 @@ export function prepareCardPay(opts) {
     return failure ? unavailable(failure.message, true) : unavailable(errMessage(error, 'preview unavailable'));
   });
 }
+
+function payPreviewScore(preview) {
+  if (!preview || preview.unavailable || preview.received == null) return -1n;
+  return BigInt(preview.received);
+}
+
+// One rule, the same as the web clients' (SDK prepareBestUserPay): most tokens to the payer, then the larger
+// guaranteed minimum, then the larger total issuance, then the direct terminal.
+export function payRouteIsBetter(candidate, current) {
+  var candidateScore = payPreviewScore(candidate.preview);
+  var currentScore = payPreviewScore(current && current.preview);
+  if (candidateScore !== currentScore) return candidateScore > currentScore;
+  if (candidateScore < 0n) return false;
+
+  // Equal previews can hide unequal fallbacks; the larger floor is the larger guaranteed delivery.
+  var candidateMin = candidate.preview.minReturnedTokens, currentMin = current.preview.minReturnedTokens;
+  if (candidateMin != null && currentMin != null && BigInt(candidateMin) !== BigInt(currentMin)) return BigInt(candidateMin) > BigInt(currentMin);
+
+  var candidateTotal = candidate.preview && candidate.preview.reserved != null
+    ? candidateScore + BigInt(candidate.preview.reserved) : candidateScore;
+  var currentTotal = current && current.preview && current.preview.reserved != null
+    ? currentScore + BigInt(current.preview.reserved) : currentScore;
+  if (candidateTotal !== currentTotal) return candidateTotal > currentTotal;
+
+  return !candidate.viaRouter && current && current.viaRouter;
+}

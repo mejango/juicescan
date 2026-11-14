@@ -55,7 +55,8 @@ vi.mock('../src/component-base.js', () => ({
   truncAddr: value => value,
 }));
 
-vi.mock('../src/pay-preview.js', () => ({
+vi.mock('../src/pay-preview.js', async (original) => ({
+  payRouteIsBetter: (await original()).payRouteIsBetter,
   computePayPreview: payState.preview,
   prepareCardPay: payState.prepare,
   formatTokenCount: value => String(value),
@@ -104,6 +105,15 @@ describe('pay route trust boundary', () => {
       amount: 1n,
       beneficiary: BENEFICIARY,
     })).resolves.toMatchObject({ address: TERMINAL, viaRouter: false });
+  });
+
+  it('breaks an equal preview by the larger guaranteed minimum', async () => {
+    payState.prepare.mockImplementation(({ terminal }) => Promise.resolve(
+      Object.assign(quote(900n), { minReturnedTokens: terminal === ROUTER ? 97n : 47n }),
+    ));
+    await expect(resolveBestPayRoute({
+      chainId: 1, projectId: '7', token: NATIVE, amount: 1n, beneficiary: BENEFICIARY,
+    })).resolves.toMatchObject({ address: ROUTER, viaRouter: true });
   });
 
   it('never converts unavailable, rejected, negative, or missing quotes into a zero slippage floor', async () => {

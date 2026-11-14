@@ -17,7 +17,7 @@ import { bucketPoolReserves, downsampleTimeSeries, smoothPriceSeries } from './t
 import { PAY_DEFAULT_SLIPPAGE_BPS, quotedOutputFloor } from './slippage.js';
 import { assertPayoutDistributionFresh, preparePayoutDistributions, prepareReservedDistributions, verifyDistributionReceipt, distributionCallFromTransaction, verifyQueuedDistributionReceipt, readDistributionTokens } from './distribution-plan.js';
 import { cacheStale, cacheValidated } from './cache.js';
-import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive } from './pay-preview.js';
+import { computePayPreview, prepareCardPay, formatTokenCount, formatRawAdaptive, payRouteIsBetter } from './pay-preview.js';
 import { PAY_QUOTE_FAILED_MESSAGE, V4_QUOTER_BY_CHAIN, poolKeyOfAbi, uniswapV4PoolId, v4QuoterAbi } from './pay-prepare.js';
 import { bendystrawQuery, setBendystrawNetwork } from './bendystraw-client.js';
 import { idMapFromGroup, readSuckerPairsOf, resolveSuckerGroup } from './sucker-group.js';
@@ -10239,6 +10239,13 @@ export function renderPayCard(project, cart) {
     var gen = ++previewGen;
     var identity = payIdentity(amt, getEffectiveAccount());
     var terminal = state.token.viaRouter ? routerTerminalFor(state.chainId) : getAddress('JBMultiTerminal', state.chainId);
+    // A token the project takes directly is also quoted through the router it lists, and the payment goes where
+    // the payer gets the most. Item checkout stays direct: the hook only sees what a swap leaves.
+    var routes = [{ address: terminal, viaRouter: !!state.token.viaRouter }];
+    var listed = state.terminalSurfaceChain === state.chainId ? state.terminalSurface : null;
+    if (state.mode === 'pay' && !state.token.viaRouter && !previewTierIds.length && listed && listed.hasDirect && listed.hasRouter) {
+      routes.push({ address: routerTerminalFor(state.chainId), viaRouter: true });
+    }
     var request = state.mode === 'addbalance'
       ? computePayPreview({
         chainId: state.chainId,
@@ -10248,16 +10255,21 @@ export function renderPayCard(project, cart) {
         beneficiary: getEffectiveAccount() || undefined,
         terminal: terminal,
       })
-      : prepareCardPay({
-        chainId: state.chainId,
-        terminal: terminal,
-        projectId: pidOn(project, state.chainId),
-        token: state.token.address,
-        amount: amt,
-        beneficiary: getEffectiveAccount(),
-        shop: state.shop,
-        tierIds: previewTierIds,
-        slippageBps: paySlippageBps(amt, getEffectiveAccount()),
+      : Promise.all(routes.map(function (route) {
+        return prepareCardPay({
+          chainId: state.chainId,
+          terminal: route.address,
+          projectId: pidOn(project, state.chainId),
+          token: state.token.address,
+          amount: amt,
+          beneficiary: getEffectiveAccount(),
+          shop: state.shop,
+          tierIds: previewTierIds,
+          slippageBps: paySlippageBps(amt, getEffectiveAccount()),
+        }).then(function (preview) { return { preview: Object.assign({}, preview, { terminal: route.address, viaRouter: route.viaRouter }), viaRouter: route.viaRouter }; });
+      })).then(function (quoted) {
+        // The token's own entry is first, so its reason shows when neither route can be quoted.
+        return quoted.reduce(function (best, route) { return payRouteIsBetter(route, best) ? route : best; }).preview;
       });
     request.then(function (p) {
       if (gen !== previewGen) return;
@@ -10366,6 +10378,8 @@ export function renderPayCard(project, cart) {
 
     var isNative = state.token.address.toLowerCase() === NATIVE_TOKEN.toLowerCase();
     var viaRouter = !!state.token.viaRouter; // swap currency → authorize via a gasless Permit2 signature, not a router approve
+    // The payment goes to the terminal its quote came from; the checks below refuse a quote for other inputs.
+    if (!addBalance && state.preview && state.preview.terminal) { terminal = state.preview.terminal; viaRouter = !!state.preview.viaRouter; }
     if (addBalance && viaRouter) {
       status.textContent = 'Add to balance only supports tokens the project accepts directly; router swaps have no onchain minimum-output field for this action.';
       return;

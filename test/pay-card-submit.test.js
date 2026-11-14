@@ -73,6 +73,31 @@ it('sends prepareUserPay metadata and minimum to the terminal for exactly the re
   expect(tx.holdLegacyTargets).toEqual([terminal, registry]);
 });
 
+it('quotes the router the project lists too, and pays whichever gives the payer more', async () => {
+  terminals = [terminal, registry];
+  runtime.prepare.mockImplementation(async (_client, args) => args.terminal === registry ? prepared('0xcc', 1200n) : prepared('0xaa', 900n));
+  await card(603); type('1');
+  await vi.waitFor(() => expect(runtime.prepare.mock.calls.map(([, args]) => args.terminal).sort()).toEqual([terminal, registry].sort()));
+  await vi.waitFor(() => expect(document.querySelector('.paybox-yg-val').textContent).not.toBe('…'));
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  const tx = runtime.execute.mock.lastCall[0];
+  expect(tx.address).toBe(registry);
+  expect(tx.args).toEqual([603n, NATIVE, 10n ** 18n, runtime.account, 1200n, '', '0xcc']);
+  expect(tx.value).toBe(10n ** 18n);
+});
+
+it('stays on the direct terminal when the listed router quotes less or cannot quote', async () => {
+  terminals = [terminal, registry];
+  runtime.prepare.mockImplementation(async (_client, args) => { if (args.terminal === registry) throw new Error('no route'); return prepared('0xaa', 900n); });
+  await card(604); type('1');
+  await vi.waitFor(() => expect(runtime.prepare).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(document.querySelector('.paybox-yg-val').textContent).not.toBe('…'));
+  await review(); confirmButton().click();
+  await vi.waitFor(() => expect(runtime.execute).toHaveBeenCalledTimes(1));
+  expect(runtime.execute.mock.lastCall[0].address).toBe(terminal);
+});
+
 async function directUsdc(id) {
   contexts = [{ token: USDC, decimals: 6, currency: 2 }];
   runtime.prepare.mockResolvedValue(prepared('0xbb', 5n));
