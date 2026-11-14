@@ -606,6 +606,7 @@ function renderActivityCard(address, isOwn, live) {
   var totalCount = 0;
   var loadedAny = false;
   var loadedIds = {};
+  var unnamed = []; // rows drawn before their project stub landed: { ev, rowEl }
 
   function eventKey(ev) {
     return ev.id || ((ev.txHash || '') + ':' + Number(ev.chainId) + ':' + Number(ev.projectId));
@@ -628,19 +629,39 @@ function renderActivityCard(address, isOwn, live) {
     ordered.forEach(function (ev) {
       var key = eventKey(ev);
       if (loadedIds[key]) return;
-      var stub = stubFor(ev);
-      var row = activityRowFromEvent(ev, stub);
-      if (!row) return;
-      var rowEl = renderActivityRow(row, stub);
-      // Account context: each row also links to the project it happened on.
-      if (Number(ev.projectId) > 0) {
-        var main = rowEl.querySelector('.activity-main');
-        if (main) main.appendChild(projectLinkNode('account-activity-proj', ev.chainId, ev.projectId, stub.name));
-      }
+      var rowEl = rowFor(ev);
+      if (!rowEl) return;
+      if (!stubs[Number(ev.chainId) + ':' + Number(ev.projectId)]) unnamed.push({ ev: ev, rowEl: rowEl });
       if (prepend) body.insertBefore(rowEl, body.firstChild);
       else body.appendChild(rowEl);
       loadedIds[key] = true;
       loadedAny = true;
+    });
+  }
+
+  function rowFor(ev) {
+    var stub = stubFor(ev);
+    var row = activityRowFromEvent(ev, stub);
+    if (!row) return null;
+    var rowEl = renderActivityRow(row, stub);
+    // Account context: each row also links to the project it happened on.
+    if (Number(ev.projectId) > 0) {
+      var main = rowEl.querySelector('.activity-main');
+      if (main) main.appendChild(projectLinkNode('account-activity-proj', ev.chainId, ev.projectId, stub.name));
+    }
+    return rowEl;
+  }
+
+  // Project names and symbols land after the rows: redraw the rows that were waiting on them, in place.
+  function nameRows(events) {
+    return loadStubs(events).then(function () {
+      if (!live()) return;
+      unnamed = unnamed.filter(function (entry) {
+        if (!stubs[Number(entry.ev.chainId) + ':' + Number(entry.ev.projectId)]) return true;
+        var named = rowFor(entry.ev);
+        if (named && entry.rowEl.isConnected) entry.rowEl.replaceWith(named);
+        return false;
+      });
     });
   }
 
@@ -650,11 +671,11 @@ function renderActivityCard(address, isOwn, live) {
     status.textContent = 'Loading activity…';
     return fetchAccountActivityWindow(address, loadedCount + ACTIVITY_PAGE).then(function (page) {
       totalCount = page.totalCount;
-      var items = page.items.slice(loadedCount, loadedCount + ACTIVITY_PAGE);
-      return loadStubs(items).then(function () { return items; });
+      return page.items.slice(loadedCount, loadedCount + ACTIVITY_PAGE);
     }).then(function (items) {
       if (!live()) return;
       appendRows(items);
+      nameRows(items);
       loadedCount += items.length;
       status.style.display = 'none';
       if (!loadedAny) {
@@ -688,13 +709,11 @@ function renderActivityCard(address, isOwn, live) {
         var fresh = page.items.slice(0, ACTIVITY_PAGE).filter(function (ev) {
           return !loadedIds[eventKey(ev)];
         });
-        return loadStubs(fresh).then(function () {
-          if (!card.isConnected || !live()) return;
-          appendRows(fresh, true);
-          loadedCount += fresh.length;
-          if (fresh.length) status.style.display = 'none';
-          more.style.display = loadedCount < totalCount ? '' : 'none';
-        });
+        appendRows(fresh, true);
+        nameRows(fresh);
+        loadedCount += fresh.length;
+        if (fresh.length) status.style.display = 'none';
+        more.style.display = loadedCount < totalCount ? '' : 'none';
       }).catch(function () {}).then(scheduleRefresh);
     }, ACTIVITY_POLL_MS);
   }
@@ -785,7 +804,8 @@ function renderTokenHoldingsCard(address, live) {
     account: address.toLowerCase(), version: VERSION,
   }, 250).then(function (items) {
     var rows = dedupeTokenHoldings(items);
-    return fetchProjectStubs(rows).then(function (stubMap) {
+    // Balances draw at once under each project's id; names and symbols fill in when they land.
+    function draw(stubMap) {
       if (!live() || !body.isConnected) return;
       body.innerHTML = '';
       if (!rows.length) { body.textContent = 'No project token balances for this account.'; return; }
@@ -808,7 +828,9 @@ function renderTokenHoldingsCard(address, live) {
         }
         body.appendChild(line);
       });
-    });
+    }
+    draw({});
+    return fetchProjectStubs(rows).then(draw);
   }).catch(function () {
     if (!live() || !body.isConnected) return;
     body.textContent = 'Could not load token balances from Bendystraw.';
@@ -827,7 +849,7 @@ function renderNftHoldingsCard(address, live) {
     owner: address.toLowerCase(), version: VERSION,
   }, 250).then(function (items) {
     var groups = groupNftHoldings(items);
-    return fetchProjectStubs(groups).then(function (stubMap) {
+    function draw(stubMap) {
       if (!live() || !body.isConnected) return;
       body.innerHTML = '';
       if (!groups.length) { body.textContent = 'No store items held by this account.'; return; }
@@ -843,7 +865,9 @@ function renderNftHoldingsCard(address, live) {
         });
         body.appendChild(line);
       });
-    });
+    }
+    draw({});
+    return fetchProjectStubs(groups).then(draw);
   }).catch(function () {
     if (!live() || !body.isConnected) return;
     body.textContent = 'Could not load store items from Bendystraw.';
@@ -890,11 +914,13 @@ function renderOwnedCard(address, live) {
     });
   })).then(function (pages) { return [].concat.apply([], pages); });
 
-  Promise.all([direct, viaSafe]).then(function (results) {
+  // Directly owned projects draw at once; Safe-owned ones join when the Safe lookups finish. `safeOwned` is null
+  // until then, and the card never says "none" before it knows.
+  function draw(directRows, safeOwned) {
     if (!live() || !body.isConnected) return;
-    var rows = dedupeOwnedProjects(results[0], results[1]);
+    var rows = dedupeOwnedProjects(directRows, safeOwned || []);
     body.innerHTML = '';
-    if (!rows.length) { body.textContent = 'No V6 projects owned by this account.'; return; }
+    if (!rows.length) { body.textContent = safeOwned ? 'No V6 projects owned by this account.' : 'Loading…'; return; }
     rows.forEach(function (row) {
       var line = el('div', 'account-proj-row');
       line.appendChild(projectLinkNode('account-proj-link', row.chainId, row.projectId, row.name || row.handle));
@@ -910,11 +936,21 @@ function renderOwnedCard(address, live) {
       }
       body.appendChild(line);
     });
-    if (safeOwnershipPartial) {
+    if (!safeOwned) {
+      var loading = el('div', 'account-holdings-cap');
+      loading.textContent = 'Loading Safe-owned projects…';
+      body.appendChild(loading);
+    } else if (safeOwnershipPartial) {
       var warning = el('div', 'account-holdings-cap');
       warning.textContent = 'Some Safe-owned projects could not be loaded.';
       body.appendChild(warning);
     }
+  }
+  var safeDone = false;
+  direct.then(function (rows) { if (!safeDone) draw(rows, null); }).catch(function () {});
+  Promise.all([direct, viaSafe]).then(function (results) {
+    safeDone = true;
+    draw(results[0], results[1]);
   }).catch(function () {
     if (!live() || !body.isConnected) return;
     body.textContent = 'Could not load owned projects from Bendystraw or Safe services.';
@@ -939,9 +975,10 @@ function renderOperatedCard(address, live) {
     body.innerHTML = '';
     if (!groups.length) { body.textContent = 'This account operates no V6 projects.'; return; }
 
-    // Best-effort project names for the group headers.
-    fetchProjectStubs(groups).then(function (stubMap) {
-      if (!body.isConnected) return;
+    // Roles draw at once under each project's id; best-effort names fill the group headers when they land.
+    function draw(stubMap) {
+      if (!live() || !body.isConnected) return;
+      body.innerHTML = '';
       groups.forEach(function (g) {
         var stub = stubMap[g.chainId + ':' + g.projectId];
         var row = el('div', 'powers-row');
@@ -974,7 +1011,9 @@ function renderOperatedCard(address, live) {
         row.appendChild(list);
         body.appendChild(row);
       });
-    });
+    }
+    draw({});
+    fetchProjectStubs(groups).then(draw);
   }).catch(function () {
     if (!live() || !body.isConnected) return;
     body.textContent = 'Could not read permissions from Bendystraw.';

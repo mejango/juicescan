@@ -6474,6 +6474,7 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .backoffice-batch-calls { margin: 4px 0 0; padding-left: 18px; font-size: 11px; color: var(--muted-2); }
 .safe-batch-proposed { flex: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 6px; color: var(--c-teal); }
 .safe-batch-proposed a { color: var(--c-teal); text-decoration: underline; text-underline-offset: 2px; }
+.safe-batch-checking { flex-basis: 100%; margin-top: 6px; font-size: 11px; color: var(--muted-2); }
 .safe-batch-remove-proposed { font-family: inherit; font-size: inherit; border: 0; background: transparent; padding: 0; color: var(--muted-2); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .safe-batch-tray-status { margin-top: 8px; font-size: 11px; color: var(--muted-2); word-break: break-word; }
 .safe-batch-tray-status:empty { display: none; }
@@ -6516,3 +6517,9 @@ select.create-input-auto { width: auto; max-width: 100%; }
 .native-nft-inventory caption { text-align: left; margin-bottom: 8px; color: var(--text-muted); }
 .native-nft-inventory th, .native-nft-inventory td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
 .native-nft-inventory th:last-child, .native-nft-inventory td:last-child { text-align: right; }
+/* A confirm dialog opened before its reads landed: the rows still loading read quieter than the known ones. */
+.tx-decoded-argval.pending { color: var(--muted-2); font-style: italic; }
+button[aria-busy="true"] { cursor: progress; }
+/* Content kept on screen while its replacement loads reads as stale, not as the new result. */
+.data-card-result[aria-busy="true"] { opacity: 0.45; }
+.project-detail[aria-busy="true"] { cursor: progress; }

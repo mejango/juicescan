@@ -5,10 +5,11 @@
 import {
   el, createComponentWrapper, createProjectAndChainInput,
   createWalletButton, selectChain, firstChainForNetwork,
-  executeTransaction, executeRead, renderError, getAddress, getAccount, getViewAs,
+  executeTransaction, executeRead, openPendingReview, renderError, getAddress, getAccount, getViewAs,
   getChainTokens, parseAmount, formatAmount, parseHashDefaults,
 } from './component-base.js';
 import { projectDiscovery } from './project-discovery.js';
+import { chainNameFor } from './chain.js';
 
 export var burnTokensAbi = [{
   type: 'function', name: 'burnTokensOf', stateMutability: 'nonpayable',
@@ -92,14 +93,14 @@ export function renderBurnComponent() {
 
     // Balance display — always the CONNECTED wallet's balance: the burn spends from the real signer,
     // so showing a View-as account's balance here would misstate what this form can actually burn.
-    if (state.balance !== null) {
+    if (state.balance !== null || (getAccount() && state.selectedChain && state.projectId)) {
       var balBox = el('div', 'pay-preview');
       var row = el('div', 'preview-row');
       var lbl = el('span', 'preview-label');
       lbl.textContent = 'Your project token balance';
       row.appendChild(lbl);
       var val = el('span', 'preview-value');
-      val.textContent = formatAmount(state.balance, 18);
+      val.textContent = state.balance !== null ? formatAmount(state.balance, 18) : (state.balanceFailed ? 'Could not load' : 'Loading…');
       row.appendChild(val);
       balBox.appendChild(row);
       if (getViewAs()) {
@@ -168,6 +169,7 @@ export function renderBurnComponent() {
     var tokensAddr = getAddress('JBTokens', state.selectedChain);
     if (!tokensAddr) return;
 
+    state.balanceFailed = false;
     executeRead({
       chainId: state.selectedChain,
       address: tokensAddr,
@@ -177,7 +179,7 @@ export function renderBurnComponent() {
     }).then(function(result) {
       state.balance = result;
       updateUI();
-    }).catch(function() {});
+    }).catch(function() { state.balanceFailed = true; updateUI(); });
   }
 
   async function executeBurn() {
@@ -206,45 +208,56 @@ export function renderBurnComponent() {
     if (!tokensAddr || !directoryAddr) {
       state.error = 'Juicebox contracts are unavailable on this chain'; updateUI(); return;
     }
+    var summaryRows = [
+      ['Burning', formatAmount(tokenCount, 18) + ' tokens: gone for good'],
+      ['From', holder],
+      ['Project', '#' + String(state.projectId)],
+      state.memo ? ['Memo', state.memo] : null,
+    ].filter(Boolean);
+    // The review opens at the click; the balance and controller checks decide the exact call before it can be sent.
+    var review = openPendingReview({ action: 'Burn tokens', chain: chainNameFor(state.selectedChain), rows: summaryRows });
+    if (review.closed) return;
     var freshBalance, controllerAddr;
     try {
-      freshBalance = await executeRead({
-        chainId: state.selectedChain,
-        address: tokensAddr,
-        abi: totalBalanceOfAbi,
-        functionName: 'totalBalanceOf',
-        args: [holder, BigInt(state.projectId)],
-      });
-      if (tokenCount > freshBalance) {
-        state.balance = freshBalance;
-        state.error = 'Your balance changed. Review the amount before burning.';
-        updateUI();
-        return;
-      }
-      controllerAddr = await executeRead({
-        chainId: state.selectedChain,
-        address: directoryAddr,
-        abi: controllerOfAbi,
-        functionName: 'controllerOf',
-        args: [BigInt(state.projectId)],
-      });
+      var checks = await Promise.all([
+        executeRead({
+          chainId: state.selectedChain,
+          address: tokensAddr,
+          abi: totalBalanceOfAbi,
+          functionName: 'totalBalanceOf',
+          args: [holder, BigInt(state.projectId)],
+        }),
+        executeRead({
+          chainId: state.selectedChain,
+          address: directoryAddr,
+          abi: controllerOfAbi,
+          functionName: 'controllerOf',
+          args: [BigInt(state.projectId)],
+        }),
+      ]);
+      freshBalance = checks[0]; controllerAddr = checks[1];
     } catch (e) {
       state.error = 'Could not verify the current balance and project controller.';
+      review.fail(state.error);
+      updateUI();
+      return;
+    }
+    if (tokenCount > freshBalance) {
+      state.balance = freshBalance;
+      state.error = 'Your balance changed. Review the amount before burning.';
+      review.fail(state.error);
       updateUI();
       return;
     }
     if (!controllerAddr || /^0x0{40}$/i.test(controllerAddr)) {
-      state.error = 'The project has no active controller.'; updateUI(); return;
+      state.error = 'The project has no active controller.'; review.fail(state.error); updateUI(); return;
     }
+    if (review.closed) return;
 
     executeTransaction({
       ...buildBurnArgs({ chainId: state.selectedChain, controllerAddr: controllerAddr, holder: holder, projectId: state.projectId, tokenCount: tokenCount, memo: state.memo || '' }),
-      confirmSummary: { action: 'Burn tokens', rows: [
-        ['Burning', formatAmount(tokenCount, 18) + ' tokens: gone for good'],
-        ['From', holder],
-        ['Project', '#' + String(state.projectId)],
-        state.memo ? ['Memo', state.memo] : null,
-      ].filter(Boolean) },
+      confirmSummary: { action: 'Burn tokens', rows: summaryRows },
+      confirmSession: review,
       reverify: async function () {
         var latestBalance = await executeRead({
           chainId: state.selectedChain,

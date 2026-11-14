@@ -26,6 +26,7 @@ export const erc20ApproveAbi=[{type:'function',name:'approve',stateMutability:'n
 export const readErc20Allowance=async()=>0n;
 export async function executeTransaction(options){window.native.execution=options;await options.onSending?.();window.native.executions++}
 export async function waitForTrackedTransactionReceipt(){return {status:'success'}}
+export function openPendingReview(){return {closed:false,setRows(){},fail(){},close(){}}}
 export function onEffectiveAccountChange(){return ()=>{}}
 `}));
  }}]}).then(result=>result.outputFiles[0].text);return harness;

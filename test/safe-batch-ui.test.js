@@ -4,14 +4,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { decodeFunctionData } from 'viem';
 
-const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', safeInfo: null, pending: [] }));
+const runtime = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', safeInfo: null, pending: [], nextNonce: null }));
 // Every RPC read fails closed: the surfaces under test never depend on a live chain.
 const offlineClient = new Proxy({}, { get: (_, key) => (key === 'then' ? undefined : () => Promise.reject(new Error('offline'))) });
 vi.mock('../src/component-base.js', async importOriginal => ({
   ...await importOriginal(), getAccount: () => runtime.account, getEffectiveAccount: () => runtime.account, connect: vi.fn(async () => {}),
   isSafeConnected: () => false, getWalletClient: () => null, createPublicClientForChain: () => offlineClient,
 }));
-vi.mock('../src/safe.js', async importOriginal => ({ ...await importOriginal(), listPendingSafeTxs: vi.fn(async () => runtime.pending) }));
+vi.mock('../src/safe.js', async importOriginal => { const real = await importOriginal(); return { ...real, listPendingSafeTxs: vi.fn(async () => runtime.pending),
+  getSafeNextNonce: vi.fn((chainId, safe) => (runtime.nextNonce ? runtime.nextNonce() : real.getSafeNextNonce(chainId, safe))) }; });
 vi.mock('../src/discover.js', async importOriginal => ({ ...await importOriginal(), safeInfoForAuthority: vi.fn(async () => runtime.safeInfo) }));
 
 import { renderBuybackHookCard } from '../src/discover.js';
@@ -29,7 +30,7 @@ const tabs = node => Array.from(node.querySelectorAll('[role="tab"]')).map(b => 
 const rows = node => Array.from(node.querySelectorAll('.safe-batch-table .splits-row:not(.splits-head)')).map(r => r.children[1].textContent);
 const buttons = node => Array.from(node.querySelectorAll('button')).map(b => b.textContent);
 
-beforeEach(() => { localStorage.clear(); runtime.account = OWNER; runtime.safeInfo = null; runtime.pending = []; });
+beforeEach(() => { localStorage.clear(); runtime.account = OWNER; runtime.safeInfo = null; runtime.pending = []; runtime.nextNonce = null; });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 afterEach(() => { document.querySelectorAll('dialog').forEach(node => { if (node.open) node.close(); node.remove(); }); document.body.innerHTML = ''; });
 
@@ -62,7 +63,9 @@ describe('tray', () => {
     const tray = renderSafeBatchTray(project());
     document.body.appendChild(tray);
     expect(buttons(tray)).toContain('Review and propose on Base');
+    expect(tray.querySelector('.safe-batch-checking').textContent).toBe('Checking for an existing proposal…'); // announced from the first paint
     await tick(); await tick();
+    expect(tray.querySelector('.safe-batch-checking')).toBeNull();
     expect(tray.querySelector('.safe-batch-proposed').textContent).toContain('Already proposed on Base as Safe transaction #10 (1/2 signatures)');
     expect(tray.querySelector('.safe-batch-proposed a').href).toContain('multisig_');
     expect(buttons(tray)).not.toContain('Review and propose on Base');
@@ -78,7 +81,7 @@ describe('batch dialog', () => {
     const tray = renderSafeBatchTray(project());
     document.body.appendChild(tray);
     tray.querySelector('.safe-batch-review').click();
-    await vi.waitFor(() => expect(dialog()).not.toBeNull());
+    await vi.waitFor(() => expect(dialog().querySelector('.safe-batch-step')).not.toBeNull());
     const dlg = dialog();
     expect(dlg.querySelector('.modal-title').textContent).toBe('Batch on Base');
     expect(Array.from(dlg.querySelectorAll('.tx-decoded-argname')).map(n => n.textContent)).toContain('Route: ');
@@ -114,9 +117,65 @@ describe('batch dialog', () => {
     const tray = renderSafeBatchTray(project());
     document.body.appendChild(tray);
     tray.querySelector('.safe-batch-review').click();
-    await vi.waitFor(() => expect(dialog()).not.toBeNull());
+    await vi.waitFor(() => expect(dialog().querySelector('.safe-batch-refusal')).not.toBeNull());
     expect(dialog().querySelector('.safe-batch-refusal').textContent).toBe('Connected wallet is not the owner. Switch to 0x1111...1111.');
     expect(dialog().querySelector('.create-modal-foot .create-btn.primary').disabled).toBe(true);
+  });
+});
+
+describe('batch dialog opens at the click', () => {
+  const argRows = dlg => Array.from(dlg.querySelectorAll('.tx-decoded-arg')).map(n => n.textContent);
+  const primary = dlg => dlg.querySelector('.create-modal-foot .create-btn.primary');
+  const agree = dlg => dlg.querySelector('.tx-confirm-agree input');
+  function deferred() { let resolve, reject; const promise = new Promise((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
+
+  it('shows Loading… rows, locked, until who sends and the Safe nonce are read, then the nonce choice', async () => {
+    saveTray(8453, 6, [hook()]);
+    const info = deferred(), nonce = deferred();
+    runtime.safeInfo = info.promise; runtime.nextNonce = () => nonce.promise;
+    runtime.pending = [{ nonce: 7, to: OTHER, data: '0x', operation: 0 }];
+    const tray = renderSafeBatchTray(project());
+    document.body.appendChild(tray);
+    tray.querySelector('.safe-batch-review').click();
+    await tick();
+    const dlg = dialog();
+    expect(dlg.querySelector('.modal-title').textContent).toBe('Batch on Base');
+    expect(argRows(dlg)).toEqual(['On: Base', 'From: Loading…', 'Route: Loading…']);
+    expect(dlg.querySelector('.safe-batch-step')).toBeNull();
+    expect(primary(dlg).disabled).toBe(true);
+    expect(agree(dlg).disabled).toBe(true);
+
+    info.resolve({ owners: [OWNER], threshold: 2 });
+    await vi.waitFor(() => expect(argRows(dlg)).toContain('Safe nonce: Loading…'));
+    expect(argRows(dlg)).toContain('From: 0x1111...1111 (Safe)');
+    expect(primary(dlg).disabled).toBe(true);
+    expect(agree(dlg).disabled).toBe(true);
+
+    nonce.resolve(7);
+    await vi.waitFor(() => expect(dlg.querySelector('.safe-nonce-input')).not.toBeNull());
+    expect(Array.from(dlg.querySelectorAll('.safe-nonce-input option')).map(o => o.textContent)).toEqual(['7, replaces what is queued there', '8, next available']);
+    expect(dlg.querySelectorAll('.safe-batch-step')).toHaveLength(1);
+    expect(primary(dlg).textContent).toBe('Propose batch to Safe');
+    expect(primary(dlg).disabled).toBe(true); // the acknowledgement is for the exact batch now on screen
+    expect(agree(dlg).disabled).toBe(false);
+    agree(dlg).click();
+    expect(primary(dlg).disabled).toBe(false);
+  });
+
+  it('ends closed with the reason when the Safe nonce cannot be read', async () => {
+    saveTray(8453, 6, [hook()]);
+    runtime.safeInfo = { owners: [OWNER], threshold: 2 };
+    runtime.nextNonce = () => Promise.reject(new Error('Safe service is unreachable.'));
+    const tray = renderSafeBatchTray(project());
+    document.body.appendChild(tray);
+    tray.querySelector('.safe-batch-review').click();
+    await vi.waitFor(() => expect(dialog().querySelector('.tx-confirm-status.error')).not.toBeNull());
+    expect(dialog().querySelector('.tx-confirm-status.error').textContent).toBe('Safe service is unreachable.');
+    expect(argRows(dialog())).toContain('Safe nonce: Not loaded');
+    expect(primary(dialog()).disabled).toBe(true);
+    expect(agree(dialog()).disabled).toBe(true);
+    await vi.waitFor(() => expect(tray.querySelector('.safe-batch-tray-status').textContent).toBe('Safe service is unreachable.'));
+    expect(tray.querySelector('.safe-batch-review').disabled).toBe(false);
   });
 });
 

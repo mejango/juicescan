@@ -28,3 +28,44 @@ juicebox.money and revnet.money items are tracked in those repos' `tasks/todo.md
 - **Verification:** A unit or browser regression per fix, reverted once to see it fail where the fix is a gate; full `npm run check` per PR; CI green before asking to merge. Transaction-argument changes round-trip through the ABI tests.
 - **Resource budget:** One worktree, PRs sized so one `npm run check` (about 8 minutes) covers each; edits in the main session; read-only subagents only for the revnet comparison and for review. Replan if a fix needs an SDK release or a contract read contradicts a report.
 
+
+# Open first, fill in after (2026-11-14)
+
+jango: do the whole inventory of places where Juicescan can feel faster the way juicebox.money does, without giving up data integrity; merge to main when ready. The inventory is the 2026-11-13 read-only sweep (sections A to E below).
+
+Rule for every item: the click answers at once (dialog, pressed button, placeholder row); nothing can be agreed to or sent until the exact call and every read that decides it is on screen; a failed read is said, never replaced by a default.
+
+- [x] Shared lever: `openPendingReview` (confirm dialog opens with known rows, "Loading…" for the rest, acknowledgement and Confirm locked), `busyWhile` for buttons, a status line while an earlier held write is checked. `test/confirm-pending.test.js`.
+- [x] A. Clicks that showed nothing while reads ran: project card, Cash out button, Safe queue Sign and Execute, item discount and remove, free mint review, redeem items, LP claim fees, Burn, Launch and Pay tool forms, owner and operator forms, lazy chunk downloads.
+- [x] B. Reviews that waited behind a status line: Pay, Cash out, loans, payouts and allowance, distribute reserved, bridge claim, execute and sync, Move and Add liquidity, Safe batch, queue rulesets, create launch and resume, Relayr review, Defifa actions, LP move and remove, edit splits.
+- [x] C. Views that went blank: handle URL tab switches, the rebuild after a confirmed transaction, account page lists and route, Defifa panel, tool form chain discovery, Data tab and contract read.
+- [x] D. Independent reads run together instead of in sequence, in every flow touched above.
+- [x] E. Rows that popped in late get a placeholder from the first paint.
+- [x] Each item ends changed with a test, or listed in the review with the reason it stays.
+
+## Review (2026-11-14)
+
+Built as one shared lever plus six sections in isolated worktrees, each diff read before merging. Two Codex passes on the combined diff.
+
+Changed on review: the bridge fee probes stay in order (probing every budget at once always cost the slowest probe and let a throttled RPC raise the fee shown); a routed subtab now switches on a reused page (cached sections keep their switch, slugs accepted), which the handle URL reuse exposed.
+
+Left as they were, with the reason:
+- Relayr payment review: a test pins that a different runtime is rejected before the review opens; one code read of delay.
+- Cash out by direct pool sale, and Add liquidity submit: both use the stepped pay dialog, whose step list depends on the authorization plan read. The buttons already disable and say what they are doing.
+- Contract warnings under the header, the "Rules change in" notice and "Your loans": most projects and wallets have none, so a placeholder would appear and vanish for the majority.
+- Pending multisig cards, Distribute form, pending payments per row: already open-first or already parallel.
+- Cash out inventory then route, Defifa cash out's two prepares, the handle editor's record checks, token edit's token verification first: each read depends on the one before it.
+- Owner and operator form buttons: the shared path now says "Checking who can send this…" at the click; the buttons themselves get no visual disable because the shared path does not hold them.
+- After a confirmed transaction no card has its own refresh: the page is still rebuilt from fresh data, and the old page stays visible but inert until the new one has loaded (or 4 seconds).
+
+Known cost: a tool form opens as soon as its chain choice is settled, so a chain that answers later re-renders the form once.
+
+Not verified against live wallets or a live Safe. The page handoff, handle URL tab switches and the first-use loading dialog are covered by unit tests of their parts and by the existing browser suite, not by a browser test written for them.
+
+## Plan refinement
+- **Objective:** Every listed Juicescan action responds at the click and fills in as reads land, with no change to what is sent or to which reads gate a send. Success is each inventory item changed and tested, or recorded with the reason it stays as it is.
+- **System fit:** `component-base.js` owns the confirm dialog and `executeTransaction`; flows in `discover.js`, the tool components, `create-flow.js`, `safe-batch-ui.js`, `relayr.js` and `project-ops-modals.js` consume it. The pending state lives in that one dialog and is handed to `executeTransaction` through the existing `confirmSession` path, so prepared call, authority, send and receipt handling are untouched. juicebox.money and revnet.money already work this way, so no port is owed there.
+- **Reuse and simplicity:** One pending mode in the existing dialog and one button helper; no second dialog, no state library, no SDK. Views reuse their existing skeletons and caches. Sequential independent reads become `Promise.all` in place; dependent reads keep their order.
+- **Evidence and unknowns:** The inventory came from subagent sweeps at 39f2a09 with four items spot-checked; every item is re-read at current main before it changes. Unknown: which E placeholders shift layout more than they help, and whether the post-transaction rebuild can refresh in place without stale cards; both are decided against the code, and anything that would trade integrity for speed stays and is listed.
+- **Verification:** Unit regression per changed flow (pending dialog locks Confirm, failed read fails closed, busy button), the existing transaction suites unchanged and green, `npm run test:ci` including the browser suite, one independent review of the combined diff, CI green before merge.
+- **Resource budget:** The shared lever first in the main session; then sections split by file region across isolated worktrees from that commit, each brief carrying these rules and resources; I review every diff before merging it into one branch and one PR. Replan if a section needs the dialog API to change or main moves under a region being edited.

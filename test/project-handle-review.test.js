@@ -125,7 +125,7 @@ describe('project-handle route lifecycle', () => {
     expect(primitiveStart).toBeGreaterThan(-1);
     expect(base.slice(primitiveStart, modalStart)).toContain("el('div', 'pay-confirm-sequence')");
     expect(base.slice(primitiveStart, modalStart)).toContain("item.classList.toggle('complete', complete)");
-    expect(base.slice(modalStart)).toContain('buildTransactionSequence(opts.steps === false ? [] : confirmStepsFor(payload, opts), opts.stepsIntro)');
+    expect(base.slice(modalStart)).toContain('buildTransactionSequence(opts.steps === false ? [] : confirmStepsFor(payload || { action: pending.action }, opts), opts.stepsIntro)');
     var source = readFileSync('src/discover.js', 'utf8');
     var payStart = source.indexOf('function openTxConfirm');
     var payEnd = source.indexOf('function openPayConfirm', payStart);

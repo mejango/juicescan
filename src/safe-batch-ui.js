@@ -3,7 +3,7 @@
 // per-chain batch dialog (the app's standard confirm shape carrying an editable step list), and the submit routes —
 // one proposal through the connected Safe App, one operation-1 SafeTx signed by a Safe owner, or ordered
 // direct sends / one Relayr bundle for an EOA authority. Never N separate Safe proposals.
-import { el, openDialog, confirmTransactionModal, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, invokeWallet, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
+import { el, openDialog, openPendingReview, getAccount, connect, truncAddr, createPublicClientForChain, isSafeConnected, getWalletClient, invokeWallet, renderTxReview, resolveContractName, makeStatusSetter, errMessage, ZERO_ADDRESS } from './component-base.js';
 import { chainNameFor, usdcByChain } from './chain.js';
 import { generationNames, getAddress } from './abi-registry.js';
 import { STEP_KINDS, buildStep, loadTray, saveTray, clearTray, upsertStep, moveStep, removeStep, composeBatch, checkBatchOrder, dependsOnPrior, mirrorBatch, encodeMultiSend, multiSendBatchCalls, simulateBatchCalls, MULTI_SEND_CALL_ONLY, NATIVE_TOKEN, TRAY_UPDATED_EVENT } from './safe-batch.js';
@@ -110,9 +110,16 @@ export function renderSafeBatchTray(project) {
         foot.appendChild(review);
         if (!known || known.key !== key) {
           proposed[source.chain.id] = { key: key, tx: null };
+          // The queue lookup says so from the first paint, so an "Already proposed" note never appears unannounced.
+          var checking = null;
+          if (projectAuthorityAddress(project) && hasSafeService(source.chain.id)) {
+            checking = el('div', 'safe-batch-checking'); checking.setAttribute('role', 'status'); checking.textContent = 'Checking for an existing proposal…';
+            foot.appendChild(checking);
+          }
           findProposedBatch(source.chain.id, projectAuthorityAddress(project), source.steps)
             .then(function (tx) { if (tx && node.isConnected) { proposed[source.chain.id] = { key: key, tx: tx }; paint(); } })
-            .catch(function () {});
+            .catch(function () {})
+            .then(function () { if (checking) checking.remove(); });
         }
       }
       node.appendChild(foot);
@@ -143,11 +150,11 @@ export function renderSafeBatchTray(project) {
 // ── Route ────────────────────────────────────────────────────────────────────
 // Decided from (authority identity, connection): a Safe reached through the Safe App as itself, a Safe whose owner is
 // connected, the EOA authority itself, or a refusal that disables the primary with the existing copy.
-export async function resolveBatchRoute(project, chainId, authority) {
+export async function resolveBatchRoute(project, chainId, authority, noConnect) {
   var role = projectAuthorityLabel(project).toLowerCase();
   if (!authority) return { mode: null, label: 'Send batch', description: 'unavailable', refusal: 'Could not read the project’s ' + role + '.' };
   var signer = getAccount();
-  if (!signer) signer = await connect().then(getAccount).catch(function () { return null; });
+  if (!signer && !noConnect) signer = await connect().then(getAccount).catch(function () { return null; });
   var safeInfo = await safeInfoForAuthority(authority, chainId, Number(project._urlChainId || project.chainId));
   if (safeInfo) {
     var mode = safeAuthorityAccessMode(signer, authority, safeInfo, isSafeConnected());
@@ -185,12 +192,28 @@ export async function openBatchDialog(project, chain, setStatus) {
   var steps = loadTray(chain.id, pid);
   if (!steps.length) { setStatus('Nothing queued on ' + chainName(chain) + '.', ''); return null; }
   var authority = projectAuthorityAddress(project);
+  var title = 'Batch on ' + chainName(chain);
+  // A wallet prompt cannot show over an open dialog, so an unconnected visitor connects before it opens.
+  if (!getAccount()) await connect().catch(function () {});
+  // The dialog opens at the click: who sends, the route and the Safe nonce fill in as they are read, and nothing
+  // can be agreed to before they are.
+  var review = openPendingReview({ action: title, chain: chainName(chain), rows: [['On', chainName(chain)], ['From', null], ['Route', null]] }, { title: title });
+  if (review.closed) return null;
   setStatus('Checking who can send the batch…', 'pending');
-  var route = await resolveBatchRoute(project, chain.id, authority);
-  // A Safe owner proposing through the Safe service picks the nonce: the next free one, or a queued one to replace.
-  var nonces = route.safeInfo && route.mode && route.mode !== 'safe-app' && hasSafeService(chain.id)
-    ? await readProposalNonces(chain.id, authority, chainName(chain)) : null;
+  var route, nonces;
+  try {
+    route = await resolveBatchRoute(project, chain.id, authority, true);
+    // A Safe owner proposing through the Safe service picks the nonce: the next free one, or a queued one to replace.
+    var needsNonce = route.safeInfo && route.mode && route.mode !== 'safe-app' && hasSafeService(chain.id);
+    var routeRows = [['On', chainName(chain)], ['From', truncAddr(authority) + (route.safeInfo ? ' (Safe)' : ' (wallet)')], ['Route', route.description]];
+    review.setRows(needsNonce ? routeRows.concat([['Safe nonce', null]]) : routeRows);
+    nonces = needsNonce ? await readProposalNonces(chain.id, authority, chainName(chain)) : null;
+  } catch (e) {
+    review.fail(errMessage(e, 'Could not open the batch.'));
+    throw e;
+  }
   setStatus('', '');
+  if (review.closed) return null;
   // An EOA authority sends every chain's queued batch in one go: sequentially on one chain, or as one Relayr bundle
   // when two or more chains are queued (same-chain calls keep their order through per-chain virtual nonces).
   var others = route.mode === 'eoa' ? projectChains(project).filter(function (c) { return c.id !== chain.id && trayFor(project, c).length; }) : [];
@@ -202,8 +225,7 @@ export async function openBatchDialog(project, chain, setStatus) {
     route.intro = 'Review and send each transaction in order.';
     if (others.length) route.description = 'one Relayr bundle across ' + [chain].concat(others).map(chainName).join(', ');
   }
-  var title = 'Batch on ' + chainName(chain);
-  var session = await confirmTransactionModal({
+  var session = await review.showNext({
     action: title, chain: chainName(chain), chainId: chain.id,
     summary: { action: title, rows: [['On', chainName(chain)], ['From', truncAddr(authority) + (route.safeInfo ? ' (Safe)' : ' (wallet)')], ['Route', route.description]] },
     // The audit prompt carries every step's exact call, and the one MultiSend a Safe route proposes.
@@ -454,11 +476,11 @@ export async function mirrorAcrossChains(project, sourceChainId) {
   if (!source) return { mirrored: [], skipped: [], message: 'Nothing queued to mirror.' };
   var steps = trayFor(project, source), resolve = mirrorResolver(project);
   var mirrored = [], skipped = [];
-  for (var i = 0; i < chains.length; i++) {
-    var target = chains[i];
-    if (target.id === source.id) continue;
-    var pid = pidOn(project, target.id);
-    var result = await mirrorBatch(steps, source.id, target.id, resolve, pid);
+  // Each chain's reads are independent, so they run together; the trays are written after, in chain order.
+  var targets = chains.filter(function (c) { return c.id !== source.id; });
+  var results = await Promise.all(targets.map(function (target) { return mirrorBatch(steps, source.id, target.id, resolve, pidOn(project, target.id)); }));
+  targets.forEach(function (target, i) {
+    var pid = pidOn(project, target.id), result = results[i];
     if (result.steps.length) {
       var tray = loadTray(target.id, pid);
       result.steps.forEach(function (s) { tray = upsertStep(tray, s); });
@@ -466,7 +488,7 @@ export async function mirrorAcrossChains(project, sourceChainId) {
       mirrored.push(chainName(target) + ' (' + result.steps.length + ')');
     }
     result.skipped.forEach(function (s) { skipped.push(chainName(target) + ': ' + s.label + ': ' + s.reason); });
-  }
+  });
   var message = (mirrored.length ? 'Mirrored ' + chainName(source) + '’s batch to ' + mirrored.join(', ') + '.' : 'Nothing could be mirrored from ' + chainName(source) + '.')
     + (skipped.length ? ' Skipped ' + skipped.join('; ') + '.' : '');
   return { mirrored: mirrored, skipped: skipped, message: message };

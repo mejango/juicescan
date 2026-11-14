@@ -4,7 +4,7 @@ import { encodeFunctionData, decodeFunctionData, TransactionReceiptNotFoundError
 import { writeHold } from './write-hold.js';
 import { isLockLost } from './browser-locks.js';
 import { txHashForSafeTx } from './safe-app.js';
-import { getAccount, getViewAs, connect, createPublicClientForChain, executeTransaction, waitForTrackedTransactionReceipt, onEffectiveAccountChange, ZERO_ADDRESS, isAddr, isSafeConnected, formatAmount, readErc20Allowance, erc20ApproveAbi, NATIVE_TOKEN } from './component-base.js';
+import { getAccount, getViewAs, connect, createPublicClientForChain, executeTransaction, openPendingReview, waitForTrackedTransactionReceipt, onEffectiveAccountChange, ZERO_ADDRESS, isAddr, isSafeConnected, formatAmount, readErc20Allowance, erc20ApproveAbi, NATIVE_TOKEN } from './component-base.js';
 import { readProjectNftInventory, indexedDefifaTokenIds } from './nft-inventory.js';
 
 const actionNames = { mint: 'pay', cashout: 'cash-out', transfer: 'transfer' };
@@ -90,7 +90,9 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
     if (getViewAs()) throw new Error('Leave View as before transacting.');
     if (!account || !getAccount() || getAccount().toLowerCase() !== account.toLowerCase()) throw new Error('Connected account changed. Refresh and review again.');
   }
-  function error(err) { busy = false; if (disposed || !active) return; message(err.message || String(err)); body.replaceChildren(); button(body, 'Retry', refresh); }
+  // A refresh for the same account keeps what is on screen, out of reach, until the fresh read replaces it.
+  function keepBody(on) { body.inert = on; if (on) body.setAttribute('aria-busy', 'true'); else body.removeAttribute('aria-busy'); }
+  function error(err) { busy = false; if (disposed || !active) return; message(err.message || String(err)); keepBody(false); body.replaceChildren(); button(body, 'Retry', refresh); }
   function readRecovery(account) {
     records.clear(); recoveryBody.replaceChildren();
     if (!account) return;
@@ -155,7 +157,9 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
   }
   async function refresh(initial) {
     if (busy || disposed || !active || (!root.isConnected && initial !== true)) return false;
-    var LOADING = 'Loading NFT actions…', ticket = ++generation, account = getAccount(); body.replaceChildren(); message(LOADING);
+    var LOADING = 'Loading NFT actions…', ticket = ++generation, account = getAccount();
+    if (initial !== true && account === holder && body.childNodes.length) keepBody(true); else body.replaceChildren();
+    message(LOADING);
     try {
       readRecovery(account);
       var next = initial === true && (mintOnly || holdingsOnly) ? await Promise.resolve(inventory) : await readProjectNftInventory(client, { chainId: chainId, projectId: BigInt(projectId) });
@@ -176,11 +180,21 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
       if (disposed || !active || !root.isConnected || ticket !== generation || (reviewedCart !== null && (cartRevision !== reviewedCartRevision || cartSnapshot() !== reviewedCart)) || JSON.stringify(readMintDraft()) !== JSON.stringify(reviewedDraft)) throw new Error('NFT checkout details or view changed. Review again.');
     }
     body.querySelectorAll('button').forEach(function (node) { node.disabled = true; });
+    var review = null;
     try {
       assertAccount(account);
       if (readHold(kind, account)) throw new Error('Check the original transaction before starting this action again.');
       var args = Object.assign({ chainId: chainId, projectId: BigInt(projectId), account: account, expectedHook: current.hook }, values);
       var prepare = kind === 'mint' ? prepareDefifaPay : kind === 'cashout' ? prepareDefifaCashOut : prepareDefifaTransfer;
+      // The review opens at the click with what this panel already knows; prices, the minimum and the exact call
+      // fill in once the transaction is prepared.
+      var known = [['Collection', current.hook], ['Account', account]];
+      if (kind === 'mint') known.push(['NFTs', String(values.tierIdsToMint.length)], ['Total', null], ['Voting power recipient', null]);
+      else known.push(['NFT IDs', (values.tokenIds || [values.tokenId]).map(String).join(', ')]);
+      if (values.memo) known.push(['Memo', values.memo]);
+      if (kind === 'transfer') known.push(['Recipient', values.recipient]);
+      if (kind === 'cashout') known.push(['Minimum reclaim', null]);
+      review = openPendingReview({ action: kind === 'mint' ? 'Mint Defifa NFTs' : kind === 'cashout' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT', rows: known });
       message('Preparing transaction…');
       var reviewed = await prepare(client, args); assertIntent();
       if (kind === 'cashout') { args.minimumReclaim = reviewed.reclaimAmount; reviewed = await prepare(client, args); assertIntent(); }
@@ -207,7 +221,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
       var context = { hook: reviewed.inventory.hook, implementation: reviewed.inventory.implementation, account: account, transaction: reviewed.transaction };
       var hold = holdFor(kind, account), savedCall = { namespace: namespace(kind), chainId: chainId, safe: safeRoute, call: { to: request.address.toLowerCase(), data: encodeFunctionData(request).toLowerCase(), value: String(request.value || 0n) } };
       await hold.withLock(function (lock, holdKeep) { return new Promise(function (resolve) {
-        if (hold.read()) { error(new Error('Check the original transaction before starting this action again.')); resolve(); return; }
+        if (hold.read()) { review.fail('Check the original transaction before starting this action again.'); error(new Error('Check the original transaction before starting this action again.')); resolve(); return; }
         var reservation = null;
         // Saves this attempt's outcome through the hold's keep. Once the lock was lost (as while suspended in the
         // wallet), this ends the lock work so the fresh-lock reconcile can run, and waits for it: `submitted` and
@@ -225,7 +239,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
         }
         async function releaseBeforeBroadcast() { if (reservation && !reservation.hash) await keep(function () { hold.releaseLocked(reservation); reservation = null; }); }
         executeTransaction(Object.assign({}, request, {
-          expectedSafe: safeRoute, safeSingleCall: kind === 'mint', locks: [lock],
+          confirmSession: review, expectedSafe: safeRoute, safeSingleCall: kind === 'mint', locks: [lock],
           tokenAddr: kind === 'mint' && !approvalOnly ? reviewed.inventory.pricing.token : undefined, spenderAddr: kind === 'mint' && !approvalOnly ? reviewed.transaction.address : undefined, approvalAmount: kind === 'mint' && !approvalOnly ? reviewed.amount : undefined,
           onSending: function () { assertIntent(); if (isSafeConnected() !== safeRoute) throw new Error('Wallet route changed. Review the transaction again.'); reservation = hold.reserve(savedCall); },
           assertWriteState: assertIntent,
@@ -250,7 +264,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
           },
         }));
       }); });
-    } catch (err) { error(err); }
+    } catch (err) { if (review) review.fail(err.message || String(err)); error(err); }
   }
   function drawCartMint() {
     var previousDraft = readMintDraft();
@@ -305,7 +319,7 @@ export function renderDefifaNftActions(inventory, chainId, projectId, formatPric
     updateCartView();
   }
   function draw() {
-    body.replaceChildren();
+    keepBody(false); body.replaceChildren();
     if (getViewAs()) { text(body, 'p', 'Leave View as to mint, transfer or cash out NFTs.'); button(body, 'Refresh', refresh); return; }
     if (mintOnly) { drawCartMint(); return; }
     if (!holder) { button(body, 'Connect wallet for NFT actions', async function () { try { await connect(); await refresh(); } catch (err) { error(err); } }); return; }

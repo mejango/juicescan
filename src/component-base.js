@@ -283,7 +283,9 @@ export function buildEmbedUrl(prefix, params) {
 
 // --- Chain discovery ---
 
-export function discoverChains(projectId, callback) {
+// `onAnswer(answers)` (optional) runs as each chain answers, with { chainId: true | false } for the chains heard
+// from so far, so a caller can go ahead once its choice no longer depends on the chains still out.
+export function discoverChains(projectId, callback, onAnswer) {
   var chains = getManifestChains();
   var chainIds = Object.keys(chains).map(Number);
 
@@ -297,12 +299,18 @@ export function discoverChains(projectId, callback) {
     return;
   }
 
+  var answers = {};
+  function answered(result) {
+    answers[result.chainId] = !!result.exists;
+    if (onAnswer) onAnswer(answers);
+    return result;
+  }
   var promises = chainIds.map(function(chainId) {
     var directoryAddr = getAddress('JBDirectory', chainId);
-    if (!directoryAddr) return Promise.resolve({ chainId: chainId, exists: false });
+    if (!directoryAddr) return Promise.resolve({ chainId: chainId, exists: false }).then(answered);
 
     var client = createPublicClientForChain(chainId);
-    if (!client) return Promise.resolve({ chainId: chainId, exists: false });
+    if (!client) return Promise.resolve({ chainId: chainId, exists: false }).then(answered);
 
     return client.readContract({
       address: directoryAddr,
@@ -313,7 +321,7 @@ export function discoverChains(projectId, callback) {
       return { chainId: chainId, exists: result && result !== ZERO_ADDRESS };
     }).catch(function() {
       return { chainId: chainId, exists: false };
-    });
+    }).then(answered);
   });
 
   Promise.all(promises).then(function(results) {
@@ -1303,15 +1311,20 @@ export function confirmTransactionModal(payload, opts) {
   // (executeTransaction only) opts into the richer behavior: stay open, resolve { ok, showStatus, close, showNext }.
   // `showNext(payload, opts)` re-reviews a follow-on call in the SAME dialog (its step list advances) and
   // resolves like a fresh confirm, so multi-transaction flows never open a second dialog.
-  var keepOpen = !!opts.keepOpenForProgress;
+  // `opts.pending` ({ action, chain, rows: [[label, value or null]] }) opens the dialog before the exact call is
+  // known: null values read "Loading…", nothing can be agreed to or sent, and the session handed to
+  // `opts.onSession` swaps in the real review (see openPendingReview).
+  var pending = opts.pending || null;
+  var keepOpen = !!opts.keepOpenForProgress || !!pending;
   var cancelResult = keepOpen ? { ok: false } : false;
-  // `dialog`: 'review' (Confirm live), 'sending' (locked, the caller drives showStatus), 'settled' (closable).
-  var pendingResolve = null, closed = false, dialog = 'review';
+  // `dialog`: 'pending' (the call is still being prepared), 'review' (Confirm live), 'sending' (locked, the caller
+  // drives showStatus), 'settled' (closable).
+  var pendingResolve = null, closed = false, dialog = pending ? 'pending' : 'review';
   var feeReview = null, feeBusy = false, bodyDisabled = false;
   // Every send needs a ticked acknowledgement of the exact call on screen, as on juicebox.money. A follow-on call
   // in the same dialog needs its own. The read-only details view (`steps: false`) sends nothing and has none.
   var needsAgreement = opts.steps !== false, agreed = !needsAgreement;
-  function syncConfirm() { confirm.disabled = bodyDisabled || feeBusy || !agreed; }
+  function syncConfirm() { confirm.disabled = dialog === 'pending' || bodyDisabled || feeBusy || !agreed; }
   function settle(result) { var r = pendingResolve; pendingResolve = null; if (r) r(result); }
   var modal = openDialog(opts.title || 'Confirm transaction', {
     canClose: function () { return dialog !== 'sending'; },
@@ -1319,10 +1332,10 @@ export function confirmTransactionModal(payload, opts) {
   });
   var content = el('div', 'pay-confirm');
   // `steps: false` is the read-only details view — nothing is sent from it, so no wallet-step list.
-  var sequence = buildTransactionSequence(opts.steps === false ? [] : confirmStepsFor(payload, opts), opts.stepsIntro);
+  var sequence = buildTransactionSequence(opts.steps === false ? [] : confirmStepsFor(payload || { action: pending.action }, opts), opts.stepsIntro);
   if (opts.steps !== false) content.appendChild(sequence.node);
   var stepIndex = opts.stepIndex || 0;
-  var hasApproval = !!payload.erc20Approval;
+  var hasApproval = !!(payload && payload.erc20Approval);
   sequence.setActive(stepIndex, false);
   var reviewHost = el('div', 'pay-confirm-current-action');
   content.appendChild(reviewHost);
@@ -1340,6 +1353,15 @@ export function confirmTransactionModal(payload, opts) {
       });
     }
   }
+  function showPending(rows) {
+    reviewHost.innerHTML = '';
+    var note = el('div', 'tx-confirm-note');
+    note.textContent = pending.note || 'Preparing the exact transaction. Nothing is sent until you review it here.';
+    reviewHost.appendChild(note);
+    var summary = renderFriendlySummary({ action: pending.action, rows: rows.map(function (row) { return [row[0], row[1] == null ? 'Loading…' : row[1]]; }) }, { chain: pending.chain });
+    Array.prototype.forEach.call(summary.querySelectorAll('.tx-decoded-argval'), function (node, i) { if (rows[i][1] == null) node.classList.add('pending'); });
+    reviewHost.appendChild(summary);
+  }
   var foot = el('div', 'create-modal-foot');
   var cancel = el('button', 'create-btn ghost'); cancel.textContent = 'Cancel';
   var confirm = el('button', 'create-btn primary'); confirm.textContent = opts.confirmText || 'Confirm & send';
@@ -1348,7 +1370,7 @@ export function confirmTransactionModal(payload, opts) {
   var agreeText = el('span'); agreeText.textContent = 'I reviewed the chain, destination, native value and calldata. I agree to send this exact call.';
   agree.appendChild(agreeBox); agree.appendChild(agreeText);
   agreeBox.addEventListener('change', function () { agreed = agreeBox.checked; syncConfirm(); });
-  showAction(payload, opts);
+  if (pending) { showPending(pending.rows || []); agreeBox.disabled = true; } else showAction(payload, opts);
   syncConfirm();
   if (needsAgreement) content.appendChild(agree);
   if (!opts.hideCancel) foot.appendChild(cancel);
@@ -1382,7 +1404,12 @@ export function confirmTransactionModal(payload, opts) {
   }
   function showNext(nextPayload, nextOpts) {
     nextOpts = nextOpts || {};
-    stepIndex = nextOpts.stepIndex != null ? nextOpts.stepIndex : stepIndex + 1 + (hasApproval ? 1 : 0);
+    if (dialog === 'pending') {
+      // The first real review of a dialog that opened pending: same step, and the step list the exact call needs.
+      stepIndex = nextOpts.stepIndex || opts.stepIndex || 0;
+      var steps = buildTransactionSequence(confirmStepsFor(nextPayload, { steps: nextOpts.steps || opts.steps }), nextOpts.stepsIntro || opts.stepsIntro);
+      sequence.node.replaceWith(steps.node); sequence = steps;
+    } else stepIndex = nextOpts.stepIndex != null ? nextOpts.stepIndex : stepIndex + 1 + (hasApproval ? 1 : 0);
     hasApproval = !!nextPayload.erc20Approval;
     sequence.setActive(stepIndex, false);
     if (nextOpts.title) modal.title.textContent = nextOpts.title;
@@ -1394,6 +1421,23 @@ export function confirmTransactionModal(payload, opts) {
     dialog = 'review';
     return waitForConfirm();
   }
+  // A dialog that never reached its review says why and can only be closed.
+  function fail(message) {
+    if (closed) return;
+    Array.prototype.forEach.call(reviewHost.querySelectorAll('.tx-decoded-argval.pending'), function (node) { node.classList.remove('pending'); node.textContent = 'Not loaded'; });
+    if (feeReview) feeReview.stop();
+    dialog = 'settled'; confirm.disabled = true; agreeBox.disabled = true; cancel.disabled = false; cancel.textContent = 'Close';
+    statusEl.style.display = ''; statusEl.className = 'tx-confirm-status error';
+    setStatusContent(statusEl, message);
+  }
+  if (opts.onSession) opts.onSession({
+    get closed() { return closed; },
+    showNext: showNext, fail: fail, close: teardown,
+    // Rows that land one at a time: redraw the pending rows (no-op once the real review is up).
+    setRows: function (rows) { if (!closed && dialog === 'pending') showPending(rows); },
+    // For callers that awaited a boolean: true once the exact call is confirmed, and the dialog closes.
+    confirm: function (nextPayload, nextOpts) { return showNext(nextPayload, nextOpts).then(function (r) { if (!r || !r.ok) return false; r.close(); return true; }); },
+  });
   cancel.addEventListener('click', modal.requestClose);
   confirm.addEventListener('click', async function () {
     if (confirm.disabled) return;
@@ -1410,6 +1454,36 @@ export function confirmTransactionModal(payload, opts) {
     }
   });
   return waitForConfirm();
+}
+
+// Open the confirm dialog at the click, before the reads that decide the exact call have landed. The rows already
+// known show at once and the rest read "Loading…"; Confirm and the acknowledgement stay locked until the session
+// is given the exact call. Pass the session as `confirmSession` to executeTransaction, or call
+// `session.showNext(payload, opts)` (resolves like a keepOpenForProgress confirm) or `session.confirm(payload, opts)`
+// (resolves a boolean and closes). `session.fail(message)` ends a dialog whose reads failed; `session.closed` says
+// the user dismissed it.
+export function openPendingReview(pending, opts) {
+  if (getViewAs()) {
+    confirmTransactionModal(null, {});
+    return { closed: true, setRows: function () {}, fail: function () {}, close: function () {},
+      showNext: function () { return Promise.resolve({ ok: false }); }, confirm: function () { return Promise.resolve(false); } };
+  }
+  var session;
+  confirmTransactionModal(null, Object.assign({}, opts, { pending: pending, onSession: function (s) { session = s; } }));
+  return session;
+}
+
+// A button that starts reads before anything else shows: disabled and marked busy until `work` settles, so a click
+// always answers and a second click cannot start the reads twice. `label` replaces its text meanwhile.
+export function busyWhile(button, label, work) {
+  if (button.disabled) return Promise.resolve();
+  var text = button.textContent;
+  button.disabled = true; button.setAttribute('aria-busy', 'true');
+  if (label) button.textContent = label;
+  return Promise.resolve().then(work).finally(function () {
+    button.disabled = false; button.removeAttribute('aria-busy');
+    if (label && button.textContent === label) button.textContent = text;
+  });
 }
 
 // The hold (write-hold.js) for one direct contract write: `request` is { address, abi, functionName, args, value },
@@ -1522,9 +1596,11 @@ export function executeTransaction(opts) {
   if (getViewAs()) { (opts.onError || function () {})(VIEW_AS_TX_ERROR); return; }
   var wallet = getWalletClient();
   var reviewedSafe = opts.expectedSafe == null ? isSafeConnected() : opts.expectedSafe;
-  if (!wallet) { opts.onError('Connect a wallet to continue'); return; }
+  // A dialog opened pending (openPendingReview) ends here when the send cannot reach its review.
+  var failPending = function (m) { if (opts.confirmSession && opts.confirmSession.fail) opts.confirmSession.fail(m); };
+  if (!wallet) { failPending('Connect a wallet to continue'); opts.onError('Connect a wallet to continue'); return; }
   var account = getAccount();
-  if (!account) { opts.onError('Connect a wallet to continue'); return; }
+  if (!account) { failPending('Connect a wallet to continue'); opts.onError('Connect a wallet to continue'); return; }
   // A caller with its own write journal (onWriteRejected) keeps it; every other direct write is held here.
   var hold = opts.onWriteRejected ? null : holdForWrite(opts.chainId, account, opts);
   // A scoped hold also reads the per-target holds an earlier build saved for the same action (read-only).
@@ -1554,7 +1630,9 @@ export function executeTransaction(opts) {
     if (i >= gates.length) return Promise.resolve(null);
     return heldWriteGate(gates[i], opts.label || opts.functionName, opts.verifyReceipt).then(function (gate) { return gate || settleGates(i + 1); });
   }
+  if (heldNow) cbs.onStatus('Checking your earlier transaction…', 'pending');
   var confirmStep = heldNow ? settleGates(0).then(function (gate) {
+    if (gate) failPending(gate.line);
     if (gate && gate.hash) { held = true; cbs.onSuccess(gate.line, { phase: 'done', hash: gate.hash, chainId: opts.chainId, blockNumber: gate.blockNumber, recovered: true }); return null; }
     if (gate) { held = true; callerOnError(gate.line, gate.verificationError ? { submittedHash: gate.submittedHash, error: gate.verificationError, userRejected: false } : undefined); return null; }
     return reviewStep();
