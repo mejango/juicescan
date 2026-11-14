@@ -4727,7 +4727,10 @@ async function finishCreateRelayr(state, session) {
     var call = saved.calls.find(function (candidate) { return candidate.chainId === chainId; });
     var expected = (session.expectedTransactions || [])[i];
     if (!call || !expected || Number(expected.chain) !== chainId || expected.requestHash !== call.requestHash) throw new Error('The saved launch call for ' + name + ' does not match this bundle. Nothing was signed.');
-    var hash = relayrDestinationHash((session.records || [])[i]);
+    // By the quote's own transaction ID: a status list can leave entries out, so positions prove nothing.
+    var hash = relayrDestinationHash((session.records || []).find(function (record) {
+      return record && String(record.tx_uuid || '').toLowerCase() === String(expected.txUuid || '').toLowerCase();
+    }));
     var forwarder = getAddress('ERC2771Forwarder', chainId), client = createPublicClientForChain(chainId);
     var transaction = null, receipt = null;
     if (hash) {
