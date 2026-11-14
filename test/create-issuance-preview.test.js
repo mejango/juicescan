@@ -36,6 +36,28 @@ describe('issuance preview schedule', () => {
     expect(stages[1]).toEqual({ start: NOW + 600 + 60 * DAY, weight: 250e18, weightCutPercent: 0, duration: 0 });
   });
 
+  it('a cut with no cycle length applies once to the stage that inherits', () => {
+    const state = newCreateDraftState();
+    setProjectFlavor(state, 'revnet');
+    Object.assign(state.stages[0], { weight: '1000', issuanceCutOn: true, weightCutPercent: 50, cutFreqDays: '' });
+    const later = createStage();
+    Object.assign(later, { weight: '', issuanceCutOn: false, startDaysAfter: 30 });
+    state.stages.push(later);
+    const stages = issuancePreviewStages(state, NOW);
+    expect(stages[0]).toEqual({ start: NOW + 600, weight: 1000e18, weightCutPercent: 0, duration: 0 });
+    expect(stages[1].weight).toBe(500e18);
+  });
+
+  it('several rulesets behind a notice start an hour out, as the launch does', () => {
+    const state = newCreateDraftState();
+    setProjectFlavor(state, 'custom');
+    Object.assign(state.stages[0], { tokenMode: 'custom', weight: '1000', durationSeconds: 7 * DAY, deadline: '1day' });
+    const next = createStage();
+    Object.assign(next, { tokenMode: 'custom', weight: '500', durationSeconds: 7 * DAY, deadline: '1day' });
+    state.stages.push(next);
+    expect(issuancePreviewStages(state, NOW)[0].start).toBe(NOW + 3600);
+  });
+
   it('draws under the rules in create, and never in the queue editor', () => {
     const state = newCreateDraftState();
     setProjectFlavor(state, 'custom');

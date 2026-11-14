@@ -23,7 +23,8 @@ describe('project header stats', () => {
     const rows = raisedByChainRows(byChain, [1, 8453, 10]);
     expect(rows.map((row) => row.name)).toEqual(['Ethereum', 'Base']);
     expect(rows[0].text).toBe('$6,345.00');
-    expect(rows[1].text).toMatch(/^2(\.0+)? ETH \(\$6,000\.00\)$/);
+    // Dollars only: a chain's token volume can mix tokens.
+    expect(rows[1].text).toBe('$6,000.00');
     expect(raisedByChainRows(undefined, [1])).toEqual([]);
     const host = document.createElement('div');
     appendHeaderStats(host, { id: '5', chainId: 1, chains: [{ id: 1 }, { id: 8453 }], idByChain: { 1: 5 },

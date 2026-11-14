@@ -6103,12 +6103,15 @@ export const __test = {
 
 // The issuance schedule the draft would launch, in the shape the project page's price ladder reads: each
 // stage's start, issuance rate (18 decimals), cut per cycle (out of 1e9) and cycle length. A launch starts about
-// ten minutes after it is sent. Empty when nothing issues tokens or the schedule cannot be resolved yet.
+// ten minutes after it is sent (an hour for several rulesets behind a notice). Empty when nothing issues tokens
+// or the schedule cannot be resolved yet.
 export function issuancePreviewStages(state, now) {
-  var launch = now + 600, out = [];
+  var launch = now + launchStartLead(state, state.chainIds[0]), out = [];
+  // What a stage that inherits starts from. JBRulesets cuts once per elapsed cycle, and once when the stage
+  // before it has a cut and no cycle length.
   var rateAt = function (t) {
-    var active = out[out.length - 1], cycles = active.duration > 0 ? Math.max(0, Math.floor((t - active.start) / active.duration)) : 0;
-    return active.weight * Math.pow((1e9 - active.weightCutPercent) / 1e9, cycles);
+    var active = out[out.length - 1], cycles = active.duration > 0 ? Math.max(0, Math.floor((t - active.start) / active.duration)) : 1;
+    return active.weight * Math.pow((1e9 - active.cut) / 1e9, cycles);
   };
   var cutOf = function (stage) { return Math.round(Math.max(0, Math.min(100, Number(stage.weightCutPercent) || 0)) / 100 * 1e9); };
   try {
@@ -6121,7 +6124,8 @@ export function issuancePreviewStages(state, now) {
         // A later stage left blank keeps the previous stage's issuance as it stands at the boundary.
         var weight = (i === 0 || stage.weight) ? Number(tokenAmount18(stage.weight, UINT112_MAX)) : rateAt(start);
         var frequency = stage.issuanceCutOn ? Math.max(0, Math.round((Number(stage.cutFreqDays) || 0) * 86400)) : 0;
-        out.push({ start: start, weight: weight, weightCutPercent: stage.issuanceCutOn && frequency ? cutOf(stage) : 0, duration: frequency });
+        var cut = stage.issuanceCutOn ? cutOf(stage) : 0;
+        out.push({ start: start, weight: weight, weightCutPercent: frequency ? cut : 0, duration: frequency, cut: cut });
       });
     } else {
       if (durationIssue(state)) return [];
@@ -6135,7 +6139,8 @@ export function issuancePreviewStages(state, now) {
       });
     }
   } catch (_) { return []; }
-  return out.some(function (stage) { return stage.weight > 0; }) && out.every(function (stage) { return isFinite(stage.start) && stage.start > 0; }) ? out : [];
+  if (!out.some(function (stage) { return stage.weight > 0; }) || !out.every(function (stage) { return isFinite(stage.start) && stage.start > 0; })) return [];
+  return out.map(function (stage) { return { start: stage.start, weight: stage.weight, weightCutPercent: stage.weightCutPercent, duration: stage.duration }; });
 }
 
 // The preview under the rules: the token's issuance price over time, redrawn as the rules are edited.

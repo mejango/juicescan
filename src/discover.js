@@ -6399,17 +6399,15 @@ function appendIndexedStats(statLine, stats) {
   statLine.appendChild(document.createTextNode(stats.paymentsCount === 1 ? ' payment' : ' payments'));
 }
 
-// What each chain raised, for the hover on the header's raised figure: chains in the project's own order, the
-// token volume beside its dollar value when the index carries it. Empty unless at least one chain raised.
+// What each chain raised in dollars, for the hover on the header's raised figure, chains in the project's own
+// order. Empty unless at least one chain raised.
 export function raisedByChainRows(byChain, order) {
   var rank = function (cid) { var i = (order || []).indexOf(Number(cid)); return i < 0 ? 1e9 : i; };
-  return (byChain || []).filter(function (row) { return toBigInt(row.volumeUsd) > 0n || toBigInt(row.volume) > 0n; })
+  return (byChain || []).filter(function (row) { return toBigInt(row.volumeUsd) > 0n; })
     .sort(function (a, b) { return rank(a.chainId) - rank(b.chainId); })
     .map(function (row) {
-      var usd = formatUsd(usdFromScaled(row.volumeUsd));
-      var token = row.tokenSymbol && row.decimals != null && row.volume != null
-        ? formatBalance(toBigInt(row.volume), Number(row.decimals), row.tokenSymbol) : '';
-      return { name: chainNameOf(row.chainId), text: token ? token + ' (' + usd + ')' : usd };
+      // Dollars only: a chain that took more than one token has no single token amount to state.
+      return { name: chainNameOf(row.chainId), text: formatUsd(usdFromScaled(row.volumeUsd)) };
     });
 }
 
@@ -21944,7 +21942,7 @@ export var BENDYSTRAW_PROJECT_QUERY = 'query($where: projectFilter, $limit: Int!
   + 'metadataUri metadata handle name description projectTagline logoUri coverImageUri infoUri payDisclosure '
   + 'tags twitter farcaster discord telegram domain tokens } } }';
 var BENDYSTRAW_RAISED_BY_CHAIN_QUERY = 'query($suckerGroupId: String!, $version: Int!, $limit: Int!) { '
-  + 'projects(where: { suckerGroupId: $suckerGroupId, version: $version }, limit: $limit) { items { chainId volume volumeUsd tokenSymbol decimals } } }';
+  + 'projects(where: { suckerGroupId: $suckerGroupId, version: $version }, limit: $limit) { items { chainId volumeUsd } } }';
 // Cross-chain aggregate stats for a sucker group (the honest omnichain totals).
 var BENDYSTRAW_SUCKER_GROUP_STATS_QUERY = 'query($ids: [String], $limit: Int!) { '
   + 'suckerGroups(where: { id_in: $ids }, limit: $limit) { items { id volumeUsd paymentsCount contributorsCount } } }';
@@ -31587,12 +31585,16 @@ function openLpPoolMove(project, chainId, stalePos, acct, onDone) {
   var review = openPendingReview({ action: action, chain: chainNameOf(chainId), rows: rows(null, null) }, opts);
   if (review.closed) return;
   var client = clientFor(chainId), pm = POOL_MANAGER_BY_CHAIN[chainId];
-  Promise.all([
-    refreshLpPositionForRemoval(chainId, stalePos, acct),
-    projectBuybackHook(project, chainId, { strict: true, fresh: true }).then(function (hook) {
+  // The pool the project's ruleset uses right now, read again at review and at send.
+  var currentPoolKey = function () {
+    return projectBuybackHook(project, chainId, { strict: true, fresh: true }).then(function (hook) {
       if (!hook || hook === ZERO_ADDRESS) throw new Error('This project has no current pool to move into.');
       return client.readContract({ address: hook, abi: poolKeyOfAbi, functionName: 'poolKeyOf', args: [pidOn(project, chainId), stalePos.pair.addr] });
-    }).then(function (toKey) {
+    });
+  };
+  Promise.all([
+    refreshLpPositionForRemoval(chainId, stalePos, acct),
+    currentPoolKey().then(function (toKey) {
       var slot = keccak256(encodeAbiParameters([{ type: 'bytes32' }, { type: 'uint256' }], [uniswapV4PoolId(toKey), 6n]));
       return client.readContract({ address: pm, abi: extsloadAbi, functionName: 'extsload', args: [slot] })
         .then(function (slot0) { return { key: toKey, sqrtP: BigInt(slot0) & ((1n << 160n) - 1n) }; });
@@ -31612,8 +31614,9 @@ function openLpPoolMove(project, chainId, stalePos, acct, onDone) {
     }, opts, 'Moving liquidity…', 'Move failed', function () {
       // The burn takes whatever the position holds when it runs, while the mint is sized from the review: a
       // position that changed since must be reviewed again, as juicebox.money requires.
-      return lpReadPositionDetails(client, prep.posm, [BigInt(pos.tokenId)], pos.poolId).then(function (now) {
-        if (!lpMoveStillFits(pos, now[0], acct)) throw new Error('This position changed. Review it again before moving it.');
+      return Promise.all([lpReadPositionDetails(client, prep.posm, [BigInt(pos.tokenId)], pos.poolId), currentPoolKey()]).then(function (read) {
+        if (!lpMoveStillFits(pos, read[0][0], acct)) throw new Error('This position changed. Review it again before moving it.');
+        if (uniswapV4PoolId(read[1]) !== uniswapV4PoolId(to.key)) throw new Error('The project\u2019s current pool changed. Review the move again.');
         return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });
       });
     }, function (hash) {
