@@ -380,13 +380,18 @@ export function openDeploymentCheck(deps) {
     if (operatorCheck.checked) operatorInput.focus();
     else if (operatorInput.value.trim()) { operatorInput.value = ''; run(); }
   });
+  // A result is for the operator it was read for: typing another drops it, and any read still on its way.
+  operatorInput.addEventListener('input', function () {
+    sequence++; report = null; results.textContent = ''; copy.style.display = 'none';
+    status.className = 'operator-edit-status'; status.textContent = ''; again.textContent = 'Check again';
+  });
   operatorInput.addEventListener('change', run);
   again.addEventListener('click', function (event) { event.preventDefault(); run(); });
   copy.addEventListener('click', function (event) {
     event.preventDefault(); if (!report) return;
-    var serialized = JSON.stringify(report, null, 2);
-    Promise.resolve().then(function () { return deps.copyText(serialized); }).then(function () { copy.textContent = 'Copied'; }, function () {
-      if (results.querySelector('textarea')) return;
+    var serialized = JSON.stringify(report, null, 2), mine = sequence;
+    Promise.resolve().then(function () { return deps.copyText(serialized); }).then(function () { if (mine === sequence) copy.textContent = 'Copied'; }, function () {
+      if (mine !== sequence || results.querySelector('textarea')) return;
       results.appendChild(line('deploy-check-line', 'Clipboard unavailable. Select and copy the diagnostics below.'));
       var area = el('textarea', 'deploy-check-raw'); area.readOnly = true; area.rows = 10; area.value = serialized; area.setAttribute('aria-label', 'Deployment diagnostics');
       area.addEventListener('focus', function () { area.select(); });

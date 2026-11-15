@@ -116,6 +116,18 @@ describe('the Check deployment dialog', () => {
     expect(form.querySelector('.deploy-check-results').textContent).toBe('');
   });
 
+  it('drops a result as soon as another operator is typed, and a late clipboard failure for an earlier report', async () => {
+    let failCopy;
+    const { form } = open({ copyText: () => new Promise((resolve, reject) => { failCopy = reject; }) });
+    await settle();
+    [...form.querySelectorAll('a')].find((node) => node.textContent === 'Copy diagnostics').click(); await settle();
+    const check = form.querySelector('input[type="checkbox"]'); check.checked = true; check.dispatchEvent(new Event('change'));
+    const input = form.querySelector('[aria-label="Operator address"]'); input.value = '0x00'; input.dispatchEvent(new Event('input'));
+    expect(form.querySelector('.deploy-check-results').textContent).toBe('');
+    failCopy(new Error('denied')); await settle();
+    expect(form.querySelector('textarea')).toBe(null);
+  });
+
   it('offers the report as text when the clipboard is unavailable', async () => {
     const { form } = open({ copyText: async () => { throw new Error('denied'); } });
     await settle();
