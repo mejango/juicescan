@@ -11,7 +11,7 @@ import {
   POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpApprovalRows, lpBandPricesOf, lpConfirmAndSend, lpCorridor,
   lpGetAmountsForLiquidity, lpMintPlan, lpSafeBatchPreview, lpSqrtAtTick, lpWithAllowanceFlags, noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
 } from './discover.js';
-import { lpCloseActions, lpEditOperations, lpEncodeUnlock, lpMintParams, lpMoveStillCovered } from './lp-edit.js';
+import { lpCappedClose, lpCloseActions, lpEditOperations, lpEncodeUnlock, lpMintParams, lpMoveStillCovered } from './lp-edit.js';
 
 var UINT160_MAX = (1n << 160n) - 1n;
 
@@ -162,14 +162,16 @@ export function lpMarketEdit(pool, sides, targets, corridor, refit, account) {
   var operations = [token && token.ops, pair && pair.ops].filter(Boolean);
   if (!operations.length) throw new Error('This leaves the market as it is.');
   var value = total(operations, function (ops) { return ops.value; });
-  var close = lpCloseActions(pool, account, value);
+  var erc20 = mergeErc20(operations.map(function (ops) { return ops.erc20; }));
+  // A re-fit burns to mint, so the whole edit pays in its reviewed caps and takes the rest.
+  var close = operations.some(function (ops) { return ops.burned; }) ? lpCappedClose(pool, account, value, erc20) : lpCloseActions(pool, account, value);
   var parameters = [];
   operations.forEach(function (ops) { parameters = parameters.concat(ops.parameters); });
   var sum = function (field) { return total(operations, function (ops) { return ops[field]; }); };
   return {
     unlockData: lpEncodeUnlock(operations.map(function (ops) { return ops.actions; }).join('') + close.actions, parameters.concat(close.parameters)),
     token: token ? token.edit : null, pair: pair ? pair.edit : null, value: value,
-    erc20: mergeErc20(operations.map(function (ops) { return ops.erc20; })),
+    erc20: erc20,
     tokenFlow: sum('tokenFlow'), pairFlow: sum('pairFlow'), tokenFunding: sum('tokenFunding'), pairFunding: sum('pairFunding'),
     tokenMinimum: sum('tokenMinimum'), pairMinimum: sum('pairMinimum'),
     tokenHolding: token ? token.edit.holding : 0n, pairHolding: pair ? pair.edit.holding : 0n, refit: refit,
