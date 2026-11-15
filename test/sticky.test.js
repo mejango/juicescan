@@ -1,5 +1,6 @@
 // Sticky split recipients follow juicebox.money's SDK module (v6/sticky): same recognition, group rules and labels.
 import { describe, expect, it } from 'vitest';
+import { encodedStickySplits, stickyEncodedProblem, stickyGroupFromFields } from '../src/sticky.js';
 import { checkStickyToken, decodeStickyGroupId, describeStickySplit, isStickySplit, stickyDistributorAddress, stickyGroupId, stickyRecipientLabel, stickySplitsProblem, validateStickyGroupId } from '../src/sticky.js';
 import { describeSplitGroups } from '../src/tx-pretty-args.js';
 
@@ -95,5 +96,37 @@ describe('stickySplitsProblem', () => {
     const zero = '0x0000000000000000000000000000000000000000';
     expect(await stickySplitsProblem({ 8453: [split(0n)] }, chains, true, clientFor([8453]), erc20(zero))).toMatch(/no ERC-20 on Base/);
     expect(await stickySplitsProblem({ 8453: [split(0n)] }, chains, true, clientFor([8453]), erc20(token))).toBe(null);
+  });
+});
+
+describe('the week fields', () => {
+  it('make the group, and refuse a maximum that is switched on but empty or zero', () => {
+    expect(stickyGroupFromFields(false, '9', true, '9')).toBe(0n);
+    expect(stickyGroupFromFields(true, '4', false, '')).toBe(4000n);
+    expect(stickyGroupFromFields(true, '4', true, '52')).toBe(4052n);
+    expect(() => stickyGroupFromFields(true, '', false, '')).toThrow('Enter the minimum weeks');
+    expect(() => stickyGroupFromFields(true, '4', true, '')).toThrow('Enter the maximum weeks');
+    expect(() => stickyGroupFromFields(true, '4', true, '0')).toThrow('Maximum weeks must be at least 1.');
+    expect(() => stickyGroupFromFields(true, '4.5', false, '')).toThrow('Enter whole weeks');
+    // Group 0 is all holders by voting power, a different policy than the tenure the form shows.
+    expect(() => stickyGroupFromFields(true, '0', false, '')).toThrow('at least 1 week');
+    expect(() => stickyGroupFromFields(true, '4', true, '2')).toThrow(/less than minimum/);
+  });
+});
+
+describe('Sticky splits in what is about to be signed', () => {
+  const distributor = stickyDistributorAddress(8453);
+  const token = '0x1111111111111111111111111111111111111111';
+  const split = (projectId, hook) => ({ hook: hook || distributor, beneficiary: token, projectId, percent: 1, lockedUntil: 0, preferAddToBalance: false });
+  const args = (reservedGroup, payoutGroup) => ['0xowner', 'uri', [{ metadata: {}, splitGroups: [{ groupId: 1n, splits: reservedGroup }, { groupId: 61166n, splits: payoutGroup }] }]];
+  it('finds each one and whether it is in the reserved group', () => {
+    const found = encodedStickySplits(args([split(0n), split(7n, token)], [split(4052n)]), 8453);
+    expect(found.map((entry) => [entry.split.projectId, entry.reserved])).toEqual([[0n, true], [4052n, false]]);
+  });
+  it('refuses a per-chain group the distributor would reroute, whatever the form row says', async () => {
+    const chains = [{ id: 1, name: 'Ethereum' }, { id: 8453, name: 'Base' }];
+    const never = () => { throw new Error('read'); };
+    const encoded = { 1: args([], [split(4052n)]), 8453: args([], [split(52004n)]) };
+    expect(await stickyEncodedProblem((chainId) => encoded[chainId], chains, never)).toMatch(/Maximum weeks/);
   });
 });

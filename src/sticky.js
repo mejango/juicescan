@@ -113,14 +113,19 @@ function projectTokenProblem(erc20Of, chain) {
 // splitsByChain: { [chainId]: split[] }; chains: [{ id, name }]; clientFor(chainId): a viem public client;
 // erc20Of(chainId): resolves the project's token address there (zero if none), given only when `reserved`.
 export async function stickySplitsProblem(splitsByChain, chains, reserved, clientFor, erc20Of) {
-  var checks = [];
-  for (var i = 0; i < chains.length; i++) {
-    var chain = chains[i], sticky = (splitsByChain[chain.id] || []).filter(function (split) { return isStickySplit(split, chain.id); });
-    if (!sticky.length) continue;
-    for (var j = 0; j < sticky.length; j++) {
-      var invalid = validateStickyGroupId(sticky[j].projectId || 0);
+  var checks = [], stickyOn = {};
+  // Every group is judged before anything is read.
+  for (var c = 0; c < chains.length; c++) {
+    var list = (splitsByChain[chains[c].id] || []).filter(function (split) { return isStickySplit(split, chains[c].id); });
+    for (var j = 0; j < list.length; j++) {
+      var invalid = validateStickyGroupId(list[j].projectId || 0);
       if (invalid) return invalid;
     }
+    stickyOn[chains[c].id] = list;
+  }
+  for (var i = 0; i < chains.length; i++) {
+    var chain = chains[i], sticky = stickyOn[chain.id];
+    if (!sticky.length) continue;
     var tokens = {};
     sticky.forEach(function (split) { tokens[String(split.beneficiary).toLowerCase()] = split.beneficiary; });
     Object.keys(tokens).forEach(function (key) {
@@ -143,4 +148,43 @@ export function stickyRecipientIssue(rec) {
   if (rec.stickyError) return rec.stickyError;
   if (!/^0x[0-9a-fA-F]{40}$/.test(String(rec.address || '').trim())) return 'Enter the Sticky token\'s 0x address.';
   return validateStickyGroupId(rec.projectId || 0);
+}
+
+// The group the week fields ask for, as a bigint; throws the reason they do not make one. A maximum that is
+// switched on must be given: an empty or zero maximum would otherwise read as "no upper bound".
+export function stickyGroupFromFields(tenure, min, hasMax, max) {
+  if (!tenure) return 0n;
+  min = String(min || '').trim(); max = String(max || '').trim();
+  if (!min) throw new Error('Enter the minimum weeks');
+  if (hasMax && !max) throw new Error('Enter the maximum weeks');
+  if (!/^[0-9]+$/.test(min) || (hasMax && !/^[0-9]+$/.test(max))) throw new Error('Enter whole weeks');
+  if (Number(min) < 1) throw new Error('Tenure groups need a minimum of at least 1 week.');
+  if (hasMax && Number(max) < 1) throw new Error('Maximum weeks must be at least 1.');
+  return stickyGroupId(Number(min), hasMax ? Number(max) : 0);
+}
+
+// Every Sticky split inside an encoded call's arguments, as { split, reserved }: what is about to be signed for
+// `chainId`, whatever form rows and per-chain values produced it. `reserved` is true inside a reserved-token group.
+export function encodedStickySplits(value, chainId, reserved, out) {
+  out = out || [];
+  if (Array.isArray(value)) { value.forEach(function (entry) { encodedStickySplits(entry, chainId, reserved, out); }); return out; }
+  if (!value || typeof value !== 'object') return out;
+  if (typeof value.hook === 'string' && 'beneficiary' in value && 'percent' in value) {
+    if (isStickySplit(value, chainId)) out.push({ split: value, reserved: !!reserved });
+    return out;
+  }
+  var inGroup = 'groupId' in value && Array.isArray(value.splits) ? BigInt(value.groupId) === 1n : reserved;
+  Object.keys(value).forEach(function (key) { encodedStickySplits(value[key], chainId, inGroup, out); });
+  return out;
+}
+
+// Why the encoded calls cannot be sent, or null. encodedOn(chainId): that chain's call arguments.
+export async function stickyEncodedProblem(encodedOn, chains, clientFor, erc20Of) {
+  var payouts = {}, reserved = {};
+  chains.forEach(function (chain) {
+    var found = encodedStickySplits(encodedOn(chain.id), chain.id);
+    payouts[chain.id] = found.filter(function (entry) { return !entry.reserved; }).map(function (entry) { return entry.split; });
+    reserved[chain.id] = found.filter(function (entry) { return entry.reserved; }).map(function (entry) { return entry.split; });
+  });
+  return (await stickySplitsProblem(payouts, chains, false, clientFor)) || (await stickySplitsProblem(reserved, chains, !!erc20Of, clientFor, erc20Of));
 }

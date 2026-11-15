@@ -1,7 +1,7 @@
 // The split editor's Sticky option: the row sends the chain's distributor as the hook, the Sticky token as the
 // beneficiary and the holders' group as the project id, and reopens a stored Sticky split the same way.
 import { describe, expect, it } from 'vitest';
-import { addSplitRecipientRow, buildSplitsEditPayload } from '../src/discover.js';
+import { addSplitRecipientRow, buildSplitsEditPayload, resolveSplitsEditByChain } from '../src/discover.js';
 
 const DISTRIBUTOR = '0x489d011dc34983eb2e219a5010806caa418cb46b';
 const TOKEN = '0x1111111111111111111111111111111111111111';
@@ -51,6 +51,32 @@ describe('Sticky in the split editor', () => {
     const out = buildSplitsEditPayload(rows);
     expect(out.splits[0]).toMatchObject({ projectId: 4052n, beneficiary: TOKEN });
     expect(hookOf(out.splits[0].hook, 1)).toBe(DISTRIBUTOR);
+  });
+
+  it('keeps the group on every chain, never looking it up as a project', async () => {
+    const lookups = [];
+    const resolve = async (projectId) => { lookups.push(projectId); return { byChain: { 1: projectId, 8453: 8000 } }; };
+    const sticky = { hook: DISTRIBUTOR, beneficiary: TOKEN, projectId: 4052n, percent: 1 };
+    const project = { hook: '0x0000000000000000000000000000000000000000', beneficiary: TOKEN, projectId: 4052n, percent: 1 };
+    const out = await resolveSplitsEditByChain([sticky, project], CHAINS, 1, resolve);
+    expect(out[8453].map((split) => split.projectId)).toEqual([4052n, 8000n]);
+    expect(lookups).toEqual([4052]);
+    // A hook that is Sticky on one chain only: its other chain still gets the looked-up project.
+    const mixed = { hook: Object.assign((chainId) => (chainId === 1 ? DISTRIBUTOR : '0x00000000000000000000000000000000000000cc'), { _chainValue: true }), beneficiary: TOKEN, projectId: 4052n, percent: 1 };
+    const mixedOut = await resolveSplitsEditByChain([mixed], CHAINS, 1, resolve);
+    expect(mixedOut[8453][0]).toMatchObject({ projectId: 8000n, hook: '0x00000000000000000000000000000000000000cc' });
+  });
+
+  it('refuses a maximum that is switched on but zero', () => {
+    const { box, rows } = editor();
+    choose(box.querySelector('select'), 'hook'); choose(box.querySelector('.create-split-subsel'), 'sticky');
+    type(rows[0].pct, '100'); type(box.querySelector('[aria-label="Sticky token"]'), TOKEN);
+    choose([...box.querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'tenure')), 'tenure');
+    type(box.querySelector('[aria-label="Minimum weeks"]'), '4');
+    const max = box.querySelector('.splits-edit-lockcheck input'); max.checked = true; max.dispatchEvent(new Event('change'));
+    expect(buildSplitsEditPayload(rows).error).toMatch(/Enter the maximum weeks/);
+    type(box.querySelector('[aria-label="Maximum weeks"]'), '0');
+    expect(buildSplitsEditPayload(rows).error).toMatch(/at least 1/);
   });
 
   it('does not offer Sticky where the editor did not ask for it', () => {

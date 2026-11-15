@@ -50,6 +50,42 @@ describe('Sticky in the recipient picker', () => {
     expect(rec).toMatchObject({ type: 'customhook', hookAddress: '', address: '', projectId: 0 });
   });
 
+  it('refuses a maximum of zero, which would otherwise send no maximum', () => {
+    const rec = { type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4000, percent: 10 };
+    const host = picker(rec, { isPayout: true });
+    const max = host.querySelector('input[type="checkbox"]'); max.checked = true; max.dispatchEvent(new Event('change'));
+    expect(rec.stickyError).toBe('Enter the maximum weeks');
+    type(host.querySelector('[aria-label="Maximum weeks"]'), '0');
+    expect(rec.stickyError).toBe('Maximum weeks must be at least 1.');
+  });
+
+  it('never shows weeks the row no longer holds after its type was switched', () => {
+    const rec = { type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4052, percent: 10 };
+    const host = picker(rec, { isPayout: true });
+    type(host.querySelector('[aria-label="Minimum weeks"]'), '5');
+    expect(rec.projectId).toBe(5052);
+    choose(host.querySelector('.create-split-typesel'), 'project');
+    expect(rec.stickyWeeks).toBeUndefined();
+    // A row whose group changed behind the typed fields opens from the group it holds.
+    const stale = { type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 8000, stickyWeeks: { tenure: true, min: '4', max: '52', hasMax: true } };
+    const reopened = picker(stale, { isPayout: true });
+    expect(reopened.querySelector('[aria-label="Minimum weeks"]').value).toBe('8');
+    expect(reopened.querySelector('[aria-label="Maximum weeks"]')).toBe(null);
+  });
+
+  it('offers no per-chain project ids on a distributor row left in Custom by per-chain addresses', () => {
+    const state = { chainIds: [1, 8453], perChain: {}, _pcOpen: { 'p:0:0': true, 'ppid:0:0': true } };
+    const keys = { state, isPayout: true, perChainKey: 'p:0:0', pidKey: 'ppid:0:0' };
+    const other = picker({ type: 'customhook', hookAddress: TOKEN, address: TOKEN, projectId: 4052 }, keys);
+    const fields = (host) => host.querySelectorAll('.create-split-idcol input').length;
+    expect(subSelect(other).value).toBe('custom');
+    const distributor = picker({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4052 }, keys);
+    expect(subSelect(distributor).value).toBe('custom');
+    // The other hook shows an id per chain; the distributor row shows the one group it sends.
+    expect(fields(other)).toBeGreaterThan(1);
+    expect(fields(distributor)).toBe(1);
+  });
+
   it('opens a stored Sticky split as Sticky, with its group', () => {
     const host = picker({ type: 'customhook', hookAddress: DISTRIBUTOR, address: TOKEN, projectId: 4052, percent: 10 }, { isPayout: true });
     expect(subSelect(host).value).toBe('sticky');
@@ -69,7 +105,15 @@ describe('Sticky launch checks', () => {
     expect(recipientIssue(stateWith('revnet', [sticky({ address: '' })]))).toMatch(/Sticky token/);
     expect(recipientIssue(stateWith('revnet', [sticky({ stickyError: 'Enter whole weeks' })]))).toMatch(/Enter whole weeks/);
   });
+  it('never encodes a row whose weeks were refused, whenever the encoder runs', () => {
+    expect(() => splitState(sticky({ projectId: 4052, stickyError: 'Enter whole weeks' }), 1, null, 1, null, false)).toThrow('A split to Sticky holders is not ready: Enter whole weeks');
+  });
+  it('encodes the group the row shows, whatever per-chain project id its slot still holds', () => {
+    expect(splitState(sticky({ projectId: 4000 }), 1, null, 1, 8000, false).projectId).toBe(4000);
+    // Another hook keeps its per-chain project id.
+    expect(splitState(sticky({ hookAddress: TOKEN, projectId: 4000 }), 1, null, 1, 8000, false).projectId).toBe(8000);
+  });
   it('reads nothing when no row is Sticky', async () => {
-    expect(await stickyRecipientsProblem(stateWith('project', [{ type: 'wallet', address: TOKEN, percent: 10 }]), [1])).toBe(null);
+    expect(await stickyRecipientsProblem(stateWith('project', [{ type: 'wallet', address: TOKEN, percent: 10 }]), [1], () => [])).toBe(null);
   });
 });
