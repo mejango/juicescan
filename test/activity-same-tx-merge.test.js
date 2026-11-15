@@ -131,6 +131,17 @@ describe('mergeSameTxActivityRows', () => {
     expect(reservePercentLabel('1000', null)).toBe('');
   });
 
+  it('names a Sticky split receipt by its holders, never as a project', () => {
+    const tx = { chainId: 8453, txHash: '0xst', timestamp: 1, from: '0xcaller' };
+    const token = '0x4444444444444444444444444444444444444444';
+    const rows = projectFeedRowsFromEvents([
+      Object.assign({}, tx, { sendReservedTokensToSplitEvent: { tokenCount: '600000000000000000000000', beneficiary: token, splitProjectId: 4052, hook: '0x489D011dc34983Eb2e219A5010806CAA418Cb46B', from: '0xcaller', txHash: '0xst', timestamp: 1 } }),
+      Object.assign({}, tx, { sendReservedTokensToSplitsEvent: { tokenCount: '600000000000000000000000', from: '0xcaller', txHash: '0xst', timestamp: 1 } }),
+    ], Object.assign({}, project));
+    const merged = mergeSameTxActivityRows(rows, project);
+    expect(merged[0].actionParts).toEqual([{ text: '600k ART to ', sticky: { projectId: 4052, beneficiary: token }, chainId: 8453 }]);
+  });
+
   it('folds a reserved distribution with its receipts: the total as headline, a recipient per bullet', () => {
     const tx = { chainId: 8453, txHash: '0xrs', timestamp: 1, from: '0xcaller' };
     const rows = projectFeedRowsFromEvents([

@@ -5,6 +5,7 @@ import { assertScheduleFresh, assertOrderedRulesetReceipt } from './ruleset-sche
 // display metadata and indexed aggregates come from Bendystraw with an onchain URI fallback.
 
 import { PERMISSION_IDS } from './permission-ids.js';
+import { isStickySplit, stickyRecipientLabel } from './sticky.js';
 import { boundedLogClient, RPC_LOG_WINDOW } from './rpc-logs.js';
 import { MAX_DEFIFA_ACTION_NFTS, defifaPhaseAllowsPay } from './defifa.js';
 import { PAY_MAX_SLIPPAGE_BPS, decodePayFailure, payRetrySlippageBps } from './pay-failure.js';
@@ -3157,7 +3158,8 @@ function renderTierSaleRouting(project, shop, tier) {
     var shares = tierSaleShares(tier.splitPercent, splits || []);
     shares.rows.forEach(function (entry) {
       var split = entry.split;
-      var label = BigInt(split.projectId || 0) > 0n
+      var label = isStickySplit(split, project.chainId) ? stickyRecipientNode(split, project.chainId)
+        : BigInt(split.projectId || 0) > 0n
         ? 'Project #' + String(split.projectId)
         : addressLinkNode(split.hook && split.hook !== ZERO_ADDRESS ? split.hook : split.beneficiary, project.chainId);
       body.appendChild(row(label, formatBps(entry.bps)));
@@ -6959,11 +6961,29 @@ function splitRoutingKind(sp) {
   return 'owner';
 }
 
+// A Sticky split's recipient, "Sticky holders stuck 4 to 52 weeks → STICKY": the group from the split's projectId,
+// then the Sticky token (the split's beneficiary) by symbol once read. The full token address is the tooltip.
+var stickySymbolReads = {};
+function stickyRecipientNode(split, chainId) {
+  var node = el('span', 'split-sticky-recipient');
+  node.textContent = stickyRecipientLabel(split, '');
+  node.title = String(split.beneficiary || '');
+  var key = chainId + '|' + String(split.beneficiary).toLowerCase();
+  if (!stickySymbolReads[key]) {
+    stickySymbolReads[key] = clientFor(chainId).readContract({ address: split.beneficiary, abi: erc20SymbolAbi, functionName: 'symbol', args: [] })
+      .catch(function () { delete stickySymbolReads[key]; return ''; });
+  }
+  stickySymbolReads[key].then(function (symbol) { if (symbol) node.textContent = stickyRecipientLabel(split, symbol); });
+  return node;
+}
+
 // Render the "Account" cell for a single JBSplit. Precedence follows splitRoutingKind (hook →
 // project → beneficiary → owner fallback). Returns a fresh node.
 function splitAccountNode(sp, project, chainId, opts) {
   opts = opts || {};
   var node = el('span', 'splits-acct-inner');
+  // A Sticky split's projectId is a reward group and its beneficiary a token, so it is told apart first.
+  if (isStickySplit(sp, chainId)) { node.appendChild(stickyRecipientNode(sp, chainId)); return node; }
   var kind = splitRoutingKind(sp);
   if (kind === 'hook') {
     var label = el('span', 'split-hook-label'); label.textContent = 'Split hook'; label.title = 'Reserved tokens are forwarded to a split hook';
@@ -14616,6 +14636,7 @@ function sameTxRank(type) { var i = SAME_TX_ORDER.indexOf(type); return i === -1
 function activityRowPhrase(row, unit, distributed, fanOut) {
   if (distributed && row.type === 'reserved_split') {
     var amount = formatCompactTokenAmount(row.splitCount) + ' ' + unit;
+    if (isStickySplit({ hook: row.splitHook }, row.chainId)) return { text: amount + ' to ', sticky: { projectId: row.splitProjectId, beneficiary: row.account }, chainId: row.chainId };
     return row.splitProjectId ? amount + ' to project #' + row.splitProjectId : { text: amount + ' to ', address: row.account };
   }
   // A fan-out (several pays in one tx) names who got what: the swap's payee, or an issuing pay's beneficiary.
@@ -14650,7 +14671,8 @@ function decorateItemMintBullet(bullet, project, nft) {
 }
 function phraseText(phrase) {
   if (typeof phrase === 'string') return phrase;
-  return (phrase.lead ? shortAddr6(phrase.lead) : '') + phrase.text + (phrase.address ? shortAddr6(phrase.address) : '');
+  return (phrase.lead ? shortAddr6(phrase.lead) : '') + phrase.text + (phrase.address ? shortAddr6(phrase.address) : '')
+    + (phrase.sticky ? stickyRecipientLabel(phrase.sticky, '') : '');
 }
 
 // Collapse rows that belong to one transaction (on one chain) into a single line item:
@@ -14847,6 +14869,7 @@ export function renderActivityRow(row, project) {
       }
       if (lastIndex < text.length) bullet.appendChild(document.createTextNode(text.slice(lastIndex)));
       if (phrase.address) bullet.appendChild(addressNode(phrase.address));
+      if (phrase.sticky) bullet.appendChild(stickyRecipientNode(phrase.sticky, phrase.chainId));
       if (phrase.lead) bullet.insertBefore(addressNode(phrase.lead), bullet.firstChild);
       if (phrase.nft && project) decorateItemMintBullet(bullet, project, phrase.nft);
       bullets.appendChild(bullet);
@@ -14984,7 +15007,7 @@ export function activityRowFromEvent(event, project, swapOrdinal) {
       type: 'reserved_split', direction: 'in', chainId: chainId,
       txHash: rsp.txHash || event.txHash, timestamp: Number(rsp.timestamp || event.timestamp),
       account: rsp.beneficiary || event.from, from: rsp.from || event.from,
-      splitCount: splitCount, splitProjectId: Number(rsp.splitProjectId) || 0,
+      splitCount: splitCount, splitProjectId: Number(rsp.splitProjectId) || 0, splitHook: rsp.hook || '',
       baseAmount: '', tokenAmount: '',
       action: 'received ' + formatCompactTokenAmount(splitCount) + ' ' + sym + (project.tokenAddress ? '' : ' credits') + ' from a reserved split',
       memo: '',
@@ -22046,7 +22069,7 @@ export var BENDYSTRAW_ACTIVITY_ITEM_FIELDS = 'items { id chainId projectId times
   + 'mintTokensEvent { beneficiary beneficiaryTokenCount caller from txHash timestamp } '
   + 'sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd token decimals tokenSymbol fee caller from txHash timestamp } '
   + 'sendReservedTokensToSplitsEvent { tokenCount from txHash timestamp } '
-  + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId from txHash timestamp } '
+  + 'sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from txHash timestamp } '
   + 'autoIssueEvent { beneficiary count stageId from txHash timestamp } '
   + 'borrowLoanEvent { borrowAmount collateral beneficiary token from txHash timestamp } '
   + 'repayLoanEvent { repayBorrowAmount collateralCountToReturn caller from txHash timestamp } '

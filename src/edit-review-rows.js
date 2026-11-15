@@ -1,6 +1,8 @@
 // Review rows that state what an owner edit changes: the value before and the value after, per chain.
 // The same lines juicebox.money shows for the same edits.
 
+import { describeStickySplit, isStickySplit } from './sticky.js';
+
 var SPLITS_TOTAL = 1000000000n;
 
 var METADATA_LABELS = {
@@ -48,7 +50,9 @@ function recipientText(split, now) {
   var hook = String(split.hook || '');
   var none = /^0x0*$/.test(beneficiary) || !beneficiary;
   // With no project, no hook and no beneficiary, the contracts pay whoever sends the distribution.
-  var who = /^0x0*$/.test(hook) || !hook
+  // A Sticky split names its holders' group and token, not a project and a beneficiary.
+  var who = isStickySplit(split) ? describeStickySplit(split.projectId || 0) + ' → Sticky token ' + beneficiary
+    : /^0x0*$/.test(hook) || !hook
     ? (BigInt(split.projectId || 0) > 0n ? 'Project #' + BigInt(split.projectId) + (split.preferAddToBalance ? ' (added to its balance)' : none ? '' : ' (tokens to ' + beneficiary + ')')
       : none ? 'Whoever sends the distribution' : beneficiary)
     : 'Hook ' + hook;
