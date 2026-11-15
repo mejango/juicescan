@@ -37,6 +37,7 @@ vi.mock('../src/component-base.js', () => ({
   openPendingReview: (pending) => { payState.openReview(pending); return payState.review; },
   payHoldScope: projectId => 'project-' + BigInt(projectId),
   getBeneficiaryAddress: () => payState.BENEFICIARY,
+  getAccount: () => payState.BENEFICIARY,
   firstChainForNetwork: () => 1,
   createPublicClientForChain: () => ({ readContract: payState.readContract }),
   getChainTokens: () => [
@@ -58,6 +59,7 @@ vi.mock('../src/component-base.js', () => ({
 
 vi.mock('../src/pay-preview.js', async (original) => ({
   payRouteIsBetter: (await original()).payRouteIsBetter,
+  bestPayRoute: (await original()).bestPayRoute,
   computePayPreview: payState.preview,
   prepareCardPay: payState.prepare,
   formatTokenCount: value => String(value),

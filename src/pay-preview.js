@@ -14,9 +14,9 @@
 
 import { decodeAbiParameters, formatUnits } from 'viem';
 import { decodePayFailure } from './pay-failure.js';
-import { PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay } from './pay-prepare.js';
+import { PAY_QUOTE_FAILED_MESSAGE, PAY_SWAP_QUOTE_FAILED_MESSAGE, prepareUserPay, runUserPay } from './pay-prepare.js';
 import { PAY_DEFAULT_SLIPPAGE_BPS } from './slippage.js';
-import { getAddress, createPublicClientForChain, el, errMessage } from './component-base.js';
+import { getAddress, createPublicClientForChain, el, errMessage, NATIVE_TOKEN } from './component-base.js';
 
 // Format an 18-decimal token count (bigint) for display, trimming to a few significant digits.
 // Adaptive significant digits for a Number: big numbers drop decimals (and get thousands separators),
@@ -301,4 +301,37 @@ export function payRouteIsBetter(candidate, current) {
   if (candidateTotal !== currentTotal) return candidateTotal > currentTotal;
 
   return !candidate.viaRouter && current && current.viaRouter;
+}
+
+// The route to pay among quoted ones. ran: Map(route -> token count | 'reverted' | null) from running each
+// payable route as the payer, or nothing. A reverting route is dropped while another is left; the counts decide
+// only when every route left has one; otherwise the previews decide (payRouteIsBetter). When nothing is payable
+// the previews' own order keeps the reason to show.
+export function pickPayRoute(routes, ran) {
+  var payable = routes.filter(function (route) { return payPreviewScore(route.preview) >= 0n; });
+  var live = ran ? payable.filter(function (route) { return ran.get(route) !== 'reverted'; }) : payable;
+  if (!live.length) live = payable;
+  var exact = !!ran && live.every(function (route) { return typeof ran.get(route) === 'bigint'; });
+  return (live.length ? live : routes).reduce(function (best, route) {
+    if (exact && ran.get(route) !== ran.get(best)) return ran.get(route) > ran.get(best) ? route : best;
+    return payRouteIsBetter(route, best) ? route : best;
+  });
+}
+
+// pickPayRoute, after running each payable route when there is more than one and a payer to run them as.
+// payment: { chainId, projectId, token, amount, beneficiary, payer }; a route's terminal is route.address or
+// route.preview.terminal. Only native-token payments are run: an ERC-20 payment needs the payer's approval first.
+export async function bestPayRoute(routes, payment) {
+  var payable = routes.filter(function (route) { return payPreviewScore(route.preview) >= 0n; });
+  var native = payment && String(payment.token || '').toLowerCase() === NATIVE_TOKEN.toLowerCase();
+  if (!native || !payment.payer || payable.length < 2) return pickPayRoute(routes, null);
+  var client = createPublicClientForChain(payment.chainId), ran = new Map();
+  await Promise.all(payable.map(async function (route) {
+    ran.set(route, await runUserPay(client, {
+      chainId: payment.chainId, terminal: route.address || route.preview.terminal, projectId: BigInt(payment.projectId), token: payment.token,
+      amount: BigInt(payment.amount), beneficiary: payment.beneficiary || payment.payer,
+      minReturnedTokens: BigInt(route.preview.minReturnedTokens || 0), metadata: route.preview.metadata || '0x',
+    }, payment.payer));
+  }));
+  return pickPayRoute(routes, ran);
 }

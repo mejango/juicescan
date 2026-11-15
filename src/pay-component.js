@@ -5,7 +5,7 @@
 import {
   el, parseHashDefaults,
   createProjectAndChainInput, createComponentWrapper,
-  executeTransaction, openPendingReview, getBeneficiaryAddress, firstChainForNetwork, payHoldScope,
+  executeTransaction, openPendingReview, getAccount, getBeneficiaryAddress, firstChainForNetwork, payHoldScope,
   createPublicClientForChain, getChainTokens,
   parseAmount, renderError, getAddress,
   NATIVE_TOKEN, erc20DecimalsAbi, truncAddr,
@@ -13,7 +13,7 @@ import {
 import { projectDiscovery } from './project-discovery.js';
 import { chainNameFor } from './chain.js';
 import { decodePayFailure } from './pay-failure.js';
-import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub, payRouteIsBetter } from './pay-preview.js';
+import { computePayPreview, prepareCardPay, formatTokenCount, renderRoutingTag, renderAmmSub, bestPayRoute } from './pay-preview.js';
 
 export var payAbi = [{
   type: 'function', name: 'pay', stateMutability: 'payable',
@@ -115,10 +115,9 @@ function quoteBestPayRoute(opts, routes) {
       return Object.assign({}, route, { preview: { unavailable: true } });
     });
   })).then(function (resolved) {
-    var best = null;
-    for (var i = 0; i < resolved.length; i++) {
-      if (!best || payRouteIsBetter(resolved[i], best)) best = resolved[i];
-    }
+    return bestPayRoute(resolved, opts).then(function (best) { return [resolved, best]; });
+  }).then(function (found) {
+    var resolved = found[0], best = found[1];
     if (best && best.preview && !best.preview.unavailable && best.preview.received != null && BigInt(best.preview.received) >= 0n) return best;
     // Never turn an unavailable preview into a minReturnedTokens=0 payment. An exact, verified zero quote is a
     // legitimate zero-issuance payment; an RPC or terminal failure is not. A known revert says why.
@@ -484,6 +483,7 @@ export function renderPayComponent() {
       token: state.selectedToken.address,
       amount: amountParsed,
       beneficiary: beneficiary,
+      payer: getAccount() || undefined,
     };
     // The preview shows with its routing tag in one render (as before); only the submit path skips the tag.
     resolveBestPayRoute(request).then(function (route) {
@@ -578,6 +578,7 @@ export function renderPayComponent() {
       token: reviewed.token,
       amount: amountParsed,
       beneficiary: beneficiary,
+      payer: getAccount() || undefined,
     }).then(function (route) {
       if (review.closed) { state.phase = 'ready'; updateUI(); return; }
       if (!unchanged()) { state.phase = 'ready'; state.error = CHANGED; review.fail(CHANGED); updateUI(); return; }
