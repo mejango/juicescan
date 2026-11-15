@@ -171,6 +171,7 @@ Not verified against live wallets or a live Safe. The page handoff, handle URL t
   - Not run: the old-pool move (needs a position in a retired pool), anything through a Safe, and the dialogs themselves in a browser.
   - Left out on purpose: claiming both sides' fees in one call. Each position keeps its own Claim fees.
 - [x] J10h Raised by chain on hover, and the issuance price preview in Create.
+- [x] J10j Claim both sides of a market in one call (jango, 2026-11-15: "i want it"). Small and obvious: `prepareCollectLpFees` takes `pos.claimIds` and encodes one zero-liquidity decrease per position plus one TAKE_PAIR, the bytes juicebox.money's `buildCollectMarketFeesUnlockData` builds; the same review and sender as a single claim; "Claim market fees" on the selling side's row. Test in `test/open-first-bridge.test.js`.
 - [ ] J10i Asked of jango: Sticky split recipient (Juicescan has no pinned source for Sticky's addresses), the deployment check dialog, paying by card.
 - [x] J10d Other items are split into J10h (built) and J10i (asked).
 
