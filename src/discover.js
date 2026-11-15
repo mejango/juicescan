@@ -31426,12 +31426,19 @@ async function readLpPositionFees(chainId, pos) {
 // zero-liquidity decrease — the pool settles accrued fees into the position's delta and TAKE_PAIR pays them out,
 // leaving the position itself untouched. The minimums are 0 because nothing is swapped: the amounts are whatever
 // the pool already accrued, so a floor could only make a valid claim revert.
+// pos.claimIds names several positions of one pool (a market's two sides) claimed together: one zero-liquidity
+// decrease each, then one TAKE_PAIR.
+function lpClaimIds(pos) { return (pos.claimIds || [pos.tokenId]).map(function (id) { return BigInt(id); }); }
+function lpClaimIdsText(pos) { return lpClaimIds(pos).map(function (id) { return '#' + id.toString(); }).join(' + '); }
 function prepareCollectLpFees(chainId, pos, acct) {
   var posm = POSITION_MANAGER_BY_CHAIN[chainId];
   if (!posm) throw new Error('No position manager on this chain');
-  var decreaseParams = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }], [BigInt(pos.tokenId), 0n, 0n, 0n, '0x']);
+  var ids = lpClaimIds(pos);
+  var decreases = ids.map(function (id) {
+    return encodeAbiParameters([{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }], [id, 0n, 0n, 0n, '0x']);
+  });
   var takeParams = encodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], [pos.key.currency0, pos.key.currency1, acct]);
-  var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x0111', [decreaseParams, takeParams]]); // DECREASE_LIQUIDITY(0x01), TAKE_PAIR(0x11)
+  var unlockData = encodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], ['0x' + '01'.repeat(ids.length) + '11', decreases.concat([takeParams])]); // DECREASE_LIQUIDITY(0x01) each, TAKE_PAIR(0x11)
   var deadline = BigInt(Math.floor(Date.now() / 1000) + (pos.smartWallet ? 30 * 24 * 3600 : 1200));
   return { posm: posm, unlockData: unlockData, deadline: deadline, value: 0n, smartWallet: !!pos.smartWallet };
 }
@@ -31742,6 +31749,21 @@ function renderYourLpPositions(project, rows, acct, host, onDone) {
             edit.addEventListener('click', function () { mod.openLpMarketEditor(project, cid, group, acct, onDone); });
             entry.cell.insertBefore(edit, entry.cell.firstChild);
           });
+          // Both sides' fees in one call, on the row of the selling side. Fees are read at the click.
+          var host = current.find(function (entry) { return entry.pos === group.tokenSide; });
+          var both = el('button', 'detail-check-btn'); both.textContent = 'Claim market fees';
+          both.addEventListener('click', function () {
+            if (both.disabled) return;
+            both.disabled = true;
+            Promise.all([readLpPositionFees(cid, group.tokenSide), readLpPositionFees(cid, group.pairSide)]).then(function (fees) {
+              if (!fees[0] || !fees[1]) throw new Error('Fees are unavailable on this chain.');
+              var total = { pairFees: fees[0].pairFees + fees[1].pairFees, tokFees: fees[0].tokFees + fees[1].tokFees };
+              if (total.pairFees <= 0n && total.tokFees <= 0n) throw new Error('No fees to claim yet.');
+              var pos = Object.assign({}, group.tokenSide, { claimIds: [group.tokenSide.tokenId, group.pairSide.tokenId] });
+              return openLpClaimConfirm(project, cid, pos, acct, total, function () { if (onDone) onDone(); });
+            }).catch(function (e) { both.title = errMessage(e); }).then(function () { both.disabled = false; });
+          });
+          host.cell.insertBefore(both, host.cell.firstChild.nextSibling);
         });
       }).catch(function () {});
     });
@@ -31763,12 +31785,12 @@ function openLpClaimConfirm(project, chainId, pos, acct, claimable, onClaimed) {
     openLpClaimConfirmFor(project, chainId, Object.assign({}, pos, { smartWallet: smartWallet }), acct, claimable, onClaimed, review);
   }).catch(function (e) { review.fail(errMessage(e, 'Could not prepare the claim.')); throw e; });
 }
-export { openLpClaimConfirm, openEditSplitsModal };
+export { openLpClaimConfirm, openEditSplitsModal, prepareCollectLpFees };
 function lpClaimAction(project, pos) { return 'Claim your LP fees from the ' + (project.tokenSymbol || 'tokens') + '/' + pos.pair.symbol + ' pool'; }
 function lpClaimRows(project, pos, acct, claimable, deadline) {
   var feesH = formatTokens(claimable.tokFees) + ' ' + (project.tokenSymbol || 'tokens') + ' + ' + formatBalance(claimable.pairFees, pos.pair.decimals, pos.pair.symbol);
   return [
-    ['Position', '#' + pos.tokenId.toString() + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
+    [pos.claimIds ? 'Positions' : 'Position', lpClaimIdsText(pos) + (pos.hookIsCurrent ? ' (current pool)' : ' (old pool)')],
     ['You receive', '≈ ' + feesH + ' (whatever the pool has accrued at execution)'],
     ['Liquidity', 'untouched: this claims fees only'],
     ['To', acct],
@@ -31801,7 +31823,7 @@ function openLpClaimConfirmFor(project, chainId, pos, acct, claimable, onClaimed
     chain: chainNameOf(chainId), chainId: chainId, contract: 'Uniswap V4 PositionManager', address: prep.posm,
     'function': 'modifyLiquidities', value: '0',
     calldata: encodeFunctionData({ abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline] }),
-    position: { actions: 'DECREASE_LIQUIDITY 0, TAKE_PAIR (0x0111)', tokenId: pos.tokenId.toString(), expectedReturns: feesH, recipient: acct },
+    position: { actions: pos.claimIds ? 'DECREASE_LIQUIDITY 0 per position, TAKE_PAIR' : 'DECREASE_LIQUIDITY 0, TAKE_PAIR (0x0111)', tokenId: lpClaimIdsText(pos).replace(/#/g, ''), expectedReturns: feesH, recipient: acct },
     args: { unlockData: prep.unlockData, deadline: 'set at signing (~' + (prep.smartWallet ? '30 days: survives a multisig signing queue' : '20 min') + ')' },
   }, { title: 'Confirm transaction', confirmText: 'Confirm' }, 'Claiming fees…', 'Claim failed', function () {
     return lpSendTx(chainId, { account: acct, address: prep.posm, abi: lpPositionManagerAbi, functionName: 'modifyLiquidities', args: [prep.unlockData, prep.deadline], value: 0n, smartWallet: prep.smartWallet });

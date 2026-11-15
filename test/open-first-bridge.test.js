@@ -10,7 +10,8 @@ vi.mock('../src/fee-buyback-review.js', () => ({
   mountFeeBuybackReview: (_host, _call, changed) => { changed({ busy: false, label: null }); return { stop() {}, confirm: async () => true }; },
 }));
 
-import { openEditSplitsModal, openLpClaimConfirm, renderBridgeTransactionsTable, smallestPassing } from '../src/discover.js';
+import { decodeAbiParameters } from 'viem';
+import { openEditSplitsModal, openLpClaimConfirm, prepareCollectLpFees, renderBridgeTransactionsTable, smallestPassing } from '../src/discover.js';
 
 const SUCKER = '0x5555555555555555555555555555555555555555';
 const PEER = '0x6666666666666666666666666666666666666666';
@@ -120,6 +121,22 @@ describe('LP claim fees', () => {
     await vi.waitFor(() => expect(dialog().querySelector('.create-payload')).not.toBeNull());
     expect(rows()).toContain('Deadline: ~20 minutes');
     expect(document.querySelectorAll('dialog.modal-dialog').length).toBe(1);
+  });
+
+  it('claims both sides of a market in one call: a zero decrease per position, then one take', async () => {
+    const market = { ...pos, claimIds: [9n, 12n] };
+    const one = prepareCollectLpFees(8453, pos, h.account), two = prepareCollectLpFees(8453, market, h.account);
+    const decode = (data) => decodeAbiParameters([{ type: 'bytes' }, { type: 'bytes[]' }], data);
+    expect(decode(one.unlockData)[0]).toBe('0x0111');
+    const [actions, params] = decode(two.unlockData);
+    expect(actions).toBe('0x010111');
+    expect(params.length).toBe(3);
+    expect(params.slice(0, 2).map((p) => decodeAbiParameters([{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }], p).slice(0, 4)))
+      .toEqual([[9n, 0n, 0n, 0n], [12n, 0n, 0n, 0n]]);
+    expect(params[2]).toBe(decode(one.unlockData)[1][1]);
+    h.client = { getCode: async () => '0x' };
+    await openLpClaimConfirm(project, 8453, market, h.account, claimable, () => {});
+    expect(rows()).toContain('Positions: #9 + #12 (current pool)');
   });
 
   it('fails closed when the wallet type cannot be read', async () => {
