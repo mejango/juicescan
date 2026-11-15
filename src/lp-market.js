@@ -11,7 +11,7 @@ import {
   POSITION_MANAGER_BY_CHAIN, chainNameOf, formatBalance, formatPrice, formatTokens, lpApprovalRows, lpBandPricesOf, lpConfirmAndSend, lpCorridor,
   lpGetAmountsForLiquidity, lpMintPlan, lpSafeBatchPreview, lpSqrtAtTick, lpWithAllowanceFlags, noteLocalLpWrite, openModal, refreshLpPositionForRemoval, runAddLiquidityTxs,
 } from './discover.js';
-import { lpCappedClose, lpCloseActions, lpEditOperations, lpEncodeUnlock, lpMintParams, lpMoveStillCovered } from './lp-edit.js';
+import { lpCappedClose, lpCloseActions, lpEditOperations, lpEncodeUnlock, lpMintParams, lpMoveStillCovered, lpRequireBalances } from './lp-edit.js';
 
 var UINT160_MAX = (1n << 160n) - 1n;
 
@@ -322,7 +322,10 @@ export function openLpMarketEditor(project, chainId, group, acct, onDone) {
       var plan = lpMarketEditFromForm(sides, shown, values, corridor, refit, acct);
       var posm = POSITION_MANAGER_BY_CHAIN[chainId], smartWallet = !!sides.tokenSide.smartWallet;
       var window = smartWallet ? '30 days: survives a multisig signing queue' : '~20 minutes';
-      return lpWithAllowanceFlags(chainId, acct, posm, smartWallet, plan.erc20).then(function (erc20) {
+      var paysCap = [plan.token, plan.pair].some(function (side) { return side && side.burned; });
+      return lpRequireBalances(chainId, sides.tokenSide, acct, plan, paysCap, sym).then(function () {
+        return lpWithAllowanceFlags(chainId, acct, posm, smartWallet, plan.erc20);
+      }).then(function (erc20) {
       if (review.closed) return;
       var prep = { posm: posm, unlockData: plan.unlockData, value: plan.value, erc20: erc20, acct: acct, smartWallet: smartWallet,
         stepLabel: 'market edit', finalLabel: 'Edit the market', sendingLine: 'Confirm in your wallet…' };

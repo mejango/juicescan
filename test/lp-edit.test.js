@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { lpEditPlan, lpEditStillFits } from '../src/lp-edit.js';
+import { lpBalanceProblem, lpEditPlan, lpEditStillFits } from '../src/lp-edit.js';
 
 var ACCOUNT = '0x3333333333333333333333333333333333333333';
 var vectors = JSON.parse(readFileSync(join(process.cwd(), 'test/fixtures/lp-edit-vectors.json'), 'utf8'),
@@ -108,5 +108,19 @@ describe('the plan a filled form asks for', () => {
     expect(() => lpEditFromForm(pos, prefill, form({ token: '1e3' }), ACCOUNT)).toThrow(/valid amount/);
     expect(() => lpEditFromForm(pos, prefill, form({ token: '' }), ACCOUNT)).toThrow(/valid amount/);
     expect(() => lpEditFromForm(pos, prefill, form({ min: '0.002', max: '0.001' }), ACCOUNT)).toThrow(/valid positive price range/);
+  });
+});
+
+describe('the wallet balance gate', () => {
+  var plan = { tokenFlow: 10n, tokenFunding: 12n, pairFlow: 5n, pairFunding: 6n };
+  it('gates an increase on what the pool pulls and a move on its whole cap', () => {
+    expect(lpBalanceProblem(plan, false, { token: 10n, pair: 5n }, 'TKN', 'ETH')).toBeNull();
+    expect(lpBalanceProblem(plan, true, { token: 11n, pair: 6n }, 'TKN', 'ETH')).toBe("That's more TKN than your balance.");
+    expect(lpBalanceProblem(plan, true, { token: 12n, pair: 5n }, 'TKN', 'ETH')).toBe("That's more ETH than your balance.");
+    expect(lpBalanceProblem(plan, true, { token: 12n, pair: 6n }, 'TKN', 'ETH')).toBeNull();
+  });
+  it('refuses when a balance could not be read, and lets a change that returns funds through', () => {
+    expect(lpBalanceProblem(plan, false, { token: null, pair: 5n }, 'TKN', 'ETH')).toMatch(/Could not read/);
+    expect(lpBalanceProblem({ tokenFlow: -3n, tokenFunding: 0n, pairFlow: -1n, pairFunding: 0n }, false, { token: 0n, pair: 0n }, 'TKN', 'ETH')).toBeNull();
   });
 });

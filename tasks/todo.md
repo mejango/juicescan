@@ -211,3 +211,18 @@ jango, 2026-11-15: "1. add to juicescan. 2. lets add to juicescan."
 - **Agent-system impact:** None.
 - J11d kept as the SDK has it: a project on a retired controller generation reads "Custom / unsupported". Not run against a live chain; the dialog was not rendered in a browser (it needs a live project), its DOM test covers it.
 - J11 not built: a different Sticky token per chain in one row (the row is refused per-chain values, as juicebox.money refuses them in a file). The split editor row was not rendered in a browser (it needs a live project); its DOM test covers it.
+
+## 2026-11-15: Wallet balance gate in the position and market editors (J12)
+
+- [x] J12a Review refuses a position or market edit the wallet cannot fund: gated on what the pool pulls, and on the whole cap when the edit burns to mint (the capped close settles the cap). One rule (`lpBalanceProblem`) for both editors, the wording juicebox.money uses.
+
+## Plan refinement
+
+- **Objective:** A re-band or re-fit the wallet cannot cover is refused at Review instead of reverting onchain.
+- **System fit:** One rule, lpBalanceProblem in src/lp-edit.js, read by both editors; balances come from the existing readWalletTokenBalance.
+- **Reuse and simplicity:** No new reader and no new dialog state; the refusal uses the editors' existing error path and juicebox.money's wording.
+- **Evidence and unknowns:** juicebox.money EditPositionPanel and MarketEditPanel gate the same way (paysCap). Not gated: gas on a native pair, and a balance that drops between Review and send (the call then reverts).
+- **Verification:** Unit test of the rule on both branches and on a failed read; full check.
+- **Resource budget:** One small pull request.
+- **Authority and recovery:** Pull request; jango asked for the gate, no merge word for it yet.
+- **Agent-system impact:** None.
