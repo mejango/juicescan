@@ -11,8 +11,8 @@ import { gzipSync } from 'node:zlib';
 // startup measures 722,045 B gzip, and the ceiling rose to about 2% above it.
 // The old-pool position move, the raised-by-chain hover and the exact pay route choice load with the project page:
 // startup measures 736,158 B gzip.
-// Sticky recipients are named in split lists and the feed, which load with the project page: startup measures 738,739 B gzip.
-const startupBudget = { raw: 3_930_000, gzip: 739_000 };
+// Sticky recipients are named in split lists and the feed, which load with the project page: startup measures 739,059 B gzip.
+const startupBudget = { raw: 3_930_000, gzip: 740_000 };
 
 const budgets = {
   // Open-first states (pending review rows, busy buttons, stale-while-refreshing marks) measure 248,424 B raw, 50,173 B gzip.
@@ -113,8 +113,8 @@ const totalGzip = (await Promise.all(distributionFiles.map(gzipOf))).reduce((sum
 // A new Safe as owner or operator at launch (address prediction, the creation batch, on-chain verification, the signer editor): measured 2,149,531 B gzip.
 // The old-pool move, raised by chain, the issuance preview and the lazy position editor: measured 2,153,861 B gzip.
 // The two-sided market: its builders, the market mode of the add form and the market editor: measured 2,160,828 B gzip.
-// Sticky recipients (labels, the editor option, launch checks, .jb rows) and claiming a market's fees: measured 2,165,790 B gzip.
-const totalGzipBudget = 2_166_000;
+// Sticky recipients (labels, the editor option, launch checks, .jb rows) and claiming a market's fees: measured 2,166,166 B gzip.
+const totalGzipBudget = 2_167_000;
 if (totalGzip > totalGzipBudget) failures.push(`total distribution gzip ${totalGzip} > ${totalGzipBudget}`);
 if (failures.length) {
   console.error(`Bundle budget exceeded:\n- ${failures.join('\n- ')}`);

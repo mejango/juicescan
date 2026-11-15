@@ -108,6 +108,8 @@ describe('the week fields', () => {
     expect(() => stickyGroupFromFields(true, '4', true, '')).toThrow('Enter the maximum weeks');
     expect(() => stickyGroupFromFields(true, '4', true, '0')).toThrow('Maximum weeks must be at least 1.');
     expect(() => stickyGroupFromFields(true, '4.5', false, '')).toThrow('Enter whole weeks');
+    // Group 0 is all holders by voting power, a different policy than the tenure the form shows.
+    expect(() => stickyGroupFromFields(true, '0', false, '')).toThrow('at least 1 week');
     expect(() => stickyGroupFromFields(true, '4', true, '2')).toThrow(/less than minimum/);
   });
 });

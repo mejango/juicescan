@@ -158,6 +158,7 @@ export function stickyGroupFromFields(tenure, min, hasMax, max) {
   if (!min) throw new Error('Enter the minimum weeks');
   if (hasMax && !max) throw new Error('Enter the maximum weeks');
   if (!/^[0-9]+$/.test(min) || (hasMax && !/^[0-9]+$/.test(max))) throw new Error('Enter whole weeks');
+  if (Number(min) < 1) throw new Error('Tenure groups need a minimum of at least 1 week.');
   if (hasMax && Number(max) < 1) throw new Error('Maximum weeks must be at least 1.');
   return stickyGroupId(Number(min), hasMax ? Number(max) : 0);
 }
