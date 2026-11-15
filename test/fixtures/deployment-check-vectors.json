@@ -1,0 +1,3430 @@
+[
+ {
+  "name": "canonical revnet with a shop",
+  "revnet": true,
+  "values": {},
+  "defaults": {
+   "ownerOf": "@REVOwner",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "@REVOwner",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "@REVOwner",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "revnet",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Canonical composite hooks enable both payment and cash-out routing.",
+     "actual": "payments=true; cashOuts=true",
+     "expected": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "project.provenance",
+     "category": "project",
+     "status": "passed",
+     "label": "Revnet configuration",
+     "message": "The canonical deployer has a configuration for this revnet.",
+     "actual": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ },
+ {
+  "name": "canonical revnet, operator read",
+  "revnet": true,
+  "operator": "0x00000000000000000000000000000000000000aa",
+  "values": {
+   "hasPermissions": true
+  },
+  "defaults": {
+   "ownerOf": "@REVOwner",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "@REVOwner",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "@REVOwner",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "revnet",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Canonical composite hooks enable both payment and cash-out routing.",
+     "actual": "payments=true; cashOuts=true",
+     "expected": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "project.provenance",
+     "category": "project",
+     "status": "passed",
+     "label": "Revnet configuration",
+     "message": "The canonical deployer has a configuration for this revnet.",
+     "actual": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "id": "shop.permission.24",
+     "category": "permissions",
+     "status": "info",
+     "label": "Adjust tiers",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.permission.25",
+     "category": "permissions",
+     "status": "info",
+     "label": "Update metadata",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.permission.26",
+     "category": "permissions",
+     "status": "info",
+     "label": "Mint items",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.permission.27",
+     "category": "permissions",
+     "status": "info",
+     "label": "Increase discounts",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ],
+   "operator": "0x00000000000000000000000000000000000000aa"
+  }
+ },
+ {
+  "name": "canonical revnet, operator is the shop authority",
+  "revnet": true,
+  "operator": "@REVOwner",
+  "values": {},
+  "defaults": {
+   "ownerOf": "@REVOwner",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "@REVOwner",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "@REVOwner",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "revnet",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Canonical composite hooks enable both payment and cash-out routing.",
+     "actual": "payments=true; cashOuts=true",
+     "expected": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "project.provenance",
+     "category": "project",
+     "status": "passed",
+     "label": "Revnet configuration",
+     "message": "The canonical deployer has a configuration for this revnet.",
+     "actual": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "id": "shop.permission.24",
+     "category": "permissions",
+     "status": "info",
+     "label": "Adjust tiers",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.permission.25",
+     "category": "permissions",
+     "status": "info",
+     "label": "Update metadata",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.permission.26",
+     "category": "permissions",
+     "status": "info",
+     "label": "Mint items",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.permission.27",
+     "category": "permissions",
+     "status": "info",
+     "label": "Increase discounts",
+     "message": "This is the supplied operator's current capability, including owner, root and wildcard authority.",
+     "actual": "Allowed"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ],
+   "operator": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+  }
+ },
+ {
+  "name": "canonical revnet with no shop",
+  "revnet": true,
+  "values": {
+   "tiered721HookOf": "0x0000000000000000000000000000000000000000"
+  },
+  "defaults": {
+   "ownerOf": "@REVOwner",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "@REVOwner",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "@REVOwner",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "revnet",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.provenance",
+     "category": "project",
+     "status": "passed",
+     "label": "Revnet configuration",
+     "message": "The canonical deployer has a configuration for this revnet.",
+     "actual": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Canonical composite hooks enable both payment and cash-out routing.",
+     "actual": "payments=true; cashOuts=true",
+     "expected": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "mismatch",
+     "label": "Shop hook",
+     "message": "The canonical revnet has no registered shop hook.",
+     "actual": "0x0000000000000000000000000000000000000000",
+     "expected": "A registered 721 hook",
+     "action": "Compare these values with the original deployment call before choosing a correction; immutable settings may require a new deployment."
+    }
+   ]
+  }
+ },
+ {
+  "name": "revnet with no registered configuration",
+  "revnet": true,
+  "values": {
+   "hashedEncodedConfigurationOf": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "defaults": {
+   "ownerOf": "@REVOwner",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "@REVOwner",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "@REVOwner",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "revnet",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "project.provenance",
+     "category": "project",
+     "status": "unsupported",
+     "label": "Revnet configuration",
+     "message": "No canonical configuration is registered. Ownership alone does not establish canonical deployment.",
+     "actual": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ },
+ {
+  "name": "canonical revnet routed to another hook with cash outs off",
+  "revnet": true,
+  "values": {
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000077",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": false
+    }
+   ]
+  },
+  "defaults": {
+   "ownerOf": "@REVOwner",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "@REVOwner",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "@REVOwner",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "revnet",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "mismatch",
+     "label": "Hook enablement",
+     "message": "Canonical composite hooks enable both payment and cash-out routing.",
+     "actual": "payments=true; cashOuts=false",
+     "expected": "payments=true; cashOuts=true",
+     "action": "Compare these values with the original deployment call before choosing a correction; immutable settings may require a new deployment."
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "mismatch",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000077",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "action": "Compare these values with the original deployment call before choosing a correction; immutable settings may require a new deployment."
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "project.provenance",
+     "category": "project",
+     "status": "passed",
+     "label": "Revnet configuration",
+     "message": "The canonical deployer has a configuration for this revnet.",
+     "actual": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ },
+ {
+  "name": "revnet whose ruleset read fails",
+  "revnet": true,
+  "values": {
+   "currentRulesetOf": {
+    "fail": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "@REVOwner",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "@REVOwner",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "@REVOwner",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "revnet",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3",
+     "expected": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "project.provenance",
+     "category": "project",
+     "status": "passed",
+     "label": "Revnet configuration",
+     "message": "The canonical deployer has a configuration for this revnet.",
+     "actual": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+     "id": "project.ruleset",
+     "category": "project",
+     "label": "Current ruleset",
+     "status": "unavailable",
+     "message": "The chain read did not complete. No mismatch was established.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x2ba4705ad0332cdfb299b452068438bcba3faaf3"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ },
+ {
+  "name": "juicebox project whose data hook is the shop",
+  "revnet": false,
+  "values": {},
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ },
+ {
+  "name": "juicebox project with no data hook",
+  "revnet": false,
+  "values": {
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000000",
+     "useDataHookForPay": false,
+     "useDataHookForCashOut": false
+    }
+   ]
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000000"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=false; cashOuts=false"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "info",
+     "label": "Shop hook",
+     "message": "No 721 shop is configured. This is valid for a Juicebox project."
+    }
+   ]
+  }
+ },
+ {
+  "name": "juicebox project through the omnichain deployer",
+  "revnet": false,
+  "values": {
+   "currentRulesetOf": [
+    {
+     "id": 7
+    },
+    {
+     "dataHook": "@JBOmnichainDeployer",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": false
+    }
+   ],
+   "tiered721HookOf": [
+    "0x0000000000000000000000000000000000000045",
+    false
+   ]
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=false"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0xb853758a70a6b4216c09f1d071ea2344aba0a34f"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ },
+ {
+  "name": "omnichain project with no shop",
+  "revnet": false,
+  "values": {
+   "currentRulesetOf": [
+    {
+     "id": 7
+    },
+    {
+     "dataHook": "@JBOmnichainDeployer",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": false
+    }
+   ],
+   "tiered721HookOf": [
+    "0x0000000000000000000000000000000000000000",
+    false
+   ]
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0xb853758a70a6b4216c09f1d071ea2344aba0a34f"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=false"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "info",
+     "label": "Shop hook",
+     "message": "No 721 shop is configured. This is valid for a Juicebox project."
+    }
+   ]
+  }
+ },
+ {
+  "name": "custom data hook that is not a shop",
+  "revnet": false,
+  "values": {
+   "STORE": {
+    "revert": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "custom",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "unsupported",
+     "label": "Shop hook",
+     "message": "The selected custom data hook does not expose a supported 721 shop."
+    }
+   ]
+  }
+ },
+ {
+  "name": "shop store read does not complete",
+  "revnet": false,
+  "values": {
+   "STORE": {
+    "fail": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "label": "Shop hook",
+     "status": "unavailable",
+     "message": "The chain read did not complete. No mismatch was established.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    }
+   ]
+  }
+ },
+ {
+  "name": "no active ruleset",
+  "revnet": false,
+  "values": {
+   "currentRulesetOf": [
+    {
+     "id": 0
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000000",
+     "useDataHookForPay": false,
+     "useDataHookForCashOut": false
+    }
+   ]
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.ruleset",
+     "category": "project",
+     "status": "info",
+     "label": "Current ruleset",
+     "message": "No active ruleset is available yet. Hook routing cannot be checked."
+    }
+   ]
+  }
+ },
+ {
+  "name": "another controller",
+  "revnet": false,
+  "values": {
+   "controllerOf": "0x0000000000000000000000000000000000000088"
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "custom",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "unsupported",
+     "label": "Controller",
+     "message": "This controller requires deployment-specific checks.",
+     "actual": "0x0000000000000000000000000000000000000088",
+     "expected": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1",
+     "action": "Compare with the controller chosen in the deployment script."
+    }
+   ]
+  }
+ },
+ {
+  "name": "owner read reverts",
+  "revnet": false,
+  "values": {
+   "ownerOf": {
+    "revert": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "unknown",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "label": "Project owner",
+     "status": "unsupported",
+     "message": "The contract read reverted or returned no data, so this check could not be verified.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    }
+   ]
+  }
+ },
+ {
+  "name": "controller read does not complete",
+  "revnet": false,
+  "values": {
+   "controllerOf": {
+    "fail": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "label": "Controller",
+     "status": "unavailable",
+     "message": "The chain read did not complete. No mismatch was established.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    }
+   ]
+  }
+ },
+ {
+  "name": "wrong network",
+  "revnet": false,
+  "clientChainId": 1,
+  "values": {},
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": null,
+   "kind": "unknown",
+   "checks": [
+    {
+     "id": "network",
+     "category": "project",
+     "status": "unavailable",
+     "label": "Network",
+     "message": "The connected network does not match this project.",
+     "actual": "1",
+     "expected": "84532",
+     "action": "Choose the project's network and retry."
+    }
+   ]
+  }
+ },
+ {
+  "name": "project id zero",
+  "revnet": false,
+  "projectId": "0n",
+  "values": {},
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "0",
+   "checkedAt": "T",
+   "checkedBlock": null,
+   "kind": "unknown",
+   "checks": [
+    {
+     "id": "project",
+     "category": "project",
+     "status": "unsupported",
+     "label": "Project",
+     "message": "A positive project ID is required."
+    }
+   ]
+  }
+ },
+ {
+  "name": "operator that is not an address",
+  "revnet": false,
+  "operator": "nope",
+  "values": {},
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "unsupported",
+     "label": "Shop permissions",
+     "message": "The supplied operator is not a valid address.",
+     "action": "Supply the operator address from your deployment configuration."
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ },
+ {
+  "name": "zero operator",
+  "revnet": false,
+  "operator": "0x0000000000000000000000000000000000000000",
+  "values": {},
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "unsupported",
+     "label": "Shop permissions",
+     "message": "Operator powers cannot be established for an unverified project binding, custom permission registry or zero operator.",
+     "action": "Verify the hook's project and permission registry, then supply a nonzero operator address."
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ],
+   "operator": "0x0000000000000000000000000000000000000000"
+  }
+ },
+ {
+  "name": "operator on a hook bound to another project",
+  "revnet": false,
+  "operator": "0x00000000000000000000000000000000000000aa",
+  "values": {
+   "projectId": "46n"
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "mismatch",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "46",
+     "expected": "45",
+     "action": "Compare these values with the original deployment call before choosing a correction; immutable settings may require a new deployment."
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "unsupported",
+     "label": "Shop permissions",
+     "message": "Operator powers cannot be established for an unverified project binding, custom permission registry or zero operator.",
+     "action": "Verify the hook's project and permission registry, then supply a nonzero operator address."
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ],
+   "operator": "0x00000000000000000000000000000000000000aa"
+  }
+ },
+ {
+  "name": "operator with a custom permission registry",
+  "revnet": false,
+  "operator": "0x00000000000000000000000000000000000000aa",
+  "values": {
+   "PERMISSIONS": "0x0000000000000000000000000000000000000066"
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000066"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "unsupported",
+     "label": "Shop permissions",
+     "message": "Operator powers cannot be established for an unverified project binding, custom permission registry or zero operator.",
+     "action": "Verify the hook's project and permission registry, then supply a nonzero operator address."
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ],
+   "operator": "0x00000000000000000000000000000000000000aa"
+  }
+ },
+ {
+  "name": "operator when the authority read fails",
+  "revnet": false,
+  "operator": "0x00000000000000000000000000000000000000aa",
+  "values": {
+   "owner": {
+    "fail": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "unavailable",
+     "message": "The chain read did not complete. No mismatch was established.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "unavailable",
+     "label": "Shop permissions",
+     "message": "A required hook authority or binding read could not be verified. Operator powers remain unknown.",
+     "action": "Retry the missing hook reads before checking operator powers."
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ],
+   "operator": "0x00000000000000000000000000000000000000aa"
+  }
+ },
+ {
+  "name": "operator whose permission read reverts",
+  "revnet": false,
+  "operator": "0x00000000000000000000000000000000000000aa",
+  "values": {
+   "hasPermissions": {
+    "revert": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop factory",
+     "message": "The registry records the canonical 721 factory.",
+     "actual": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop store",
+     "message": "The reported store is readable; highest tier ID is 0.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permission.24",
+     "category": "permissions",
+     "label": "Adjust tiers",
+     "status": "unsupported",
+     "message": "The contract read reverted or returned no data, so this check could not be verified.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "shop.permission.25",
+     "category": "permissions",
+     "label": "Update metadata",
+     "status": "unsupported",
+     "message": "The contract read reverted or returned no data, so this check could not be verified.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "shop.permission.26",
+     "category": "permissions",
+     "label": "Mint items",
+     "status": "unsupported",
+     "message": "The contract read reverted or returned no data, so this check could not be verified.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "shop.permission.27",
+     "category": "permissions",
+     "label": "Increase discounts",
+     "status": "unsupported",
+     "message": "The contract read reverted or returned no data, so this check could not be verified.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ],
+   "operator": "0x00000000000000000000000000000000000000aa"
+  }
+ },
+ {
+  "name": "hook with no store, another factory, unreadable pricing",
+  "revnet": false,
+  "values": {
+   "STORE": "0x0000000000000000000000000000000000000000",
+   "deployerOf": "0x0000000000000000000000000000000000000055",
+   "pricingContext": {
+    "fail": true
+   }
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b"
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "status": "unsupported",
+     "label": "Shop factory",
+     "message": "The registry does not establish canonical factory provenance. Custom hooks need separate review.",
+     "actual": "0x0000000000000000000000000000000000000055",
+     "expected": "0xb7b8ec35e2dd84afff04ee769c6189e7a4d44a78"
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "status": "mismatch",
+     "label": "Shop store",
+     "message": "The hook reports no store address.",
+     "actual": "0x0000000000000000000000000000000000000000",
+     "expected": "A deployed 721 store",
+     "action": "Compare the hook initialization with the deployment script before using its shop."
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "label": "Shop pricing",
+     "status": "unavailable",
+     "message": "The chain read did not complete. No mismatch was established.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    }
+   ]
+  }
+ },
+ {
+  "name": "store and factory reads revert, wrong directory",
+  "revnet": false,
+  "values": {
+   "maxTierIdOf": {
+    "revert": true
+   },
+   "deployerOf": {
+    "revert": true
+   },
+   "DIRECTORY": "0x0000000000000000000000000000000000000044"
+  },
+  "defaults": {
+   "ownerOf": "0x0000000000000000000000000000000000000099",
+   "controllerOf": "@JBController",
+   "hashedEncodedConfigurationOf": "0x1111111111111111111111111111111111111111111111111111111111111111",
+   "currentRulesetOf": [
+    {
+     "id": 1
+    },
+    {
+     "dataHook": "0x0000000000000000000000000000000000000045",
+     "useDataHookForPay": true,
+     "useDataHookForCashOut": true
+    }
+   ],
+   "tiered721HookOf": "0x0000000000000000000000000000000000000045",
+   "STORE": "0x0000000000000000000000000000000000000099",
+   "maxTierIdOf": "0n",
+   "PERMISSIONS": "@JBPermissions",
+   "projectId": "45n",
+   "DIRECTORY": "@JBDirectory",
+   "owner": "0x0000000000000000000000000000000000000099",
+   "deployerOf": "@JB721TiersHookDeployer",
+   "pricingContext": [
+    "2n",
+    "18n"
+   ],
+   "hasPermissions": false
+  },
+  "report": {
+   "version": 6,
+   "chainId": 84532,
+   "projectId": "45",
+   "checkedAt": "T",
+   "checkedBlock": "123",
+   "kind": "juicebox",
+   "checks": [
+    {
+     "id": "hook.directory",
+     "category": "hook",
+     "label": "Hook directory",
+     "status": "mismatch",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "0x0000000000000000000000000000000000000044",
+     "expected": "0x5aff29060e023e6fb87be5596652b33c65af535b",
+     "action": "Compare these values with the original deployment call before choosing a correction; immutable settings may require a new deployment."
+    },
+    {
+     "id": "hook.flags",
+     "category": "hook",
+     "status": "info",
+     "label": "Hook enablement",
+     "message": "Hook enablement can be an intentional ruleset choice.",
+     "actual": "payments=true; cashOuts=true"
+    },
+    {
+     "id": "hook.owner",
+     "category": "hook",
+     "label": "Shop authority",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "hook.permissions",
+     "category": "hook",
+     "label": "Permission registry",
+     "status": "info",
+     "message": "The hook reported this value; custom ownership can be intentional.",
+     "actual": "0xf92ac1ab5a00033e35a3975739124f61928c36b0"
+    },
+    {
+     "id": "hook.projectId",
+     "category": "hook",
+     "label": "Hook project",
+     "status": "passed",
+     "message": "Compared the hook's binding with this project.",
+     "actual": "45",
+     "expected": "45"
+    },
+    {
+     "id": "hook.provenance",
+     "category": "hook",
+     "label": "Shop factory",
+     "status": "unsupported",
+     "message": "The contract read reverted or returned no data, so this check could not be verified.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "hook.routing",
+     "category": "hook",
+     "status": "info",
+     "label": "Payment hook routing",
+     "message": "The current ruleset selects this data hook.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.shop",
+     "category": "hook",
+     "status": "passed",
+     "label": "Shop hook",
+     "message": "The project resolves to a hook reporting a 721 store address.",
+     "actual": "0x0000000000000000000000000000000000000045"
+    },
+    {
+     "id": "hook.store",
+     "category": "hook",
+     "label": "Shop store",
+     "status": "unsupported",
+     "message": "The contract read reverted or returned no data, so this check could not be verified.",
+     "action": "Retry the check or inspect this contract with your deployment configuration."
+    },
+    {
+     "id": "project.controller",
+     "category": "project",
+     "status": "passed",
+     "label": "Controller",
+     "message": "The project uses the supported v6 controller.",
+     "actual": "0x3fcec3572e84b624477bcff4e2cf1f7deab648f1"
+    },
+    {
+     "id": "project.owner",
+     "category": "project",
+     "status": "passed",
+     "label": "Project exists",
+     "message": "The v6 project registry returned its current owner.",
+     "actual": "0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.permissions",
+     "category": "permissions",
+     "status": "info",
+     "label": "Shop permissions",
+     "message": "Operator permissions can be intentionally restricted. Supply an operator address to read its current powers.",
+     "actual": "Shop authority: 0x0000000000000000000000000000000000000099"
+    },
+    {
+     "id": "shop.pricing",
+     "category": "pricing",
+     "status": "info",
+     "label": "Shop pricing",
+     "message": "Prices use these units. Precision alone cannot establish whether an item was priced as intended.",
+     "actual": "currency=2; decimals=18"
+    }
+   ]
+  }
+ }
+]

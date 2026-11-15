@@ -3074,6 +3074,18 @@ input[type="checkbox"].field {
 .operator-edit-submit.disabled { opacity: 0.55; cursor: wait; }
 .extras-body { max-width: 760px; }
 .extras-payer-copy { color: var(--muted-2); margin-bottom: 10px; max-width: 68ch; }
+.deploy-check-results { margin-top: 12px; font-size: 12px; }
+.deploy-check-meta { color: var(--muted-2); font-size: 11px; word-break: break-all; }
+.deploy-check-title { font-weight: bold; margin: 14px 0 6px; }
+.deploy-check-item { border: 1px solid var(--border); padding: 8px 10px; margin-bottom: 8px; }
+.deploy-check-item > .deploy-check-title { margin-top: 0; }
+.deploy-check-head { display: flex; flex-wrap: wrap; gap: 4px 10px; justify-content: space-between; }
+.deploy-check-label { font-weight: bold; }
+.deploy-check-status { color: var(--muted-2); }
+.deploy-check-status.mismatch { color: var(--c-pink); }
+.deploy-check-line { margin-top: 4px; }
+.deploy-check-value { margin-top: 4px; font-size: 11px; word-break: break-all; }
+.deploy-check-raw { width: 100%; margin-top: 6px; font-family: inherit; font-size: 11px; }
 .extras-label { margin-top: 12px; }
 .extras-address, .extras-memo, .extras-select { width: 100%; box-sizing: border-box; }
 .extras-address { margin-bottom: 0; }
